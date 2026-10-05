@@ -1,0 +1,41 @@
+name: Import Core044 sources
+
+on:
+  push:
+    paths:
+      - '.source-upload/**'
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct source tree when all parts are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(find .source-upload -maxdepth 1 -type f -name 'source.part.*' 2>/dev/null | wc -l)
+          if [ "$count" -ne 11 ]; then
+            echo "Waiting for all 11 parts; currently $count"
+            exit 0
+          fi
+          tmp=$(mktemp -d)
+          cat .source-upload/source.part.* | base64 -d > "$tmp/source.tar.gz"
+          tar -xzf "$tmp/source.tar.gz" -C "$tmp"
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .source-upload ! -name .github -exec rm -rf {} +
+          cp -a "$tmp"/. .
+          rm -f source.tar.gz
+          rm -rf .source-upload
+          rm -f .github/workflows/import-core044.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Publish Cifereca Core 0.9.44-dev.1 sources'
+          git push origin HEAD:main
