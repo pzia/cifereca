@@ -20,8 +20,8 @@ jobs:
         run: |
           set -euo pipefail
           count=$(find .source-upload -maxdepth 1 -type f -name 'source.part.*' 2>/dev/null | wc -l)
-          if [ "$count" -ne 11 ]; then
-            echo "Waiting for all 11 parts; currently $count"
+          if [ "$count" -ne 6 ]; then
+            echo "Waiting for all 6 parts; currently $count"
             exit 0
           fi
           tmp=$(mktemp -d)
@@ -29,7 +29,6 @@ jobs:
           tar -xzf "$tmp/source.tar.gz" -C "$tmp"
           find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .source-upload ! -name .github -exec rm -rf {} +
           cp -a "$tmp"/. .
-          rm -f source.tar.gz
           rm -rf .source-upload
           rm -f .github/workflows/import-core044.yml
           rmdir .github/workflows 2>/dev/null || true
