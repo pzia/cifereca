@@ -3,7 +3,7 @@ name: Import Core044 sources
 on:
   push:
     paths:
-      - '.source-upload2/READY'
+      - '.source-upload3/READY'
 
 permissions:
   contents: write
@@ -19,12 +19,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          count=$(find .source-upload2 -maxdepth 1 -type f -name 'source.part.*' | wc -l)
-          test "$count" -eq 18
+          count=$(find .source-upload3 -maxdepth 1 -type f -name 'source.part.*' | wc -l)
+          test "$count" -eq 34
           tmp=$(mktemp -d)
-          cat .source-upload2/source.part.* | base64 -d > "$tmp/source.tar.gz"
+          cat .source-upload3/source.part.* | base64 -d > "$tmp/source.tar.xz"
           mkdir "$tmp/source"
-          tar -xzf "$tmp/source.tar.gz" -C "$tmp/source"
+          tar -xJf "$tmp/source.tar.xz" -C "$tmp/source"
           git checkout --orphan core044-publish
           git rm -rf . >/dev/null 2>&1 || true
           cp -a "$tmp/source"/. .
