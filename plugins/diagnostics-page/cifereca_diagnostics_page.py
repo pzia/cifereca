@@ -16,14 +16,77 @@ def _safe_text(value: Any) -> str:
     return str(value)
 
 
+def active_checks(context, sync_broker=None) -> list[dict[str, Any]]:
+    """Run bounded, non-destructive checks through public plugin surfaces."""
+    rows: list[dict[str, Any]] = []
+    if sync_broker is not None:
+        try:
+            sources = tuple(sync_broker.sources())
+            if not sources:
+                rows.append({"message": "Sources configurées", "status": "ok", "detail": {"count": 0}})
+            for source in sources:
+                error = str(getattr(source, "error", "") or "")
+                connected = bool(getattr(source, "connected", False))
+                capable = bool(getattr(source, "sync_capable", True))
+                status = "error" if error else ("ok" if connected and capable else "warning")
+                rows.append({
+                    "message": "Source " + str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "configurée"),
+                    "status": status,
+                    "detail": {
+                        "provider_id": str(getattr(source, "provider_id", "") or ""),
+                        "connected": connected, "sync_capable": capable,
+                        "enabled": bool(getattr(source, "enabled", True)),
+                        "last_success": str(getattr(source, "last_success", "") or ""),
+                        "error": error[:240] if error else "",
+                    },
+                })
+        except Exception as exc:
+            rows.append({"message": "Sources configurées", "status": "error", "detail": {"error_type": type(exc).__name__}})
+    else:
+        rows.append({"message": "Sources configurées", "status": "warning", "detail": {"reason": "broker sync indisponible"}})
+
+    try:
+        runtimes = tuple(context.services("runtime.adapter", contract="cifereca.runtime", version=">=1,<2"))
+    except Exception as exc:
+        runtimes = ()
+        rows.append({"message": "Runtimes", "status": "error", "detail": {"error_type": type(exc).__name__}})
+    for resolved in runtimes:
+        service = resolved.service
+        try:
+            available = getattr(service, "available", None)
+            if callable(available) and available() is False:
+                rows.append({"message": resolved.plugin_id, "status": "error", "detail": {"available": False}})
+                continue
+            probe = getattr(service, "probe", None)
+            payload = probe() if callable(probe) else {}
+            detail = {"available": True, "version": resolved.plugin_version}
+            if isinstance(payload, Mapping):
+                contract = payload.get("contract")
+                if isinstance(contract, Mapping):
+                    detail["contract_version"] = contract.get("contract_version") or contract.get("version")
+                detail["resolved_executable"] = bool(payload.get("resolved_executable")) if "resolved_executable" in payload else None
+            rows.append({"message": resolved.plugin_id, "status": "ok", "detail": detail})
+        except Exception as exc:
+            rows.append({"message": resolved.plugin_id, "status": "error", "detail": {"error_type": type(exc).__name__}})
+
+    try:
+        providers = tuple(context.services("provider.library", contract="cifereca.provider", version=">=1,<2"))
+        rows.append({"message": "Providers chargés", "status": "ok", "detail": {"count": len(providers)}})
+    except Exception as exc:
+        rows.append({"message": "Providers chargés", "status": "error", "detail": {"error_type": type(exc).__name__}})
+    return rows
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
         self.diagnostics = None
+        self.sync = None
 
     def activate(self, context):
         self.context = context
         self.diagnostics = context.broker("diagnostics")
+        self.sync = context.broker("sync")
         if self.diagnostics is None:
             raise RuntimeError("broker diagnostics indisponible")
         return self
@@ -66,7 +129,10 @@ class DiagnosticsPagePlugin:
         refresh.set_tooltip_text("Actualiser les diagnostics")
         copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
         copy.set_tooltip_text("Copier le rapport texte expurgé")
+        check = Gtk.Button.new_from_icon_name("system-run-symbolic")
+        check.set_tooltip_text("Vérifier les services configurés et runtimes")
         action_row.append(refresh)
+        action_row.append(check)
         action_row.append(copy)
         outer.append(action_row)
 
@@ -87,6 +153,15 @@ class DiagnosticsPagePlugin:
         outer.append(diag_title)
         diag_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         outer.append(diag_box)
+
+        check_title = Gtk.Label(label="Vérification active", xalign=0)
+        check_title.add_css_class("heading")
+        outer.append(check_title)
+        check_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer.append(check_box)
+        check_hint = Gtk.Label(label="Lancez la vérification pour contrôler les connexions connues et runtimes sans synchroniser ni télécharger.", xalign=0)
+        check_hint.set_wrap(True)
+        check_box.append(check_hint)
 
         export_title = Gtk.Label(label="Rapport texte", xalign=0)
         export_title.add_css_class("heading")
@@ -178,6 +253,28 @@ class DiagnosticsPagePlugin:
                         level="normal",
                     )
 
+        def run_checks(_button) -> None:
+            clear_container(check_box)
+            try:
+                rows = active_checks(self.context, self.sync)
+                for row in rows:
+                    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+                    card.add_css_class("card")
+                    for margin in ("top", "bottom", "start", "end"):
+                        getattr(card, "set_margin_" + margin)(8)
+                    status = str(row.get("status") or "unknown")
+                    title = Gtk.Label(label=str(row.get("message") or "Vérification"), xalign=0)
+                    title.add_css_class("heading")
+                    card.append(title)
+                    detail = Gtk.Label(label=f"{status} · {_safe_text(row.get('detail'))}", xalign=0)
+                    detail.set_wrap(True)
+                    detail.set_selectable(True)
+                    card.append(detail)
+                    check_box.append(card)
+                host.toast("Vérification terminée")
+            except Exception as exc:
+                host.toast(f"Vérification impossible : {type(exc).__name__}")
+
         def copy_report(_button) -> None:
             try:
                 text = str(broker.export_text() or "")
@@ -190,11 +287,13 @@ class DiagnosticsPagePlugin:
                 host.toast(f"Copie impossible : {type(exc).__name__}")
 
         refresh.connect("clicked", render)
+        check.connect("clicked", run_checks)
         copy.connect("clicked", copy_report)
         render()
         return scroll
 
     def deactivate(self):
+        self.sync = None
         self.diagnostics = None
         self.context = None
 
