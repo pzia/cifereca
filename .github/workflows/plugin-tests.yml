@@ -1,0 +1,52 @@
+name: Test plugins
+
+on:
+  push:
+    paths:
+      - "plugins/**"
+      - "src/cifereca/**"
+      - "pyproject.toml"
+      - ".github/workflows/plugin-tests.yml"
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "src/cifereca/**"
+      - "pyproject.toml"
+      - ".github/workflows/plugin-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12"
+
+      - name: Run plugin tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        shell: bash
+        run: |
+          failed=0
+          count=0
+          for p in plugins/*; do
+            if [ -f "$p/cifereca-plugin.json" ] && [ -d "$p/tests" ]; then
+              count=$((count + 1))
+              echo "::group::$(basename "$p")"
+              if ! (cd "$p" && python -m pytest -q); then
+                failed=1
+              fi
+              echo "::endgroup::"
+            fi
+          done
+          echo "Tested $count plugin package(s)"
+          exit "$failed"
