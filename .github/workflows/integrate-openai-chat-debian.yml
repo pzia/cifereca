@@ -1,0 +1,42 @@
+name: Integrate OpenAI Chat Debian recipe
+
+on:
+  push:
+    branches:
+      - maintenance/openai-chat-debian-kobo-test
+    paths:
+      - '.integration-openai-chat-debian/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore recipe and Kobo integration test
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find .integration-openai-chat-debian -maxdepth 1 -type f -name 'payload.b64.part.*' | wc -l)" -eq 2
+          cat .integration-openai-chat-debian/payload.b64.part.* | base64 -d > /tmp/integration.tar.xz
+          echo "9ef98bb5005a69222aea4a784aeee52a3d451c3fab4d656d06fd0a6ea495d50c  /tmp/integration.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/integration.tar.xz -C .
+
+          python -m compileall -q environnements/openai-chat-debian
+          bash -n             environnements/openai-chat-debian/env.sh             environnements/openai-chat-debian/gtk-python             environnements/openai-chat-debian/headless             environnements/openai-chat-debian/capture-app             environnements/openai-chat-debian/run-cifereca
+          python environnements/openai-chat-debian/bootstrap.py --help >/dev/null
+
+          python -m pip install -e '.[dev]'
+          python -m pytest -q plugins/provider-kobo/tests/test_dataset_integration.py
+
+          rm -rf .integration-openai-chat-debian
+          rm -f .github/workflows/integrate-openai-chat-debian.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Add OpenAI Chat Debian recipe and Kobo integration test'
+          git push origin HEAD:maintenance/openai-chat-debian-kobo-test
