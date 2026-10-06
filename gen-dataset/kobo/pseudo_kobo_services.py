@@ -59,7 +59,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
-APP_VERSION = "1.0"
+DATASET_ROOT = Path(__file__).resolve().parents[1]
+if str(DATASET_ROOT) not in sys.path:
+    sys.path.insert(0, str(DATASET_ROOT))
+
+from common.fake_books import FakeBook, FakeBookFactory, write_epub as write_shared_epub
+
+APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_CATALOG_BOOKS = 10_000
 DEFAULT_VAULT_BOOKS = 1_000
@@ -321,18 +327,14 @@ class DatasetCache:
         conn.execute("DELETE FROM ownership")
         conn.execute("DELETE FROM books")
         conn.execute("DELETE FROM meta")
-        rng = random.Random(stable_int(self.seed, "kobo-catalog"))
-        used: set[str] = set()
+        rng = random.Random(stable_int(self.seed, "kobo-service"))
+        factory = FakeBookFactory(self.seed, "kobo")
         first_date = date(1998, 1, 1)
         span_days = (date(2026, 9, 30) - first_date).days
         batch = []
         for book_id in range(1, self.catalog_books + 1):
-            title, place, obj = make_unique_title(rng, used, book_id)
-            author = f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}"
-            publisher = rng.choice(PUBLISHERS)
+            book = factory.make(book_id)
             publication_date = first_date + timedelta(days=rng.randrange(span_days + 1))
-            language = rng.choice(LANGUAGES)
-            subject = rng.choice(SUBJECTS)
             product_id = f"kobo-fake-{book_id:05d}"
             revision_id = f"rev-{stable_int(self.seed, product_id) % 10**12:012d}"
             isbn = f"978{stable_int(self.seed, 'isbn', book_id) % 10_000_000_000:010d}"
@@ -345,10 +347,10 @@ class DatasetCache:
             else:
                 drm_type, fmt = "AdobeDrm", "EPUB"
             batch.append((
-                book_id, product_id, revision_id, title, author, publisher,
-                publication_date.isoformat(), language, subject,
-                make_summary(title, place, subject), isbn, price, "EUR", fmt,
-                drm_type, place, obj, rng.randrange(len(PALETTES)),
+                book_id, product_id, revision_id, book.title, book.author, book.publisher,
+                publication_date.isoformat(), book.language, book.subject,
+                book.description, isbn, price, "EUR", fmt,
+                drm_type, book.place, book.object_name, rng.randrange(len(PALETTES)),
             ))
             if len(batch) >= 1000:
                 conn.executemany("INSERT INTO books VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
@@ -879,25 +881,20 @@ class KoboFakeApp:
         return "\n".join(f"<p>{esc(p)}</p>" for p in paragraphs)
 
     def write_epub(self, path: Path, row: sqlite3.Row):
-        identifier = f"urn:cifereca:kobo:{row['product_id']}"
-        cover_svg = self.make_cover_svg(row)
-        chapter = self.chapter_html(row)
-        css = "body{font-family:serif;line-height:1.55;margin:7%}p{text-align:justify;text-indent:1.2em}.cover{text-align:center;margin:0}.cover img{max-width:100%;max-height:100vh}"
-        container_xml = '''<?xml version="1.0" encoding="UTF-8"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'''
-        cover_page = '''<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" lang="fr"><head><title>Couverture</title><link rel="stylesheet" href="style.css"/></head><body class="cover"><img src="cover.svg" alt="Couverture"/></body></html>'''
-        chapter_page = f'''<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" lang="fr"><head><title>{esc(row['title'])}</title><link rel="stylesheet" href="style.css"/></head><body><h1>Chapitre 1 — Le signe</h1>{chapter}</body></html>'''
-        nav = '''<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="fr"><head><title>Navigation</title></head><body><nav epub:type="toc"><h1>Sommaire</h1><ol><li><a href="chapter1.xhtml">Chapitre 1 — Le signe</a></li></ol></nav></body></html>'''
-        ncx = f'''<?xml version="1.0" encoding="UTF-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="{esc(identifier)}"/></head><docTitle><text>{esc(row['title'])}</text></docTitle><navMap><navPoint id="n1" playOrder="1"><navLabel><text>Chapitre 1 — Le signe</text></navLabel><content src="chapter1.xhtml"/></navPoint></navMap></ncx>'''
-        opf = f'''<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="{esc(row['language'])}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">{esc(identifier)}</dc:identifier><dc:title>{esc(row['title'])}</dc:title><dc:creator>{esc(row['author'])}</dc:creator><dc:publisher>{esc(row['publisher'])}</dc:publisher><dc:language>{esc(row['language'])}</dc:language><dc:date>{esc(row['publication_date'])}</dc:date><dc:subject>{esc(row['subject'])}</dc:subject><dc:description>{esc(row['description'])}</dc:description><meta property="dcterms:modified">2026-10-06T00:00:00Z</meta><meta name="cover" content="cover-image"/></metadata><manifest><item id="cover-image" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/><item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/><item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="style.css" media-type="text/css"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx"><itemref idref="cover-page" linear="no"/><itemref idref="chapter1"/></spine></package>'''
-        with zipfile.ZipFile(path, "w") as z:
-            z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-            for name, data in [
-                ("META-INF/container.xml", container_xml), ("OEBPS/content.opf", opf),
-                ("OEBPS/style.css", css), ("OEBPS/cover.svg", cover_svg),
-                ("OEBPS/cover.xhtml", cover_page), ("OEBPS/chapter1.xhtml", chapter_page),
-                ("OEBPS/nav.xhtml", nav), ("OEBPS/toc.ncx", ncx),
-            ]:
-                z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+        book = FakeBook(
+            index=int(row["book_id"]),
+            identifier=f"urn:cifereca:kobo:{row['product_id']}",
+            title=str(row["title"]),
+            author=str(row["author"]),
+            publisher=str(row["publisher"]),
+            publication_date=str(row["publication_date"]),
+            subject=str(row["subject"]),
+            language=str(row["language"]),
+            place=str(row["place"]),
+            object_name=str(row["object_name"]),
+            description=str(row["description"]),
+        )
+        write_shared_epub(path, book)
 
     def route(self, handler: BaseHTTPRequestHandler):
         parsed = urlsplit(handler.path)
