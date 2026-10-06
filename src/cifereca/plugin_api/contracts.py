@@ -30,6 +30,8 @@ class ContractCheck:
     detail: Mapping[str, object] | None = None
 
 
+# The public registry is intentionally data-only. Contract versions evolve
+# independently from Plugin API and manifest versions.
 CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
     ContractDefinition("provider.library", "cifereca.provider", "1", capabilities=("catalog.search", "catalog.holdings", "acquisition.borrow", "acquisition.download")),
     ContractDefinition("transport", "cifereca.transport", "1"),
