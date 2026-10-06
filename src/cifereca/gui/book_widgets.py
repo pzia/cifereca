@@ -1,0 +1,386 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Callable
+
+import gi
+import time
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Pango
+
+from .cover_loader import CoverLoader
+
+
+def _add_css(widget: Gtk.Widget, *classes: str) -> Gtk.Widget:
+    for name in classes:
+        widget.add_css_class(name)
+    return widget
+
+def attribute_tag(label,callback=None,*,group='form',tooltip=None):
+    """Compact list facet with non-hyperlink presentation.
+
+    Real GTK runtimes use a flat button for mouse/keyboard activation. The
+    label fallback keeps lightweight contract tests independent from Gtk.Button.
+    """
+    button_cls = getattr(Gtk, 'Button', None)
+    if callback and button_cls is not None:
+        tag=button_cls(label=str(label))
+        try: tag.add_css_class('flat')
+        except Exception: pass
+        tag.connect('clicked', lambda _button: callback(None))
+    else:
+        tag=Gtk.Label()
+        if callback:
+            # Escaped plain markup: intentionally no <a> hyperlink styling.
+            tag.set_markup(GLib.markup_escape_text(str(label)))
+            tag.connect('activate-link', lambda _label, _uri: (callback(None), True)[1])
+        else:
+            tag.set_label(str(label))
+        try:
+            tag.set_xalign(0.5); tag.set_ellipsize(Pango.EllipsizeMode.END); tag.set_max_width_chars(28)
+        except Exception: pass
+    try:
+        tag.set_halign(Gtk.Align.CENTER); tag.set_valign(Gtk.Align.CENTER)
+    except Exception: pass
+    _add_css(tag,'book-tag','tag-content' if group=='content' else 'tag-form')
+    tag.set_tooltip_text(tooltip or str(label))
+    return tag
+
+class CoverView(Gtk.Overlay):
+    """Vue de couverture recyclable.
+
+    Core031 prépare en worker une image à 3x la taille logique des listes.
+    Le détail garde l’original. Cache original conservé, génération vérifiée.
+    """
+
+    def __init__(self, width: int = 60, height: int = 90):
+        super().__init__()
+        self._width = int(width)
+        self._height = int(height)
+        self.set_size_request(self._width, self._height)
+        _add_css(self, "cover-frame")
+        self._generation = 0
+        self._request = None
+        self._loader: CoverLoader | None = None
+        self._url: str | None = None
+        self._priority = 10
+        self._decode_retry = False
+
+        self.placeholder = Gtk.Image.new_from_icon_name("image-x-generic-symbolic")
+        self.placeholder.set_pixel_size(max(24, self._width // 2))
+        self.placeholder.set_opacity(0.45)
+        self.set_child(self.placeholder)
+
+        self.picture = Gtk.Picture()
+        self.picture.set_size_request(self._width, self._height)
+        self.picture.set_can_shrink(True)
+        try:
+            self.picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+        except Exception:
+            pass
+        self.add_overlay(self.picture)
+
+        self.spinner = Gtk.Spinner()
+        self.spinner.set_halign(Gtk.Align.CENTER)
+        self.spinner.set_valign(Gtk.Align.CENTER)
+        self.spinner.set_visible(False)
+        self.add_overlay(self.spinner)
+
+    def reset(self) -> None:
+        if self._request is not None:
+            try:
+                self._request.cancel()
+            except Exception:
+                pass
+            self._request = None
+        self._generation += 1
+        self._loader = None
+        self._url = None
+        self._decode_retry = False
+        self.picture.set_paintable(None)
+        self.placeholder.set_visible(True)
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+
+    def show_loading(self) -> None:
+        self.spinner.set_visible(True)
+        self.spinner.start()
+
+    def bind_url(self, loader: CoverLoader, url: str | None, *, priority: int = 10) -> None:
+        self.reset()
+        if not url:
+            return
+        self._loader = loader
+        self._url = url
+        self._priority = priority
+        self._start_cover_request(force=False)
+
+    def _start_cover_request(self, *, force: bool) -> None:
+        if self._loader is None or not self._url:
+            return
+        generation = self._generation
+        loader = self._loader
+        self.show_loading()
+
+        def received(path: Path | None) -> None:
+            GLib.idle_add(self._apply_result, generation, loader, path)
+
+        if self._width<=80 and hasattr(loader,'load_preview'):
+            scale=max(3,int(self.get_scale_factor()))
+            self._request=loader.load_preview(self._url,received,width=self._width*scale,height=self._height*scale,priority=self._priority,force=force)
+        else:
+            self._request = loader.load(self._url, received, priority=self._priority, force=force)
+
+    def _apply_result(self, generation: int, loader: CoverLoader, path: Path | None) -> bool:
+        if generation != self._generation:
+            loader.note_ui_stale()
+            return False
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+        if not path:
+            self.placeholder.set_visible(True)
+            return False
+        try:
+            decode_started = time.perf_counter()
+            texture = Gdk.Texture.new_from_file(Gio.File.new_for_path(str(path)))
+            loader.note_ui_decode((time.perf_counter() - decode_started) * 1000.0)
+            self.picture.set_paintable(texture)
+            self.placeholder.set_visible(False)
+            loader.note_ui_applied()
+        except Exception as exc:
+            loader.note_ui_failed()
+            self.picture.set_paintable(None)
+            self.placeholder.set_visible(True)
+            loader.invalidate(path, decode_failure=True)
+            if loader.diagnostics is not None:
+                loader.diagnostics.add(
+                    "COVER", "ui decode", "error",
+                    detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                    level="detailed",
+                )
+            if not self._decode_retry and self._loader is not None and self._url:
+                self._decode_retry = True
+                self._start_cover_request(force=True)
+        return False
+
+    def set_path(self, path: Path | None) -> bool:
+        loader = self._loader
+        if loader is None:
+            return False
+        return self._apply_result(self._generation, loader, path)
+
+
+class BookListItem(GObject.Object):
+    """Modèle léger pour Gtk.ListView ; aucune image n'est chargée ici."""
+
+    __gtype_name__ = "CiferecaBookListItem"
+
+    def __init__(
+        self,
+        key: str,
+        title: str,
+        subtitle: str = "",
+        meta: str = "",
+        badge: str = "",
+        thumbnail_url: str | None = None,
+        cover_provider: str | None = None,
+        cover_record_id: str | None = None,
+        cover_title: str | None = None,
+        cover_author: str | None = None,
+        cover_year: str | None = None,
+        default_thumbnail_url: str | None = None,
+        action_label: str | None = None,
+        action_callback: Callable[[Gtk.Button], None] | None = None,
+        action_icon_name: str | None = None,
+    ):
+        super().__init__()
+        self.key = key
+        self.title = title or "Sans titre"
+        self.subtitle = subtitle or ""
+        self.meta = meta or ""
+        self.badge = badge or ""
+        self.thumbnail_url = thumbnail_url
+        self.cover_provider = cover_provider
+        self.cover_record_id = cover_record_id
+        self.cover_title = cover_title or self.title
+        self.cover_author = cover_author
+        self.cover_year = cover_year
+        self.default_thumbnail_url = default_thumbnail_url
+        self.action_label = action_label or ""
+        self.action_callback = action_callback
+        self.action_icon_name = action_icon_name or 'view-more-symbolic'
+
+
+class BookListCell(Gtk.Box):
+    """Cellule recyclée par Gtk.ListView.
+
+    Le bind/unbind est la clé de la performance : une couverture n'est demandée
+    que lorsque GTK matérialise réellement une cellule (typiquement à l'écran
+    ou juste autour de la zone visible).
+    """
+
+    def __init__(self, window: Any):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.window = window
+        self.cover_loader = window.covers
+        self._meta_request = None
+        self._bound_key: str | None = None
+        self.set_margin_top(8)
+        self.set_margin_bottom(8)
+        self.set_margin_start(8)
+        self.set_margin_end(8)
+        _add_css(self, "book-row")
+
+        self.cover = CoverView(58, 86)
+        self.append(self.cover)
+
+        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        labels.set_hexpand(True)
+        labels.set_valign(Gtk.Align.CENTER)
+        self.append(labels)
+
+        self.title_label = Gtk.Label(xalign=0)
+        self.title_label.set_wrap(True)
+        self.title_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.title_label.set_lines(2)
+        self.title_label.set_ellipsize(Pango.EllipsizeMode.END)
+        _add_css(self.title_label, "book-title")
+        labels.append(self.title_label)
+
+        self.subtitle_label = Gtk.Label(xalign=0)
+        self.subtitle_label.set_ellipsize(Pango.EllipsizeMode.END)
+        _add_css(self.subtitle_label, "dim-label")
+        labels.append(self.subtitle_label)
+        self.author_box = Gtk.Box(spacing=4)
+        labels.append(self.author_box)
+
+        self.facet_box = Gtk.FlowBox()
+        self.facet_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.facet_box.set_halign(Gtk.Align.CENTER)
+        self.facet_box.set_min_children_per_line(1); self.facet_box.set_max_children_per_line(4)
+        labels.append(self.facet_box)
+        self.meta_label = Gtk.Label(xalign=0)
+        self.meta_label.set_ellipsize(Pango.EllipsizeMode.END)
+        _add_css(self.meta_label, "caption", "dim-label")
+        labels.append(self.meta_label)
+
+        self.badge_label = Gtk.Label()
+        self._source_callback = None
+        def source_link(_label, _uri):
+            if self._source_callback: self._source_callback(None)
+            return True
+        self.badge_label.connect("activate-link", source_link)
+        _add_css(self.badge_label, "badge")
+        self.badge_label.set_valign(Gtk.Align.CENTER)
+        self.append(self.badge_label)
+
+        self.action_button = Gtk.Button()
+        self.action_button.add_css_class('flat')
+        self.action_button.set_valign(Gtk.Align.CENTER)
+        self.action_button.set_visible(False)
+        self.action_button.connect("clicked", self._action_clicked)
+        self.append(self.action_button)
+        self._action_callback: Callable[[Gtk.Button], None] | None = None
+
+    def _action_clicked(self, button: Gtk.Button) -> None:
+        callback = self._action_callback
+        if callback is not None:
+            callback(button)
+
+    def bind(self, item: BookListItem) -> None:
+        self._bound_key = item.key
+        child = self.facet_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling(); self.facet_box.remove(child); child = nxt
+        tags=getattr(item,'tags',None)
+        if tags is not None:
+            for facet,callback in tags:
+                guarded=lambda _b,cb=callback,key=item.key:cb(_b) if self._bound_key==key else None
+                self.facet_box.insert(attribute_tag(facet.label,guarded,group=facet.group,tooltip=facet.tooltip),-1)
+        else:
+            for label,callback in getattr(item,'facet_actions',()):self.facet_box.insert(attribute_tag(label,callback),-1)
+        self.facet_box.set_visible(bool(tags if tags is not None else getattr(item,'facet_actions',())))
+        self.title_label.set_label(item.title)
+        self.title_label.set_tooltip_text(item.title)
+        self.subtitle_label.set_label(item.subtitle)
+        authors = getattr(item, "author_actions", ())
+        self.subtitle_label.set_visible(bool(item.subtitle) and not authors and not any(f.field=="author" for f,_ in (tags or [])))
+        child = self.author_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling(); self.author_box.remove(child); child = nxt
+        for name, callback in authors:
+            link = Gtk.Label(xalign=0)
+            link.set_markup('<a href="author">' + GLib.markup_escape_text(name) + '</a>')
+            link.set_ellipsize(Pango.EllipsizeMode.END)
+            link.set_tooltip_text(name)
+            def activate(_label, _uri, cb=callback):
+                cb(None); return True
+            link.connect("activate-link", activate)
+            self.author_box.append(link)
+        self.author_box.set_visible(bool(authors))
+        self.meta_label.set_label(item.meta)
+        self.meta_label.set_visible(bool(item.meta))
+        self._source_callback = getattr(item, "source_action", None)
+        if self._source_callback:
+            self.badge_label.set_markup('<a href="source">' + GLib.markup_escape_text(item.badge) + '</a>')
+        else:
+            self.badge_label.set_label(item.badge)
+        self.badge_label.set_visible(bool(item.badge) and not any(f.field=="source" and f.label==item.badge for f,_ in (tags or [])))
+        self._action_callback = item.action_callback
+        try: self.action_button.set_icon_name(getattr(item, 'action_icon_name', None) or 'view-more-symbolic')
+        except Exception: pass
+        self.action_button.set_tooltip_text(item.action_label or '')
+        self.action_button.set_visible(bool(item.action_label and item.action_callback))
+        if self._meta_request is not None:
+            try:
+                self._meta_request.cancel()
+            except Exception:
+                pass
+            self._meta_request = None
+        if item.thumbnail_url:
+            self.cover.bind_url(self.cover_loader, item.thumbnail_url, priority=10)
+        elif item.cover_provider and item.cover_title:
+            # L'historique lié observé ne fournit aucune ThumbnailUrl. Résoudre
+            # via Search.svc uniquement pour cette cellule visible/recyclée.
+            self.cover.reset()
+            self.cover.show_loading()
+            bound_key = item.key
+
+            def resolved(url: str | None) -> None:
+                if self._bound_key != bound_key:
+                    return
+                self.cover.bind_url(self.cover_loader, url or item.default_thumbnail_url, priority=10)
+
+            self._meta_request = self.window.history_cover_resolver.request(
+                item.cover_provider,
+                item.cover_record_id,
+                item.cover_title,
+                item.cover_author,
+                item.cover_year,
+                item.default_thumbnail_url,
+                resolved,
+            )
+        else:
+            self.cover.bind_url(self.cover_loader, item.default_thumbnail_url, priority=10)
+
+    def unbind(self) -> None:
+        self._bound_key = None
+        if self._meta_request is not None:
+            try:
+                self._meta_request.cancel()
+            except Exception:
+                pass
+            self._meta_request = None
+        self.cover.reset()
+        self.title_label.set_label("")
+        self.subtitle_label.set_label("")
+        self.meta_label.set_label("")
+        self.badge_label.set_label("")
+        self._action_callback = None
+        self._source_callback = None
+        self.author_box.set_visible(False)
+        self.facet_box.set_visible(False)
+        self.action_button.set_label("")
+        self.action_button.set_visible(False)
+
