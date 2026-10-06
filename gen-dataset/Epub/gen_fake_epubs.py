@@ -46,9 +46,9 @@ PLACES = [
 ]
 OBJECTS = [
     "phare", "carnet", "miroir", "violon", "passage", "jardin", "train",
-    "secret", "atelier", "silence", "horloge", "clef", "boussole", "portrait",
-    "manuscrit", "lanterne", "carte", "valise", "médaillon", "livre", "compas",
-    "piano", "navire", "observatoire", "cabinet", "grenier", "pont", "théâtre",
+    "secret", "studio", "silence", "sablier", "coffret", "compas", "portrait",
+    "manuscrit", "fanion", "atlas", "bagage", "médaillon", "livre", "sextant",
+    "piano", "navire", "belvédère", "cabinet", "grenier", "pont", "théâtre",
 ]
 QUALIFIERS = [
     "oublié", "silencieux", "invisible", "bleu", "d'hiver", "de minuit",
