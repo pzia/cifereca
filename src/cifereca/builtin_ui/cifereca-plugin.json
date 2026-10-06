@@ -1,0 +1,88 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "core.ui",
+    "version": "0.9.44+dev.1",
+    "name": "Interface cifereca",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "core.ui.pages",
+      "type": "ui.page",
+      "version": "0.9.44+dev.1",
+      "entrypoint": "cifereca_builtin_ui:Pages",
+      "display_name": "Pages standard",
+      "priority": -100,
+      "description": "Pages standard",
+      "help_text": "Affiche les pages de recherche, bibliothèque, emprunts et configuration. Chaque page propose une action Afficher ; la bibliothèque permet aussi l’import ACSM."
+    },
+    {
+      "id": "core.ui.titlebar",
+      "type": "ui.titlebar",
+      "version": "0.9.44+dev.1",
+      "entrypoint": "cifereca_builtin_ui:Titlebar",
+      "display_name": "Barre de titre",
+      "priority": -100,
+      "config_schema": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Actions affichées (identifiants)",
+            "default": [
+              "search.open",
+              "library.open",
+              "library.import-acsm",
+              "settings.open",
+              "plugins.open"
+            ]
+          }
+        }
+      },
+      "description": "Barre de titre et actions",
+      "help_text": "Permet de choisir les actions visibles dans la barre de titre. Configurez ce plugin depuis Plugins ; les sélecteurs suivent l’identité active."
+    },
+    {
+      "id": "core.ui.widgets",
+      "type": "ui.widgets",
+      "version": "0.9.44+dev.1",
+      "entrypoint": "cifereca_builtin_ui:Widgets",
+      "display_name": "Widgets standard",
+      "priority": -100,
+      "description": "Contrôles de recherche",
+      "help_text": "Fournit les champs et filtres communs aux pages Recherche et Bibliothèque. Les filtres portent sur les résultats chargés ; la recherche en ligne est une action distincte."
+    },
+    {
+      "id": "core.ui.system",
+      "type": "ui.page",
+      "version": "0.9.44+dev.1",
+      "entrypoint": "cifereca_builtin_ui:SystemPages",
+      "display_name": "État du système",
+      "priority": 100,
+      "description": "Inventaire du système",
+      "help_text": "Affiche les versions, états et dates d’installation disponibles du core et des plugins. Dépliez un composant pour consulter son rôle et ses détails ; Actualiser recharge l’inventaire."
+    },
+    {
+      "id": "core.maintenance.cache",
+      "type": "maintenance.tool",
+      "version": "0.9.44+dev.1",
+      "entrypoint": "cifereca_builtin_ui:CacheMaintenance",
+      "display_name": "Nettoyage des caches",
+      "priority": 100,
+      "requires_brokers": [
+        "cache"
+      ],
+      "capabilities": [
+        "cache.inspect",
+        "cache.purge"
+      ],
+      "description": "Inspecte et purge les caches Core et plugins sans toucher aux données utilisateur.",
+      "help_text": "Le Core arbitre les namespaces et empêche un plugin tiers de purger le cache d’un autre plugin."
+    }
+  ]
+}
