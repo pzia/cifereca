@@ -452,4 +452,164 @@ class PluginManager:
             if not progressed:
                 for plugin_id in next_pending:
                     record = self._records[plugin_id]
-                    record
+                    record.state = "blocked"
+                    record.reason = "missing_service"
+                    record.reason_detail = {"contracts": tuple(
+                        {"category": req.category, "contract": req.contract, "version": req.version}
+                        for req in record.descriptor.requires_contracts if req.mode == "required"
+                    )}
+                    record.error = "required contract providers could not be activated"
+                break
+            pending = next_pending
+
+        self._publish_registry_change()
+        return self.statuses()
+
+    def _activate_one(self, record: _RuntimeRecord) -> None:
+        descriptor = record.descriptor
+        if not descriptor.entrypoint:
+            return
+        root_text = str(record.package.root)
+        if root_text not in sys.path:
+            sys.path.insert(0, root_text)
+            self._import_roots.add(root_text)
+        value = load_entrypoint(record.package.root, descriptor.entrypoint)
+        instance = value
+        if isinstance(value, type):
+            instance = value()
+        elif callable(value) and not hasattr(value, "activate"):
+            instance = value()
+        plugin_data = data_dir() / "plugins" / "data" / descriptor.id
+        plugin_cache = cache_dir() / "plugins" / descriptor.id
+        plugin_data.mkdir(parents=True, exist_ok=True)
+        plugin_cache.mkdir(parents=True, exist_ok=True)
+        scope = schema_scope(descriptor.config_schema)
+        activation_config = (
+            self.config.get(descriptor.id, descriptor.config_schema)
+            if scope == "plugin"
+            else defaults_for_schema(descriptor.config_schema)
+        )
+        context = PluginContext(
+            plugin_id=descriptor.id,
+            package_id=descriptor.package_id,
+            directories=PluginDirectories(data=plugin_data, cache=plugin_cache),
+            config=activation_config,
+            logger=logging.getLogger(f"cifereca.plugin.{descriptor.id}"),
+            _service_resolver=self.service,
+            _services_resolver=self.services,
+            _services_subscriber=self.subscribe_services,
+            _broker_resolver=lambda broker_id, pid=descriptor.id, trusted=(record.package.sha256 == "builtin"): self._broker_for_plugin(pid, broker_id, trusted=trusted),
+            _diagnostic_reporter=lambda message, status, detail, level, pid=descriptor.id: self._plugin_diag(pid, message, status, detail, level),
+            _config_resolver=lambda scope_id, pid=descriptor.id, schema=descriptor.config_schema: self.config.get(pid, schema, scope_id=scope_id),
+            _config_ids_resolver=lambda pid=descriptor.id, schema=descriptor.config_schema: self.config.scope_ids(pid, schema),
+        )
+        service = None
+        activate = getattr(instance, "activate", None)
+        if callable(activate):
+            service = activate(context)
+        published = service if service is not None else instance
+        check = check_service_contract(descriptor.type, published)
+        if not check.ok:
+            deactivate = getattr(instance, "deactivate", None)
+            if callable(deactivate):
+                try:
+                    deactivate()
+                except Exception:
+                    pass
+            record.instance = None
+            record.service = None
+            record.state = "incompatible"
+            record.reason = check.reason_code or "contract_mismatch"
+            record.reason_detail = dict(check.detail or {})
+            record.error = "activated service does not satisfy its public contract"
+            self._diag("plugin contract validation", "error", {"plugin": descriptor.id, **record.reason_detail})
+            return
+        record.instance = instance
+        record.service = published
+        if record.degraded_details:
+            record.state = "degraded"
+            record.reason = "missing_optional_capability"
+            record.reason_detail = {"contracts": tuple(record.degraded_details)}
+        else:
+            record.state = "ready"
+            record.reason = ""
+            record.reason_detail = {}
+        record.error = ""
+        self._diag("plugin activated", "ok", {"plugin": descriptor.id, "type": descriptor.type})
+
+    def _deactivate_record(self, record: _RuntimeRecord) -> None:
+        if record.instance is None:
+            return
+        deactivate = getattr(record.instance, "deactivate", None)
+        if callable(deactivate):
+            try:
+                deactivate()
+            except Exception as exc:
+                self._diag("plugin deactivation", "error", {"plugin": record.descriptor.id, "error": str(exc)})
+        record.instance = None
+        record.service = None
+
+    def deactivate_all(self) -> None:
+        for record in reversed(list(self._records.values())):
+            self._deactivate_record(record)
+        roots = {Path(value).resolve() for value in self._import_roots}
+        for name, module in list(sys.modules.items()):
+            filename = getattr(module, "__file__", None)
+            if not filename:
+                continue
+            try:
+                resolved = Path(filename).resolve()
+            except Exception:
+                continue
+            if any(root == resolved or root in resolved.parents for root in roots):
+                sys.modules.pop(name, None)
+        for value in list(self._import_roots):
+            while value in sys.path:
+                sys.path.remove(value)
+        self._import_roots.clear()
+
+    def service(self, plugin_id: str) -> object | None:
+        record = self._records.get(plugin_id)
+        return record.service if record is not None else None
+
+    def services(self, category_id: str) -> tuple[ResolvedPluginService, ...]:
+        rows: list[ResolvedPluginService] = []
+        for status in self.candidates(category_id):
+            service = self.service(status.descriptor.id)
+            if service is None:
+                continue
+            d = status.descriptor
+            category = self.categories.get(d.type)
+            rows.append(ResolvedPluginService(
+                d.id, d.version, d.package_id, d.package_version, d.type, service, status.effective_priority,
+                category.contract_id, category.contract_version, tuple(d.capabilities), self._registry_generation,
+            ))
+        return tuple(rows)
+
+    def subscribe_services(self, category_id: str, callback: Callable[[], None]) -> Callable[[], None]:
+        category_id = str(category_id)
+        callbacks = self._service_subscribers.setdefault(category_id, [])
+        if callback not in callbacks:
+            callbacks.append(callback)
+        active = True
+        def unsubscribe() -> None:
+            nonlocal active
+            if not active:
+                return
+            active = False
+            try:
+                callbacks.remove(callback)
+            except ValueError:
+                pass
+        return unsubscribe
+
+    def _notify_service_subscribers(self, category_ids: set[str] | None = None) -> None:
+        keys = set(self._service_subscribers) if category_ids is None else set(category_ids)
+        for category_id in sorted(keys):
+            for callback in tuple(self._service_subscribers.get(category_id, ())):
+                try:
+                    callback()
+                except Exception as exc:
+                    self._diag("service subscription callback", "error", {"category": category_id, "error": str(exc)})
+
+    def broker(self, broke
