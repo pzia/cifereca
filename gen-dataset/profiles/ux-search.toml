@@ -1,0 +1,32 @@
+name = "ux-search"
+description = "Recherche multi-source à gros volumes : OPDS, BnF et Kobo."
+
+[runtime]
+startup_timeout_seconds = 30
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = ["ui.page.home"]
+width = 1300
+height = 850
+
+[library]
+epubs = 0
+seed = 20261006
+
+[services.opds]
+enabled = true
+books_per_source = 10000
+seed = 20261006
+
+[services.bnf]
+enabled = true
+books = 20000
+seed = 20261006
+
+[services.kobo]
+enabled = true
+catalog_books = 10000
+vault_books = 1000
+seed = 20261006
