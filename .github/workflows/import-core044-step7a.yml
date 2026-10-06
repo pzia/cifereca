@@ -1,0 +1,45 @@
+name: Import Core044 application step 7A
+
+on:
+  push:
+    branches:
+      - migration/core044-app-step7a
+    paths:
+      - '.migration-step7a/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore application source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find .migration-step7a -maxdepth 1 -type f -name 'payload.b64.part.*' | wc -l)" -eq 4
+          cat .migration-step7a/payload.b64.part.* | base64 -d > /tmp/step7a-src.tar.xz
+          echo "722c6eb32c0a3586b6fafe603be18483653477385207df27be07dfaf1a91b02b  /tmp/step7a-src.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/step7a-src.tar.xz -C .
+          python -m compileall -q src/cifereca
+          python -m pip install -q httpx
+          PYTHONPATH=src python -m cifereca --version
+          PYTHONPATH=src python - <<'PY'
+          import cifereca.app
+          import cifereca.cli
+          import cifereca.paris.client
+          import cifereca.plugin_test_runner
+          import cifereca.builtin_ui.cifereca_builtin_ui
+          print("step7a-imports-ok")
+          PY
+          rm -rf .migration-step7a
+          rm -f .github/workflows/import-core044-step7a.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Publish Core044 application source step 7A'
+          git push origin HEAD:migration/core044-app-step7a
