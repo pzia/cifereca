@@ -56,7 +56,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-APP_VERSION = "1.0"
+DATASET_ROOT = Path(__file__).resolve().parents[1]
+if str(DATASET_ROOT) not in sys.path:
+    sys.path.insert(0, str(DATASET_ROOT))
+
+from common.fake_books import FakeBook, FakeBookFactory, cover_png_bytes
+
+APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_BOOKS = 10_000
 DEFAULT_ACTIVE_LOANS = 120
@@ -386,20 +392,16 @@ class DatasetCache:
         conn.execute("DELETE FROM books")
         conn.execute("DELETE FROM meta")
 
-        rng = random.Random(stable_int(self.seed, "catalog"))
-        used: set[str] = set()
+        rng = random.Random(stable_int(self.seed, "paris-service"))
+        factory = FakeBookFactory(self.seed, "paris")
         digital_target = int(round(self.books * self.digital_ratio))
         base_date = date(1985, 1, 1)
         span = (date(2026, 9, 30) - base_date).days
         rows = []
         for book_id in range(1, self.books + 1):
             digital = book_id <= digital_target
-            title, place, obj = make_title(rng, used, book_id)
-            author = f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}"
-            publisher = rng.choice(PUBLISHERS)
+            book = factory.make(book_id)
             pub = base_date + timedelta(days=rng.randrange(span + 1))
-            subject = rng.choice(SUBJECTS)
-            language = rng.choice(["fr", "fr", "fr", "fr", "en", "de", "es", "it"])
             isbn = f"978{stable_int(self.seed, 'isbn', book_id) % 10_000_000_000:010d}"
             record_id = isbn if digital else f"PARIS-{book_id:06d}"
             rows.append(
@@ -408,17 +410,17 @@ class DatasetCache:
                     record_id,
                     "DILICOM" if digital else "SYRACUSE",
                     "digital" if digital else "physical",
-                    title,
-                    author,
-                    publisher,
+                    book.title,
+                    book.author,
+                    book.publisher,
                     pub.isoformat(),
-                    subject,
-                    f"Notice fictive Paris : {title}. {subject}, découverte et mémoire autour de {place}.",
+                    book.subject,
+                    book.description,
                     isbn,
                     "EPUB" if digital else None,
-                    language,
-                    place,
-                    obj,
+                    book.language,
+                    book.place,
+                    book.object_name,
                     rng.randrange(len(PALETTES)),
                     rng.choice([1, 1, 1, 2, 2, 3, 4]) if digital else rng.choice([1, 2, 3]),
                     0 if stable_int(self.seed, "borrowable", book_id) % 100 < 4 else 1,
@@ -1030,7 +1032,20 @@ class ParisFakeApp:
             return self.fail(handler, "Notice inconnue", HTTPStatus.NOT_FOUND)
         path = self.cache.cover_path(record_id)
         if not path.exists():
-            path.write_bytes(make_png(stable_int(self.cache.seed, "cover", record_id)))
+            book = FakeBook(
+                index=int(row["book_id"]),
+                identifier=f"urn:cifereca:paris:{record_id}",
+                title=str(row["title"]),
+                author=str(row["author"]),
+                publisher=str(row["publisher"]),
+                publication_date=str(row["publication_date"]),
+                subject=str(row["subject"]),
+                language=str(row["language"]),
+                place=str(row["place"]),
+                object_name=str(row["object_name"]),
+                description=str(row["description"]),
+            )
+            path.write_bytes(cover_png_bytes(book, width=240, height=360))
         self.send_bytes(handler, HTTPStatus.OK, "image/png", path.read_bytes())
 
     def acsm(self, handler, record_id: str):
