@@ -21,17 +21,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find .migration-step6b -maxdepth 1 -type f -name 'payload.b64.part.*' | wc -l)" -eq 4
-          cat .migration-step6b/payload.b64.part.* | base64 -d > /tmp/step6b-runtime.tar.gz
-          echo "ae91b9cabe569dd9cd759d8d102a2e277a0c32e3232da1a1c9c0a8d6227e5ec7  /tmp/step6b-runtime.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/step6b-runtime.tar.gz -C .
+          test "$(find .migration-step6b -maxdepth 1 -type f -name 'payload.xz.b64.part.*' | wc -l)" -eq 14
+          cat .migration-step6b/payload.xz.b64.part.* | base64 -d > /tmp/step6b-runtime.tar.xz
+          echo "c62fbfb7216208a887db0d26e8f8e8b5e9455011a5ab7d199a0fb734e9847f05  /tmp/step6b-runtime.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/step6b-runtime.tar.xz -C .
           python -m compileall -q src/cifereca
           python -m pip install -q httpx
-          PYTHONPATH=src python - <<'PY'
-          import cifereca.core
-          from cifereca.core import CiferecaCore, LocalLibrarySearch, MaterializationCoordinator
-          print("core-import-ok", CiferecaCore.__name__, LocalLibrarySearch.__name__, MaterializationCoordinator.__name__)
-          PY
+          PYTHONPATH=src python -c 'import cifereca.core; from cifereca.core import CiferecaCore, LocalLibrarySearch, MaterializationCoordinator; print("core-import-ok", CiferecaCore.__name__, LocalLibrarySearch.__name__, MaterializationCoordinator.__name__)'
           rm -rf .migration-step6b
           rm -f .github/workflows/import-core044-step6b.yml
           git config user.name 'github-actions[bot]'
