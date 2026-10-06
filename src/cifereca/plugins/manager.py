@@ -929,4 +929,78 @@ class PluginManager:
             out.append({
                 "plugin_id": d.id, "display_name": d.display_name or d.id, "type": d.type,
                 "version": d.version, "package_id": d.package_id, "package_version": d.package_version,
-    
+                "description": d.description, "help_text": d.help_text,
+                "enabled": status.enabled, "state": status.state,
+                "installed_at": installation_date(self._records[d.id].package.root),
+                "builtin": self._records[d.id].package.sha256 == "builtin",
+                "priority": status.effective_priority, "reason": status.reason, "error": status.error,
+                "reason_code": status.reason_code, "reason_detail": dict(status.reason_detail),
+                "requires": [{"plugin": x.plugin, "version": x.version} for x in d.requires],
+                "recommends": [{"plugin": x.plugin, "version": x.version} for x in d.recommends],
+                "conflicts": [{"plugin": x.plugin, "version": x.version} for x in d.conflicts],
+                "capabilities": list(d.capabilities),
+                "requires_brokers": list(d.requires_brokers),
+                "requires_contracts": [
+                    {"category": x.category, "contract": x.contract, "version": x.version, "mode": x.mode, "capabilities": list(x.capabilities)}
+                    for x in d.requires_contracts
+                ],
+                "requires_services": list(d.requires_services),
+                "requirements": [
+                    {"type": r.requirement.type, "name": r.requirement.name or r.requirement.path,
+                     "version": r.requirement.version, "ok": r.ok, "detected": r.detected, "message": r.message}
+                    for r in status.requirements
+                ],
+            })
+        return out
+
+    def page_contributions(self) -> list[Any]:
+        from dataclasses import replace
+        from cifereca.plugin_api import UiPageContribution
+        pages: list[Any] = []
+        for status in self.candidates("ui.page"):
+            factory = getattr(self.service(status.descriptor.id), "pages", None)
+            if not callable(factory):
+                continue
+            try:
+                contributions = list(factory() or [])
+            except Exception as exc:
+                self._diag("ui.page contributions", "error", {"plugin": status.descriptor.id, "error": str(exc)})
+                continue
+            for page in contributions:
+                try:
+                    if not isinstance(page, UiPageContribution):
+                        raise TypeError("pages() must return UiPageContribution objects")
+                    if not isinstance(page.route, str) or not page.route.strip() or not callable(page.factory):
+                        raise ValueError("page route and factory are required")
+                    if not isinstance(page.title, str) or not isinstance(page.group, str):
+                        raise ValueError("page title and group must be strings")
+                    pages.append(replace(page, order=int(page.order), priority=status.effective_priority + int(page.priority)))
+                except Exception as exc:
+                    self._diag("ui.page contribution", "error", {"plugin": status.descriptor.id, "error": str(exc)})
+        return sorted(pages, key=lambda page: (page.order, page.route))
+
+    def widget_catalog(self) -> object | None:
+        selected = self.select("ui.widgets")
+        return self.service(selected.descriptor.id) if selected is not None else None
+
+    def plugin_config(self, plugin_id: str, *, scope_id: str | None = None) -> dict[str, Any]:
+        if plugin_id not in self._records:
+            self.refresh()
+        record = self._records.get(plugin_id)
+        if record is None:
+            raise KeyError(plugin_id)
+        return self.config.get(plugin_id, record.descriptor.config_schema, scope_id=scope_id)
+
+    def set_plugin_config(self, plugin_id: str, values: dict[str, Any], *, scope_id: str | None = None) -> dict[str, Any]:
+        if plugin_id not in self._records:
+            self.refresh()
+        record = self._records.get(plugin_id)
+        if record is None:
+            raise KeyError(plugin_id)
+        result = self.config.set(plugin_id, record.descriptor.config_schema, values, scope_id=scope_id)
+        self._deactivate_plugin_and_dependents(plugin_id)
+        self.activate()
+        return result
+
+    def close(self) -> None:
+        self.deactivate_all()
