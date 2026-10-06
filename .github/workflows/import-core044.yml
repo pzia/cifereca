@@ -20,17 +20,14 @@ jobs:
         run: |
           set -euo pipefail
           count=$(find .source-upload4 -maxdepth 1 -type f -name 'source.part.*' | wc -l)
-          test "$count" -eq 6
+          test "$count" -eq 22
           tmp=$(mktemp -d)
           cat .source-upload4/source.part.* | base64 -d > "$tmp/source.tar.xz"
-          echo "8b7a4bbb324dea0ad1cf17f97ca4958df807637dd68d0e2937c9efcbe57bf9e4  $tmp/source.tar.xz" | sha256sum -c -
+          echo "a80b6a420728be8f6e50cd0ccb7aa130c53e16ef2e2ac8e609792478e106134d  $tmp/source.tar.xz" | sha256sum -c -
           mkdir "$tmp/source"
           tar -xJf "$tmp/source.tar.xz" -C "$tmp/source"
-
-          # Preserve the separately published plugin source tree.
           find . -mindepth 1 -maxdepth 1 ! -name .git ! -name plugins -exec rm -rf {} +
           cp -a "$tmp/source"/. .
-
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
