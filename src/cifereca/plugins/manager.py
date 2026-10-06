@@ -778,4 +778,155 @@ class PluginManager:
         return self.python_dependencies.diagnostic(manifests)
 
     def install(self, archive: Path, *, activate: bool = True, replace: bool = False) -> InstalledPackage:
-        manifest = self.installer.inspect
+        manifest = self.installer.inspect(Path(archive))
+        package_id = manifest.package.id
+        version = manifest.package.version
+        old_active = self.packages.active_version(package_id)
+        final = self.packages.version_root(package_id, version)
+        backup_root: Path | None = None
+        backup_parent: Path | None = None
+        if replace and final.exists():
+            backup_parent = Path(tempfile.mkdtemp(prefix=f"cifereca-plugin-{package_id}-"))
+            backup_root = backup_parent / "package"
+            shutil.copytree(final, backup_root)
+        if replace:
+            # A dev snapshot may replace code while keeping the same package
+            # version. Tear down live services first so the next activation is
+            # guaranteed to import the replacement instead of reusing instances.
+            self.deactivate_all()
+        transaction: PythonDependencyTransaction | None = None
+        installed: InstalledPackage | None = None
+        try:
+            # Do not make a new package active before its Python dependencies are
+            # resolved. This keeps discovery manifest-first and entrypoint-free.
+            installed = self.installer.install(archive, activate=False, replace=replace)
+            if activate:
+                manifests, roots = self._active_manifests_with(installed)
+                transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
+                self.packages.set_active(package_id, version)
+            if transaction is not None:
+                # Dependency resolution itself is transactional. Plugin activation
+                # errors remain isolated statuses, preserving the existing manager
+                # contract for third-party plugins.
+                transaction.commit()
+            self.activate()
+            return installed
+        except Exception:
+            if transaction is not None:
+                try:
+                    transaction.rollback()
+                except Exception as exc:
+                    self._diag("python dependency rollback", "error", {"package": package_id, "error": str(exc)})
+            try:
+                self.deactivate_all()
+                if backup_root is not None and backup_root.exists():
+                    if final.exists():
+                        shutil.rmtree(final, ignore_errors=True)
+                    shutil.copytree(backup_root, final)
+                elif installed is not None and old_active != version:
+                    self.installer.uninstall_version(package_id, version)
+                pointer = self.packages._pointer_path(package_id)
+                if old_active and self.packages.version_root(package_id, old_active).is_dir():
+                    self.packages.set_active(package_id, old_active)
+                elif not old_active:
+                    pointer.unlink(missing_ok=True)
+                self.activate()
+            except Exception as exc:
+                self._diag("plugin install rollback", "error", {"package": package_id, "error": str(exc)})
+            raise
+        finally:
+            if backup_parent is not None:
+                shutil.rmtree(backup_parent, ignore_errors=True)
+
+    def rollback(self, package_id: str) -> str:
+        pointer = self.packages.pointer(package_id)
+        current = pointer.get("active")
+        target = pointer.get("previous")
+        if not target or not self.packages.version_root(package_id, target).is_dir():
+            candidates = [version for version in self.packages.installed_versions(package_id) if version != current]
+            target = candidates[0] if candidates else None
+        if not target:
+            from .errors import PackageInstallError
+            raise PackageInstallError(f"no rollback version available for {package_id}")
+        self.deactivate_all()
+        package = self.packages.load(package_id, target)
+        manifests, roots = self._active_manifests_with(package)
+        transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
+        try:
+            self.packages.set_active(package_id, target)
+            self.activate()
+            transaction.commit()
+            return target
+        except Exception:
+            transaction.rollback()
+            if current and self.packages.version_root(package_id, current).is_dir():
+                self.packages.set_active(package_id, current)
+                self.activate()
+            raise
+
+    def inspect_archive(self, archive: Path):
+        return self.installer.inspect(Path(archive))
+
+    def set_active_package_version(self, package_id: str, version: str) -> None:
+        old_active = self.packages.active_version(package_id)
+        self.deactivate_all()
+        package = self.packages.load(package_id, version)
+        manifests, roots = self._active_manifests_with(package)
+        transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
+        try:
+            self.packages.set_active(package_id, version)
+            self.activate()
+            transaction.commit()
+        except Exception:
+            transaction.rollback()
+            if old_active and self.packages.version_root(package_id, old_active).is_dir():
+                self.packages.set_active(package_id, old_active)
+                self.activate()
+            raise
+
+    def remove_package(self, package_id: str, *, version: str | None = None) -> None:
+        self.deactivate_all()
+        if version is not None:
+            self.installer.uninstall_version(package_id, version)
+        else:
+            root = self.packages.package_root(package_id)
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+        self.activate()
+
+    def package_inventory(self) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for package_id, versions in sorted(self.packages.all_packages().items()):
+            pointer = self.packages.pointer(package_id)
+            active = pointer.get("active")
+            package = None
+            if active:
+                try:
+                    package = self.packages.load(package_id, active)
+                except Exception:
+                    package = None
+            rows.append({
+                "package_id": package_id,
+                "name": package.manifest.package.name if package else package_id,
+                "publisher": package.manifest.package.publisher if package else "",
+                "active": active,
+                "previous": pointer.get("previous"),
+                "versions": versions,
+                "sha256": package.sha256 if package else "",
+            })
+        if self._builtin_ui:
+            from cifereca import __version__
+            rows.insert(0, {"package_id": "core.ui", "name": "Interface cifereca", "publisher": "cifereca",
+                        "active": __version__, "previous": None, "versions": [__version__], "sha256": "builtin", "builtin": True})
+        return rows
+
+    def diagnostic(self, plugin_id: str | None = None) -> list[dict[str, Any]]:
+        from cifereca.system_status import installation_date
+        statuses = [self.status(plugin_id)] if plugin_id else self.statuses()
+        out: list[dict[str, Any]] = []
+        for status in statuses:
+            d = status.descriptor
+            out.append({
+                "plugin_id": d.id, "display_name": d.display_name or d.id, "type": d.type,
+                "version": d.version, "package_id": d.package_id, "package_version": d.package_version,
+    
