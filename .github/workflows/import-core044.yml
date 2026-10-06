@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           count=$(find .source-upload4 -maxdepth 1 -type f -name 'source.part.*' | wc -l)
-          test "$count" -eq 40
+          test "$count" -eq 20
           tmp=$(mktemp -d)
           cat .source-upload4/source.part.* | base64 -d > "$tmp/source.tar.xz"
           echo "c5fdf2709936f241123025b2bb25b775cc03a7f524b99d661281cbff0641afb7  $tmp/source.tar.xz" | sha256sum -c -
