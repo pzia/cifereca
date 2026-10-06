@@ -37,20 +37,73 @@ PUBLISHERS = [
 PLACES = [
     "la baie des Brumes", "le quartier des Verrières", "la vallée d'Argile",
     "l'île aux Lanternes", "la gare de Minuit", "les collines de Verre",
-    "le port des Écluses", "la forêt de Cendre"
+    "le port des Écluses", "la forêt de Cendre", "la ville des Horloges",
+    "le jardin des Amandiers", "le quai des Ombres", "la maison du Phare",
+    "la rue des Cartographes", "le passage des Étoiles", "la plaine d'Azur",
+    "le village des Saules", "la tour des Vents", "le lac des Silences",
+    "les falaises d'Opale", "le canal des Songes", "la place des Tisserands",
+    "le domaine des Roches", "la côte des Alizés", "le val des Lucioles",
 ]
 OBJECTS = [
     "phare", "carnet", "miroir", "violon", "passage", "jardin", "train",
-    "secret", "atelier", "silence"
+    "secret", "atelier", "silence", "horloge", "clef", "boussole", "portrait",
+    "manuscrit", "lanterne", "carte", "valise", "médaillon", "livre", "compas",
+    "piano", "navire", "observatoire", "cabinet", "grenier", "pont", "théâtre",
+]
+QUALIFIERS = [
+    "oublié", "silencieux", "invisible", "bleu", "d'hiver", "de minuit",
+    "des brumes", "des jours perdus", "aux reflets d'or", "du dernier été",
+    "de verre", "des marées", "des voyageurs", "des secrets", "du nord",
+    "des absents", "sans retour", "aux mille fenêtres", "sous la pluie",
+    "des heures lentes", "de l'autre rive", "du bout du monde",
+]
+MOMENTS = [
+    "avant l'aube", "après minuit", "au dernier hiver", "un soir de septembre",
+    "à l'heure des marées", "au printemps des absents", "quand revient le vent",
+    "le jour des lucioles", "à la fin de l'été", "sous la première neige",
+]
+MOTIFS = [
+    "des ombres", "des étoiles", "des marées", "des oiseaux", "des cendres",
+    "des lucioles", "des cartes", "des lettres", "des voix", "des saisons",
+    "des chemins", "des fenêtres", "des îles", "des souvenirs", "des voyageurs",
+]
+CHARACTERS = [
+    "la cartographe", "le veilleur", "la relieuse", "le marin", "l'horloger",
+    "la violoniste", "le libraire", "l'arpenteuse", "le photographe",
+    "la gardienne", "le passeur", "la botaniste", "le facteur", "l'astronome",
 ]
 GENRES = ["Roman", "Mystère", "Aventure", "Fantastique", "Fiction contemporaine"]
 TITLE_PATTERNS = [
     "Le {object} de {place}",
+    "Le {object} {qualifier}",
+    "Le {object} {qualifier} de {place}",
     "La mémoire de {place}",
+    "La mémoire {qualifier}",
     "Les nuits de {place}",
+    "Les nuits {qualifier}",
     "Sous le ciel de {place}",
+    "Sous le ciel {qualifier}",
     "Le secret de {place}",
+    "Le secret du {object}",
     "Une saison à {place}",
+    "Une saison {qualifier}",
+    "Chroniques de {place}",
+    "Chroniques du {object} {qualifier}",
+    "L'ombre du {object}",
+    "L'ombre de {place}",
+    "Le dernier {object}",
+    "Le dernier {object} de {place}",
+    "{moment} à {place}",
+    "{moment}, le {object}",
+    "La route {motif}",
+    "Le livre {motif}",
+    "{character} de {place}",
+    "{character} et le {object} {qualifier}",
+    "Ce que racontent {motif}",
+    "Là où dorment {motif}",
+    "Quand disparaît le {object}",
+    "Quand revient {character}",
+    "Au bord de {place}",
 ]
 PALETTES = [
     ("#183153", "#f4d35e", "#ffffff"),
@@ -71,11 +124,37 @@ def slugify(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").lower() or "livre"
 
 
-def make_title(rng: random.Random) -> str:
-    return rng.choice(TITLE_PATTERNS).format(
+def make_title(rng: random.Random, used_titles: set[str], index: int) -> str:
+    """Construit un titre unique avec une combinatoire très large.
+
+    Le nombre de tentatives est borné pour éviter toute boucle infinie,
+    même avec des jeux de données bien plus gros que les listes lexicales.
+    """
+    for _ in range(200):
+        title = rng.choice(TITLE_PATTERNS).format(
+            object=rng.choice(OBJECTS),
+            place=rng.choice(PLACES),
+            qualifier=rng.choice(QUALIFIERS),
+            moment=rng.choice(MOMENTS),
+            motif=rng.choice(MOTIFS),
+            character=rng.choice(CHARACTERS),
+        )
+        if title not in used_titles:
+            used_titles.add(title)
+            return title
+
+    # Collision extrême : suffixe discret, déterministe et toujours unique.
+    base = rng.choice(TITLE_PATTERNS).format(
         object=rng.choice(OBJECTS),
         place=rng.choice(PLACES),
+        qualifier=rng.choice(QUALIFIERS),
+        moment=rng.choice(MOMENTS),
+        motif=rng.choice(MOTIFS),
+        character=rng.choice(CHARACTERS),
     )
+    title = f"{base} — {index:05d}"
+    used_titles.add(title)
+    return title
 
 
 def make_chapter(title: str, place: str, rng: random.Random) -> str:
@@ -237,10 +316,7 @@ def generate(count: int, output_dir: Path, seed: int | None) -> list[Path]:
     created, used_titles = [], set()
 
     for index in range(1, count + 1):
-        title = make_title(rng)
-        while title in used_titles:
-            title = make_title(rng)
-        used_titles.add(title)
+        title = make_title(rng, used_titles, index)
 
         author = f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}"
         publisher = rng.choice(PUBLISHERS)
