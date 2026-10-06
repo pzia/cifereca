@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.numilog",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "name": "Numilog",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -33,11 +33,18 @@
             "maximum": 536870912,
             "default": 104857600,
             "title": "Taille maximale EPUB (octets)"
+          },
+          "base_url": {
+            "type": "string",
+            "format": "uri",
+            "default": "https://www.numilog.com/",
+            "title": "URL du service Numilog",
+            "description": "Laisser la valeur par défaut en production. HTTP est accepté uniquement sur loopback pour les jeux de données locaux."
           }
         }
       },
-      "help_text": "Configurez une connexion Numilog avec votre email et votre mot de passe. La recherche porte uniquement sur les titres possédés, par titre. Le téléchargement relit la bibliothèque puis suit le lien Numilog courant. EPUB direct uniquement : ACSM, LCP, PDF, audio et achats intégrés non pris en charge. Bibliothèque multipage suivie uniquement via liens rel=next validés ; première recette compte réel à maintenir. la session HTTP peut rencontrer un contrôle du navigateur. Aucune dépendance Playwright ni modification privée du Core.",
-      "version": "0.1.6",
+      "help_text": "Configurez une connexion Numilog avec votre email et votre mot de passe. La recherche porte uniquement sur les titres possédés, par titre. Le téléchargement relit la bibliothèque puis suit le lien Numilog courant. EPUB direct uniquement : ACSM, LCP, PDF, audio et achats intégrés non pris en charge. Bibliothèque multipage suivie uniquement via liens rel=next validés ; première recette compte réel à maintenir. la session HTTP peut rencontrer un contrôle du navigateur. Aucune dépendance Playwright ni modification privée du Core. Pour les tests locaux, base_url peut cibler le pseudo-service Numilog ; HTTP n'est accepté que sur loopback.",
+      "version": "0.1.7",
       "capabilities": [
         "catalog.personal",
         "catalog.detail",
