@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Any
+import hashlib
+import zipfile
 from urllib.parse import urlsplit
 
 from cifereca.plugin_api import (
@@ -48,6 +50,54 @@ def _language_values(row: Mapping[str, Any]) -> list[str]:
             elif isinstance(value, (list, tuple, set)):
                 values.extend(str(item).strip() for item in value if str(item).strip())
     return list(dict.fromkeys(values))
+
+
+def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected_size: int = 0, expected_sha256: str = "") -> tuple[str, ...]:
+    target=Path(path)
+    issues=[]
+    if not target.exists():
+        return ("missing",)
+    if target.is_symlink():
+        issues.append("symlink")
+    if not target.is_file():
+        return tuple(issues + ["not_file"])
+    try:
+        stat=target.stat()
+    except OSError:
+        return tuple(issues + ["unreadable"])
+    if expected_size and stat.st_size != int(expected_size):
+        issues.append("size_mismatch")
+    digest=""
+    if expected_sha256:
+        try:
+            h=hashlib.sha256()
+            with target.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024*1024), b""):
+                    h.update(chunk)
+            digest=h.hexdigest()
+            if digest.casefold() != str(expected_sha256).removeprefix("sha256:").casefold():
+                issues.append("sha256_mismatch")
+        except OSError:
+            issues.append("unreadable")
+    fmt=str(media_format or target.suffix.lstrip(".")).casefold()
+    try:
+        if fmt in {"epub","kepub"} or target.name.casefold().endswith((".epub",".kepub.epub")):
+            with zipfile.ZipFile(target) as archive:
+                if archive.testzip() is not None:
+                    issues.append("zip_crc")
+                try:
+                    if archive.read("mimetype") != b"application/epub+zip":
+                        issues.append("epub_mimetype")
+                    archive.getinfo("META-INF/container.xml")
+                except KeyError:
+                    issues.append("epub_structure")
+        elif fmt=="pdf" or target.suffix.casefold()==".pdf":
+            with target.open("rb") as stream:
+                if stream.read(5) != b"%PDF-":
+                    issues.append("pdf_header")
+    except (OSError, zipfile.BadZipFile):
+        issues.append("container_invalid")
+    return tuple(dict.fromkeys(issues))
 
 
 class _ReadOnlyTool:
@@ -220,9 +270,84 @@ class NamingAuditTool(_ReadOnlyTool):
         )
 
 
+class IntegrityAuditTool(_ReadOnlyTool):
+    info = MaintenanceToolInfo(
+        id="library.integrity.audit",
+        title="Vérifier l’intégrité des fichiers",
+        description="Vérifie présence, taille, SHA-256 et structure minimale des EPUB/PDF locaux.",
+        icon_name="security-high-symbolic",
+        scope="library",
+        danger_level="read-only",
+        supports_dry_run=True,
+        cancellable=True,
+    )
+
+    def plan(self, context: MaintenanceContext) -> MaintenancePlan:
+        metadata=self._broker("metadata")
+        library_read=self._broker("library.read")
+        candidates=[]
+        missing_path=0
+        for row in _rows(metadata.library_entries(identity_id=context.identity_id)):
+            if not row.get("local"):
+                continue
+            path=str(row.get("local_path") or "").strip()
+            artifact_id=str(row.get("artifact_id") or "").strip()
+            if not path:
+                missing_path += 1
+                continue
+            artifact=None
+            if artifact_id:
+                try: artifact=library_read.artifact(artifact_id)
+                except Exception: artifact=None
+            candidates.append({
+                "path": path,
+                "title": str(row.get("title") or PurePath(path).name),
+                "format": str(row.get("media_format") or getattr(artifact,"format","") or ""),
+                "expected_size": int(getattr(artifact,"size_bytes",0) or 0),
+                "expected_sha256": str(getattr(artifact,"sha256","") or row.get("sha256") or ""),
+            })
+        warnings=(f"{missing_path} entrée(s) locale(s) sans chemin observable.",) if missing_path else ()
+        return MaintenancePlan(
+            tool_id=self.info.id,
+            summary=f"{len(candidates)} fichier(s) local(aux) à vérifier.",
+            warnings=warnings,
+            facts={"candidates": tuple(candidates), "missing_path": missing_path},
+        )
+
+    def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
+        candidates=tuple(plan.facts.get("candidates",()))
+        warnings=list(plan.warnings)
+        invalid=0
+        missing=0
+        by_issue={}
+        for index,row in enumerate(candidates,start=1):
+            control.check_cancelled()
+            control.report(current=index-1,total=len(candidates) or 1,message=f"Intégrité {index}/{len(candidates)}")
+            issues=_file_integrity_issues(
+                row.get("path",""), row.get("format",""),
+                expected_size=int(row.get("expected_size") or 0),
+                expected_sha256=str(row.get("expected_sha256") or ""),
+            )
+            if issues:
+                invalid += 1
+                if "missing" in issues: missing += 1
+                for issue in issues: by_issue[issue]=by_issue.get(issue,0)+1
+                if len(warnings)<100:
+                    warnings.append(f"{row.get('title') or PurePath(str(row.get('path') or '')).name}: {', '.join(issues)}")
+        control.report(current=len(candidates),total=len(candidates) or 1,message="Audit d’intégrité terminé")
+        return MaintenanceResult(
+            ok=invalid==0,
+            changed=0,
+            summary=f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), dont {missing} manquant(s).",
+            warnings=tuple(warnings),
+            facts={"checked":len(candidates),"invalid":invalid,"missing":missing,"issues":by_issue},
+        )
+
+
 COVER_AUDIT = CoverAuditTool()
 LANGUAGE_AUDIT = LanguageAuditTool()
 NAMING_AUDIT = NamingAuditTool()
+INTEGRITY_AUDIT = IntegrityAuditTool()
 
 # Core041 repair tools -------------------------------------------------------
 # These tools never mutate the filesystem or storage directly. They only

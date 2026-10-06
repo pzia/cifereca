@@ -55,6 +55,42 @@ def statistics_lines(row):
     lines.append('Dernier inventaire ; comptes de prêts éventuellement partiels. Les sources peuvent se chevaucher.')
     return lines
 
+def attention_items(row, *, now=None):
+    """Return concise dashboard actions from already-known local state."""
+    from time import time
+    stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else {}
+    sync=row.get('sync') if isinstance(row.get('sync'),dict) else {}
+    items=[]
+    def add(kind,label,count=None):
+        if count is None or int(count or 0)>0:
+            items.append({'kind':kind,'label':label,'count':count})
+    due=int(stats.get('due_soon_loans') or 0)
+    if due:add('warning','Prêts proches de l’échéance',due)
+    available=int(stats.get('available_bookings') or stats.get('available_reservations') or 0)
+    if available:add('success','Réservations disponibles',available)
+    attention=int(sync.get('attention_required') or 0)
+    if attention:add('warning','Actions de synchronisation requises',attention)
+    errors=int(sync.get('errors') or 0)
+    if errors:add('error','Erreurs de synchronisation',errors)
+    if stats and stats.get('known_loans') is None:
+        add('warning','Inventaire des prêts à actualiser')
+    observed=stats.get('loans_observed_at')
+    if stats.get('known_loans') and observed:
+        try:
+            age=max(0,float((time() if now is None else now))-float(observed))
+            if age>24*3600:add('warning','Inventaire des prêts ancien')
+        except (TypeError,ValueError):
+            pass
+    disconnected=[str(source.get('label') or source.get('provider_id') or 'Source')
+                  for source in linked_sources(row) if not source.get('connected')]
+    if disconnected:
+        add('warning','Sources à connecter : '+', '.join(disconnected[:3]))
+    providers=set(row.get('providers') or ())
+    if 'paris' in providers and not row.get('adept_profile_id'):
+        add('warning','Profil ADE à associer pour les prêts protégés')
+    return items
+
+
 class OverviewController:
     def __init__(self,host,render,identity_broker=None):
         self.host=host;self.render=render;self.identity_broker=identity_broker;self.closed=False
@@ -230,6 +266,14 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             tile(actions_grid,'Erreurs',sync.get('errors',0),'error' if sync.get('errors') else 'dim-label')
             tile(actions_grid,'État',STATUS.get(sync.get('status'),'Jamais synchronisée'),
                  'success' if sync.get('status')=='success' else ('warning' if sync.get('status') in {'running','partial'} else ('error' if sync.get('status')=='failed' else 'dim-label')))
+
+            attention=attention_items(row)
+            if attention:
+                attention_grid=section(box,'À traiter',3,'dialog-warning-symbolic')
+                for action in attention:
+                    count=action.get('count')
+                    value=count if count is not None else 'Action requise'
+                    tile(attention_grid,action['label'],value,action.get('kind') or 'warning')
 
             info_grid=section(box,'Profil et appareils',6,'preferences-system-symbolic')
             loans_missing=isinstance(stats,dict) and stats.get('known_loans') is None

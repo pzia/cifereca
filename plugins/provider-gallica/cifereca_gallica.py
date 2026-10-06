@@ -29,6 +29,7 @@ OPENSEARCH = "http://a9.com/-/spec/opensearch/1.1/"
 DCTERMS = "http://purl.org/dc/terms/"
 DC = "http://purl.org/dc/elements/1.1/"
 EPUB_SEARCH = "https://gallica.bnf.fr/services/engine/search/opds"
+EBOOK_FORMAT_CQL = '((dc.formatspecific all "epub") or (dc.formatspecific all "pdf"))'
 
 
 def _cql_literal(value: str) -> str:
@@ -314,7 +315,7 @@ class GallicaSession(ProviderSession):
     def _fallback_search_template(self) -> str:
         # Documented SRU/OPDS endpoint; /opds?q=... is not a search API.
         return (self.epub_search_url + '?operation=searchRetrieve&version=1.2&query='
-                + quote_plus('(gallica all "{searchTerms}") and (dc.formatspecific all "epub")')
+                + quote_plus('(gallica all "{searchTerms}") and ' + EBOOK_FORMAT_CQL)
                   .replace('%7BsearchTerms%7D', '{searchTerms}')
                 + '&startRecord={startIndex}&maximumRecords=50')
 
@@ -334,7 +335,7 @@ class GallicaSession(ProviderSession):
                 raise ProviderError(f"Gallica : champ de recherche non pris en charge : {field}")
             response = self.client.get(self.epub_search_url, params={
                 "operation": "searchRetrieve", "version": "1.2",
-                "query": f'({index} all {_cql_literal(query)}) and (dc.formatspecific all "epub")',
+                "query": f'({index} all {_cql_literal(query)}) and {EBOOK_FORMAT_CQL}',
                 "startRecord": str(max(0, page) * 50 + 1), "maximumRecords": "50",
             })
         response.raise_for_status()
@@ -490,7 +491,7 @@ class GallicaSession(ProviderSession):
         audio = self.include_audio and (not requested or bool(requested & {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}))
         branches = []
         if ebooks:
-            branches.append(("OPDS", "catalogue EPUB temporairement indisponible", self._search_ebooks))
+            branches.append(("OPDS", "catalogue livres numériques temporairement indisponible", self._search_ebooks))
         if audio:
             branches.append(("audio", "recherche audio temporairement indisponible", self._search_audio))
         rows: list[SearchResult] = []

@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib, html, re, tempfile, zipfile
+import hashlib, html, re, tempfile, unicodedata, zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, quote_plus, urlsplit
@@ -7,7 +7,7 @@ import httpx
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 BASE='https://www.ebooksgratuits.com/'
-DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Source publique sans authentification.',))
+DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Source publique sans authentification.','Recherche par titre, auteur, catégorie et genre.'))
 class Parser(HTMLParser):
     """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
     def __init__(self):
@@ -46,6 +46,47 @@ class Parser(HTMLParser):
                 if row['detail'] and row['epub'] and row['title']: self.cards.append(row)
     def rows(self,text):
         self.cards=[]; self._depth=0; self._card=None; self._capture=None; self.feed(text); self.close(); return list(self.cards)
+class FilterParser(HTMLParser):
+    """Extract public search select options without executing page scripts."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True); self.options={}; self._select=None; self._value=None; self._pieces=[]
+    def handle_starttag(self,tag,attrs):
+        attrs={str(k).lower():str(v or '') for k,v in attrs}; tag=tag.lower()
+        if tag=='select':
+            name=attrs.get('name','').strip().lower()
+            self._select=name if name in {'id_auteur','id_categorie','id_genre'} else None
+        elif tag=='option' and self._select:
+            self._value=attrs.get('value','').strip(); self._pieces=[]
+    def handle_data(self,data):
+        if self._value is not None and data.strip(): self._pieces.append(data.strip())
+    def handle_endtag(self,tag):
+        tag=tag.lower()
+        if tag=='option' and self._select and self._value is not None:
+            label=' '.join(self._pieces).strip()
+            if self._value and label: self.options.setdefault(self._select,[]).append((self._value,label))
+            self._value=None; self._pieces=[]
+        elif tag=='select':
+            self._select=None; self._value=None; self._pieces=[]
+
+def _fold(value):
+    return ''.join(ch for ch in unicodedata.normalize('NFKD',str(value or '').casefold()) if not unicodedata.combining(ch))
+
+def _filter_choice(text,names,query):
+    parser=FilterParser(); parser.feed(text); parser.close()
+    needle=_fold(query).strip()
+    if not needle: return None
+    best=None
+    for name in names:
+        for value,label in parser.options.get(name,()):
+            folded=_fold(label)
+            if folded==needle: score=0
+            elif folded.startswith(needle): score=1
+            elif needle in folded: score=2
+            else: continue
+            candidate=(score,len(folded),name,value,label)
+            if best is None or candidate<best: best=candidate
+    return None if best is None else best[2:]
+
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw); self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.0','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
@@ -61,13 +102,28 @@ class EbooksSession(ProviderSession):
     def search(self,query,scope='all',page=0,field='all'):
         if not self.connected: raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
         if scope == 'physical': return []
-        page=max(0,int(page))
-        if query or page:
+        page=max(0,int(page)); field=str(field or 'all').casefold()
+        if field in {'author','subject','category','genre'} and str(query or '').strip():
             try:
-                r=self.client.post(BASE+'ebooks.php',data=self._search_payload(query,page,self.page_size)); r.raise_for_status()
+                form=self._fetch(BASE+'ebooks.php')
+                names=('id_auteur',) if field=='author' else (('id_categorie',) if field=='category' else (('id_genre',) if field=='genre' else ('id_categorie','id_genre')))
+                choice=_filter_choice(form.text,names,query)
+                if choice is None: return []
+                selected,value,_label=choice
+                params={'begin':str(page*self.page_size),'offset':str(self.page_size),'option':'search',
+                        'id_auteur':'0','id_categorie':'1','id_genre':'1'}
+                params[selected]=value
+                r=self.client.get(BASE+'ebooks.php',params=params); r.raise_for_status()
             except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : recherche indisponible') from e
+        elif field in {'all','title','titre'}:
+            if query or page:
+                try:
+                    r=self.client.post(BASE+'ebooks.php',data=self._search_payload(query,page,self.page_size)); r.raise_for_status()
+                except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : recherche indisponible') from e
+            else:
+                r=self._fetch(BASE+'ebooks.php')
         else:
-            r=self._fetch(BASE+'ebooks.php')
+            return []
         out=[]
         for card in Parser().rows(r.text):
             detail=card['detail']; epub=card['epub']; rid=hashlib.sha256(detail.encode()).hexdigest()[:24]

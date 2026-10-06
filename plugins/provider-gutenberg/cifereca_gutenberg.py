@@ -29,6 +29,19 @@ from cifereca.plugin_api import (
 
 ATOM = "http://www.w3.org/2005/Atom"
 DCTERMS = "http://purl.org/dc/terms/"
+LANGUAGE_SEARCH_NAMES = {
+    "fr": "French", "french": "French", "francais": "French", "français": "French",
+    "en": "English", "english": "English",
+    "de": "German", "german": "German", "deutsch": "German",
+    "es": "Spanish", "spanish": "Spanish", "espanol": "Spanish", "español": "Spanish",
+    "it": "Italian", "italian": "Italian", "pt": "Portuguese", "portuguese": "Portuguese",
+    "nl": "Dutch", "dutch": "Dutch",
+}
+LANGUAGE_SEARCH_CODES = {
+    "french": "fr", "francais": "fr", "français": "fr", "english": "en",
+    "german": "de", "deutsch": "de", "spanish": "es", "espanol": "es", "español": "es",
+    "italian": "it", "portuguese": "pt", "dutch": "nl",
+}
 DEFAULT_OPDS_SEARCH_URL = "https://www.gutenberg.org/ebooks/search.opds/"
 _EPUB_REL = "http://opds-spec.org/acquisition"
 _EBOOK_RE = re.compile(r"(?:urn:gutenberg:|/ebooks/)(\d+)", re.I)
@@ -62,6 +75,29 @@ DESCRIPTOR = ProviderDescriptor(
         "Les droits Project Gutenberg sont principalement déterminés selon le droit américain ; vérifier la situation locale avant redistribution.",
     ),
 )
+
+
+def _search_facet(query: str, field: str) -> tuple[str, str, str]:
+    raw = " ".join(str(query or "").split())
+    selected = str(field or "all").casefold()
+    if selected in {"all", ""}:
+        match = re.match(r"^(?:lang|language):\s*(.+)$", raw, re.I)
+        if match:
+            selected = "language"
+            raw = match.group(1).strip()
+        else:
+            match = re.match(r"^(?:bookshelf|shelf):\s*(.+)$", raw, re.I)
+            if match:
+                selected = "bookshelf"
+                raw = match.group(1).strip()
+    if selected == "language":
+        folded = raw.casefold()
+        canonical = LANGUAGE_SEARCH_CODES.get(folded) or normalize_language_tag(folded)
+        server = LANGUAGE_SEARCH_NAMES.get(folded) or LANGUAGE_SEARCH_NAMES.get(canonical or "") or raw
+        return server, "language", canonical or folded
+    if selected in {"bookshelf", "category"}:
+        return raw, "bookshelf", raw
+    return raw, selected, raw
 
 
 class GutenbergSession(ProviderSession):
@@ -201,12 +237,13 @@ class GutenbergSession(ProviderSession):
             published = self._text(entry.find(f"{{{ATOM}}}published")) or self._text(entry.find(f"{{{ATOM}}}updated"))
             language = normalize_language_tag(self._text(entry.find(f"{{{DCTERMS}}}language")))
             rights = self._text(entry.find(f"{{{ATOM}}}rights"))
-            subjects = [
-                html.unescape(str(category.attrib.get("term") or "").strip())
+            categories = [
+                (html.unescape(str(category.attrib.get("term") or "").strip()), str(category.attrib.get("scheme") or ""))
                 for category in entry.findall(f"{{{ATOM}}}category")
                 if str(category.attrib.get("term") or "").strip()
-                and "LCSH" in str(category.attrib.get("scheme") or "")
             ]
+            subjects = [term for term, scheme in categories if "LCSH" in scheme]
+            bookshelves = [term for term, scheme in categories if "LCSH" not in scheme]
 
             thumbnail: str | None = None
             cover: str | None = None
@@ -283,6 +320,7 @@ class GutenbergSession(ProviderSession):
                 "language": language,
                 "rights": rights,
                 "subjects": subjects,
+                "bookshelves": bookshelves,
                 "thumbnail": thumbnail or cover,
                 "cover_origin": "opds_thumbnail" if thumbnail else ("opds_image" if cover else "unavailable"),
                 "friendly": friendly or f"https://www.gutenberg.org/ebooks/{ebook_no}",
@@ -335,6 +373,7 @@ class GutenbergSession(ProviderSession):
                     "language": row["language"],
                     "rights": row["rights"],
                     "subjects": list(row["subjects"]),
+                    "bookshelves": list(row.get("bookshelves") or []),
                     "opds_detail_url": row.get("detail_url"),
                     "cover_source": row["cover_origin"],
                 },
@@ -412,6 +451,13 @@ class GutenbergSession(ProviderSession):
                 haystack = item.author or ""
             elif field == "subject":
                 haystack = " ".join(str(v) for v in item.metadata.get("subjects", []))
+            elif field == "bookshelf":
+                haystack = " ".join(str(v) for v in (item.metadata.get("bookshelves", []) or item.metadata.get("subjects", [])))
+            elif field == "language":
+                language = str(item.metadata.get("language") or "")
+                if language and normalize_language_tag(language) == normalize_language_tag(query):
+                    filtered.append(item)
+                continue
             else:
                 return rows
             folded = haystack.casefold()
@@ -461,7 +507,7 @@ class GutenbergSession(ProviderSession):
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
         if scope == "physical":
             _LOG.info("TRACE gutenberg search skipped reason=physical-scope"); return []
-        query = str(query or "").strip()
+        query, field, filter_query = _search_facet(query, field)
         if len(query) < 2:
             _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
         page = max(0, int(page))
@@ -490,7 +536,7 @@ class GutenbergSession(ProviderSession):
                 self.diagnostics.add("GUTENBERG", "OPDS pagination", "ok",detail={"requested_page": page, "last_available_page": page_index}, level="detailed"); return []
             current_url=next_url; params=None; page_index+=1
         assert response is not None
-        parsed = self._parse_feed(response.content, str(response.url)); rows = self._field_filter(parsed, query, field); duration_ms = int((time.perf_counter() - started) * 1000)
+        parsed = self._parse_feed(response.content, str(response.url)); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
         self.diagnostics.add("GUTENBERG", "OPDS search", "ok", duration_ms=duration_ms,detail={"results": len(rows), "parsed_results": len(parsed), "query_len": len(query), "field": field, "page": page},level="detailed")
         return rows
 
