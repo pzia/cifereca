@@ -57,3 +57,13 @@ plugins = ["provider.bnf-catalogue"]
 [service.bnf.args]
 books = "--books"
 seed = "--seed"
+
+[service.ebooksgratuits]
+script = "ebooksgratuits/pseudo_ebooksgratuits_service.py"
+default_port = 8096
+health_path = "/health"
+plugins = ["provider.ebooksgratuits"]
+
+[service.ebooksgratuits.args]
+books = "--books"
+seed = "--seed"

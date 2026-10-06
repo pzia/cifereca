@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.ebooksgratuits",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "name": "Ebooks libres et gratuits",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -20,6 +20,13 @@
         "type": "object",
         "x-cifereca-scope": "plugin",
         "properties": {
+          "base_url": {
+            "type": "string",
+            "format": "uri",
+            "default": "https://www.ebooksgratuits.com/",
+            "title": "URL du catalogue",
+            "description": "URL du site Ebooks libres et gratuits ; utile notamment pour les jeux de données locaux."
+          },
           "timeout_seconds": {
             "type": "number",
             "default": 30
@@ -37,7 +44,7 @@
         }
       },
       "help_text": "Catalogue public sans compte. Recherche par titre, auteur et sujet (catégorie/genre) via les filtres publics du site ; pagination serveur et parsing HTML structuré ; respecter la notice du site et ses limites de téléchargement.",
-      "version": "0.1.7",
+      "version": "0.1.8",
       "capabilities": [
         "catalog.search",
         "catalog.detail",

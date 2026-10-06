@@ -1,0 +1,21 @@
+name = "ux-ebooksgratuits"
+description = "Recette isolée du catalogue Ebooks libres et gratuits."
+
+[runtime]
+startup_timeout_seconds = 20
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = ["provider.ebooksgratuits"]
+width = 1300
+height = 850
+
+[library]
+epubs = 0
+seed = 20261006
+
+[services.ebooksgratuits]
+enabled = true
+books = 500
+seed = 20261006
