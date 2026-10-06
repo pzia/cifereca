@@ -1,0 +1,30 @@
+name: Validate Core tests step 1A2
+
+on:
+  push:
+    branches:
+      - rationalization/core-tests-step1a2
+    paths:
+      - 'tests/test_gui_compat.py'
+      - 'tests/test_cover_loader.py'
+      - 'tests/test_search_resilience.py'
+      - 'tests/test_task_queue_09001.py'
+      - '.github/workflows/validate-core-tests-step1a2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install test dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Run restored tests
+        run: |
+          python -m pytest -q             tests/test_gui_compat.py             tests/test_cover_loader.py             tests/test_search_resilience.py             tests/test_task_queue_09001.py
