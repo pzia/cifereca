@@ -109,8 +109,8 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
     if not all(callable(getattr(host,name,None)) for name in required):
         raise RuntimeError('Accueil nécessite les brokers publics du Core 0.9.15 ou ultérieur')
     scroll=Gtk.ScrolledWindow();scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC)
-    outer=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=12)
-    for margin in ('top','bottom','start','end'):getattr(outer,'set_margin_'+margin)(20)
+    outer=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
+    for margin in ('top','bottom','start','end'):getattr(outer,'set_margin_'+margin)(16)
     header=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=8)
     title=Gtk.Label(label='Bibliothèque familiale',xalign=0);title.set_hexpand(True);title.set_wrap(True);title.add_css_class('page-title');header.append(title)
     quick=Gtk.Button.new_from_icon_name('view-refresh-symbolic');quick.set_tooltip_text('Synchronisation rapide')
@@ -127,48 +127,65 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
         item.set_wrap_mode(Pango.WrapMode.WORD_CHAR);item.set_width_chars(1);item.set_max_width_chars(44);item.set_hexpand(True)
         if style:item.add_css_class(style)
         parent.append(item);return item
-    def section(parent,title_text):
-        label(parent,title_text,'heading')
-        area=Gtk.FlowBox();area.set_selection_mode(Gtk.SelectionMode.NONE);area.set_homogeneous(True)
-        area.set_min_children_per_line(1);area.set_max_children_per_line(3);area.set_column_spacing(10);area.set_row_spacing(8)
+    def section(parent,title_text,columns=3,icon=None):
+        section_head=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=6)
+        if icon is not None:
+            section_icon=Gtk.Image.new_from_icon_name(icon);section_icon.add_css_class('dim-label');section_head.append(section_icon)
+        label(section_head,title_text,'heading');parent.append(section_head)
+        area=Gtk.Grid();area.set_column_homogeneous(True);area.set_column_spacing(6);area.set_row_spacing(6)
+        area._cifereca_columns=columns;area._cifereca_next=0
         parent.append(area);return area
-    def tile(area,caption,value,style='accent',tooltip=None,callback=None,settings_callback=None):
-        content=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=2);content.set_hexpand(True);content.add_css_class('card')
-        for margin in ('top','bottom','start','end'):getattr(content,'set_margin_'+margin)(8)
-        label(content,caption,'caption');value_label=label(content,value,style)
+    def tile(area,caption,value,style='accent',tooltip=None,callback=None,settings_callback=None,span=1):
+        content=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=0);content.set_hexpand(True);content.set_vexpand(True);content.add_css_class('card')
+        inner=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=1);inner.set_hexpand(True);inner.set_vexpand(True);inner.set_valign(Gtk.Align.CENTER)
+        for margin in ('top','bottom','start','end'):getattr(inner,'set_margin_'+margin)(6)
+        content.append(inner)
+        value_label=label(inner,value,style);value_label.add_css_class('heading')
+        caption_label=label(inner,caption,'caption')
+        for centered in (value_label,caption_label):
+            centered.set_xalign(.5);centered.set_justify(Gtk.Justification.CENTER)
         if tooltip:value_label.set_tooltip_text(tooltip)
         main=content
         if callback is not None:
-            action=Gtk.Button();action.set_child(content);action.add_css_class('flat');action.set_hexpand(True)
+            action=Gtk.Button();action.set_child(content);action.add_css_class('flat');action.set_hexpand(True);action.set_vexpand(True)
             if tooltip:action.set_tooltip_text(tooltip)
             action.connect('clicked',callback);main=action
-        if settings_callback is None:
-            area.insert(main,-1);return main
-        wrapper=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=4);wrapper.set_hexpand(True)
-        wrapper.append(main)
-        settings=Gtk.Button();settings.set_child(Gtk.Image.new_from_icon_name('emblem-system-symbolic'));settings.add_css_class('flat')
-        settings.set_tooltip_text('Configurer ce fournisseur');settings.connect('clicked',settings_callback);wrapper.append(settings)
-        area.insert(wrapper,-1);return wrapper
+        if settings_callback is not None:
+            wrapper=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=2);wrapper.set_hexpand(True)
+            wrapper.append(main)
+            settings=Gtk.Button();settings.set_child(Gtk.Image.new_from_icon_name('emblem-system-symbolic'));settings.add_css_class('flat')
+            settings.set_tooltip_text('Configurer ce fournisseur');settings.connect('clicked',settings_callback);wrapper.append(settings)
+            main=wrapper
+        index=area._cifereca_next;columns=area._cifereca_columns;span=max(1,min(int(span),columns))
+        column=index % columns
+        if column+span>columns:
+            index+=columns-column;column=0
+        area.attach(main,column,index // columns,span,1);area._cifereca_next=index+span
+        return main
     def render(rows):
         child=grid.get_first_child()
         while child is not None:
             next_child=child.get_next_sibling();grid.remove(child);child=next_child
         empty.set_visible(not rows)
         for row in rows:
-            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10);box.set_hexpand(True);box.add_css_class('card')
-            for margin in ('top','bottom','start','end'):getattr(box,'set_margin_'+margin)(12)
-            head=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=8)
-            name=Gtk.Button(label=str(row.get('label') or 'Utilisateur'));name.set_hexpand(True);name.add_css_class('flat')
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=7);box.set_hexpand(True);box.add_css_class('card')
+            for margin in ('top','bottom','start','end'):getattr(box,'set_margin_'+margin)(10)
+            head=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=10)
+            avatar=Gtk.Image.new_from_icon_name('avatar-default-symbolic');avatar.set_pixel_size(28);avatar.add_css_class('accent');head.append(avatar)
+            identity=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=0);identity.set_hexpand(True)
+            name=Gtk.Button(label=str(row.get('label') or 'Utilisateur'));name.set_halign(Gtk.Align.START);name.add_css_class('flat');name.add_css_class('title-3')
             name.get_child().set_wrap(True);name.get_child().set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            name.get_child().set_max_width_chars(32);name.set_tooltip_text('Sélectionner cette identité et ouvrir sa bibliothèque')
-            name.connect('clicked',lambda button,iid=row['identity_id']:controller.open(iid));head.append(name)
-            if row.get('selected'):
-                selected=Gtk.Image.new_from_icon_name('emblem-ok-symbolic');selected.set_tooltip_text('Identité sélectionnée');head.append(selected)
-            box.append(head)
+            name.get_child().set_max_width_chars(28);name.set_tooltip_text('Sélectionner cette identité et ouvrir sa bibliothèque')
+            name.connect('clicked',lambda button,iid=row['identity_id']:controller.open(iid));identity.append(name)
+            subtitle=Gtk.Label(label='Bibliothèque personnelle',xalign=0);subtitle.add_css_class('caption');subtitle.add_css_class('dim-label');identity.append(subtitle)
+            head.append(identity)
+            state=Gtk.Label(label='ACTIVE' if row.get('selected') else 'PROFIL');state.add_css_class('pill')
+            state.add_css_class('success' if row.get('selected') else 'dim-label');state.set_valign(Gtk.Align.CENTER);head.append(state)
+            box.append(head);box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
             stats=row.get('statistics')
             if isinstance(stats,dict):
-                globals_grid=section(box,'Statistiques globales')
+                globals_grid=section(box,'En bref',3,'view-grid-symbolic')
                 loans=stats.get('known_loans')
                 tile(globals_grid,'Livres locaux',stats.get('local_books',0),'success',
                      'Ouvrir la bibliothèque de cette identité',
@@ -176,7 +193,7 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                 tile(globals_grid,'Emprunts connus',loans if loans is not None else '—','accent')
                 tile(globals_grid,"Droits d’achat distants",stats.get('remote_owned_rights',0),'accent')
 
-                breakdown=section(box,'Répartition des livres')
+                breakdown=section(box,'Catalogues',3,'view-list-symbolic')
                 support=getattr(host,'supports_identity_view_filters',None)
                 filters=bool(callable(support) and support() is True and callable(getattr(host,'open_identity_view',None)))
                 names={'paris':'Paris','kobo':'Kobo','gallica':'Gallica','gutenberg':'Gutenberg','bnf-catalogue':'BnF','local':'Local / origine non rapprochée'}
@@ -189,9 +206,9 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                 else:
                     tile(breakdown,'Catalogues','Aucune donnée','dim-label')
             else:
-                unavailable=section(box,'Statistiques globales');tile(unavailable,'Statistiques','Core029 requis','warning')
+                unavailable=section(box,'En bref',3,'view-grid-symbolic');tile(unavailable,'Statistiques','Core029 requis','warning')
 
-            sources_grid=section(box,'Sources authentifiées')
+            sources_grid=section(box,'Sources authentifiées',3,'network-server-symbolic')
             linked_rows=linked_sources(row,public_providers)
             support=getattr(host,'supports_identity_view_filters',None)
             source_filters=bool(callable(support) and support() is True and callable(getattr(host,'open_identity_view',None)))
@@ -207,26 +224,28 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                 tile(sources_grid,'Sources','Aucune source liée','dim-label')
 
             sync=row.get('sync') or {}
-            actions_grid=section(box,'Activité de synchronisation')
+            actions_grid=section(box,'Synchronisation',4,'view-refresh-symbolic')
             tile(actions_grid,'Acquisitions',sync.get('new_acquisitions',0),'success')
             tile(actions_grid,'Actions requises',sync.get('attention_required',0),'warning')
             tile(actions_grid,'Erreurs',sync.get('errors',0),'error' if sync.get('errors') else 'dim-label')
             tile(actions_grid,'État',STATUS.get(sync.get('status'),'Jamais synchronisée'),
                  'success' if sync.get('status')=='success' else ('warning' if sync.get('status') in {'running','partial'} else ('error' if sync.get('status')=='failed' else 'dim-label')))
 
-            info_grid=section(box,'Informations')
+            info_grid=section(box,'Profil et appareils',6,'preferences-system-symbolic')
+            loans_missing=isinstance(stats,dict) and stats.get('known_loans') is None
+            primary_span=2 if loans_missing else 3
             if isinstance(stats,dict):
-                tile(info_grid,'Emplacements',stats.get('local_placements',0),'accent')
-                if stats.get('known_loans') is None:tile(info_grid,'Prêts','Non actualisés','warning')
-            tile(info_grid,'Compte ADE','Profil lié' if row.get('adept_profile_id') else 'À configurer','success' if row.get('adept_profile_id') else 'warning')
-            tile(info_grid,'Liseuses',readers_text(row).removeprefix('Liseuses : '),'accent')
+                tile(info_grid,'Emplacements',stats.get('local_placements',0),'accent',span=primary_span)
+                if loans_missing:tile(info_grid,'Prêts','Non actualisés','warning',span=2)
+            tile(info_grid,'Compte ADE','Profil lié' if row.get('adept_profile_id') else 'À configurer','success' if row.get('adept_profile_id') else 'warning',span=primary_span)
+            tile(info_grid,'Liseuses',readers_text(row).removeprefix('Liseuses : '),'accent',span=3)
             if row.get('deep_last_at'):
                 from datetime import datetime
                 try:date=datetime.fromtimestamp(int(row['deep_last_at'])).astimezone().strftime('%d/%m/%Y %H:%M')
                 except (TypeError,ValueError,OverflowError,OSError):date='Date inconnue'
                 tile(info_grid,'Vérification complète',date,'dim-label')
             if isinstance(stats,dict):
-                tile(info_grid,'Portée des chiffres','Dernier inventaire','dim-label','Les sources peuvent se chevaucher ; les comptes de prêts peuvent être partiels.')
+                tile(info_grid,'Chiffres','Dernier inventaire','dim-label','Les sources peuvent se chevaucher ; les comptes de prêts peuvent être partiels.',span=3)
 
             if sync.get('errors') or sync.get('attention_required'):
                 issues=Gtk.Expander(label='Erreurs et actions')
