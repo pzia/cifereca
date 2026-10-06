@@ -3,7 +3,7 @@ name: Import Core044 sources
 on:
   push:
     paths:
-      - '.source-upload4/READY'
+      - '.source-upload5/READY'
 
 permissions:
   contents: write
@@ -19,11 +19,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          count=$(find .source-upload4 -maxdepth 1 -type f -name 'source.part.*' | wc -l)
-          test "$count" -eq 20
+          count=$(find .source-upload5 -maxdepth 1 -type f -name 'source.part.*' | wc -l)
+          test "$count" -eq 12
           tmp=$(mktemp -d)
-          cat .source-upload4/source.part.* | base64 -d > "$tmp/source.tar.xz"
-          echo "c5fdf2709936f241123025b2bb25b775cc03a7f524b99d661281cbff0641afb7  $tmp/source.tar.xz" | sha256sum -c -
+          cat .source-upload5/source.part.* | base64 -d > "$tmp/source.tar.xz"
+          echo "718ddf1d845b2a0094c6ae4bbb46158959eef0e733df5041c9345565615e5935  $tmp/source.tar.xz" | sha256sum -c -
           mkdir "$tmp/source"
           tar -xJf "$tmp/source.tar.xz" -C "$tmp/source"
 
