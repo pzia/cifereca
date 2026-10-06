@@ -163,3 +163,112 @@ class ArtifactExecutionBrokerImpl:
             return status.descriptor.version if status else ""
         except Exception:
             return ""
+t((s for s in manager.statuses() if s.descriptor.id == plugin_id), None)
+            return str(status.descriptor.version) if status else ""
+        except Exception:
+            return ""
+
+    def commit_variant(self, *, source: ArtifactRef, destination: Any, result: TransformResult, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> ArtifactRef:
+        lease = self._assert_output_lease(destination)
+        if lease.source.artifact_id != source.artifact_id:
+            raise Conflict("Le lease de sortie ne correspond pas à la source", code="artifact_lease_source_mismatch")
+        path = lease.path
+        if not path.is_file():
+            raise NotFound("Le transformer n'a produit aucun fichier", code="artifact_output_missing")
+        actual_sha = sha256_file(path); actual_size = path.stat().st_size
+        if result.sha256 and actual_sha != result.sha256:
+            raise Conflict("Checksum de transformation invalide", code="artifact_output_checksum_mismatch")
+        if result.size_bytes and actual_size != int(result.size_bytes):
+            raise Conflict("Taille de transformation invalide", code="artifact_output_size_mismatch")
+        existing = self.service.storage.artifact_variant_find(
+            source_sha256=source.sha256, transformer_plugin_id=transformer_plugin_id,
+            profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
+        )
+        if existing:
+            artifact = _artifact_ref(self.service.storage, str(existing.get("artifact_id") or ""), book_id=source.book_id)
+            path.unlink(missing_ok=True); lease.active = False
+            if artifact is not None: return artifact
+        source_placement = self._source_placement(source)
+        source_path = Path(str(source_placement.get("path"))).resolve()
+        proposed = Path(str(result.proposed_filename or lease.proposed_filename or "")).name
+        if not proposed:
+            suffix = "." + str(result.output_format.format or lease.output_format.format or source_path.suffix.lstrip(".")).lstrip(".")
+            proposed = f"{source_path.stem} [{lease.variant_kind or 'variant'}]{suffix}"
+        suffix = Path(proposed).suffix or ("." + str(result.output_format.format or lease.output_format.format or "bin").lstrip("."))
+        stem = Path(proposed).stem or source_path.stem
+        final = source_path.parent / (stem + suffix)
+        if final.exists() and sha256_file(final) != actual_sha:
+            final = source_path.parent / f"{stem}-{actual_sha[:8]}{suffix}"
+        final.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(path, final)
+        lease.active = False
+        now = int(time.time())
+        artifact_id = f"sha256:{actual_sha}"
+        self.service.storage.artifact_put({
+            "artifact_id": artifact_id, "sha256": actual_sha, "size": actual_size,
+            "media_format": result.output_format.format or lease.output_format.format or suffix.lstrip("."),
+            "mime_type": result.output_format.media_type or lease.output_format.media_type,
+            "metadata": {"variant_kind": lease.variant_kind or "derived", "source_artifact_id": source.artifact_id, "book_id": source.book_id or ""},
+        })
+        placement_id = self.service.storage.placement_put({
+            "artifact_id": artifact_id, "path": str(final), "identity_id": source_placement.get("identity_id"),
+            "provider_id": source_placement.get("provider_id"), "source_item_id": source_placement.get("source_item_id"),
+            "state": "present", "last_seen_at": now,
+            "metadata": {"variant": True, "variant_kind": lease.variant_kind or "derived", "source_artifact_id": source.artifact_id},
+        })
+        source_entries = [e for e in self.service.storage.catalog_entries() if str(e.get("placement_id") or "") == str(source_placement.get("placement_id") or "")]
+        if source_entries:
+            src_entry = source_entries[0]
+            meta = dict(src_entry.get("metadata") or {}); meta.update({"path": str(final), "variant": True, "source_artifact_id": source.artifact_id})
+            self.service.storage.catalog_entry_put({
+                "artifact_id": artifact_id, "placement_id": placement_id, "title": src_entry.get("title"), "author": src_entry.get("author"),
+                "media_format": result.output_format.format, "identity_id": src_entry.get("identity_id"), "provider_id": src_entry.get("provider_id"),
+                "item_id": src_entry.get("item_id"), "local_state": "local", "metadata": meta,
+            })
+        self.service.storage.artifact_variant_put({
+            "artifact_id": artifact_id, "source_artifact_id": source.artifact_id, "source_sha256": source.sha256,
+            "variant_kind": lease.variant_kind or "derived", "transformer_plugin_id": transformer_plugin_id,
+            "transformer_version": self._version_for_plugin(transformer_plugin_id), "profile_plugin_id": profile_plugin_id,
+            "profile_version": self._version_for_plugin(profile_plugin_id), "options_fingerprint": options_fingerprint,
+            "metadata": {"book_id": source.book_id or "", "warnings": list(result.warnings), "facts": dict(result.facts)},
+        })
+        ref = _artifact_ref(self.service.storage, artifact_id, book_id=source.book_id)
+        if ref is None: raise RuntimeError("committed artifact disappeared")
+        return ref
+
+    def abort_output(self, destination: Any) -> None:
+        lease = self._assert_output_lease(destination)
+        lease.path.unlink(missing_ok=True); lease.active = False
+
+    def variants(self, source: ArtifactRef) -> tuple[ArtifactVariant, ...]:
+        out=[]
+        for row in self.service.storage.artifact_variants(source_artifact_id=source.artifact_id):
+            variant = _variant_ref(self.service.storage, row, book_id=source.book_id or "")
+            if variant is not None: out.append(variant)
+        return tuple(out)
+
+    def _select_transformer(self, request: TransformRequest, plugin_id: str = "") -> tuple[str, Any]:
+        manager = getattr(self.service, "plugin_manager", None)
+        if manager is None: raise RuntimeError("plugin manager unavailable")
+        rows = list(manager.services("document.transformer"))
+        if plugin_id:
+            rows = [row for row in rows if row.plugin_id == plugin_id]
+        rows = [row for row in rows if "artifact.transform" in set(row.capabilities)] or rows
+        for row in rows:
+            supports = getattr(row.service, "supports", None)
+            if callable(supports):
+                try:
+                    if not supports(request): continue
+                except Exception: continue
+            return row.plugin_id, row.service
+        raise NotFound("Aucun transformer compatible", code="artifact_transformer_unavailable")
+
+    def execute_transform(self, request: TransformRequest, *, transformer_plugin_id: str = "", control: TaskControl | None = None) -> ArtifactRef:
+        plugin_id, transformer = self._select_transformer(request, transformer_plugin_id)
+        source_lease = self.input_lease(request.source)
+        plan = transformer.plan(request, source_lease, control)
+        destination = self.output_lease(request.source, output_format=plan.output_format, proposed_filename=plan.proposed_filename, variant_kind=request.capability_id or "derived")
+        identity_id = None
+        try:
+            placement = self._source_placement(request.source)
+            identity_id
