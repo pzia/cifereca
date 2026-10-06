@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           cp .restore-tests-step1a9/payload.tar.xz /tmp/core-tests-step1a9.tar.xz
-          echo "52ef22518649589e8b243b0573b0977f81d0256a46f3964e664f79b1598ebf8a  /tmp/core-tests-step1a9.tar.xz" | sha256sum -c -
+          echo "32b1bc1134c196ac917925af5d277e25526978e9858e597f582b75467b22c8e0  /tmp/core-tests-step1a9.tar.xz" | sha256sum -c -
           tar -xJf /tmp/core-tests-step1a9.tar.xz -C .
 
           python -m pip install -e '.[dev]'
