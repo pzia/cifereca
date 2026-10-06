@@ -1,0 +1,53 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.provider.ebooksgratuits",
+    "version": "0.1.6",
+    "name": "Ebooks libres et gratuits",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "provider.ebooksgratuits",
+      "type": "provider.library",
+      "entrypoint": "cifereca_ebooksgratuits:PLUGIN",
+      "display_name": "Ebooks libres et gratuits",
+      "description": "Catalogue public francophone et téléchargement EPUB.",
+      "priority": 45,
+      "instantiation": "singleton_public",
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "properties": {
+          "timeout_seconds": {
+            "type": "number",
+            "default": 30
+          },
+          "max_download_bytes": {
+            "type": "integer",
+            "default": 104857600
+          },
+          "search_page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          }
+        }
+      },
+      "help_text": "Catalogue public sans compte. Pagination serveur via offset, parsing HTML structuré des fiches et métadonnées attestées ; respecter la notice du site et ses limites de téléchargement.",
+      "version": "0.1.6",
+      "capabilities": [
+        "catalog.search",
+        "catalog.detail",
+        "acquisition.download"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    }
+  ]
+}

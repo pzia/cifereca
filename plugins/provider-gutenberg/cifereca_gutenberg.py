@@ -1,0 +1,690 @@
+from __future__ import annotations
+from collections import OrderedDict
+from cifereca_gutenberg_description import description_text, description_element
+from cifereca_gutenberg_download import validate_document, atomic_write
+
+import html
+import logging
+import re
+import time
+from pathlib import Path
+from typing import Any
+from urllib.parse import urljoin, urlsplit, urlunsplit
+from xml.etree import ElementTree as ET
+
+import httpx
+
+from cifereca.plugin_api import (
+    Account,
+    AcquisitionOffer,
+    ItemDetail,
+    ProviderCapabilities,
+    ProviderConfigurationError,
+    ProviderDescriptor,
+    ProviderError,
+    ProviderPlugin,
+    ProviderSession, normalize_language_tag,
+    SearchResult,
+)
+
+ATOM = "http://www.w3.org/2005/Atom"
+DCTERMS = "http://purl.org/dc/terms/"
+DEFAULT_OPDS_SEARCH_URL = "https://www.gutenberg.org/ebooks/search.opds/"
+_EPUB_REL = "http://opds-spec.org/acquisition"
+_EBOOK_RE = re.compile(r"(?:urn:gutenberg:|/ebooks/)(\d+)", re.I)
+_LOG = logging.getLogger("cifereca.plugin.provider.gutenberg")
+
+
+def _safe_url(value: str) -> str:
+    """Return a log-safe URL without query/fragment."""
+    try:
+        parts = urlsplit(str(value or ""))
+        if parts.scheme.casefold() == "data":
+            return "data:<redacted>"
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except Exception:
+        return "<invalid-url>"
+
+
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
+
+
+DESCRIPTOR = ProviderDescriptor(
+    id="gutenberg",
+    display_name="Project Gutenberg",
+    description="Project Gutenberg : bibliothèque publique de livres du domaine public, via OPDS.",
+    state="ready",
+    capabilities=ProviderCapabilities(search=True, holdings=True, direct_download=True),
+    homepage="https://www.gutenberg.org",
+    notes=(
+        "Catalogue public sans authentification.",
+        "Project Gutenberg demande un User-Agent avec une adresse de contact et un rythme de requêtes comparable à celui d'un utilisateur.",
+        "Les droits Project Gutenberg sont principalement déterminés selon le droit américain ; vérifier la situation locale avant redistribution.",
+    ),
+)
+
+
+class GutenbergSession(ProviderSession):
+    """Project Gutenberg OPDS session.
+
+    The plugin requests only the OPDS page explicitly asked by the caller.
+    For page N it follows Atom rel=next links at most N times; it never prefetches
+    beyond the requested page or crawls the catalog.
+    """
+
+    def __init__(self, *, config: Any, diagnostics: Any, **kwargs: Any) -> None:
+        super().__init__(descriptor=DESCRIPTOR, **kwargs)
+        self.diagnostics = diagnostics
+        timeout = float(
+            self.options.get("timeout_seconds")
+            or (
+                config.request_timeout_seconds("gutenberg", self.credential_id)
+                if hasattr(config, "request_timeout_seconds")
+                else config.get("request_timeout_seconds", 20)
+            )
+        )
+        self.opds_search_url = str(self.options.get("opds_search_url") or DEFAULT_OPDS_SEARCH_URL).strip()
+        self.prefer_images = bool(self.options.get("prefer_images", True))
+        self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
+        self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
+        user_agent = "cifereca-gutenberg/1.2.2"
+        if self.contact:
+            user_agent += f" (+{self.contact})"
+        self.client = httpx.Client(
+            timeout=timeout,
+            follow_redirects=True,
+            http2=False,
+            headers={
+                "User-Agent": user_agent,
+                "Accept": "application/atom+xml;profile=opds-catalog, application/atom+xml;q=0.9, application/xml;q=0.8, */*;q=0.2",
+            },
+        )
+        self._page_urls = OrderedDict()
+        self._detail_feed_cache = OrderedDict()
+        self._page_cache_keys = 32
+        self._detail_cache_entries = 64
+
+    @staticmethod
+    def _normalize_contact(value: str) -> str:
+        value = " ".join(str(value or "").strip().split())
+        if not value:
+            return ""
+        if "@" in value and "://" not in value and not value.lower().startswith("mailto:"):
+            return "mailto:" + value
+        return value
+
+    def _require_contact(self) -> None:
+        if not self.contact:
+            raise ProviderConfigurationError(
+                "Project Gutenberg : configurez une adresse e-mail ou URL de contact pour le User-Agent OPDS."
+            )
+        if "\r" in self.contact or "\n" in self.contact:
+            raise ProviderConfigurationError("Project Gutenberg : contact User-Agent invalide")
+
+    def connect(self) -> list[Account]:
+        self.connected = True
+        self._accounts = [
+            Account(
+                display_name="Catalogue public",
+                barcode="",
+                unique_id="",
+                is_primary=True,
+                provider_id=self.provider_id,
+                credential_id=self.credential_id,
+                provider_label=self.descriptor.display_name,
+            )
+        ]
+        return self.accounts
+
+    def close(self) -> None:
+        self.client.close()
+        self.connected = False
+
+    @staticmethod
+    def _text(node: ET.Element | None) -> str | None:
+        if node is None:
+            return None
+        value = " ".join("".join(node.itertext()).split())
+        return html.unescape(value) if value else None
+
+    @staticmethod
+    def _ebook_number(entry: ET.Element, *urls: str | None) -> str | None:
+        values = [GutenbergSession._text(entry.find(f"{{{ATOM}}}id")), *urls]
+        for value in values:
+            if not value:
+                continue
+            match = _EBOOK_RE.search(str(value))
+            if match:
+                return match.group(1)
+        return None
+
+    @staticmethod
+    def _safe_name(value: str, fallback: str = "gutenberg") -> str:
+        return _SAFE_FILENAME.sub("_", value or fallback).strip(" ._") or fallback
+
+    def _parse_feed(self, content: bytes, base_url: str) -> list[SearchResult]:
+        started = time.perf_counter()
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError as exc:
+            _LOG.warning(
+                "TRACE gutenberg parse failed bytes=%s base=%s error=%s",
+                len(content), _safe_url(base_url), exc,
+            )
+            self.diagnostics.add(
+                "GUTENBERG", "OPDS parse", "error",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                detail={"bytes": len(content), "base_url": _safe_url(base_url), "error": str(exc)},
+                level="detailed",
+            )
+            raise ProviderError(f"Project Gutenberg OPDS : XML invalide ({exc})") from exc
+
+        entries = root.findall(f"{{{ATOM}}}entry")
+        stats = {
+            "entries": len(entries),
+            "placeholder": 0,
+            "without_epub": 0,
+            "without_ebook_id": 0,
+            "candidate_editions": 0,
+            "detail_only": 0,
+        }
+        candidates: dict[str, list[dict[str, Any]]] = {}
+        for entry in entries:
+            title = self._text(entry.find(f"{{{ATOM}}}title")) or "Sans titre"
+            # Gutenberg returns a placeholder entry for no-result queries.
+            if title.casefold() == "no records found.":
+                stats["placeholder"] += 1
+                continue
+            authors = [self._text(a.find(f"{{{ATOM}}}name")) for a in entry.findall(f"{{{ATOM}}}author")]
+            author = ", ".join(x for x in authors if x) or None
+            description = description_element(entry.find(f"{{{ATOM}}}content")) or description_element(entry.find(f"{{{ATOM}}}summary"))
+            published = self._text(entry.find(f"{{{ATOM}}}published")) or self._text(entry.find(f"{{{ATOM}}}updated"))
+            language = normalize_language_tag(self._text(entry.find(f"{{{DCTERMS}}}language")))
+            rights = self._text(entry.find(f"{{{ATOM}}}rights"))
+            subjects = [
+                html.unescape(str(category.attrib.get("term") or "").strip())
+                for category in entry.findall(f"{{{ATOM}}}category")
+                if str(category.attrib.get("term") or "").strip()
+                and "LCSH" in str(category.attrib.get("scheme") or "")
+            ]
+
+            thumbnail: str | None = None
+            cover: str | None = None
+            friendly: str | None = None
+            detail_url: str | None = None
+            epub_links: list[tuple[str, str]] = []
+            link_shapes: list[tuple[str, str, str]] = []
+            # OPDS is Atom-based, but be tolerant of servers that serialize link
+            # elements with a different/no namespace.  The semantic attributes
+            # (rel/type/href) are what matter here.
+            links = [node for node in entry.iter() if str(node.tag).split("}")[-1] == "link"]
+            for link in links:
+                href = html.unescape(str(link.attrib.get("href") or "").strip())
+                if not href:
+                    continue
+                href = urljoin(base_url, href)
+                rel = str(link.attrib.get("rel") or "").strip()
+                typ = str(link.attrib.get("type") or "").split(";", 1)[0].strip().lower()
+                link_title = str(link.attrib.get("title") or "")
+                href_lower = href.lower()
+                is_epub_mime = typ in {"application/epub+zip", "application/epub"}
+                is_epub_href = bool(re.search(r"\.epub(?:3)?(?:[./?]|$)", href_lower))
+                is_acquisition = "acquisition" in rel.casefold()
+                if len(link_shapes) < 12:
+                    link_shapes.append((rel or "<none>", typ or "<none>", _safe_url(href)))
+                # MIME is authoritative.  If a server uses a generic MIME, accept
+                # an EPUB-looking URL only when the relation is acquisition-like.
+                if rel.casefold().startswith(_EPUB_REL) and (is_epub_mime or is_epub_href):
+                    epub_links.append((href, link_title))
+                elif "thumbnail" in rel.casefold():
+                    if urlsplit(href).scheme in {"http", "https"}:
+                        thumbnail = thumbnail or href
+                elif rel.casefold() in {"http://opds-spec.org/image", "https://opds-spec.org/image", "http://opds-spec.org/cover", "https://opds-spec.org/cover"}:
+                    if urlsplit(href).scheme in {"http", "https"}:
+                        cover = cover or href
+                elif rel == "alternate" and typ in {"text/html", "application/xhtml+xml", ""}:
+                    friendly = friendly or href
+                elif rel == "subsection" and re.search(r"/ebooks/\d+\.opds(?:[/?]|$)", href, re.I):
+                    detail_url = detail_url or href
+
+            ebook_no = self._ebook_number(entry, friendly, detail_url, *(href for href, _ in epub_links))
+            if not epub_links and not detail_url:
+                stats["without_epub"] += 1
+                _LOG.debug(
+                    "TRACE gutenberg entry without-epub title=%r links=%s",
+                    title[:120], link_shapes,
+                )
+                continue
+            if not ebook_no:
+                stats["without_ebook_id"] += 1
+                continue
+            if epub_links:
+                stats["candidate_editions"] += 1
+            else:
+                stats["detail_only"] += 1
+
+            def epub_rank(item: tuple[str, str]) -> tuple[int, int]:
+                href, label = item
+                text = (href + " " + label).casefold()
+                with_images = "images" in text and "noimages" not in text and "no images" not in text
+                epub3 = ".epub3" in text or "epub3" in text
+                if self.prefer_images:
+                    return (2 if with_images else 0, 1 if epub3 else 0)
+                return (2 if not with_images else 0, 1 if epub3 else 0)
+
+            acquisition = None
+            if epub_links:
+                acquisition, _label = max(epub_links, key=epub_rank)
+            candidates.setdefault(ebook_no, []).append({
+                "title": title,
+                "author": author,
+                "description": description,
+                "published": published,
+                "language": language,
+                "rights": rights,
+                "subjects": subjects,
+                "thumbnail": thumbnail or cover,
+                "cover_origin": "opds_thumbnail" if thumbnail else ("opds_image" if cover else "unavailable"),
+                "friendly": friendly or f"https://www.gutenberg.org/ebooks/{ebook_no}",
+                "download": acquisition,
+                "detail_url": detail_url,
+            })
+
+        rows: list[SearchResult] = []
+        for ebook_no, editions in candidates.items():
+            # The OPDS feed may expose image/no-image editions as separate entries.
+            # Pick the edition whose URL matches the user's preference.
+            editions.sort(
+                key=lambda row: (
+                    int("images" in str(row.get("download") or "").casefold() and "noimages" not in str(row.get("download") or "").casefold()),
+                    int("epub3" in str(row.get("download") or "").casefold()),
+                ),
+                reverse=self.prefer_images,
+            )
+            row = dict(editions[0])
+            if not row.get("thumbnail"):
+                sibling = next((edition for edition in editions if edition.get("thumbnail")), None)
+                if sibling:
+                    row["thumbnail"] = sibling["thumbnail"]
+                    row["cover_origin"] = "opds_other_edition"
+            rows.append(SearchResult(
+                id=f"gutenberg:{ebook_no}",
+                record_id=ebook_no,
+                docbase="GUTENBERG",
+                medium="digital",
+                title=str(row["title"]),
+                author=row["author"],
+                type="Livre numérique",
+                format="EPUB",
+                publisher="Project Gutenberg",
+                published_at=row["published"],
+                description=row["description"],
+                thumbnail_url=row["thumbnail"],
+                friendly_url=row["friendly"],
+                scenario="OPDS",
+                source_provider=self.provider_id,
+                source_credential=self.credential_id,
+                download_url=(str(row["download"]) if row.get("download") else None),
+                content_type="ebook",
+                source_collection="Project Gutenberg",
+                # Public availability is not user ownership.  Gutenberg entries
+                # stay directly downloadable, but must not be mirrored as remote_owned.
+                owned=False,
+                downloadable=True,
+                metadata={
+                    "language": row["language"],
+                    "rights": row["rights"],
+                    "subjects": list(row["subjects"]),
+                    "opds_detail_url": row.get("detail_url"),
+                    "cover_source": row["cover_origin"],
+                },
+            ))
+        duplicate_editions = max(0, stats["candidate_editions"] - len(candidates))
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        detail = {
+            **stats,
+            "covers_available": sum(bool(row.thumbnail_url) for row in rows),
+            "covers_unavailable": sum(not row.thumbnail_url for row in rows),
+            "unique_books": len(candidates),
+            "duplicate_editions": duplicate_editions,
+            "rows": len(rows),
+            "bytes": len(content),
+            "base_url": _safe_url(base_url),
+        }
+        _LOG.info(
+            "TRACE gutenberg parse end entries=%s candidate_editions=%s detail_only=%s unique_books=%s rows=%s without_epub=%s placeholder=%s duplicates=%s dt_ms=%s",
+            stats["entries"], stats["candidate_editions"], stats["detail_only"], len(candidates), len(rows),
+            stats["without_epub"], stats["placeholder"], duplicate_editions, duration_ms,
+        )
+        _LOG.debug(
+            "TRACE gutenberg parse sample=%s",
+            [(row.record_id, row.title, _safe_url(str(row.download_url or ""))) for row in rows[:5]],
+        )
+        self.diagnostics.add(
+            "GUTENBERG", "OPDS parse", "ok",
+            duration_ms=duration_ms, detail=detail, level="detailed",
+        )
+        return rows
+
+    @staticmethod
+    def _next_page_url(content: bytes, base_url: str) -> str | None:
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError:
+            return None
+        base = urlsplit(base_url)
+        for link in root.findall(f"{{{ATOM}}}link"):
+            rel = str(link.attrib.get("rel") or "").strip().casefold()
+            if rel != "next":
+                continue
+            href = html.unescape(str(link.attrib.get("href") or "").strip())
+            if not href:
+                continue
+            resolved = urljoin(base_url, href)
+            parsed = urlsplit(resolved)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                continue
+            if base.hostname and parsed.hostname.casefold() != base.hostname.casefold():
+                continue
+            if parsed.username or parsed.password:
+                continue
+            try:
+                parsed.port
+            except ValueError:
+                continue
+            return resolved
+        return None
+
+    @staticmethod
+    def _field_filter(rows: list[SearchResult], query: str, field: str) -> list[SearchResult]:
+        field = str(field or "all").lower()
+        if field in {"all", ""}:
+            return rows
+        if field == "isbn":
+            # Gutenberg's OPDS catalog does not expose ISBN as a stable search field.
+            return []
+        terms = [part.casefold() for part in query.split() if part]
+        filtered: list[SearchResult] = []
+        for item in rows:
+            if field == "title":
+                haystack = item.title
+            elif field == "author":
+                haystack = item.author or ""
+            elif field == "subject":
+                haystack = " ".join(str(v) for v in item.metadata.get("subjects", []))
+            else:
+                return rows
+            folded = haystack.casefold()
+            if all(term in folded for term in terms):
+                filtered.append(item)
+        return filtered
+
+    def _page_cache(self, query: str) -> list[str | None]:
+        key=(self.opds_search_url, query.casefold())
+        rows=self._page_urls.get(key)
+        if rows is None:
+            rows=[]; self._page_urls[key]=rows
+        else:
+            self._page_urls.move_to_end(key)
+        while len(self._page_urls)>self._page_cache_keys: self._page_urls.popitem(last=False)
+        return rows
+
+    @staticmethod
+    def _remember_page(rows: list[str | None], index: int, url: str | None) -> None:
+        while len(rows)<=index: rows.append(None)
+        if url: rows[index]=url
+
+    def _detail_feed(self, url: str) -> tuple[bytes,str]:
+        cached=self._detail_feed_cache.get(url)
+        if cached is not None:
+            self._detail_feed_cache.move_to_end(url); return cached
+        response=self.client.get(url); response.raise_for_status(); value=(response.content,str(response.url))
+        self._detail_feed_cache[url]=value
+        while len(self._detail_feed_cache)>self._detail_cache_entries: self._detail_feed_cache.popitem(last=False)
+        return value
+
+    @staticmethod
+    def _detail_cover(content: bytes, base_url: str) -> str | None:
+        try: root=ET.fromstring(content)
+        except ET.ParseError: return None
+        image=None
+        for link in root.iter():
+            if str(link.tag).split('}')[-1] != 'link': continue
+            rel=str(link.attrib.get('rel') or '').casefold(); href=str(link.attrib.get('href') or '').strip()
+            if not href: continue
+            resolved=urljoin(base_url,href); parsed=urlsplit(resolved)
+            if parsed.scheme not in {'http','https'}: continue
+            if 'thumbnail' in rel: return resolved
+            if rel in {'http://opds-spec.org/image','https://opds-spec.org/image','http://opds-spec.org/cover','https://opds-spec.org/cover'}: image=image or resolved
+        return image
+
+    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        if scope == "physical":
+            _LOG.info("TRACE gutenberg search skipped reason=physical-scope"); return []
+        query = str(query or "").strip()
+        if len(query) < 2:
+            _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
+        page = max(0, int(page))
+        if page > 100: raise ProviderError("Project Gutenberg : numéro de page hors limite")
+        self._require_contact(); started = time.perf_counter(); rows_cache=self._page_cache(query)
+        cached_indexes=[i for i,u in enumerate(rows_cache) if u and i<=page]
+        if cached_indexes:
+            page_index=max(cached_indexes); current_url=rows_cache[page_index]; params=None
+        else:
+            page_index=0; current_url=self.opds_search_url; params={"query": query}
+        response=None
+        while page_index <= page:
+            endpoint = _safe_url(current_url)
+            _LOG.info("TRACE gutenberg search page begin endpoint=%s query=%r scope=%s field=%s requested_page=%s hop=%s",endpoint, query, scope, field, page, page_index)
+            try:
+                response = self.client.get(current_url, params=params); response.raise_for_status()
+            except httpx.HTTPError as exc:
+                elapsed_ms = int((time.perf_counter() - started) * 1000); status = getattr(getattr(exc, "response", None), "status_code", None)
+                self.diagnostics.add("GUTENBERG", "OPDS search", "error", duration_ms=elapsed_ms,detail={"endpoint": endpoint, "status": status, "error": type(exc).__name__, "requested_page": page})
+                raise ProviderError(f"Project Gutenberg : recherche OPDS indisponible ({exc})") from exc
+            self._remember_page(rows_cache,page_index,str(response.url))
+            next_url=self._next_page_url(response.content,str(response.url))
+            if next_url: self._remember_page(rows_cache,page_index+1,next_url)
+            if page_index == page: break
+            if not next_url:
+                self.diagnostics.add("GUTENBERG", "OPDS pagination", "ok",detail={"requested_page": page, "last_available_page": page_index}, level="detailed"); return []
+            current_url=next_url; params=None; page_index+=1
+        assert response is not None
+        parsed = self._parse_feed(response.content, str(response.url)); rows = self._field_filter(parsed, query, field); duration_ms = int((time.perf_counter() - started) * 1000)
+        self.diagnostics.add("GUTENBERG", "OPDS search", "ok", duration_ms=duration_ms,detail={"results": len(rows), "parsed_results": len(parsed), "query_len": len(query), "field": field, "page": page},level="detailed")
+        return rows
+
+    def _epub_candidates(self, content: bytes, base_url: str) -> list[tuple[str, str]]:
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError as exc:
+            raise ProviderError(f"Project Gutenberg OPDS détail : XML invalide ({exc})") from exc
+        rows: list[tuple[str, str]] = []
+        for link in root.iter():
+            if str(link.tag).split("}")[-1] != "link":
+                continue
+            href = html.unescape(str(link.attrib.get("href") or "").strip())
+            if not href:
+                continue
+            href = urljoin(base_url, href)
+            rel = str(link.attrib.get("rel") or "").strip().casefold()
+            typ = str(link.attrib.get("type") or "").split(";", 1)[0].strip().lower()
+            label = str(link.attrib.get("title") or "")
+            href_lower = href.lower()
+            is_epub_mime = typ in {"application/epub+zip", "application/epub"}
+            is_epub_href = bool(re.search(r"\.epub(?:3)?(?:[./?]|$)", href_lower))
+            if rel.startswith(_EPUB_REL) and (is_epub_mime or is_epub_href):
+                rows.append((href, label))
+        return rows
+
+    def _resolve_epub_url(self, item: SearchResult) -> str:
+        cached = str(item.metadata.get("resolved_epub_url") or "").strip()
+        if cached:
+            return cached
+        direct = str(item.download_url or "").strip()
+        if direct:
+            return direct
+        detail_url = str(item.metadata.get("opds_detail_url") or "").strip()
+        if not detail_url:
+            raise ProviderError("Project Gutenberg : feed OPDS détaillé absent")
+        self._require_contact()
+        started = time.perf_counter()
+        _LOG.info(
+            "TRACE gutenberg detail begin record_id=%s url=%s",
+            item.record_id, _safe_url(detail_url),
+        )
+        try:
+            content, response_url = self._detail_feed(detail_url)
+        except httpx.HTTPError as exc:
+            _LOG.warning(
+                "TRACE gutenberg detail failed record_id=%s status=%s dt_ms=%s error=%s",
+                item.record_id, getattr(getattr(exc, "response", None), "status_code", None),
+                int((time.perf_counter() - started) * 1000), exc,
+            )
+            raise ProviderError(f"Project Gutenberg : détail OPDS indisponible ({exc})") from exc
+        candidates = self._epub_candidates(content, response_url)
+        if not candidates:
+            _LOG.warning(
+                "TRACE gutenberg detail no-epub record_id=%s bytes=%s dt_ms=%s",
+                item.record_id, len(content), int((time.perf_counter() - started) * 1000),
+            )
+            raise ProviderError("Project Gutenberg : aucun EPUB dans le feed détaillé")
+
+        def rank(value: tuple[str, str]) -> tuple[int, int]:
+            href, label = value
+            text = (href + " " + label).casefold()
+            with_images = "images" in text and "noimages" not in text and "no images" not in text
+            epub3 = ".epub3" in text or "epub3" in text
+            if self.prefer_images:
+                return (2 if with_images else 0, 1 if epub3 else 0)
+            return (2 if not with_images else 0, 1 if epub3 else 0)
+
+        resolved, _label = max(candidates, key=rank)
+        item.metadata["resolved_epub_url"] = resolved
+        item.download_url = resolved
+        _LOG.info(
+            "TRACE gutenberg detail resolved record_id=%s candidates=%s url=%s dt_ms=%s",
+            item.record_id, len(candidates), _safe_url(resolved), int((time.perf_counter() - started) * 1000),
+        )
+        return resolved
+
+    def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
+        thumbnail=item.thumbnail_url
+        detail_url=str(item.metadata.get("opds_detail_url") or "").strip()
+        if not thumbnail and detail_url:
+            try:
+                content,base_url=self._detail_feed(detail_url); thumbnail=self._detail_cover(content,base_url)
+                if thumbnail: item.thumbnail_url=thumbnail
+            except httpx.HTTPError:
+                pass
+        return ItemDetail(
+            record_id=item.record_id,
+            docbase=item.docbase,
+            title=item.title,
+            author=item.author,
+            type=item.type,
+            year=item.published_at,
+            thumbnail_url=thumbnail,
+            availability_status="available",
+            availability_label="Téléchargement libre",
+            holdings=[],
+            source_provider=self.provider_id,
+            source_credential=self.credential_id,
+        )
+
+    def acquisition_offers(self, item: SearchResult) -> list[AcquisitionOffer]:
+        url = self._resolve_epub_url(item)
+        return [AcquisitionOffer(
+            offer_id=f"gutenberg:{item.record_id}",
+            media_type="ebook",
+            format="epub",
+            drm="none",
+            source_kind="http",
+            source={"url": url},
+            priority=20,
+            metadata={"rights": item.metadata.get("rights"), "provider": "gutenberg"},
+        )]
+
+    def download_direct(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
+        self._require_contact()
+        url = self._resolve_epub_url(item)
+        started = time.perf_counter()
+        _LOG.info(
+            "TRACE gutenberg download begin record_id=%s url=%s",
+            item.record_id, _safe_url(url),
+        )
+        try:
+            with self.client.stream("GET", url, headers={"Accept": "application/epub+zip, */*;q=0.2"}) as response:
+                response.raise_for_status()
+                chunks, size = [], 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > self.max_download_bytes:
+                        raise ProviderError("Project Gutenberg : téléchargement trop volumineux")
+                    chunks.append(chunk)
+                content = b''.join(chunks)
+        except httpx.HTTPError as exc:
+            _LOG.warning(
+                "TRACE gutenberg download failed record_id=%s status=%s exception=%s dt_ms=%s error=%s",
+                item.record_id, getattr(getattr(exc, "response", None), "status_code", None),
+                type(exc).__name__, int((time.perf_counter() - started) * 1000), exc,
+            )
+            raise ProviderError(f"Project Gutenberg : téléchargement EPUB indisponible ({exc})") from exc
+        content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].lower()
+        _LOG.info(
+            "TRACE gutenberg download response record_id=%s status=%s bytes=%s content_type=%s final_url=%s dt_ms=%s",
+            item.record_id, response.status_code, len(content), content_type or "<none>",
+            _safe_url(str(response.url)), int((time.perf_counter() - started) * 1000),
+        )
+        validate_document(content, 'epub')
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{self._safe_name(item.title)[:145]}_{self._safe_name(item.record_id)[:20]}.epub"
+        path = target_dir / filename
+        atomic_write(path, content)
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        _LOG.info(
+            "TRACE gutenberg download end record_id=%s path=%s bytes=%s dt_ms=%s",
+            item.record_id, path.name, len(content), duration_ms,
+        )
+        self.diagnostics.add(
+            "GUTENBERG", "EPUB download", "ok", duration_ms=duration_ms,
+            detail={"bytes": len(content), "record_id": item.record_id, "content_type": content_type},
+            level="detailed",
+        )
+        return path, str(response.url)
+
+
+class GutenbergPlugin(ProviderPlugin):
+    descriptor = DESCRIPTOR
+
+    def __init__(self) -> None:
+        self._plugin_config: dict[str, Any] = {}
+
+    def activate(self, context: Any) -> "GutenbergPlugin":
+        self._plugin_config = dict(getattr(context, "config", {}) or {})
+        return self
+
+    def create_session(
+        self,
+        *,
+        credential_id: str,
+        label: str,
+        credentials: dict[str, Any],
+        options: dict[str, Any],
+        config: Any,
+        storage: Any,
+        diagnostics: Any,
+    ) -> ProviderSession:
+        merged_options = dict(self._plugin_config)
+        merged_options.update(options or {})
+        return GutenbergSession(
+            credential_id=credential_id,
+            label=label,
+            credentials=credentials,
+            options=merged_options,
+            config=config,
+            diagnostics=diagnostics,
+        )
+
+
+PLUGIN = GutenbergPlugin()

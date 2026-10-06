@@ -1,0 +1,47 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.provider.baen",
+    "version": "0.1.6",
+    "name": "Baen",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "provider.baen",
+      "type": "provider.library",
+      "entrypoint": "cifereca_baen:PLUGIN",
+      "display_name": "Baen",
+      "description": "Baen Free Library et catalogue de livres électroniques.",
+      "priority": 45,
+      "instantiation": "singleton_public",
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "properties": {
+          "timeout_seconds": {
+            "type": "number",
+            "default": 30
+          },
+          "max_download_bytes": {
+            "type": "integer",
+            "default": 104857600
+          }
+        }
+      },
+      "help_text": "Fonds public Baen Free Library : recherche et pagination serveur qualifiées (q/page/pageSize), téléchargement EPUB streamé et validé. Achats et My Books restent hors périmètre.",
+      "version": "0.1.6",
+      "capabilities": [
+        "catalog.search",
+        "catalog.detail",
+        "acquisition.download"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    }
+  ]
+}

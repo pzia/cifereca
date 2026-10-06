@@ -1,0 +1,193 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.epub-optimizer",
+    "version": "0.2.4",
+    "name": "Cifereca EPUB Optimizer",
+    "publisher": "Cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "document.transformer.epub-optimizer",
+      "type": "document.transformer",
+      "version": "0.2.4",
+      "entrypoint": "cifereca_epub_optimizer_transformer:PLUGIN",
+      "display_name": "Optimiseur EPUB e-ink",
+      "description": "Transforme un EPUB sans DRM en variante e-ink en optimisant uniquement les images raster.",
+      "help_text": "Transformer Core041 : travaille exclusivement sur des leases fournis par artifact.execution, préserve l’original et découvre les profils via cifereca.device.profile/1.",
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "priority": 50,
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "artifact.plan",
+        "artifact.transform"
+      ],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "Pillow",
+          "version": ">=11,<13",
+          "import": "PIL"
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "default_profile": {
+            "type": "string",
+            "default": "device.profile.xteink-x3"
+          },
+          "max_uncompressed_mb": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 4096,
+            "default": 2048
+          }
+        }
+      },
+      "requires_brokers": [],
+      "requires_contracts": [
+        {
+          "category": "device.profile",
+          "contract": "cifereca.device.profile",
+          "version": ">=1,<2",
+          "mode": "required",
+          "capabilities": [
+            "device.profile.describe"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "device.profile.xteink-x3",
+      "type": "device.profile",
+      "version": "0.2.4",
+      "entrypoint": "cifereca_epub_optimizer_profiles:XTEINK_X3_PLUGIN",
+      "display_name": "Xteink X3 / CrossPoint",
+      "description": "Profil 528×792, 4 niveaux de gris.",
+      "help_text": "Profil indépendant pour EPUB Optimizer ; peut être désactivé sans désactiver le transformer.",
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "device.profile.describe"
+      ],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    },
+    {
+      "id": "device.profile.xteink-x4",
+      "type": "device.profile",
+      "version": "0.2.4",
+      "entrypoint": "cifereca_epub_optimizer_profiles:XTEINK_X4_PLUGIN",
+      "display_name": "Xteink X4 / CrossPoint",
+      "description": "Profil 480×800, 4 niveaux de gris.",
+      "help_text": "Profil indépendant pour EPUB Optimizer ; peut être désactivé sans désactiver le transformer.",
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "device.profile.describe"
+      ],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    },
+    {
+      "id": "device.profile.kobo-clara-bw",
+      "type": "device.profile",
+      "version": "0.2.4",
+      "entrypoint": "cifereca_epub_optimizer_profiles:KOBO_CLARA_BW_PLUGIN",
+      "display_name": "Kobo Clara BW",
+      "description": "Profil 1072×1448, 300 ppp, niveaux de gris 8 bits.",
+      "help_text": "Profil indépendant pour EPUB Optimizer ; peut être désactivé sans désactiver le transformer.",
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "device.profile.describe"
+      ],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    },
+    {
+      "id": "device.profile.generic-eink",
+      "type": "device.profile",
+      "version": "0.2.4",
+      "entrypoint": "cifereca_epub_optimizer_profiles:GENERIC_EINK_PLUGIN",
+      "display_name": "E-ink générique",
+      "description": "Profil prudent 1200×1600 en niveaux de gris.",
+      "help_text": "Profil indépendant pour EPUB Optimizer ; peut être désactivé sans désactiver le transformer.",
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "device.profile.describe"
+      ],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    },
+    {
+      "id": "ui.page.epub-optimizer",
+      "type": "ui.page",
+      "version": "0.2.4",
+      "entrypoint": "cifereca_epub_optimizer_plugin:PLUGIN",
+      "display_name": "Optimiseur EPUB e-ink",
+      "description": "Page de recette manuelle et contribution d’action book.detail pour EPUB Optimizer.",
+      "help_text": "Ajoute l’action Optimiser… au détail d’un EPUB local. Core041 fournit artifact.execution : la variante est créée et persistée par le Core, sans chemin ou placement privé.",
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "requires": [
+        {
+          "plugin": "document.transformer.epub-optimizer",
+          "version": ">=0.2.4,<1"
+        }
+      ],
+      "recommends": [],
+      "capabilities": [
+        "ui.detail.action"
+      ],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "Pillow",
+          "version": ">=11,<13",
+          "import": "PIL"
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "default_profile": {
+            "type": "string",
+            "default": "device.profile.xteink-x3"
+          },
+          "max_uncompressed_mb": {
+            "type": "integer",
+            "minimum": 64,
+            "maximum": 4096,
+            "default": 2048
+          }
+        }
+      },
+      "requires_brokers": [
+        "artifact.execution"
+      ],
+      "requires_contracts": []
+    }
+  ]
+}

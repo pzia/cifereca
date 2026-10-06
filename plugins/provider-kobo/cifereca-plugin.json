@@ -1,0 +1,67 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.provider.kobo",
+    "version": "1.2.7",
+    "name": "Kobo Suite Provider",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "provider.kobo.catalog",
+      "type": "provider.library",
+      "entrypoint": "cifereca_kobo_catalog:PLUGIN",
+      "priority": 59,
+      "display_name": "Kobo — Catalogue",
+      "description": "Normalisation et recherche du catalogue Kobo, séparées de la bibliothèque personnelle.",
+      "version": "1.2.7",
+      "help_text": "Service de recherche et normalisation du catalogue consommé par provider.kobo ; utilise ses identifiants, sans connexion indépendante. Aucun format EPUB supposé lorsque le fournisseur ne l’annonce pas. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les couvertures du catalogue sont lues dans des champs URL identifiés ; les identifiants d’image seuls ne produisent pas d’URL. Cela ne génère ni première page ni couverture locale EPUB et ne déclenche aucune acquisition. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
+      "capabilities": [
+        "catalog.search",
+        "catalog.detail"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    },
+    {
+      "id": "provider.kobo",
+      "type": "provider.library",
+      "entrypoint": "cifereca_kobo:PLUGIN",
+      "priority": 60,
+      "display_name": "Kobo",
+      "description": "Bibliothèque personnelle/ownership Kobo via Kobo-Vault; le catalogue est une dépendance plugin séparée.",
+      "recommends": [
+        {
+          "plugin": "drm.ade",
+          "version": ">=1,<2"
+        },
+        {
+          "plugin": "drm.kobo-kdrm",
+          "version": ">=1,<2"
+        }
+      ],
+      "requires": [
+        {
+          "plugin": "provider.kobo.catalog",
+          "version": ">=1.2.7,<2"
+        }
+      ],
+      "version": "1.2.7",
+      "help_text": "Expose le compte et la bibliothèque Kobo via Kobo-Vault. Utilise le service du plugin catalogue déclaré. Un format absent reste inconnu jusqu’à une offre attestée ou au fichier final de backup ; le profil Adobe est nécessaire seulement pour ACSM. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les couvertures du catalogue sont lues dans des champs URL identifiés ; les identifiants d’image seuls ne produisent pas d’URL. Cela ne génère ni première page ni couverture locale EPUB et ne déclenche aucune acquisition. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
+      "capabilities": [
+        "catalog.search",
+        "catalog.detail",
+        "catalog.account",
+        "catalog.vault",
+        "acquisition.download"
+      ],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    }
+  ]
+}

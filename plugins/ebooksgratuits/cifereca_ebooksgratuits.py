@@ -1,0 +1,100 @@
+from __future__ import annotations
+import hashlib, html, re, tempfile, zipfile
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.parse import urljoin, quote_plus, urlsplit
+import httpx
+from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
+
+BASE='https://www.ebooksgratuits.com/'
+DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Source publique sans authentification.',))
+class Parser(HTMLParser):
+    """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True); self.cards=[]; self._depth=0; self._card=None; self._capture=None
+    @staticmethod
+    def _attrs(attrs): return {str(k).lower():str(v or '') for k,v in attrs}
+    def handle_starttag(self,tag,attrs):
+        tag=tag.lower(); a=self._attrs(attrs)
+        if tag=='li':
+            if self._depth==0: self._card={'title':[],'author':[],'description':[],'detail':'','epub':'','image':''}
+            self._depth+=1; return
+        if not self._card: return
+        classes={x.casefold() for x in a.get('class','').split()}
+        if tag=='a':
+            href=a.get('href','')
+            low=href.casefold()
+            if 'details.php' in low: self._card['detail']=urljoin(BASE,href)
+            if ('newsendbook.php' in low and 'format=epub' in low) or low.endswith('.epub'): self._card['epub']=urljoin(BASE,href)
+        elif tag=='img' and not self._card['image']:
+            src=a.get('src','').strip()
+            if src: self._card['image']=urljoin(BASE,src)
+        if tag in {'span','div','p'}:
+            if 'listeb' in classes: self._capture='title'
+            elif 'auteur' in classes: self._capture='author'
+            elif classes.intersection({'resume','résumé','description','descriptif'}): self._capture='description'
+    def handle_data(self,data):
+        if self._card and self._capture and data.strip(): self._card[self._capture].append(data.strip())
+    def handle_endtag(self,tag):
+        tag=tag.lower()
+        if tag in {'span','div','p'}: self._capture=None
+        if tag=='li' and self._depth:
+            self._depth-=1
+            if self._depth==0 and self._card is not None:
+                card=self._card; self._card=None
+                row={k:(' '.join(v).strip() if isinstance(v,list) else v) for k,v in card.items()}
+                if row['detail'] and row['epub'] and row['title']: self.cards.append(row)
+    def rows(self,text):
+        self.cards=[]; self._depth=0; self._card=None; self._capture=None; self.feed(text); self.close(); return list(self.cards)
+class EbooksSession(ProviderSession):
+    def __init__(self,*,config,diagnostics,**kw):
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.0','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+    def connect(self):
+        self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
+    def close(self): self.client.close(); self.connected=False; self._accounts=[]
+    def _fetch(self,url):
+        try:r=self.client.get(url); r.raise_for_status(); return r
+        except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : réseau indisponible') from e
+    @staticmethod
+    def _search_payload(query,page,page_size=50):
+        return {'titre':str(query or '').strip(),'offset':str(max(0,int(page))*int(page_size)),'Submit':'Rechercher'}
+    def search(self,query,scope='all',page=0,field='all'):
+        if not self.connected: raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
+        if scope == 'physical': return []
+        page=max(0,int(page))
+        if query or page:
+            try:
+                r=self.client.post(BASE+'ebooks.php',data=self._search_payload(query,page,self.page_size)); r.raise_for_status()
+            except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : recherche indisponible') from e
+        else:
+            r=self._fetch(BASE+'ebooks.php')
+        out=[]
+        for card in Parser().rows(r.text):
+            detail=card['detail']; epub=card['epub']; rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
+            out.append(SearchResult(id='ebooksgratuits:'+rid,record_id=rid,docbase='EBOOKSGRATUITS',medium='digital',title=card['title'],author=card['author'] or None,type='Livre numérique',format='EPUB',publisher='Ebooks libres et gratuits',published_at=None,description=card['description'] or None,thumbnail_url=card['image'] or None,friendly_url=detail,scenario='EBOOKSGRATUITS_CATALOG',source_provider='ebooksgratuits',source_credential=self.credential_id,download_url=epub,content_type='ebook',source_collection='public',owned=False,downloadable=True,metadata={'license_note':'Vérifier les droits selon le pays'}))
+        return out[:self.page_size]
+    def holdings(self,item,search_terms=''): return ItemDetail(record_id=item.record_id,docbase='EBOOKSGRATUITS',title=item.title,author=item.author,type=item.type,year=None,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Téléchargement public EPUB',holdings=[],source_provider=self.provider_id,source_credential=self.credential_id)
+    def download_direct(self,item,target_dir):
+        if item.source_provider!=self.provider_id or not item.download_url: raise ProviderError('Ebooks libres et gratuits : offre inconnue')
+        r=self._fetch(item.download_url)
+        if len(r.content)>self.maximum: raise ProviderError('Ebooks libres et gratuits : fichier trop volumineux')
+        d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/(re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub'; part=Path(tempfile.mktemp(prefix='.eg-',dir=d))
+        part.write_bytes(r.content)
+        try:
+            with zipfile.ZipFile(part) as z:
+                if z.read('mimetype')!=b'application/epub+zip': raise ValueError
+            part.replace(dest)
+        except (Exception,): part.unlink(missing_ok=True); raise ProviderError('Ebooks libres et gratuits : EPUB invalide')
+        return dest,item.friendly_url or BASE
+class Plugin(ProviderPlugin):
+    descriptor=DESCRIPTOR
+    def __init__(self): self._sessions=[]; self.context=None
+    def activate(self,context): self.context=context; return self
+    def deactivate(self):
+        for session in self._sessions:
+            try: session.close()
+            except Exception: pass
+        self._sessions.clear(); self.context=None
+    def create_session(self,*,credential_id,label,credentials,options,config,storage,diagnostics):
+        session=EbooksSession(credential_id=credential_id,label=label,credentials=credentials,options=options,config=config,diagnostics=diagnostics); self._sessions.append(session); return session
+PLUGIN=Plugin()

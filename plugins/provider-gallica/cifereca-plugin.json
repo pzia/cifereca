@@ -1,0 +1,84 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.provider.gallica",
+    "version": "1.2.9",
+    "name": "Gallica",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "provider.gallica",
+      "type": "provider.library",
+      "entrypoint": "cifereca_gallica:PLUGIN",
+      "display_name": "Gallica (BnF)",
+      "description": "EPUB publics via OPDS, recherche par champ, validation des archives ; audio SRU/OAI conservé.",
+      "priority": 50,
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "opds_url": {
+            "type": "string",
+            "format": "uri",
+            "title": "URL OPDS",
+            "default": "https://gallica.bnf.fr/opds"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 120,
+            "title": "Délai réseau",
+            "default": 25
+          },
+          "include_audio": {
+            "type": "boolean",
+            "default": true,
+            "title": "Inclure les documents sonores"
+          },
+          "max_download_bytes": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 268435456,
+            "default": 104857600,
+            "title": "Taille maximale ebook (octets)"
+          },
+          "max_audio_track_bytes": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 2147483648,
+            "default": 104857600,
+            "title": "Taille maximale piste audio (octets)"
+          },
+          "max_audio_bundle_bytes": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 2147483648,
+            "default": 536870912,
+            "title": "Taille maximale ensemble audio (octets)"
+          }
+        }
+      },
+      "recommends": [
+        {
+          "plugin": "transport.http",
+          "version": ">=1,<2"
+        }
+      ],
+      "help_text": "Recherchez les livres EPUB publics et les documents sonores de Gallica sans compte BnF. Les liens EPUB proviennent des offres OPDS ; une simple notice ARK ne suffit pas. La recherche générale conserve les deux branches. Désactivez include_audio pour rechercher seulement les ebooks. Les champs titre, auteur, ISBN et sujet sont pris en charge ; séries/collections ne le sont pas. Les paramètres réseau prennent effet à la prochaine connexion ou après redémarrage. Le filtre Livres numériques limite la recherche aux ebooks ; le filtre audio active seulement la branche sonore. Une source temporairement indisponible est signalée sans masquer les résultats de l’autre branche. Les formats audio restent inconnus jusqu’à la résolution/validation des pistes. Les bundles audio sont publiés complets et sans écrasement ; la publication atomique nécessite Linux avec renameat2. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
+      "version": "1.2.9",
+      "capabilities": [
+        "catalog.search",
+        "catalog.detail",
+        "acquisition.download",
+        "artifact.bundle"
+      ],
+      "requires": [],
+      "system_requires": [],
+      "requires_brokers": [],
+      "requires_contracts": []
+    }
+  ]
+}

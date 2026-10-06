@@ -1,0 +1,42 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.ui.page.home",
+    "version": "1.0.10",
+    "name": "Accueil",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.home",
+      "version": "1.0.10",
+      "type": "ui.page",
+      "entrypoint": "cifereca_home:PLUGIN",
+      "priority": 100,
+      "display_name": "Accueil",
+      "description": "Sources liées, compte ADE, synchronisation et accès direct à la bibliothèque.",
+      "help_text": "Tableau de bord par identité structuré en sections homogènes. Les cards d'identité sont disposées deux par ligne ; à l'intérieur de chaque card, statistiques globales, répartition des livres, sources authentifiées, activité de synchronisation et informations complémentaires utilisent des grilles homogènes jusqu'à trois colonnes avec couleurs sémantiques. Les compteurs et sources ouvrent les vues filtrées lorsque le broker Core le permet. Les données viennent de l'inventaire/synchronisation connus et n'effectuent aucun accès réseau lors de la lecture. Sur Core041, chaque source authentifiée propose aussi un accès direct à la configuration publique du plugin.",
+      "capabilities": [
+        "ui.dashboard",
+        "identity.list",
+        "sync.trigger"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "identities"
+      ],
+      "requires_contracts": [
+        {
+          "category": "provider.library",
+          "contract": "cifereca.provider",
+          "version": ">=1,<2",
+          "mode": "optional",
+          "capabilities": []
+        }
+      ]
+    }
+  ]
+}

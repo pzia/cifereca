@@ -1,0 +1,35 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.ui.page.diagnostics",
+    "version": "0.1.2",
+    "name": "Cifereca Diagnostics",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.diagnostics",
+      "type": "ui.page",
+      "entrypoint": "cifereca_diagnostics_page:PLUGIN",
+      "display_name": "Diagnostics",
+      "description": "Page technique autonome fondée sur le broker public diagnostics.",
+      "priority": 80,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "version": "0.1.2",
+      "help_text": "Affiche l'état système et les diagnostics expurgés fournis par le Core, avec copie du rapport texte. Aucun accès aux fichiers internes ni aux secrets.",
+      "capabilities": [
+        "ui.page",
+        "diagnostics.read"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "diagnostics"
+      ],
+      "requires_contracts": []
+    }
+  ]
+}

@@ -1,0 +1,445 @@
+from __future__ import annotations
+
+import json
+import logging
+import hashlib
+import uuid
+from pathlib import Path
+import shutil
+import subprocess
+import time
+
+from cifereca_runtime_diagnostics import safe_message, output_bytes, operation_family, stderr_summary
+from cifereca.plugin_api import (
+    ArtifactInput, AttentionRequired, DrmMutationRequest, DrmMutationResult,
+    PluginContext, UserFacingError,
+)
+
+
+class KoboAdeptError(UserFacingError):
+    def __init__(self, message, *, code, retryable=False, exit_code=None, technical_detail='', details=None):
+        super().__init__(safe_message(message), code=code, technical_detail=technical_detail)
+        self.retryable = retryable
+        self.exit_code = exit_code
+        self.details = dict(details or {})
+
+
+class KoboAdeptRuntime:
+    """Public contract v8, integration document 1.3; no device side effects."""
+    required_contract = 8
+
+    def __init__(self, context: PluginContext):
+        self.context = context
+        self.config = dict(context.config)
+        self.last_run_diagnostic = {}
+        self.contract_version = None
+
+    def _report(self, message, status="ok", *, level="detailed"):
+        # Diagnostics crossing the Core boundary contain only bounded technical facts.
+        allowed = {
+            "operation", "duration_ms", "stdout_bytes", "stderr_bytes", "returncode",
+            "stdout_mode", "stdout_summary", "stderr_summary", "json_line", "json_column",
+            "launch_error", "loan_count", "inventory_valid",
+        }
+        detail = {key: value for key, value in self.last_run_diagnostic.items() if key in allowed}
+        reporter = getattr(self.context, "report_diagnostic", None)
+        if not callable(reporter):
+            return
+        try:
+            reporter(message, status, detail=detail, level=level)
+        except Exception:
+            # Diagnostics must never alter the runtime operation.
+            logger = getattr(self.context, "logger", None)
+            if logger is not None:
+                logger.debug("Kobo-Adept diagnostic reporter unavailable", exc_info=True)
+
+    @property
+    def command(self):
+        value = self.config.get('command') or ['kobo-adept']
+        if not isinstance(value, list) or not value or not all(isinstance(x, str) and x for x in value):
+            raise AttentionRequired('Commande Kobo-Adept invalide.', code='kobo_adept_invalid_command')
+        return list(value)
+
+    def configured_command(self): return self.command
+    def available(self): return bool(shutil.which(self.command[0]))
+
+    def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
+        started = time.monotonic()
+        self.last_run_diagnostic = {'operation': operation_family(args)}
+
+        def statistics(stdout, stderr, returncode=None):
+            out, err = output_bytes(stdout), output_bytes(stderr)
+            self.last_run_diagnostic.update(
+                duration_ms=int((time.monotonic()-started)*1000),
+                stdout_bytes=len(out), stderr_bytes=len(err), stderr_summary=stderr_summary(err))
+            if returncode is not None:
+                self.last_run_diagnostic['returncode'] = returncode
+            return out, err
+
+        def fail(message, code, *, returncode=None, retryable=False):
+            detail = dict(self.last_run_diagnostic)
+            context = []
+            if returncode is not None:context.append(f'code retour={returncode}')
+            context.append('stdout=' + detail.get('stdout_summary', 'inconnu'))
+            context.append('stderr=' + detail.get('stderr_summary', 'inconnu'))
+            self._report(f"Kobo-Adept {detail.get('operation') or 'operation'}", "error", level="normal")
+            raise KoboAdeptError(message + ' (' + '; '.join(context) + ')', code=code,
+                exit_code=returncode, retryable=retryable, details=detail,
+                technical_detail=json.dumps(detail, ensure_ascii=False)) from None
+
+        try:
+            # Byte transport is independent of the parent locale. Only the
+            # request is encoded; raw process streams never become diagnostics.
+            proc = subprocess.run([*self.command, *args],
+                input=json.dumps(payload, ensure_ascii=False).encode('utf-8') if payload is not None else None,
+                capture_output=True, timeout=timeout, check=False)
+        except FileNotFoundError:
+            self.last_run_diagnostic['duration_ms'] = int((time.monotonic()-started)*1000)
+            raise AttentionRequired("Kobo-Adept n'est pas installé.", code='kobo_adept_missing') from None
+        except subprocess.TimeoutExpired as exc:
+            statistics(exc.output, exc.stderr)
+            self.last_run_diagnostic.update(stdout_mode='timeout', stdout_summary='sortie partielle après délai')
+            fail("Kobo-Adept a dépassé le délai d'exécution.", 'kobo_adept_timeout', retryable=True)
+        except OSError as exc:
+            self.last_run_diagnostic.update(duration_ms=int((time.monotonic()-started)*1000), launch_error=type(exc).__name__)
+            fail('Kobo-Adept ne peut pas être exécuté.', 'kobo_adept_launch_error')
+
+        out, err = statistics(proc.stdout, proc.stderr, proc.returncode)
+        if max_output_bytes is not None and len(out) > max_output_bytes:
+            self.last_run_diagnostic.update(stdout_mode='oversized', stdout_summary='sortie trop volumineuse')
+            fail('La réponse Kobo-Adept dépasse la limite de lecture.', 'kobo_adept_output_too_large', returncode=proc.returncode)
+        try:
+            text = out.decode('utf-8')
+        except UnicodeDecodeError:
+            self.last_run_diagnostic.update(stdout_mode='invalid_utf8', stdout_summary='UTF-8 invalide')
+            fail('La réponse Kobo-Adept ne respecte pas UTF-8.', 'kobo_adept_invalid_utf8', returncode=proc.returncode)
+        try:
+            value = json.loads(text)
+        except (ValueError, TypeError) as exc:
+            summary = 'vide' if not text.strip() else 'JSON invalide'
+            self.last_run_diagnostic.update(stdout_mode='invalid_json', stdout_summary=summary)
+            if isinstance(exc, json.JSONDecodeError):
+                self.last_run_diagnostic.update(json_line=exc.lineno, json_column=exc.colno)
+            message = ("Kobo-Adept a échoué et n'a pas fourni de JSON exploitable." if proc.returncode != 0
+                       else 'Kobo-Adept a renvoyé une réponse JSON invalide.')
+            fail(message, 'kobo_adept_invalid_json', returncode=proc.returncode)
+        if not isinstance(value, dict):
+            self.last_run_diagnostic.update(stdout_mode='unexpected_json_type', stdout_summary='JSON de type inattendu')
+            fail('Kobo-Adept a renvoyé un document inattendu.', 'kobo_adept_invalid_response', returncode=proc.returncode)
+        self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
+        if proc.returncode != 0 or value.get('ok') is False:
+            error = value.get('error') if isinstance(value.get('error'), dict) else {}
+            fail(safe_message(error.get('message') or 'Échec Kobo-Adept'),
+                str(error.get('code') or 'kobo_adept_failed'),
+                returncode=proc.returncode, retryable=error.get('retryable') is True)
+        self._report(f"Kobo-Adept {self.last_run_diagnostic.get('operation') or 'operation'}", "ok")
+        return value
+
+    def contract(self):
+        value = self.run_json(['contract', '--json'], timeout=20)
+        try: version = int(value.get('contract_version') or 0)
+        except (ValueError, TypeError) as exc:
+            raise KoboAdeptError('Version de contrat Kobo-Adept invalide.',code='kobo_adept_invalid_contract') from exc
+        if value.get('name') != 'kobo-adept':
+            raise AttentionRequired('Le programme ne publie pas le contrat Kobo-Adept.',code='kobo_adept_invalid_contract')
+        if version < self.required_contract:
+            raise AttentionRequired(f'Kobo-Adept contract v{version} est trop ancien.',code='kobo_adept_contract_old')
+        self.contract_version = version
+        return value
+
+    def capabilities(self):
+        value = self.run_json(['capabilities', '--json'])
+        self._capabilities_cache = value
+        return value
+
+    def _caps(self):
+        value = getattr(self, '_capabilities_cache', None)
+        if value is None: value = self.capabilities()
+        caps = value.get('capabilities', value)
+        if not isinstance(caps, dict):
+            raise KoboAdeptError('Capabilities Kobo-Adept invalides.',code='kobo_adept_invalid_response')
+        return caps
+
+    def _available(self, *keys):
+        value = self._caps()
+        for key in keys:
+            if not isinstance(value, dict): return False
+            value = value.get(key)
+        return value is True or (isinstance(value, dict) and value.get('available') is True)
+
+    def _require_download(self, payload):
+        source = payload.get('source')
+        if not isinstance(source, dict) or source.get('type') not in {'http', 'acsm', 'kobo'}:
+            raise AttentionRequired('Recette de téléchargement invalide.',code='invalid_request')
+        kind = source['type']
+        handling = str(source.get('handling') or (payload.get('metadata') or {}).get('handling') or '').casefold()
+        if kind == 'http' and handling in {'kobo_kdrm','adobe_adept'}:
+            raise AttentionRequired('Un candidat DRM ne peut pas devenir HTTP direct.',code='unsupported_drm')
+        if not payload.get('destination'):
+            raise AttentionRequired('Destination exacte requise.',code='invalid_request')
+        if not self._available('download', kind):
+            raise AttentionRequired('Capability de téléchargement indisponible.',code='unsupported_format')
+        if kind == 'acsm':
+            profile = str(payload.get('profile') or '')
+            adept = self._caps().get('adept')
+            ready = adept.get('fetch_capable_profiles', []) if isinstance(adept, dict) else []
+            if not profile or profile not in ready:
+                raise AttentionRequired('Le profil ADEPT choisi ne permet pas le fulfillment ACSM.',code='adept_profile_required')
+        if kind == 'kobo':
+            candidate = source.get('candidate') or {}
+            drm = str(candidate.get('drm_type') or '').casefold()
+            if drm in {'adobedrm', 'adobe_adept', 'adept'}:
+                raise AttentionRequired('AdobeDrm nécessite un candidat ACSM.',code='unsupported_drm')
+            if drm == 'kdrm':
+                context = source.get('kdrm') or {}
+                if not self._available('download', 'kobo', 'drm', 'KDRM'):
+                    raise AttentionRequired('Backend KDRM indisponible.',code='kobo_kdrm_backend_unavailable')
+                if not source.get('request') or not context.get('device_id') or not context.get('user_id'):
+                    raise AttentionRequired('Recette et contexte KDRM requis.',code='kobo_kdrm_context_required')
+            if self._has_content_keys(source):
+                raise AttentionRequired('Les clés Kobo doivent être récupérées localement par Adept.',code='invalid_request')
+        return kind
+
+    @staticmethod
+    def _has_content_keys(value):
+        if isinstance(value, dict):
+            return any(str(k).casefold().replace('_','') == 'contentkeys' or KoboAdeptRuntime._has_content_keys(v) for k,v in value.items())
+        if isinstance(value, list): return any(KoboAdeptRuntime._has_content_keys(v) for v in value)
+        return False
+
+    @staticmethod
+    def _request_dict(request):
+        if isinstance(request, DrmMutationRequest):
+            return {'operation': request.operation, 'identity_id': request.identity_id,
+                'provider_id': request.provider_id, 'loan_id': request.loan_id,
+                'source': dict(request.source), 'destination': str(request.destination) if request.destination else None,
+                'media_format': request.media_format, 'profile_ref': request.profile_ref,
+                'metadata': dict(request.metadata)}
+        return dict(request)
+
+    def supports(self, request):
+        payload = self._request_dict(request)
+        op = str(payload.get('operation') or '').casefold()
+        try:
+            if op == 'return': return self._available('adept', 'loan_return')
+            if op == 'fulfill':
+                self._require_download(self._fulfill_payload(payload)); return True
+        except UserFacingError: return False
+        # No canonical renewal primitive is published by integration contract 1.1.
+        return False
+
+    @staticmethod
+    def _return_binding(payload):
+        metadata = payload.get('metadata') or {}
+        # DrmMutationRequest.loan_id can be a PROVIDER id. Never use it as ADEPT id.
+        loan = str(metadata.get('adept_loan_id') or '').strip()
+        profile = str(metadata.get('adept_profile_name') or '').strip()
+        if not loan or not profile or loan.startswith('-') or profile.startswith('-'):
+            raise AttentionRequired('Loan ID ADEPT et nom du profil de fulfillment requis.',code='adept_return_binding_required')
+        return loan, profile
+
+    @staticmethod
+    def _fulfill_payload(payload):
+        return {'schema_version': 2, 'source': dict(payload.get('source') or {}),
+            'destination': payload.get('destination'), 'format': payload.get('media_format') or payload.get('format') or 'epub',
+            'profile': (payload.get('metadata') or {}).get('adept_profile_name') or payload.get('profile'),
+            'metadata': dict(payload.get('metadata') or {})}
+
+    def return_diagnostic(self):
+        """Bounded phase/proof flags; no profile, loan ID or raw process output."""
+        return dict(getattr(self, '_return_diagnostic', {}))
+
+    def return_loan(self, loan_id, profile):
+        logger = getattr(self.context, 'logger', None) or logging.getLogger('cifereca.plugin.runtime.kobo-adept')
+        started = time.monotonic()
+        trace=uuid.uuid4().hex[:12]
+        self._return_diagnostic = {'phase': 'binding', 'trace_id':trace, 'cli_requested': False, 'cli_confirmed': False}
+        def phase(name, **detail):
+            self._return_diagnostic.update(phase=name, **detail)
+            logger.info('ADEPT return trace=%s phase=%s cli_requested=%s cli_confirmed=%s duration_ms=%s',
+                        trace,name, self._return_diagnostic['cli_requested'], self._return_diagnostic['cli_confirmed'],
+                        int((time.monotonic()-started)*1000))
+        try:
+            phase('binding')
+            loan, name = self._return_binding({'metadata': {'adept_loan_id': loan_id, 'adept_profile_name': profile}})
+            phase('capability_check')
+            if not self._available('adept', 'loan_return'):
+                raise AttentionRequired('Retour ADEPT indisponible.',code='adept_loan_return_unsupported')
+            logger.info('ADEPT return trace=%s binding loan_ref=%s profile_ref=%s executable_ref=%s',trace,
+                        hashlib.sha256(loan.encode()).hexdigest()[:12],hashlib.sha256(name.encode()).hexdigest()[:12],
+                        hashlib.sha256(str(shutil.which(self.command[0]) or self.command[0]).encode()).hexdigest()[:12])
+            phase('cli_dispatch', cli_requested=True)
+            value = self.run_json(['acsm', 'return', loan, '--profile', name, '--json'],timeout=120)
+            process=dict(getattr(self,'last_run_diagnostic',{}) or {})
+            logger.info('ADEPT return trace=%s cli-process exit_code=%s duration_ms=%s stdout_bytes=%s stderr_bytes=%s',trace,
+                        process.get('returncode'),process.get('duration_ms'),process.get('stdout_bytes'),process.get('stderr_bytes'))
+            matches = {'ok_confirmed': value.get('ok') is True,
+                       'operation_matches': value.get('operation') == 'loan_return',
+                       'loan_matches': value.get('loan_id') == loan,
+                       'profile_matches': value.get('profile') == name}
+            phase('response_validation', **matches)
+            if not all(matches.values()):
+                raise KoboAdeptError('Résultat de restitution incohérent.',code='kobo_adept_invalid_response')
+            phase('cli_confirmation', cli_confirmed=True)
+            # The CLI reports dispatch success; contract 1.3 also specifies an
+            # exact returned entry in the originating profile's local registry.
+            # Never let Core persist a returned state before this check.
+            phase('inventory_verification', inventory_confirmed=False)
+            try:
+                inventory = self.loans(name)
+                matches = [row for row in inventory['loans'] if row['id'] == loan]
+            except Exception as exc:
+                raise KoboAdeptError(
+                    'Commande de restitution confirmée, mais inventaire ADEPT illisible. '
+                    'Vérifiez le prêt avant toute nouvelle restitution ; le fichier est conservé.',
+                    code='adept_return_verification_unavailable', retryable=False) from exc
+            exact=len(matches)==1
+            returned=matches[0].get('returned') if exact else None
+            token_present=matches[0].get('token_present') if exact else None
+            logger.info('ADEPT return trace=%s inventory matches=%s returned=%s token_present=%s',trace,len(matches),returned,token_present)
+            self._return_diagnostic.update(inventory_matches=len(matches),registry_returned=returned,token_present=token_present)
+            if not exact or returned is not True or token_present is not False:
+                raise KoboAdeptError(
+                    'Commande de restitution confirmée, mais état restitué et absence du jeton non confirmés dans ADEPT. '
+                    'Vérifiez le prêt avant toute nouvelle restitution ; le fichier est conservé.',
+                    code='adept_return_not_confirmed', retryable=False)
+            phase('inventory_confirmation', inventory_confirmed=True)
+            return value
+        except Exception as exc:
+            failed_phase = self._return_diagnostic['phase']
+            # Codes originate from structured exceptions, never the raw message.
+            code = getattr(exc, 'code', 'adept_return_failed')
+            safe_codes = {'adept_return_verification_unavailable', 'adept_return_not_confirmed', 'adept_return_binding_required', 'adept_loan_return_unsupported', 'kobo_adept_invalid_response', 'kobo_adept_missing', 'kobo_adept_timeout', 'kobo_adept_launch_error', 'kobo_adept_invalid_json', 'kobo_adept_invalid_utf8', 'kobo_adept_failed'}
+            code = code if code in safe_codes else 'adept_return_failed'
+            phase('failed', failed_phase=failed_phase, error_code=code[:120])
+            logger.warning('ADEPT return trace=%s failed phase=%s code=%s', trace,failed_phase, code[:120])
+            if self._return_diagnostic['cli_requested']:
+                process=dict(getattr(self,'last_run_diagnostic',{}) or {})
+                logger.warning('ADEPT return trace=%s failure-process exit_code=%s duration_ms=%s stdout_bytes=%s stderr_bytes=%s',trace,process.get('returncode'),process.get('duration_ms'),process.get('stdout_bytes'),process.get('stderr_bytes'))
+            raise
+        finally:
+            self._return_diagnostic['duration_ms'] = int((time.monotonic()-started)*1000)
+
+    def execute(self, request):
+        payload = self._request_dict(request)
+        op = str(payload.get('operation') or '').casefold()
+        if op == 'return':
+            loan, name = self._return_binding(payload)
+            value = self.return_loan(loan, name)
+            return DrmMutationResult(ok=True,operation='return',metadata={
+                'runtime_result': value, 'adept_loan_id': loan, 'adept_profile_name': name,
+                'loan_state': 'returned', 'artifact_preserved': True})
+        if op == 'fulfill':
+            value = self.download_request(self._fulfill_payload(payload))
+            artifact = value['artifact']
+            return DrmMutationResult(ok=True,operation='fulfill',artifact=ArtifactInput(
+                path=Path(artifact['path']),format=artifact.get('format',''),sha256=artifact.get('sha256','')),
+                metadata={'runtime_result':value,'adept_loan_id':value.get('loan_id'),
+                          'adept_profile_name':value.get('profile')})
+        raise AttentionRequired('Opération DRM non publiée par Kobo-Adept.',code='kobo_adept_drm_mutation_unsupported')
+
+    def download_request(self, request):
+        if self.contract_version is None: self.contract()
+        payload = dict(request)
+        # Core 0.9.5 emits compatible schema-1 recipes; the v2 fields are identical here.
+        payload['schema_version'] = 2
+        self._require_download(payload)
+        value = self.run_json(['download','request','-','--json'],payload=payload,
+            timeout=int(self.config.get('download_timeout_seconds') or 900))
+        artifact = value.get('artifact')
+        if value.get('ok') is not True or not isinstance(artifact, dict) or not artifact.get('path'):
+            raise KoboAdeptError('Artifact absent du résultat.',code='kobo_adept_invalid_response')
+        if Path(artifact['path']).resolve() != Path(payload['destination']).resolve():
+            raise KoboAdeptError('Adept a publié une destination différente de celle demandée.',code='kobo_adept_destination_mismatch')
+        # Validation belongs to the final publisher/core; return all authoritative fields,
+        # including profile and optional ADEPT loan_id, without inventing missing values.
+        return value
+
+    @staticmethod
+    def _loan_profile(profile):
+        # Caller resolves the stable profile ID to its current CLI name.
+        # No implicit default and no discovery of unrelated identities.
+        if (not isinstance(profile, str) or not profile or profile != profile.strip()
+                or profile.startswith('-') or len(profile) > 256
+                or any(ord(c) < 32 for c in profile)):
+            raise AttentionRequired('Nom explicite du profil ADEPT requis.', code='adept_profile_required')
+        return profile
+
+    def _loan_inventory(self, profile, *, expired=False):
+        name = self._loan_profile(profile)
+        if self.contract_version is None:
+            self.contract()
+        operation = 'expired' if expired else 'list'
+        # Reading the registry is independent of loan_return and fetch readiness.
+        value = self.run_json(['loans', operation, '--profile', name, '--json'],
+                              timeout=30, max_output_bytes=4*1024*1024)
+        rows = value.get('loans')
+        if not isinstance(rows, list) or len(rows) > 5000:
+            raise KoboAdeptError('Inventaire des prêts ADEPT invalide.', code='kobo_adept_invalid_loan_inventory')
+        loans = []
+        for row in rows:
+            if (not isinstance(row, dict) or not isinstance(row.get('id'), str)
+                    or not row['id'].strip() or row['id'].startswith('-')
+                    or any(type(row.get(k)) is not bool for k in ('expired', 'returned', 'token_present'))):
+                raise KoboAdeptError('Entrée de prêt ADEPT invalide.', code='kobo_adept_invalid_loan_inventory')
+            if expired and (not row['expired'] or row['returned']):
+                raise KoboAdeptError('Inventaire expiré incohérent.', code='kobo_adept_invalid_loan_inventory')
+            loan = {k: row[k] for k in ('id', 'expired', 'returned', 'token_present')}
+            # Technical token_path/operator_url and arbitrary fields are tolerated,
+            # but never become an application dependency or copied diagnostics.
+            for key in ('title', 'validity', 'local_book', 'fetched_at', 'returned_at'):
+                field = row.get(key)
+                if isinstance(field, str) and len(field) <= 8192:
+                    loan[key] = field
+            if isinstance(row.get('devices'), list) and len(row['devices']) <= 100:
+                loan['devices'] = row['devices']
+            loans.append(loan)
+        self.last_run_diagnostic.update(loan_count=len(loans), inventory_valid=True)
+        return {'loans': loans}
+
+    def loans(self, profile):
+        """Read tracked ADEPT loans for an explicit CLI profile name."""
+        return self._loan_inventory(profile)
+
+    def expired_loans(self, profile):
+        """Read expired, not-returned loans. Never return one automatically."""
+        return self._loan_inventory(profile, expired=True)
+
+    def loan_inventories(self, profiles, *, expired=False):
+        """Read only caller-designated candidates, retaining profile namespaces.
+
+        Identity/origin selection and Artifact matching belong to Core. A
+        partial response cannot establish global absence or a unique binding.
+        """
+        if not isinstance(profiles, (list, tuple)) or len(profiles) > 8:
+            raise AttentionRequired('Liste explicite de huit profils ADEPT au maximum requise.', code='adept_profile_candidates_invalid')
+        names = list(dict.fromkeys(self._loan_profile(p) for p in profiles))
+        result = {'profiles': [], 'errors': [], 'complete': True}
+        for name in names:
+            try:
+                inventory = self._loan_inventory(name, expired=expired)
+                result['profiles'].append({'profile': name, 'loans': inventory['loans']})
+            except UserFacingError as exc:
+                result['complete'] = False
+                result['errors'].append({'profile': name, 'code': exc.code, 'message': safe_message(str(exc))})
+        return result
+
+    def probe_core(self):
+        return {'contract':self.contract(),'capabilities':self.capabilities(),
+            'resolved_executable':shutil.which(self.command[0]),'probe_timings_ms':{}}
+    def probe(self): return self.probe_core()
+    def profiles(self): return self.run_json(['profile','list','--json'],timeout=30)
+    def profile(self,name): return self.run_json(['profile','show',str(name),'--json'],timeout=30)
+
+
+class Plugin:
+    def __init__(self): self.service = None
+    def activate(self, context):
+        self.service = KoboAdeptRuntime(context)
+        self.service.contract()
+        self.service.capabilities()
+        return self.service
+    def deactivate(self): self.service = None
+
+
+PLUGIN = Plugin()

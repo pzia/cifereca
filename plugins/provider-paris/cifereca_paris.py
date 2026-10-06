@@ -1,0 +1,386 @@
+from __future__ import annotations
+from cifereca_paris_download import validate_document, atomic_write
+from cifereca_paris_formats import explicit_formats
+
+import logging
+import re
+import time
+import unicodedata
+from pathlib import Path
+from typing import Any
+from urllib.parse import urljoin, urlparse
+
+from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AcquisitionOffer
+from cifereca_paris_client import ParisClient
+from cifereca.plugin_api import (
+    CredentialField,
+    ProviderCapabilities,
+    ProviderConfigurationError,
+    ProviderDescriptor,
+    ProviderPlugin,
+    ProviderSession,
+)
+
+_TRACE_LOG = logging.getLogger("cifereca")
+
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
+
+
+DESCRIPTOR = ProviderDescriptor(
+    id="paris",
+    display_name="Bibliothèques de Paris",
+    description="Catalogue, compte lecteur et prêt numérique PNB des Bibliothèques de Paris.",
+    state="ready",
+    capabilities=ProviderCapabilities(
+        authentication=True,
+        multiple_credentials=True,
+        linked_accounts=True,
+        search=True,
+        loans=True,
+        history=True,
+        bookings=True,
+        holdings=True,
+        borrow=True,
+        digital_download=True,
+        return_loan=True,
+        renew_loan=True,
+    ),
+    credential_fields=(
+        CredentialField("username", "Identifiant", placeholder="Numéro de carte ou e-mail"),
+        CredentialField("password", "Mot de passe", secret=True),
+    ),
+    homepage="https://bibliotheques.paris.fr",
+)
+
+
+class ParisProviderSession(ProviderSession):
+    def __init__(self, *, config: Any, diagnostics: Any, **kwargs: Any) -> None:
+        super().__init__(descriptor=DESCRIPTOR, **kwargs)
+        base_url = str(self.options.get("base_url") or (config.paris_base_url(self.credential_id) if hasattr(config, "paris_base_url") else config.get("base_url", "https://bibliotheques.paris.fr")))
+        timeout = float(self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("paris", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
+        self.diagnostics = diagnostics
+        self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)
+        self.last_loan_errors: list[dict[str, str]] = []
+        self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
+
+    def _decorate_account(self, account: Account) -> Account:
+        account.provider_id = self.provider_id
+        account.credential_id = self.credential_id
+        account.provider_label = self.descriptor.display_name
+        return account
+
+    def connect(self) -> list[Account]:
+        username = str(self.credentials.get("username") or "").strip()
+        password = str(self.credentials.get("password") or "")
+        if not username or not password:
+            raise ProviderConfigurationError("Bibliothèques de Paris : identifiant et mot de passe requis")
+        self.client.login(username, password)
+        summary = self.client.summary("SYRACUSE", "")
+        primary = self._decorate_account(Account(
+            display_name=str(summary.get("DisplayName") or self.label or "Compte principal"),
+            barcode=str(summary.get("Barcode") or ""),
+            unique_id="",
+            is_primary=True,
+        ))
+        try:
+            linked = [self._decorate_account(x) for x in self.client.pairings()]
+        except Exception:
+            linked = []
+        self._accounts = [primary, *linked]
+        self.connected = True
+        return self.accounts
+
+    def connect_with_credentials(self, username: str, password: str) -> list[Account]:
+        self.credentials = {"username": username, "password": password}
+        return self.connect()
+
+    def close(self) -> None:
+        self.client.close()
+        self.connected = False
+
+    @staticmethod
+    def _decorate(items: list[Any], provider_id: str, credential_id: str) -> list[Any]:
+        for item in items:
+            if hasattr(item, "source_provider"):
+                item.source_provider = provider_id
+            if hasattr(item, "source_credential"):
+                item.source_credential = credential_id
+            # Catalogue identifiers are only unique inside a provider. Prefix
+            # the UI identity while preserving `record_id` for upstream calls.
+            if isinstance(item, SearchResult):
+                item.id = f"{provider_id}:{item.id}"
+        return items
+
+    @staticmethod
+    def _fold_catalog_text(value: Any) -> str:
+        text = unicodedata.normalize("NFKD", str(value or ""))
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+    @staticmethod
+    def _loan_embedded_metadata(loan: Loan) -> dict[str, Any]:
+        raw = loan.raw if isinstance(loan.raw, dict) else {}
+        additional = raw.get("AdditionalProperties") if isinstance(raw.get("AdditionalProperties"), dict) else {}
+        author = (
+            additional.get("Auteur") or additional.get("Author") or additional.get("Creator")
+            or raw.get("Auteur") or raw.get("Author") or raw.get("Creator")
+        )
+        formats, _evidence = explicit_formats(('AdditionalProperties', additional), ('Loan', raw))
+        media_format = formats[0] if len(formats) == 1 else None
+        return {
+            "author": str(author).strip() if author else None,
+            "format": str(media_format).strip() if media_format else None,
+        }
+
+    def _enrich_digital_loan_metadata(self, loan: Loan) -> None:
+        """Attach bounded catalogue metadata without changing the public Loan contract.
+
+        DILICOM ListLoans does not reliably expose author/media format in the
+        normalized Loan model.  Keep the authoritative upstream loan untouched,
+        but add a plugin-owned metadata projection under ``raw['_cifereca']``.
+        One bounded EBOOKS lookup is attempted only when the loan payload itself
+        is missing author or format.  Failure to enrich must never hide a loan.
+        """
+        if loan.medium != "digital" or str(loan.provider).upper() != "DILICOM":
+            return
+
+        embedded = self._loan_embedded_metadata(loan)
+        record_id = str(loan.record_id or "").strip()
+        cache_key = record_id or f"title:{self._fold_catalog_text(loan.title)}"
+        metadata = dict(self._loan_catalog_metadata_cache.get(cache_key) or {})
+
+        if not metadata and embedded.get("author") and embedded.get("format"):
+            metadata = embedded
+        elif not metadata:
+            rows: list[SearchResult] = []
+            queries = [record_id] if record_id else []
+            title = str(loan.title or "").strip()
+            if title and self._fold_catalog_text(title) not in {self._fold_catalog_text(q) for q in queries}:
+                queries.append(title)
+            try:
+                matched: SearchResult | None = None
+                for query in queries[:2]:
+                    rows = self.client.search_catalog(query, scenario="EBOOKS", result_size=12)
+                    if record_id:
+                        matched = next((row for row in rows if str(row.record_id) == record_id), None)
+                    if matched is None and title:
+                        folded_title = self._fold_catalog_text(title)
+                        title_matches = [row for row in rows if self._fold_catalog_text(row.title) == folded_title]
+                        if len(title_matches) == 1:
+                            matched = title_matches[0]
+                    if matched is not None:
+                        break
+                if matched is not None:
+                    metadata = {
+                        "author": matched.author or embedded.get("author"),
+                        "format": matched.format or embedded.get("format"),
+                        "type": matched.type,
+                        "publisher": matched.publisher,
+                        "published_at": matched.published_at,
+                        "thumbnail_url": matched.thumbnail_url,
+                        "record_id": matched.record_id,
+                        "source": "catalog:EBOOKS",
+                    }
+                else:
+                    metadata = {**embedded, "source": "loan-payload"}
+            except Exception as exc:
+                metadata = {**embedded, "source": "loan-payload", "catalog_enrichment_error": type(exc).__name__}
+                try:
+                    self.diagnostics.add(
+                        "CATALOG", "loan metadata enrichment", "error",
+                        detail={
+                            "provider": self.provider_id,
+                            "record_id_present": bool(record_id),
+                            "error": type(exc).__name__,
+                        },
+                        level="detailed",
+                    )
+                except Exception:
+                    pass
+
+        if cache_key:
+            self._loan_catalog_metadata_cache[cache_key] = dict(metadata)
+        if not isinstance(loan.raw, dict):
+            loan.raw = {}
+        loan.raw["_cifereca"] = {k: v for k, v in metadata.items() if v not in {None, ""}}
+        # Plugin API 0.9.3 promotes the two library-critical facets to the
+        # normalized Loan contract. Keep raw metadata for compatibility/detail,
+        # but make Library filtering independent from that implementation detail.
+        if not loan.author and metadata.get("author"):
+            loan.author = str(metadata["author"])
+        if not loan.media_format and metadata.get("format"):
+            loan.media_format = str(metadata["format"]).strip().lower() or None
+        if not loan.thumbnail_url and metadata.get("thumbnail_url"):
+            loan.thumbnail_url = str(metadata["thumbnail_url"])
+
+    def loans(self, account: Account) -> list[Loan]:
+        # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
+        # services. One transient failure must not hide all loans from the other.
+        rows: list[Loan] = []
+        errors: list[dict[str, str]] = []
+        for upstream in ("DILICOM", "SYRACUSE"):
+            try:
+                rows.extend(self.client.loans(upstream, account.unique_id))
+            except Exception as exc:
+                errors.append({"upstream": upstream, "error": str(exc), "type": type(exc).__name__})
+                try:
+                    self.diagnostics.add(
+                        "API", f"loans {upstream}", "error",
+                        detail={"provider": self.provider_id, "credential_id": self.credential_id,
+                                "account_id": account.unique_id, "error": type(exc).__name__, "message": str(exc)},
+                    )
+                except Exception:
+                    pass
+        self.last_loan_errors = errors
+        if errors and not rows and len(errors) == 2:
+            raise ProviderConfigurationError(
+                "Bibliothèques de Paris : impossible de synchroniser les prêts DILICOM et SYRACUSE: "
+                + " ; ".join(f"{e['upstream']}: {e['error']}" for e in errors)
+            )
+        rows = self._decorate(rows, self.provider_id, self.credential_id)
+        for loan in rows:
+            self._enrich_digital_loan_metadata(loan)
+        # Persist the exact borrower on each loan. Paris uses the empty string
+        # for the primary account, which must not be confused with "unknown".
+        for loan in rows:
+            loan.source_account_id = account.unique_id or "primary"
+        return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
+
+    def history(self, account: Account) -> list[HistoryItem]:
+        return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
+
+    def bookings(self, account: Account) -> list[Booking]:
+        return self._decorate(self.client.all_bookings(account.unique_id), self.provider_id, self.credential_id)
+
+    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        try:
+            return self._decorate(self.client.search(query, scope, page), self.provider_id, self.credential_id)
+        finally:
+            self.last_search_warnings = list(self.client.last_search_warnings)
+
+    def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
+        detail = self.client.holdings(item.docbase, item.record_id, item.scenario, search_terms)
+        detail.source_provider = self.provider_id
+        detail.source_credential = self.credential_id
+        return detail
+
+    def borrow(self, item: SearchResult, account: Account) -> Loan:
+        """Create a real Paris PNB loan using the captured official redirect flow.
+
+        The captured contract is valid for the primary account only.  Paris uses
+        the empty upstream UID for that account; linked/delegated accounts remain
+        intentionally rejected until their mutation flow is captured.
+        """
+        uid = "" if account.is_primary or not account.unique_id else account.unique_id
+        loan = self.client.borrow_digital(item, uid)
+        loan.source_provider = self.provider_id
+        loan.source_credential = self.credential_id
+        loan.source_account_id = account.unique_id or "primary"
+        self._enrich_digital_loan_metadata(loan)
+        return loan
+
+    def renew(self, loan: Loan, account: Account) -> dict[str, Any]:
+        return self.client.renew_loan(loan, "" if account.is_primary else account.unique_id)
+
+    def return_digital(self, loan: Loan, account: Account) -> dict[str, Any]:
+        return self.client.return_digital_loan(loan, "" if account.is_primary else account.unique_id)
+
+    def digital_preferences(self, account: Account) -> dict[str, Any]:
+        return self.client.pnb_preferences()
+
+    def diagnostic_state(self) -> dict[str, Any]:
+        state = super().diagnostic_state()
+        state["pnb_borrow"] = dict(getattr(self.client, "last_pnb_borrow", {"phase": "unknown"}))
+        return state
+
+    def download_digital(self, loan: Loan, account: Account, target_dir: Path) -> tuple[Path, str]:
+        started = time.monotonic()
+        account_key = str(loan.source_account_id or account.unique_id or "primary")
+
+        # Active DILICOM loans already carry their PNB delivery URL in
+        # AdditionalProperties.EbookUrl.  That URL represents the existing
+        # right and must be preferred over Syracuse DownloadDigitalDocument,
+        # which can re-apply borrowing/quota business rules to an already
+        # active loan.
+        direct_url = str(loan.ebook_url or "").strip()
+        if direct_url:
+            url = urljoin(self.client.base_url + "/", direct_url)
+            parsed_direct = urlparse(url)
+            if parsed_direct.scheme not in {"http", "https"}:
+                raise ProviderConfigurationError("Lien PNB du prêt invalide: schéma HTTP(S) requis")
+            _TRACE_LOG.info(
+                "TRACE download paris direct-loan-url loan_id=%s account_key=%s host=%s path=%s",
+                loan.id, account_key, parsed_direct.hostname, self.client._pnb_trace_path(url),
+            )
+        else:
+            _TRACE_LOG.info(
+                "TRACE download paris direct-loan-url missing loan_id=%s account_key=%s fallback=DownloadDigitalDocument",
+                loan.id, account_key,
+            )
+            _TRACE_LOG.info(
+                "TRACE download paris prefs begin loan_id=%s account_key=%s upstream_uid_present=%s",
+                loan.id, account_key, bool(account.unique_id),
+            )
+            prefs = self.client.pnb_preferences()
+            _TRACE_LOG.info(
+                "TRACE download paris prefs end loan_id=%s reader_id_present=%s passphrase_present=%s hint_present=%s dt=%.3fs",
+                loan.id, bool(prefs.get("ReaderId")), bool(prefs.get("PassPhrase")), bool(prefs.get("Hint")), time.monotonic()-started,
+            )
+            endpoint_started = time.monotonic()
+            _TRACE_LOG.info(
+                "TRACE download paris acquisition-url begin loan_id=%s ean=%s account_key=%s upstream_uid_present=%s",
+                loan.id, loan.record_id, account_key, bool(account.unique_id),
+            )
+            url = self.client.download_digital_document(loan, "" if account.is_primary else account.unique_id, prefs)
+            _TRACE_LOG.info("TRACE download paris acquisition-url end loan_id=%s url_returned=%s dt=%.3fs", loan.id, bool(url), time.monotonic()-endpoint_started)
+            url = urljoin(self.client.base_url + "/", url)
+        parsed = urlparse(url)
+        http_started = time.monotonic()
+        _TRACE_LOG.info("TRACE download paris acsm-http begin loan_id=%s host=%s path=%s", loan.id, parsed.hostname, self.client._pnb_trace_path(url))
+        current = url
+        for hop in range(12):
+            self.client._validate_pnb_redirect_url(current)
+            hop_started = time.monotonic()
+            response = self.client._get_pnb_response(current)
+            self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
+            if response.status_code not in {301,302,303,307,308}: break
+            location = response.headers.get('location')
+            if not location: raise ProviderConfigurationError('Redirection PNB sans Location')
+            current = urljoin(str(response.url), location)
+        else: raise ProviderConfigurationError('Trop de redirections PNB')
+        _TRACE_LOG.info(
+            "TRACE download paris acsm-http response loan_id=%s status=%s content_type=%s content_length=%s final_host=%s final_path=%s dt=%.3fs",
+            loan.id, response.status_code, response.headers.get("content-type", ""), response.headers.get("content-length", ""),
+            urlparse(str(response.url)).hostname, self.client._pnb_trace_path(str(response.url)), time.monotonic()-http_started,
+        )
+        response.raise_for_status()
+        content = response.content
+        content_type = response.headers.get("content-type", "")
+        fmt = 'pdf' if content.startswith(b'%PDF-') else ('epub' if content.startswith(b'PK') else 'acsm')
+        validate_document(content, fmt)
+        _TRACE_LOG.info("TRACE download paris document-validated loan_id=%s kind=%s bytes=%s", loan.id, fmt, len(content))
+        name = _SAFE_FILENAME.sub("_", str(loan.title)).strip(" ._") or "download"
+        path = target_dir / (name[:160] + '.' + fmt)
+        atomic_write(path, content)
+        _TRACE_LOG.info(
+            "TRACE download paris acsm-write loan_id=%s file=%s bytes=%s detected_acsm=%s total_dt=%.3fs",
+            loan.id, path, len(content), path.suffix.casefold() == ".acsm", time.monotonic()-started,
+        )
+        return path, url
+
+
+class ParisProviderPlugin(ProviderPlugin):
+    descriptor = DESCRIPTOR
+
+    def create_session(self, *, credential_id: str, label: str, credentials: dict[str, Any], options: dict[str, Any], config: Any, storage: Any, diagnostics: Any) -> ProviderSession:
+        return ParisProviderSession(
+            credential_id=credential_id,
+            label=label,
+            credentials=credentials,
+            options=options,
+            config=config,
+            diagnostics=diagnostics,
+        )
+
+
+PLUGIN = ParisProviderPlugin()

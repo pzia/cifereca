@@ -1,0 +1,133 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.maintenance.library-audit",
+    "version": "0.2.0",
+    "name": "Cifereca Library Audits",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.3,<2"
+  },
+  "plugins": [
+    {
+      "id": "maintenance.audit.covers",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_library_audits:COVER_AUDIT",
+      "display_name": "Vérifier les couvertures",
+      "description": "Audit en lecture seule des couvertures connues du catalogue local.",
+      "version": "0.2.0",
+      "priority": 50,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Compte les notices sans couverture ou avec une valeur de couverture non exploitable. Aucune régénération n'est tentée sans contrat public de mutation.",
+      "capabilities": [
+        "maintenance.audit",
+        "maintenance.audit.covers"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "catalog"
+      ],
+      "requires_contracts": []
+    },
+    {
+      "id": "maintenance.audit.languages",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_library_audits:LANGUAGE_AUDIT",
+      "display_name": "Vérifier les langues",
+      "description": "Audit en lecture seule des tags de langue et de leur forme canonique.",
+      "version": "0.2.0",
+      "priority": 49,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Utilise normalize_language_tag du contrat public pour détecter les valeurs invalides ou non canoniques.",
+      "capabilities": [
+        "maintenance.audit",
+        "maintenance.audit.languages"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "catalog"
+      ],
+      "requires_contracts": []
+    },
+    {
+      "id": "maintenance.audit.naming",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_library_audits:NAMING_AUDIT",
+      "display_name": "Auditer les noms de fichiers",
+      "description": "Compare, lorsque les métadonnées publiques le permettent, le nom actuel avec la politique Core.",
+      "version": "0.2.0",
+      "priority": 48,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Audit read-only des noms observables. La réparation est fournie séparément par maintenance.repair.naming via library.maintenance.",
+      "capabilities": [
+        "maintenance.audit",
+        "maintenance.audit.naming"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "metadata",
+        "library.naming"
+      ],
+      "requires_contracts": []
+    },
+    {
+      "id": "maintenance.repair.naming",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_library_audits:NAMING_REPAIR",
+      "display_name": "Renormaliser les noms de fichiers",
+      "description": "Renomme transactionnellement les placements de bibliothèque selon la politique de nommage Core.",
+      "version": "0.2.0",
+      "priority": 47,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Produit un plan sans mutation puis délègue chaque normalize_filename au broker Core library.maintenance.",
+      "capabilities": [
+        "maintenance.repair",
+        "maintenance.repair.naming"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "metadata",
+        "library.naming",
+        "library.read",
+        "library.maintenance"
+      ],
+      "requires_contracts": []
+    },
+    {
+      "id": "maintenance.cleanup.duplicates",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_library_audits:DUPLICATE_CLEANUP",
+      "display_name": "Nettoyer les doublons physiques",
+      "description": "Supprime uniquement les placements de bibliothèque vérifiés comme doublons du même artefact SHA-256.",
+      "version": "0.2.0",
+      "priority": 46,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Le plugin ne supprime aucun fichier lui-même : delete_duplicate est planifié et exécuté par library.maintenance, qui revérifie l’identité de l’artefact.",
+      "capabilities": [
+        "maintenance.cleanup",
+        "maintenance.cleanup.duplicates"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "metadata",
+        "library.read",
+        "library.maintenance"
+      ],
+      "requires_contracts": []
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+from __future__ import annotations
+from cifereca_kobo_description import description_text, description_element
+
+from typing import Any
+from urllib.parse import urljoin, urlsplit
+
+from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag
+
+
+class KoboCatalogService:
+    """Credential-bound Kobo catalogue projection.
+
+    The service owns catalogue normalization/search semantics.  The personal
+    library provider consumes this service rather than keeping catalogue policy
+    mixed with ownership/manifest logic.
+    """
+    def __init__(self, client: Any, *, credential_id: str, provider_id: str = "kobo") -> None:
+        self.client = client
+        self.credential_id = credential_id
+        self.provider_id = provider_id
+
+    def cover_url(self, item: dict[str, Any]) -> str | None:
+        """Only URL fields in cover structures; never turn an image ID into a URL."""
+        keys = {"url", "src", "href", "large", "medium", "thumbnail", "small", "cover_url", "thumbnail_url", "image_url", "coverimageurl", "imageurl"}
+        budget = [256]
+        def valid(value):
+            if not isinstance(value, str) or len(value) > 8192:return None
+            text=value.strip()
+            if not text or any(ord(c)<32 for c in text):return None
+            try:
+                raw=urlsplit(text)
+                if not raw.scheme and not raw.netloc and '/' not in raw.path and '.' not in raw.path:return None
+                if raw.scheme and raw.scheme.lower() not in {'http','https'}:return None
+                resolved=urljoin(self.client.base_url.rstrip('/')+'/',text)
+                parsed=urlsplit(resolved)
+                if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password:return None
+                parsed.port
+                return resolved
+            except ValueError:return None
+        def candidate(value, depth=0):
+            budget[0]-=1
+            if depth>6 or budget[0]<0:return None
+            if isinstance(value,str):return valid(value)
+            if isinstance(value,dict):
+                for key,nested in value.items():
+                    if str(key).casefold() in keys:
+                        found=candidate(nested,depth+1)
+                        if found:return found
+                # Named image variants can be nested, but opaque strings/IDs
+                # outside recognised fields must not become a relative URL.
+                for nested in value.values():
+                    if isinstance(nested,(dict,list)):
+                        found=candidate(nested,depth+1)
+                        if found:return found
+            elif isinstance(value,list):
+                for nested in value:
+                    found=candidate(nested,depth+1)
+                    if found:return found
+            return None
+        for key in ("cover_url", "thumbnail_url", "image_url", "cover", "image", "images", "covers", "CoverImageUrl", "ImageUrl"):
+            found=candidate(item.get(key))
+            if found:return found
+        return None
+
+    @staticmethod
+    def _price(item: dict[str, Any]) -> tuple[str | None, str | None]:
+        price = item.get("price")
+        if isinstance(price, dict):
+            amount = price.get("amount")
+            currency = price.get("currency")
+            return (str(amount) if amount is not None else None, str(currency) if currency else None)
+        return (str(price) if price is not None else None, str(item.get("currency")) if item.get("currency") else None)
+
+    def normalize_item(self, item: dict[str, Any], *, default_collection: str = "catalog") -> SearchResult:
+        product_id = str(item.get("product_id") or item.get("id") or "").strip()
+        if not product_id:
+            raise ProviderError("Kobo-Vault : résultat sans product_id")
+        authors = item.get("authors")
+        if isinstance(authors, list):
+            author = ", ".join(str(x) for x in authors if str(x).strip()) or None
+        else:
+            author = str(item.get("author") or "").strip() or None
+        fmt = str(item.get("format") or item.get("file_format") or "").strip().upper() or None
+        content_type = str(item.get("content_type") or "ebook").lower()
+        owned = item.get("owned")
+        downloadable = item.get("downloadable")
+        collection = str(item.get("collection") or ("library" if owned else default_collection)).lower()
+        price, currency = self._price(item)
+        metadata = {k: v for k, v in item.items() if k not in {"description"}}
+        if isinstance(metadata.get("language"), str):
+            metadata["language"] = normalize_language_tag(metadata["language"])
+        if isinstance(metadata.get("languages"), (list, tuple)):
+            metadata["languages"] = list(dict.fromkeys(
+                canonical for raw in metadata["languages"]
+                if (canonical := normalize_language_tag(str(raw))) is not None
+            ))
+        return SearchResult(
+            id=f"kobo:{self.credential_id}:{product_id}", record_id=product_id, docbase="KOBO",
+            medium="digital", title=str(item.get("title") or "Sans titre"), author=author,
+            type="Livre numérique Kobo", format=fmt,
+            publisher=str(item.get("publisher") or "").strip() or None,
+            published_at=str(item.get("publication_date") or item.get("published_at") or "").strip() or None,
+            description=description_text(item.get("description")),
+            thumbnail_url=self.cover_url(item), friendly_url=str(item.get("product_url") or "").strip() or None,
+            scenario="KOBO", source_provider=self.provider_id, source_credential=self.credential_id,
+            download_url=None, content_type=content_type, source_collection=collection,
+            owned=bool(owned) if owned is not None else (collection == "library"),
+            downloadable=bool(downloadable) if downloadable is not None else None,
+            price=price, currency=currency,
+            revision_id=str(item.get("revision_id") or "").strip() or None,
+            metadata=metadata,
+        )
+
+    def search(self, query: str, *, field: str = "all", limit: int = 50, page: int = 0) -> list[SearchResult]:
+        payload = self.client.search(query, field=field, scope="all", limit=limit, page=page)
+        items = payload.get("items")
+        if not isinstance(items, list):
+            return []
+        rows: list[SearchResult] = []
+        for raw in items:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                rows.append(self.normalize_item(raw))
+            except ProviderError:
+                continue
+        return rows
+
+
+class KoboCatalogPlugin:
+    """Plugin-visible factory used by provider.kobo.
+
+    It intentionally does not create a provider session of its own: credentials
+    belong to the personal-library connection, while catalogue behaviour is a
+    separately replaceable plugin dependency.
+    """
+    def create(self, client: Any, *, credential_id: str, provider_id: str = "kobo") -> KoboCatalogService:
+        return KoboCatalogService(client, credential_id=credential_id, provider_id=provider_id)
+
+
+PLUGIN = KoboCatalogPlugin()

@@ -1,0 +1,191 @@
+"""Public BnF bibliographic catalogue, Provider Plugin API v1 only."""
+from __future__ import annotations
+from cifereca_bnf_description import description_text, description_element
+
+import re
+from typing import Any
+from urllib.parse import urlsplit
+from xml.etree import ElementTree as ET
+
+import httpx
+
+from cifereca.plugin_api import (
+    Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor,
+    ProviderError, ProviderPlugin, ProviderSession, normalize_language_tag,
+)
+
+SRU = "http://www.loc.gov/zing/srw/"
+DC = "http://purl.org/dc/elements/1.1/"
+ENDPOINT = "https://catalogue.bnf.fr/api/SRU"
+ARK = re.compile(r"(?:https?://catalogue\.bnf\.fr/)?(ark:/12148/cb[0-9]+[a-z0-9])(?:[/?#\s]|$)", re.I)
+FIELDS = {
+    "all": "bib.anywhere", "title": "bib.title", "author": "bib.author",
+    "isbn": "bib.isbn", "subject": "bib.subject",
+}
+
+DESCRIPTOR = ProviderDescriptor(
+    id="bnf-catalogue", display_name="BnF — Catalogue général",
+    description="Notices bibliographiques publiques : titres, auteurs, ISBN et sujets. Pas de prêt ni de téléchargement.",
+    state="ready", capabilities=ProviderCapabilities(search=True, holdings=True),
+    homepage="https://catalogue.bnf.fr",
+    notes=("API SRU publique, sans compte BnF.",
+           "Une notice bibliographique n'est pas une offre d'acquisition.",),
+)
+
+
+def literal(value: str) -> str:
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def _text(node: ET.Element) -> str:
+    return "".join(node.itertext()).strip()
+
+
+def _gallica_link(value: str) -> str | None:
+    value = value.strip()
+    parsed = urlsplit(value)
+    if parsed.scheme in {"https", "http"} and parsed.hostname == "gallica.bnf.fr" and parsed.path.startswith("/ark:/12148/"):
+        return parsed._replace(scheme="https").geturl()
+    return None
+
+
+class BnfCatalogueSession(ProviderSession):
+    def __init__(self, *, diagnostics: Any, **kwargs: Any):
+        super().__init__(descriptor=DESCRIPTOR, **kwargs)
+        self.diagnostics = diagnostics
+        self.sru_url = str(self.options.get("sru_url") or ENDPOINT)
+        self.page_size = int(self.options.get("page_size", 50))
+        if not 1 <= self.page_size <= 100:
+            raise ProviderError("BnF : taille de page hors limites (1–100)")
+        self.client = httpx.Client(
+            timeout=float(self.options.get("timeout_seconds", 25)), follow_redirects=True,
+            headers={"User-Agent": "Cifereca-BnF-Catalogue/1.0", "Accept": "application/xml, text/xml"},
+        )
+
+    def connect(self):
+        self.connected = True
+        # Public session; no fictitious borrower or delegated reader identity.
+        self._accounts = []
+        return []
+
+    def close(self):
+        self.client.close()
+        self.connected = False
+
+    def search(self, query: str, scope="all", page=0, field="all"):
+        query = str(query or "").strip()
+        if len(query) < 2:
+            return []
+        if field not in FIELDS:
+            raise ProviderError(f"BnF : champ de recherche non pris en charge : {field}")
+        if scope not in {"all", "physical", "digital"}:
+            raise ProviderError("BnF : périmètre de recherche non pris en charge")
+        if field == "isbn":
+            query = re.sub(r"[\s-]", "", query)
+            if not re.fullmatch(r"(?:\d{9}[\dXx]|\d{13})", query):
+                raise ProviderError("BnF : ISBN attendu sur 10 ou 13 caractères")
+        relation = "adj" if field == "isbn" else "all"
+        try:
+            response = self.client.get(self.sru_url, params={
+                "operation": "searchRetrieve", "version": "1.2", "recordSchema": "dublincore",
+                "query": f"{FIELDS[field]} {relation} {literal(query)}",
+                "startRecord": str(max(0, int(page)) * self.page_size + 1),
+                "maximumRecords": str(self.page_size),
+            })
+            response.raise_for_status()
+            rows = self.parse_records(response.content)
+        except httpx.HTTPError as exc:
+            self.diagnostics.add("BNF", "SRU search", "error", detail={"error": type(exc).__name__})
+            raise ProviderError("BnF : catalogue temporairement indisponible") from exc
+        # Unknown support is omitted from scoped searches. API v1 only allows
+        # physical/digital; all-scope uses a documented physical fallback.
+        if scope != "all":
+            rows = [r for r in rows if r.metadata["support"] == scope]
+        self.diagnostics.add("BNF", "SRU search", "ok", detail={"results": len(rows), "page": page, "field": field})
+        return rows
+
+    def parse_records(self, content: bytes):
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError as exc:
+            raise ProviderError("BnF : réponse du catalogue inexploitable") from exc
+        if root.tag != f"{{{SRU}}}searchRetrieveResponse":
+            raise ProviderError("BnF : réponse SRU attendue")
+        if any(n.tag.rsplit("}", 1)[-1] == "diagnostic" for n in root.iter()):
+            raise ProviderError("BnF : requête refusée par le service SRU")
+        rows = {}
+        for data in root.findall(f".//{{{SRU}}}recordData"):
+            values: dict[str, list[str]] = {}
+            for node in data.iter():
+                if node.tag.startswith("{" + DC + "}"):
+                    value = _text(node)
+                    if value:
+                        values.setdefault(node.tag.split("}", 1)[1], []).append(value)
+            identifiers = values.get("identifier", [])
+            ark = next((m.group(1) for value in identifiers if (m := ARK.fullmatch(value.strip()) or ARK.search(value.strip()))), None)
+            if not ark:
+                continue
+            formats = values.get("format", [])
+            kinds = values.get("type", [])
+            links = list(dict.fromkeys(link for value in values.get("relation", []) + identifiers if (link := _gallica_link(value))))
+            digital = any(f.lower().startswith(("application/", "audio/", "video/")) for f in formats) or any("électronique" in t.casefold() or "electronic" in t.casefold() for t in kinds)
+            physical = any(re.search(r"\b(?:vol\.|p\.|cm\b)", f, re.I) for f in formats)
+            support = "digital" if digital else "physical" if physical else "unknown"
+            # Technical format is left unknown unless a MIME type says otherwise.
+            fmt = next(({"application/epub+zip": "EPUB", "application/pdf": "PDF"}[f.lower().split(";", 1)[0].strip()] for f in formats if f.lower().split(";", 1)[0].strip() in {"application/epub+zip", "application/pdf"}), None)
+            isbns = []
+            for identifier in identifiers:
+                candidate = re.sub(r"^(?:urn:isbn:|isbn\s*:?)\s*", "", identifier, flags=re.I)
+                candidate = re.sub(r"[\s-]", "", candidate)
+                if re.fullmatch(r"(?:\d{9}[\dXx]|\d{13})", candidate):
+                    isbns.append(candidate.upper())
+            languages = list(dict.fromkeys(
+                canonical for raw in values.get("language", [])
+                if (canonical := normalize_language_tag(raw)) is not None
+            ))
+            first = lambda key: (values.get(key) or [None])[0]
+            rows[ark] = SearchResult(
+                id=f"bnf-catalogue:{ark.rsplit('/', 1)[-1]}", record_id=ark,
+                docbase="BNF-CATALOGUE", medium="digital" if digital else "physical",
+                title=first("title") or "Sans titre", author=" ; ".join(values.get("creator", [])) or None,
+                type="Notice bibliographique", format=fmt, publisher=first("publisher"),
+                published_at=first("date"), description=description_text("\n".join(values.get("description", []))),
+                thumbnail_url=None, friendly_url=f"https://catalogue.bnf.fr/{ark}", scenario="SRU-DUBLINCORE",
+                source_provider=self.provider_id, source_credential=self.credential_id,
+                download_url=None, downloadable=False,
+                metadata={"source": "BnF Catalogue général", "isbns": isbns,
+                          "subjects": values.get("subject", []), "languages": languages,
+                          "rights": values.get("rights", []), "bibliographic_formats": formats,
+                          "bibliographic_types": kinds, "gallica_links": links, "support": support,
+                          "medium_fallback": support == "unknown", "format_evidence": "dc.format-mime" if fmt else "unknown"},
+            )
+        return list(rows.values())
+
+    def holdings(self, item: SearchResult, search_terms=""):
+        return ItemDetail(
+            record_id=item.record_id, docbase=item.docbase, title=item.title,
+            author=item.author, type=item.type, year=item.published_at,
+            thumbnail_url=None, availability_status="unknown",
+            availability_label="Notice bibliographique — disponibilité non vérifiée",
+            holdings=[], source_provider=self.provider_id, source_credential=self.credential_id,
+        )
+
+    def acquisition_offers(self, item):
+        return []
+
+
+class BnfCataloguePlugin(ProviderPlugin):
+    descriptor = DESCRIPTOR
+
+    def activate(self, context):
+        self._configuration = dict(context.config)
+        return self
+
+    def create_session(self, *, credential_id, label, credentials, options, config, storage, diagnostics):
+        return BnfCatalogueSession(
+            credential_id=credential_id, label=label, credentials=credentials,
+            options={**getattr(self, "_configuration", {}), **options}, diagnostics=diagnostics,
+        )
+
+
+PLUGIN = BnfCataloguePlugin()
