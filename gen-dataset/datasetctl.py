@@ -525,6 +525,8 @@ def write_cifereca_config(profile: dict, catalog: dict[str, dict], library: Path
         })
     if "bnf" in urls:
         plugin("provider.bnf-catalogue", {"sru_url": urls["bnf"] + "/api/SRU"})
+    if "ebooksgratuits" in urls:
+        plugin("provider.ebooksgratuits", {"base_url": urls["ebooksgratuits"] + "/"})
     if "numilog" in urls:
         plugin("provider.numilog", {"base_url": urls["numilog"] + "/"})
 
