@@ -1,0 +1,280 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from recommendation_engine import (
+    RankedCandidate,
+    build_profile,
+    build_queries,
+    candidate_key,
+    content_score,
+    get_field,
+    is_already_present,
+    normalize,
+)
+from recommendation_engine_fast import rank_candidates_prepared
+
+
+@dataclass(frozen=True)
+class RecommendationResult:
+    books_count: int
+    queries: tuple[str, ...]
+    ranked: tuple[RankedCandidate, ...]
+    providers: tuple[tuple[str, str], ...]
+    warnings: tuple[str, ...] = ()
+    cache_batches: int = 0
+    network_batches: int = 0
+    cache_unknown_calls: int = 0
+    cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class RecommendationPartial:
+    ranked: tuple[RankedCandidate, ...]
+    query_index: int
+    query_total: int
+    provider_done: int
+    provider_total: int
+    results_seen: int
+    cache_batches: int
+    network_batches: int
+
+
+def _merge_provider_rows(grouped: dict[str, list[Any]], providers: tuple[tuple[str, str], ...]) -> list[Any]:
+    order = [str(pid) for pid, _label in providers if str(pid) in grouped]
+    order.extend(sorted(pid for pid in grouped if pid not in order))
+    maximum = max((len(grouped[pid]) for pid in order), default=0)
+    return [grouped[pid][rank] for rank in range(maximum) for pid in order if rank < len(grouped[pid])]
+
+
+def _cancelled(control: Any) -> bool:
+    if control is None:
+        return False
+    try:
+        fn = getattr(control, "cancelled", None)
+        return bool(fn()) if callable(fn) else False
+    except Exception:
+        return True
+
+
+def compute_recommendations(
+    metadata_broker: Any,
+    catalog_broker: Any,
+    identity_id: str,
+    *,
+    scope: str = "digital",
+    max_queries: int = 8,
+    per_query: int = 50,
+    max_results: int = 120,
+    exploration: int = 25,
+    progress: Callable[[int, int, str], None] | None = None,
+    partial: Callable[[RecommendationPartial], None] | None = None,
+    control: Any = None,
+) -> RecommendationResult:
+    # Persisted projection only: never trigger a filesystem scan here.
+    books = list(metadata_broker.library_entries(identity_id=identity_id, scan=False) or [])
+    profile = build_profile(books)
+    queries = build_queries(books, max_queries=max_queries)
+    providers = tuple(catalog_broker.searchable_providers() or ())
+    if not books or not queries or not providers:
+        return RecommendationResult(len(books), queries, (), providers)
+
+    batches: list[list[Any]] = []
+    warnings: list[str] = []
+    cache_batches = network_batches = cache_unknown_calls = results_seen = 0
+    provider_total = max(1, len(providers))
+    total_units = max(1, len(queries) * provider_total)
+    progressive = getattr(catalog_broker, "search_progressive", None)
+    was_cancelled = False
+
+    # Provisional ranking is intentionally lightweight: content score once per
+    # candidate, no RRF/MMR. Full ranking runs once after all catalog queries.
+    provisional: dict[str, tuple[Any, float, tuple[str, ...], list[str]]] = {}
+
+    def ingest_provisional(rows: list[Any]) -> None:
+        for item in rows:
+            key = candidate_key(item)
+            if is_already_present(profile, item):
+                continue
+            score, reasons = content_score(profile, item)
+            source = str(get_field(item, "source_provider", "") or "")
+            previous = provisional.get(key)
+            if previous is None:
+                provisional[key] = (item, score, reasons, [source] if source else [])
+                continue
+            prev_item, prev_score, prev_reasons, sources = previous
+            if source and source not in sources:
+                sources.append(source)
+            provisional[key] = (
+                (item, score, reasons, sources)
+                if score > prev_score
+                else (prev_item, prev_score, prev_reasons, sources)
+            )
+
+    def emit_partial(query_index: int, provider_done: int) -> None:
+        if partial is None or _cancelled(control):
+            return
+        ranked = [
+            RankedCandidate(
+                item=item,
+                score=max(1, min(100, int(round(score)))),
+                reasons=reasons,
+                sources=tuple(sources),
+                query_hits=0,
+            )
+            for item, score, reasons, sources in provisional.values()
+            if score > 0.0
+        ]
+        ranked.sort(
+            key=lambda row: (
+                -row.score,
+                normalize(get_field(row.item, "title", "")),
+                normalize(get_field(row.item, "author", "")),
+            )
+        )
+        partial(
+            RecommendationPartial(
+                ranked=tuple(ranked[: min(40, max(1, int(max_results)))]),
+                query_index=query_index,
+                query_total=len(queries),
+                provider_done=provider_done,
+                provider_total=provider_total,
+                results_seen=results_seen,
+                cache_batches=cache_batches,
+                network_batches=network_batches,
+            )
+        )
+
+    for query_index, query in enumerate(queries, 1):
+        if _cancelled(control):
+            was_cancelled = True
+            break
+        grouped: dict[str, list[Any]] = {}
+        provider_done = 0
+        if progress:
+            progress(
+                (query_index - 1) * provider_total,
+                total_units,
+                f"{query} · requête {query_index}/{len(queries)} · catalogues 0/{provider_total} · {results_seen} résultats",
+            )
+
+        if callable(progressive):
+            def on_batch(batch: Any) -> None:
+                nonlocal provider_done, cache_batches, network_batches, results_seen, was_cancelled
+                if _cancelled(control):
+                    was_cancelled = True
+                    return
+                provider_id = str(getattr(batch, "provider_id", "") or f"provider-{provider_done + 1}")
+                rows = list(getattr(batch, "results", ()) or ())
+                grouped.setdefault(provider_id, []).extend(rows)
+                provider_done += 1
+                results_seen += len(rows)
+                ingest_provisional(rows)
+                if bool(getattr(batch, "cached", False)):
+                    cache_batches += 1
+                else:
+                    network_batches += 1
+                warnings.extend(str(x) for x in tuple(getattr(batch, "warnings", ()) or ()))
+                error = str(getattr(batch, "error_message", "") or "").strip()
+                if error:
+                    warnings.append(f"{provider_id}: {error}")
+                if progress:
+                    done = (query_index - 1) * provider_total + min(provider_done, provider_total)
+                    progress(
+                        max(0, done - 1),
+                        total_units,
+                        f"{query} · requête {query_index}/{len(queries)} · catalogues {min(provider_done, provider_total)}/{provider_total} · "
+                        f"{results_seen} résultats · cache {cache_batches} / réseau {network_batches}",
+                    )
+                emit_partial(query_index, provider_done)
+
+            try:
+                summary = progressive(
+                    query,
+                    scope=scope,
+                    force=False,
+                    on_batch=on_batch,
+                    control=control,
+                )
+                warnings.extend(str(x) for x in tuple(getattr(summary, "warnings", ()) or ()))
+                if bool(getattr(summary, "cancelled", False)):
+                    was_cancelled = True
+            except Exception as exc:
+                if _cancelled(control):
+                    was_cancelled = True
+                else:
+                    warnings.append(f"{query}: {exc}")
+            batches.append(_merge_provider_rows(grouped, providers)[: max(10, int(per_query))])
+        else:
+            try:
+                rows = list(catalog_broker.search(query, scope=scope, force=False) or [])
+                results_seen += len(rows)
+                cache_unknown_calls += 1
+                ingest_provisional(rows)
+                batches.append(rows[: max(10, int(per_query))])
+                emit_partial(query_index, provider_total)
+            except Exception as exc:
+                if _cancelled(control):
+                    was_cancelled = True
+                else:
+                    warnings.append(f"{query}: {exc}")
+                batches.append([])
+
+        if progress and not was_cancelled:
+            progress(
+                query_index * provider_total - 1,
+                total_units,
+                f"{query} · requête {query_index}/{len(queries)} terminée · {results_seen} résultats · "
+                f"cache {cache_batches} / réseau {network_batches}",
+            )
+        if was_cancelled or _cancelled(control):
+            was_cancelled = True
+            break
+
+    if was_cancelled:
+        provisional_rows = sorted(
+            (
+                RankedCandidate(
+                    item,
+                    max(1, min(100, int(round(score)))),
+                    reasons,
+                    tuple(sources),
+                    0,
+                )
+                for item, score, reasons, sources in provisional.values()
+                if score > 0.0
+            ),
+            key=lambda row: (-row.score, normalize(get_field(row.item, "title", ""))),
+        )
+        return RecommendationResult(
+            len(books),
+            queries,
+            tuple(provisional_rows[:max_results]),
+            providers,
+            tuple(dict.fromkeys(warnings)),
+            cache_batches,
+            network_batches,
+            cache_unknown_calls,
+            True,
+        )
+
+    if progress:
+        progress(total_units, total_units, "")
+    ranked = rank_candidates_prepared(
+        profile,
+        batches,
+        limit=max_results,
+        exploration=exploration,
+    )
+    return RecommendationResult(
+        len(books),
+        queries,
+        tuple(ranked),
+        providers,
+        tuple(dict.fromkeys(warnings)),
+        cache_batches,
+        network_batches,
+        cache_unknown_calls,
+        False,
+    )
