@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import threading
+from cifereca.plugin_api import UiPageContribution
+
+
+class AdeptProfilesPagePlugin:
+    def __init__(self):
+        self.context=None
+        self.runtime=None
+
+    def activate(self,context):
+        self.context=context
+        self.runtime=context.service("runtime.kobo-adept")
+        if self.runtime is None:
+            raise RuntimeError("runtime.kobo-adept indisponible")
+        return self
+
+    def pages(self):
+        return [UiPageContribution(
+            route="adept-profiles", title="Profils Adobe",
+            icon_name="avatar-default-symbolic", order=82,
+            factory=self._build, group="configuration",
+        )]
+
+    def _build(self,host):
+        from gi.repository import GLib, Gtk
+
+        scroll=Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC)
+        box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=10)
+        for margin in ("top","bottom","start","end"):
+            getattr(box,"set_margin_"+margin)(18)
+        scroll.set_child(box)
+
+        title=Gtk.Label(label="Profils Adobe / ADEPT",xalign=0)
+        title.add_css_class("page-title"); box.append(title)
+        intro=Gtk.Label(label="Créer un profil ADEPT utilisable pour les ACSM, puis associer une liseuse déjà autorisée avec la même identité Adobe.",xalign=0)
+        intro.set_wrap(True); box.append(intro)
+
+        profiles=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=6)
+        box.append(profiles)
+
+        name=Gtk.Entry(); name.set_placeholder_text("Nom du profil")
+        email=Gtk.Entry(); email.set_placeholder_text("Adresse Adobe (email)")
+        mount=Gtk.Entry(); mount.set_placeholder_text("Point de montage de la liseuse")
+        box.append(name); box.append(email); box.append(mount)
+
+        actions=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=8)
+        refresh=Gtk.Button(label="Actualiser")
+        create=Gtk.Button(label="Créer / activer")
+        associate=Gtk.Button(label="Associer la liseuse")
+        remove=Gtk.Button(label="Supprimer")
+        actions.append(refresh); actions.append(create); actions.append(associate); actions.append(remove); box.append(actions)
+        confirm=Gtk.CheckButton(label="Confirmer explicitement la suppression du profil saisi")
+        box.append(confirm)
+        remove.set_sensitive(False)
+        confirm.connect("toggled",lambda button:remove.set_sensitive(button.get_active()))
+
+        buttons=(refresh,create,associate,remove)
+
+        def clear(container):
+            child=container.get_first_child()
+            while child is not None:
+                nxt=child.get_next_sibling(); container.remove(child); child=nxt
+
+        def set_busy(value):
+            for button in buttons: button.set_sensitive(not value)
+            if not value: remove.set_sensitive(confirm.get_active())
+
+        def render(payload):
+            clear(profiles)
+            rows=payload.get("profiles",[]) if isinstance(payload,dict) else []
+            if not rows:
+                empty=Gtk.Label(label="Aucun profil ADEPT.",xalign=0); profiles.append(empty); return
+            for row in rows:
+                if not isinstance(row,dict): continue
+                profile_name=str(row.get("name") or row.get("profile") or "")
+                provisioning=row.get("provisioning") if isinstance(row.get("provisioning"),dict) else {}
+                ready=row.get("complete") is True and row.get("fetch_capable") is True and provisioning.get("acsm_fetch_ready") is True
+                devices=row.get("devices") if isinstance(row.get("devices"),list) else []
+                button=Gtk.Button(label=f"{profile_name} · {'prêt ACSM' if ready else 'incomplet'} · {len(devices)} liseuse(s)")
+                button.set_halign(Gtk.Align.FILL)
+                button.connect("clicked",lambda _b,value=profile_name:name.set_text(value))
+                profiles.append(button)
+
+        def async_call(fn,success_message=None):
+            set_busy(True)
+            def worker():
+                try:
+                    value=fn(); error=None
+                except Exception as exc:
+                    value=None; error=exc
+                def done():
+                    set_busy(False)
+                    if error is not None:
+                        host.toast(str(error)[:240])
+                    else:
+                        if success_message: host.toast(success_message)
+                        try: render(self.runtime.profiles())
+                        except Exception as exc: host.toast(str(exc)[:240])
+                    return False
+                GLib.idle_add(done)
+            threading.Thread(target=worker,daemon=True).start()
+
+        refresh.connect("clicked",lambda _b:async_call(self.runtime.profiles))
+        create.connect("clicked",lambda _b:async_call(
+            lambda:self.runtime.provision_profile(name.get_text(),email.get_text()),"Profil ADEPT prêt"))
+        associate.connect("clicked",lambda _b:async_call(
+            lambda:self.runtime.associate_profile(name.get_text(),mount.get_text()),"Liseuse associée"))
+        def do_remove(_b):
+            if not confirm.get_active(): return
+            async_call(lambda:self.runtime.remove_profile(name.get_text()),"Profil supprimé")
+            confirm.set_active(False)
+        remove.connect("clicked",do_remove)
+
+        async_call(self.runtime.profiles)
+        return scroll
+
+    def deactivate(self):
+        self.runtime=None
+        self.context=None
+
+
+PLUGIN=AdeptProfilesPagePlugin()

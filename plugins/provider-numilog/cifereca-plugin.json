@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.numilog",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "name": "Numilog",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -13,7 +13,7 @@
       "type": "provider.library",
       "entrypoint": "cifereca_numilog:PLUGIN",
       "display_name": "Numilog",
-      "description": "Bibliothèque personnelle et téléchargement EPUB direct ; achats sur le site Numilog.",
+      "description": "Bibliothèque personnelle, EPUB direct et fulfillment ACSM/ADEPT ; achats sur le site Numilog.",
       "priority": 50,
       "config_schema": {
         "type": "object",
@@ -43,17 +43,25 @@
           }
         }
       },
-      "help_text": "Configurez une connexion Numilog avec votre email et votre mot de passe. La recherche porte uniquement sur les titres possédés, par titre. Le téléchargement relit la bibliothèque puis suit le lien Numilog courant. EPUB direct uniquement : ACSM, LCP, PDF, audio et achats intégrés non pris en charge. Bibliothèque multipage suivie uniquement via liens rel=next validés ; première recette compte réel à maintenir. la session HTTP peut rencontrer un contrôle du navigateur. Aucune dépendance Playwright ni modification privée du Core. Pour les tests locaux, base_url peut cibler le pseudo-service Numilog ; HTTP n'est accepté que sur loopback.",
-      "version": "0.1.7",
+      "help_text": "Configurez une connexion Numilog avec votre email et votre mot de passe. La recherche porte sur les titres possédés. EPUB directs validés localement ; lorsqu’un ACSM Adobe est livré, il est confié au broker public acquisition/import_acsm avec l’identité propriétaire du compte, puis au runtime ADEPT configuré. Un profil ADE prêt reste nécessaire. LCP, PDF, audio et achats intégrés ne sont pas pris en charge. Bibliothèque multipage via rel=next validé ; HTTP n’est accepté que sur loopback pour les jeux de données locaux.",
+      "version": "0.1.8",
       "capabilities": [
         "catalog.personal",
         "catalog.detail",
         "acquisition.download"
       ],
       "requires": [],
-      "recommends": [],
+      "recommends": [
+        {
+          "plugin": "drm.ade",
+          "version": ">=1,<2"
+        }
+      ],
       "system_requires": [],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "acquisition",
+        "identities"
+      ],
       "requires_contracts": []
     }
   ]

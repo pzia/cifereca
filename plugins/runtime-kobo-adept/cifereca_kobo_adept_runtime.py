@@ -428,8 +428,64 @@ class KoboAdeptRuntime:
         return {'contract':self.contract(),'capabilities':self.capabilities(),
             'resolved_executable':shutil.which(self.command[0]),'probe_timings_ms':{}}
     def probe(self): return self.probe_core()
+    @staticmethod
+    def _profile_name(name):
+        value=str(name or '').strip()
+        if not value or value.startswith('-') or len(value)>128 or any(ord(ch)<32 for ch in value):
+            raise AttentionRequired('Nom de profil ADEPT invalide.',code='adept_profile_name_invalid')
+        return value
+
+    @staticmethod
+    def _profile_username(username):
+        value=str(username or '').strip()
+        if not value or '@' not in value or len(value)>320 or value.startswith('-') or any(ord(ch)<32 for ch in value):
+            raise AttentionRequired('Adresse Adobe invalide.',code='adept_profile_username_invalid')
+        return value
+
+    @staticmethod
+    def _profile_payload(value):
+        if not isinstance(value,dict):
+            return {}
+        profile=value.get('profile')
+        return profile if isinstance(profile,dict) else value
+
+    @classmethod
+    def _profile_ready(cls,value):
+        profile=cls._profile_payload(value)
+        provisioning=profile.get('provisioning') if isinstance(profile.get('provisioning'),dict) else {}
+        return (profile.get('complete') is True and profile.get('fetch_capable') is True
+                and provisioning.get('acsm_fetch_ready') is True)
+
     def profiles(self): return self.run_json(['profile','list','--json'],timeout=30)
-    def profile(self,name): return self.run_json(['profile','show',str(name),'--json'],timeout=30)
+    def profile(self,name): return self.run_json(['profile','show',self._profile_name(name),'--json'],timeout=30)
+
+    def provision_profile(self,name,username):
+        if not self._available('adept','profile_provisioning'):
+            raise AttentionRequired('Provisioning de profil ADEPT indisponible.',code='adept_profile_provisioning_unsupported')
+        profile=self._profile_name(name); adobe=self._profile_username(username)
+        self.run_json(['profile','add',profile,'--username',adobe,'--json'],timeout=180)
+        shown=self.profile(profile)
+        if not self._profile_ready(shown):
+            raise AttentionRequired('Le profil ADEPT a été créé mais n’est pas prêt pour les ACSM.',
+                code='adept_profile_provisioning_incomplete')
+        return shown
+
+    def associate_profile(self,name,mount):
+        if not self._available('adept','profile_provisioning'):
+            raise AttentionRequired('Association de liseuse ADEPT indisponible.',code='adept_profile_association_unsupported')
+        profile=self._profile_name(name)
+        path=Path(str(mount or '')).expanduser()
+        if not str(mount or '').strip() or not path.is_dir():
+            raise AttentionRequired('Point de montage de liseuse invalide.',code='adept_mount_invalid')
+        self.run_json(['profile','associate',profile,'--mount',str(path),'--json'],timeout=180)
+        return self.profile(profile)
+
+    def remove_profile(self,name):
+        if not self._available('adept','profile_provisioning'):
+            raise AttentionRequired('Suppression de profil ADEPT indisponible.',code='adept_profile_remove_unsupported')
+        profile=self._profile_name(name)
+        # Never use --force automatically: associated devices must stay protected.
+        return self.run_json(['profile','remove',profile,'--json'],timeout=120)
 
 
 class Plugin:

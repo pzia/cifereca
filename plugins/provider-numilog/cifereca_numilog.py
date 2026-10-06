@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.7, bibliothèque privée et EPUB direct."""
+"""Provider externe Numilog 0.1.8, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -19,14 +19,14 @@ from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderC
 from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.7'
+VERSION = '0.1.8'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
-    description='Bibliothèque personnelle Numilog et téléchargement EPUB direct.',state='ready',
+    description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
         search=True,holdings=True,personal_library=True,direct_download=True),
     credential_fields=(CredentialField('email','Adresse email Numilog'),CredentialField('password','Mot de passe Numilog',secret=True)),
     homepage=BASE,notes=('Recherche limitée aux titres possédés. Achats sur numilog.com.',
-        'EPUB direct uniquement ; Adobe ACSM, LCP, PDF et audio non qualifiés.'))
+        'EPUB direct et Adobe ACSM via le broker public d’acquisition ; LCP, PDF et audio non qualifiés.'))
 
 ALLOWED = {'www.numilog.com','services.numilog.com','www.edenlivres.fr','storage.googleapis.com'}
 REDIRECTS = {301,302,303,307,308}
@@ -99,10 +99,25 @@ def validate_epub(path):
     except (ValueError,KeyError,OSError,zipfile.BadZipFile,ET.ParseError,RuntimeError,NotImplementedError):
         raise ProviderError('Numilog : le fichier reçu n’est pas un EPUB valide') from None
 
+def looks_like_acsm(path):
+    try:
+        target=Path(path)
+        if target.stat().st_size <= 0 or target.stat().st_size > 2*1024*1024:
+            return False
+        root=ET.parse(target).getroot()
+        tag=str(root.tag)
+        local=tag.rsplit('}',1)[-1].casefold()
+        namespace=tag[1:].split('}',1)[0].casefold() if tag.startswith('{') and '}' in tag else ''
+        return local in {'fulfillmenttoken','acsm'} and ('adobe.com/adept' in namespace or local=='fulfillmenttoken')
+    except (OSError,ET.ParseError,ValueError):
+        return False
+
 class NumilogSession(ProviderSession):
-    def __init__(self, *, config, diagnostics, **kwargs):
+    def __init__(self, *, config, diagnostics, acquisition_broker=None, identity_broker=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR,**kwargs)
         self.diagnostics = diagnostics
+        self.acquisition_broker = acquisition_broker
+        self.identity_broker = identity_broker
         self.scope = hashlib.sha256(self.credential_id.encode()).hexdigest()[:20]
         self.base_url = normalized_base_url(self.options.get('base_url') or BASE)
         self.library_url = urljoin(self.base_url,'Pages/Compte/MesLivres.aspx')
@@ -285,6 +300,37 @@ class NumilogSession(ProviderSession):
         item.source_collection = 'library'
         item.friendly_url = self.library_url
 
+    def _identity_id(self):
+        if self.identity_broker is None:
+            raise ProviderCapabilityError('Numilog : broker identités requis pour le fulfillment ACSM')
+        account_id='numilog:'+self.scope
+        matches=[ref for ref in self.identity_broker.accounts()
+                 if getattr(ref,'provider_id','')=='numilog' and getattr(ref,'account_id','')==account_id]
+        identity_ids={str(getattr(ref,'identity_id','') or '') for ref in matches if getattr(ref,'identity_id','')}
+        if len(identity_ids)!=1:
+            raise ProviderCapabilityError('Numilog : identité propriétaire du compte non résolue pour le fulfillment ACSM')
+        return next(iter(identity_ids))
+
+    def _fulfill_acsm(self,path,*,title=None):
+        if self.acquisition_broker is None:
+            raise ProviderCapabilityError('Numilog : broker acquisition requis pour traiter un ACSM')
+        identity_id=self._identity_id()
+        result=self.acquisition_broker.import_acsm(
+            Path(path), identity_id=identity_id, provider_id='numilog', title=title or None)
+        if not isinstance(result,dict):
+            raise ProviderError('Numilog : résultat de fulfillment ACSM invalide')
+        status=str(result.get('status') or '')
+        if status=='attention_required':
+            code=str(result.get('code') or 'adept_attention_required')
+            raise ProviderCapabilityError('Numilog : fulfillment ACSM nécessite une action ('+code+')')
+        if status not in {'complete','unchanged'} or not result.get('path'):
+            raise ProviderError('Numilog : fulfillment ACSM non confirmé')
+        produced=Path(str(result['path']))
+        if not produced.is_file():
+            raise ProviderError('Numilog : fichier final ADEPT introuvable')
+        self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
+        return produced,self.library_url
+
     def _download(self,url,destination,*,title=None,author=None,book_id=None):
         seen = set()
         for _ in range(12):
@@ -306,8 +352,9 @@ class NumilogSession(ProviderSession):
                     except ParseError:
                         raise ProviderError('Numilog : lien de livraison absent ; reconnecter le compte ou signaler la page modifiée') from None
                     continue
-                if mime not in {'application/epub+zip','application/octet-stream','application/zip'}:
-                    raise ProviderCapabilityError('Numilog : fichier autre qu’un EPUB direct ; Adobe ACSM, LCP, PDF et audio non pris en charge')
+                if mime not in {'application/epub+zip','application/octet-stream','application/zip',
+                        'application/vnd.adobe.adept+xml','application/xml','text/xml'}:
+                    raise ProviderCapabilityError('Numilog : format livré non pris en charge ; EPUB direct ou ACSM Adobe attendus')
                 length = r.headers.get('content-length','')
                 if length.isdigit() and int(length) > self.maximum:
                     raise ProviderError('Numilog : téléchargement trop volumineux')
@@ -321,6 +368,8 @@ class NumilogSession(ProviderSession):
                             if size > self.maximum:
                                 raise ProviderError('Numilog : téléchargement trop volumineux')
                             output.write(chunk)
+                    if looks_like_acsm(part):
+                        return self._fulfill_acsm(part,title=title)
                     validate_epub(part)
                     if title:
                         destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
@@ -353,10 +402,13 @@ class NumilogPlugin(ProviderPlugin):
 
     def activate(self,context):
         self.configuration = dict(context.config)
+        self.acquisition_broker = context.broker('acquisition')
+        self.identity_broker = context.broker('identities')
         return self
 
     def create_session(self,*,credential_id,label,credentials,options,config,storage,diagnostics):
         return NumilogSession(credential_id=credential_id,label=label,credentials=credentials,
-            options={**getattr(self,'configuration',{}),**options},config=config,diagnostics=diagnostics)
+            options={**getattr(self,'configuration',{}),**options},config=config,diagnostics=diagnostics,
+            acquisition_broker=getattr(self,'acquisition_broker',None),identity_broker=getattr(self,'identity_broker',None))
 
 PLUGIN = NumilogPlugin()
