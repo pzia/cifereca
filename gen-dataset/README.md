@@ -38,6 +38,7 @@ python3 gen-dataset/datasetctl.py profiles
 
 python3 gen-dataset/datasetctl.py up ux-search
 python3 gen-dataset/datasetctl.py status ux-search
+python3 gen-dataset/datasetctl.py summary ux-search
 python3 gen-dataset/datasetctl.py logs ux-search
 python3 gen-dataset/datasetctl.py config ux-search
 
@@ -53,6 +54,10 @@ réutilisé.
 `rebuild` arrête le profil, supprime son état Cifereca isolé, ses caches de
 services et sa bibliothèque générée, puis reconstruit le tout.
 
+`summary` compare les volumes configurés aux volumes réellement générés et
+aux compteurs annoncés par les health checks. `summary --json` fournit une
+sortie exploitable par les scripts de recette.
+
 ## Profils livrés
 
 | Profil | Usage |
@@ -61,7 +66,7 @@ services et sa bibliothèque générée, puis reconstruit le tout.
 | `ux-search` | recherche multi-source à gros volume |
 | `ux-library` | bibliothèque dense : EPUB locaux + Kobo + Numilog |
 | `ux-paris` | parcours Paris / PNB |
-| `ux-errors` | états atypiques et erreurs visibles |
+| `ux-errors` | états atypiques, assets OPDS/Kobo cassés de façon déterministe et erreurs visibles |
 | `ux-all` | environnement complet |
 
 Les profils sont dans `gen-dataset/profiles/*.toml`.
@@ -113,9 +118,13 @@ tout en conservant les faux services et la configuration Cifereca du profil.
 4. si nécessaire, compléter la génération de configuration provider dans
    `datasetctl.py`.
 
-Les données de livre, couvertures et EPUB doivent réutiliser
+Les données de livre, couvertures PNG et EPUB doivent réutiliser
 `gen-dataset/common/fake_books.py` quand leur nature est générique. Les
 protocoles et états métier restent propres aux services.
+
+OPDS et Kobo acceptent `--broken-assets-every N` pour faire échouer de façon
+reproductible la couverture et le téléchargement de chaque N-ième livre. Le
+profil `ux-errors` active ce mécanisme.
 
 ## Ajouter un profil
 
