@@ -1,0 +1,25 @@
+name = "ux-paris"
+description = "Parcours Bibliothèques de Paris / PNB : recherche, prêts, réservations et emprunt."
+
+[runtime]
+startup_timeout_seconds = 30
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = ["ui.page.home"]
+width = 1300
+height = 850
+
+[library]
+epubs = 100
+seed = 20261006
+
+[services.paris]
+enabled = true
+books = 10000
+active_loans = 120
+history_items = 200
+bookings = 30
+digital_ratio = 0.70
+seed = 20261006
