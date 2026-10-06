@@ -20,6 +20,11 @@ enabled = true
 books_per_source = 10000
 seed = 20261006
 
+[services.ebooksgratuits]
+enabled = true
+books = 10000
+seed = 20261006
+
 [services.bnf]
 enabled = true
 books = 20000

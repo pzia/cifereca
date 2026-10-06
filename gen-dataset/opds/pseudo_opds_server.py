@@ -53,7 +53,7 @@ if str(DATASET_ROOT) not in sys.path:
 
 from common.fake_books import FakeBook, FakeBookFactory, cover_png_bytes, write_epub as write_shared_epub
 
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_BOOKS_PER_SOURCE = 10_000
 DEFAULT_PAGE_SIZE = 50
@@ -330,6 +330,7 @@ class DatasetCache:
             "author": "author",
             "subject": "subject",
             "isbn": "isbn",
+            "language": "language",
         }.get(field, "")
 
     def search(self, source: str, query: str, offset: int, limit: int, field: str = "all"):
@@ -470,7 +471,7 @@ class FakeOPDSApp:
         useful = []
         for item in quoted:
             item = item.replace('\\"', '"').replace('\\\\', '\\').strip()
-            if item.casefold() != "epub":
+            if item.casefold() not in {"epub", "pdf"}:
                 useful.append(item)
         if useful:
             return useful[0], field
@@ -497,7 +498,16 @@ class FakeOPDSApp:
         page = max(1, int((qs.get("page") or ["1"])[0] or 1))
         limit = DEFAULT_PAGE_SIZE
         offset = (page - 1) * limit
-        total, rows = self.cache.search("gutenberg", query, offset, limit, "all")
+        language_codes = {
+            "french": "fr", "english": "en", "german": "de", "spanish": "es",
+            "italian": "it", "portuguese": "pt", "dutch": "nl",
+        }
+        folded = query.casefold()
+        if folded in language_codes:
+            server_query, field = language_codes[folded], "language"
+        else:
+            server_query, field = query, "all"
+        total, rows = self.cache.search("gutenberg", server_query, offset, limit, field)
         self.send_atom_feed(handler, "gutenberg", query, rows, total, offset, limit, page=page)
 
     def send_atom_feed(self, handler, source: str, query: str, rows, total: int, offset: int, limit: int, *, gallica: bool = False, page: int | None = None):
@@ -547,9 +557,18 @@ class FakeOPDSApp:
             record_id = str(book_id)
             atom_id = f"urn:gutenberg:{book_id}"
         detail = f"{base}/{source}/books/{book_id}"
-        epub = f"{base}/{source}/epub/{book_id}.epub"
+        is_pdf = source == "gallica" and int(book_id) % 2 == 0
+        acquisition = f"{base}/{source}/pdf/{book_id}.pdf" if is_pdf else f"{base}/{source}/epub/{book_id}.epub"
+        acquisition_type = "application/pdf" if is_pdf else "application/epub+zip"
+        acquisition_label = "PDF" if is_pdf else "EPUB"
         cover = f"{base}/{source}/covers/{book_id}.png"
         updated = row["published"] + "T12:00:00Z"
+        category_xml = (
+            f'<category term="{esc(row["subject"])}" scheme="http://purl.org/dc/terms/LCSH"/>'
+            f'<category term="Bookshelf {esc(row["subject"])}" scheme="urn:cifereca:bookshelf"/>'
+            if source == "gutenberg"
+            else f'<category term="{esc(row["subject"])}" label="{esc(row["subject"])}"/>'
+        )
         return f'''<entry>
     <id>{esc(atom_id)}</id>
     <title>{esc(row['title'])}</title>
@@ -561,9 +580,9 @@ class FakeOPDSApp:
     <dcterms:language>{esc(row['language'])}</dcterms:language>
     <dc:publisher>{esc(row['publisher'])}</dc:publisher>
     <dc:identifier>{esc(row['isbn'])}</dc:identifier>
-    <category term="{esc(row['subject'])}" label="{esc(row['subject'])}"/>
+    {category_xml}
     <link rel="alternate" type="text/html" href="{esc(detail)}"/>
-    <link rel="http://opds-spec.org/acquisition/open-access" type="application/epub+zip" href="{esc(epub)}" title="EPUB"/>
+    <link rel="http://opds-spec.org/acquisition/open-access" type="{acquisition_type}" href="{esc(acquisition)}" title="{acquisition_label}"/>
     <link rel="http://opds-spec.org/image/thumbnail" type="image/png" href="{esc(cover)}"/>
     <link rel="http://opds-spec.org/image" type="image/png" href="{esc(cover)}"/>
   </entry>'''
@@ -601,6 +620,16 @@ class FakeOPDSApp:
             path.parent.mkdir(parents=True, exist_ok=True)
             self.write_epub(path, row)
         self._send(handler, HTTPStatus.OK, "application/epub+zip", path.read_bytes(), cache_control="public, max-age=86400")
+
+    def pdf(self, handler, source: str, book_id: int):
+        row = self.cache.get(source, book_id)
+        if row is None or source != "gallica":
+            return self.not_found(handler)
+        if self.asset_is_broken(book_id):
+            return self.send_json(handler, HTTPStatus.SERVICE_UNAVAILABLE, {"error": "simulated pdf failure"})
+        body = ("%PDF-1.4\n% Cifereca fake PDF\n1 0 obj<</Type/Catalog>>endobj\n"
+                "trailer<</Root 1 0 R>>\n%%EOF\n").encode("ascii")
+        self._send(handler, HTTPStatus.OK, "application/pdf", body, cache_control="public, max-age=86400")
 
     @staticmethod
     def make_cover_svg(row: sqlite3.Row) -> str:
@@ -705,6 +734,9 @@ class FakeOPDSApp:
         m = re.fullmatch(r"/(gallica|gutenberg)/epub/(\d+)\.epub", path)
         if m:
             return self.epub(handler, m.group(1), int(m.group(2)))
+        m = re.fullmatch(r"/gallica/pdf/(\d+)\.pdf", path)
+        if m:
+            return self.pdf(handler, "gallica", int(m.group(1)))
         m = re.fullmatch(r"/(gallica|gutenberg)/books/(\d+)", path)
         if m:
             return self.book_page(handler, m.group(1), int(m.group(2)))

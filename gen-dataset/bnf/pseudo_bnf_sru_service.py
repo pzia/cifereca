@@ -51,7 +51,7 @@ if str(DATASET_ROOT) not in sys.path:
 
 from common.fake_books import FakeBookFactory, stable_int
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_BOOKS = 20_000
 DEFAULT_PORT = 8095
@@ -351,6 +351,10 @@ class BnfSruApp:
         else:
             self.dc(dc_root, "type", "Texte")
 
+        # Structured values exercise the series/collection projection of the plugin.
+        self.dc(dc_root, "relation", f"Série {row['subject']}")
+        self.dc(dc_root, "source", f"Collection {row['subject']}")
+        self.dc(dc_root, "source", f"Collection éditeur {row['publisher']}")
         if row["gallica_url"]:
             self.dc(dc_root, "relation", row["gallica_url"])
         return record
