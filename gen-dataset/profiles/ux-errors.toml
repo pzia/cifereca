@@ -28,7 +28,8 @@ catalog_books = 1000
 vault_books = 150
 broken_assets_every = 7
 seed = 20261006
-\n[services.numilog]
+
+[services.numilog]
 enabled = true
 books = 1000
 page_size = 50
