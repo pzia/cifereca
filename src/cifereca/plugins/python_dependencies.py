@@ -160,6 +160,8 @@ class PythonDependencyManager:
                 raise PythonDependencyError(f"Python plugin dependencies remain unsatisfied after pip: {detail}")
             return transaction
         except Exception as exc:
+            # pip is normally transactional, but restore the exact pre-operation
+            # environment on a partial resolver/install failure whenever possible.
             try:
                 if _installed_versions() != before:
                     self._restore(before, wheel_dirs)
