@@ -7,6 +7,7 @@ Par défaut :
 - 20 000 notices ;
 - supports physiques, numériques et indéterminés ;
 - recherche CQL sur titre, auteur, ISBN, sujet et texte libre ;
+- séries et collections synthétiques via `dc:relation` / `dc:source`, recherchables par le plugin ;
 - pagination SRU ;
 - liens Gallica sur une partie des notices numériques ;
 - diagnostics SRU pour requêtes invalides ;

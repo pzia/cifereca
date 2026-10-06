@@ -51,7 +51,7 @@ if str(DATASET_ROOT) not in sys.path:
 
 from common.fake_books import FakeBookFactory, stable_int
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_BOOKS = 20_000
 DEFAULT_PORT = 8095
@@ -262,7 +262,9 @@ class DatasetCache:
             }.get(field)
 
             if field == "bib.anywhere":
-                columns = ["title_fold", "author_fold", "subject_fold", "isbn"]
+                # "anywhere" also covers publisher so collection searches can
+                # retrieve candidates before the plugin filters structured dc:source.
+                columns = ["title_fold", "author_fold", "subject_fold", "isbn", "lower(publisher)"]
             elif column:
                 columns = [column]
             else:
@@ -351,6 +353,10 @@ class BnfSruApp:
         else:
             self.dc(dc_root, "type", "Texte")
 
+        # Synthetic structured values exercise the plugin's conservative
+        # projection of Dublin Core relation/source into series/collections.
+        self.dc(dc_root, "relation", f"Série {row['subject']}")
+        self.dc(dc_root, "source", f"Collection {row['publisher']}")
         if row["gallica_url"]:
             self.dc(dc_root, "relation", row["gallica_url"])
         return record
