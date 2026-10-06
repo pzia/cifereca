@@ -1,0 +1,72 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.recommendations",
+    "version": "0.2.1",
+    "name": "Recommandations CIFERECA",
+    "publisher": "CIFERECA",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.recommendations",
+      "type": "ui.page",
+      "version": "0.2.1",
+      "entrypoint": "recommendations_v021:PLUGIN",
+      "display_name": "Recommandations",
+      "description": "Recommande des livres à partir de la bibliothèque du profil et des catalogues connectés.",
+      "help_text": "Ajoute une page Recommandations. Le plugin lit la projection publique de la bibliothèque via le broker metadata et interroge les catalogues via le broker catalog. Il combine les affinités auteur/sujets/série avec une fusion RRF, déduplique les notices déjà possédées et diversifie le classement avec MMR. Aucun emprunt ni téléchargement n'est déclenché.",
+      "enabled_by_default": true,
+      "priority": 0,
+      "instantiation": "singleton_public",
+      "requires_brokers": ["metadata", "catalog", "identities"],
+      "config_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": ["digital", "all"],
+            "default": "digital",
+            "description": "Périmètre demandé aux catalogues."
+          },
+          "max_queries": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 12,
+            "default": 8,
+            "description": "Nombre maximal de signaux du profil envo{3�s à la recherche fédérée."
+          },
+          "per_query": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 100,
+            "default": 50,
+            "description": "Nombre maximal de résultats conservés par signal."
+          },
+          "max_results": {
+            "type": "integer",
+            "minimum": 20,
+            "maximum": 300,
+            "default": 120,
+            "description": "Nombre maximal de recommandations classées."
+          },
+          "minimum_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 15,
+            "description": "Score minimal affiché par défaut."
+          },
+          "exploration": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 25,
+            "description": "Diversification MMR : 0 privilégie la pertinence pure, 100 augmente la variété."
+          }
+        }
+      }
+    }
+  ]
+}
