@@ -1,0 +1,505 @@
+from __future__ import annotations
+
+import hashlib
+import mimetypes
+import time
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+from .acquisition_engine import Artifact, stable_id
+from .artifact_inspection import detect_artifact_format
+from .epub_metadata import SCHEMA as EPUB_METADATA_SCHEMA, inspect_epub, cached_cover_url
+from .plugin_api import BUNDLE_MANIFEST_NAME, BundleError, load_bundle_manifest
+
+
+SUPPORTED_EXTENSIONS = {
+    ".epub": "epub",
+    ".pdf": "pdf",
+    ".mp3": "mp3",
+    ".m4a": "m4a",
+    ".ogg": "ogg",
+    ".opus": "opus",
+    ".flac": "flac",
+    ".wav": "wav",
+}
+
+
+@dataclass(frozen=True)
+class CatalogScanResult:
+    root: Path
+    scanned: int
+    cataloged: int
+    invalid: int
+    unsupported: int
+    missing_marked: int
+    artifacts_new: int
+    placements_new: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "root": str(self.root),
+            "scanned": self.scanned,
+            "cataloged": self.cataloged,
+            "invalid": self.invalid,
+            "unsupported": self.unsupported,
+            "missing_marked": self.missing_marked,
+            "artifacts_new": self.artifacts_new,
+            "placements_new": self.placements_new,
+        }
+
+
+class LocalCatalog:
+    """Local-first catalog for the functional library owned by Paris.
+
+    0.8.0 deliberately discovers facts from disk instead of deleting or moving
+    user files. Identity/provider path components are interpreted when present;
+    legacy flat layouts stay cataloged with hints inferred from the 0.7 ledger.
+    """
+
+    def __init__(self, storage: Any, root: Path) -> None:
+        self.storage = storage
+        self.root = root.expanduser()
+
+    @staticmethod
+    def sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _media_format(path: Path) -> str | None:
+        name = path.name.lower()
+        if name.endswith(".kepub.epub"):
+            return "kepub"
+        return SUPPORTED_EXTENSIONS.get(path.suffix.lower())
+
+    @staticmethod
+    def _validate(path: Path, media_format: str) -> tuple[bool, str | None]:
+        try:
+            if path.stat().st_size <= 0:
+                return False, "empty_file"
+            if media_format in {"epub", "kepub"}:
+                if not zipfile.is_zipfile(path):
+                    return False, "invalid_epub_zip"
+                with zipfile.ZipFile(path) as archive:
+                    names = set(archive.namelist())
+                    if "META-INF/container.xml" not in names:
+                        return False, "missing_epub_container"
+                return True, None
+            if media_format == "pdf":
+                with path.open("rb") as handle:
+                    if not handle.read(5).startswith(b"%PDF-"):
+                        return False, "invalid_pdf_header"
+                return True, None
+            return True, None
+        except (OSError, zipfile.BadZipFile):
+            return False, "unreadable_file"
+
+    def _path_hints(self, path: Path) -> tuple[str | None, str | None]:
+        try:
+            rel = path.relative_to(self.root)
+        except ValueError:
+            return None, None
+        parts = rel.parts
+        # Target layout is root/<identity>/<provider>/... . Do not invent an
+        # identity for legacy flat files; 0.8.1 will make identities explicit.
+        if len(parts) >= 3:
+            directory_name = parts[0]
+            identity_id = None
+            try:
+                match = next((row for row in self.storage.identities() if str(row.get("directory_name") or "") == directory_name), None)
+                if match:
+                    identity_id = str(match.get("identity_id") or directory_name)
+                else:
+                    previous = self.storage.placement_for_path(path.resolve())
+                    owner = (previous or {}).get("identity_id")
+                    registered = {row["identity_id"] for row in self.storage.identities()}
+                    if owner and (owner in registered or any(row.get("identity_id") == owner for row in self.storage.acquisitions()) or any(row.get("identity_id") == owner for row in self.storage.entitlements())):
+                        identity_id = owner
+            except Exception:
+                pass
+            # A folder name is not proof of a declared identity.
+            return identity_id, parts[1]
+        if len(parts) >= 2:
+            return None, parts[0]
+        return None, None
+
+    def _legacy_provenance(self, path: Path) -> dict[str, Any] | None:
+        return self.storage.backup_find_by_local_path(str(path))
+
+    def _index_bundle(
+        self,
+        root: Path,
+        *,
+        title: str | None = None,
+        item_id: str | None = None,
+        identity_id: str | None = None,
+        provider_id: str | None = None,
+    ) -> dict[str, Any]:
+        root = root.expanduser().resolve()
+        path_text = str(root)
+        existing = self.storage.placement_for_path(Path(path_text))
+        placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
+        identity_hint, provider_hint = self._path_hints(root)
+        identity_hint = identity_id or identity_hint
+        provider_hint = provider_id or provider_hint
+        now = int(time.time())
+        try:
+            manifest = load_bundle_manifest(root, verify=True)
+        except BundleError as exc:
+            self.storage.placement_put({
+                "placement_id": placement_id, "artifact_id": None, "path": path_text,
+                "identity_id": identity_hint, "provider_id": provider_hint,
+                "source_item_id": item_id, "state": "invalid", "last_seen_at": now,
+                "metadata": {"invalid_reason": str(exc), "artifact_kind": "bundle"},
+            })
+            return {"status": "invalid", "path": path_text, "reason": str(exc), "artifact_kind": "bundle"}
+
+        artifact = Artifact.from_bundle(
+            manifest, metadata={"discovered_by": "targeted_catalog_index", "bundle_manifest_file": BUNDLE_MANIFEST_NAME}
+        )
+        artifact_was_new = self.storage.artifact_get(artifact.artifact_id) is None
+        placement_was_new = self.storage.placement_get(placement_id) is None
+        self.storage.artifact_put(artifact)
+        try:
+            relative = str(root.relative_to(self.root.resolve()))
+        except ValueError:
+            relative = root.name
+        manifest_path = root / BUNDLE_MANIFEST_NAME
+        try:
+            stat = manifest_path.stat()
+            stat_meta = {"manifest_size": int(stat.st_size), "manifest_mtime_ns": int(stat.st_mtime_ns)}
+        except OSError:
+            stat_meta = {}
+        self.storage.placement_put({
+            "placement_id": placement_id, "artifact_id": artifact.artifact_id, "path": path_text,
+            "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": item_id,
+            "state": "present", "last_seen_at": now,
+            "metadata": {"relative_path": relative, "artifact_kind": "bundle", **stat_meta},
+        })
+        member_rows = [member.as_dict() for member in manifest.members]
+        metadata = {
+            "path": path_text, "artifact_kind": "bundle", "playlist": manifest.playlist,
+            "bundle_sha256": manifest.bundle_sha256, "bundle_members": member_rows,
+            "bundle_metadata": dict(manifest.metadata),
+        }
+        # Parent-level descriptive metadata may be supplied by the plugin in the
+        # autonomous manifest and remains reconstructable after a database loss.
+        metadata.update({k: v for k, v in dict(manifest.metadata).items() if k not in metadata})
+        self.storage.catalog_entry_put({
+            "catalog_entry_id": stable_id("catalog", placement_id), "artifact_id": artifact.artifact_id,
+            "placement_id": placement_id, "title": str(title or manifest.title or root.name),
+            "author": manifest.author or None, "media_format": manifest.media_format,
+            "identity_id": identity_hint, "provider_id": provider_hint, "item_id": item_id,
+            "local_state": "local", "metadata": metadata,
+        })
+        return {
+            "status": "indexed", "path": path_text, "media_format": manifest.media_format,
+            "artifact_kind": "bundle", "artifact_id": artifact.artifact_id,
+            "artifact_new": artifact_was_new, "placement_new": placement_was_new,
+            "members": len(manifest.members),
+        }
+
+    def index_path(
+        self,
+        path: Path,
+        *,
+        title: str | None = None,
+        item_id: str | None = None,
+        identity_id: str | None = None,
+        provider_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Index one newly materialized artifact without scanning the library."""
+        path = path.expanduser().resolve()
+        if path.is_dir():
+            return self._index_bundle(
+                path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id,
+            )
+        media_format = self._media_format(path)
+        if media_format is None:
+            return {"status": "unsupported", "path": str(path)}
+        ok, invalid_reason = self._validate(path, media_format)
+        path_text = str(path)
+        existing = self.storage.placement_for_path(Path(path_text))
+        placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
+        identity_hint, provider_hint = self._path_hints(path)
+        legacy = self._legacy_provenance(path)
+        if legacy:
+            provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
+        identity_hint = identity_id or identity_hint
+        provider_hint = provider_id or provider_hint
+        now = int(time.time())
+        try:
+            stat = path.stat()
+            stat_meta = {"file_size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+        except OSError:
+            stat_meta = {}
+        if not ok:
+            self.storage.placement_put({
+                "placement_id": placement_id, "artifact_id": None, "path": path_text,
+                "identity_id": identity_hint, "provider_id": provider_hint,
+                "source_item_id": item_id or (legacy.get("item_id") if legacy else None),
+                "state": "invalid", "last_seen_at": now,
+                "metadata": {"invalid_reason": invalid_reason, "media_format": media_format, **stat_meta},
+            })
+            return {"status": "invalid", "path": path_text, "reason": invalid_reason, "media_format": media_format}
+
+        catalog_entry_id = stable_id('catalog', placement_id)
+        previous_entry = self.storage.catalog_entry_get(catalog_entry_id)
+        digest = self.sha256(path)
+        artifact_id = f"sha256:{digest}"
+        artifact_was_new = self.storage.artifact_get(artifact_id) is None
+        placement_was_new = self.storage.placement_get(placement_id) is None
+        mime_type = mimetypes.guess_type(path.name)[0]
+        if media_format in {"epub", "kepub"}:
+            mime_type = "application/epub+zip"
+        artifact = Artifact.from_file(
+            path, sha256=digest, media_format=media_format, mime_type=mime_type,
+            metadata={**((self.storage.artifact_get(artifact_id) or {}).get("metadata") or {}), "discovered_by": "targeted_catalog_index"},
+        )
+        self.storage.artifact_put(artifact)
+        try:
+            relative = str(path.relative_to(self.root.resolve()))
+        except ValueError:
+            relative = path.name
+        source_item_id = item_id or (legacy.get("item_id") if legacy else None)
+        self.storage.placement_put({
+            "placement_id": placement_id, "artifact_id": artifact_id, "path": path_text,
+            "identity_id": identity_hint, "provider_id": provider_hint, "source_item_id": source_item_id,
+            "state": "present", "last_seen_at": now,
+            "metadata": {"relative_path": relative, "artifact_kind": "file", **stat_meta},
+        })
+        self.storage.catalog_entry_put({
+            "catalog_entry_id": catalog_entry_id, "artifact_id": artifact_id,
+            "placement_id": placement_id, "title": str(title or (legacy or {}).get("title") or ((previous_entry or {}).get("title") if (previous_entry or {}).get("artifact_id")==artifact_id else None) or path.stem),
+            "author": (legacy or {}).get("author") or ((previous_entry or {}).get("author") if (previous_entry or {}).get("artifact_id")==artifact_id else None), "media_format": media_format,
+            "identity_id": identity_hint, "provider_id": provider_hint, "item_id": source_item_id,
+            "local_state": "local", "metadata": {**(dict((previous_entry or {}).get("metadata") or {}) if (previous_entry or {}).get("artifact_id")==artifact_id else {}), "path": path_text, "artifact_kind": "file"},
+        })
+        entry = self.storage.catalog_entry_get(catalog_entry_id)
+        if entry is None:
+            raise RuntimeError(f"Entrée catalogue introuvable après indexation: {catalog_entry_id}")
+        if title:
+            entry['metadata']['title_source']='explicit';self.storage.catalog_entry_put(entry)
+        self._enrich_epub_entry(entry)
+        return {
+            "status": "indexed", "path": path_text, "media_format": media_format,
+            "artifact_id": artifact_id, "artifact_new": artifact_was_new, "placement_new": placement_was_new,
+        }
+
+    def _enrich_epub_entry(self, entry):
+        if entry.get('local_state') != 'local' or entry.get('media_format') not in {'epub','kepub'}:
+            return entry
+        artifact=self.storage.artifact_get(str(entry.get('artifact_id') or ''))
+        if not artifact:return entry
+        metadata=dict(entry.get('metadata') or {})
+        path=Path(str(metadata.get('path') or ''))
+        if not path.is_file():return entry
+        cached=dict(artifact.get('metadata') or {})
+        force=getattr(self,'_force_covers',False) and entry.get('artifact_id') not in getattr(self,'_cover_refresh_seen',set())
+        complete=cached.get('epub_metadata_schema')==EPUB_METADATA_SCHEMA and not force
+        if cached.get('epub_cover') and not cached_cover_url(cached):complete=False
+        if not complete:
+            inspected=inspect_epub(path)
+            if hasattr(self,'_cover_refresh_seen'):self._cover_refresh_seen.add(entry.get('artifact_id'))
+            # Content-derived facts attach to the Artifact hash, never a filename.
+            cached={**cached,**inspected}
+            if not inspected.get('epub_cover'):cached.pop('epub_cover',None)
+            self.storage.artifact_put({**artifact,'metadata':cached})
+        facts={key:value for key,value in cached.items() if key.startswith('epub_')}
+        if not metadata.get('epub_metadata_schema'):
+            descriptive={key:metadata[key] for key in ['description','publisher','published_at','languages','subjects','identifiers','series','collection'] if metadata.get(key)}
+            if descriptive:metadata['catalogue_metadata']=descriptive
+        if not facts.get('epub_cover'):metadata.pop('epub_cover',None)
+        metadata.update(facts)
+        local=facts.get('epub_metadata') or {}
+        for key,value in {'description':local.get('description'),'publisher':local.get('publishers'),
+                          'languages':local.get('languages'),'subjects':local.get('subjects'),
+                          'identifiers':local.get('identifiers'),'series':[row.get('name') for row in local.get('series',[]) if row.get('name')]}.items():
+            if value and not metadata.get(key):metadata[key]=value
+        if local.get('title') and (entry.get('title') in {None,'',path.stem} or metadata.get('title_source')=='epub'):
+            entry={**entry,'title':local['title']};metadata['title_source']='epub'
+        if local.get('authors') and not entry.get('author'):entry={**entry,'author':' ; '.join(local['authors'])}
+        enriched={**entry,'metadata':metadata}
+        if enriched!=entry:self.storage.catalog_entry_put(enriched)
+        return enriched
+
+    def scan(self, *, repair_misnamed: bool = False, force_covers: bool = False) -> CatalogScanResult:
+        self._force_covers = force_covers
+        self._cover_refresh_seen = set()
+        self.root.mkdir(parents=True, exist_ok=True)
+        started_at = int(time.time())
+        previous_catalog = {row["catalog_entry_id"]: row for row in self.storage.catalog_entries()}
+        seen_paths: set[str] = set()
+        scanned = cataloged = invalid = unsupported = artifacts_new = placements_new = 0
+
+        bundle_roots = sorted({p.parent.resolve() for p in self.root.rglob(BUNDLE_MANIFEST_NAME) if p.is_file() and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)})
+        bundle_root_set = set(bundle_roots)
+        for bundle_root in bundle_roots:
+            scanned += 1
+            seen_paths.add(str(bundle_root))
+            result = self._index_bundle(bundle_root)
+            if result.get("status") == "indexed":
+                cataloged += 1
+                artifacts_new += int(bool(result.get("artifact_new")))
+                placements_new += int(bool(result.get("placement_new")))
+            else:
+                invalid += 1
+
+        def inside_bundle(path: Path) -> bool:
+            resolved = path.resolve()
+            return any(root in resolved.parents for root in bundle_root_set)
+
+        for path in sorted(p for p in self.root.rglob("*") if p.is_file() and not p.name.endswith(".part") and not inside_bundle(p) and not any(part.startswith(".cifereca-migration-") for part in p.relative_to(self.root).parts)):
+            scanned += 1
+            media_format = self._media_format(path)
+            if media_format is None:
+                unsupported += 1
+                continue
+            ok, invalid_reason = self._validate(path, media_format)
+            if repair_misnamed and not ok and media_format in {"epub", "pdf"}:
+                actual = detect_artifact_format(path)
+                if actual in {"epub", "pdf"} and actual != media_format:
+                    old_path = path.resolve()
+                    suffix = ".pdf" if actual == "pdf" else ".epub"
+                    target = path.with_suffix(suffix)
+                    if target.exists() and target.resolve() != old_path:
+                        target = path.with_name(path.stem + ".repaired" + suffix)
+                    path.replace(target)
+                    path = target
+                    media_format = actual
+                    ok, invalid_reason = self._validate(path, media_format)
+                    new_path = str(path.resolve())
+                    for acquisition in self.storage.acquisitions():
+                        metadata = dict(acquisition.get("metadata") or {})
+                        if str(metadata.get("path") or "") == str(old_path):
+                            self.storage.acquisition_update_state(
+                                acquisition["acquisition_id"], str(acquisition.get("status") or "complete"),
+                                metadata={"path": new_path, "deep_repair": "extension_matches_content"},
+                            )
+            path_text = str(path.resolve())
+            seen_paths.add(path_text)
+            identity_hint, provider_hint = self._path_hints(path)
+            legacy = self._legacy_provenance(path.resolve())
+            if legacy:
+                provider_hint = str(legacy.get("provider_id") or provider_hint or "") or None
+            if not ok:
+                invalid += 1
+                self.storage.placement_put(
+                    {
+                        "placement_id": stable_id("placement", path_text),
+                        "artifact_id": None,
+                        "path": path_text,
+                        "identity_id": identity_hint,
+                        "provider_id": provider_hint,
+                        "source_item_id": legacy.get("item_id") if legacy else None,
+                        "state": "invalid",
+                        "last_seen_at": started_at,
+                        "metadata": {"invalid_reason": invalid_reason, "media_format": media_format},
+                    }
+                )
+                continue
+
+            existing = self.storage.placement_for_path(Path(path_text))
+            placement_id = existing["placement_id"] if existing else stable_id("placement", path_text)
+            previous_placement = self.storage.placement_get(placement_id)
+            placement_was_new = previous_placement is None
+            stat = path.stat()
+            previous_meta = dict((previous_placement or {}).get("metadata") or {})
+            artifact_id = str((previous_placement or {}).get("artifact_id") or "")
+            cached_unchanged = bool(
+                artifact_id
+                and int(previous_meta.get("file_size") or -1) == int(stat.st_size)
+                and int(previous_meta.get("mtime_ns") or -1) == int(stat.st_mtime_ns)
+                and self.storage.artifact_get(artifact_id) is not None
+            )
+            if cached_unchanged:
+                artifact_was_new = False
+            else:
+                digest = self.sha256(path)
+                artifact_id = f"sha256:{digest}"
+                artifact_was_new = self.storage.artifact_get(artifact_id) is None
+                mime_type = mimetypes.guess_type(path.name)[0]
+                if media_format in {"epub", "kepub"}:
+                    mime_type = "application/epub+zip"
+                artifact = Artifact.from_file(
+                    path,
+                    sha256=digest,
+                    media_format=media_format,
+                    mime_type=mime_type,
+                    metadata={**((self.storage.artifact_get(artifact_id) or {}).get("metadata") or {}), "discovered_by": "local_catalog_scan"},
+                )
+                self.storage.artifact_put(artifact)
+            self.storage.placement_put(
+                {
+                    "placement_id": placement_id,
+                    "artifact_id": artifact_id,
+                    "path": path_text,
+                    "identity_id": identity_hint,
+                    "provider_id": provider_hint,
+                    "source_item_id": legacy.get("item_id") if legacy else None,
+                    "state": "present",
+                    "last_seen_at": started_at,
+                    "metadata": {
+                        "relative_path": str(path.relative_to(self.root)),
+                        "file_size": int(stat.st_size),
+                        "mtime_ns": int(stat.st_mtime_ns),
+                        "artifact_kind": "file",
+                    },
+                }
+            )
+            self.storage.catalog_entry_put(
+                {
+                    "catalog_entry_id": stable_id("catalog", placement_id),
+                    "artifact_id": artifact_id,
+                    "placement_id": placement_id,
+                    "title": str((legacy or {}).get("title") or path.stem),
+                    "author": (legacy or {}).get("author"),
+                    "media_format": media_format,
+                    "identity_id": identity_hint,
+                    "provider_id": provider_hint,
+                    "item_id": (legacy or {}).get("item_id"),
+                    "local_state": "local",
+                    "metadata": {"path": path_text, "artifact_kind": "file"},
+                }
+            )
+            cataloged += 1
+            artifacts_new += int(artifact_was_new)
+            placements_new += int(placement_was_new)
+
+        # A scan updates disk facts. It must preserve descriptive provenance
+        # already attached to an unchanged Artifact, including after relocation.
+        # Reuse the same catalogue snapshot for EPUB enrichment instead of
+        # rescanning the whole table a second time.
+        for current in self.storage.catalog_entries():
+            effective = current
+            previous = previous_catalog.get(current["catalog_entry_id"])
+            if previous and previous.get("artifact_id") == current.get("artifact_id") and previous.get("local_state") == "local":
+                preserved = {**current, "title": previous["title"],
+                             "author": current.get("author") or previous.get("author"),
+                             "item_id": current.get("item_id") or previous.get("item_id"),
+                             "metadata": {**previous.get("metadata", {}), **current.get("metadata", {})}}
+                if preserved != current:
+                    self.storage.catalog_entry_put(preserved)
+                    effective = preserved
+            if str((effective.get('metadata') or {}).get('path') or '') in seen_paths:
+                self._enrich_epub_entry(effective)
+
+        missing_marked = self.storage.placements_mark_missing(self.root, seen_paths, seen_at=started_at)
+        return CatalogScanResult(
+            root=self.root,
+            scanned=scanned,
+            cataloged=cataloged,
+            invalid=invalid,
+            unsupported=unsupported,
+            missing_marked=missing_marked,
+            artifacts_new=artifacts_new,
+            placements_new=placements_new,
+        )
+
+    def entries(self, *, state: str | None = None) -> list[dict[str, Any]]:
+        return self.storage.catalog_entries(state=state)
