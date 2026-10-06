@@ -141,6 +141,32 @@ def is_pid_alive(pid: int) -> bool:
     return True
 
 
+def managed_service_alive(row: dict) -> bool:
+    try:
+        pid = int(row.get("pid") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not is_pid_alive(pid):
+        return False
+    command = row.get("command")
+    if not isinstance(command, list) or len(command) < 2:
+        return False
+    expected_script = str(command[1])
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    if proc_cmdline.exists():
+        try:
+            args = [
+                part.decode("utf-8", errors="replace")
+                for part in proc_cmdline.read_bytes().split(b"\0")
+                if part
+            ]
+        except OSError:
+            return False
+        return expected_script in args
+    # Non-Linux fallback: keep PID semantics but never infer another command.
+    return True
+
+
 def health_ok(url: str, timeout: float = 0.7) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
@@ -253,7 +279,8 @@ def stop_service(profile: dict, state: dict, name: str) -> None:
         pid = int(row.get("pid") or 0)
     except (TypeError, ValueError):
         pid = 0
-    stop_pid(pid)
+    if managed_service_alive(row):
+        stop_pid(pid)
     state["services"].pop(name, None)
 
 
@@ -451,7 +478,7 @@ def start_services(profile: dict, catalog: dict[str, dict], *, rebuild: bool = F
         if isinstance(old, dict):
             old_pid = int(old.get("pid") or 0)
             same = old.get("command") == desired_command
-            if same and is_pid_alive(old_pid) and health_ok(ctx["health_url"]):
+            if same and managed_service_alive(old) and health_ok(ctx["health_url"]):
                 print(f"[ok] {name}: déjà actif pid={old_pid} {ctx['base_url']}")
                 continue
             stop_service(profile, state, name)
@@ -600,7 +627,7 @@ def status_rows(profile: dict, catalog: dict[str, dict]) -> list[dict]:
         rows.append({
             "service": name,
             "pid": pid or None,
-            "process": is_pid_alive(pid),
+            "process": managed_service_alive(saved),
             "health": health_ok(ctx["health_url"]),
             "url": ctx["base_url"],
             "log": saved.get("log"),
