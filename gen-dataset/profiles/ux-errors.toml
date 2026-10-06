@@ -1,0 +1,36 @@
+name = "ux-errors"
+description = "États UX atypiques : téléchargements expirés, indisponibilités et diagnostics."
+
+[runtime]
+startup_timeout_seconds = 20
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = ["ui.page.home", "ui.page.diagnostics"]
+width = 1300
+height = 850
+
+[library]
+epubs = 25
+seed = 20261006
+
+[services.numilog]
+enabled = true
+books = 1000
+page_size = 50
+seed = 20261006
+
+[services.paris]
+enabled = true
+books = 1000
+active_loans = 80
+history_items = 100
+bookings = 25
+digital_ratio = 0.70
+seed = 20261006
+
+[services.bnf]
+enabled = true
+books = 2000
+seed = 20261006

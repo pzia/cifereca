@@ -1,0 +1,57 @@
+version = 1
+
+[service.opds]
+script = "opds/pseudo_opds_server.py"
+default_port = 8080
+health_path = "/health"
+plugins = ["provider.gallica", "provider.gutenberg"]
+
+[service.opds.args]
+books_per_source = "--books-per-source"
+seed = "--seed"
+
+[service.kobo]
+script = "kobo/pseudo_kobo_services.py"
+default_port = 8090
+health_path = "/health"
+plugins = ["provider.kobo.catalog", "provider.kobo"]
+
+[service.kobo.args]
+catalog_books = "--catalog-books"
+vault_books = "--vault-books"
+seed = "--seed"
+
+[service.paris]
+script = "paris/pseudo_paris_service.py"
+default_port = 8093
+health_path = "/health"
+plugins = ["provider.paris"]
+
+[service.paris.args]
+books = "--books"
+active_loans = "--active-loans"
+history_items = "--history-items"
+bookings = "--bookings"
+digital_ratio = "--digital-ratio"
+seed = "--seed"
+
+[service.numilog]
+script = "numilog/pseudo_numilog_service.py"
+default_port = 8094
+health_path = "/health"
+plugins = ["provider.numilog"]
+
+[service.numilog.args]
+books = "--books"
+page_size = "--page-size"
+seed = "--seed"
+
+[service.bnf]
+script = "bnf/pseudo_bnf_sru_service.py"
+default_port = 8095
+health_path = "/health"
+plugins = ["provider.bnf-catalogue"]
+
+[service.bnf.args]
+books = "--books"
+seed = "--seed"

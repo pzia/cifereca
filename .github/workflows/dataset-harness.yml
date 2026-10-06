@@ -1,0 +1,44 @@
+name: Dataset UX harness
+
+on:
+  push:
+    paths:
+      - "gen-dataset/**"
+      - ".github/workflows/dataset-harness.yml"
+  pull_request:
+    paths:
+      - "gen-dataset/**"
+      - ".github/workflows/dataset-harness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-datasets
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile dataset tools
+        run: python -m compileall -q gen-dataset
+
+      - name: Test dataset harness
+        run: python -m unittest discover -s gen-dataset/tests -v
+
+      - name: Start small UX profile
+        run: python gen-dataset/datasetctl.py up ux-small
+
+      - name: Check service health
+        run: python gen-dataset/datasetctl.py status ux-small
+
+      - name: Show generated config
+        run: python gen-dataset/datasetctl.py config ux-small
+
+      - name: Stop small UX profile
+        if: always()
+        run: python gen-dataset/datasetctl.py down ux-small

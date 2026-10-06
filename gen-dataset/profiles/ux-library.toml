@@ -1,0 +1,28 @@
+name = "ux-library"
+description = "Bibliothèque dense : 1 000 EPUB locaux, Kobo Vault et Numilog."
+
+[runtime]
+startup_timeout_seconds = 30
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = ["ui.page.home"]
+width = 1300
+height = 850
+
+[library]
+epubs = 1000
+seed = 20261006
+
+[services.kobo]
+enabled = true
+catalog_books = 10000
+vault_books = 1000
+seed = 20261006
+
+[services.numilog]
+enabled = true
+books = 1000
+page_size = 50
+seed = 20261006
