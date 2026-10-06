@@ -11,6 +11,8 @@ entièrement isolé.
 - génération automatique de `config.json` et `plugins-config.json` ;
 - isolation via `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` et
   `XDG_STATE_HOME` ;
+- snapshot des packages de plugins installés dans le profil UX, afin de garder
+  BnF/Numilog/Home/etc. disponibles sans partager la base Cifereca réelle ;
 - génération optionnelle d'une bibliothèque EPUB locale ;
 - lancement Cifereca avec `--no-plugins` et les vrais `--force-plugin` du Core ;
 - exécution de n'importe quel outil UX dans le même environnement ;
@@ -18,6 +20,16 @@ entièrement isolé.
 
 Les fichiers runtime sont stockés dans `gen-dataset/.runtime/` par défaut.
 Définissez `CIFERECA_DATASET_RUNTIME` pour les placer ailleurs.
+
+Par défaut, `datasetctl` copie le store de plugins actif depuis le
+`XDG_DATA_HOME` réel vers le profil isolé. Pour utiliser un store explicite :
+
+```bash
+export CIFERECA_DATASET_PLUGIN_SOURCE=~/.local/share/cifereca/plugins/packages
+```
+
+Cette copie n'est refaite que lorsque la signature des packages installés
+change.
 
 ## Commandes
 
