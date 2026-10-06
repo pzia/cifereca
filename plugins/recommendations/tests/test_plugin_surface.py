@@ -1,4 +1,4 @@
-import recommendations_v021 as recommendations
+import recommendations_v022 as recommendations
 
 
 def test_page_is_single_and_named_recommendations():

@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.recommendations",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "name": "Recommandations CIFERECA",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,22 +11,29 @@
     {
       "id": "ui.page.recommendations",
       "type": "ui.page",
-      "version": "0.2.1",
-      "entrypoint": "recommendations_v021:PLUGIN",
+      "version": "0.2.2",
+      "entrypoint": "recommendations_v022:PLUGIN",
       "display_name": "Recommandations",
       "description": "Recommande des livres à partir de la bibliothèque du profil et des catalogues connectés.",
       "help_text": "Ajoute une page Recommandations. Le plugin lit la projection publique de la bibliothèque via le broker metadata et interroge les catalogues via le broker catalog. Il combine les affinités auteur/sujets/série avec une fusion RRF, déduplique les notices déjà possédées et diversifie le classement avec MMR. Aucun emprunt ni téléchargement n'est déclenché.",
       "enabled_by_default": true,
       "priority": 0,
       "instantiation": "singleton_public",
-      "requires_brokers": ["metadata", "catalog", "identities"],
+      "requires_brokers": [
+        "metadata",
+        "catalog",
+        "identities"
+      ],
       "config_schema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "scope": {
             "type": "string",
-            "enum": ["digital", "all"],
+            "enum": [
+              "digital",
+              "all"
+            ],
             "default": "digital",
             "description": "Périmètre demandé aux catalogues."
           },
@@ -35,7 +42,7 @@
             "minimum": 2,
             "maximum": 12,
             "default": 8,
-            "description": "Nombre maximal de signaux du profil envo{3�s à la recherche fédérée."
+            "description": "Nombre maximal de signaux du profil envoyés à la recherche fédérée."
           },
           "per_query": {
             "type": "integer",
