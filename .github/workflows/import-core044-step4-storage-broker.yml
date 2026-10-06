@@ -1,0 +1,41 @@
+name: Import Core044 step4 storage broker
+
+on:
+  push:
+    paths:
+      - '.core044-step4-storage-broker/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct and publish step 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          cat .core044-step4-storage-broker/source.part.* | base64 -d > "$tmp/payload.tar.xz"
+          echo "7274fa9a83268961f4fad12bd1f53ca540570198841b14b1c54b85f0cc5a9c72  $tmp/payload.tar.xz" | sha256sum -c -
+          mkdir "$tmp/source"
+          tar -xJf "$tmp/payload.tar.xz" -C "$tmp/source"
+
+          for path in             src/cifereca/storage.py             src/cifereca/artifact_runtime.py             src/cifereca/brokers.py
+          do
+            test -f "$tmp/source/$path"
+            mkdir -p "$(dirname "$path")"
+            cp "$tmp/source/$path" "$path"
+          done
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -r .core044-step4-storage-broker
+          git rm .github/workflows/import-core044-step4-storage-broker.yml
+          git add src/cifereca/storage.py src/cifereca/artifact_runtime.py src/cifereca/brokers.py
+          git commit -m 'Publish Core044 storage and broker layer'
+          git push origin HEAD:"$GITHUB_REF_NAME"
