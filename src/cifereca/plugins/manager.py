@@ -299,4 +299,157 @@ class PluginManager:
             }
         if category.contract_id != requirement.contract or not contract_version_matches(category.contract_version, requirement.version):
             return [], {
-                "reason_code": "contr
+                "reason_code": "contract_mismatch", "category": requirement.category,
+                "expected_contract": requirement.contract, "expected_version": requirement.version,
+                "actual_contract": category.contract_id, "actual_version": category.contract_version,
+                "message": f"contract mismatch for category {requirement.category}",
+            }
+        required_caps = set(requirement.capabilities)
+        matches = []
+        for plugin_id, candidate in self._records.items():
+            if not candidate.enabled or candidate.descriptor.type != requirement.category:
+                continue
+            if required_caps.issubset(set(candidate.descriptor.capabilities)):
+                matches.append(plugin_id)
+        if not matches:
+            return [], {
+                "reason_code": "missing_service", "category": requirement.category,
+                "contract": requirement.contract, "version": requirement.version,
+                "capabilities": tuple(requirement.capabilities),
+                "message": f"no compatible provider for category {requirement.category}",
+            }
+        return sorted(matches), {}
+
+    def _category_signatures(self) -> dict[str, tuple[object, ...]]:
+        grouped: dict[str, list[object]] = {}
+        for plugin_id, record in sorted(self._records.items()):
+            if record.service is None or not record.enabled or record.state not in {"ready", "degraded"}:
+                continue
+            grouped.setdefault(record.descriptor.type, []).append((
+                plugin_id, record.descriptor.version, tuple(record.descriptor.capabilities),
+                record.state, id(record.service),
+            ))
+        return {key: tuple(value) for key, value in grouped.items()}
+
+    def _publish_registry_change(self) -> None:
+        signatures = self._category_signatures()
+        keys = set(signatures) | set(self._published_category_signatures)
+        changed = {key for key in keys if signatures.get(key, ()) != self._published_category_signatures.get(key, ())}
+        if not changed:
+            return
+        self._published_category_signatures = signatures
+        self._registry_generation += 1
+        self._notify_service_subscribers(changed)
+
+    @property
+    def registry_generation(self) -> int:
+        return self._registry_generation
+
+    def _active_contract_match(self, requirement: ContractRequirement) -> bool:
+        required_caps = set(requirement.capabilities)
+        for row in self.services(requirement.category):
+            if row.contract_id != requirement.contract:
+                continue
+            if not contract_version_matches(row.contract_version, requirement.version):
+                continue
+            if not required_caps.issubset(set(row.capabilities)):
+                continue
+            return True
+        return False
+
+    def activate(self) -> list[PluginStatus]:
+        self.refresh()
+        descriptors = {plugin_id: record.descriptor for plugin_id, record in self._records.items()}
+        candidates = {
+            plugin_id for plugin_id, record in self._records.items()
+            if record.enabled and record.state in {"ready", "degraded"}
+        }
+        try:
+            order = topological_order(descriptors, candidates)
+        except DependencyError:
+            order = sorted(candidates)
+
+        pending = list(order)
+        while pending:
+            progressed = False
+            next_pending: list[str] = []
+            pending_set = set(pending)
+            for plugin_id in pending:
+                record = self._records[plugin_id]
+                blocked_dependency = next(
+                    (dep.plugin for dep in record.descriptor.requires
+                     if dep.plugin in self._records and self._records[dep.plugin].state not in {"ready", "degraded"}),
+                    None,
+                )
+                if blocked_dependency:
+                    record.state = "blocked"
+                    record.reason = "dependency_unavailable"
+                    record.reason_detail = {"plugin": blocked_dependency}
+                    record.error = f"required plugin is not ready: {blocked_dependency}"
+                    progressed = True
+                    continue
+
+                wait_for_contract = False
+                runtime_blocked = False
+                for requirement in record.descriptor.requires_contracts:
+                    if requirement.mode == "optional" or self._active_contract_match(requirement):
+                        continue
+                    static_matches, detail = self._static_contract_matches(requirement)
+                    waiting = any(
+                        provider_id != plugin_id and provider_id in pending_set
+                        and self._records[provider_id].service is None
+                        for provider_id in static_matches
+                    )
+                    if waiting:
+                        wait_for_contract = True
+                        break
+                    if requirement.mode == "required":
+                        record.state = "blocked"
+                        record.reason = "missing_service"
+                        record.reason_detail = detail or {
+                            "category": requirement.category, "contract": requirement.contract,
+                            "version": requirement.version, "capabilities": tuple(requirement.capabilities),
+                        }
+                        record.error = f"no ready service satisfies {requirement.contract} {requirement.version}"
+                        runtime_blocked = True
+                        break
+                    if requirement.mode == "degraded":
+                        details = record.degraded_details or []
+                        runtime_detail = detail or {
+                            "reason_code": "missing_service", "category": requirement.category,
+                            "contract": requirement.contract, "version": requirement.version,
+                            "capabilities": tuple(requirement.capabilities),
+                        }
+                        if runtime_detail not in details:
+                            details.append(runtime_detail)
+                        record.degraded_details = details
+                if runtime_blocked:
+                    progressed = True
+                    continue
+                if wait_for_contract:
+                    next_pending.append(plugin_id)
+                    continue
+
+                if record.descriptor.type == "meta.bundle" and not record.descriptor.entrypoint:
+                    record.state = "ready"
+                    progressed = True
+                    continue
+                if record.instance is not None:
+                    progressed = True
+                    continue
+                try:
+                    self._activate_one(record)
+                except Exception as exc:
+                    record.state = "error"
+                    record.reason = "activation_failed"
+                    record.reason_detail = {"exception": type(exc).__name__}
+                    record.error = str(exc)
+                    self._diag("plugin activation", "error", {"plugin": plugin_id, "error": str(exc)})
+                progressed = True
+
+            if not next_pending:
+                break
+            if not progressed:
+                for plugin_id in next_pending:
+                    record = self._records[plugin_id]
+                    record
