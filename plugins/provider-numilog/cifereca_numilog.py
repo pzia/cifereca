@@ -1,6 +1,7 @@
-"""Provider externe Numilog 0.1.1, bibliothèque privée et EPUB direct."""
+"""Provider externe Numilog 0.1.7, bibliothèque privée et EPUB direct."""
 from __future__ import annotations
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -18,7 +19,7 @@ from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderC
 from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.5'
+VERSION = '0.1.7'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog et téléchargement EPUB direct.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -31,10 +32,31 @@ ALLOWED = {'www.numilog.com','services.numilog.com','www.edenlivres.fr','storage
 REDIRECTS = {301,302,303,307,308}
 MAX_HTML = 4*1024*1024
 
-def checked_url(value):
+def url_origin(value):
+    p=urlsplit(value)
+    port=p.port or (443 if p.scheme=='https' else 80 if p.scheme=='http' else None)
+    return (p.scheme.casefold(),(p.hostname or '').casefold(),port)
+
+def normalized_base_url(value):
+    text=str(value or BASE).strip()
+    try:
+        p=urlsplit(text)
+        host=(p.hostname or '').casefold()
+        loopback = host == 'localhost'
+        if host and not loopback:
+            try: loopback=ipaddress.ip_address(host).is_loopback
+            except ValueError: pass
+        if (p.scheme=='https' or (p.scheme=='http' and loopback)) and host and not p.username and not p.password and not p.query and not p.fragment and p.path in {'','/'}:
+            return f"{p.scheme}://{p.netloc}/"
+    except ValueError:
+        pass
+    raise ProviderConfigurationError('Numilog : base_url invalide ; HTTPS requis, sauf loopback HTTP pour les tests locaux')
+
+def checked_url(value, allowed_origins=None):
+    allowed=set(allowed_origins or {url_origin('https://'+host+'/') for host in ALLOWED})
     try:
         p = urlsplit(value)
-        if p.scheme == 'https' and p.hostname in ALLOWED and p.port in {None,443} and not p.username and not p.password and not p.fragment:
+        if p.scheme in {'http','https'} and url_origin(value) in allowed and not p.username and not p.password and not p.fragment:
             return value
     except ValueError:
         pass
@@ -82,6 +104,10 @@ class NumilogSession(ProviderSession):
         super().__init__(descriptor=DESCRIPTOR,**kwargs)
         self.diagnostics = diagnostics
         self.scope = hashlib.sha256(self.credential_id.encode()).hexdigest()[:20]
+        self.base_url = normalized_base_url(self.options.get('base_url') or BASE)
+        self.library_url = urljoin(self.base_url,'Pages/Compte/MesLivres.aspx')
+        self.allowed_origins = {url_origin('https://'+host+'/') for host in ALLOWED}
+        self.allowed_origins.add(url_origin(self.base_url))
         timeout = float(self.options.get('timeout_seconds',30))
         self.maximum = int(self.options.get('max_download_bytes',100*1024*1024))
         if not 1 <= timeout <= 120 or not 1024 <= self.maximum <= 512*1024*1024:
@@ -116,10 +142,10 @@ class NumilogSession(ProviderSession):
     def _page(self,url,*,payload=None):
         method = 'POST' if payload is not None else 'GET'
         for _ in range(10):
-            checked_url(url)
-            headers = {'Referer':BASE}
+            checked_url(url,self.allowed_origins)
+            headers = {'Referer':self.base_url}
             if payload is not None:
-                headers.update({'Origin':BASE.rstrip('/'),'X-Requested-With':'XMLHttpRequest','Accept':'application/json'})
+                headers.update({'Origin':self.base_url.rstrip('/'),'X-Requested-With':'XMLHttpRequest','Accept':'application/json'})
             with self.client.stream(method,url,json=payload,headers=headers) as r:
                 self._diag('HTTP',method=method,host=urlsplit(url).hostname,status=r.status_code)
                 if r.status_code in REDIRECTS:
@@ -141,17 +167,17 @@ class NumilogSession(ProviderSession):
             if not email or not password:
                 raise ProviderConfigurationError('Numilog : email et mot de passe requis')
             try:
-                self._page(BASE)
-                _, text = self._page(BASE+'Login.Aspx/AuthUser',payload={'frmLogin':email,'frmPassword':password})
+                self._page(self.base_url)
+                _, text = self._page(urljoin(self.base_url,'Login.Aspx/AuthUser'),payload={'frmLogin':email,'frmPassword':password})
                 result = json.loads(text).get('d')
                 if isinstance(result,str):
                     result = json.loads(result)
                 if not isinstance(result,dict) or result.get('AuthSuccess') is not True:
                     raise ProviderError('Numilog : connexion refusée')
-                url, text = self._page(LIBRARY)
+                url, text = self._page(self.library_url)
                 if urlsplit(url).path.lower() != '/pages/compte/meslivres.aspx':
                     raise ProviderError('Numilog : session non reconnue par la bibliothèque')
-                parse_library(text)
+                parse_library(text,url,cover_origins=self.allowed_origins)
             except (httpx.HTTPError,ValueError,TypeError,AttributeError):
                 self.client.cookies.clear()
                 raise ProviderError('Numilog : connexion impossible ou réponse inattendue') from None
@@ -176,7 +202,7 @@ class NumilogSession(ProviderSession):
         if not self.connected:
             raise ProviderError('Numilog : connecter le compte avant cette opération')
         try:
-            url = LIBRARY
+            url = self.library_url
             rows = []
             seen_pages = set()
             seen_items = set()
@@ -188,7 +214,7 @@ class NumilogSession(ProviderSession):
                 if urlsplit(final_url).path.lower() != '/pages/compte/meslivres.aspx':
                     self.connected = False
                     raise ProviderError('Numilog : session expirée ; reconnecter le compte')
-                page_rows,next_url = parse_library_page(text,final_url)
+                page_rows,next_url = parse_library_page(text,final_url,cover_origins=self.allowed_origins)
                 for row in page_rows:
                     key=(row['lid'],row['variant'])
                     if key not in seen_items:
@@ -211,7 +237,7 @@ class NumilogSession(ProviderSession):
         key = self._id(row)
         return SearchResult(id=key,record_id=key,docbase='NUMILOG',medium='digital',title=row['title'],
             author=None,type='Livre numérique',format=None,publisher=None,published_at=None,description=None,
-            thumbnail_url=row['cover'],friendly_url=LIBRARY,scenario='NUMILOG_LIBRARY',source_provider='numilog',
+            thumbnail_url=row['cover'],friendly_url=self.library_url,scenario='NUMILOG_LIBRARY',source_provider='numilog',
             source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='library',
             owned=True,downloadable=True,metadata={'format_unverified':True})
 
@@ -257,16 +283,16 @@ class NumilogSession(ProviderSession):
         item.owned = True
         item.downloadable = True
         item.source_collection = 'library'
-        item.friendly_url = LIBRARY
+        item.friendly_url = self.library_url
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None):
         seen = set()
         for _ in range(12):
-            checked_url(url)
+            checked_url(url,self.allowed_origins)
             if url in seen:
                 raise ProviderError('Numilog : boucle de téléchargement')
             seen.add(url)
-            with self.client.stream('GET',url,headers={'Referer':BASE}) as r:
+            with self.client.stream('GET',url,headers={'Referer':self.base_url}) as r:
                 self._diag('HTTP',method='GET',host=urlsplit(url).hostname,status=r.status_code)
                 if r.status_code in REDIRECTS:
                     url = urljoin(str(r.url),r.headers.get('location',''))
@@ -276,7 +302,7 @@ class NumilogSession(ProviderSession):
                 if mime == 'text/html':
                     html = self._small(r).decode('utf-8-sig',errors='replace')
                     try:
-                        url = delivery_url(html,str(r.url))
+                        url = delivery_url(html,str(r.url),allowed_origins=self.allowed_origins)
                     except ParseError:
                         raise ProviderError('Numilog : lien de livraison absent ; reconnecter le compte ou signaler la page modifiée') from None
                     continue
@@ -304,7 +330,7 @@ class NumilogSession(ProviderSession):
                     part.unlink(missing_ok=True)
                 self._diag('téléchargement',bytes=size,format='EPUB')
                 # La source rendue au core est stable ; jamais l'URL signée.
-                return destination,LIBRARY
+                return destination,self.library_url
         raise ProviderError('Numilog : trop de redirections ou pages intermédiaires')
 
     def download_direct(self,item,target_dir):

@@ -9,8 +9,10 @@ from urllib.parse import urljoin, urlsplit, parse_qs
 BASE = 'https://www.numilog.com/'
 LIBRARY = BASE + 'Pages/Compte/MesLivres.aspx'
 
+
 class ParseError(ValueError):
     pass
+
 
 @dataclass
 class Node:
@@ -26,6 +28,7 @@ class Node:
 
     def text(self):
         return ' '.join(' '.join(self.pieces).split())
+
 
 class Parser(HTMLParser):
     def __init__(self, text):
@@ -63,17 +66,31 @@ class Parser(HTMLParser):
                 if node.tag not in {'script','style'}:
                     node.pieces.append(data)
 
+
 def classes(node):
     return set((node.attrs.get('class') or '').split())
 
-def parse_library_page(text, base_url=LIBRARY):
+
+def origin(value):
+    p=urlsplit(value)
+    port=p.port or (443 if p.scheme=='https' else 80 if p.scheme=='http' else None)
+    return (p.scheme.casefold(),(p.hostname or '').casefold(),port)
+
+
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
         raise ParseError('Bibliothèque absente : session expirée ou page modifiée')
+
+    site_origin=origin(base_url)
+    site=urlsplit(base_url)
+    site_root=f'{site.scheme}://{site.netloc}/'
+    allowed_covers={site_origin,origin('https://couverture.numilog.com/')}
+    allowed_covers.update(cover_origins or ())
+
     items, keys = [], set()
     for card in tables[0].children:
-        # Le modèle n'est pas un livre possédé, même s'il est déplacé dans la table.
         if card.attrs.get('id') == 'ModelItemMesLivres':
             continue
         nodes = list(card.walk())
@@ -85,21 +102,22 @@ def parse_library_page(text, base_url=LIBRARY):
         for link in links:
             href = urljoin(base_url, link.attrs.get('href') or '')
             url = urlsplit(href)
-            if url.scheme != 'https' or url.hostname != 'www.numilog.com' or url.username or url.password or url.port not in {None,443} or url.path != '/Pages/Compte/readBook.ashx':
+            if origin(href) != site_origin or url.username or url.password or url.fragment or url.path != '/Pages/Compte/readBook.ashx':
                 raise ParseError('Lien de bibliothèque inattendu')
             params = parse_qs(url.query)
             lid = params.get('lid',[])
             if len(lid) != 1 or not re.fullmatch(r'\d{1,20}',lid[0]):
                 raise ParseError('Identifiant du livre absent ou inattendu')
-            # Le paramètre m distingue lecture/download : reprendre le href exact.
             variant = tuple((k,tuple(params[k])) for k in ('m','format','FormatId','FORMAT_ID') if k in params)
             key = (lid[0],variant)
             if key in keys:
                 continue
             keys.add(key)
-            cover = urljoin(BASE,images[0]) if images and images[0] else None
-            if cover and (urlsplit(cover).scheme != 'https' or urlsplit(cover).hostname != 'couverture.numilog.com' or urlsplit(cover).query):
-                cover = None
+            cover = urljoin(site_root,images[0]) if images and images[0] else None
+            if cover:
+                parsed_cover=urlsplit(cover)
+                if origin(cover) not in allowed_covers or parsed_cover.username or parsed_cover.password or parsed_cover.fragment or parsed_cover.query:
+                    cover = None
             items.append({'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href})
 
     next_links=[]
@@ -111,7 +129,7 @@ def parse_library_page(text, base_url=LIBRARY):
             continue
         resolved=urljoin(base_url,href)
         parsed=urlsplit(resolved)
-        if parsed.scheme!='https' or parsed.hostname!='www.numilog.com' or parsed.username or parsed.password or parsed.port not in {None,443}:
+        if origin(resolved)!=site_origin or parsed.username or parsed.password or parsed.fragment:
             raise ParseError('Lien de pagination inattendu')
         if parsed.path.lower()!='/pages/compte/meslivres.aspx':
             raise ParseError('Lien de pagination inattendu')
@@ -122,14 +140,17 @@ def parse_library_page(text, base_url=LIBRARY):
     return items,(next_links[0] if next_links else None)
 
 
-def parse_library(text):
-    items,_next=parse_library_page(text,LIBRARY)
+def parse_library(text, base_url=LIBRARY, *, cover_origins=None):
+    items,_next=parse_library_page(text,base_url,cover_origins=cover_origins)
     return items
+
 
 QUOTED = re.compile(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',re.X)
 
-def delivery_url(text, base_url):
+
+def delivery_url(text, base_url, *, allowed_origins=None):
     root = Parser(text).root
+    allowed=set(allowed_origins or {origin('https://services.numilog.com/')})
     candidates = set()
     for node in root.walk():
         values = [node.attrs.get('href') or '']
@@ -142,12 +163,11 @@ def delivery_url(text, base_url):
                     continue
                 values.append(value)
         for value in values:
-            # Pas de concaténation ou expression JS : URL littérale seulement.
-            if not isinstance(value,str) or not value.startswith('https://services.numilog.com/'):
+            if not isinstance(value,str) or not value.startswith(('https://','http://')):
                 continue
             url = urljoin(base_url,unescape(value))
             parsed = urlsplit(url)
-            if parsed.hostname == 'services.numilog.com' and parsed.scheme == 'https' and not parsed.username and not parsed.password and parsed.port in {None,443}:
+            if origin(url) in allowed and not parsed.username and not parsed.password and parsed.port in {None,80,443} | {o[2] for o in allowed if o[2]}:
                 candidates.add(url)
     if len(candidates) != 1:
         raise ParseError('Lien de livraison absent ou ambigu : page modifiée ou session expirée')
