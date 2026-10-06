@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -325,6 +326,84 @@ def generate_local_library(profile: dict, *, rebuild: bool = False) -> Path:
     return library
 
 
+def default_host_data_home() -> Path:
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return base.expanduser().resolve()
+
+
+def host_plugin_store(profile: dict) -> Path:
+    explicit = os.environ.get("CIFERECA_DATASET_PLUGIN_SOURCE")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    candidate = default_host_data_home() / "cifereca" / "plugins" / "packages"
+    target = profile_runtime(profile) / "xdg" / "data" / "cifereca" / "plugins" / "packages"
+    try:
+        if candidate.resolve() == target.resolve() or profile_runtime(profile) in candidate.resolve().parents:
+            candidate = (Path.home() / ".local" / "share" / "cifereca" / "plugins" / "packages").resolve()
+    except OSError:
+        pass
+    return candidate
+
+
+def plugin_store_signature(source: Path) -> str:
+    digest = hashlib.sha256()
+    if not source.is_dir():
+        return ""
+    for package in sorted(path for path in source.iterdir() if path.is_dir()):
+        digest.update(package.name.encode("utf-8", "surrogatepass"))
+        pointer = package / "current.json"
+        if pointer.is_file():
+            digest.update(pointer.read_bytes())
+        for version in sorted(path for path in package.iterdir() if path.is_dir()):
+            digest.update(version.name.encode("utf-8", "surrogatepass"))
+            for filename in ("cifereca-plugin.json", ".cifereca-install.json"):
+                item = version / filename
+                if item.is_file():
+                    digest.update(item.read_bytes())
+    return digest.hexdigest()
+
+
+def sync_plugin_packages(profile: dict) -> Path | None:
+    cfg = profile.get("cifereca") or {}
+    if cfg.get("copy_installed_plugins", True) is False:
+        return None
+    source = host_plugin_store(profile)
+    if not source.is_dir():
+        return None
+
+    runtime = profile_runtime(profile)
+    target = runtime / "xdg" / "data" / "cifereca" / "plugins" / "packages"
+    marker = runtime / "plugin-packages.json"
+    signature = plugin_store_signature(source)
+    current = {}
+    if marker.is_file():
+        try:
+            current = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+    if target.is_dir() and current.get("source") == str(source) and current.get("signature") == signature:
+        return target
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + ".tmp")
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    shutil.copytree(source, temporary, symlinks=True)
+    if target.exists():
+        shutil.rmtree(target)
+    temporary.replace(target)
+    marker.write_text(
+        json.dumps({"source": str(source), "signature": signature, "copied_at": now_iso()}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return target
+
+
 def isolated_env(profile: dict) -> dict[str, str]:
     runtime = profile_runtime(profile)
     xdg = runtime / "xdg"
@@ -451,10 +530,12 @@ def prepare(profile: dict, catalog: dict[str, dict], *, rebuild_library: bool = 
     (runtime / "logs").mkdir(parents=True, exist_ok=True)
     (runtime / "downloads").mkdir(parents=True, exist_ok=True)
     library = generate_local_library(profile, rebuild=rebuild_library)
+    plugin_packages = sync_plugin_packages(profile)
     config_path, plugins_path = write_cifereca_config(profile, catalog, library)
     return {
         "runtime": runtime,
         "library": library,
+        "plugin_packages": plugin_packages,
         "config": config_path,
         "plugins_config": plugins_path,
         "env": isolated_env(profile),
