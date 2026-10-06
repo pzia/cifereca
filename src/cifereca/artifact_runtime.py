@@ -271,4 +271,122 @@ t((s for s in manager.statuses() if s.descriptor.id == plugin_id), None)
         identity_id = None
         try:
             placement = self._source_placement(request.source)
-            identity_id
+            identity_id = placement.get("identity_id")
+        except Exception:
+            pass
+        try:
+            if control is None: control = _NullTaskControl()
+            result = transformer.transform(request, source_lease, destination, control)
+            fingerprint = hashlib.sha256(json.dumps(dict(request.options), ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+            committed = self.commit_variant(source=request.source, destination=destination, result=result, transformer_plugin_id=plugin_id, profile_plugin_id=request.profile_plugin_id, options_fingerprint=fingerprint)
+            recorder = getattr(self.service, "_record_action", None)
+            if callable(recorder): recorder(identity_id, "transformation", "success", plugin_id=plugin_id, facts={"capability": request.capability_id, "source_artifact_id": request.source.artifact_id, "artifact_id": committed.artifact_id})
+            return committed
+        except Exception as exc:
+            if destination.active:
+                try: self.abort_output(destination)
+                except Exception: pass
+            recorder = getattr(self.service, "_record_action", None)
+            if callable(recorder): recorder(identity_id, "transformation", "failed", plugin_id=plugin_id, facts={"capability": request.capability_id, "error": type(exc).__name__})
+            raise
+
+
+class _NullTaskControl:
+    def cancelled(self) -> bool: return False
+    def check_cancelled(self) -> None: return None
+    def report(self, *, current: int | None = None, total: int | None = None, message: str = "") -> None: return None
+
+
+@dataclass(slots=True)
+class LibraryReadBrokerImpl:
+    service: Any
+
+    def artifact(self, artifact_id: str) -> ArtifactRef | None:
+        return _artifact_ref(self.service.storage, str(artifact_id))
+
+    def preferred_artifact(self, book_id: str, *, purpose: str = "read") -> ArtifactRef | None:
+        view = self.book(book_id)
+        if view is None or not view.artifacts:
+            return None
+        source_ids = {v.source_artifact_id for v in view.variants}
+        originals = [a for a in view.artifacts if a.artifact_id not in {v.artifact_id for v in view.variants}]
+        source = originals[0] if originals else view.artifacts[0]
+        preferred = self.service.storage.metadata_get(f"artifact.variant.preferred.{source.artifact_id}.{str(purpose or 'read')}")
+        if preferred:
+            candidate = next((a for a in view.artifacts if a.artifact_id == preferred), None)
+            if candidate is not None:
+                return candidate
+        return source
+
+    def _view(self, entries: list[dict[str, Any]], book_id: str) -> LogicalBookArtifacts | None:
+        if not entries: return None
+        title = str(next((e.get("title") for e in entries if e.get("title")), ""))
+        author = str(next((e.get("author") for e in entries if e.get("author")), ""))
+        provider = str(next((e.get("provider_id") for e in entries if e.get("provider_id")), ""))
+        logical_id = str(book_id or next((e.get("item_id") or e.get("artifact_id") for e in entries), ""))
+        book = BookRef(logical_id, title=title, authors=tuple(x.strip() for x in author.split(";") if x.strip()), identifiers={"provider": provider} if provider else {})
+        artifact_ids=[]
+        for e in entries:
+            aid=str(e.get("artifact_id") or "")
+            if aid and aid not in artifact_ids: artifact_ids.append(aid)
+        # Pull derived variants into the same logical view.
+        for aid in tuple(artifact_ids):
+            for v in self.service.storage.artifact_variants(source_artifact_id=aid):
+                vid=str(v.get("artifact_id") or "")
+                if vid and vid not in artifact_ids: artifact_ids.append(vid)
+        artifacts=tuple(x for x in (_artifact_ref(self.service.storage, aid, book_id=logical_id) for aid in artifact_ids) if x is not None)
+        variants=[]
+        for aid in artifact_ids:
+            for row in self.service.storage.artifact_variants(source_artifact_id=aid):
+                v=_variant_ref(self.service.storage,row,book_id=logical_id)
+                if v is not None: variants.append(v)
+        placements=[]
+        for row in self.service.storage.placements():
+            if str(row.get("artifact_id") or "") in artifact_ids: placements.append(_placement_ref(row))
+        possessions=[]
+        provider_items={(str(e.get("provider_id") or ""),str(e.get("item_id") or "")) for e in entries}
+        for entitlement in self.service.storage.entitlements():
+            if (str(entitlement.get("provider_id") or ""),str(entitlement.get("item_id") or "")) not in provider_items: continue
+            kind=str(entitlement.get("entitlement_type") or "owned")
+            if kind not in {"owned","loan","license"}: kind="owned"
+            possessions.append(ArtifactPossessionRef(
+                identity_id=str(entitlement.get("identity_id")) if entitlement.get("identity_id") else None,
+                provider_id=str(entitlement.get("provider_id") or ""), source_item_id=str(entitlement.get("item_id") or ""), kind=kind,
+                state=str(entitlement.get("state") or "active"), account_id=str(entitlement.get("account_id")) if entitlement.get("account_id") else None,
+                entitlement_id=str(entitlement.get("entitlement_id")) if entitlement.get("entitlement_id") else None,
+                expires_at=str(entitlement.get("expires_at")) if entitlement.get("expires_at") else None,
+                facts={"credential_id": str(entitlement.get("credential_id") or "")},
+            ))
+        for p in placements:
+            possessions.append(ArtifactPossessionRef(p.identity_id, p.provider_id, p.source_item_id, "storage" if p.kind == "storage" else "local", state=p.state, facts={"placement_id": p.placement_id, "storage_target_id": p.storage_target_id or ""}))
+        return LogicalBookArtifacts(book, artifacts, tuple(variants), tuple(placements), tuple(possessions))
+
+    def book(self, book_id: str) -> LogicalBookArtifacts | None:
+        value=str(book_id)
+        entries=[e for e in self.service.storage.catalog_entries() if value in {str(e.get("item_id") or ""),str(e.get("catalog_entry_id") or ""),str(e.get("artifact_id") or "")}]
+        if not entries:
+            # Resolve a transformed artifact back to its source and logical book.
+            variant=next((v for v in self.service.storage.artifact_variants(artifact_id=value)),None)
+            if variant:
+                return self.for_artifact(str(variant.get("source_artifact_id") or ""))
+        return self._view(entries,value)
+
+    def for_artifact(self, artifact_id: str) -> LogicalBookArtifacts | None:
+        value=str(artifact_id)
+        source=value
+        variant=next((v for v in self.service.storage.artifact_variants(artifact_id=value)),None)
+        if variant: source=str(variant.get("source_artifact_id") or value)
+        entries=[e for e in self.service.storage.catalog_entries() if str(e.get("artifact_id") or "") == source]
+        logical=next((str(e.get("item_id") or "") for e in entries if e.get("item_id")), source)
+        return self._view(entries,logical)
+
+
+@dataclass(slots=True)
+class LibraryMaintenanceBrokerImpl:
+    service: Any
+
+    def plan(self, request: LibraryMutationRequest) -> LibraryMutationPlan:
+        op=request.operation
+        if op == "normalize_filename":
+            row=self.service.storage.placement_get(request.placement_id)
+            
