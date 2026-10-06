@@ -15,6 +15,20 @@ height = 850
 epubs = 25
 seed = 20261006
 
+
+[services.opds]
+enabled = true
+books_per_source = 500
+broken_assets_every = 7
+seed = 20261006
+
+[services.kobo]
+enabled = true
+catalog_books = 1000
+vault_books = 150
+broken_assets_every = 7
+seed = 20261006
+
 [services.numilog]
 enabled = true
 books = 1000

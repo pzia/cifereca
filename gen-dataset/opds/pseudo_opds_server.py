@@ -7,7 +7,7 @@ Sources OPDS simulées d'après les plugins Cifereca :
   - Project Gutenberg
 
 Au premier lancement, le serveur génère par défaut 10 000 notices fictives par
-source dans un cache SQLite persistant. Les couvertures SVG et les EPUB sont
+source dans un cache SQLite persistant. Les couvertures PNG et les EPUB sont
 générés à la demande, puis mis en cache sur disque.
 
 Exemples :
@@ -51,7 +51,7 @@ DATASET_ROOT = Path(__file__).resolve().parents[1]
 if str(DATASET_ROOT) not in sys.path:
     sys.path.insert(0, str(DATASET_ROOT))
 
-from common.fake_books import FakeBook, FakeBookFactory, write_epub as write_shared_epub
+from common.fake_books import FakeBook, FakeBookFactory, cover_png_bytes, write_epub as write_shared_epub
 
 APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
@@ -361,15 +361,19 @@ class DatasetCache:
         return total, rows
 
     def cover_path(self, source: str, book_id: int) -> Path:
-        return self.cover_dir / source / f"{book_id}.svg"
+        return self.cover_dir / source / f"{book_id}.png"
 
     def epub_path(self, source: str, book_id: int) -> Path:
         return self.epub_dir / source / f"{book_id}.epub"
 
 
 class FakeOPDSApp:
-    def __init__(self, cache: DatasetCache):
+    def __init__(self, cache: DatasetCache, *, broken_assets_every: int = 0):
         self.cache = cache
+        self.broken_assets_every = max(0, int(broken_assets_every))
+
+    def asset_is_broken(self, book_id: int) -> bool:
+        return self.broken_assets_every > 0 and int(book_id) % self.broken_assets_every == 0
 
     @staticmethod
     def _base(handler: BaseHTTPRequestHandler) -> str:
@@ -408,6 +412,7 @@ class FakeOPDSApp:
                 },
             },
             "health": base + "/health",
+            "faults": {"broken_assets_every": self.broken_assets_every},
         }
         self.send_json(handler, HTTPStatus.OK, payload)
 
@@ -543,7 +548,7 @@ class FakeOPDSApp:
             atom_id = f"urn:gutenberg:{book_id}"
         detail = f"{base}/{source}/books/{book_id}"
         epub = f"{base}/{source}/epub/{book_id}.epub"
-        cover = f"{base}/{source}/covers/{book_id}.svg"
+        cover = f"{base}/{source}/covers/{book_id}.png"
         updated = row["published"] + "T12:00:00Z"
         return f'''<entry>
     <id>{esc(atom_id)}</id>
@@ -559,8 +564,8 @@ class FakeOPDSApp:
     <category term="{esc(row['subject'])}" label="{esc(row['subject'])}"/>
     <link rel="alternate" type="text/html" href="{esc(detail)}"/>
     <link rel="http://opds-spec.org/acquisition/open-access" type="application/epub+zip" href="{esc(epub)}" title="EPUB"/>
-    <link rel="http://opds-spec.org/image/thumbnail" type="image/svg+xml" href="{esc(cover)}"/>
-    <link rel="http://opds-spec.org/image" type="image/svg+xml" href="{esc(cover)}"/>
+    <link rel="http://opds-spec.org/image/thumbnail" type="image/png" href="{esc(cover)}"/>
+    <link rel="http://opds-spec.org/image" type="image/png" href="{esc(cover)}"/>
   </entry>'''
 
     def book_page(self, handler, source: str, book_id: int):
@@ -577,16 +582,20 @@ class FakeOPDSApp:
         row = self.cache.get(source, book_id)
         if row is None:
             return self.not_found(handler)
+        if self.asset_is_broken(book_id):
+            return self.send_json(handler, HTTPStatus.SERVICE_UNAVAILABLE, {"error": "simulated cover failure"})
         path = self.cache.cover_path(source, book_id)
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(self.make_cover_svg(row), encoding="utf-8")
-        self._send(handler, HTTPStatus.OK, "image/svg+xml", path.read_bytes(), cache_control="public, max-age=86400")
+            path.write_bytes(cover_png_bytes(self._book_from_row(row), width=480, height=720))
+        self._send(handler, HTTPStatus.OK, "image/png", path.read_bytes(), cache_control="public, max-age=86400")
 
     def epub(self, handler, source: str, book_id: int):
         row = self.cache.get(source, book_id)
         if row is None:
             return self.not_found(handler)
+        if self.asset_is_broken(book_id):
+            return self.send_json(handler, HTTPStatus.SERVICE_UNAVAILABLE, {"error": "simulated epub failure"})
         path = self.cache.epub_path(source, book_id)
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -650,8 +659,9 @@ class FakeOPDSApp:
         ]
         return "\n".join(f"<p>{esc(x)}</p>" for x in p)
 
-    def write_epub(self, path: Path, row: sqlite3.Row):
-        book = FakeBook(
+    @staticmethod
+    def _book_from_row(row: sqlite3.Row) -> FakeBook:
+        return FakeBook(
             index=int(row["book_id"]),
             identifier=f"urn:cifereca:fake:{row['source']}:{row['book_id']}",
             title=str(row["title"]),
@@ -664,7 +674,9 @@ class FakeOPDSApp:
             object_name=str(row["object_name"]),
             description=str(row["summary"]),
         )
-        write_shared_epub(path, book)
+
+    def write_epub(self, path: Path, row: sqlite3.Row):
+        write_shared_epub(path, self._book_from_row(row))
 
     def not_found(self, handler):
         self.send_json(handler, HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -687,7 +699,7 @@ class FakeOPDSApp:
         if path == "/gutenberg/ebooks/search.opds":
             return self.gutenberg_search(handler, qs)
 
-        m = re.fullmatch(r"/(gallica|gutenberg)/covers/(\d+)\.svg", path)
+        m = re.fullmatch(r"/(gallica|gutenberg)/covers/(\d+)\.png", path)
         if m:
             return self.cover(handler, m.group(1), int(m.group(2)))
         m = re.fullmatch(r"/(gallica|gutenberg)/epub/(\d+)\.epub", path)
@@ -728,6 +740,7 @@ def parse_args():
     p.add_argument("--cache-dir", type=Path, default=Path(".opds-fake-cache"), help="Répertoire du cache")
     p.add_argument("--books-per-source", type=int, default=DEFAULT_BOOKS_PER_SOURCE, help="Nombre de notices par source (défaut: 10000)")
     p.add_argument("--seed", type=int, default=20261006, help="Graine déterministe")
+    p.add_argument("--broken-assets-every", type=int, default=0, help="Simule une panne cover/EPUB tous les N livres (0=désactivé)")
     p.add_argument("--rebuild", action="store_true", help="Reconstruire entièrement le cache")
     p.add_argument("--build-cache-only", action="store_true", help="Générer/valider le cache puis quitter")
     return p.parse_args()
@@ -739,13 +752,15 @@ def main() -> int:
         raise SystemExit("--books-per-source doit être >= 1")
     if not (1 <= args.port <= 65535):
         raise SystemExit("--port doit être compris entre 1 et 65535")
+    if args.broken_assets_every < 0:
+        raise SystemExit("--broken-assets-every doit être >= 0")
 
     cache = DatasetCache(args.cache_dir, args.books_per_source, args.seed, args.rebuild)
     if args.build_cache_only:
         print(json.dumps({source: cache.count(source) for source in SOURCES}, ensure_ascii=False))
         return 0
 
-    app = FakeOPDSApp(cache)
+    app = FakeOPDSApp(cache, broken_assets_every=args.broken_assets_every)
     Handler.app = app
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print(f"[server] http://{args.bind}:{args.port}/")

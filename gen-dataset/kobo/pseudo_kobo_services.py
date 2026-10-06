@@ -63,7 +63,7 @@ DATASET_ROOT = Path(__file__).resolve().parents[1]
 if str(DATASET_ROOT) not in sys.path:
     sys.path.insert(0, str(DATASET_ROOT))
 
-from common.fake_books import FakeBook, FakeBookFactory, write_epub as write_shared_epub
+from common.fake_books import FakeBook, FakeBookFactory, cover_png_bytes, write_epub as write_shared_epub
 
 APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
@@ -410,7 +410,7 @@ class DatasetCache:
             (product_id,),
         ).fetchone()
 
-    def search_catalog(self, query: str, field: str, offset: int, limit: int):
+    def search_catalog(self, query: str, field: str, offset: int, limit: int, language: str = ""):
         conn = self.connect()
         query = str(query or "").strip()
         field_col = self._column(field)
@@ -423,6 +423,10 @@ class DatasetCache:
         for term in terms:
             where.append(expr + " LIKE ?")
             params.append("%" + term.casefold() + "%")
+        language = str(language or "").strip().casefold()
+        if language:
+            where.append("lower(b.language) = ?")
+            params.append(language)
         sql_where = ("WHERE " + " AND ".join(where)) if where else ""
         total = conn.execute(f"SELECT COUNT(*) FROM books b {sql_where}", params).fetchone()[0]
         rows = conn.execute(
@@ -471,7 +475,7 @@ class DatasetCache:
         return total, rows
 
     def cover_path(self, product_id: str) -> Path:
-        return self.cover_dir / f"{product_id}.svg"
+        return self.cover_dir / f"{product_id}.png"
 
     def epub_path(self, product_id: str) -> Path:
         return self.epub_dir / f"{product_id}.epub"
@@ -481,11 +485,23 @@ class DatasetCache:
 
 
 class KoboFakeApp:
-    def __init__(self, cache: DatasetCache, *, service: str, token: str, accept_any_token: bool) -> None:
+    def __init__(
+        self,
+        cache: DatasetCache,
+        *,
+        service: str,
+        token: str,
+        accept_any_token: bool,
+        broken_assets_every: int = 0,
+    ) -> None:
         self.cache = cache
         self.service = service
         self.token = token
         self.accept_any_token = accept_any_token
+        self.broken_assets_every = max(0, int(broken_assets_every))
+
+    def asset_is_broken(self, row: sqlite3.Row) -> bool:
+        return self.broken_assets_every > 0 and int(row["book_id"]) % self.broken_assets_every == 0
 
     @staticmethod
     def base(handler: BaseHTTPRequestHandler) -> str:
@@ -551,8 +567,8 @@ class KoboFakeApp:
             "price": {"amount": row["price_amount"], "currency": row["currency"]},
             "currency": row["currency"],
             "cover": {
-                "thumbnail": f"{base}/assets/covers/{quote(row['product_id'])}.svg",
-                "large": f"{base}/assets/covers/{quote(row['product_id'])}.svg",
+                "thumbnail": f"{base}/assets/covers/{quote(row['product_id'])}.png",
+                "large": f"{base}/assets/covers/{quote(row['product_id'])}.png",
             },
             "product_url": f"{base}/store/books/{quote(row['product_id'])}",
             "owned": owned,
@@ -578,6 +594,7 @@ class KoboFakeApp:
                 "library_manifest": base + "/api/v2/library/manifest",
                 "health": base + "/health",
             },
+            "faults": {"broken_assets_every": self.broken_assets_every},
         })
 
     def health(self, handler):
@@ -619,7 +636,7 @@ class KoboFakeApp:
         self.send_json(handler, HTTPStatus.OK, {
             "account": {
                 "id": "acct-kobo-fake-001",
-                "display_name": "Kobo Test — 1 000 livres",
+                "display_name": f"Kobo Test — {self.cache.vault_books:,} livres".replace(",", " "),
                 "email_hint": "fake-kobo@example.invalid",
             }
         })
@@ -632,9 +649,7 @@ class KoboFakeApp:
         limit = max(1, min(MAX_SEARCH_LIMIT, int((qs.get("limit") or ["50"])[0] or 50)))
         page = max(0, int((qs.get("page") or ["0"])[0] or 0))
         language = (qs.get("language") or [""])[0].strip().casefold()
-        total, rows = self.cache.search_catalog(query, field, page * limit, limit)
-        if language:
-            rows = [r for r in rows if str(r["language"]).casefold() == language]
+        total, rows = self.cache.search_catalog(query, field, page * limit, limit, language)
         self.send_json(handler, HTTPStatus.OK, {
             "items": [self.item_json(handler, r) for r in rows],
             "page": page,
@@ -812,15 +827,19 @@ class KoboFakeApp:
         row = self.cache.get(product_id)
         if row is None:
             return self.error(handler, HTTPStatus.NOT_FOUND, "not_found", "livre inconnu")
+        if self.asset_is_broken(row):
+            return self.error(handler, HTTPStatus.SERVICE_UNAVAILABLE, "simulated_failure", "panne de couverture simulée")
         path = self.cache.cover_path(product_id)
         if not path.exists():
-            path.write_text(self.make_cover_svg(row), encoding="utf-8")
-        self.send_bytes(handler, HTTPStatus.OK, "image/svg+xml", path.read_bytes(), cache_control="public, max-age=86400")
+            path.write_bytes(cover_png_bytes(self._book_from_row(row), width=480, height=720))
+        self.send_bytes(handler, HTTPStatus.OK, "image/png", path.read_bytes(), cache_control="public, max-age=86400")
 
     def epub(self, handler, product_id: str, *, kepub: bool = False):
         row = self.cache.get(product_id)
         if row is None:
             return self.error(handler, HTTPStatus.NOT_FOUND, "not_found", "livre inconnu")
+        if self.asset_is_broken(row):
+            return self.error(handler, HTTPStatus.SERVICE_UNAVAILABLE, "simulated_failure", "panne de téléchargement simulée")
         path = self.cache.epub_path(product_id)
         if not path.exists():
             self.write_epub(path, row)
@@ -831,6 +850,8 @@ class KoboFakeApp:
         row = self.cache.get(product_id)
         if row is None:
             return self.error(handler, HTTPStatus.NOT_FOUND, "not_found", "livre inconnu")
+        if self.asset_is_broken(row):
+            return self.error(handler, HTTPStatus.SERVICE_UNAVAILABLE, "simulated_failure", "panne ACSM simulée")
         path = self.cache.acsm_path(product_id)
         if not path.exists():
             xml = f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -880,8 +901,9 @@ class KoboFakeApp:
         ]
         return "\n".join(f"<p>{esc(p)}</p>" for p in paragraphs)
 
-    def write_epub(self, path: Path, row: sqlite3.Row):
-        book = FakeBook(
+    @staticmethod
+    def _book_from_row(row: sqlite3.Row) -> FakeBook:
+        return FakeBook(
             index=int(row["book_id"]),
             identifier=f"urn:cifereca:kobo:{row['product_id']}",
             title=str(row["title"]),
@@ -894,7 +916,9 @@ class KoboFakeApp:
             object_name=str(row["object_name"]),
             description=str(row["description"]),
         )
-        write_shared_epub(path, book)
+
+    def write_epub(self, path: Path, row: sqlite3.Row):
+        write_shared_epub(path, self._book_from_row(row))
 
     def route(self, handler: BaseHTTPRequestHandler):
         parsed = urlsplit(handler.path)
@@ -912,7 +936,7 @@ class KoboFakeApp:
         m = re.fullmatch(r"/store/books/([^/]+)", path)
         if m:
             return self.store_page(handler, m.group(1))
-        m = re.fullmatch(r"/assets/covers/([^/]+)\.svg", path)
+        m = re.fullmatch(r"/assets/covers/([^/]+)\.png", path)
         if m:
             return self.cover(handler, m.group(1))
         m = re.fullmatch(r"/assets/epub/([^/]+)\.epub", path)
@@ -1011,6 +1035,7 @@ def parse_args():
     p.add_argument("--seed", type=int, default=20261006, help="Graine déterministe")
     p.add_argument("--token", default=DEFAULT_TOKEN, help="Bearer token attendu (défaut: kvt_test)")
     p.add_argument("--accept-any-token", action="store_true", help="Accepter tout Bearer token non vide")
+    p.add_argument("--broken-assets-every", type=int, default=0, help="Simule une panne d'asset tous les N livres (0=désactivé)")
     p.add_argument("--rebuild", action="store_true", help="Reconstruire le cache")
     p.add_argument("--build-cache-only", action="store_true", help="Construire/valider le cache puis quitter")
     return p.parse_args()
@@ -1024,13 +1049,21 @@ def main() -> int:
         raise SystemExit("--vault-books doit être <= --catalog-books")
     if not (1 <= args.port <= 65535):
         raise SystemExit("--port doit être compris entre 1 et 65535")
+    if args.broken_assets_every < 0:
+        raise SystemExit("--broken-assets-every doit être >= 0")
 
     cache = DatasetCache(args.cache_dir, args.catalog_books, args.vault_books, args.seed, args.rebuild)
     if args.build_cache_only:
         print(json.dumps(cache.counts(), ensure_ascii=False))
         return 0
 
-    app = KoboFakeApp(cache, service=args.service, token=args.token, accept_any_token=args.accept_any_token)
+    app = KoboFakeApp(
+        cache,
+        service=args.service,
+        token=args.token,
+        accept_any_token=args.accept_any_token,
+        broken_assets_every=args.broken_assets_every,
+    )
     Handler.app = app
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print(f"[server] mode={args.service} http://{args.bind}:{args.port}/")

@@ -9,6 +9,7 @@ plugins = ["provider.gallica", "provider.gutenberg"]
 [service.opds.args]
 books_per_source = "--books-per-source"
 seed = "--seed"
+broken_assets_every = "--broken-assets-every"
 
 [service.kobo]
 script = "kobo/pseudo_kobo_services.py"
@@ -20,6 +21,7 @@ plugins = ["provider.kobo.catalog", "provider.kobo"]
 catalog_books = "--catalog-books"
 vault_books = "--vault-books"
 seed = "--seed"
+broken_assets_every = "--broken-assets-every"
 
 [service.paris]
 script = "paris/pseudo_paris_service.py"
