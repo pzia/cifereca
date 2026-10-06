@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BASE="$(cd -- "$(dirname -- "$0")" && pwd)"
+case "${1:-}" in
+  bootstrap)
+    shift
+    exec python3 "$BASE/work_env.py" bootstrap "$@"
+    ;;
+  *)
+    if [[ ! -x "$BASE/.venv/bin/python" ]]; then
+      echo "Environnement absent : exécuter d'abord ./work bootstrap" >&2
+      exit 2
+    fi
+    source "$BASE/env.sh"
+    exec "$BASE/.venv/bin/python" "$BASE/work_env.py" "$@"
+    ;;
+esac

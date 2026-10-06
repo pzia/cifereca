@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BASE="$(cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(cd -- "$BASE/../.." && pwd)"
+source "$BASE/env.sh"
+export HOME="$BASE/runtime/home"
+mkdir -p "$HOME/EBooks"
+if [[ -n "${CIFERECA_CMD:-}" ]]; then
+  exec "$CIFERECA_CMD" "$@"
+fi
+if [[ -f "$REPO_ROOT/src/cifereca/app.py" ]]; then
+  export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+  exec "$BASE/.venv/bin/python" -m cifereca "$@"
+fi
+if command -v cifereca >/dev/null 2>&1; then
+  exec cifereca "$@"
+fi
+echo "Cifereca introuvable : sources complètes, commande 'cifereca' installée ou CIFERECA_CMD requis." >&2
+exit 127
