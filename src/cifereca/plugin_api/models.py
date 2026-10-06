@@ -1,0 +1,780 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Literal, Mapping, Protocol, runtime_checkable
+
+PluginState = Literal["disabled", "ready", "blocked", "degraded", "incompatible", "error"]
+ResolutionMode = Literal["priority", "all", "single"]
+InstantiationMode = Literal["multiple", "per_identity", "singleton_public"]
+ContractRequirementMode = Literal["required", "optional", "degraded"]
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryDefinition:
+    id: str
+    display_name: str
+    contract: str
+    resolution: ResolutionMode = "priority"
+    description: str = ""
+
+    @property
+    def contract_id(self) -> str:
+        return self.contract.rsplit("/", 1)[0] if "/" in self.contract else self.contract
+
+    @property
+    def contract_version(self) -> str:
+        return self.contract.rsplit("/", 1)[1] if "/" in self.contract else ""
+
+
+@dataclass(frozen=True, slots=True)
+class Dependency:
+    plugin: str
+    version: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ContractRequirement:
+    category: str
+    contract: str
+    version: str = ""
+    mode: ContractRequirementMode = "required"
+    capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SystemRequirement:
+    type: str
+    name: str = ""
+    version: str = ""
+    path: str = ""
+    version_args: tuple[str, ...] = ("--version",)
+    import_name: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PluginDescriptor:
+    id: str
+    type: str
+    version: str
+    package_id: str
+    package_version: str
+    entrypoint: str | None = None
+    priority: int = 0
+    requires: tuple[Dependency, ...] = ()
+    recommends: tuple[Dependency, ...] = ()
+    conflicts: tuple[Dependency, ...] = ()
+    system_requires: tuple[SystemRequirement, ...] = ()
+    enabled_by_default: bool = True
+    display_name: str = ""
+    description: str = ""
+    config_schema: Mapping[str, Any] = field(default_factory=dict)
+    instantiation: InstantiationMode = "multiple"
+    help_text: str = ""
+    capabilities: tuple[str, ...] = ()
+    # Deprecated public v1 field. Interpreted as broker ids until Plugin API 2.
+    requires_services: tuple[str, ...] = ()
+    requires_brokers: tuple[str, ...] = ()
+    requires_contracts: tuple[ContractRequirement, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RequirementStatus:
+    requirement: SystemRequirement
+    ok: bool
+    detected: str = ""
+    message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PluginStatus:
+    descriptor: PluginDescriptor
+    state: PluginState
+    enabled: bool
+    effective_priority: int
+    reason: str = ""
+    error: str = ""
+    requirements: tuple[RequirementStatus, ...] = ()
+    reason_code: str = ""
+    reason_detail: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class PluginDirectories:
+    data: Path
+    cache: Path
+
+
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionOffer:
+    offer_id: str
+    media_type: str = "ebook"
+    format: str = ""
+    drm: str = "none"
+    source_kind: str = "http"
+    source: Mapping[str, Any] = field(default_factory=dict)
+    priority: int = 0
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactInput:
+    path: Path
+    artifact_id: str = ""
+    title: str = ""
+    format: str = ""
+    sha256: str = ""
+    kind: Literal["file", "bundle"] = "file"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class StorageTarget:
+    target_id: str
+    mount: Path
+    label: str = ""
+    kind: str = "filesystem"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class StorageResult:
+    target_id: str
+    relative_path: str
+    path: Path
+    present: bool = True
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+
+
+@dataclass(frozen=True, slots=True)
+class DrmMutationRequest:
+    operation: Literal["fulfill", "renew", "return"]
+    identity_id: str
+    provider_id: str = ""
+    entitlement_id: str = ""
+    loan_id: str = ""
+    source: Mapping[str, Any] = field(default_factory=dict)
+    destination: Path | None = None
+    media_format: str = ""
+    profile_ref: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class DrmMutationResult:
+    ok: bool
+    operation: str
+    artifact: ArtifactInput | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@runtime_checkable
+class DrmRuntime(Protocol):
+    def supports(self, request: DrmMutationRequest) -> bool: ...
+    def execute(self, request: DrmMutationRequest) -> DrmMutationResult | Mapping[str, Any]: ...
+
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedPluginService:
+    plugin_id: str
+    plugin_version: str
+    package_id: str
+    package_version: str
+    category_id: str
+    service: object
+    effective_priority: int = 0
+    contract_id: str = ""
+    contract_version: str = ""
+    capabilities: tuple[str, ...] = ()
+    registry_generation: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Provenance:
+    source: str
+    provider_id: str = ""
+    source_id: str = ""
+    observed_at: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class BookRef:
+    book_id: str
+    title: str = ""
+    authors: tuple[str, ...] = ()
+    identifiers: Mapping[str, str] = field(default_factory=dict)
+    provenance: Provenance | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DetailField:
+    id: str
+    label: str
+    value: object
+    kind: str = "text"
+    provenance: Provenance | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DetailSection:
+    id: str
+    title: str
+    fields: tuple[DetailField, ...] = ()
+    order: int = 100
+
+
+@dataclass(frozen=True, slots=True)
+class FacetTag:
+    id: str
+    label: str
+    value: str
+    count: int | None = None
+    group: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactFormat:
+    media_type: str
+    format: str
+    drm: str = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactRef:
+    artifact_id: str
+    book_id: str | None
+    format: ArtifactFormat
+    size_bytes: int
+    sha256: str
+    variant_kind: str = "original"
+    filename: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactVariant:
+    artifact_id: str
+    book_id: str
+    source_artifact_id: str
+    variant_kind: str
+    format: ArtifactFormat
+    size_bytes: int
+    sha256: str
+    filename: str
+    transformer_plugin_id: str
+    transformer_version: str
+    profile_plugin_id: str | None = None
+    profile_version: str | None = None
+    options_fingerprint: str = ""
+    source_sha256: str = ""
+    created_at: str = ""
+    stale: bool = False
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactPlacementRef:
+    placement_id: str
+    artifact_id: str
+    identity_id: str | None = None
+    provider_id: str = ""
+    source_item_id: str = ""
+    state: str = "present"
+    kind: str = "library"
+    filename: str = ""
+    storage_target_id: str | None = None
+    storage_plugin_id: str | None = None
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactPossessionRef:
+    identity_id: str | None
+    provider_id: str
+    source_item_id: str
+    kind: Literal["local", "owned", "loan", "license", "device", "storage"]
+    state: str = "active"
+    account_id: str | None = None
+    entitlement_id: str | None = None
+    expires_at: str | None = None
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalBookArtifacts:
+    book: BookRef
+    artifacts: tuple[ArtifactRef, ...] = ()
+    variants: tuple[ArtifactVariant, ...] = ()
+    placements: tuple[ArtifactPlacementRef, ...] = ()
+    possessions: tuple[ArtifactPossessionRef, ...] = ()
+
+
+LibraryMutationOperation = Literal["normalize_filename", "move_placement", "delete_duplicate", "replace_cover", "delete_variant", "set_preferred_variant"]
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryMutationRequest:
+    operation: LibraryMutationOperation
+    placement_id: str = ""
+    keep_placement_id: str = ""
+    target_identity_id: str | None = None
+    book_id: str = ""
+    cover_artifact_id: str = ""
+    artifact_id: str = ""
+    purpose: str = "read"
+    options: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryMutationPlan:
+    operation: LibraryMutationOperation
+    summary: str
+    request: LibraryMutationRequest
+    destructive: bool = False
+    changes: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryMutationResult:
+    ok: bool
+    changed: int = 0
+    summary: str = ""
+    placements: tuple[ArtifactPlacementRef, ...] = ()
+    warnings: tuple[str, ...] = ()
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactRouteRequest:
+    artifact: ArtifactRef
+    target_id: str = ""
+    filename: str = ""
+    identity_id: str | None = None
+    options: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactRouteTarget:
+    plugin_id: str
+    target: StorageTarget
+    effective_priority: int = 0
+    registry_generation: int = 0
+    capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactRoutePlan:
+    request: ArtifactRouteRequest
+    target: ArtifactRouteTarget
+    filename: str
+    summary: str = ""
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactTransferResult:
+    ok: bool
+    artifact: ArtifactRef
+    target: ArtifactRouteTarget
+    placement: ArtifactPlacementRef | None = None
+    relative_path: str = ""
+    warnings: tuple[str, ...] = ()
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSearchBatch:
+    provider_id: str
+    provider_label: str
+    results: tuple[object, ...] = ()
+    warnings: tuple[str, ...] = ()
+    error_code: str = ""
+    error_message: str = ""
+    cached: bool = False
+    elapsed_ms: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSearchSummary:
+    query: str
+    result_count: int
+    providers_total: int
+    providers_completed: int
+    providers_failed: int
+    cancelled: bool = False
+    warnings: tuple[str, ...] = ()
+    started_at: str = ""
+    completed_at: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CacheNamespaceInfo:
+    namespace_id: str
+    owner: str
+    scope: Literal["plugin", "core"]
+    entries: int = 0
+    size_bytes: int = 0
+    expired_entries: int = 0
+    purgeable: bool = True
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CachePurgeResult:
+    ok: bool
+    entries_removed: int = 0
+    bytes_freed: int = 0
+    namespaces: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ActionStatistics:
+    window_seconds: int
+    from_timestamp: int
+    to_timestamp: int
+    acquisitions_succeeded: int = 0
+    acquisitions_failed: int = 0
+    imports_succeeded: int = 0
+    imports_failed: int = 0
+    synchronizations_succeeded: int = 0
+    synchronizations_failed: int = 0
+    transformations_succeeded: int = 0
+    transformations_failed: int = 0
+    transfers_succeeded: int = 0
+    transfers_failed: int = 0
+
+    @property
+    def total(self) -> int:
+        return sum((
+            self.acquisitions_succeeded, self.acquisitions_failed,
+            self.imports_succeeded, self.imports_failed,
+            self.synchronizations_succeeded, self.synchronizations_failed,
+            self.transformations_succeeded, self.transformations_failed,
+            self.transfers_succeeded, self.transfers_failed,
+        ))
+
+@dataclass(frozen=True, slots=True)
+class SyncRequest:
+    identity_id: str | None = None
+    deep: bool = False
+    scopes: tuple[str, ...] = ()
+    options: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SyncResult:
+    ok: bool
+    changed: int = 0
+    warnings: tuple[str, ...] = ()
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class AccountRef:
+    account_id: str
+    identity_id: str
+    provider_id: str
+    label: str
+    connected: bool = True
+    capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SyncSourceRef:
+    source_id: str
+    identity_id: str
+    provider_id: str
+    account_id: str
+    label: str
+    connected: bool = True
+    sync_capable: bool = True
+    enabled: bool = True
+    last_attempt: str = ""
+    last_success: str = ""
+    status: str = "idle"
+    error: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenanceToolInfo:
+    id: str
+    title: str
+    description: str = ""
+    icon_name: str = "applications-system-symbolic"
+    scope: Literal["global", "identity", "library", "artifact", "storage.target"] = "global"
+    danger_level: Literal["read-only", "repair", "destructive"] = "read-only"
+    supports_dry_run: bool = True
+    cancellable: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenanceContext:
+    scope: str = "global"
+    identity_id: str | None = None
+    artifact: ArtifactRef | None = None
+    storage_target_id: str | None = None
+    options: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenancePlan:
+    tool_id: str
+    summary: str
+    changes: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class MaintenanceResult:
+    ok: bool
+    changed: int = 0
+    summary: str = ""
+    warnings: tuple[str, ...] = ()
+    facts: Mapping[str, object] = field(default_factory=dict)
+
+
+@runtime_checkable
+class MaintenanceTool(Protocol):
+    def describe(self) -> MaintenanceToolInfo: ...
+    def plan(self, context: MaintenanceContext) -> MaintenancePlan: ...
+    def run(self, plan: MaintenancePlan, control: TaskControl) -> MaintenanceResult: ...
+
+
+@dataclass(frozen=True, slots=True)
+class TransformCapability:
+    id: str
+    input_formats: tuple[ArtifactFormat, ...]
+    output_formats: tuple[ArtifactFormat, ...]
+    preserves_original: bool = True
+    supports_profiles: bool = False
+    supports_plan: bool = False
+    supports_batch: bool = False
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class TransformRequest:
+    source: ArtifactRef
+    capability_id: str
+    profile_plugin_id: str | None = None
+    options: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class TransformPlan:
+    output_format: ArtifactFormat
+    proposed_filename: str
+    warnings: tuple[str, ...] = ()
+    facts: Mapping[str, object] = field(default_factory=dict)
+    estimated_size_bytes: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TransformResult:
+    output_format: ArtifactFormat
+    proposed_filename: str
+    sha256: str
+    size_bytes: int
+    facts: Mapping[str, object] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class ArtifactInputLease(Protocol):
+    @property
+    def path(self) -> Path: ...
+    @property
+    def artifact(self) -> ArtifactRef: ...
+
+
+@runtime_checkable
+class ArtifactOutputLease(Protocol):
+    @property
+    def path(self) -> Path: ...
+    def suggested_suffix(self) -> str: ...
+
+
+@runtime_checkable
+class TaskControl(Protocol):
+    def cancelled(self) -> bool: ...
+    def check_cancelled(self) -> None: ...
+    def report(self, *, current: int | None = None, total: int | None = None, message: str = "") -> None: ...
+
+
+@runtime_checkable
+class DocumentTransformer(Protocol):
+    def capabilities(self) -> tuple[TransformCapability, ...]: ...
+    def plan(self, request: TransformRequest, source: ArtifactInputLease, control: TaskControl | None = None) -> TransformPlan: ...
+    def transform(self, request: TransformRequest, source: ArtifactInputLease, destination: ArtifactOutputLease, control: TaskControl) -> TransformResult: ...
+
+
+@dataclass(frozen=True, slots=True)
+class UiActionContext:
+    target: str
+    route: str = ""
+    book: BookRef | None = None
+    artifact: ArtifactRef | None = None
+    selection: tuple[BookRef, ...] = ()
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+
+@runtime_checkable
+class UiBookListHost(Protocol):
+    def selected_books(self) -> tuple[BookRef, ...]: ...
+    def refresh_books(self) -> None: ...
+
+
+@runtime_checkable
+class UiBookDetailHost(Protocol):
+    def current_book(self) -> BookRef | None: ...
+    def detail_sections(self) -> tuple[DetailSection, ...]: ...
+    def refresh_detail(self) -> None: ...
+
+
+@runtime_checkable
+class UiFacetHost(Protocol):
+    def facets(self) -> tuple[FacetTag, ...]: ...
+    def set_facet(self, facet_id: str, value: str | None) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class UiActionContribution:
+    id: str
+    title: str
+    callback: Callable[["UiPageHost"], object]
+    icon_name: str = "applications-system-symbolic"
+    global_action: bool = False
+    target: str = "page"
+    visible_when: Callable[["UiActionContext"], bool] | None = None
+    enabled_when: Callable[["UiActionContext"], bool] | None = None
+    cancellable: bool = False
+    progress: bool = False
+    result_kind: str = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class UiPageContribution:
+    """Declarative navigation contribution returned by a ``ui.page`` plugin.
+
+    ``factory`` receives a narrow UiPageHost supplied by the shell and must return
+    a GTK widget at runtime.  Keeping GTK out of this dataclass lets manifests and
+    dependency tests stay headless.
+    """
+    route: str
+    title: str
+    icon_name: str = "applications-system-symbolic"
+    order: int = 100
+    factory: Callable[["UiPageHost"], object] | None = None
+    group: str = "usage"
+    actions: tuple[UiActionContribution, ...] = ()
+    priority: int = 0
+
+
+@runtime_checkable
+class UiPageHost(Protocol):
+    def toast(self, message: str, timeout: int = 3) -> None: ...
+    def navigate(self, route: str) -> None: ...
+    def plugin_statuses(self) -> list[Mapping[str, Any]]: ...
+
+
+@runtime_checkable
+class UiActionHost(UiPageHost, Protocol):
+    """Host used while executing contextual UI actions."""
+    def action_context(self) -> UiActionContext: ...
+    def refresh_context(self) -> None: ...
+
+
+@runtime_checkable
+class UiPluginManagementHost(UiPageHost, Protocol):
+    def open_plugin_settings(self, plugin_id: str) -> None: ...
+
+
+
+@runtime_checkable
+class UiIdentityHost(UiPageHost, Protocol):
+    """Optional identity brokers supported by Core 0.9.15 and later."""
+    def identity_overview(self) -> list[dict[str, Any]]: ...
+    def open_identity_library(self, identity_id: str) -> None: ...
+    def synchronize(self, *, deep: bool = False, control: Any = None) -> None: ...
+    def subscribe_identity_overview(self, callback: Callable[[], None]) -> Callable[[], None]: ...
+
+
+@runtime_checkable
+class UiIdentityViewHost(UiIdentityHost, Protocol):
+    """Optional filtered navigation extension, Core 0.9.33 and later."""
+    def supports_identity_view_filters(self) -> bool: ...
+    def open_identity_view(self, identity_id: str, *, route: str, providers: tuple[str, ...] = ()) -> None: ...
+
+
+@runtime_checkable
+class UiPageActionHost(UiPageHost, Protocol):
+    """Optional standard action-bar factory, Core 0.9.33 and later."""
+    def build_action_bar(self, actions: tuple[UiActionContribution, ...]) -> object: ...
+
+
+@runtime_checkable
+class UiTitlebarProvider(Protocol):
+    def build(self, host: UiPageHost) -> object: ...
+    def selected_actions(self) -> list[str]: ...
+
+
+@runtime_checkable
+class UiPageProvider(Protocol):
+    def pages(self) -> list[UiPageContribution]: ...
+
+
+@runtime_checkable
+class WidgetCatalog(Protocol):
+    def describe(self, widget_id: str) -> Mapping[str, Any] | None: ...
+
+
+@runtime_checkable
+class PluginLifecycle(Protocol):
+    def activate(self, context: "PluginContext") -> object | None: ...
+    def deactivate(self) -> None: ...
+
+
+# Imported lazily/type-only in practice; keeping the name here documents the public contract.
+class PluginContext(Protocol):
+    plugin_id: str
+    package_id: str
+    directories: PluginDirectories
+    config: Mapping[str, Any]
+
+    def service(self, plugin_id: str) -> object | None: ...
+    def services(self, category_id: str, *, contract: str = "", version: str = "", capabilities: tuple[str, ...] = ()) -> tuple[ResolvedPluginService, ...]: ...
+    def select_service(self, category_id: str, *, request: object | None = None, contract: str = "", version: str = "", capabilities: tuple[str, ...] = ()) -> ResolvedPluginService | None: ...
+    def subscribe_services(self, category_id: str, callback: Callable[[], None]) -> Callable[[], None]: ...
+    def broker(self, broker_id: str) -> object | None: ...
+    def report_diagnostic(self, message: str, status: str = "ok", *, detail: Mapping[str, Any] | None = None, level: str = "detailed") -> None: ...
+    @property
+    def logging_level(self) -> int: ...
+    def configuration_ids(self) -> list[str]: ...
+    def configuration(self, scope_id: str | None = None) -> Mapping[str, Any]: ...
+
+
+__all__ = [
+    "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
+    "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
+    "PluginDirectories", "AcquisitionOffer", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
+    "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag",
+    "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
+    "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
+    "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
+    "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
+    "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
+    "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "DocumentTransformer",
+    "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "PluginLifecycle", "PluginContext",
+]
