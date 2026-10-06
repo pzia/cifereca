@@ -26,15 +26,11 @@ jobs:
           set -euo pipefail
           test "$(find .restore-tests-step1e -maxdepth 1 -type f -name 'payload.b64.part.*' | wc -l)" -eq 5
           cat .restore-tests-step1e/payload.b64.part.* | base64 -d > /tmp/core-tests-step1e.tar.xz
-          echo "72dd91176f0ce472edfb6e53d6f843c8a5716320baf6b021e07395c04562cb55  /tmp/core-tests-step1e.tar.xz" | sha256sum -c -
+          echo "3295dc0f40c358e150635024a63d26e3f8d25713fc91b874c2c37d8333834691  /tmp/core-tests-step1e.tar.xz" | sha256sum -c -
           tar -xJf /tmp/core-tests-step1e.tar.xz -C .
-          test "$(find .restore-tests-step1e -maxdepth 1 -type f -name 'support.b64.part.*' | wc -l)" -eq 2
-          cat .restore-tests-step1e/support.b64.part.* | base64 -d > /tmp/core-tests-step1e-support.tar.xz
-          echo "3536c9f99622ad7fc26c029da8e607dc0df1644b24b9351b9206bd69b905c8d0  /tmp/core-tests-step1e-support.tar.xz" | sha256sum -c -
-          tar -xJf /tmp/core-tests-step1e-support.tar.xz -C .
 
           python -m pip install -e '.[dev]'
-          timeout 120s python -m pytest -q             tests/test_core044_performance.py             tests/test_core_0911.py             tests/test_core_0913.py             tests/test_core_0915.py             tests/test_core_0917.py             tests/test_core_0919.py             tests/test_core_0921.py             tests/test_core_0923.py             tests/test_core_0925.py             tests/test_core_0929.py
+          timeout 120s python -m pytest -q             tests/test_core044_performance.py             tests/test_core_0911.py             tests/test_core_0913.py             tests/test_core_0915.py             tests/test_core_0919.py             tests/test_core_iteration_097_dev3.py             tests/test_settings_migration_099_dev2.py             tests/test_updater.py             tests/test_history_covers.py             tests/test_login_retry.py             tests/test_normalize.py             tests/test_identities_081.py
 
           rm -rf .restore-tests-step1e
           rm -f .github/workflows/restore-core-tests-step1e.yml
