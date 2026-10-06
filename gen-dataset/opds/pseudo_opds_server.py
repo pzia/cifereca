@@ -330,6 +330,7 @@ class DatasetCache:
             "author": "author",
             "subject": "subject",
             "isbn": "isbn",
+            "language": "language",
         }.get(field, "")
 
     def search(self, source: str, query: str, offset: int, limit: int, field: str = "all"):
@@ -497,7 +498,14 @@ class FakeOPDSApp:
         page = max(1, int((qs.get("page") or ["1"])[0] or 1))
         limit = DEFAULT_PAGE_SIZE
         offset = (page - 1) * limit
-        total, rows = self.cache.search("gutenberg", query, offset, limit, "all")
+        language_codes = {
+            "french": "fr", "english": "en", "german": "de", "spanish": "es",
+            "italian": "it", "portuguese": "pt", "dutch": "nl",
+        }
+        folded = query.casefold()
+        server_query = language_codes.get(folded, query)
+        field = "language" if folded in language_codes else "all"
+        total, rows = self.cache.search("gutenberg", server_query, offset, limit, field)
         self.send_atom_feed(handler, "gutenberg", query, rows, total, offset, limit, page=page)
 
     def send_atom_feed(self, handler, source: str, query: str, rows, total: int, offset: int, limit: int, *, gallica: bool = False, page: int | None = None):
