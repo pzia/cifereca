@@ -635,6 +635,7 @@ def reset_runtime(profile: dict) -> None:
             shutil.rmtree(path)
     state = state_path(profile)
     state.unlink(missing_ok=True)
+    (runtime / "plugin-packages.json").unlink(missing_ok=True)
 
 
 def derived_plugins(profile: dict, catalog: dict[str, dict]) -> list[str]:
@@ -756,6 +757,7 @@ def command_config(args, catalog) -> int:
         "library": str(prepared["library"]),
         "config": str(prepared["config"]),
         "plugins_config": str(prepared["plugins_config"]),
+        "plugin_packages": str(prepared["plugin_packages"]) if prepared["plugin_packages"] else None,
         "plugins": derived_plugins(profile, catalog),
         "env": {k: prepared["env"][k] for k in ("XDG_CONFIG_HOME","XDG_DATA_HOME","XDG_CACHE_HOME","XDG_STATE_HOME")},
     }
