@@ -716,6 +716,56 @@ def command_exec(args, catalog) -> int:
     return subprocess.call(command, env=prepared["env"])
 
 
+def command_snapshot(args, catalog) -> int:
+    path, profile = load_profile(args.profile)
+    profile["_path"] = str(path)
+    prepared = start_services(profile, catalog)
+
+    harness_value = args.harness or os.environ.get("CIFERECA_GTK_TEST_HARNESS")
+    if not harness_value:
+        raise DatasetError("snapshot exige --harness ou CIFERECA_GTK_TEST_HARNESS")
+    harness = Path(harness_value).expanduser().resolve()
+    headless = harness / "headless"
+    capture = harness / "capture-app"
+    if not headless.is_file() or not capture.is_file():
+        raise DatasetError(f"harnas GTK incomplet: {harness}")
+
+    cfg = profile.get("cifereca") or {}
+    width = int(args.width or cfg.get("width") or 1300)
+    height = int(args.height or cfg.get("height") or 850)
+    if not (320 <= width <= 4096 and 320 <= height <= 4096):
+        raise DatasetError("dimensions snapshot hors limites 320..4096")
+
+    output = Path(args.out).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    app_command = cifereca_command(profile, catalog, [], args.verbose)
+    capture_command = [
+        str(capture),
+        "--wait", str(args.wait),
+        "--out", str(output),
+    ]
+    for click in args.click or []:
+        capture_command.extend(("--click", click))
+    if args.type_text is not None:
+        capture_command.extend(("--type-text", args.type_text))
+    for key in args.key or []:
+        capture_command.extend(("--key", key))
+    capture_command.extend(("--", *app_command))
+    command = [
+        str(headless),
+        "--screen", f"{width}x{height}x24",
+        "--",
+        *capture_command,
+    ]
+    if args.dry_run:
+        print(printable_command(command, prepared["env"]))
+        return 0
+    result = subprocess.call(command, env=prepared["env"])
+    if result == 0:
+        print(f"[snapshot] {output}")
+    return result
+
+
 def command_doctor(args, catalog) -> int:
     path, profile = load_profile(args.profile)
     profile["_path"] = str(path)
@@ -787,6 +837,19 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--dry-run", action="store_true")
     execute.add_argument("command", nargs=argparse.REMAINDER)
 
+    snapshot = sub.add_parser("snapshot", help="Capture Cifereca via le harnais GTK/Xvfb")
+    snapshot.add_argument("profile")
+    snapshot.add_argument("--harness", help="Répertoire gtk4-environnement-tests")
+    snapshot.add_argument("--out", default="snapshot.png")
+    snapshot.add_argument("--wait", type=float, default=4.0)
+    snapshot.add_argument("--width", type=int)
+    snapshot.add_argument("--height", type=int)
+    snapshot.add_argument("--click", action="append", default=[], metavar="X,Y")
+    snapshot.add_argument("--type-text")
+    snapshot.add_argument("--key", action="append", default=[])
+    snapshot.add_argument("--verbose", action="store_true")
+    snapshot.add_argument("--dry-run", action="store_true")
+
     return p
 
 
@@ -805,6 +868,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": command_doctor,
         "cifereca": command_cifereca,
         "exec": command_exec,
+        "snapshot": command_snapshot,
     }
     try:
         return int(handlers[args.command_name](args, catalog))
