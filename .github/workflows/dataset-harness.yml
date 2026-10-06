@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      CIFERECA_DATASET_RUNTIME: ${{ runner.temp }}/cifereca-datasets
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-datasets
 
     steps:
       - uses: actions/checkout@v4
