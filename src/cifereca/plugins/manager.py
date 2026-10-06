@@ -159,3 +159,144 @@ class PluginManager:
                 record = self._records[plugin_id]
                 for dep in record.descriptor.requires:
                     if dep.plugin in old_records and dep.plugin not in reusable:
+                        reusable.remove(plugin_id)
+                        changed = True
+                        break
+
+        descriptors = {plugin_id: record.descriptor for plugin_id, record in self._records.items()}
+        issues = validate_dependencies(descriptors)
+        issues_by_plugin: dict[str, list[DependencyIssue]] = {}
+        for issue in issues:
+            issues_by_plugin.setdefault(issue.plugin_id, []).append(issue)
+
+        enabled_ids = {plugin_id for plugin_id, record in self._records.items() if record.enabled}
+        try:
+            topological_order(descriptors, enabled_ids)
+        except DependencyError as exc:
+            cycle_text = str(exc)
+            cyclic = {part.strip() for part in cycle_text.split(":", 1)[-1].split(",")}
+            for plugin_id in cyclic:
+                if plugin_id in self._records:
+                    record = self._records[plugin_id]
+                    record.state = "blocked"
+                    record.reason = "dependency_cycle"
+                    record.error = cycle_text
+
+        for plugin_id, record in self._records.items():
+            if not record.enabled:
+                continue
+            plugin_issues = issues_by_plugin.get(plugin_id, [])
+            blocking = [issue for issue in plugin_issues if issue.code in {"dependency_missing", "dependency_version", "conflict"}]
+            if blocking:
+                record.state = "blocked"
+                record.reason = blocking[0].code
+                record.error = "; ".join(issue.message for issue in blocking)
+                continue
+            for conflict in record.descriptor.conflicts:
+                target = self._records.get(conflict.plugin)
+                if target is None or not target.enabled:
+                    continue
+                from packaging.specifiers import SpecifierSet
+                from packaging.version import Version
+                if not conflict.version or Version(target.descriptor.version) in SpecifierSet(conflict.version):
+                    record.state = "blocked"
+                    record.reason = "conflict"
+                    record.error = f"conflicts with enabled plugin: {conflict.plugin}"
+                    break
+            if record.state == "blocked":
+                continue
+            # An enabled dependency can itself be disabled/blocked by policy; propagate later too.
+            for dep in record.descriptor.requires:
+                target = self._records.get(dep.plugin)
+                if target is not None and not target.enabled:
+                    record.state = "blocked"
+                    record.reason = "dependency_disabled"
+                    record.error = f"required plugin is disabled: {dep.plugin}"
+                    break
+            if record.state == "blocked":
+                continue
+            broker_ids = tuple(dict.fromkeys((*record.descriptor.requires_brokers, *record.descriptor.requires_services)))
+            missing_brokers = [name for name in broker_ids if name not in self._brokers]
+            if missing_brokers:
+                record.state = "blocked"
+                record.reason = "missing_broker"
+                record.reason_detail = {"brokers": tuple(missing_brokers)}
+                record.error = "required broker(s) unavailable: " + ", ".join(missing_brokers)
+                continue
+            degraded: list[dict[str, object]] = []
+            contract_blocked = False
+            for requirement in record.descriptor.requires_contracts:
+                matches, detail = self._static_contract_matches(requirement)
+                if matches:
+                    continue
+                if requirement.mode == "required":
+                    record.state = "blocked"
+                    record.reason = str(detail.get("reason_code") or "missing_service")
+                    record.reason_detail = detail
+                    record.error = str(detail.get("message") or "required contract unavailable")
+                    contract_blocked = True
+                    break
+                if requirement.mode == "degraded":
+                    degraded.append(detail)
+            if contract_blocked:
+                continue
+            record.degraded_details = degraded
+            if degraded:
+                record.state = "degraded"
+                record.reason = "missing_optional_capability"
+                record.reason_detail = {"contracts": tuple(degraded)}
+            old = old_records.get(plugin_id)
+            if plugin_id in reusable and old is not None and old.requirements:
+                # System requirement probes may spawn binaries (and can be
+                # hundreds of milliseconds on desktop Python launchers). Keep
+                # the already-validated result while the live plugin/package is
+                # unchanged; blocked/not-yet-active plugins are still reprobed
+                # on every refresh so installing a missing prerequisite is
+                # detected without restarting cifereca.
+                requirements = old.requirements
+            else:
+                requirements = check_system_requirements(record.descriptor.system_requires)
+            record.requirements = requirements
+            failed = [item for item in requirements if not item.ok]
+            if failed:
+                record.state = "blocked"
+                record.reason = "system_requirement"
+                record.error = "; ".join(item.message for item in failed)
+                continue
+            try:
+                scope = schema_scope(record.descriptor.config_schema)
+                if scope == "plugin":
+                    self.config.get(record.descriptor.id, record.descriptor.config_schema)
+                else:
+                    # Scoped configuration is validated when an instance/Identity/target
+                    # is configured; its absence must not block plugin activation.
+                    defaults_for_schema(record.descriptor.config_schema)
+            except PluginConfigError as exc:
+                record.state = "blocked"
+                record.reason = "configuration"
+                record.error = str(exc)
+
+        # Carry reusable services only after all policy/requirement/config checks
+        # succeeded.  Everything else is deactivated narrowly rather than using
+        # a global teardown.
+        for plugin_id, old in old_records.items():
+            new = self._records.get(plugin_id)
+            if plugin_id in reusable and new is not None and new.enabled and new.state in {"ready", "degraded"}:
+                new.instance = old.instance
+                new.service = old.service
+                continue
+            if old.instance is not None:
+                self._deactivate_record(old)
+        return self.statuses()
+
+    def _static_contract_matches(self, requirement: ContractRequirement) -> tuple[list[str], dict[str, object]]:
+        category = self.categories.maybe_get(requirement.category)
+        if category is None:
+            return [], {
+                "reason_code": "missing_service", "category": requirement.category,
+                "contract": requirement.contract, "version": requirement.version,
+                "message": f"required category is unavailable: {requirement.category}",
+            }
+        if category.contract_id != requirement.contract or not contract_version_matches(category.contract_version, requirement.version):
+            return [], {
+                "reason_code": "contr
