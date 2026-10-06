@@ -177,6 +177,17 @@ def health_ok(url: str, timeout: float = 0.7) -> bool:
         return False
 
 
+def health_payload(url: str, timeout: float = 0.7) -> dict | None:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            if not 200 <= int(response.status) < 400:
+                return None
+            value = json.loads(response.read().decode("utf-8"))
+            return value if isinstance(value, dict) else None
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError, json.JSONDecodeError):
+        return None
+
+
 def port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
@@ -779,6 +790,68 @@ def command_status(args, catalog) -> int:
     return 0 if all(r["process"] and r["health"] for r in rows) else 1
 
 
+def summary_payload(profile: dict, catalog: dict[str, dict]) -> dict:
+    runtime = profile_runtime(profile)
+    library = runtime / "library"
+    library_cfg = profile.get("library") or {}
+    configured_epubs = int(library_cfg.get("epubs") or 0)
+    generated_epubs = sum(1 for path in library.glob("*.epub") if path.is_file()) if library.is_dir() else 0
+    state = load_state(profile)
+    services = []
+    for name, config in enabled_service_configs(profile).items():
+        ctx = service_context(profile, catalog, name, config)
+        saved = (state.get("services") or {}).get(name) or {}
+        declared = {
+            key: config[key]
+            for key in (ctx["spec"].get("args") or {})
+            if key in config and key != "seed"
+        }
+        services.append({
+            "service": name,
+            "process": managed_service_alive(saved),
+            "health": health_ok(ctx["health_url"]),
+            "url": ctx["base_url"],
+            "configured": declared,
+            "reported": health_payload(ctx["health_url"]),
+        })
+    return {
+        "profile": profile["name"],
+        "runtime": str(runtime),
+        "library": {
+            "path": str(library),
+            "configured_epubs": configured_epubs,
+            "generated_epubs": generated_epubs,
+            "complete": generated_epubs == configured_epubs,
+        },
+        "services": services,
+    }
+
+
+def command_summary(args, catalog) -> int:
+    _, profile = load_profile(args.profile)
+    payload = summary_payload(profile, catalog)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    library = payload["library"]
+    state = "OK" if library["complete"] else "INCOMPLET"
+    print(
+        f"library    {state:9} generated={library['generated_epubs']} "
+        f"configured={library['configured_epubs']} {library['path']}"
+    )
+    for row in payload["services"]:
+        service_state = "UP" if row["process"] and row["health"] else "DOWN"
+        configured = " ".join(f"{key}={value}" for key, value in row["configured"].items())
+        reported = row["reported"] or {}
+        counts = reported.get("counts") if isinstance(reported.get("counts"), dict) else {}
+        if not counts:
+            counts = {key: reported[key] for key in ("books", "catalog", "vault") if key in reported}
+        actual = " ".join(f"{key}={value}" for key, value in counts.items())
+        details = " ".join(part for part in (configured, actual) if part)
+        print(f"{row['service']:10} {service_state:9} {details}".rstrip())
+    return 0
+
+
 def command_logs(args, _catalog) -> int:
     _, profile = load_profile(args.profile)
     logs = profile_runtime(profile) / "logs"
@@ -1027,6 +1100,10 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("profile")
     status.add_argument("--json", action="store_true")
 
+    summary = sub.add_parser("summary", help="Résume les volumes configurés et réellement disponibles")
+    summary.add_argument("profile")
+    summary.add_argument("--json", action="store_true")
+
     logs = sub.add_parser("logs", help="Affiche la fin des logs")
     logs.add_argument("profile")
     logs.add_argument("service", nargs="?")
@@ -1078,6 +1155,7 @@ def main(argv: list[str] | None = None) -> int:
         "down": command_down,
         "rebuild": command_rebuild,
         "status": command_status,
+        "summary": command_summary,
         "logs": command_logs,
         "config": command_config,
         "env": command_env,
