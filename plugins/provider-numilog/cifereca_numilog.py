@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.1, bibliothèque privée et EPUB direct."""
+"""Provider externe Numilog 0.1.7, bibliothèque privée et EPUB direct."""
 from __future__ import annotations
 import hashlib
 import ipaddress
