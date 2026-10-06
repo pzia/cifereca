@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import sys
+import time
+
+from . import __version__
+from .logging_utils import configure_logging, set_diagnostics_level
+from .core import CiferecaCore
+
+
+def _gtk_import_error(exc: BaseException) -> int:
+    message = f"""
+cifereca nécessite GTK 4, libadwaita et PyGObject.
+
+Erreur: {exc}
+
+Sous Debian/Ubuntu :
+  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+
+Puis relancez :
+  cifereca
+""".strip()
+    print(message, file=sys.stderr)
+    return 3
+
+
+def main() -> int:
+    if "--version" in sys.argv[1:]:
+        print(f"cifereca {__version__}")
+        return 0
+    verbose = "--verbose" in sys.argv[1:] or "--debug" in sys.argv[1:]
+    no_plugins = "--no-plugins" in sys.argv[1:]
+    force_plugins: list[str] = []
+    cleaned = [sys.argv[0]]
+    index = 1
+    while index < len(sys.argv):
+        arg = sys.argv[index]
+        if arg in {"--verbose", "--debug", "--no-plugins"}:
+            index += 1
+            continue
+        if arg == "--force-plugin":
+            if index + 1 >= len(sys.argv):
+                print("--force-plugin requiert un identifiant de plugin", file=sys.stderr)
+                return 2
+            force_plugins.append(sys.argv[index + 1])
+            index += 2
+            continue
+        if arg.startswith("--force-plugin="):
+            force_plugins.append(arg.split("=", 1)[1])
+            index += 1
+            continue
+        cleaned.append(arg)
+        index += 1
+    sys.argv = cleaned
+    logger = configure_logging(verbose=verbose)
+    t0 = time.monotonic()
+    logger.info("TRACE startup begin version=%s verbose=%s no_plugins=%s force_plugins=%s", __version__, verbose, no_plugins, force_plugins)
+    try:
+        import gi
+        gi.require_version("Gtk", "4.0")
+        gi.require_version("Adw", "1")
+        from gi.repository import Adw, Gio
+        from .gui import MainWindow
+    except Exception as exc:
+        return _gtk_import_error(exc)
+
+    logger.info("TRACE startup gtk-import-ok dt=%.3fs", time.monotonic()-t0)
+    logger.info("TRACE startup core-open begin")
+    core = CiferecaCore.open(no_plugins=no_plugins, force_plugins=tuple(force_plugins))
+    config, service, diagnostics = core.config, core.library, core.diagnostics
+    set_diagnostics_level("trace" if verbose else diagnostics.level)
+    logger.info(
+        "TRACE startup core-open end schema=%s identity=%s dt=%.3fs",
+        core.storage.schema_version(), getattr(getattr(service, "current_identity", None), "identity_id", None),
+        time.monotonic()-t0,
+    )
+
+    class CiferecaApplication(Adw.Application):
+        def __init__(self):
+            super().__init__(application_id="org.cifereca.Cifereca")
+            self.window = None
+
+        def do_activate(self):
+            if self.window is None:
+                logger.info("TRACE gui MainWindow-init begin")
+                self.window = MainWindow(self, config, service, diagnostics)
+                logger.info("TRACE gui MainWindow-init end dt=%.3fs", time.monotonic()-t0)
+            self.window.present()
+
+        def do_shutdown(self):
+            try:
+                core.close()
+            except Exception:
+                pass
+            # Adw.Application -> Gtk.Application -> Gio.Application.  The
+            # virtual method is declared on Gio.Application; calling super()
+            # here is broken on some PyGObject versions and resolves to the
+            # shutdown signal wrapper. Chain the virtual explicitly.
+            Gio.Application.do_shutdown(self)
+
+    logger.info("TRACE startup application-created dt=%.3fs", time.monotonic()-t0)
+    app = CiferecaApplication()
+    try:
+        logger.info("TRACE startup app.run begin dt=%.3fs", time.monotonic()-t0)
+        rc = int(app.run(sys.argv))
+        logger.info("TRACE shutdown app.run end rc=%s dt=%.3fs", rc, time.monotonic()-t0)
+        return rc
+    except Exception:
+        logger.exception("Fatal GTK GUI error")
+        return 1
