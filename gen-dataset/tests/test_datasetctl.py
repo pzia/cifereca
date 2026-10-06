@@ -73,6 +73,41 @@ class DatasetCtlTests(unittest.TestCase):
         self.assertIn("provider.bnf-catalogue", plugins)
         self.assertIn("ui.page.home", plugins)
 
+    def test_plugin_packages_are_copied_into_isolated_data_home(self):
+        old_runtime = os.environ.get(datasetctl.RUNTIME_ENV)
+        old_source = os.environ.get("CIFERECA_DATASET_PLUGIN_SOURCE")
+        try:
+            with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as src:
+                os.environ[datasetctl.RUNTIME_ENV] = tmp
+                os.environ["CIFERECA_DATASET_PLUGIN_SOURCE"] = src
+                package = Path(src) / "org.example" / "1.0.0"
+                package.mkdir(parents=True)
+                (Path(src) / "org.example" / "current.json").write_text(
+                    json.dumps({"active": "1.0.0", "previous": None}), encoding="utf-8"
+                )
+                (package / "cifereca-plugin.json").write_text(
+                    json.dumps({
+                        "manifest": 1,
+                        "package": {"id": "org.example", "version": "1.0.0", "name": "Example", "publisher": "test", "plugin_api": ">=1,<2"},
+                        "plugins": [{"id": "provider.example"}],
+                    }),
+                    encoding="utf-8",
+                )
+                profile = {"name": "unit-plugins", "cifereca": {}, "services": {}}
+                target = datasetctl.sync_plugin_packages(profile)
+                self.assertIsNotNone(target)
+                self.assertIn("provider.example", datasetctl.installed_plugin_ids(target))
+                self.assertNotEqual(Path(target).resolve(), Path(src).resolve())
+        finally:
+            if old_runtime is None:
+                os.environ.pop(datasetctl.RUNTIME_ENV, None)
+            else:
+                os.environ[datasetctl.RUNTIME_ENV] = old_runtime
+            if old_source is None:
+                os.environ.pop("CIFERECA_DATASET_PLUGIN_SOURCE", None)
+            else:
+                os.environ["CIFERECA_DATASET_PLUGIN_SOURCE"] = old_source
+
 
 if __name__ == "__main__":
     unittest.main()
