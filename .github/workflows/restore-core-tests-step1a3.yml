@@ -29,7 +29,7 @@ jobs:
           echo "df8f1e31b974203ccee9d21c25343e06be7560fc7ee05b5a121df806ec583c0e  /tmp/core-tests-step1a3.tar.xz" | sha256sum -c -
           tar -xJf /tmp/core-tests-step1a3.tar.xz -C .
 
-          python -m pip install -e '.[dev]'
+          python -m pip install -e '.[dev]' 'Pillow>=10,<12'
           timeout 90s python -m pytest -q             tests/test_acquisition.py             tests/test_acquisition_engine_080.py             tests/test_catalog_083.py             tests/test_core037_python_dependencies.py
 
           rm -rf .restore-tests-step1a3
