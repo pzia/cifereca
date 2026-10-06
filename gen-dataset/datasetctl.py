@@ -725,10 +725,14 @@ def command_snapshot(args, catalog) -> int:
     if not harness_value:
         raise DatasetError("snapshot exige --harness ou CIFERECA_GTK_TEST_HARNESS")
     harness = Path(harness_value).expanduser().resolve()
-    headless = harness / "headless"
-    capture = harness / "capture-app"
-    if not headless.is_file() or not capture.is_file():
-        raise DatasetError(f"harnas GTK incomplet: {harness}")
+    harness_python = harness / ".venv" / "bin" / "python"
+    headless_py = harness / "headless.py"
+    capture_py = harness / "capture_app.py"
+    gtk_root = harness / "runtime" / "root"
+    xvfb = gtk_root / "usr" / "bin" / "Xvfb-local"
+    required = (harness_python, headless_py, capture_py, xvfb)
+    if any(not path.is_file() for path in required):
+        raise DatasetError(f"harnais GTK incomplet ou non bootstrappé: {harness}")
 
     cfg = profile.get("cifereca") or {}
     width = int(args.width or cfg.get("width") or 1300)
@@ -740,7 +744,8 @@ def command_snapshot(args, catalog) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     app_command = cifereca_command(profile, catalog, [], args.verbose)
     capture_command = [
-        str(capture),
+        str(harness_python),
+        str(capture_py),
         "--wait", str(args.wait),
         "--out", str(output),
     ]
@@ -752,15 +757,56 @@ def command_snapshot(args, catalog) -> int:
         capture_command.extend(("--key", key))
     capture_command.extend(("--", *app_command))
     command = [
-        str(headless),
+        str(harness_python),
+        str(headless_py),
         "--screen", f"{width}x{height}x24",
         "--",
         *capture_command,
     ]
+
+    snapshot_env = dict(prepared["env"])
+    root_usr = gtk_root / "usr"
+    lib = gtk_root / "usr" / "lib" / "x86_64-linux-gnu"
+    lib2 = gtk_root / "lib" / "x86_64-linux-gnu"
+    gi = lib / "girepository-1.0"
+    py_dist = gtk_root / "usr" / "lib" / "python3" / "dist-packages"
+    snapshot_env["PATH"] = str(root_usr / "bin") + os.pathsep + snapshot_env.get("PATH", "")
+    snapshot_env["LD_LIBRARY_PATH"] = os.pathsep.join(
+        [str(lib), str(lib2)] + ([snapshot_env["LD_LIBRARY_PATH"]] if snapshot_env.get("LD_LIBRARY_PATH") else [])
+    )
+    snapshot_env["GI_TYPELIB_PATH"] = os.pathsep.join(
+        [str(gi)] + ([snapshot_env["GI_TYPELIB_PATH"]] if snapshot_env.get("GI_TYPELIB_PATH") else [])
+    )
+    snapshot_env["PYTHONPATH"] = os.pathsep.join(
+        [str(py_dist)] + ([snapshot_env["PYTHONPATH"]] if snapshot_env.get("PYTHONPATH") else [])
+    )
+    snapshot_env["XDG_DATA_DIRS"] = str(root_usr / "share") + os.pathsep + snapshot_env.get(
+        "XDG_DATA_DIRS", "/usr/local/share:/usr/share"
+    )
+    snapshot_env.update({
+        "GTK4_POC_BASE": str(harness),
+        "GTK4_POC_ROOT": str(gtk_root),
+        "GDK_BACKEND": "x11",
+        "GSK_RENDERER": "cairo",
+        "GDK_DEBUG": "gl-disable",
+        "GDK_SCALE": "1",
+        "GTK_A11Y": "none",
+    })
+    xdg_runtime = prepared["runtime"] / "xdg-runtime"
+    tmpdir = prepared["runtime"] / "tmp"
+    xdg_runtime.mkdir(parents=True, exist_ok=True)
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    try:
+        xdg_runtime.chmod(0o700)
+    except OSError:
+        pass
+    snapshot_env["XDG_RUNTIME_DIR"] = str(xdg_runtime)
+    snapshot_env["TMPDIR"] = str(tmpdir)
+
     if args.dry_run:
-        print(printable_command(command, prepared["env"]))
+        print(printable_command(command, snapshot_env))
         return 0
-    result = subprocess.call(command, env=prepared["env"])
+    result = subprocess.call(command, env=snapshot_env)
     if result == 0:
         print(f"[snapshot] {output}")
     return result
