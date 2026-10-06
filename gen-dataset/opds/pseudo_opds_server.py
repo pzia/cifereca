@@ -47,6 +47,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
+DATASET_ROOT = Path(__file__).resolve().parents[1]
+if str(DATASET_ROOT) not in sys.path:
+    sys.path.insert(0, str(DATASET_ROOT))
+
+from common.fake_books import FakeBook, FakeBookFactory, write_epub as write_shared_epub
+
 APP_VERSION = "1.0"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_BOOKS_PER_SOURCE = 10_000
@@ -168,8 +174,8 @@ def make_summary(title: str, place: str, subject: str, source: str) -> str:
 
 
 def generate_records(source: str, count: int, seed: int):
-    rng = random.Random(source_seed(seed, source))
-    used: set[str] = set()
+    rng = random.Random(source_seed(seed, source, "service"))
+    factory = FakeBookFactory(seed, f"opds-{source}")
     if source == "gallica":
         first_date = date(1850, 1, 1)
         span_days = (date(1938, 12, 31) - first_date).days
@@ -186,18 +192,16 @@ def generate_records(source: str, count: int, seed: int):
         ]
 
     for book_id in range(1, count + 1):
-        title, place, obj = make_title(rng, used)
-        author = f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}"
-        subject = rng.choice(SUBJECTS)
+        book = factory.make(book_id)
         published = first_date + timedelta(days=rng.randrange(span_days + 1))
-        language = rng.choice(LANGUAGES)
         publisher = rng.choice(publisher_pool)
         isbn = f"978{source_seed(seed, source, book_id) % 10_000_000_000:010d}"
         cover_variant = rng.randrange(len(PALETTES))
         yield (
-            source, book_id, title, author, publisher, published.isoformat(),
-            language, subject, make_summary(title, place, subject, source), isbn,
-            place, obj, cover_variant,
+            source, book_id, book.title, book.author, publisher, published.isoformat(),
+            book.language, book.subject,
+            make_summary(book.title, book.place, book.subject, source), isbn,
+            book.place, book.object_name, cover_variant,
         )
 
 
@@ -647,26 +651,20 @@ class FakeOPDSApp:
         return "\n".join(f"<p>{esc(x)}</p>" for x in p)
 
     def write_epub(self, path: Path, row: sqlite3.Row):
-        identifier = f"urn:cifereca:fake:{row['source']}:{row['book_id']}"
-        cover_svg = self.make_cover_svg(row)
-        chapter = self.chapter_html(row)
-        css = "body{font-family:serif;line-height:1.55;margin:7%}p{text-align:justify;text-indent:1.2em}.cover{text-align:center;margin:0}.cover img{max-width:100%;max-height:100vh}"
-        container_xml = '''<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'''
-        cover_page = '''<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" lang="fr"><head><title>Couverture</title><link rel="stylesheet" href="style.css"/></head><body class="cover"><img src="cover.svg" alt="Couverture"/></body></html>'''
-        chapter_page = f'''<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" lang="fr"><head><title>{esc(row['title'])}</title><link rel="stylesheet" href="style.css"/></head><body><h1>Chapitre 1 — Le signe</h1>{chapter}</body></html>'''
-        nav = '''<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="fr"><head><title>Navigation</title></head><body><nav epub:type="toc"><h1>Sommaire</h1><ol><li><a href="chapter1.xhtml">Chapitre 1 — Le signe</a></li></ol></nav></body></html>'''
-        ncx = f'''<?xml version="1.0" encoding="UTF-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="{esc(identifier)}"/></head><docTitle><text>{esc(row['title'])}</text></docTitle><navMap><navPoint id="n1" playOrder="1"><navLabel><text>Chapitre 1 — Le signe</text></navLabel><content src="chapter1.xhtml"/></navPoint></navMap></ncx>'''
-        opf = f'''<?xml version="1.0" encoding="UTF-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="{esc(row['language'])}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">{esc(identifier)}</dc:identifier><dc:title>{esc(row['title'])}</dc:title><dc:creator>{esc(row['author'])}</dc:creator><dc:publisher>{esc(row['publisher'])}</dc:publisher><dc:language>{esc(row['language'])}</dc:language><dc:date>{esc(row['published'])}</dc:date><dc:subject>{esc(row['subject'])}</dc:subject><dc:description>{esc(row['summary'])}</dc:description><meta property="dcterms:modified">2026-10-06T00:00:00Z</meta><meta name="cover" content="cover-image"/></metadata><manifest><item id="cover-image" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/><item id="cover-page" href="cover.xhtml" media-type="application/xhtml+xml"/><item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="style.css" media-type="text/css"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx"><itemref idref="cover-page" linear="no"/><itemref idref="chapter1"/></spine></package>'''
-        with zipfile.ZipFile(path, "w") as z:
-            z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-            for name, data in [
-                ("META-INF/container.xml", container_xml), ("OEBPS/content.opf", opf),
-                ("OEBPS/style.css", css), ("OEBPS/cover.svg", cover_svg),
-                ("OEBPS/cover.xhtml", cover_page), ("OEBPS/chapter1.xhtml", chapter_page),
-                ("OEBPS/nav.xhtml", nav), ("OEBPS/toc.ncx", ncx),
-            ]:
-                z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+        book = FakeBook(
+            index=int(row["book_id"]),
+            identifier=f"urn:cifereca:fake:{row['source']}:{row['book_id']}",
+            title=str(row["title"]),
+            author=str(row["author"]),
+            publisher=str(row["publisher"]),
+            publication_date=str(row["published"]),
+            subject=str(row["subject"]),
+            language=str(row["language"]),
+            place=str(row["place"]),
+            object_name=str(row["object_name"]),
+            description=str(row["summary"]),
+        )
+        write_shared_epub(path, book)
 
     def not_found(self, handler):
         self.send_json(handler, HTTPStatus.NOT_FOUND, {"error": "not found"})
