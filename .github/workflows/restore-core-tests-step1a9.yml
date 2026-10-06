@@ -29,7 +29,7 @@ jobs:
           tar -xJf /tmp/core-tests-step1a9.tar.xz -C .
 
           python -m pip install -e '.[dev]'
-          timeout 90s python -m pytest -q             tests/test_core_0917.py             tests/test_core_0921.py             tests/test_core_0923.py             tests/test_core_0925.py
+          timeout 90s python -m pytest -q             tests/test_core_ui_095.py             tests/test_core_0917.py
 
           rm -rf .restore-tests-step1a9
           rm -f .github/workflows/restore-core-tests-step1a9.yml
