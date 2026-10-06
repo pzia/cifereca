@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Resolve the host interpreter before env.sh prepends runtime/root/usr/bin to PATH.
+python_bin="${GTK4_POC_PYTHON:-$(command -v python3)}"
+source "$(dirname -- "$0")/env.sh"
+exec "$python_bin" "$@"
