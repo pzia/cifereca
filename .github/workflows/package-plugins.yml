@@ -1,0 +1,44 @@
+name: Package plugins
+
+on:
+  push:
+    paths:
+      - "plugins/**"
+      - "scripts/**"
+      - ".github/workflows/package-plugins.yml"
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "scripts/**"
+      - ".github/workflows/package-plugins.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate plugin source tree
+        run: python scripts/verify-packaging.py
+
+      - name: Test packaging scripts
+        run: python -m unittest scripts.test_plugin_packaging
+
+      - name: Build all-in-one bundle
+        run: python scripts/package-all-in-one.py
+
+      - name: Build cifereca-update-dev snapshot
+        run: python scripts/package-dev-snapshot.py
+
+      - name: List artifacts
+        run: unzip -l dist/cifereca-dev-plugins-*.zip | head -80
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cifereca-plugin-packages
+          path: dist/*.zip
+          if-no-files-found: error
