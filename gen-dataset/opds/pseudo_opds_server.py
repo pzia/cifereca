@@ -53,7 +53,7 @@ if str(DATASET_ROOT) not in sys.path:
 
 from common.fake_books import FakeBook, FakeBookFactory, write_epub as write_shared_epub
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_BOOKS_PER_SOURCE = 10_000
 DEFAULT_PAGE_SIZE = 50
