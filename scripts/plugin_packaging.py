@@ -486,17 +486,10 @@ def validate_dev_snapshot(path: Path) -> dict:
             actual = hashlib.sha256(payload).hexdigest()
             if expected and actual != expected:
                 raise PackagingError(f"SHA-256 plugin invalide: {relative}")
-            try:
-                with zipfile.ZipFile(
-                    tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
-                ):
-                    pass
-                with tempfile.NamedTemporaryFile(suffix=".zip") as handle:
-                    handle.write(payload)
-                    handle.flush()
-                    plugin_manifest = validate_plugin_zip(Path(handle.name))
-            except PackagingError:
-                raise
+            with tempfile.NamedTemporaryFile(suffix=".zip") as handle:
+                handle.write(payload)
+                handle.flush()
+                plugin_manifest = validate_plugin_zip(Path(handle.name))
             package_id = str(plugin_manifest["package"]["id"])
             if package_id in package_ids:
                 raise PackagingError(
