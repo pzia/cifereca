@@ -134,7 +134,7 @@ class EbooksSession(ProviderSession):
         if item.source_provider!=self.provider_id or not item.download_url: raise ProviderError('Ebooks libres et gratuits : offre inconnue')
         r=self._fetch(item.download_url)
         if len(r.content)>self.maximum: raise ProviderError('Ebooks libres et gratuits : fichier trop volumineux')
-        d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/(re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub'; part=Path(tempfile.mktemp(prefix='.eg-',dir=d))
+        d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub'); part=Path(tempfile.mktemp(prefix='.eg-',dir=d))
         part.write_bytes(r.content)
         try:
             with zipfile.ZipFile(part) as z:
