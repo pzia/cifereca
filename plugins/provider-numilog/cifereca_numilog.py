@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.8, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.9, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -19,7 +19,7 @@ from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderC
 from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.8'
+VERSION = '0.1.9'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -369,7 +369,12 @@ class NumilogSession(ProviderSession):
                                 raise ProviderError('Numilog : téléchargement trop volumineux')
                             output.write(chunk)
                     if looks_like_acsm(part):
-                        return self._fulfill_acsm(part,title=title)
+                        acsm = part.with_suffix('.acsm')
+                        os.replace(part, acsm)
+                        try:
+                            return self._fulfill_acsm(acsm,title=title)
+                        finally:
+                            acsm.unlink(missing_ok=True)
                     validate_epub(part)
                     if title:
                         destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
