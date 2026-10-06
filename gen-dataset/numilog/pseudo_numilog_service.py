@@ -10,7 +10,7 @@ Le serveur reproduit les routes consommées par provider.numilog :
 - GET  /Pages/Compte/MesLivres.aspx?page=N
 - GET  /Pages/Compte/readBook.ashx?lid=...&m=download
 - GET  /Services/Delivery.ashx?lid=...
-- GET  /downloads/{lid}.epub
+- GET  /downloads/{lid}.epub\n- GET  /downloads/{lid}.acsm (un livre sur sept)
 - GET  /covers/{lid}.png
 
 Configuration Cifereca :
@@ -39,7 +39,7 @@ if str(DATASET_ROOT) not in sys.path:
 
 from common.fake_books import FakeBook, FakeBookFactory, cover_png_bytes, write_epub
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 CACHE_SCHEMA_VERSION = "1"
 DEFAULT_BOOKS = 1_000
 DEFAULT_PORT = 8094
@@ -309,12 +309,13 @@ class NumilogFakeApp:
             lid = 0
         if self.cache.get(lid) is None:
             return self.send_bytes(handler, HTTPStatus.NOT_FOUND, "text/plain", b"unknown book")
+        suffix = "acsm" if lid % 7 == 0 else "epub"
         return self.send_bytes(
             handler,
             HTTPStatus.FOUND,
             "text/plain",
             b"",
-            {"Location": f"/downloads/{lid}.epub"},
+            {"Location": f"/downloads/{lid}.{suffix}"},
         )
 
     def cover(self, handler, lid: int):
@@ -334,6 +335,20 @@ class NumilogFakeApp:
         if not path.exists():
             write_epub(path, self.cache.as_book(row))
         self.send_bytes(handler, HTTPStatus.OK, "application/epub+zip", path.read_bytes())
+
+    def acsm(self, handler, lid: int):
+        row = self.cache.get(lid)
+        if row is None:
+            return self.send_bytes(handler, HTTPStatus.NOT_FOUND, "text/plain", b"unknown book")
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+            '<resourceItemInfo><metadata>'
+            '<dc:format xmlns:dc="http://purl.org/dc/elements/1.1/">application/epub+zip</dc:format>'
+            '</metadata></resourceItemInfo>'
+            '</fulfillmentToken>'
+        ).encode("utf-8")
+        self.send_bytes(handler, HTTPStatus.OK, "application/vnd.adobe.adept+xml", body)
 
     def route(self, handler: BaseHTTPRequestHandler):
         parsed = urlsplit(handler.path)
@@ -359,6 +374,9 @@ class NumilogFakeApp:
         m = __import__("re").fullmatch(r"/downloads/(\d+)\.epub", path)
         if m:
             return self.epub(handler, int(m.group(1)))
+        m = __import__("re").fullmatch(r"/downloads/(\d+)\.acsm", path)
+        if m:
+            return self.acsm(handler, int(m.group(1)))
 
         self.send_bytes(handler, HTTPStatus.NOT_FOUND, "text/plain; charset=utf-8", b"route inconnue")
 
