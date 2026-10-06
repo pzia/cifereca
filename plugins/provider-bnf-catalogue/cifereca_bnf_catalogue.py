@@ -20,12 +20,12 @@ ENDPOINT = "https://catalogue.bnf.fr/api/SRU"
 ARK = re.compile(r"(?:https?://catalogue\.bnf\.fr/)?(ark:/12148/cb[0-9]+[a-z0-9])(?:[/?#\s]|$)", re.I)
 FIELDS = {
     "all": "bib.anywhere", "title": "bib.title", "author": "bib.author",
-    "isbn": "bib.isbn", "subject": "bib.subject",
+    "isbn": "bib.isbn", "subject": "bib.subject", "series": "bib.anywhere", "collection": "bib.anywhere",
 }
 
 DESCRIPTOR = ProviderDescriptor(
     id="bnf-catalogue", display_name="BnF — Catalogue général",
-    description="Notices bibliographiques publiques : titres, auteurs, ISBN et sujets. Pas de prêt ni de téléchargement.",
+    description="Notices bibliographiques publiques : titres, auteurs, ISBN, sujets, séries et collections. Pas de prêt ni de téléchargement.",
     state="ready", capabilities=ProviderCapabilities(search=True, holdings=True),
     homepage="https://catalogue.bnf.fr",
     notes=("API SRU publique, sans compte BnF.",
@@ -47,6 +47,21 @@ def _gallica_link(value: str) -> str | None:
     if parsed.scheme in {"https", "http"} and parsed.hostname == "gallica.bnf.fr" and parsed.path.startswith("/ark:/12148/"):
         return parsed._replace(scheme="https").geturl()
     return None
+
+
+def _structured_group_values(values: dict[str, list[str]]) -> tuple[list[str], list[str]]:
+    """Extract conservative series/collection labels from simple Dublin Core."""
+    def clean(rows):
+        out=[]
+        for raw in rows:
+            value=' '.join(str(raw or '').split())
+            if not value or value.startswith(('http://','https://','ark:/','urn:')):
+                continue
+            if value not in out: out.append(value)
+        return out
+    collections=clean(values.get('source',[]))
+    series=clean(values.get('relation',[]))
+    return series,collections
 
 
 class BnfCatalogueSession(ProviderSession):
@@ -101,6 +116,10 @@ class BnfCatalogueSession(ProviderSession):
         # physical/digital; all-scope uses a documented physical fallback.
         if scope != "all":
             rows = [r for r in rows if r.metadata["support"] == scope]
+        if field in {"series","collection"}:
+            key="series" if field=="series" else "collections"
+            needle=query.casefold()
+            rows=[r for r in rows if any(needle in str(value).casefold() for value in r.metadata.get(key,[]))]
         self.diagnostics.add("BNF", "SRU search", "ok", detail={"results": len(rows), "page": page, "field": field})
         return rows
 
@@ -143,6 +162,7 @@ class BnfCatalogueSession(ProviderSession):
                 canonical for raw in values.get("language", [])
                 if (canonical := normalize_language_tag(raw)) is not None
             ))
+            series, collections = _structured_group_values(values)
             first = lambda key: (values.get(key) or [None])[0]
             rows[ark] = SearchResult(
                 id=f"bnf-catalogue:{ark.rsplit('/', 1)[-1]}", record_id=ark,
@@ -155,6 +175,7 @@ class BnfCatalogueSession(ProviderSession):
                 download_url=None, downloadable=False,
                 metadata={"source": "BnF Catalogue général", "isbns": isbns,
                           "subjects": values.get("subject", []), "languages": languages,
+                          "series": series, "collections": collections,
                           "rights": values.get("rights", []), "bibliographic_formats": formats,
                           "bibliographic_types": kinds, "gallica_links": links, "support": support,
                           "medium_fallback": support == "unknown", "format_evidence": "dc.format-mime" if fmt else "unknown"},

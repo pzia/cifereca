@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.bnf-catalogue",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "name": "BnF Catalogue général",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -16,7 +16,7 @@
       "instantiation": "singleton_public",
       "display_name": "BnF — Catalogue général",
       "description": "Recherche de notices bibliographiques publiques, sans emprunt ni téléchargement.",
-      "help_text": "Source publique sans identifiants. Recherchez par titre, auteur, ISBN ou sujet ; ouvrez la notice dans le Catalogue général via son lien. Les liens Gallica et métadonnées sont conservés, mais ne sont jamais transformés en offres EPUB. La disponibilité des exemplaires est inconnue. Le support non déterminé est conservé en metadata et omis des recherches Physique/Numérique ; le contrat v1 affiche ces notices dans Tous avec un repli physique. Séries et collections non pris en charge. Réglez la visibilité par identité ; les paramètres réseau prennent effet à la prochaine connexion ou après redémarrage. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
+      "help_text": "Source publique sans identifiants. Recherchez par titre, auteur, ISBN, sujet, série ou collection ; ouvrez la notice dans le Catalogue général via son lien. Les liens Gallica et métadonnées sont conservés, mais ne sont jamais transformés en offres EPUB. La disponibilité des exemplaires est inconnue. Le support non déterminé est conservé en metadata et omis des recherches Physique/Numérique ; le contrat v1 affiche ces notices dans Tous avec un repli physique. Séries et collections sont projetées depuis les relations/sources Dublin Core attestées et peuvent être recherchées comme champs structurés. Réglez la visibilité par identité ; les paramètres réseau prennent effet à la prochaine connexion ou après redémarrage. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
       "config_schema": {
         "type": "object",
         "x-cifereca-scope": "plugin",
@@ -44,7 +44,7 @@
           }
         }
       },
-      "version": "1.0.6",
+      "version": "1.0.7",
       "capabilities": [
         "catalog.search",
         "catalog.detail"
