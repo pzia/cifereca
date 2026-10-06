@@ -638,6 +638,55 @@ def reset_runtime(profile: dict) -> None:
     (runtime / "plugin-packages.json").unlink(missing_ok=True)
 
 
+def installed_plugin_ids(packages_root: Path | None) -> set[str]:
+    if packages_root is None or not packages_root.is_dir():
+        return set()
+    out: set[str] = set()
+    for package in packages_root.iterdir():
+        if not package.is_dir():
+            continue
+        pointer = package / "current.json"
+        active = None
+        if pointer.is_file():
+            try:
+                data = json.loads(pointer.read_text(encoding="utf-8"))
+                active = str(data.get("active") or "").strip() if isinstance(data, dict) else ""
+            except (OSError, json.JSONDecodeError):
+                active = ""
+        roots = [package / active] if active else sorted(
+            (path for path in package.iterdir() if path.is_dir()),
+            reverse=True,
+        )
+        for root in roots:
+            manifest = root / "cifereca-plugin.json"
+            if not manifest.is_file():
+                continue
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            for row in data.get("plugins") or []:
+                if isinstance(row, dict) and str(row.get("id") or "").strip():
+                    out.add(str(row["id"]).strip())
+            break
+    return out
+
+
+def ensure_required_plugins(profile: dict, catalog: dict[str, dict], packages_root: Path | None) -> None:
+    required = derived_plugins(profile, catalog)
+    if not required:
+        return
+    available = installed_plugin_ids(packages_root)
+    missing = [plugin_id for plugin_id in required if plugin_id not in available]
+    if missing:
+        source = host_plugin_store(profile)
+        raise DatasetError(
+            "plugins UX absents du store installé: "
+            + ", ".join(missing)
+            + f" ; source inspectée: {source}"
+        )
+
+
 def derived_plugins(profile: dict, catalog: dict[str, dict]) -> list[str]:
     plugins: list[str] = []
     for name, config in enabled_service_configs(profile).items():
@@ -790,6 +839,7 @@ def command_cifereca(args, catalog) -> int:
     extra = list(args.extra or [])
     if extra and extra[0] == "--":
         extra = extra[1:]
+    ensure_required_plugins(profile, catalog, prepared["plugin_packages"])
     command = cifereca_command(profile, catalog, extra, args.verbose)
     if args.dry_run:
         print(printable_command(command, prepared["env"]))
@@ -853,6 +903,7 @@ def command_snapshot(args, catalog) -> int:
 
     output = Path(args.out).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    ensure_required_plugins(profile, catalog, prepared["plugin_packages"])
     app_command = cifereca_command(profile, catalog, [], args.verbose)
     capture_command = [
         str(harness_python),
@@ -935,6 +986,14 @@ def command_doctor(args, catalog) -> int:
             print(f"service : {name:10} port={ctx['port']} script={ctx['script'].relative_to(ROOT)}")
         except DatasetError as exc:
             problems.append(str(exc))
+    packages = sync_plugin_packages(profile)
+    required = derived_plugins(profile, catalog)
+    available = installed_plugin_ids(packages)
+    missing = [plugin_id for plugin_id in required if plugin_id not in available]
+    print(f"plugins  : {packages or 'aucun store installé trouvé'}")
+    if missing:
+        problems.append("plugins UX absents: " + ", ".join(missing))
+
     binary = str((profile.get("cifereca") or {}).get("binary") or "cifereca")
     found = shutil.which(binary)
     print(f"cifereca: {found or 'NON TROUVÉ (' + binary + ')'}")
