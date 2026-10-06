@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d .restore-tests-step1a8/payload.b64 > /tmp/core-tests-step1a8.tar.xz
+          cp .restore-tests-step1a8/payload.tar.xz /tmp/core-tests-step1a8.tar.xz
           echo "f399a081499d805f92c6011a7c5544253653f3eeaae107195bfc28b884d2047b  /tmp/core-tests-step1a8.tar.xz" | sha256sum -c -
           tar -xJf /tmp/core-tests-step1a8.tar.xz -C .
 
