@@ -26,7 +26,7 @@ jobs:
           set -euo pipefail
           test "$(find .restore-tests-step1a4 -maxdepth 1 -type f -name 'payload.b64.part.*' | wc -l)" -eq 2
           cat .restore-tests-step1a4/payload.b64.part.* | base64 -d > /tmp/core-tests-step1a4.tar.xz
-          echo "42c1013e01a181662c5d9e2da97ba891b0b78f7099fd6db988073d183b217b97  /tmp/core-tests-step1a4.tar.xz" | sha256sum -c -
+          echo "aec21aaed061d686e01e7a9408d2e6fd212925d6f0acd6dab459e5ffd2c87774  /tmp/core-tests-step1a4.tar.xz" | sha256sum -c -
           tar -xJf /tmp/core-tests-step1a4.tar.xz -C .
 
           python -m pip install -e '.[dev]'
