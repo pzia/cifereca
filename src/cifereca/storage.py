@@ -1,0 +1,2102 @@
+from __future__ import annotations
+
+import hashlib
+import logging
+import json
+import sqlite3
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from .paths import database_file
+
+_TRACE_LOG = logging.getLogger("cifereca")
+
+
+# Schema history is deliberately explicit from 0.7.10 onward.  Databases created
+# before that release had no schema_version metadata; they are treated as v0 and
+# migrated forward transactionally.
+CURRENT_SCHEMA_VERSION = 12
+
+BASE_SCHEMA = """
+PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS cache (
+  namespace TEXT NOT NULL,
+  cache_key TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  stored_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY(namespace, cache_key)
+);
+CREATE TABLE IF NOT EXISTS metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS backup_items (
+  provider_id TEXT NOT NULL,
+  credential_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  revision_id TEXT,
+  title TEXT NOT NULL,
+  author TEXT,
+  format TEXT,
+  local_path TEXT,
+  status TEXT NOT NULL,
+  size INTEGER,
+  sha256 TEXT,
+  updated_at INTEGER NOT NULL,
+  error TEXT,
+  PRIMARY KEY(provider_id, credential_id, item_id)
+);
+"""
+
+
+class Storage:
+    def __init__(self, path: Path | None = None):
+        self.path = path or database_file()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._connections_lock = threading.Lock()
+        self._connections: set[sqlite3.Connection] = set()
+        self._thread_local = threading.local()
+        started = time.monotonic()
+        _TRACE_LOG.info("TRACE storage init path=%s", self.path)
+        with self._connect() as db:
+            _TRACE_LOG.info("TRACE storage base-schema begin")
+            db.executescript(BASE_SCHEMA)
+            _TRACE_LOG.info("TRACE storage base-schema end dt=%.3fs", time.monotonic()-started)
+            self._migrate(db)
+            _TRACE_LOG.info("TRACE storage migrate end schema=%s dt=%.3fs", self._read_schema_version(db), time.monotonic()-started)
+
+    @staticmethod
+    def _column_names(db: sqlite3.Connection, table: str) -> set[str]:
+        return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def metadata_get(self, key: str, default: str | None = None) -> str | None:
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT value FROM metadata WHERE key=?", (str(key),)).fetchone()
+        return str(row[0]) if row is not None else default
+
+    def metadata_json_put_item(self, key: str, item: str, value: Any, *, only_if_missing: bool = False) -> None:
+        """Atomic dictionary update, retaining observations from other workers."""
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT value FROM metadata WHERE key=?",(key,)).fetchone()
+            try:values=json.loads(row[0]) if row else {}
+            except (ValueError,TypeError):values={}
+            if not isinstance(values,dict):values={}
+            if only_if_missing and item in values:return
+            values[item]=value
+            db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(key,json.dumps(values)))
+
+    def metadata_set(self, key: str, value: Any) -> None:
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(key), str(value)),
+            )
+
+    @staticmethod
+    def _read_schema_version(db: sqlite3.Connection) -> int:
+        row = db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
+        if row is None:
+            return 0
+        try:
+            return max(0, int(row[0]))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _write_schema_version(db: sqlite3.Connection, version: int) -> None:
+        db.execute(
+            "INSERT INTO metadata(key,value) VALUES('schema_version',?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(int(version)),),
+        )
+
+    @classmethod
+    def _migrate(cls, db: sqlite3.Connection) -> None:
+        """Forward-only, transaction-safe local schema migrations.
+
+        v1: historical Kobo ``job_id`` compatibility column.
+        v2: provenance/lifecycle columns for the historical Kobo compatibility table.
+        v3: generic entitlements, acquisition ledger, immutable artifacts,
+            placements and local catalog. ``backup_items`` remains a compatibility
+            projection for the 0.7 Kobo sync API.
+        v4: first-class identities, provider connections/accounts, ADE profile
+            bindings and device bindings; generic provenance gains identity_id.
+        v5: strict Kobo/ADE cardinalities and cover_url projection.
+        v6: stable human filesystem directory per identity, decoupled from identity_id.
+        v7: opening synchronization runs and durable per-identity status summaries.
+        v8: normalize the Paris primary account key and merge duplicate loan/ledger rows.
+        v9: device target directories and desired/observed artifact placements.
+        v10: persisted artifact variants and preferred variants.
+        v11: structured action events for dashboard statistics.
+        v12: performance indexes for catalogue/library projections.
+        """
+        version = cls._read_schema_version(db)
+        _TRACE_LOG.info("TRACE storage migrate begin from=%s target=%s", version, CURRENT_SCHEMA_VERSION)
+        if version > CURRENT_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Base cifereca trop récente (schéma {version}, support {CURRENT_SCHEMA_VERSION})"
+            )
+
+        if version < 1:
+            cols = cls._column_names(db, "backup_items")
+            if "job_id" not in cols:
+                db.execute("ALTER TABLE backup_items ADD COLUMN job_id TEXT")
+            cls._write_schema_version(db, 1)
+            version = 1
+
+        if version < 2:
+            cols = cls._column_names(db, "backup_items")
+            additions = {
+                "account_id": "TEXT",
+                "entitlement_type": "TEXT NOT NULL DEFAULT 'owned'",
+                "loan_id": "TEXT",
+                "expires_at": "TEXT",
+                "acquisition_strategy": "TEXT",
+                "executor": "TEXT",
+                "adept_profile": "TEXT",
+                "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+                "last_attempt_at": "INTEGER",
+                "attention_code": "TEXT",
+            }
+            for name, ddl in additions.items():
+                if name not in cols:
+                    db.execute(f"ALTER TABLE backup_items ADD COLUMN {name} {ddl}")
+            cls._write_schema_version(db, 2)
+            version = 2
+
+        if version < 3:
+            # One transaction/savepoint creates the complete generic 0.8 model.
+            # No filesystem access occurs during migration: paths from 0.7 are
+            # imported as unverified placements and reconciled by a later scan.
+            db.execute("SAVEPOINT migration_v3")
+            try:
+                schema_sql = """
+                    CREATE TABLE IF NOT EXISTS entitlements (
+                      entitlement_id TEXT PRIMARY KEY,
+                      provider_id TEXT NOT NULL,
+                      credential_id TEXT NOT NULL,
+                      account_id TEXT,
+                      item_id TEXT NOT NULL,
+                      revision_id TEXT,
+                      entitlement_type TEXT NOT NULL,
+                      state TEXT NOT NULL,
+                      loan_id TEXT,
+                      expires_at TEXT,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      discovered_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      identity_id TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_entitlements_source
+                      ON entitlements(provider_id, credential_id, item_id);
+
+                    CREATE TABLE IF NOT EXISTS artifacts (
+                      artifact_id TEXT PRIMARY KEY,
+                      sha256 TEXT NOT NULL UNIQUE,
+                      size INTEGER NOT NULL,
+                      media_format TEXT NOT NULL,
+                      mime_type TEXT,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL
+                    );
+
+                    CREATE TABLE IF NOT EXISTS placements (
+                      placement_id TEXT PRIMARY KEY,
+                      artifact_id TEXT,
+                      path TEXT NOT NULL UNIQUE,
+                      identity_id TEXT,
+                      provider_id TEXT,
+                      source_item_id TEXT,
+                      state TEXT NOT NULL,
+                      last_seen_at INTEGER,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_placements_artifact ON placements(artifact_id);
+                    CREATE INDEX IF NOT EXISTS idx_placements_state ON placements(state);
+
+                    CREATE TABLE IF NOT EXISTS acquisition_ledger (
+                      acquisition_id TEXT PRIMARY KEY,
+                      entitlement_id TEXT,
+                      provider_id TEXT NOT NULL,
+                      credential_id TEXT NOT NULL,
+                      account_id TEXT,
+                      item_id TEXT NOT NULL,
+                      title TEXT,
+                      status TEXT NOT NULL,
+                      strategy TEXT,
+                      executor TEXT,
+                      candidate_id TEXT,
+                      artifact_id TEXT,
+                      attempt_count INTEGER NOT NULL DEFAULT 0,
+                      last_attempt_at INTEGER,
+                      error_code TEXT,
+                      error_message TEXT,
+                      attention_code TEXT,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      identity_id TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_acquisition_status ON acquisition_ledger(status);
+                    CREATE INDEX IF NOT EXISTS idx_acquisition_source
+                      ON acquisition_ledger(provider_id, credential_id, item_id);
+
+                    CREATE TABLE IF NOT EXISTS catalog_entries (
+                      catalog_entry_id TEXT PRIMARY KEY,
+                      artifact_id TEXT,
+                      placement_id TEXT,
+                      title TEXT NOT NULL,
+                      author TEXT,
+                      media_format TEXT,
+                      identity_id TEXT,
+                      provider_id TEXT,
+                      item_id TEXT,
+                      local_state TEXT NOT NULL,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_catalog_local_state ON catalog_entries(local_state);
+                    CREATE INDEX IF NOT EXISTS idx_catalog_artifact ON catalog_entries(artifact_id);
+                    """
+                for statement in schema_sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        db.execute(statement)
+                now = int(time.time())
+                keys = [
+                    "provider_id", "credential_id", "item_id", "revision_id", "title", "author",
+                    "format", "local_path", "status", "size", "sha256", "updated_at", "error",
+                    "account_id", "entitlement_type", "loan_id", "expires_at", "acquisition_strategy",
+                    "executor", "attempt_count", "last_attempt_at", "attention_code",
+                ]
+                rows = db.execute("SELECT " + ",".join(keys) + " FROM backup_items").fetchall()
+                for values in rows:
+                    row = dict(zip(keys, values))
+                    cls._mirror_backup_row(db, row, now=now, migration=True)
+                cls._write_schema_version(db, 3)
+                db.execute("RELEASE SAVEPOINT migration_v3")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v3")
+                db.execute("RELEASE SAVEPOINT migration_v3")
+                raise
+            version = 3
+
+        if version < 4:
+            db.execute("SAVEPOINT migration_v4")
+            try:
+                # Provenance becomes identity-aware without moving any user file.
+                for table in ("backup_items", "entitlements", "acquisition_ledger"):
+                    cols = cls._column_names(db, table)
+                    if "identity_id" not in cols:
+                        db.execute(f"ALTER TABLE {table} ADD COLUMN identity_id TEXT")
+
+                schema_sql = """
+                    CREATE TABLE IF NOT EXISTS identities (
+                      identity_id TEXT PRIMARY KEY,
+                      label TEXT NOT NULL,
+                      prefer_original_language INTEGER NOT NULL DEFAULT 0,
+                      reading_languages_json TEXT NOT NULL DEFAULT '[]',
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS provider_connections (
+                      connection_id TEXT PRIMARY KEY,
+                      identity_id TEXT NOT NULL,
+                      provider_id TEXT NOT NULL,
+                      credential_id TEXT NOT NULL,
+                      label TEXT NOT NULL,
+                      enabled INTEGER NOT NULL DEFAULT 1,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      UNIQUE(provider_id, credential_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_provider_connections_identity
+                      ON provider_connections(identity_id, provider_id);
+                    CREATE TABLE IF NOT EXISTS provider_accounts (
+                      provider_account_id TEXT PRIMARY KEY,
+                      connection_id TEXT NOT NULL,
+                      identity_id TEXT NOT NULL,
+                      provider_id TEXT NOT NULL,
+                      credential_id TEXT NOT NULL,
+                      account_id TEXT NOT NULL,
+                      label TEXT NOT NULL,
+                      is_primary INTEGER NOT NULL DEFAULT 0,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      UNIQUE(connection_id, account_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_provider_accounts_identity
+                      ON provider_accounts(identity_id, provider_id);
+                    CREATE TABLE IF NOT EXISTS adept_profile_bindings (
+                      scope_type TEXT NOT NULL,
+                      scope_id TEXT NOT NULL,
+                      profile_id TEXT NOT NULL,
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      PRIMARY KEY(scope_type, scope_id)
+                    );
+                    CREATE TABLE IF NOT EXISTS device_bindings (
+                      device_id TEXT PRIMARY KEY,
+                      identity_id TEXT NOT NULL,
+                      label TEXT,
+                      enabled INTEGER NOT NULL DEFAULT 1,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_device_bindings_identity
+                      ON device_bindings(identity_id);
+                    CREATE INDEX IF NOT EXISTS idx_entitlements_identity
+                      ON entitlements(identity_id, provider_id);
+                    CREATE INDEX IF NOT EXISTS idx_acquisition_identity
+                      ON acquisition_ledger(identity_id, provider_id);
+                """
+                for statement in schema_sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        db.execute(statement)
+                cls._write_schema_version(db, 4)
+                db.execute("RELEASE SAVEPOINT migration_v4")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v4")
+                db.execute("RELEASE SAVEPOINT migration_v4")
+                raise
+
+        if version < 5:
+            db.execute("SAVEPOINT migration_v5")
+            try:
+                # 0.8.1 cardinality fix: one Kobo Vault connection/account and
+                # one ADE identity/profile per Paris identity. Account-scoped ADE
+                # bindings from the first 0.8.1 build are obsolete.
+                if "cover_url" not in cls._column_names(db, "backup_items"):
+                    db.execute("ALTER TABLE backup_items ADD COLUMN cover_url TEXT")
+                db.execute("DELETE FROM adept_profile_bindings WHERE scope_type='account'")
+
+                # Early 0.8.1 builds attached every legacy Kobo connection to the
+                # first Paris identity.  Preserve every Vault connection by splitting
+                # extras into deterministic derived identities instead of aborting the
+                # application startup.  Provenance rows that carry credential_id move
+                # with the connection; local catalog/placements remain untouched.
+                duplicated_identities = db.execute(
+                    "SELECT identity_id FROM provider_connections "
+                    "WHERE provider_id='kobo' GROUP BY identity_id HAVING COUNT(*)>1"
+                ).fetchall()
+                for (identity_id,) in duplicated_identities:
+                    connections = db.execute(
+                        "SELECT connection_id,credential_id,label,created_at FROM provider_connections "
+                        "WHERE provider_id='kobo' AND identity_id=? "
+                        "ORDER BY created_at,connection_id",
+                        (identity_id,),
+                    ).fetchall()
+                    for connection_id, credential_id, connection_label, _created_at in connections[1:]:
+                        suffix = hashlib.sha256(str(credential_id).encode("utf-8", "surrogatepass")).hexdigest()[:8]
+                        derived_id = f"{identity_id}-kobo-{suffix}"
+                        # Avoid collision with an unrelated pre-existing identity.
+                        candidate = derived_id
+                        serial = 2
+                        while db.execute(
+                            "SELECT 1 FROM identities WHERE identity_id=?", (candidate,)
+                        ).fetchone():
+                            candidate = f"{derived_id}-{serial}"
+                            serial += 1
+                        derived_id = candidate
+
+                        source = db.execute(
+                            "SELECT label,prefer_original_language,reading_languages_json,metadata_json,created_at,updated_at "
+                            "FROM identities WHERE identity_id=?",
+                            (identity_id,),
+                        ).fetchone()
+                        now = int(time.time())
+                        if source:
+                            base_label, prefer_vo, langs_json, metadata_json, created_at, updated_at = source
+                        else:
+                            base_label, prefer_vo, langs_json, metadata_json, created_at, updated_at = (
+                                str(identity_id), 0, '["fr"]', '{}', now, now
+                            )
+                        label = str(connection_label or f"{base_label} Kobo").strip() or f"{base_label} Kobo"
+                        db.execute(
+                            "INSERT INTO identities(identity_id,label,prefer_original_language,reading_languages_json,metadata_json,created_at,updated_at) "
+                            "VALUES(?,?,?,?,?,?,?)",
+                            (derived_id, label, prefer_vo, langs_json, metadata_json, created_at, updated_at),
+                        )
+                        db.execute(
+                            "UPDATE provider_connections SET identity_id=? WHERE connection_id=?",
+                            (derived_id, connection_id),
+                        )
+                        db.execute(
+                            "UPDATE provider_accounts SET identity_id=? WHERE connection_id=?",
+                            (derived_id, connection_id),
+                        )
+                        for table in ("backup_items", "entitlements", "acquisition_ledger"):
+                            if "identity_id" in cls._column_names(db, table):
+                                db.execute(
+                                    f"UPDATE {table} SET identity_id=? WHERE provider_id='kobo' AND credential_id=? "
+                                    "AND (identity_id=? OR identity_id IS NULL OR identity_id='')",
+                                    (derived_id, credential_id, identity_id),
+                                )
+
+                # A Vault connection may have projected more than one Kobo account in
+                # an earlier build.  Provider-account rows are a cache/projection, so
+                # retain the primary row (then oldest as a deterministic fallback).
+                duplicated_accounts = db.execute(
+                    "SELECT identity_id FROM provider_accounts "
+                    "WHERE provider_id='kobo' GROUP BY identity_id HAVING COUNT(*)>1"
+                ).fetchall()
+                for (identity_id,) in duplicated_accounts:
+                    rows = db.execute(
+                        "SELECT provider_account_id FROM provider_accounts "
+                        "WHERE provider_id='kobo' AND identity_id=? "
+                        "ORDER BY is_primary DESC,created_at,provider_account_id",
+                        (identity_id,),
+                    ).fetchall()
+                    for (provider_account_id,) in rows[1:]:
+                        db.execute(
+                            "DELETE FROM provider_accounts WHERE provider_account_id=?",
+                            (provider_account_id,),
+                        )
+
+                # A legacy global ADE profile could have been projected onto several
+                # identities by an early 0.8.1 build.  Keep the oldest deterministic
+                # binding and leave the other identities unbound; no ADE secret is
+                # stored or guessed by Paris.
+                duplicated_profiles = db.execute(
+                    "SELECT profile_id FROM adept_profile_bindings "
+                    "WHERE scope_type='identity' GROUP BY profile_id HAVING COUNT(*)>1"
+                ).fetchall()
+                for (profile_id,) in duplicated_profiles:
+                    rows = db.execute(
+                        "SELECT scope_id FROM adept_profile_bindings "
+                        "WHERE scope_type='identity' AND profile_id=? "
+                        "ORDER BY created_at,scope_id",
+                        (profile_id,),
+                    ).fetchall()
+                    for (scope_id,) in rows[1:]:
+                        db.execute(
+                            "DELETE FROM adept_profile_bindings WHERE scope_type='identity' AND scope_id=?",
+                            (scope_id,),
+                        )
+
+                db.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_kobo_connection_identity "
+                    "ON provider_connections(identity_id) WHERE provider_id='kobo'"
+                )
+                db.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_kobo_account_identity "
+                    "ON provider_accounts(identity_id) WHERE provider_id='kobo'"
+                )
+                db.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ade_profile_identity "
+                    "ON adept_profile_bindings(profile_id) WHERE scope_type='identity'"
+                )
+                cls._write_schema_version(db, 5)
+                db.execute("RELEASE SAVEPOINT migration_v5")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v5")
+                db.execute("RELEASE SAVEPOINT migration_v5")
+                raise
+
+        if version < 6:
+            db.execute("SAVEPOINT migration_v6")
+            try:
+                if "directory_name" not in cls._column_names(db, "identities"):
+                    db.execute("ALTER TABLE identities ADD COLUMN directory_name TEXT")
+                # Bootstrap only. LibraryService will project the configured
+                # human directory name (derived from label for legacy config).
+                db.execute("UPDATE identities SET directory_name=identity_id WHERE directory_name IS NULL OR TRIM(directory_name)='' ")
+                db.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_identity_directory_name ON identities(directory_name)")
+                cls._write_schema_version(db, 6)
+                db.execute("RELEASE SAVEPOINT migration_v6")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v6")
+                db.execute("RELEASE SAVEPOINT migration_v6")
+                raise
+            version = 6
+
+        if version < 7:
+            db.execute("SAVEPOINT migration_v7")
+            try:
+                schema_sql = """
+                    CREATE TABLE IF NOT EXISTS sync_runs (
+                      sync_run_id TEXT PRIMARY KEY,
+                      identity_id TEXT,
+                      scope TEXT NOT NULL,
+                      status TEXT NOT NULL,
+                      started_at INTEGER NOT NULL,
+                      finished_at INTEGER,
+                      new_acquisitions INTEGER NOT NULL DEFAULT 0,
+                      attention_required INTEGER NOT NULL DEFAULT 0,
+                      errors INTEGER NOT NULL DEFAULT 0,
+                      detail_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_sync_runs_identity
+                      ON sync_runs(identity_id, started_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_sync_runs_scope
+                      ON sync_runs(scope, started_at DESC);
+                    """
+                for statement in schema_sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        db.execute(statement)
+                cls._write_schema_version(db, 7)
+                db.execute("RELEASE SAVEPOINT migration_v7")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v7")
+                db.execute("RELEASE SAVEPOINT migration_v7")
+                raise
+            version = 7
+
+        if version < 8:
+            db.execute("SAVEPOINT migration_v8")
+            try:
+                # Paris 0.8.3 made the logical primary-account key explicit as
+                # ``primary``. Older rows used NULL/empty, which changed stable
+                # entitlement/acquisition ids and could create duplicate ledger
+                # rows for the very same loan. Normalize and merge them here.
+                db.row_factory = sqlite3.Row
+                entitlement_rows = db.execute(
+                    "SELECT * FROM entitlements WHERE provider_id='paris' "
+                    "AND (account_id IS NULL OR TRIM(account_id)='' OR account_id='primary') "
+                    "ORDER BY updated_at DESC, discovered_at DESC"
+                ).fetchall()
+                groups = {}
+                for raw in entitlement_rows:
+                    row = dict(raw)
+                    row['account_id'] = 'primary'
+                    key = (row.get('credential_id') or '', row.get('item_id') or '',
+                           row.get('entitlement_type') or '', row.get('loan_id') or '',
+                           row.get('identity_id') or '')
+                    groups.setdefault(key, []).append(row)
+                for rows in groups.values():
+                    base = rows[0]
+                    canonical_id = cls._entitlement_id_for(base)
+                    survivor = next((r for r in rows if r.get('entitlement_id') == canonical_id), rows[0])
+                    survivor_id = survivor['entitlement_id']
+                    if survivor_id != canonical_id:
+                        existing = db.execute("SELECT 1 FROM entitlements WHERE entitlement_id=?", (canonical_id,)).fetchone()
+                        if not existing:
+                            db.execute("UPDATE entitlements SET entitlement_id=? WHERE entitlement_id=?", (canonical_id, survivor_id))
+                            db.execute("UPDATE acquisition_ledger SET entitlement_id=? WHERE entitlement_id=?", (canonical_id, survivor_id))
+                            survivor_id = canonical_id
+                    db.execute("UPDATE entitlements SET account_id='primary' WHERE entitlement_id=?", (survivor_id,))
+                    for dup in rows:
+                        dup_id = dup['entitlement_id']
+                        if dup_id == survivor_id or dup_id == canonical_id:
+                            continue
+                        db.execute("UPDATE acquisition_ledger SET entitlement_id=? WHERE entitlement_id=?", (survivor_id, dup_id))
+                        db.execute("DELETE FROM entitlements WHERE entitlement_id=?", (dup_id,))
+
+                ledger_rows = db.execute(
+                    "SELECT * FROM acquisition_ledger WHERE provider_id='paris' AND strategy='loan_auto' "
+                    "AND (account_id IS NULL OR TRIM(account_id)='' OR account_id='primary') "
+                    "ORDER BY updated_at DESC, created_at DESC"
+                ).fetchall()
+                groups = {}
+                for raw in ledger_rows:
+                    row = dict(raw)
+                    row['account_id'] = 'primary'
+                    key = (row.get('credential_id') or '', row.get('item_id') or '',
+                           row.get('entitlement_id') or '', row.get('identity_id') or '')
+                    groups.setdefault(key, []).append(row)
+                status_rank = {'complete': 5, 'acquiring': 4, 'retryable_error': 3, 'attention_required': 2, 'pending': 1, 'discovered': 0}
+                for rows in groups.values():
+                    # Prefer a completed row; otherwise the most recently updated one.
+                    rows.sort(key=lambda r: (status_rank.get(str(r.get('status') or ''), -1), int(r.get('updated_at') or 0)), reverse=True)
+                    survivor = rows[0]
+                    canonical_id = cls._acquisition_id_for(survivor)
+                    survivor_id = survivor['acquisition_id']
+                    max_attempts = max(int(r.get('attempt_count') or 0) for r in rows)
+                    if survivor_id != canonical_id:
+                        existing = db.execute("SELECT 1 FROM acquisition_ledger WHERE acquisition_id=?", (canonical_id,)).fetchone()
+                        if not existing:
+                            db.execute("UPDATE acquisition_ledger SET acquisition_id=? WHERE acquisition_id=?", (canonical_id, survivor_id))
+                            survivor_id = canonical_id
+                    db.execute(
+                        "UPDATE acquisition_ledger SET account_id='primary',attempt_count=? WHERE acquisition_id=?",
+                        (max_attempts, survivor_id),
+                    )
+                    for dup in rows[1:]:
+                        dup_id = dup['acquisition_id']
+                        if dup_id == survivor_id or dup_id == canonical_id:
+                            continue
+                        db.execute("DELETE FROM acquisition_ledger WHERE acquisition_id=?", (dup_id,))
+
+                cls._write_schema_version(db, 8)
+                db.execute("RELEASE SAVEPOINT migration_v8")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v8")
+                db.execute("RELEASE SAVEPOINT migration_v8")
+                raise
+            finally:
+                db.row_factory = None
+            version = 8
+
+        if version < 9:
+            db.execute("SAVEPOINT migration_v9")
+            try:
+                if "target_directory" not in cls._column_names(db, "device_bindings"):
+                    db.execute("ALTER TABLE device_bindings ADD COLUMN target_directory TEXT NOT NULL DEFAULT 'Books/Paris'")
+                schema_sql = """
+                    CREATE TABLE IF NOT EXISTS device_placements (
+                      device_placement_id TEXT PRIMARY KEY,
+                      device_id TEXT NOT NULL,
+                      artifact_id TEXT NOT NULL,
+                      desired_state TEXT NOT NULL DEFAULT 'keep',
+                      observed_state TEXT NOT NULL DEFAULT 'unknown',
+                      target_relative_path TEXT,
+                      last_observed_at INTEGER,
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      UNIQUE(device_id, artifact_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_device_placements_device
+                      ON device_placements(device_id, desired_state, observed_state);
+                    CREATE INDEX IF NOT EXISTS idx_device_placements_artifact
+                      ON device_placements(artifact_id);
+                """
+                for statement in schema_sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        db.execute(statement)
+                cls._write_schema_version(db, 9)
+                db.execute("RELEASE SAVEPOINT migration_v9")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v9")
+                db.execute("RELEASE SAVEPOINT migration_v9")
+                raise
+            version = 9
+
+        if version < 10:
+            db.execute("SAVEPOINT migration_v10")
+            try:
+                schema_sql = """
+                    CREATE TABLE IF NOT EXISTS artifact_variants (
+                      variant_id TEXT PRIMARY KEY,
+                      artifact_id TEXT NOT NULL,
+                      source_artifact_id TEXT NOT NULL,
+                      source_sha256 TEXT NOT NULL,
+                      variant_kind TEXT NOT NULL,
+                      transformer_plugin_id TEXT NOT NULL,
+                      transformer_version TEXT NOT NULL DEFAULT '',
+                      profile_plugin_id TEXT,
+                      profile_version TEXT,
+                      options_fingerprint TEXT NOT NULL DEFAULT '',
+                      metadata_json TEXT NOT NULL DEFAULT '{}',
+                      created_at INTEGER NOT NULL,
+                      updated_at INTEGER NOT NULL,
+                      UNIQUE(source_sha256, transformer_plugin_id, profile_plugin_id, options_fingerprint),
+                      FOREIGN KEY(artifact_id) REFERENCES artifacts(artifact_id),
+                      FOREIGN KEY(source_artifact_id) REFERENCES artifacts(artifact_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_artifact_variants_source ON artifact_variants(source_artifact_id);
+                    CREATE INDEX IF NOT EXISTS idx_artifact_variants_artifact ON artifact_variants(artifact_id);
+                """
+                for statement in schema_sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        db.execute(statement)
+                cls._write_schema_version(db, 10)
+                db.execute("RELEASE SAVEPOINT migration_v10")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v10")
+                db.execute("RELEASE SAVEPOINT migration_v10")
+                raise
+            version = 10
+
+        if version < 11:
+            db.execute("SAVEPOINT migration_v11")
+            try:
+                schema_sql = """
+                    CREATE TABLE IF NOT EXISTS action_events (
+                      event_id TEXT PRIMARY KEY,
+                      identity_id TEXT,
+                      action_type TEXT NOT NULL,
+                      outcome TEXT NOT NULL,
+                      provider_id TEXT,
+                      plugin_id TEXT,
+                      facts_json TEXT NOT NULL DEFAULT '{}',
+                      occurred_at INTEGER NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_action_events_identity_time
+                      ON action_events(identity_id, occurred_at);
+                    CREATE INDEX IF NOT EXISTS idx_action_events_type_outcome
+                      ON action_events(action_type, outcome, occurred_at);
+                """
+                for statement in schema_sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        db.execute(statement)
+                cls._write_schema_version(db, 11)
+                db.execute("RELEASE SAVEPOINT migration_v11")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v11")
+                db.execute("RELEASE SAVEPOINT migration_v11")
+                raise
+            version = 11
+
+        if version < 12:
+            db.execute("SAVEPOINT migration_v12")
+            try:
+                schema_sql = """
+                    CREATE INDEX IF NOT EXISTS idx_catalog_identity_state
+                      ON catalog_entries(identity_id, local_state);
+                    CREATE INDEX IF NOT EXISTS idx_catalog_source
+                      ON catalog_entries(identity_id, provider_id, item_id);
+                    CREATE INDEX IF NOT EXISTS idx_catalog_placement
+                      ON catalog_entries(placement_id);
+                    CREATE INDEX IF NOT EXISTS idx_placements_identity_state
+                      ON placements(identity_id, state);
+                    CREATE INDEX IF NOT EXISTS idx_placements_source
+                      ON placements(provider_id, source_item_id, state);
+                """
+                for statement in schema_sql.split(";"):
+                    statement = statement.strip()
+                    if statement:
+                        db.execute(statement)
+                cls._write_schema_version(db, 12)
+                db.execute("RELEASE SAVEPOINT migration_v12")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v12")
+                db.execute("RELEASE SAVEPOINT migration_v12")
+                raise
+            version = 12
+
+    @staticmethod
+    def _stable_id(prefix: str, *parts: Any) -> str:
+        raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8", "surrogatepass")
+        return f"{prefix}:{hashlib.sha256(raw).hexdigest()[:32]}"
+
+    @staticmethod
+    def _json_dump(value: Any) -> str:
+        return json.dumps(value if value is not None else {}, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
+    def _json_load(value: Any) -> dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(str(value))
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    @classmethod
+    def _entitlement_id_for(cls, row: dict[str, Any]) -> str:
+        return cls._stable_id(
+            "entitlement", row.get("provider_id"), row.get("credential_id"), row.get("account_id"),
+            row.get("item_id"), row.get("entitlement_type") or "owned", row.get("loan_id"),
+        )
+
+    @classmethod
+    def _acquisition_id_for(cls, row: dict[str, Any]) -> str:
+        return cls._stable_id("acquisition", cls._entitlement_id_for(row))
+
+    @classmethod
+    def _generic_status(cls, value: Any) -> str:
+        status = str(value or "").strip().lower()
+        if status == "complete":
+            return "complete"
+        if status == "acquiring":
+            return "acquiring"
+        if status == "attention_required":
+            return "attention_required"
+        if status in {"error", "failed", "retryable_error"}:
+            return "retryable_error"
+        if status in {"pending", "pending_acquisition", "queued"}:
+            return "pending"
+        return "discovered"
+
+    @classmethod
+    def _mirror_backup_row(
+        cls, db: sqlite3.Connection, row: dict[str, Any], *, now: int | None = None, migration: bool = False
+    ) -> None:
+        timestamp = int(row.get("updated_at") or now or time.time())
+        entitlement_id = cls._entitlement_id_for(row)
+        entitlement_type = str(row.get("entitlement_type") or "owned")
+        db.execute(
+            "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
+            "entitlement_type,state,loan_id,expires_at,metadata_json,discovered_at,updated_at,identity_id) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(entitlement_id) DO UPDATE SET revision_id=excluded.revision_id,"
+            "state=excluded.state,expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
+            "metadata_json=excluded.metadata_json,"
+            "identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at",
+            (
+                entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
+                row.get("account_id"), str(row.get("item_id") or ""), row.get("revision_id"), entitlement_type,
+                "active", row.get("loan_id"), row.get("expires_at"),
+                cls._json_dump({
+                    **({"imported_from": "backup_items"} if migration else {"compatibility_projection": "backup_items"}),
+                    "title": row.get("title"), "author": row.get("author"),
+                    "media_format": str(row.get("format") or "").lower() or None,
+                    "cover_url": row.get("cover_url"),
+                }),
+                timestamp, timestamp, row.get("identity_id"),
+            ),
+        )
+        artifact_id = None
+        sha = str(row.get("sha256") or "").strip().lower()
+        if sha:
+            artifact_id = f"sha256:{sha}"
+            try:
+                size = max(0, int(row.get("size") or 0))
+            except (TypeError, ValueError):
+                size = 0
+            db.execute(
+                "INSERT INTO artifacts(artifact_id,sha256,size,media_format,mime_type,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET size=MAX(artifacts.size,excluded.size),"
+                "media_format=CASE WHEN artifacts.media_format='unknown' THEN excluded.media_format ELSE artifacts.media_format END,"
+                "updated_at=excluded.updated_at",
+                (artifact_id, sha, size, str(row.get("format") or "unknown").lower(), None,
+                 cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
+            )
+        local_path = str(row.get("local_path") or "").strip()
+        placement_id = None
+        if local_path:
+            placement_id = cls._stable_id("placement", str(Path(local_path).expanduser().resolve()))
+            db.execute(
+                "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,state,last_seen_at,"
+                "metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(path) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,placements.artifact_id),"
+                "provider_id=COALESCE(excluded.provider_id,placements.provider_id),source_item_id=COALESCE(excluded.source_item_id,placements.source_item_id),"
+                "updated_at=excluded.updated_at",
+                (placement_id, artifact_id, str(Path(local_path).expanduser().resolve()), row.get("identity_id"), row.get("provider_id"),
+                 row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
+            )
+            catalog_id = cls._stable_id("catalog", placement_id)
+            db.execute(
+                "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,"
+                "provider_id,item_id,local_state,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,catalog_entries.artifact_id),"
+                "title=excluded.title,author=COALESCE(excluded.author,catalog_entries.author),media_format=COALESCE(excluded.media_format,catalog_entries.media_format),"
+                "provider_id=COALESCE(excluded.provider_id,catalog_entries.provider_id),item_id=COALESCE(excluded.item_id,catalog_entries.item_id),"
+                "updated_at=excluded.updated_at",
+                (catalog_id, artifact_id, placement_id, str(row.get("title") or row.get("item_id") or "Sans titre"),
+                 row.get("author"), str(row.get("format") or "").lower() or None, row.get("identity_id"), row.get("provider_id"), row.get("item_id"),
+                 "local", cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
+            )
+        acquisition_id = cls._acquisition_id_for(row)
+        db.execute(
+            "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
+            "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
+            "metadata_json,created_at,updated_at,identity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(acquisition_id) DO UPDATE SET status=excluded.status,strategy=COALESCE(excluded.strategy,acquisition_ledger.strategy),"
+            "executor=COALESCE(excluded.executor,acquisition_ledger.executor),artifact_id=COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id),"
+            "attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),"
+            "error_message=excluded.error_message,attention_code=excluded.attention_code,"
+            "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at",
+            (
+                acquisition_id, entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
+                row.get("account_id"), str(row.get("item_id") or ""), row.get("title"), cls._generic_status(row.get("status")),
+                row.get("acquisition_strategy"), row.get("executor"), None, artifact_id, int(row.get("attempt_count") or 0),
+                row.get("last_attempt_at"), None, row.get("error"), row.get("attention_code"),
+                cls._json_dump({"legacy_status": row.get("status")}), timestamp, timestamp, row.get("identity_id"),
+            ),
+        )
+
+    def schema_version(self) -> int:
+        with self._lock, self._connect() as db:
+            return self._read_schema_version(db)
+
+    def _connect(self):
+        """Return one reusable SQLite connection per worker thread.
+
+        Most Storage methods use the sqlite connection as a context manager.
+        ``sqlite3.Connection.__exit__`` commits/rolls back but deliberately does
+        not close the connection, which makes a thread-local connection a safe
+        drop-in optimisation for the historical call sites.  This removes the
+        open/close + PRAGMA setup cost from the hot paths while preserving the
+        existing transaction boundaries.
+        """
+        connection = getattr(self._thread_local, "connection", None)
+        if connection is not None:
+            return connection
+        connection = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
+        connection.execute("PRAGMA busy_timeout=10000")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        self._thread_local.connection = connection
+        with self._connections_lock:
+            self._connections.add(connection)
+        return connection
+
+    def close(self) -> None:
+        """Close cached connections owned by this Storage instance."""
+        with self._connections_lock:
+            connections = list(self._connections)
+            self._connections.clear()
+        for connection in connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+        try:
+            del self._thread_local.connection
+        except AttributeError:
+            pass
+
+    def cache_get(self, namespace: str, key: str) -> Any | None:
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT payload, expires_at FROM cache WHERE namespace=? AND cache_key=?",
+                (namespace, key),
+            ).fetchone()
+            if not row:
+                return None
+            payload, expires_at = row
+            if expires_at < now:
+                db.execute("DELETE FROM cache WHERE namespace=? AND cache_key=?", (namespace, key))
+                return None
+            try:
+                return json.loads(payload)
+            except Exception:
+                return None
+
+    def cache_put(self, namespace: str, key: str, value: Any, ttl_seconds: int) -> None:
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO cache(namespace,cache_key,payload,stored_at,expires_at) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(namespace,cache_key) DO UPDATE SET payload=excluded.payload, stored_at=excluded.stored_at, expires_at=excluded.expires_at",
+                (namespace, key, json.dumps(value, ensure_ascii=False), now, now + max(1, ttl_seconds)),
+            )
+
+    def cache_delete_namespace(self, namespace: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("DELETE FROM cache WHERE namespace=?", (namespace,))
+
+    def purge_expired(self) -> int:
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            cur = db.execute("DELETE FROM cache WHERE expires_at < ?", (now,))
+            return cur.rowcount
+
+
+    def cache_namespace_stats(self) -> list[dict[str, Any]]:
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT namespace,COUNT(*),COALESCE(SUM(LENGTH(payload)),0),"
+                "SUM(CASE WHEN expires_at < ? THEN 1 ELSE 0 END) FROM cache GROUP BY namespace ORDER BY namespace",
+                (now,),
+            ).fetchall()
+        return [
+            {"namespace": str(row[0]), "entries": int(row[1] or 0), "size_bytes": int(row[2] or 0), "expired_entries": int(row[3] or 0)}
+            for row in rows
+        ]
+
+    def cache_delete_namespace_counted(self, namespace: str, *, expired_only: bool = False) -> tuple[int, int]:
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            where = "namespace=? AND expires_at < ?" if expired_only else "namespace=?"
+            params = (str(namespace), now) if expired_only else (str(namespace),)
+            row = db.execute(f"SELECT COUNT(*),COALESCE(SUM(LENGTH(payload)),0) FROM cache WHERE {where}", params).fetchone()
+            db.execute(f"DELETE FROM cache WHERE {where}", params)
+        return int((row or (0,0))[0] or 0), int((row or (0,0))[1] or 0)
+
+    def action_event_put(self, *, identity_id: str | None, action_type: str, outcome: str, provider_id: str = "", plugin_id: str = "", facts: Mapping[str, Any] | None = None, occurred_at: int | None = None) -> str:
+        timestamp = int(occurred_at or time.time())
+        raw = "\0".join((str(identity_id or ""), str(action_type), str(outcome), str(provider_id), str(plugin_id), str(timestamp), str(time.time_ns()), json.dumps(dict(facts or {}), sort_keys=True, default=str)))
+        import hashlib
+        event_id = "event:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO action_events(event_id,identity_id,action_type,outcome,provider_id,plugin_id,facts_json,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                (event_id, identity_id, str(action_type), str(outcome), str(provider_id or ""), str(plugin_id or ""), self._json_dump(dict(facts or {})), timestamp),
+            )
+        return event_id
+
+    def action_event_counts(self, *, identity_id: str | None, since: int, until: int | None = None) -> list[dict[str, Any]]:
+        until = int(until or time.time())
+        clauses = ["occurred_at>=?", "occurred_at<=?"]; params: list[Any] = [int(since), until]
+        if identity_id is not None:
+            clauses.append("identity_id=?"); params.append(str(identity_id))
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT action_type,outcome,COUNT(*) FROM action_events WHERE " + " AND ".join(clauses) + " GROUP BY action_type,outcome ORDER BY action_type,outcome",
+                tuple(params),
+            ).fetchall()
+        return [{"action_type": str(r[0]), "outcome": str(r[1]), "count": int(r[2])} for r in rows]
+
+    @staticmethod
+    def _backup_keys() -> list[str]:
+        return [
+            "revision_id", "title", "author", "format", "local_path", "status", "size", "sha256",
+            "updated_at", "error", "job_id", "account_id", "entitlement_type", "loan_id", "expires_at",
+            "acquisition_strategy", "executor", "adept_profile", "attempt_count", "last_attempt_at", "attention_code", "identity_id", "cover_url",
+        ]
+
+    def backup_get(self, provider_id: str, credential_id: str, item_id: str) -> dict[str, Any] | None:
+        keys = self._backup_keys()
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT " + ",".join(keys) + " FROM backup_items "
+                "WHERE provider_id=? AND credential_id=? AND item_id=?",
+                (provider_id, credential_id, item_id),
+            ).fetchone()
+        if not row:
+            return None
+        out = dict(zip(keys, row))
+        out.update({"provider_id": provider_id, "credential_id": credential_id, "item_id": item_id})
+        return out
+
+    def backup_put(self, item: dict[str, Any]) -> None:
+        now = int(item.get("updated_at") or time.time())
+        attempt_count = item.get("attempt_count")
+        try:
+            attempt_count_value = max(0, int(attempt_count)) if attempt_count is not None else 0
+        except (TypeError, ValueError):
+            attempt_count_value = 0
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,revision_id,title,author,format,local_path,status,size,sha256,updated_at,error,job_id,"
+                "account_id,entitlement_type,loan_id,expires_at,acquisition_strategy,executor,adept_profile,attempt_count,last_attempt_at,attention_code,identity_id,cover_url"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(provider_id,credential_id,item_id) DO UPDATE SET "
+                "revision_id=excluded.revision_id,title=excluded.title,author=excluded.author,format=excluded.format,"
+                "local_path=excluded.local_path,status=excluded.status,size=excluded.size,sha256=excluded.sha256,"
+                "updated_at=excluded.updated_at,error=excluded.error,job_id=excluded.job_id,"
+                "account_id=COALESCE(excluded.account_id,backup_items.account_id),"
+                "entitlement_type=COALESCE(NULLIF(excluded.entitlement_type,''),backup_items.entitlement_type),"
+                "loan_id=COALESCE(excluded.loan_id,backup_items.loan_id),expires_at=COALESCE(excluded.expires_at,backup_items.expires_at),"
+                "acquisition_strategy=COALESCE(excluded.acquisition_strategy,backup_items.acquisition_strategy),"
+                "executor=COALESCE(excluded.executor,backup_items.executor),"
+                "adept_profile=COALESCE(excluded.adept_profile,backup_items.adept_profile),"
+                "attempt_count=MAX(backup_items.attempt_count,excluded.attempt_count),"
+                "last_attempt_at=COALESCE(excluded.last_attempt_at,backup_items.last_attempt_at),"
+                "attention_code=excluded.attention_code,identity_id=COALESCE(excluded.identity_id,backup_items.identity_id),"
+                "cover_url=COALESCE(excluded.cover_url,backup_items.cover_url)",
+                (
+                    str(item.get("provider_id") or ""), str(item.get("credential_id") or ""), str(item.get("item_id") or ""),
+                    item.get("revision_id"), str(item.get("title") or item.get("item_id") or "Sans titre"), item.get("author"),
+                    item.get("format"), item.get("local_path"), str(item.get("status") or "pending"), item.get("size"),
+                    item.get("sha256"), now, item.get("error"), item.get("job_id"), item.get("account_id"),
+                    str(item.get("entitlement_type") or "owned"), item.get("loan_id"), item.get("expires_at"),
+                    item.get("acquisition_strategy"), item.get("executor"), item.get("adept_profile"), attempt_count_value,
+                    item.get("last_attempt_at"), item.get("attention_code"), item.get("identity_id"), item.get("cover_url"),
+                ),
+            )
+            # Keep the 0.7 compatibility projection and the generic 0.8 ledger
+            # in the same SQLite transaction. This makes Kobo immediately visible
+            # to the provider-neutral acquisition model without duplicating sync I/O.
+            mirror = dict(item)
+            mirror.setdefault("updated_at", now)
+            mirror.setdefault("attempt_count", attempt_count_value)
+            self._mirror_backup_row(db, mirror, now=now, migration=False)
+
+    def backup_prune_missing(
+        self, provider_id: str, credential_id: str, seen_item_ids: set[str] | list[str] | tuple[str, ...]
+    ) -> dict[str, int]:
+        """Prune compatibility rows absent from an authoritative provider manifest.
+
+        ``backup_items`` is a legacy/current-manifest projection, not durable
+        acquisition history.  Removing a stale projection must never remove a
+        local Artifact, Placement or catalog entry.  The corresponding generic
+        entitlement is merely marked ``inactive`` so provenance/history remains
+        available without claiming a current remote right.
+        """
+        provider = str(provider_id or "").strip()
+        credential = str(credential_id or "").strip()
+        seen = {str(item).strip() for item in seen_item_ids if str(item).strip()}
+        now = int(time.time())
+        if not provider or not credential:
+            return {"pruned": 0, "local_preserved": 0, "entitlements_inactivated": 0}
+
+        keys = ["provider_id", "credential_id", "item_id", *self._backup_keys()]
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT " + ",".join(keys) + " FROM backup_items WHERE provider_id=? AND credential_id=?",
+                (provider, credential),
+            ).fetchall()
+            stale = [dict(zip(keys, row)) for row in rows if str(row[2] or "") not in seen]
+            local_preserved = 0
+            entitlements_inactivated = 0
+            for row in stale:
+                local_path = str(row.get("local_path") or "").strip()
+                if local_path and Path(local_path).expanduser().is_file():
+                    local_preserved += 1
+
+                entitlement_id = self._entitlement_id_for(row)
+                entitlement = db.execute(
+                    "SELECT metadata_json FROM entitlements WHERE entitlement_id=?", (entitlement_id,)
+                ).fetchone()
+                if entitlement is not None:
+                    metadata = self._json_load(entitlement[0])
+                    if (
+                        metadata.get("compatibility_projection") == "backup_items"
+                        or metadata.get("imported_from") == "backup_items"
+                    ):
+                        metadata["compatibility_projection_pruned"] = True
+                        metadata["compatibility_projection_pruned_at"] = now
+                        db.execute(
+                            "UPDATE entitlements SET state='inactive',metadata_json=?,updated_at=? WHERE entitlement_id=?",
+                            (self._json_dump(metadata), now, entitlement_id),
+                        )
+                        entitlements_inactivated += 1
+
+                db.execute(
+                    "DELETE FROM backup_items WHERE provider_id=? AND credential_id=? AND item_id=?",
+                    (provider, credential, str(row.get("item_id") or "")),
+                )
+
+            return {
+                "pruned": len(stale),
+                "local_preserved": local_preserved,
+                "entitlements_inactivated": entitlements_inactivated,
+            }
+
+    def backup_list(self, provider_id: str | None = None, credential_id: str | None = None) -> list[dict[str, Any]]:
+        item_keys = self._backup_keys()
+        keys = ["provider_id", "credential_id", "item_id", *item_keys]
+        sql = "SELECT " + ",".join(keys) + " FROM backup_items"
+        args: list[Any] = []
+        where: list[str] = []
+        if provider_id is not None:
+            where.append("provider_id=?"); args.append(provider_id)
+        if credential_id is not None:
+            where.append("credential_id=?"); args.append(credential_id)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY updated_at DESC, title COLLATE NOCASE"
+        with self._lock, self._connect() as db:
+            rows = db.execute(sql, tuple(args)).fetchall()
+        return [dict(zip(keys, row)) for row in rows]
+
+    # ---- Identity / provenance model (schema v4 / 0.8.1) -----------------------
+
+    def identity_put(self, identity: Any) -> str:
+        if isinstance(identity, dict):
+            row = dict(identity)
+        else:
+            prefs = getattr(identity, "preferences", None)
+            row = {
+                "identity_id": getattr(identity, "identity_id"),
+                "label": getattr(identity, "label", getattr(identity, "identity_id", "Identité")),
+                "directory_name": getattr(identity, "directory_name", None),
+                "prefer_original_language": getattr(prefs, "prefer_original_language", False),
+                "reading_languages": list(getattr(prefs, "reading_languages", ()) or ()),
+                "metadata": getattr(identity, "metadata", {}),
+            }
+        identity_id = str(row.get("identity_id") or "").strip()
+        if not identity_id:
+            raise ValueError("identity_id required")
+        label = str(row.get("label") or identity_id).strip() or identity_id
+        directory_name = str(row.get("directory_name") or identity_id).strip() or identity_id
+        languages = row.get("reading_languages")
+        if not isinstance(languages, (list, tuple)):
+            languages = []
+        languages = [str(x).strip().lower() for x in languages if str(x).strip()]
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO identities(identity_id,label,directory_name,prefer_original_language,reading_languages_json,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(identity_id) DO UPDATE SET label=excluded.label,directory_name=excluded.directory_name,"
+                "prefer_original_language=excluded.prefer_original_language,reading_languages_json=excluded.reading_languages_json,"
+                "metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (identity_id, label, directory_name, int(bool(row.get("prefer_original_language", False))),
+                 json.dumps(languages, ensure_ascii=False), self._json_dump(row.get("metadata")), now, now),
+            )
+        return identity_id
+
+    def identities(self) -> list[dict[str, Any]]:
+        columns = ["identity_id", "label", "directory_name", "prefer_original_language", "reading_languages_json", "metadata_json", "created_at", "updated_at"]
+        with self._lock, self._connect() as db:
+            rows = db.execute("SELECT " + ",".join(columns) + " FROM identities ORDER BY label COLLATE NOCASE, identity_id").fetchall()
+        out: list[dict[str, Any]] = []
+        for values in rows:
+            row = dict(zip(columns, values))
+            try:
+                langs = json.loads(str(row.pop("reading_languages_json") or "[]"))
+            except Exception:
+                langs = []
+            row["reading_languages"] = [str(x) for x in langs] if isinstance(langs, list) else []
+            row["prefer_original_language"] = bool(row["prefer_original_language"])
+            row["metadata"] = self._json_load(row.pop("metadata_json"))
+            out.append(row)
+        return out
+
+    def identity_get(self, identity_id: str) -> dict[str, Any] | None:
+        return next((row for row in self.identities() if row["identity_id"] == identity_id), None)
+
+    def relocate_local_path(self, old_path: Path, new_path: Path, *, identity_id: str, provider_id: str) -> None:
+        old_text = str(old_path.expanduser().resolve())
+        new_text = str(new_path.expanduser().resolve())
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("SAVEPOINT relocate_local_path")
+            try:
+                db.execute(
+                    "UPDATE backup_items SET local_path=?,identity_id=COALESCE(identity_id,?) "
+                    "WHERE local_path=? AND provider_id=?",
+                    (new_text, identity_id, old_text, provider_id),
+                )
+                old_row = db.execute(
+                    "SELECT placement_id,metadata_json FROM placements WHERE path=?", (old_text,)
+                ).fetchone()
+                target_row = db.execute(
+                    "SELECT placement_id,metadata_json FROM placements WHERE path=?", (new_text,)
+                ).fetchone()
+                if old_row:
+                    old_placement_id = str(old_row[0])
+                    placement_id = old_placement_id
+                    if target_row and str(target_row[0]) != old_placement_id:
+                        placement_id = str(target_row[0])
+                        db.execute(
+                            "UPDATE placements SET identity_id=?,provider_id=?,state='present',updated_at=? WHERE placement_id=?",
+                            (identity_id, provider_id, now, placement_id),
+                        )
+                        # The destination may have been discovered by a scan after a
+                        # crash between copy and DB rewrite. Merge references safely.
+                        db.execute(
+                            "UPDATE catalog_entries SET placement_id=?,identity_id=?,provider_id=?,updated_at=? WHERE placement_id=?",
+                            (placement_id, identity_id, provider_id, now, old_placement_id),
+                        )
+                        db.execute("DELETE FROM placements WHERE placement_id=?", (old_placement_id,))
+                    else:
+                        db.execute(
+                            "UPDATE placements SET path=?,identity_id=?,provider_id=?,updated_at=? WHERE placement_id=?",
+                            (new_text, identity_id, provider_id, now, old_placement_id),
+                        )
+                    rows = db.execute(
+                        "SELECT catalog_entry_id,metadata_json FROM catalog_entries WHERE placement_id=?", (placement_id,)
+                    ).fetchall()
+                    for catalog_entry_id, catalog_metadata_json in rows:
+                        metadata = self._json_load(catalog_metadata_json)
+                        if metadata.get("path") in {old_text, None, ""}:
+                            metadata["path"] = new_text
+                        db.execute(
+                            "UPDATE catalog_entries SET identity_id=?,provider_id=?,metadata_json=?,updated_at=? WHERE catalog_entry_id=?",
+                            (identity_id, provider_id, self._json_dump(metadata), now, catalog_entry_id),
+                        )
+                db.execute("RELEASE SAVEPOINT relocate_local_path")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT relocate_local_path")
+                db.execute("RELEASE SAVEPOINT relocate_local_path")
+                raise
+
+    def placement_for_path(self, path: Path) -> dict[str, Any] | None:
+        text = str(path.expanduser().resolve())
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT placement_id FROM placements WHERE path=?", (text,)).fetchone()
+        return self.placement_get(str(row[0])) if row else None
+
+    def commit_directory_migration(self, plan: dict[str, Any]) -> None:
+        """Commit all local references and journal state in one SQLite transaction."""
+        from .identities.directory_migration import JOURNAL_KEY, rewrite_path
+        mappings = [(e["old"], e["new"]) for e in plan["entries"]]
+        mappings += [(c["old"], c["new"]) for c in plan["changes"]]
+        root = Path(plan["root"])
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            # Repoint old references to an already indexed identical destination.
+            for pid, path in db.execute("SELECT placement_id,path FROM placements").fetchall():
+                new = rewrite_path(path, mappings, root)
+                if new == path:
+                    continue
+                target = db.execute("SELECT placement_id FROM placements WHERE path=?", (new,)).fetchone()
+                if target and target[0] != pid:
+                    db.execute("UPDATE catalog_entries SET placement_id=? WHERE placement_id=?", (target[0], pid))
+                    db.execute("DELETE FROM placements WHERE placement_id=?", (pid,))
+                else:
+                    db.execute("UPDATE placements SET path=?,updated_at=? WHERE placement_id=?", (new, now, pid))
+            for provider, credential, item, path in db.execute("SELECT provider_id,credential_id,item_id,local_path FROM backup_items").fetchall():
+                new = rewrite_path(path, mappings, root)
+                if new != path:
+                    db.execute("UPDATE backup_items SET local_path=?,updated_at=? WHERE provider_id=? AND credential_id=? AND item_id=?", (new, now, provider, credential, item))
+            # These JSON containers hold local paths, including nested ledger
+            # materialization paths. Provider URLs and text remain untouched.
+            for table, key in [("placements","placement_id"),("catalog_entries","catalog_entry_id"),
+                               ("acquisition_ledger","acquisition_id"),("artifacts","artifact_id"),("entitlements","entitlement_id")]:
+                for iid, value in db.execute(f"SELECT {key},metadata_json FROM {table}").fetchall():
+                    before = self._json_load(value)
+                    after = rewrite_path(before, mappings, root)
+                    if after != before:
+                        db.execute(f"UPDATE {table} SET metadata_json=?,updated_at=? WHERE {key}=?", (self._json_dump(after), now, iid))
+            for change in plan["changes"]:
+                db.execute("UPDATE identities SET directory_name=?,updated_at=? WHERE identity_id=?", (Path(change["new"]).name, now, change["identity_id"]))
+            committed = {**plan, "state": "committed"}
+            db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (JOURNAL_KEY, json.dumps(committed)))
+            db.execute("DELETE FROM cache WHERE namespace='search'")
+
+    def provider_connection_put(self, item: dict[str, Any]) -> str:
+        row = dict(item)
+        provider_id = str(row.get("provider_id") or "").strip().lower()
+        credential_id = str(row.get("credential_id") or "").strip()
+        identity_id = str(row.get("identity_id") or "").strip()
+        if not provider_id or not credential_id or not identity_id:
+            raise ValueError("provider connection requires identity_id/provider_id/credential_id")
+        connection_id = str(row.get("connection_id") or self._stable_id("connection", provider_id, credential_id))
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            if provider_id == "kobo":
+                existing = db.execute(
+                    "SELECT credential_id FROM provider_connections WHERE identity_id=? AND provider_id='kobo' AND credential_id<>?",
+                    (identity_id, credential_id),
+                ).fetchone()
+                if existing:
+                    raise ValueError("une identité Paris ne peut avoir qu'un seul compte Kobo Vault")
+            db.execute(
+                "INSERT INTO provider_connections(connection_id,identity_id,provider_id,credential_id,label,enabled,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(provider_id,credential_id) DO UPDATE SET identity_id=excluded.identity_id,"
+                "label=excluded.label,enabled=excluded.enabled,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (connection_id, identity_id, provider_id, credential_id, str(row.get("label") or provider_id),
+                 int(bool(row.get("enabled", True))), self._json_dump(row.get("metadata")), now, now),
+            )
+            actual = db.execute(
+                "SELECT connection_id FROM provider_connections WHERE provider_id=? AND credential_id=?",
+                (provider_id, credential_id),
+            ).fetchone()
+        return str(actual[0] if actual else connection_id)
+
+    def provider_connections(self, *, identity_id: str | None = None) -> list[dict[str, Any]]:
+        columns = ["connection_id", "identity_id", "provider_id", "credential_id", "label", "enabled", "metadata_json", "created_at", "updated_at"]
+        sql = "SELECT " + ",".join(columns) + " FROM provider_connections"
+        args: tuple[Any, ...] = ()
+        if identity_id is not None:
+            sql += " WHERE identity_id=?"; args = (identity_id,)
+        sql += " ORDER BY identity_id, provider_id, label COLLATE NOCASE"
+        with self._lock, self._connect() as db:
+            values = db.execute(sql, args).fetchall()
+        out=[]
+        for record in values:
+            row=dict(zip(columns,record)); row["enabled"]=bool(row["enabled"]); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def identity_for_connection(self, provider_id: str, credential_id: str) -> str | None:
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT identity_id FROM provider_connections WHERE provider_id=? AND credential_id=?",
+                (str(provider_id).lower(), str(credential_id)),
+            ).fetchone()
+        return str(row[0]) if row else None
+
+    def provider_account_put(self, item: dict[str, Any]) -> str:
+        row = dict(item)
+        connection_id = str(row.get("connection_id") or "").strip()
+        identity_id = str(row.get("identity_id") or "").strip()
+        provider_id = str(row.get("provider_id") or "").strip().lower()
+        credential_id = str(row.get("credential_id") or "").strip()
+        account_id = str(row.get("account_id") if row.get("account_id") is not None else "")
+        if not connection_id or not identity_id or not provider_id or not credential_id:
+            raise ValueError("provider account requires connection and provenance")
+        provider_account_id = str(row.get("provider_account_id") or self._stable_id("provider-account", connection_id, account_id))
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            if provider_id == "kobo":
+                existing = db.execute(
+                    "SELECT provider_account_id FROM provider_accounts WHERE identity_id=? AND provider_id='kobo' AND provider_account_id<>?",
+                    (identity_id, provider_account_id),
+                ).fetchone()
+                if existing:
+                    raise ValueError("une identité Paris ne peut avoir qu'un seul compte Kobo")
+            db.execute(
+                "INSERT INTO provider_accounts(provider_account_id,connection_id,identity_id,provider_id,credential_id,account_id,label,is_primary,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,account_id) DO UPDATE SET identity_id=excluded.identity_id,"
+                "label=excluded.label,is_primary=excluded.is_primary,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (provider_account_id, connection_id, identity_id, provider_id, credential_id, account_id,
+                 str(row.get("label") or account_id or "Compte principal"), int(bool(row.get("is_primary", False))),
+                 self._json_dump(row.get("metadata")), now, now),
+            )
+            actual = db.execute(
+                "SELECT provider_account_id FROM provider_accounts WHERE connection_id=? AND account_id=?",
+                (connection_id, account_id),
+            ).fetchone()
+        return str(actual[0] if actual else provider_account_id)
+
+    def provider_accounts(self, *, identity_id: str | None = None) -> list[dict[str, Any]]:
+        columns = ["provider_account_id", "connection_id", "identity_id", "provider_id", "credential_id", "account_id", "label", "is_primary", "metadata_json", "created_at", "updated_at"]
+        sql = "SELECT " + ",".join(columns) + " FROM provider_accounts"
+        args: tuple[Any, ...] = ()
+        if identity_id is not None:
+            sql += " WHERE identity_id=?"; args = (identity_id,)
+        sql += " ORDER BY identity_id, provider_id, is_primary DESC, label COLLATE NOCASE"
+        with self._lock, self._connect() as db:
+            values = db.execute(sql, args).fetchall()
+        out=[]
+        for record in values:
+            row=dict(zip(columns,record)); row["is_primary"]=bool(row["is_primary"]); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def adept_profile_binding_set(self, scope_type: str, scope_id: str, profile_id: str | None) -> None:
+        scope_type = str(scope_type).strip().lower()
+        scope_id = str(scope_id).strip()
+        if scope_type != "identity" or not scope_id:
+            raise ValueError("ADE profiles are bound to Paris identities only")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            if not str(profile_id or "").strip():
+                db.execute("DELETE FROM adept_profile_bindings WHERE scope_type=? AND scope_id=?", (scope_type, scope_id))
+            else:
+                profile = str(profile_id).strip()
+                existing = db.execute(
+                    "SELECT scope_id FROM adept_profile_bindings WHERE scope_type='identity' AND profile_id=? AND scope_id<>?",
+                    (profile, scope_id),
+                ).fetchone()
+                if existing:
+                    raise ValueError("un profil Kobo-Adept ne peut être lié qu'à une seule identité Paris")
+                db.execute(
+                    "INSERT INTO adept_profile_bindings(scope_type,scope_id,profile_id,created_at,updated_at) VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(scope_type,scope_id) DO UPDATE SET profile_id=excluded.profile_id,updated_at=excluded.updated_at",
+                    (scope_type, scope_id, str(profile_id).strip(), now, now),
+                )
+
+    def adept_profile_binding_get(self, scope_type: str, scope_id: str) -> str | None:
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT profile_id FROM adept_profile_bindings WHERE scope_type=? AND scope_id=?",
+                (str(scope_type).strip().lower(), str(scope_id).strip()),
+            ).fetchone()
+        return str(row[0]) if row else None
+
+    def device_binding_put(self, item: dict[str, Any]) -> str:
+        row = dict(item); device_id = str(row.get("device_id") or "").strip(); identity_id = str(row.get("identity_id") or "").strip()
+        if not device_id or not identity_id:
+            raise ValueError("device binding requires device_id and identity_id")
+        target_directory = str(row.get("target_directory") or "Books/Paris").strip() or "Books/Paris"
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO device_bindings(device_id,identity_id,label,enabled,metadata_json,created_at,updated_at,target_directory) VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(device_id) DO UPDATE SET identity_id=excluded.identity_id,label=excluded.label,enabled=excluded.enabled,"
+                "metadata_json=excluded.metadata_json,target_directory=excluded.target_directory,updated_at=excluded.updated_at",
+                (device_id, identity_id, row.get("label"), int(bool(row.get("enabled", True))), self._json_dump(row.get("metadata")), now, now, target_directory),
+            )
+        return device_id
+
+    def device_binding_get(self, device_id: str) -> dict[str, Any] | None:
+        rows = [row for row in self.device_bindings() if row.get("device_id") == str(device_id)]
+        return rows[0] if rows else None
+
+    def device_binding_delete(self, device_id: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("DELETE FROM device_placements WHERE device_id=?", (str(device_id),))
+            db.execute("DELETE FROM device_bindings WHERE device_id=?", (str(device_id),))
+
+    def device_bindings(self, *, identity_id: str | None = None) -> list[dict[str, Any]]:
+        columns=["device_id","identity_id","label","enabled","target_directory","metadata_json","created_at","updated_at"]
+        sql="SELECT "+",".join(columns)+" FROM device_bindings"; args: tuple[Any,...]=()
+        if identity_id is not None:
+            sql += " WHERE identity_id=?"; args=(identity_id,)
+        sql += " ORDER BY label COLLATE NOCASE, device_id"
+        with self._lock, self._connect() as db:
+            values=db.execute(sql,args).fetchall()
+        out=[]
+        for record in values:
+            row=dict(zip(columns,record)); row["enabled"]=bool(row["enabled"]); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def device_placement_put(self, item: dict[str, Any]) -> str:
+        row = dict(item)
+        device_id = str(row.get("device_id") or "").strip()
+        artifact_id = str(row.get("artifact_id") or "").strip()
+        if not device_id or not artifact_id:
+            raise ValueError("device placement requires device_id and artifact_id")
+        desired = str(row.get("desired_state") or "keep").strip().lower()
+        observed = str(row.get("observed_state") or "unknown").strip().lower()
+        if desired not in {"keep", "remove"}:
+            raise ValueError("invalid desired device placement state")
+        if observed not in {"present", "missing", "unknown"}:
+            raise ValueError("invalid observed device placement state")
+        placement_id = str(row.get("device_placement_id") or self._stable_id("device-placement", device_id, artifact_id))
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO device_placements(device_placement_id,device_id,artifact_id,desired_state,observed_state,target_relative_path,last_observed_at,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id,artifact_id) DO UPDATE SET "
+                "desired_state=excluded.desired_state,observed_state=excluded.observed_state,"
+                "target_relative_path=COALESCE(excluded.target_relative_path,device_placements.target_relative_path),"
+                "last_observed_at=COALESCE(excluded.last_observed_at,device_placements.last_observed_at),"
+                "metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (placement_id, device_id, artifact_id, desired, observed, row.get("target_relative_path"),
+                 row.get("last_observed_at"), self._json_dump(row.get("metadata")), now, now),
+            )
+        return placement_id
+
+    def device_placement_get(self, device_id: str, artifact_id: str) -> dict[str, Any] | None:
+        rows = self.device_placements(device_id=device_id, artifact_id=artifact_id)
+        return rows[0] if rows else None
+
+    def device_placements(self, *, device_id: str | None = None, artifact_id: str | None = None) -> list[dict[str, Any]]:
+        columns = [
+            "device_placement_id", "device_id", "artifact_id", "desired_state", "observed_state",
+            "target_relative_path", "last_observed_at", "metadata_json", "created_at", "updated_at",
+        ]
+        clauses: list[str] = []
+        args: list[Any] = []
+        if device_id is not None:
+            clauses.append("device_id=?"); args.append(str(device_id))
+        if artifact_id is not None:
+            clauses.append("artifact_id=?"); args.append(str(artifact_id))
+        sql = "SELECT " + ",".join(columns) + " FROM device_placements"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY device_id, artifact_id"
+        with self._lock, self._connect() as db:
+            values = db.execute(sql, tuple(args)).fetchall()
+        out: list[dict[str, Any]] = []
+        for record in values:
+            row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def device_placement_delete(self, device_id: str, artifact_id: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("DELETE FROM device_placements WHERE device_id=? AND artifact_id=?", (str(device_id), str(artifact_id)))
+
+    # ---- Generic 0.8 acquisition/catalog model ---------------------------------
+
+    def backup_find_by_local_path(self, path: str) -> dict[str, Any] | None:
+        target = str(Path(path).expanduser().resolve())
+        item_keys = self._backup_keys()
+        keys = ["provider_id", "credential_id", "item_id", *item_keys]
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT " + ",".join(keys) + " FROM backup_items WHERE local_path IS NOT NULL"
+            ).fetchall()
+        for row in rows:
+            item = dict(zip(keys, row))
+            raw = str(item.get("local_path") or "").strip()
+            if not raw:
+                continue
+            try:
+                if str(Path(raw).expanduser().resolve()) == target:
+                    return item
+            except OSError:
+                continue
+        return None
+
+    def entitlement_realize_missing_loans(self, active_entitlement_ids: set[str], *, identity_id: str | None = None, now: int | None = None) -> int:
+        """Realize active loan rights no longer reported by their provider.
+
+        Expiry is handled separately; this covers explicit return / upstream removal.
+        Artifacts and placements are intentionally untouched.
+        """
+        ts = int(now or time.time())
+        where = ["entitlement_type='loan'", "state='active'"]
+        args: list[Any] = []
+        if identity_id is not None:
+            where.append("identity_id=?")
+            args.append(identity_id)
+        with self._lock, self._connect() as db:
+            rows = db.execute("SELECT entitlement_id FROM entitlements WHERE " + " AND ".join(where), tuple(args)).fetchall()
+            stale = [str(row[0]) for row in rows if str(row[0]) not in active_entitlement_ids]
+            if not stale:
+                return 0
+            placeholders = ",".join("?" for _ in stale)
+            cur = db.execute(
+                f"UPDATE entitlements SET state='realized',updated_at=? WHERE entitlement_id IN ({placeholders})",
+                (ts, *stale),
+            )
+            return cur.rowcount
+
+    def sync_run_put(self, row: dict[str, Any]) -> str:
+        now = int(row.get("updated_at") or time.time())
+        started = int(row.get("started_at") or now)
+        sync_run_id = str(row.get("sync_run_id") or self._stable_id("sync", row.get("scope") or "opening", row.get("identity_id"), started, now))
+        detail = self._json_dump(row.get("detail") or {})
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO sync_runs(sync_run_id,identity_id,scope,status,started_at,finished_at,new_acquisitions,attention_required,errors,detail_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(sync_run_id) DO UPDATE SET status=excluded.status,finished_at=excluded.finished_at,"
+                "new_acquisitions=excluded.new_acquisitions,attention_required=excluded.attention_required,errors=excluded.errors,"
+                "detail_json=excluded.detail_json,updated_at=excluded.updated_at",
+                (sync_run_id, row.get("identity_id"), str(row.get("scope") or "opening"), str(row.get("status") or "running"),
+                 started, row.get("finished_at"), int(row.get("new_acquisitions") or 0), int(row.get("attention_required") or 0),
+                 int(row.get("errors") or 0), detail, int(row.get("created_at") or now), now),
+            )
+        return sync_run_id
+
+    def sync_runs(self, *, identity_id: str | None = None, scope: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        cols = ["sync_run_id","identity_id","scope","status","started_at","finished_at","new_acquisitions","attention_required","errors","detail_json","created_at","updated_at"]
+        where: list[str] = []
+        args: list[Any] = []
+        if identity_id is not None:
+            where.append("identity_id=?"); args.append(identity_id)
+        if scope is not None:
+            where.append("scope=?"); args.append(scope)
+        sql = "SELECT " + ",".join(cols) + " FROM sync_runs"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY started_at DESC LIMIT ?"
+        args.append(max(1, int(limit)))
+        with self._lock, self._connect() as db:
+            rows = db.execute(sql, tuple(args)).fetchall()
+        out: list[dict[str, Any]] = []
+        for values in rows:
+            item = dict(zip(cols, values))
+            item["detail"] = self._json_load(item.pop("detail_json"))
+            out.append(item)
+        return out
+
+    def latest_sync_run(self, identity_id: str, *, scope: str = "opening") -> dict[str, Any] | None:
+        rows = self.sync_runs(identity_id=identity_id, scope=scope, limit=1)
+        return rows[0] if rows else None
+
+    def entitlement_put(self, entitlement: Any) -> str:
+        source = getattr(entitlement, "source", None)
+        if source is not None:
+            row = {
+                "entitlement_id": getattr(entitlement, "entitlement_id"),
+                "provider_id": getattr(source, "provider_id"),
+                "credential_id": getattr(source, "credential_id"),
+                "account_id": getattr(source, "account_id", None),
+                "identity_id": getattr(source, "identity_id", None),
+                "item_id": getattr(entitlement, "item_id"),
+                "revision_id": getattr(entitlement, "revision_id", None),
+                "entitlement_type": getattr(entitlement, "entitlement_type", "owned"),
+                "state": getattr(entitlement, "state", "active"),
+                "loan_id": getattr(entitlement, "loan_id", None),
+                "expires_at": getattr(entitlement, "expires_at", None),
+                "metadata": getattr(entitlement, "metadata", {}),
+            }
+        else:
+            row = dict(entitlement)
+            row.setdefault("entitlement_id", self._entitlement_id_for(row))
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
+                "entitlement_type,state,loan_id,expires_at,metadata_json,discovered_at,updated_at,identity_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(entitlement_id) DO UPDATE SET revision_id=excluded.revision_id,state=excluded.state,"
+                "loan_id=COALESCE(excluded.loan_id,entitlements.loan_id),expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
+                "metadata_json=excluded.metadata_json,identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at",
+                (
+                    row["entitlement_id"], str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
+                    row.get("account_id"), str(row.get("item_id") or ""), row.get("revision_id"),
+                    str(row.get("entitlement_type") or "owned"), str(row.get("state") or "active"),
+                    row.get("loan_id"), row.get("expires_at"), self._json_dump(row.get("metadata")), now, now, row.get("identity_id"),
+                ),
+            )
+        return str(row["entitlement_id"])
+
+    def entitlements(self, *, provider_id: str | None = None, state: str | None = None) -> list[dict[str, Any]]:
+        columns = [
+            "entitlement_id", "provider_id", "credential_id", "account_id", "item_id", "revision_id", "identity_id",
+            "entitlement_type", "state", "loan_id", "expires_at", "metadata_json", "discovered_at", "updated_at",
+        ]
+        where: list[str] = []
+        args: list[Any] = []
+        if provider_id is not None:
+            where.append("provider_id=?"); args.append(provider_id)
+        if state is not None:
+            where.append("state=?"); args.append(state)
+        sql = "SELECT " + ",".join(columns) + " FROM entitlements"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY updated_at DESC"
+        with self._lock, self._connect() as db:
+            rows = db.execute(sql, tuple(args)).fetchall()
+        out: list[dict[str, Any]] = []
+        for values in rows:
+            row = dict(zip(columns, values)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def entitlement_realize_expired(self, *, now: int | None = None) -> int:
+        # ISO-8601 UTC timestamps sort lexically when consistently formatted, but
+        # provider inputs are not guaranteed to be. SQLite datetime() normalizes
+        # the common formats and ignores rows it cannot parse.
+        ts = int(now or time.time())
+        iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+        with self._lock, self._connect() as db:
+            cur = db.execute(
+                "UPDATE entitlements SET state='realized',updated_at=? "
+                "WHERE entitlement_type='loan' AND state='active' AND expires_at IS NOT NULL "
+                "AND datetime(expires_at) <= datetime(?)",
+                (ts, iso),
+            )
+            return cur.rowcount
+
+    def acquisition_put(self, item: dict[str, Any]) -> str:
+        row = dict(item)
+        now = int(row.get("updated_at") or time.time())
+        acquisition_id = str(row.get("acquisition_id") or self._stable_id(
+            "acquisition", row.get("entitlement_id"), row.get("provider_id"), row.get("credential_id"), row.get("item_id")
+        ))
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
+                "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
+                "metadata_json,created_at,updated_at,identity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(acquisition_id) DO UPDATE SET entitlement_id=COALESCE(excluded.entitlement_id,acquisition_ledger.entitlement_id),"
+                "title=COALESCE(excluded.title,acquisition_ledger.title),status=excluded.status,strategy=COALESCE(excluded.strategy,acquisition_ledger.strategy),"
+                "executor=COALESCE(excluded.executor,acquisition_ledger.executor),candidate_id=COALESCE(excluded.candidate_id,acquisition_ledger.candidate_id),"
+                "artifact_id=COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id),attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),"
+                "last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),error_code=excluded.error_code,"
+                "error_message=excluded.error_message,attention_code=excluded.attention_code,metadata_json=excluded.metadata_json,"
+                "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at",
+                (
+                    acquisition_id, row.get("entitlement_id"), str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
+                    row.get("account_id"), str(row.get("item_id") or ""), row.get("title"), str(row.get("status") or "discovered"),
+                    row.get("strategy"), row.get("executor"), row.get("candidate_id"), row.get("artifact_id"), int(row.get("attempt_count") or 0),
+                    row.get("last_attempt_at"), row.get("error_code"), row.get("error_message"), row.get("attention_code"),
+                    self._json_dump(row.get("metadata")), now, now, row.get("identity_id"),
+                ),
+            )
+        return acquisition_id
+
+    def acquisition_get(self, acquisition_id: str) -> dict[str, Any] | None:
+        rows = self.acquisitions(acquisition_id=acquisition_id)
+        return rows[0] if rows else None
+
+    def acquisitions(
+        self, *, acquisition_id: str | None = None, provider_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        columns = [
+            "acquisition_id", "entitlement_id", "provider_id", "credential_id", "account_id", "item_id", "title", "status",
+            "strategy", "executor", "candidate_id", "artifact_id", "attempt_count", "last_attempt_at", "error_code", "error_message",
+            "attention_code", "metadata_json", "created_at", "updated_at", "identity_id",
+        ]
+        where: list[str] = []
+        args: list[Any] = []
+        if acquisition_id is not None:
+            where.append("acquisition_id=?"); args.append(acquisition_id)
+        if provider_id is not None:
+            where.append("provider_id=?"); args.append(provider_id)
+        if status is not None:
+            where.append("status=?"); args.append(status)
+        sql = "SELECT " + ",".join(columns) + " FROM acquisition_ledger"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY updated_at DESC, acquisition_id"
+        with self._lock, self._connect() as db:
+            values = db.execute(sql, tuple(args)).fetchall()
+        out: list[dict[str, Any]] = []
+        for record in values:
+            row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def acquisition_update_state(
+        self,
+        acquisition_id: str,
+        status: str,
+        *,
+        strategy: str | None = None,
+        executor: str | None = None,
+        candidate_id: str | None = None,
+        artifact_id: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        attention_code: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        increment_attempt: bool = False,
+    ) -> None:
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            current = db.execute(
+                "SELECT metadata_json FROM acquisition_ledger WHERE acquisition_id=?", (acquisition_id,)
+            ).fetchone()
+            if current is None:
+                raise KeyError(acquisition_id)
+            merged = self._json_load(current[0])
+            if metadata:
+                merged.update(metadata)
+            db.execute(
+                "UPDATE acquisition_ledger SET status=?,strategy=COALESCE(?,strategy),executor=COALESCE(?,executor),"
+                "candidate_id=COALESCE(?,candidate_id),artifact_id=COALESCE(?,artifact_id),"
+                "attempt_count=attempt_count+?,last_attempt_at=CASE WHEN ? THEN ? ELSE last_attempt_at END,"
+                "error_code=?,error_message=?,attention_code=?,metadata_json=?,updated_at=? WHERE acquisition_id=?",
+                (
+                    status, strategy, executor, candidate_id, artifact_id, int(increment_attempt), int(increment_attempt), now,
+                    error_code, error_message, attention_code, self._json_dump(merged), now, acquisition_id,
+                ),
+            )
+
+    def acquisition_recover_interrupted(self) -> int:
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            cur = db.execute(
+                "UPDATE acquisition_ledger SET status='retryable_error',error_code='interrupted',"
+                "error_message='Acquisition interrompue lors de la précédente exécution',updated_at=? WHERE status='acquiring'",
+                (now,),
+            )
+            return cur.rowcount
+
+    @staticmethod
+    def _artifact_row_with_kind(row: dict[str, Any]) -> dict[str, Any]:
+        metadata = dict(row.get("metadata") or {})
+        artifact_id = str(row.get("artifact_id") or "")
+        kind = str(metadata.get("artifact_kind") or ("bundle" if artifact_id.startswith("bundle:") else "file"))
+        row["metadata"] = metadata
+        row["kind"] = kind if kind in {"file", "bundle"} else "file"
+        return row
+
+    def artifact_get(self, artifact_id: str) -> dict[str, Any] | None:
+        columns = ["artifact_id", "sha256", "size", "media_format", "mime_type", "metadata_json", "created_at", "updated_at"]
+        with self._lock, self._connect() as db:
+            record = db.execute(
+                "SELECT " + ",".join(columns) + " FROM artifacts WHERE artifact_id=?", (artifact_id,)
+            ).fetchone()
+        if not record:
+            return None
+        row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json"))
+        return self._artifact_row_with_kind(row)
+
+    def artifacts(self) -> list[dict[str, Any]]:
+        columns = ["artifact_id", "sha256", "size", "media_format", "mime_type", "metadata_json", "created_at", "updated_at"]
+        with self._lock, self._connect() as db:
+            values = db.execute("SELECT " + ",".join(columns) + " FROM artifacts ORDER BY created_at,artifact_id").fetchall()
+        out: list[dict[str, Any]] = []
+        for record in values:
+            row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(self._artifact_row_with_kind(row))
+        return out
+
+    def artifact_put(self, artifact: Any) -> str:
+        if isinstance(artifact, dict):
+            row = dict(artifact)
+        else:
+            row = {
+                "artifact_id": getattr(artifact, "artifact_id"), "sha256": getattr(artifact, "sha256"),
+                "size": getattr(artifact, "size"), "media_format": getattr(artifact, "media_format"),
+                "kind": getattr(artifact, "kind", "file"),
+                "mime_type": getattr(artifact, "mime_type", None), "metadata": getattr(artifact, "metadata", {}),
+            }
+        artifact_id = str(row.get("artifact_id") or f"sha256:{row.get('sha256')}")
+        metadata = dict(row.get("metadata") or {})
+        kind = str(row.get("kind") or metadata.get("artifact_kind") or ("bundle" if artifact_id.startswith("bundle:") else "file"))
+        metadata["artifact_kind"] = kind if kind in {"file", "bundle"} else "file"
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO artifacts(artifact_id,sha256,size,media_format,mime_type,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET size=excluded.size,media_format=excluded.media_format,"
+                "mime_type=COALESCE(excluded.mime_type,artifacts.mime_type),metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (artifact_id, str(row.get("sha256") or ""), int(row.get("size") or 0), str(row.get("media_format") or "unknown"),
+                 row.get("mime_type"), self._json_dump(metadata), now, now),
+            )
+        return artifact_id
+
+    def artifact_variant_put(self, item: dict[str, Any]) -> str:
+        row = dict(item); now = int(time.time())
+        source_sha256 = str(row.get("source_sha256") or "")
+        transformer = str(row.get("transformer_plugin_id") or "")
+        profile = str(row.get("profile_plugin_id") or "")
+        fingerprint = str(row.get("options_fingerprint") or "")
+        if not source_sha256 or not transformer or not row.get("artifact_id") or not row.get("source_artifact_id"):
+            raise ValueError("artifact variant requires source/artifact/transformer")
+        variant_id = str(row.get("variant_id") or self._stable_id("variant", source_sha256, transformer, profile, fingerprint))
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO artifact_variants(variant_id,artifact_id,source_artifact_id,source_sha256,variant_kind,transformer_plugin_id,transformer_version,profile_plugin_id,profile_version,options_fingerprint,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(variant_id) DO UPDATE SET artifact_id=excluded.artifact_id,variant_kind=excluded.variant_kind,"
+                "transformer_version=excluded.transformer_version,profile_version=excluded.profile_version,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (variant_id, str(row["artifact_id"]), str(row["source_artifact_id"]), source_sha256, str(row.get("variant_kind") or "derived"), transformer,
+                 str(row.get("transformer_version") or ""), row.get("profile_plugin_id"), row.get("profile_version"), fingerprint, self._json_dump(row.get("metadata")), now, now),
+            )
+        return variant_id
+
+    def artifact_variants(self, *, source_artifact_id: str | None = None, artifact_id: str | None = None) -> list[dict[str, Any]]:
+        columns = ["variant_id","artifact_id","source_artifact_id","source_sha256","variant_kind","transformer_plugin_id","transformer_version","profile_plugin_id","profile_version","options_fingerprint","metadata_json","created_at","updated_at"]
+        where=[]; args=[]
+        if source_artifact_id is not None: where.append("source_artifact_id=?"); args.append(source_artifact_id)
+        if artifact_id is not None: where.append("artifact_id=?"); args.append(artifact_id)
+        sql="SELECT "+",".join(columns)+" FROM artifact_variants"
+        if where: sql += " WHERE "+" AND ".join(where)
+        sql += " ORDER BY created_at,variant_id"
+        with self._lock, self._connect() as db: values=db.execute(sql,tuple(args)).fetchall()
+        out=[]
+        for record in values:
+            row=dict(zip(columns,record)); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def artifact_variant_delete(self, variant_id: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("DELETE FROM artifact_variants WHERE variant_id=?", (str(variant_id),))
+
+    def artifact_delete_if_unreferenced(self, artifact_id: str) -> bool:
+        with self._lock, self._connect() as db:
+            placement = db.execute("SELECT 1 FROM placements WHERE artifact_id=? LIMIT 1", (str(artifact_id),)).fetchone()
+            variant = db.execute("SELECT 1 FROM artifact_variants WHERE source_artifact_id=? LIMIT 1", (str(artifact_id),)).fetchone()
+            if placement or variant:
+                return False
+            db.execute("DELETE FROM artifacts WHERE artifact_id=?", (str(artifact_id),))
+            return True
+
+    def artifact_variant_find(self, *, source_sha256: str, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> dict[str, Any] | None:
+        profile = str(profile_plugin_id or "")
+        for row in self.artifact_variants():
+            if str(row.get("source_sha256") or "") == str(source_sha256) and str(row.get("transformer_plugin_id") or "") == str(transformer_plugin_id) and str(row.get("profile_plugin_id") or "") == profile and str(row.get("options_fingerprint") or "") == str(options_fingerprint or ""):
+                return row
+        return None
+
+    def placement_delete(self, placement_id: str) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("SAVEPOINT placement_delete")
+            try:
+                db.execute("DELETE FROM catalog_entries WHERE placement_id=?", (str(placement_id),))
+                db.execute("DELETE FROM placements WHERE placement_id=?", (str(placement_id),))
+                db.execute("RELEASE SAVEPOINT placement_delete")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT placement_delete"); db.execute("RELEASE SAVEPOINT placement_delete"); raise
+
+    def catalog_entry_update_metadata(self, catalog_entry_id: str, metadata: dict[str, Any]) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("UPDATE catalog_entries SET metadata_json=?,updated_at=? WHERE catalog_entry_id=?", (self._json_dump(metadata), int(time.time()), str(catalog_entry_id)))
+
+    def placement_get(self, placement_id: str) -> dict[str, Any] | None:
+        columns = ["placement_id", "artifact_id", "path", "identity_id", "provider_id", "source_item_id", "state", "last_seen_at", "metadata_json", "created_at", "updated_at"]
+        with self._lock, self._connect() as db:
+            record = db.execute(
+                "SELECT " + ",".join(columns) + " FROM placements WHERE placement_id=?", (placement_id,)
+            ).fetchone()
+        if not record:
+            return None
+        row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); return row
+
+    def placement_put(self, item: dict[str, Any]) -> str:
+        row = dict(item); now = int(time.time())
+        path = str(Path(str(row.get("path") or "")).expanduser().resolve())
+        placement_id = str(row.get("placement_id") or self._stable_id("placement", path))
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,state,last_seen_at,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET artifact_id=excluded.artifact_id,identity_id=COALESCE(excluded.identity_id,placements.identity_id),"
+                "provider_id=COALESCE(excluded.provider_id,placements.provider_id),source_item_id=COALESCE(excluded.source_item_id,placements.source_item_id),"
+                "state=excluded.state,last_seen_at=excluded.last_seen_at,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (placement_id, row.get("artifact_id"), path, row.get("identity_id"), row.get("provider_id"), row.get("source_item_id"),
+                 str(row.get("state") or "present"), row.get("last_seen_at"), self._json_dump(row.get("metadata")), now, now),
+            )
+        return placement_id
+
+    def placements(self, *, state: str | None = None) -> list[dict[str, Any]]:
+        columns = ["placement_id", "artifact_id", "path", "identity_id", "provider_id", "source_item_id", "state", "last_seen_at", "metadata_json", "created_at", "updated_at"]
+        sql = "SELECT " + ",".join(columns) + " FROM placements"
+        args: tuple[Any, ...] = ()
+        if state is not None:
+            sql += " WHERE state=?"; args = (state,)
+        sql += " ORDER BY path"
+        with self._lock, self._connect() as db:
+            values = db.execute(sql, args).fetchall()
+        out=[]
+        for record in values:
+            row=dict(zip(columns,record)); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
+
+    def placements_mark_missing(self, root: Path, seen_paths: set[str], *, seen_at: int | None = None) -> int:
+        root_resolved = root.expanduser().resolve()
+        now = int(seen_at or time.time())
+        changed = 0
+        with self._lock, self._connect() as db:
+            rows = db.execute("SELECT placement_id,path,state FROM placements").fetchall()
+            for placement_id, path_text, state in rows:
+                try:
+                    path = Path(str(path_text)).resolve()
+                    path.relative_to(root_resolved)
+                except (OSError, ValueError):
+                    continue
+                if str(path) not in seen_paths and state != "missing":
+                    db.execute(
+                        "UPDATE placements SET state='missing',updated_at=? WHERE placement_id=?", (now, placement_id)
+                    )
+                    db.execute(
+                        "UPDATE catalog_entries SET local_state='missing',updated_at=? WHERE placement_id=?", (now, placement_id)
+                    )
+                    changed += 1
+        return changed
+
+    def catalog_entry_put(self, item: dict[str, Any]) -> str:
+        row = dict(item); now = int(time.time())
+        entry_id = str(row.get("catalog_entry_id") or self._stable_id("catalog", row.get("placement_id"), row.get("artifact_id"), row.get("item_id")))
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,provider_id,item_id,local_state,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=excluded.artifact_id,placement_id=excluded.placement_id,"
+                "title=excluded.title,author=COALESCE(excluded.author,catalog_entries.author),media_format=excluded.media_format,identity_id=COALESCE(excluded.identity_id,catalog_entries.identity_id),"
+                "provider_id=COALESCE(excluded.provider_id,catalog_entries.provider_id),item_id=COALESCE(excluded.item_id,catalog_entries.item_id),"
+                "local_state=excluded.local_state,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                (entry_id, row.get("artifact_id"), row.get("placement_id"), str(row.get("title") or "Sans titre"), row.get("author"),
+                 row.get("media_format"), row.get("identity_id"), row.get("provider_id"), row.get("item_id"),
+                 str(row.get("local_state") or "local"), self._json_dump(row.get("metadata")), now, now),
+            )
+        return entry_id
+
+    def catalog_entry_get(self, catalog_entry_id: str) -> dict[str, Any] | None:
+        columns = ["catalog_entry_id", "artifact_id", "placement_id", "title", "author", "media_format", "identity_id", "provider_id", "item_id", "local_state", "metadata_json", "created_at", "updated_at"]
+        with self._lock, self._connect() as db:
+            record = db.execute(
+                "SELECT " + ",".join(columns) + " FROM catalog_entries WHERE catalog_entry_id=?",
+                (str(catalog_entry_id),),
+            ).fetchone()
+        if record is None:
+            return None
+        row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); return row
+
+    def catalog_entries_by_ids(self, catalog_entry_ids: list[str] | tuple[str, ...] | set[str]) -> dict[str, dict[str, Any]]:
+        """Fetch a catalogue subset without scanning the complete table."""
+        ids = list(dict.fromkeys(str(value) for value in catalog_entry_ids if str(value)))
+        if not ids:
+            return {}
+        columns = ["catalog_entry_id", "artifact_id", "placement_id", "title", "author", "media_format", "identity_id", "provider_id", "item_id", "local_state", "metadata_json", "created_at", "updated_at"]
+        records: list[tuple[Any, ...]] = []
+        with self._lock, self._connect() as db:
+            for offset in range(0, len(ids), 800):
+                chunk = ids[offset:offset + 800]
+                placeholders = ",".join("?" for _ in chunk)
+                records.extend(db.execute(
+                    "SELECT " + ",".join(columns) + f" FROM catalog_entries WHERE catalog_entry_id IN ({placeholders})",
+                    tuple(chunk),
+                ).fetchall())
+        out: dict[str, dict[str, Any]] = {}
+        for record in records:
+            row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out[str(row["catalog_entry_id"])] = row
+        return out
+
+    def catalog_entries_upsert_many(self, items: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> list[str]:
+        """Upsert a catalogue batch in one transaction.
+
+        This mirrors ``catalog_entry_put`` semantics but avoids one SQLite
+        transaction per provider result during progressive searches/sync.
+        """
+        if not items:
+            return []
+        now = int(time.time())
+        rows: list[tuple[Any, ...]] = []
+        ids: list[str] = []
+        for item in items:
+            row = dict(item)
+            entry_id = str(row.get("catalog_entry_id") or self._stable_id("catalog", row.get("placement_id"), row.get("artifact_id"), row.get("item_id")))
+            ids.append(entry_id)
+            rows.append((
+                entry_id, row.get("artifact_id"), row.get("placement_id"), str(row.get("title") or "Sans titre"), row.get("author"),
+                row.get("media_format"), row.get("identity_id"), row.get("provider_id"), row.get("item_id"),
+                str(row.get("local_state") or "local"), self._json_dump(row.get("metadata")), now, now,
+            ))
+        sql = (
+            "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,provider_id,item_id,local_state,metadata_json,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=excluded.artifact_id,placement_id=excluded.placement_id,"
+            "title=excluded.title,author=COALESCE(excluded.author,catalog_entries.author),media_format=excluded.media_format,identity_id=COALESCE(excluded.identity_id,catalog_entries.identity_id),"
+            "provider_id=COALESCE(excluded.provider_id,catalog_entries.provider_id),item_id=COALESCE(excluded.item_id,catalog_entries.item_id),"
+            "local_state=excluded.local_state,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at"
+        )
+        with self._lock, self._connect() as db:
+            db.executemany(sql, rows)
+        return ids
+
+    def catalog_entries(self, *, state: str | None = None) -> list[dict[str, Any]]:
+        columns = ["catalog_entry_id", "artifact_id", "placement_id", "title", "author", "media_format", "identity_id", "provider_id", "item_id", "local_state", "metadata_json", "created_at", "updated_at"]
+        sql = "SELECT " + ",".join(columns) + " FROM catalog_entries"
+        args: tuple[Any, ...] = ()
+        if state is not None:
+            sql += " WHERE local_state=?"; args = (state,)
+        sql += " ORDER BY title COLLATE NOCASE, catalog_entry_id"
+        with self._lock, self._connect() as db:
+            values = db.execute(sql, args).fetchall()
+        out=[]
+        for record in values:
+            row=dict(zip(columns,record)); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
+        return out
