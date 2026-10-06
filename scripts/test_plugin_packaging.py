@@ -133,9 +133,11 @@ class PluginPackagingTests(unittest.TestCase):
                         row["sha256"],
                     )
 
-    def test_real_repository_has_13_packages(self) -> None:
+    def test_real_repository_discovers_all_packages(self) -> None:
         plugins = Path(__file__).resolve().parents[1] / "plugins"
-        self.assertEqual(len(discover_plugins(plugins)), 13)
+        expected = sorted(path.parent.resolve() for path in plugins.glob("*/cifereca-plugin.json"))
+        self.assertEqual(discover_plugins(plugins), expected)
+        self.assertGreater(len(expected), 0)
 
 
 if __name__ == "__main__":
