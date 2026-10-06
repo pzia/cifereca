@@ -612,4 +612,170 @@ class PluginManager:
                 except Exception as exc:
                     self._diag("service subscription callback", "error", {"category": category_id, "error": str(exc)})
 
-    def broker(self, broke
+    def broker(self, broker_id: str) -> object | None:
+        return self._brokers.get(str(broker_id))
+
+    def _broker_for_plugin(self, plugin_id: str, broker_id: str, *, trusted: bool = False) -> object | None:
+        broker = self.broker(broker_id)
+        scoped = getattr(broker, "for_plugin", None)
+        if callable(scoped):
+            return scoped(plugin_id, trusted=trusted)
+        return broker
+
+    def _plugin_diag(self, plugin_id: str, message: str, status: str, detail: Any, level: str) -> None:
+        if self.diagnostics is None:
+            return
+        try:
+            payload = dict(detail or {}) if isinstance(detail, dict) else {"detail": detail}
+            payload["plugin"] = plugin_id
+            self.diagnostics.add("PLUGIN", message, status, detail=payload, level=level)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _structured_reason(record: _RuntimeRecord) -> tuple[str, dict[str, object]]:
+        code = str(record.reason or "")
+        detail = dict(record.reason_detail or {})
+        if code == "system_requirement":
+            failed = [item for item in record.requirements if not item.ok]
+            if failed:
+                req = failed[0].requirement
+                detail.setdefault("requirement_type", req.type)
+                detail.setdefault("name", req.name or req.path)
+                if req.type == "binary":
+                    code = "binary_missing"
+                elif req.type == "python-package":
+                    code = "python_dependency_missing"
+                elif req.type in {"file", "directory"}:
+                    code = "system_resource_missing"
+        elif code == "configuration":
+            code = "configuration_missing"
+        elif code == "service_unavailable":
+            code = "missing_broker"
+        return code, detail
+
+    def status(self, plugin_id: str) -> PluginStatus:
+        record = self._records[plugin_id]
+        reason_code, reason_detail = self._structured_reason(record)
+        return PluginStatus(
+            descriptor=record.descriptor,
+            state=record.state,  # type: ignore[arg-type]
+            enabled=record.enabled,
+            effective_priority=record.effective_priority,
+            reason=record.reason,
+            error=record.error,
+            requirements=tuple(record.requirements),
+            reason_code=reason_code,
+            reason_detail=reason_detail,
+        )
+
+    def statuses(self) -> list[PluginStatus]:
+        return [self.status(plugin_id) for plugin_id in sorted(self._records)]
+
+    def errors(self) -> list[str]:
+        return list(self._load_errors)
+
+    def set_enabled(self, plugin_id: str, enabled: bool) -> None:
+        if plugin_id not in self._records:
+            self.refresh()
+        if plugin_id not in self._records:
+            raise KeyError(plugin_id)
+        if not enabled:
+            self._deactivate_plugin_and_dependents(plugin_id)
+        self.state.set_enabled(plugin_id, enabled)
+        self.activate()
+
+    def _deactivate_dependents(self, plugin_id: str, _seen: set[str] | None = None) -> None:
+        seen = _seen or set()
+        if plugin_id in seen:
+            return
+        seen.add(plugin_id)
+        for dependent_id, record in self._records.items():
+            if any(dep.plugin == plugin_id for dep in record.descriptor.requires):
+                self._deactivate_dependents(dependent_id, seen)
+                self._deactivate_record(record)
+
+    def _deactivate_plugin_and_dependents(self, plugin_id: str) -> None:
+        self._deactivate_dependents(plugin_id)
+        record = self._records.get(plugin_id)
+        if record is not None:
+            self._deactivate_record(record)
+
+    def enabled_for_identity(self, plugin_id: str, identity_id: str) -> bool:
+        """Return the effective per-Identity activation of a ready plugin.
+
+        This is primarily used by singleton/public providers: one global plugin
+        instance/configuration can be visible to one Identity and hidden from
+        another without inventing credentials or duplicate provider instances.
+        """
+        if plugin_id not in self._records:
+            self.refresh()
+        record = self._records.get(plugin_id)
+        if record is None or not record.enabled or record.state not in {"ready", "degraded"}:
+            return False
+        override = self.state.identity_enabled_override(plugin_id, str(identity_id))
+        return True if override is None else bool(override)
+
+    def set_identity_enabled(self, plugin_id: str, identity_id: str, enabled: bool | None) -> None:
+        if plugin_id not in self._records:
+            self.refresh()
+        if plugin_id not in self._records:
+            raise KeyError(plugin_id)
+        self.state.set_identity_enabled(plugin_id, str(identity_id), enabled)
+
+    def set_priority(self, plugin_id: str, priority: int | None) -> None:
+        self.state.set_priority(plugin_id, priority)
+        self.refresh()
+
+    def candidates(self, category_id: str, *, ready_only: bool = True) -> list[PluginStatus]:
+        rows = [status for status in self.statuses() if status.descriptor.type == category_id]
+        if ready_only:
+            rows = [status for status in rows if status.state in {"ready", "degraded"} and status.enabled]
+        return sorted(rows, key=lambda status: (-status.effective_priority, status.descriptor.id))
+
+    def select(self, category_id: str, predicate: Callable[[object], bool] | None = None) -> PluginStatus | None:
+        category = self.categories.get(category_id)
+        if category.resolution == "all":
+            raise ValueError(f"category {category_id} uses resolution=all; use candidates()")
+        for status in self.candidates(category_id):
+            if predicate is None:
+                return status
+            service = self.service(status.descriptor.id)
+            try:
+                if predicate(service):
+                    return status
+            except Exception:
+                continue
+        return None
+
+    def _active_manifests_with(
+        self, package: InstalledPackage | None = None,
+    ) -> tuple[list[object], list[Path]]:
+        manifests: list[object] = []
+        roots: list[Path] = []
+        replacement_id = package.manifest.package.id if package is not None else None
+        for active in self.packages.active_packages():
+            if replacement_id and active.manifest.package.id == replacement_id:
+                continue
+            manifests.append(active.manifest)
+            roots.append(active.root)
+        if package is not None:
+            manifests.append(package.manifest)
+            roots.append(package.root)
+        return manifests, roots
+
+    def ensure_python_dependencies(self) -> list[dict[str, object]]:
+        """Repair Python distribution requirements of all active plugin packages.
+
+        This is the only supported runtime path that mutates the Cifereca venv
+        for plugin dependencies. Plugin code must never invoke pip itself.
+        """
+        packages = self.packages.active_packages()
+        manifests = [item.manifest for item in packages]
+        transaction = self.python_dependencies.ensure(manifests, package_roots=[item.root for item in packages])
+        transaction.commit()
+        self.activate()
+        return self.python_dependencies.diagnostic(manifests)
+
+    def install(self, archive: Path, *, activate: bool = True, replace: bool = False) -> InstalledPackage:
+        manifest = self.installer.inspect
