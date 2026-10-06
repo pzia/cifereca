@@ -445,11 +445,12 @@ def start_services(profile: dict, catalog: dict[str, dict], *, rebuild: bool = F
 
     for name, config in services.items():
         ctx = service_context(profile, catalog, name, config)
-        command = build_service_command(profile, ctx, rebuild=rebuild)
+        desired_command = build_service_command(profile, ctx, rebuild=False)
+        launch_command = build_service_command(profile, ctx, rebuild=rebuild)
         old = (state.get("services") or {}).get(name)
         if isinstance(old, dict):
             old_pid = int(old.get("pid") or 0)
-            same = old.get("command") == command
+            same = old.get("command") == desired_command
             if same and is_pid_alive(old_pid) and health_ok(ctx["health_url"]):
                 print(f"[ok] {name}: déjà actif pid={old_pid} {ctx['base_url']}")
                 continue
@@ -460,11 +461,11 @@ def start_services(profile: dict, catalog: dict[str, dict], *, rebuild: bool = F
 
         log_path = prepared["runtime"] / "logs" / f"{name}.log"
         log = log_path.open("a", encoding="utf-8")
-        log.write(f"\n=== {now_iso()} start {' '.join(command)} ===\n")
+        log.write(f"\n=== {now_iso()} start {' '.join(launch_command)} ===\n")
         log.flush()
         try:
             proc = subprocess.Popen(
-                command,
+                launch_command,
                 cwd=str(ROOT.parent),
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -479,7 +480,8 @@ def start_services(profile: dict, catalog: dict[str, dict], *, rebuild: bool = F
             "port": ctx["port"],
             "base_url": ctx["base_url"],
             "health_url": ctx["health_url"],
-            "command": command,
+            "command": desired_command,
+            "launch_command": launch_command,
             "log": str(log_path),
             "started_at": now_iso(),
         }
