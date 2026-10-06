@@ -119,7 +119,8 @@ def load_state(profile: dict) -> dict:
         value = {}
     value.setdefault("version", 1)
     value.setdefault("profile", profile["name"])
-    value.setdefault("services", {})
+    if not isinstance(value.get("services"), dict):
+        value["services"] = {}
     return value
 
 
