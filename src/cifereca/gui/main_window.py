@@ -315,6 +315,7 @@ class DetailPanel(Gtk.Box):
         super().__init__()
         self.window = window
         self._meta_request = None
+        self._pending_action_focus_key = ""
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(fraction=1.0, source=self)
@@ -348,6 +349,7 @@ class DetailPanel(Gtk.Box):
 
     def empty(self, title: str, description: str, icon: str = "book-open-symbolic") -> None:
         self._cancel_meta_request()
+        self._pending_action_focus_key = ""
         clear_box(self.content)
         self._clear_actions()
         status = Adw.StatusPage()
@@ -440,6 +442,25 @@ class DetailPanel(Gtk.Box):
     def _append_content(self, widget):
         self.content.append(widget)
 
+    @staticmethod
+    def _action_focus_key(button) -> str:
+        identifier = str(getattr(button, '_cifereca_action_id', '') or '')
+        if identifier:
+            return 'id:' + identifier
+        label = str(getattr(button, '_cifereca_action_label', '') or '')
+        if not label:
+            getter = getattr(button, 'get_label', None)
+            if callable(getter):
+                label = str(getter() or '')
+        return 'label:' + label if label else ''
+
+    def _focused_action_key(self) -> str:
+        for button in getattr(self, '_action_buttons', ()):
+            has_focus = getattr(button, 'has_focus', None)
+            if callable(has_focus) and has_focus():
+                return self._action_focus_key(button)
+        return ''
+
     def _clear_actions(self):
         self._action_ids = set()
         self._action_buttons = []
@@ -523,10 +544,18 @@ class DetailPanel(Gtk.Box):
             self.action_scroll.append(button)
         self._rendered_action_count = len(current)
         self.action_scroll.set_visible(True)
+        pending_focus = getattr(self, '_pending_action_focus_key', '')
+        if pending_focus:
+            for button in current:
+                if self._action_focus_key(button) == pending_focus:
+                    button.grab_focus()
+                    self._pending_action_focus_key = ''
+                    break
 
     def show_presentation(self, presentation: UiBookDetailPresentation) -> None:
         """Render the shared neutral book-detail projection."""
         self._cancel_meta_request()
+        self._pending_action_focus_key = self._focused_action_key()
         clear_box(self.content)
         self._clear_actions()
         self._cover_and_title(
