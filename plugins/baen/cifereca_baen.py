@@ -46,7 +46,7 @@ class BaenSession(ProviderSession):
                 candidate=urljoin(item.friendly_url,href); break
         if not candidate: raise ProviderError('Baen : aucun lien EPUB public explicite sur cette fiche')
         if self.transport is None: raise ProviderError('Baen : transport.http indisponible')
-        d=Path(target_dir);d.mkdir(parents=True,exist_ok=True);dest=d/(re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub'
+        d=Path(target_dir);d.mkdir(parents=True,exist_ok=True);dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
         source={
             'url':candidate,
             'headers':{'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2','Referer':item.friendly_url},
