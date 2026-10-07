@@ -14,6 +14,7 @@ from scripts.plugin_packaging import (
     build_plugin_zip,
     discover_plugins,
     validate_dev_snapshot,
+    validate_plugin_entrypoints,
     validate_plugin_source,
 )
 
@@ -134,6 +135,65 @@ class PluginPackagingTests(unittest.TestCase):
                         hashlib.sha256(payload).hexdigest(),
                         row["sha256"],
                     )
+
+    def test_entrypoint_module_file_is_validated_without_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest = json.loads(
+                (plugin / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            validate_plugin_entrypoints(plugin, manifest)
+
+    def test_entrypoint_python_package_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["entrypoint"] = "alpha_plugin.runtime:PLUGIN"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            package = plugin / "alpha_plugin" / "runtime"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text(
+                "raise RuntimeError('must not be imported while packaging')\n"
+                "PLUGIN = object()\n",
+                encoding="utf-8",
+            )
+            validate_plugin_entrypoints(plugin, manifest)
+
+    def test_packaging_refuses_missing_entrypoint_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["entrypoint"] = "missing.module:PLUGIN"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(
+                PackagingError,
+                r"module entrypoint absent.*missing\.module",
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_entrypoint_must_use_module_colon_attribute_form(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest = json.loads(
+                (plugin / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            manifest["plugins"][0]["entrypoint"] = "plugin.PLUGIN"
+            with self.assertRaisesRegex(PackagingError, "entrypoint invalide"):
+                validate_plugin_entrypoints(plugin, manifest)
 
     def test_production_plugin_may_only_import_public_plugin_api(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
