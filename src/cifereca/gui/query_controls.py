@@ -1,6 +1,7 @@
 from gi.repository import Gtk
 from .query_model import QueryState, FIELDS
 from .book_facets import CONTENT_FIELDS
+from ..core.provider_search import provider_search_summary
 
 class MultiSelect(Gtk.MenuButton):
     def __init__(self, label, choices, changed):
@@ -11,6 +12,7 @@ class MultiSelect(Gtk.MenuButton):
         self.buttons = {}
         self._changed_callback = changed
         self._programmatic_update = False
+        self._provider_search_capabilities = {}
         self._last_notified_values = ()
         self.set_label(label + ' : Tous')
         pop = Gtk.Popover()
@@ -96,11 +98,30 @@ class QueryControls(Gtk.Box):
         self.scope = insert_filter(Gtk.DropDown.new_from_strings(['Tous','Physiques','Numériques']))
         self.scope.set_selected(2)
         self.scope.connect('notify::selected', lambda *_: self._changed())
+        self.capability_hint = Gtk.Label(xalign=0)
+        self.capability_hint.set_wrap(True)
+        self.capability_hint.add_css_class('caption')
+        self.capability_hint.add_css_class('dim-label')
+        self.capability_hint.set_visible(False)
+        self.append(self.capability_hint)
         self._last_notified_state = self.state()
+
+    def set_provider_search_capabilities(self, capabilities):
+        self._provider_search_capabilities = dict(capabilities or {})
+        self._update_search_capability_hint()
+
+    def _update_search_capability_hint(self):
+        summary = provider_search_summary(
+            self._provider_search_capabilities,
+            self.provider.values(),
+        )
+        self.capability_hint.set_label(summary)
+        self.capability_hint.set_visible(bool(summary))
 
     def _changed(self):
         if self._programmatic_update:
             return
+        self._update_search_capability_hint()
         state = self.state()
         if state == self._last_notified_state:
             return
