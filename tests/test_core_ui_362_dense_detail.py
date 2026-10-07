@@ -93,3 +93,18 @@ def test_library_nominal_acquisition_state_and_single_presence_are_hidden():
     source = ast.unparse(_method("MainWindow", "_library_selected"))
     assert "sync_label == 'À jour'" in source
     assert "len(unique_presence) > 1" in source
+
+
+def test_async_detail_refresh_preserves_logical_action_focus():
+    presentation = ast.unparse(_method("DetailPanel", "show_presentation"))
+    actions = ast.unparse(_method("DetailPanel", "_actions"))
+    focus_key = ast.unparse(_method("DetailPanel", "_focused_action_key"))
+    identity = ast.unparse(_method("DetailPanel", "_action_focus_key"))
+
+    assert "_pending_action_focus_key = self._focused_action_key()" in presentation
+    assert presentation.index("_focused_action_key") < presentation.index("_clear_actions")
+    assert "button.grab_focus()" in actions
+    assert "_pending_action_focus_key = ''" in actions
+    assert "_cifereca_action_id" in identity
+    assert "_cifereca_action_label" in identity
+    assert "has_focus()" in focus_key
