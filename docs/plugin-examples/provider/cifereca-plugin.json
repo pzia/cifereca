@@ -1,0 +1,5 @@
+{
+  "manifest": 1,
+  "package": {"id":"org.exemple.cifereca.provider","version":"1.0.0","name":"Catalogue pédagogique","publisher":"Exemple","plugin_api":">=1,<2"},
+  "plugins": [{"id":"provider.example","type":"provider.library","entrypoint":"exemple_provider:PLUGIN","display_name":"Catalogue exemple","instantiation":"singleton_public","help_text":"Catalogue synthétique de démonstration. Ne se connecte à aucun site et ne télécharge aucun livre."}]
+}
