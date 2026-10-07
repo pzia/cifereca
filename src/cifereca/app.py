@@ -86,6 +86,12 @@ def main() -> int:
                 self.window = MainWindow(self, config, service, diagnostics)
                 logger.info("TRACE gui MainWindow-init end dt=%.3fs", time.monotonic()-t0)
             self.window.present()
+            presented_ms = (time.monotonic() - t0) * 1000.0
+            logger.info("TRACE gui window-presented duration_ms=%.1f", presented_ms)
+            try:
+                self.window.ui_perf.record("startup.window_presented", presented_ms)
+            except Exception:
+                pass
 
         def do_shutdown(self):
             try:
