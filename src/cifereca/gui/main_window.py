@@ -2608,7 +2608,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not item:
                 return
             self._selected_search_id = row.key
-            self.search_page.detail.show_summary(
+            self.search_page.detail.show_presentation(book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
                 subtitle=str(item.get("author") or ""),
                 thumbnail=item.get("thumbnail_url"),
@@ -2619,7 +2619,7 @@ class MainWindow(Adw.ApplicationWindow):
                     ("Format", str(item.get("media_format") or "—").upper()),
                     ("Fichier local", str(item.get("local_path") or "—")),
                 ],
-            )
+            ))
             actions = []
             open_library = Gtk.Button(label="Voir dans Bibliothèque")
             open_library.connect("clicked", lambda _b: self.navigate("library"))
@@ -3360,7 +3360,7 @@ class MainWindow(Adw.ApplicationWindow):
         state = self._library_state_label(item)
         provider_label = "Kobo" if provider == "kobo" else provider.capitalize()
         identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
-        detail.show_summary(
+        detail.show_presentation(book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
             thumbnail=item.get("thumbnail_url"),
@@ -3374,7 +3374,7 @@ class MainWindow(Adw.ApplicationWindow):
                 ("Fichier local", str(item.get("local_path") or "—")),
                 ("État acquisition", self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else "—"),
             ],
-        )
+        ))
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])
         presence_rows = []
