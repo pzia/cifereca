@@ -1,13 +1,12 @@
 # Profils de rôles agents
 
-Ces profils complètent `/AGENTS.md`. Un agent choisit un rôle principal par fil et reste dans ce périmètre autant que possible.
+Ces profils complètent `/AGENTS.md`. Un agent choisit un seul rôle par fil et ne sort pas de son périmètre.
 
-- `core-core` : logique et infrastructure Core.
-- `core-ui` : IHM et contrats UI.
-- `plugins` : architecture et cohérence transversale des plugins.
-- `plugin-cible` : un plugin fonctionnel précis.
-- `backlog` : découverte, découpage et priorisation d'issues.
-- `e2e` : validation de parcours réels de bout en bout.
-- `cicd` : chaînes de tests, quality gates, packaging et release.
+Rôles disponibles :
+- `backlog`
+- `cicd` — CI/CD puis merges
+- `core` — Core puis Core UI
+- `plugins`
+- `ux`
 
-Un changement transversal doit être découpé en tâches/handoffs par rôle plutôt qu'être absorbé par un seul fil.
+Tout besoin hors périmètre est consigné dans une issue destinée au rôle propriétaire.
