@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# Baseline contract coverage: this file intentionally triggers the Core quality gate.
+
 import ast
 from pathlib import Path
 
