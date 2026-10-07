@@ -7,6 +7,7 @@ class MultiSelect(Gtk.MenuButton):
         super().__init__()
         self.caption = label
         self.buttons = {}
+        self.choice_labels = {value: title for value, title in choices}
         self.set_label(label + ' : Tous')
         pop = Gtk.Popover()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -23,8 +24,22 @@ class MultiSelect(Gtk.MenuButton):
         pop.set_child(box); self.set_popover(pop)
 
     def _changed(self, changed):
-        count = len(self.values())
-        self.set_label(f'{self.caption} : {count}' if count else self.caption + ' : Tous')
+        values = self.values()
+        titles = [self.choice_labels.get(value, str(value)) for value in values]
+        if not titles:
+            summary = 'Tous'
+            tooltip = None
+        elif len(titles) == 1:
+            summary = titles[0]
+            tooltip = titles[0]
+        elif len(titles) == 2 and sum(len(title) for title in titles) <= 22:
+            summary = ' + '.join(titles)
+            tooltip = ', '.join(titles)
+        else:
+            summary = f'{titles[0]} +{len(titles) - 1}'
+            tooltip = ', '.join(titles)
+        self.set_label(f'{self.caption} : {summary}')
+        self.set_tooltip_text(tooltip)
         changed()
 
     def values(self):
