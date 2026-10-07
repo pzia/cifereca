@@ -57,6 +57,15 @@ def text_or_dash(value: Any) -> str:
     return text or "—"
 
 
+def detail_display_value(label: str, value: Any) -> tuple[str, str]:
+    """Return the compact value and the complete tooltip value for a detail row."""
+    full = text_or_dash(value)
+    if label == "Fichier local" and full != "—":
+        compact = Path(full).name or full
+        return compact, full
+    return full, full
+
+
 def book_detail_presentation(
     *,
     title: str,
@@ -341,9 +350,10 @@ class DetailPanel(Gtk.Box):
             group.add(grid)
         for label, value in rows:
             row = Adw.ActionRow()
-            row.set_title(label); row.set_subtitle(text_or_dash(value))
+            display_value, tooltip_value = detail_display_value(label, value)
+            row.set_title(label); row.set_subtitle(display_value)
             row.set_subtitle_lines(1 if grid is not None else 0)
-            row.set_tooltip_text(label+' : '+text_or_dash(value))
+            row.set_tooltip_text(label+' : '+tooltip_value)
             field={'Auteur':'author','Éditeur':'publisher','Sujets':'subject','Sujet':'subject','Collection / série':'collection','Collection':'collection','Série':'series','Langue':'language','Langues':'language','Source':'source','Fournisseur':'source','Format':'format'}.get(label)
             if field and value and value!='—':
                 row.set_activatable(True)
@@ -433,8 +443,6 @@ class DetailPanel(Gtk.Box):
         if callable(clear):
             clear()
         else:
-            # Lightweight test doubles may not implement rebuilding; the first
-            # population still preserves the deterministic order.
             existing = getattr(self, '_rendered_action_count', 0)
             if existing:
                 return
@@ -908,9 +916,10 @@ class MasterDetailPage(Gtk.Box):
                 self.store.append(row)
         self._update_count(total_count if total_count is not None else len(rows))
         self.list_stack.set_visible_child_name("list" if rows else "empty")
-        if rows:
+        if rows and selected_key is not None:
             restored = next((index for index, row in enumerate(rows) if row.key == selected_key), None)
-            self.selection.set_selected(restored if restored is not None else 0)
+            if restored is not None:
+                self.selection.set_selected(restored)
         if hasattr(self.window, "ui_perf"):
             self.window.ui_perf.record(f"list:{self.title}:replace", (time.perf_counter() - started) * 1000.0)
 
@@ -2987,6 +2996,15 @@ class MainWindow(Adw.ApplicationWindow):
             return "Fichier manquant"
         return state.replace("_", " ").strip().capitalize() or "Disponible"
 
+    @classmethod
+    def _library_availability_label(cls, item: dict[str, Any]) -> str:
+        """Avoid repeating the local provenance as an identical availability."""
+        provider = str(item.get("provider_id") or "local")
+        state = str(item.get("state") or "")
+        if provider == "local" and state == "local":
+            return ""
+        return cls._library_state_label(item)
+
     def _library_filter_toggled(self, button: Gtk.ToggleButton) -> None:
         if button.get_active():
             self.library_filter = button.get_name() or "all"
@@ -3206,11 +3224,11 @@ class MainWindow(Adw.ApplicationWindow):
             provider = str(item.get("provider_id") or "local")
             providers = list(item.get("providers") or [provider])
             provider_label = (f"{len(providers)} sources" if len(providers) > 1 else self.service.provider_display_name(provider))
-            state = self._library_state_label(item)
+            state = self._library_availability_label(item)
             key = str(item.get("key") or f"library:{len(self._library_objects)}")
             self._library_objects[key] = item
             metadata = item.get("metadata") or {}
-            meta_parts = [state]
+            meta_parts = [state] if state else []
             if item.get("due_at"):
                 meta_parts.append(f"retour {fr_date(str(item.get('due_at')))}")
             sync_status = item.get("sync_status")
@@ -3229,7 +3247,7 @@ class MainWindow(Adw.ApplicationWindow):
                 " · ".join(part for part in meta_parts if part), provider_label, item.get("thumbnail_url"),
             ))
         self._attach_row_facets(rows, self._library_objects, self.library_controls)
-        self.library_page.show_rows(rows)
+        self.library_page.show_rows(rows, total_count=len(entries))
         self.ui_perf.record("render_library", (time.perf_counter() - _perf_started) * 1000.0)
 
     # ---------- Récupérations récentes ----------
@@ -3474,23 +3492,27 @@ class MainWindow(Adw.ApplicationWindow):
 
         detail = self.library_page.detail
         provider = str(item.get("provider_id") or "local")
-        state = self._library_state_label(item)
+        state = self._library_availability_label(item)
         provider_label = "Kobo" if provider == "kobo" else provider.capitalize()
         identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
+        detail_rows = [
+            ("Identité", identity.label if identity else str(item.get("identity_id") or "—")),
+            ("Provenance", provider_label),
+        ]
+        if state:
+            detail_rows.append(("Disponibilité", state))
+        detail_rows.extend([
+            ("Format", str(item.get("media_format") or "—").upper()),
+            ("Fichier local", str(item.get("local_path") or "—")),
+            ("État acquisition", self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else "—"),
+        ])
         detail.show_presentation(book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
             thumbnail=item.get("thumbnail_url"),
             badges=[provider_label, state],
             group_title="Bibliothèque",
-            rows=[
-                ("Identité", identity.label if identity else str(item.get("identity_id") or "—")),
-                ("Provenance", provider_label),
-                ("Disponibilité", state),
-                ("Format", str(item.get("media_format") or "—").upper()),
-                ("Fichier local", str(item.get("local_path") or "—")),
-                ("État acquisition", self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else "—"),
-            ],
+            rows=detail_rows,
         ))
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])

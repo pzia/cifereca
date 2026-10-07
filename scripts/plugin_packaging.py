@@ -14,6 +14,9 @@ import tempfile
 from typing import Iterable, Sequence
 import zipfile
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = REPO_ROOT / "src" / "plugins"
 DIST_DIR = REPO_ROOT / "dist"
@@ -39,6 +42,7 @@ EXCLUDED_DIRS = {
     "simulation",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+CANONICAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,127}$")
 
 
 class PackagingError(RuntimeError):
@@ -65,6 +69,108 @@ def _read_json(path: Path) -> dict:
     return value
 
 
+def _validate_id(value: object, field: str) -> str:
+    raw = str(value or "").strip()
+    if not CANONICAL_ID_RE.fullmatch(raw):
+        raise PackagingError(f"{field} invalide: {raw!r}")
+    return raw
+
+
+def _validate_version(value: object, field: str) -> None:
+    raw = str(value or "").strip()
+    try:
+        Version(raw)
+    except InvalidVersion as exc:
+        raise PackagingError(f"{field} invalide: {raw!r}") from exc
+
+
+def _validate_specifier(value: object, field: str) -> None:
+    raw = str(value or "").strip()
+    if not raw:
+        return
+    try:
+        SpecifierSet(raw)
+    except InvalidSpecifier as exc:
+        raise PackagingError(f"{field} invalide: {raw!r}") from exc
+
+
+def _validate_manifest_versions(plugin_dir: Path, manifest: dict) -> None:
+    package = manifest["package"]
+    _validate_version(package.get("version"), f"{plugin_dir}: package.version")
+    _validate_specifier(package.get("plugin_api"), f"{plugin_dir}: package.plugin_api")
+
+    for index, descriptor in enumerate(manifest.get("plugins") or []):
+        if not isinstance(descriptor, dict):
+            continue
+        _validate_version(
+            descriptor.get("version") or package.get("version"),
+            f"{plugin_dir}: plugins[{index}].version",
+        )
+        for field in ("requires", "recommends", "conflicts"):
+            rows = descriptor.get(field)
+            if not isinstance(rows, list):
+                continue
+            for dep_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_specifier(
+                        row.get("version"),
+                        f"{plugin_dir}: plugins[{index}].{field}[{dep_index}].version",
+                    )
+        rows = descriptor.get("system_requires")
+        if isinstance(rows, list):
+            for req_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_specifier(
+                        row.get("version"),
+                        f"{plugin_dir}: plugins[{index}].system_requires[{req_index}].version",
+                    )
+        rows = descriptor.get("requires_contracts")
+        if isinstance(rows, list):
+            for req_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_specifier(
+                        row.get("version"),
+                        f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].version",
+                    )
+
+
+def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
+    categories = manifest.get("categories")
+    if isinstance(categories, list):
+        for index, category in enumerate(categories):
+            if isinstance(category, dict):
+                _validate_id(
+                    category.get("id"),
+                    f"{plugin_dir}: categories[{index}].id",
+                )
+
+    for index, descriptor in enumerate(manifest.get("plugins") or []):
+        if not isinstance(descriptor, dict):
+            continue
+        for field in ("requires", "recommends", "conflicts"):
+            rows = descriptor.get(field)
+            if not isinstance(rows, list):
+                continue
+            for dep_index, row in enumerate(rows):
+                plugin_id = row if isinstance(row, str) else (
+                    row.get("plugin") if isinstance(row, dict) else None
+                )
+                if plugin_id is not None:
+                    _validate_id(
+                        plugin_id,
+                        f"{plugin_dir}: plugins[{index}].{field}[{dep_index}].plugin",
+                    )
+
+        rows = descriptor.get("requires_contracts")
+        if isinstance(rows, list):
+            for req_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_id(
+                        row.get("category"),
+                        f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].category",
+                    )
+
+
 def read_plugin_manifest(plugin_dir: Path) -> dict:
     plugin_dir = plugin_dir.resolve()
     manifest = _read_json(plugin_dir / PLUGIN_MANIFEST)
@@ -76,11 +182,11 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
     for key in ("id", "version"):
         if not isinstance(package.get(key), str) or not package[key].strip():
             raise PackagingError(f"{plugin_dir}: package.{key} absent")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", package["id"]):
-        raise PackagingError(f"{plugin_dir}: package.id invalide")
+    _validate_id(package["id"], f"{plugin_dir}: package.id")
     descriptors = manifest.get("plugins")
     if not isinstance(descriptors, list) or not descriptors:
         raise PackagingError(f"{plugin_dir}: plugins[] vide ou absent")
+    seen_plugin_ids: set[str] = set()
     for index, descriptor in enumerate(descriptors):
         if not isinstance(descriptor, dict):
             raise PackagingError(f"{plugin_dir}: plugins[{index}] invalide")
@@ -88,6 +194,19 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}] requiert id et type"
             )
+        plugin_id = _validate_id(
+            descriptor.get("id"), f"{plugin_dir}: plugins[{index}].id"
+        )
+        _validate_id(
+            descriptor.get("type"), f"{plugin_dir}: plugins[{index}].type"
+        )
+        if plugin_id in seen_plugin_ids:
+            raise PackagingError(
+                f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"
+            )
+        seen_plugin_ids.add(plugin_id)
+    _validate_manifest_versions(plugin_dir, manifest)
+    _validate_manifest_reference_ids(plugin_dir, manifest)
     return manifest
 
 
