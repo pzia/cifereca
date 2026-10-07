@@ -2805,11 +2805,18 @@ class MainWindow(Adw.ApplicationWindow):
         providers = sorted(providers.items(), key=lambda pair: pair[1])
         catalog = self.plugin_manager.widget_catalog() if self.plugin_manager else None
         factory = getattr(catalog, "build_query_controls", None)
+        controls = None
         if callable(factory):
-            try: return factory(providers, changed, activate, library=library)
+            try:
+                controls = factory(providers, changed, activate, library=library)
             except Exception as exc:
                 self.diagnostics.add("PLUGIN", "query widget", "error", detail={"error": str(exc)})
-        return QueryControls(providers, changed, activate, library=library)
+        if controls is None:
+            controls = QueryControls(providers, changed, activate, library=library)
+        setter = getattr(controls, "set_provider_search_capabilities", None)
+        if callable(setter) and not library:
+            setter(self.service.provider_search_capabilities())
+        return controls
 
     def _reset_search_enter(self):
         sequence = getattr(self, "_search_enter_sequence", None)
