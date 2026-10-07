@@ -60,3 +60,56 @@ def test_default_epub_inspection_remains_tolerant_for_fulfillment_artifacts(tmp_
     inspected = inspect_artifact(path, "epub")
     assert inspected.valid
     assert inspected.media_format == "epub"
+
+
+def test_epub_duplicate_entries_are_rejected(tmp_path):
+    path = tmp_path / "duplicate.epub"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", b"application/epub+zip")
+        archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
+        archive.writestr("OEBPS/content.opf", "<package/>")
+        archive.writestr("OEBPS/content.opf", "<package/>")
+    inspected = inspect_artifact(path, "epub", strict_structure=True)
+    assert not inspected.valid
+    assert inspected.reason == "epub_duplicate_entries"
+
+
+def test_epub_unsafe_package_path_is_rejected(tmp_path):
+    path = tmp_path / "unsafe-root.epub"
+    _write_epub(path, rootfile="../content.opf", include_package=True)
+    inspected = inspect_artifact(path, "epub", strict_structure=True)
+    assert not inspected.valid
+    assert inspected.reason == "epub_package_path_invalid"
+
+
+def test_epub_invalid_package_xml_is_rejected(tmp_path):
+    path = tmp_path / "invalid-opf.epub"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", b"application/epub+zip")
+        archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
+        archive.writestr("OEBPS/content.opf", "<package")
+    inspected = inspect_artifact(path, "epub", strict_structure=True)
+    assert not inspected.valid
+    assert inspected.reason == "epub_package_invalid"
+
+
+def test_epub_non_package_root_is_rejected(tmp_path):
+    path = tmp_path / "wrong-root.epub"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", b"application/epub+zip")
+        archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
+        archive.writestr("OEBPS/content.opf", "<metadata/>")
+    inspected = inspect_artifact(path, "epub", strict_structure=True)
+    assert not inspected.valid
+    assert inspected.reason == "epub_package_invalid"
+
+
+def test_epub_oversized_container_is_rejected(tmp_path):
+    path = tmp_path / "oversized-container.epub"
+    oversized = b"<container>" + (b" " * (1024 * 1024)) + b"</container>"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", b"application/epub+zip")
+        archive.writestr("META-INF/container.xml", oversized)
+    inspected = inspect_artifact(path, "epub", strict_structure=True)
+    assert not inspected.valid
+    assert inspected.reason == "epub_container_oversized"
