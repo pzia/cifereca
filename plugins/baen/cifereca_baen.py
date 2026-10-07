@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib, html, os, re, tempfile, zipfile
+import hashlib, html, re
 from pathlib import Path
 from urllib.parse import urljoin
 import httpx
@@ -7,8 +7,8 @@ from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapab
 BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
 DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Fonds public qualifié ; achats et bibliothèque privée à qualifier.',))
 class BaenSession(ProviderSession):
-    def __init__(self,*,config,diagnostics,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.0','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
+    def __init__(self,*,config,diagnostics,transport=None,**kw):
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.7','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
@@ -45,41 +45,32 @@ class BaenSession(ProviderSession):
             if 'download' in txt or 'epub' in txt or href.lower().endswith('.epub'):
                 candidate=urljoin(item.friendly_url,href); break
         if not candidate: raise ProviderError('Baen : aucun lien EPUB public explicite sur cette fiche')
-        d=Path(target_dir);d.mkdir(parents=True,exist_ok=True);dest=d/(re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub'
-        fd,tmp=tempfile.mkstemp(prefix='.baen-',suffix='.epub.part',dir=d); os.close(fd); part=Path(tmp)
-        try:
-            try:
-                with self.client.stream('GET',candidate,headers={'Accept':'application/epub+zip, */*;q=0.2'}) as response:
-                    response.raise_for_status()
-                    mime=str(response.headers.get('content-type') or '').split(';',1)[0].strip().lower()
-                    if mime in {'text/html','application/xhtml+xml'}: raise ProviderError('Baen : la réponse de téléchargement est une page HTML')
-                    declared=response.headers.get('content-length')
-                    if declared and declared.isdigit() and int(declared)>self.maximum: raise ProviderError('Baen : fichier trop volumineux')
-                    size=0
-                    with part.open('wb') as handle:
-                        for chunk in response.iter_bytes():
-                            size+=len(chunk)
-                            if size>self.maximum: raise ProviderError('Baen : fichier trop volumineux')
-                            handle.write(chunk)
-                        handle.flush(); os.fsync(handle.fileno())
-            except httpx.HTTPError as e: raise ProviderError('Baen : téléchargement inaccessible') from e
-            with zipfile.ZipFile(part) as z:
-                if z.read('mimetype')!=b'application/epub+zip': raise ValueError
-            part.replace(dest)
-        except ProviderError:
-            part.unlink(missing_ok=True); raise
-        except Exception:
-            part.unlink(missing_ok=True);raise ProviderError('Baen : fichier reçu non valide comme EPUB')
+        if self.transport is None: raise ProviderError('Baen : transport.http indisponible')
+        d=Path(target_dir);d.mkdir(parents=True,exist_ok=True);dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
+        source={
+            'url':candidate,
+            'headers':{'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2','Referer':item.friendly_url},
+            'max_bytes':self.maximum,
+            'allowed_content_types':('application/epub+zip','application/zip','application/octet-stream'),
+            'expected_format':'epub',
+            'overwrite':True,
+        }
+        try: dest=Path(self.transport.fetch(source,dest))
+        except ProviderError: raise
+        except Exception as e: raise ProviderError('Baen : téléchargement inaccessible ou EPUB invalide') from e
         return dest,item.friendly_url
 class Plugin(ProviderPlugin):
     descriptor=DESCRIPTOR
-    def __init__(self): self._sessions=[]; self.context=None
-    def activate(self,context): self.context=context; return self
+    def __init__(self): self._sessions=[]; self.context=None; self.transport=None
+    def activate(self,context):
+        self.context=context; self.transport=context.service('transport.http')
+        if self.transport is None: raise ProviderError('Baen : transport.http requis')
+        return self
     def deactivate(self):
         for session in self._sessions:
             try: session.close()
             except Exception: pass
-        self._sessions.clear(); self.context=None
+        self._sessions.clear(); self.transport=None; self.context=None
     def create_session(self,*,credential_id,label,credentials,options,config,storage,diagnostics):
-        session=BaenSession(credential_id=credential_id,label=label,credentials=credentials,options=options,config=config,diagnostics=diagnostics); self._sessions.append(session); return session
+        session=BaenSession(credential_id=credential_id,label=label,credentials=credentials,options=options,config=config,diagnostics=diagnostics,transport=self.transport); self._sessions.append(session); return session
 PLUGIN=Plugin()
