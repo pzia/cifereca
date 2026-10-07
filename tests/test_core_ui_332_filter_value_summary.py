@@ -25,3 +25,22 @@ def test_multiselect_shows_selected_values_and_full_tooltip():
     assert "summary = f'{titles[0]} +{len(titles) - 1}'" in changed
     assert "tooltip = ', '.join(titles)" in changed
     assert "self.set_tooltip_text(tooltip)" in changed
+
+
+def test_summary_and_tooltip_follow_atomic_programmatic_changes():
+    from test_query_controls_batching import MultiSelect
+    calls = []
+    control = MultiSelect('Formats', iter([('epub', 'EPUB'), ('pdf', 'PDF'), ('mp3', 'MP3')]), lambda: calls.append(1))
+    control.set_values(('epub',))
+    assert control.label == 'Formats : EPUB'
+    assert control.tooltip == 'EPUB'
+    control.set_values(('epub', 'pdf'))
+    assert control.label == 'Formats : EPUB + PDF'
+    control.set_values(('epub', 'pdf', 'mp3'))
+    assert control.label == 'Formats : EPUB +2'
+    assert control.tooltip == 'EPUB, PDF, MP3'
+    control.set_values(())
+    assert control.label == 'Formats : Tous'
+    assert control.tooltip is None
+    control.set_values(())
+    assert len(calls) == 4

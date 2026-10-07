@@ -97,11 +97,19 @@ class Core0917(unittest.TestCase):
         result=self.service.execute_acquisition_request(request)
         self.assertTrue(result['ok']);source=transport.fetch.call_args.args[0]
         self.assertEqual(source['drm'],'SignedNoDrm');self.assertEqual(source['handling'],'http_plain');self.assertEqual(source['headers'],{'x-header':'v'})
-    def test_http_contract_without_optional_policy_still_supported(self):
-        request,transport=self.http({});transport.fetch.return_value=self.book('old')
+        self.assertEqual(source['protection'],{'handling':'http_plain','drm':'SignedNoDrm','protected':False,'attested':True})
+    def test_http_contract_without_policy_is_rejected_before_transport(self):
+        request,transport=self.http({})
+        with self.assertRaises(AttentionRequired) as ctx:self.service.execute_acquisition_request(request)
+        self.assertIn(ctx.exception.code,{'http_handling_attestation_required','http_drm_attestation_required'})
+        transport.fetch.assert_not_called()
+    def test_http_accepts_structured_unprotected_attestation(self):
+        path=self.book('old');request,transport=self.http({'handling':'http_plain','drm':{'protected':False,'family':'none'}})
+        transport.fetch.return_value=path
         self.assertTrue(self.service.execute_acquisition_request(request)['ok'])
+        self.assertFalse(transport.fetch.call_args.args[0]['protection']['protected'])
     def test_http_respects_transport_refusal(self):
-        request,transport=self.http({});transport.matches.return_value=False
+        request,transport=self.http({'drm':'none','handling':'http_plain'});transport.matches.return_value=False
         with self.assertRaises(AttentionRequired):self.service.execute_acquisition_request(request)
         transport.fetch.assert_not_called()
     def test_binding_captures_exact_runtime_id(self):

@@ -1,5 +1,17 @@
 """GTK-independent page/action resolution shared by the desktop shell."""
+from dataclasses import dataclass
+
 from cifereca.plugin_api import UiActionContribution, UiPageContribution
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredAction:
+    key: str
+    page_route: str
+    page_title: str
+    title: str
+    scope: str
+    action: UiActionContribution
 
 
 def resolve_pages(pages):
@@ -19,10 +31,45 @@ def page_actions(page):
     return (implicit,) + tuple(a for a in (page.actions or ()) if isinstance(a, UiActionContribution) and isinstance(a.id, str) and a.id and a.id != 'open' and callable(a.callback) and a.target in {'page', 'header'})
 
 
+def action_registry(pages):
+    """Return one deterministic registry row per declarative page action."""
+    rows = []
+    seen = set()
+    for page in resolve_pages(pages):
+        for action in page_actions(page):
+            key = f'{page.route}.{action.id}'
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(RegisteredAction(
+                key=key,
+                page_route=page.route,
+                page_title=page.title,
+                title=action.title,
+                scope='global' if action.global_action else 'page',
+                action=action,
+            ))
+    return tuple(rows)
+
+
+def validate_action_selection(pages, selected):
+    """Split configured ids into valid and obsolete entries, preserving order."""
+    known = {row.key for row in action_registry(pages)}
+    valid = []
+    obsolete = []
+    for raw in selected or ():
+        key = str(raw or '').strip()
+        if not key or key in valid or key in obsolete:
+            continue
+        (valid if key in known else obsolete).append(key)
+    return tuple(valid), tuple(obsolete)
+
+
 def visible_actions(pages, route, selected):
-    selected = set(selected)
-    return [(f'{page.route}.{action.id}', action) for page in pages for action in page_actions(page)
-            if f'{page.route}.{action.id}' in selected and (action.global_action or page.route == route)]
+    valid, _obsolete = validate_action_selection(pages, selected)
+    selected_keys = set(valid)
+    return [(row.key, row.action) for row in action_registry(pages)
+            if row.key in selected_keys and (row.scope == 'global' or row.page_route == route)]
 
 
 def delegated_accounts(accounts, identity_id, public_providers=()):
