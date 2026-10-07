@@ -291,6 +291,17 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}].help_text doit être une chaîne"
             )
+        for field in ("requires_brokers", "requires_services"):
+            values = descriptor.get(field)
+            if values is None:
+                continue
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) and value.strip() for value in values
+            ):
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].{field} "
+                    "doit être une liste de chaînes non vides"
+                )
         if plugin_id in seen_plugin_ids:
             raise PackagingError(
                 f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"
