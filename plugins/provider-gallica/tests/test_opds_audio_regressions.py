@@ -25,7 +25,7 @@ OPEN_SEARCH = b'''<?xml version="1.0" encoding="utf-8"?>
   <Url type="application/atom+xml;profile=opds-catalog" template="https://gallica.bnf.fr/opds/search?q={searchTerms}&amp;startPage={startPage?}" />
 </OpenSearchDescription>'''
 
-RESULTS = b'''<?xml version="1.0" encoding="utf-8"?>
+RESULTS = '''<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">
   <title>Recherche</title>
   <entry>
@@ -197,7 +197,7 @@ def test_opds_audio_acquisition_gets_audiobook_content_type(tmp_path):
 
 
 def test_sru_audio_recovers_valid_records_from_partially_malformed_xml(tmp_path):
-    malformed = b'''<?xml version="1.0" encoding="UTF-8"?>
+    malformed = '''<?xml version="1.0" encoding="UTF-8"?>
     <srw:searchRetrieveResponse xmlns:srw="http://www.loc.gov/zing/srw/" xmlns:oai_dc="http://www.openarchives.org/OAI/2.0/oai_dc/" xmlns:dc="http://purl.org/dc/elements/1.1/">
       <srw:records>
         <srw:record><srw:recordData><oai_dc:dc>
