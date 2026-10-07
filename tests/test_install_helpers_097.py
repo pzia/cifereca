@@ -51,6 +51,23 @@ class Paths(unittest.TestCase):
     def test_core_missing_reports_update_error(self):
         with self.assertRaisesRegex(updater.UpdateError,'Emplacements essayés'):updater.install_archive('missing.zip')
 
+    def test_plugin_cli_resolves_bare_archive_from_downloads(self):
+        import cifereca.cli as cli
+        archive=self.downloads/'plugin.zip';archive.write_bytes(b'fixture')
+        manager=unittest.mock.MagicMock()
+        manifest=unittest.mock.MagicMock(); manifest.plugins=[]
+        installed=unittest.mock.MagicMock()
+        installed.manifest.package.id='pkg.test'; installed.manifest.package.version='1.0'
+        installed.sha256='abc'
+        manager.inspect_archive.return_value=manifest
+        manager.install.return_value=installed
+        manager.packages.active_version.return_value='1.0'
+        core=unittest.mock.MagicMock(); core.plugins=manager; core.library=unittest.mock.MagicMock()
+        with patch.object(cli.CiferecaCore,'open',return_value=core):
+            self.assertEqual(cli.main(['plugin','install','plugin.zip']),0)
+        manager.inspect_archive.assert_called_once_with(archive)
+        manager.install.assert_called_once_with(archive,activate=True,replace=False)
+
 
 class PluginsOnly(unittest.TestCase):
     def setUp(self):

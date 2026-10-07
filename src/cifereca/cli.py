@@ -10,6 +10,7 @@ from typing import Any
 
 from . import __version__
 from .core import CiferecaCore
+from .install_paths import resolve_archive
 
 
 def safe_model(obj: Any) -> dict[str, Any]:
@@ -103,8 +104,9 @@ def main(argv: list[str] | None = None) -> int:
                 rows = manager.diagnostic(a.plugin_id)
                 result = rows[0] if rows else {}
             elif a.plugin_cmd == "install":
-                manifest = manager.inspect_archive(a.archive)
-                installed = manager.install(a.archive, activate=not a.no_activate, replace=a.replace)
+                archive = resolve_archive(a.archive)
+                manifest = manager.inspect_archive(archive)
+                installed = manager.install(archive, activate=not a.no_activate, replace=a.replace)
                 result = {
                     "package_id": installed.manifest.package.id, "version": installed.manifest.package.version,
                     "sha256": installed.sha256, "active": manager.packages.active_version(installed.manifest.package.id),
