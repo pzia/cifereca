@@ -897,7 +897,7 @@ class PluginContext(Protocol):
 __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
-    "PluginDirectories", "AcquisitionOffer", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
+    "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
     "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
