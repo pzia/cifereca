@@ -165,10 +165,11 @@ def test_sru_audio_normalizes_and_downloads_all_tracks_with_playlist(tmp_path):
         assert len(rows) == 1
         item = rows[0]
         assert item.content_type == "audiobook"
-        assert item.format == "MP3"
+        assert item.format is None
         assert item.record_id == "ark:/12148/bpt6k1279113"
 
         playlist, source_url = session.download_direct(item, tmp_path / "audio")
+        assert item.format == "MP3"
         assert playlist.suffix == ".m3u8"
         assert playlist.is_file()
         assert source_url.endswith("bpt6k1279113")
@@ -211,7 +212,7 @@ def test_sru_audio_recovers_valid_records_from_partially_malformed_xml(tmp_path)
           <dc:type>sound</dc:type>
         </oai_dc:dc></srw:recordData></srw:record>
       </srw:records>
-    </srw:searchRetrieveResponse>'''
+    </srw:searchRetrieveResponse>'''.encode("utf-8")
 
     session = _session(tmp_path, lambda request: httpx.Response(404))
     try:
