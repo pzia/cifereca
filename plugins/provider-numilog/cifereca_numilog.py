@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.9, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.10, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -15,11 +15,11 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderCapabilities,
     ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderError,
-    ProviderPlugin, ProviderSession, SearchResult)
+    ProviderPlugin, ProviderSession, SearchResult, inspect_artifact)
 from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.9'
+VERSION = '0.1.10'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -98,19 +98,6 @@ def validate_epub(path):
         raise
     except (ValueError,KeyError,OSError,zipfile.BadZipFile,ET.ParseError,RuntimeError,NotImplementedError):
         raise ProviderError('Numilog : le fichier reçu n’est pas un EPUB valide') from None
-
-def looks_like_acsm(path):
-    try:
-        target=Path(path)
-        if target.stat().st_size <= 0 or target.stat().st_size > 2*1024*1024:
-            return False
-        root=ET.parse(target).getroot()
-        tag=str(root.tag)
-        local=tag.rsplit('}',1)[-1].casefold()
-        namespace=tag[1:].split('}',1)[0].casefold() if tag.startswith('{') and '}' in tag else ''
-        return local in {'fulfillmenttoken','acsm'} and ('adobe.com/adept' in namespace or local=='fulfillmenttoken')
-    except (OSError,ET.ParseError,ValueError):
-        return False
 
 class NumilogSession(ProviderSession):
     def __init__(self, *, config, diagnostics, acquisition_broker=None, identity_broker=None, **kwargs):
@@ -368,7 +355,7 @@ class NumilogSession(ProviderSession):
                             if size > self.maximum:
                                 raise ProviderError('Numilog : téléchargement trop volumineux')
                             output.write(chunk)
-                    if looks_like_acsm(part):
+                    if inspect_artifact(part, 'acsm').valid:
                         acsm = part.with_suffix('.acsm')
                         os.replace(part, acsm)
                         try:
