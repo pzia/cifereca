@@ -1,5 +1,8 @@
 # Handoff — gen-dataset
 
+> **Statut de rationalisation (7 octobre 2026)**  
+> `gen-dataset/` reste le banc de simulation fonctionnelle **actuel**. La cible documentaire est un futur répertoire `simulation/`, qui n'existe pas encore. Ce handoff décrit donc l'outil actuel et ne doit pas être interprété comme une décision de maintenir deux environnements concurrents. La migration est décrite dans `docs/SIMULATION.md`.
+
 État de reprise au 6 octobre 2026.
 
 ## Situation

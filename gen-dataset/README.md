@@ -1,5 +1,8 @@
 # Datasets UX — mode d'emploi
 
+> **Position dans la rationalisation**  
+> Ce répertoire est la simulation fonctionnelle **actuelle**. La cible future est `simulation/`, actuellement absente. Les faux services, fixtures et outils utiles seront migrés progressivement ; les éléments devenus inutiles seront supprimés. Ne pas développer en parallèle un second banc de simulation concurrent. Voir `../docs/SIMULATION.md`.
+
 `datasetctl.py` orchestre les faux services Cifereca dans un environnement UX
 entièrement isolé.
 
