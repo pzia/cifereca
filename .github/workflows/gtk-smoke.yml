@@ -9,6 +9,8 @@ on:
       - "environnements/chatgpt-work/**"
       - ".github/workflows/gtk-smoke.yml"
   push:
+    branches:
+      - main
     paths:
       - "src/cifereca/app.py"
       - "src/cifereca/gui/**"
