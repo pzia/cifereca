@@ -162,6 +162,15 @@ def acquisition_offer_preferred_format(offer: AcquisitionOffer) -> str:
 
 def acquisition_offers_metadata(offers: object) -> dict[str, Any]:
     """Project offer alternatives into search metadata without inventing a choice."""
+    if isinstance(offers, AcquisitionOfferSet):
+        from .acquisition import acquisition_format_projection
+        projection = acquisition_format_projection(offers)
+        result = {"available_formats": list(projection["available_formats"]),
+                  "format_source": "acquisition_offers" if projection["available_formats"] else "unknown"}
+        preferred = projection["preferred_formats"]
+        if preferred:
+            result["preferred_format"] = preferred[0]
+        return result
     rows = tuple(offers or ()) if isinstance(offers, (list, tuple)) else ()
     formats: list[str] = []
     preferences: list[str] = []
@@ -181,6 +190,21 @@ def acquisition_offers_metadata(offers: object) -> dict[str, Any]:
     if len(preferences) == 1:
         result["preferred_format"] = preferences[0]
     return result
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionPreferences:
+    """Ordered user/provider preferences applied only to attested offers."""
+    format_order: tuple[str, ...] = ()
+    offer_order: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionOfferSet:
+    """A complete acquisition choice set without implicit format inference."""
+    offers: tuple[AcquisitionOffer, ...] = ()
+    preferences: AcquisitionPreferences = field(default_factory=AcquisitionPreferences)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -946,7 +970,7 @@ class PluginContext(Protocol):
 __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
-    "PluginDirectories", "AcquisitionOffer", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
+    "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
     "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
@@ -958,3 +982,4 @@ __all__ = [
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
+

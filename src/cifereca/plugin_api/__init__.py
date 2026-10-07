@@ -7,7 +7,7 @@ External plugins should import from this package only.  Internal modules such as
 from .context import PluginContext
 from .errors import (AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled)
 from .models import (
-    AcquisitionOffer,
+    AcquisitionOffer, AcquisitionPreferences, AcquisitionOfferSet,
     normalize_acquisition_format, acquisition_offer_formats, acquisition_offer_preferred_format, acquisition_offers_metadata,
     ArtifactInput,
     CategoryDefinition,
@@ -37,6 +37,12 @@ from .models import (
 )
 from .brokers import (CatalogBroker, AcquisitionBroker, SynchronizationBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker, RuntimeCapabilitiesBroker, AdeptProfileBroker, AdeptLoanBroker,
     ArtifactExecutionBroker, LibraryReadBroker, LibraryMaintenanceBroker, ArtifactRoutingBroker, CacheBroker, TaskBroker)
+from .acquisition import (
+    normalize_acquisition_offers,
+    attested_offer_formats,
+    rank_acquisition_offers,
+    acquisition_format_projection,
+)
 from .version import MANIFEST_VERSION, PLUGIN_API_VERSION
 from .contracts import (ContractStatus, ContractDefinition, ContractCheck, CONTRACT_REGISTRY, contract_definition, split_contract, capability_name_valid, contract_version_matches, check_service_contract)
 from cifereca.language import normalize_language_tag
@@ -56,7 +62,7 @@ from .acquisition_recipes import (
 
 __all__ = [
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
-    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
+    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
     "StorageTarget", "StorageResult", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
     "PluginDescriptor", "PluginDirectories", "PluginLifecycle", "PluginState", "InstantiationMode",
@@ -70,7 +76,8 @@ __all__ = [
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiPluginManagementHost",
     "CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",
-    "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
+    "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text",
+    "normalize_acquisition_offers", "attested_offer_formats", "rank_acquisition_offers", "acquisition_format_projection", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
     "ContractStatus", "ContractDefinition", "ContractCheck", "CONTRACT_REGISTRY", "contract_definition", "split_contract", "capability_name_valid", "contract_version_matches", "check_service_contract",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
@@ -89,3 +96,4 @@ from cifereca.providers.base import (
     CredentialField, ProviderCapabilities, ProviderCapabilityError, ProviderConfigurationError,
     ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession,
 )
+

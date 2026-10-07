@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from ..models import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult
 
 if TYPE_CHECKING:
-    from ..plugin_api.models import AcquisitionOffer
+    from ..plugin_api.models import AcquisitionOffer, AcquisitionOfferSet
 
 
 ImplementationState = Literal["ready", "skeleton"]
@@ -127,10 +127,6 @@ class ProviderSession(ABC):
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         raise ProviderCapabilityError(f"{self.provider_id}: holdings unsupported")
 
-    def acquisition_offers(self, item: SearchResult) -> list["AcquisitionOffer"]:
-        """Return explicit acquisition alternatives; empty means not published."""
-        return []
-
     def library(self) -> list[SearchResult]:
         raise ProviderCapabilityError(f"{self.provider_id}: personal library unsupported")
 
@@ -151,6 +147,14 @@ class ProviderSession(ABC):
     def download_direct(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
         """Acquire a non-loan digital resource (e.g. future Gallica plugin)."""
         raise ProviderCapabilityError(f"{self.provider_id}: direct download unsupported")
+
+    def acquisition_offers(self, item: SearchResult) -> "AcquisitionOfferSet | list[AcquisitionOffer]":
+        """Return explicit acquisition choices.
+
+        Legacy providers may return a list. New providers can return the richer
+        AcquisitionOfferSet with explicit format/offer preferences.
+        """
+        return []
 
     def renew(self, loan: Loan, account: Account) -> dict[str, Any]:
         raise ProviderCapabilityError(f"{self.provider_id}: renew unsupported")
@@ -190,3 +194,4 @@ class ProviderPlugin(ABC):
         diagnostics: Any,
     ) -> ProviderSession:
         raise NotImplementedError
+
