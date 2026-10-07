@@ -4,7 +4,7 @@ from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 from .models import (
     AccountRef, ActionStatistics, ArtifactFormat, ArtifactInputLease, ArtifactOutputLease, ArtifactRef, ArtifactRoutePlan,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, LibraryMutationPlan,
-    LibraryMutationRequest, LibraryMutationResult, LogicalBookArtifacts, SyncRequest, SyncResult, SyncSourceRef,
+    HealthCheckResult, LibraryMutationRequest, LibraryMutationResult, LogicalBookArtifacts, SyncRequest, SyncResult, SyncSourceRef,
     TaskControl, TaskHandle, TransformRequest, TransformResult,
 )
 
@@ -69,6 +69,7 @@ class TaskBroker(Protocol):
 class DiagnosticsBroker(Protocol):
     def snapshot(self) -> tuple[Mapping[str, Any], ...]: ...
     def system_status(self) -> Mapping[str, Any]: ...
+    def active_checks(self) -> tuple[HealthCheckResult, ...]: ...
     def export_text(self) -> str: ...
 
 @runtime_checkable

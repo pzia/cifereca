@@ -31,7 +31,7 @@ from .models import (
     ArtifactPlacementRef, ArtifactPossessionRef, LogicalBookArtifacts, LibraryMutationOperation, LibraryMutationRequest, LibraryMutationPlan, LibraryMutationResult,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncSourceRef,
     MaintenanceToolInfo, MaintenanceContext, MaintenancePlan, MaintenanceResult, MaintenanceTool,
-    TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, DocumentTransformer,
+    TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, HealthCheckResult, DiagnosticsCheckProvider, DocumentTransformer,
     UiActionContext, UiBookListHost, UiBookDetailHost, UiFacetHost, UiActionHost, UiPluginManagementHost,
 )
 from .brokers import (CatalogBroker, AcquisitionBroker, SynchronizationBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker,
@@ -57,7 +57,7 @@ __all__ = [
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
-    "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult", "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "DocumentTransformer",
+    "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult", "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiPluginManagementHost",
     "CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",

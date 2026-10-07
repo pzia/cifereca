@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, SyncRequest, SyncResult, SyncSourceRef
+from cifereca.plugin_api import AccountRef, HealthCheckResult, SyncRequest, SyncResult, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
@@ -266,11 +266,142 @@ class IdentityBrokerImpl:
 @dataclass(slots=True)
 class DiagnosticsBrokerImpl:
     service: Any
+
     def snapshot(self):
         return tuple(self.service.diagnostics.snapshot())
+
     def system_status(self):
         from .system_status import system_status
         return system_status(getattr(self.service, "plugin_manager", None))
+
+    def active_checks(self) -> tuple[HealthCheckResult, ...]:
+        from .diagnostics import redact, redact_text
+
+        rows: list[HealthCheckResult] = []
+        try:
+            sources = SynchronizationBrokerImpl(self.service).sources()
+            if not sources:
+                rows.append(HealthCheckResult(
+                    "core.sync.sources",
+                    "sync",
+                    "ok",
+                    "Sources configurées",
+                    {"count": 0},
+                    "core",
+                ))
+            for source in sources:
+                error = str(source.error or "")
+                connected = bool(source.connected)
+                capable = bool(source.sync_capable)
+                status = "error" if error else ("ok" if connected and capable else "warning")
+                rows.append(HealthCheckResult(
+                    f"core.sync.{source.source_id}",
+                    str(source.provider_id or "sync"),
+                    status,
+                    "Source " + str(source.label or source.provider_id or "configurée"),
+                    redact({
+                        "provider_id": source.provider_id,
+                        "connected": connected,
+                        "sync_capable": capable,
+                        "enabled": bool(source.enabled),
+                        "last_success": source.last_success,
+                        "error": error[:240] if error else "",
+                    }),
+                    "core",
+                ))
+        except Exception as exc:
+            rows.append(HealthCheckResult(
+                "core.sync.sources",
+                "sync",
+                "error",
+                "Sources configurées",
+                {"error_type": type(exc).__name__},
+                "core",
+            ))
+
+        manager = getattr(self.service, "plugin_manager", None)
+        if manager is None:
+            manager = getattr(self.service, "_plugin_manager", None)
+        if manager is None:
+            rows.append(HealthCheckResult(
+                "core.plugins",
+                "plugins",
+                "warning",
+                "Plugins",
+                {"reason": "plugin manager indisponible"},
+                "core",
+            ))
+            return tuple(rows)
+
+        try:
+            providers = tuple(manager.services("provider.library"))
+            rows.append(HealthCheckResult(
+                "core.providers.loaded",
+                "provider.library",
+                "ok",
+                "Providers chargés",
+                {"count": len(providers)},
+                "core",
+            ))
+        except Exception as exc:
+            rows.append(HealthCheckResult(
+                "core.providers.loaded",
+                "provider.library",
+                "error",
+                "Providers chargés",
+                {"error_type": type(exc).__name__},
+                "core",
+            ))
+
+        try:
+            contributions = tuple(manager.services("diagnostics.check"))
+        except Exception as exc:
+            rows.append(HealthCheckResult(
+                "core.diagnostics.contributions",
+                "diagnostics.check",
+                "error",
+                "Vérifications plugins",
+                {"error_type": type(exc).__name__},
+                "core",
+            ))
+            contributions = ()
+
+        allowed_status = {"ok", "warning", "error", "unknown"}
+        for resolved in contributions:
+            try:
+                checks = tuple(resolved.service.checks())
+            except Exception as exc:
+                rows.append(HealthCheckResult(
+                    f"{resolved.plugin_id}.check",
+                    resolved.plugin_id,
+                    "error",
+                    resolved.plugin_id,
+                    {"error_type": type(exc).__name__},
+                    "plugin",
+                ))
+                continue
+            for item in checks:
+                if not isinstance(item, HealthCheckResult):
+                    rows.append(HealthCheckResult(
+                        f"{resolved.plugin_id}.invalid",
+                        resolved.plugin_id,
+                        "error",
+                        "Résultat de diagnostic invalide",
+                        {"result_type": type(item).__name__},
+                        "plugin",
+                    ))
+                    continue
+                status = item.status if item.status in allowed_status else "unknown"
+                rows.append(HealthCheckResult(
+                    redact_text(str(item.check_id or resolved.plugin_id))[:160],
+                    redact_text(str(item.component or resolved.plugin_id))[:160],
+                    status,
+                    redact_text(str(item.message or item.component or resolved.plugin_id))[:300],
+                    redact(dict(item.detail or {})),
+                    str(item.scope or "plugin")[:80],
+                ))
+        return tuple(rows)
+
     def export_text(self) -> str:
         from . import __version__
         return self.service.diagnostics.text(__version__, {"plugins": len(getattr(getattr(self.service, "plugin_manager", None), "statuses", lambda: [])())})

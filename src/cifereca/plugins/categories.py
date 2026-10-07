@@ -23,6 +23,7 @@ CORE_CATEGORIES: tuple[CategoryDefinition, ...] = (
     CategoryDefinition("device.profile", "Profil de liseuse", "cifereca.device.profile/1", "all"),
     CategoryDefinition("artifact.transform.preset", "Preset de transformation", "cifereca.artifact.transform.preset/1", "all"),
     CategoryDefinition("maintenance.tool", "Outil de maintenance", "cifereca.maintenance.tool/1", "all"),
+    CategoryDefinition("diagnostics.check", "Vérification diagnostic", "cifereca.diagnostics.check/1", "all"),
     CategoryDefinition("meta.bundle", "Bundle de plugins", "cifereca.meta/1", "all"),
 )
 
