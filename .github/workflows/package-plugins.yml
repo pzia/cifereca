@@ -3,12 +3,12 @@ name: Package plugins
 on:
   push:
     paths:
-      - "plugins/**"
+      - "src/plugins/**"
       - "scripts/**"
       - ".github/workflows/package-plugins.yml"
   pull_request:
     paths:
-      - "plugins/**"
+      - "src/plugins/**"
       - "scripts/**"
       - ".github/workflows/package-plugins.yml"
   workflow_dispatch:
