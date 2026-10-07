@@ -12,7 +12,7 @@ from cifereca.plugin_api import (
 
 from recommendation_engine import candidate_key, get_field
 from recommendations import RecommendationsPlugin
-from recommendations_v022 import RecommendationTaskControl, StreamingRecommendationsView
+from recommendations_v022 import StreamingRecommendationsView
 
 
 class MasterDetailRecommendationsView(StreamingRecommendationsView):
@@ -31,7 +31,7 @@ class MasterDetailRecommendationsView(StreamingRecommendationsView):
         self._unsubscribe = None
         self._generation = 0
         self._busy = False
-        self._task_control: RecommendationTaskControl | None = None
+        self._task_handle = None
         self._pending_partial = None
         self._partial_source_id = 0
         self._render_generation = 0

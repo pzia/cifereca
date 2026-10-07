@@ -1,35 +1,12 @@
 from __future__ import annotations
 
-import threading
-
+from cifereca.plugin_api import Cancelled
 from recommendation_service_v022 import RecommendationPartial, RecommendationResult, compute_recommendations
 from recommendations_v021 import ProgressRecommendationsView, RecommendationsPluginV021
 
 
-class RecommendationTaskControl:
-    """Small public TaskControl implementation used to stop stale catalog work."""
-
-    def __init__(self) -> None:
-        self._cancelled = threading.Event()
-
-    def cancel(self) -> None:
-        self._cancelled.set()
-
-    def cancelled(self) -> bool:
-        return self._cancelled.is_set()
-
-    def check_cancelled(self) -> None:
-        if self.cancelled():
-            raise RuntimeError("recommendation task cancelled")
-
-    def report(self, *, current=None, total=None, message: str = "") -> None:
-        # Progress is already supplied by CatalogSearchBatch and is deliberately
-        # not sent to GTK from a provider/worker callback.
-        return None
-
-
 class StreamingRecommendationsView(ProgressRecommendationsView):
-    """0.2.2: cancellable worker, progressive results and cooperative GTK render."""
+    """0.2.3: Core-owned worker, cancellable search and cooperative GTK render."""
 
     RENDER_CHUNK = 8
     CLEAR_CHUNK = 20
@@ -37,15 +14,14 @@ class StreamingRecommendationsView(ProgressRecommendationsView):
 
     def __init__(self, plugin, host, Gtk, GLib):
         super().__init__(plugin, host, Gtk, GLib)
-        self._task_control: RecommendationTaskControl | None = None
+        self._task_handle = None
         self._pending_partial: RecommendationPartial | None = None
         self._partial_source_id = 0
         self._render_generation = 0
 
     def refresh(self):
-        # Cancel the previous Core progressive search before starting another one.
-        if self._task_control is not None:
-            self._task_control.cancel()
+        if self._task_handle is not None:
+            self._task_handle.cancel()
 
         identity_id = self.selected_identity_id()
         if not identity_id:
@@ -57,14 +33,13 @@ class StreamingRecommendationsView(ProgressRecommendationsView):
             return False
         metadata_broker = context.broker("metadata")
         catalog_broker = context.broker("catalog")
-        if metadata_broker is None or catalog_broker is None:
-            self._summary.set_label("Core incompatible : brokers metadata/catalog indisponibles.")
+        task_broker = context.broker("tasks")
+        if metadata_broker is None or catalog_broker is None or task_broker is None:
+            self._summary.set_label("Core incompatible : brokers metadata/catalog/tasks indisponibles.")
             return False
 
         self._generation += 1
         generation = self._generation
-        self._task_control = RecommendationTaskControl()
-        control = self._task_control
         self._busy = True
         self._refresh_button.set_sensitive(False)
         self._spinner.start()
@@ -73,48 +48,56 @@ class StreamingRecommendationsView(ProgressRecommendationsView):
         self._summary.set_label("Lecture de la projection locale de la bibliothèque…")
         exploration = int(self._exploration.get_value())
 
-        def progress(done: int, total: int, detail: str) -> None:
-            if generation != self._generation or control.cancelled():
-                return
-            label = (
-                f"Recherche {done + 1}/{total} · {detail}"
-                if detail and done < total
-                else "Classement des résultats…"
-            )
-            self.GLib.idle_add(self._set_progress, generation, label)
-
-        def partial(snapshot: RecommendationPartial) -> None:
-            if generation != self._generation or control.cancelled():
-                return
-            # The Core callback stays GTK-free. Crossing to GTK is always done
-            # with idle_add and partial snapshots are coalesced afterwards.
-            self.GLib.idle_add(self._accept_partial, generation, snapshot)
-
-        def worker() -> None:
-            try:
-                result = compute_recommendations(
-                    metadata_broker,
-                    catalog_broker,
-                    identity_id,
-                    scope=self._config_str("scope", "digital"),
-                    max_queries=self._config_int("max_queries", 8),
-                    per_query=self._config_int("per_query", 50),
-                    max_results=self._config_int("max_results", 120),
-                    exploration=exploration,
-                    progress=progress,
-                    partial=partial,
-                    control=control,
+        def operation(control):
+            def progress(done: int, total: int, detail: str) -> None:
+                if generation != self._generation or control.cancelled():
+                    return
+                label = (
+                    f"Recherche {done + 1}/{total} · {detail}"
+                    if detail and done < total
+                    else "Classement des résultats…"
                 )
-                self.GLib.idle_add(self._complete, generation, result, None)
-            except Exception as exc:
-                if not control.cancelled():
-                    self.GLib.idle_add(self._complete, generation, None, str(exc))
+                self.GLib.idle_add(self._set_progress, generation, label)
 
-        threading.Thread(
-            target=worker,
-            name="cifereca-recommendations",
-            daemon=True,
-        ).start()
+            def partial(snapshot: RecommendationPartial) -> None:
+                if generation != self._generation or control.cancelled():
+                    return
+                self.GLib.idle_add(self._accept_partial, generation, snapshot)
+
+            return compute_recommendations(
+                metadata_broker,
+                catalog_broker,
+                identity_id,
+                scope=self._config_str("scope", "digital"),
+                max_queries=self._config_int("max_queries", 8),
+                per_query=self._config_int("per_query", 50),
+                max_results=self._config_int("max_results", 120),
+                exploration=exploration,
+                progress=progress,
+                partial=partial,
+                control=control,
+            )
+
+        handle = task_broker.submit(
+            operation,
+            label="Calcul des recommandations",
+            kind="recommendations",
+        )
+        self._task_handle = handle
+
+        def finished(done_handle) -> None:
+            if done_handle.control.cancelled():
+                return
+            try:
+                result = done_handle.result()
+            except Cancelled:
+                return
+            except Exception as exc:
+                self.GLib.idle_add(self._complete, generation, None, str(exc))
+            else:
+                self.GLib.idle_add(self._complete, generation, result, None)
+
+        handle.add_done_callback(finished)
         return False
 
     def _accept_partial(self, generation: int, snapshot: RecommendationPartial) -> bool:
@@ -188,6 +171,7 @@ class StreamingRecommendationsView(ProgressRecommendationsView):
     ):
         if generation != self._generation:
             return False
+        self._task_handle = None
         self._pending_partial = None
         if self._partial_source_id:
             try:
@@ -198,9 +182,9 @@ class StreamingRecommendationsView(ProgressRecommendationsView):
         return super()._complete(generation, result, error)
 
     def dispose(self) -> None:
-        if self._task_control is not None:
-            self._task_control.cancel()
-        self._task_control = None
+        if self._task_handle is not None:
+            self._task_handle.cancel()
+        self._task_handle = None
         self._pending_partial = None
         self._render_generation += 1
         if self._partial_source_id:

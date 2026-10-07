@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
@@ -26,6 +26,7 @@ class CiferecaCore:
     diagnostics: Diagnostics
     library: LibraryService
     plugins: PluginManager
+    brokers: dict[str, object] = field(default_factory=dict, repr=False)
 
     @classmethod
     def open(
@@ -76,6 +77,7 @@ class CiferecaCore:
             diagnostics=diagnostics,
             library=library,
             plugins=plugins,
+            brokers=brokers,
         )
 
     @staticmethod
@@ -93,6 +95,18 @@ class CiferecaCore:
 
     def close(self) -> None:
         self.plugins.close()
+        seen: set[int] = set()
+        for broker in self.brokers.values():
+            marker = id(broker)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            close = getattr(broker, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
         self.library.close()
 
     def __enter__(self) -> Self:

@@ -642,6 +642,16 @@ class TaskControl(Protocol):
 
 
 @runtime_checkable
+class TaskHandle(Protocol):
+    @property
+    def control(self) -> TaskControl: ...
+    def cancel(self) -> None: ...
+    def done(self) -> bool: ...
+    def result(self, timeout: float | None = None) -> Any: ...
+    def add_done_callback(self, callback: Callable[["TaskHandle"], None]) -> None: ...
+
+
+@runtime_checkable
 class DocumentTransformer(Protocol):
     def capabilities(self) -> tuple[TransformCapability, ...]: ...
     def plan(self, request: TransformRequest, source: ArtifactInputLease, control: TaskControl | None = None) -> TransformPlan: ...
@@ -826,7 +836,7 @@ __all__ = [
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
-    "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "DocumentTransformer",
+    "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
