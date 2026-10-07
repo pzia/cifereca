@@ -16,11 +16,11 @@ def _method_source(class_name: str, method_name: str) -> str:
 
 def test_query_filters_keep_natural_width_in_flowbox():
     source = _method_source("QueryControls", "__init__")
-    assert "def compact_filter(widget):" in source
+    assert "def insert_filter(widget):" in source
     assert "widget.set_hexpand(False)" in source
     assert "widget.set_halign(Gtk.Align.START)" in source
-    assert "self.provider = compact_filter(" in source
-    assert "self.types = compact_filter(" in source
-    assert "self.languages = compact_filter(" in source
-    assert "self.field = compact_filter(" in source
-    assert "self.scope = compact_filter(" in source
+    assert "self.provider = insert_filter(" in source
+    assert "self.types = insert_filter(" in source
+    assert "self.languages = insert_filter(" in source
+    assert "self.field = insert_filter(" in source
+    assert "self.scope = insert_filter(" in source

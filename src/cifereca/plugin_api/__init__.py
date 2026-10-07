@@ -8,6 +8,7 @@ from .context import PluginContext
 from .errors import (AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled)
 from .models import (
     AcquisitionOffer,
+    normalize_acquisition_format, acquisition_offer_formats, acquisition_offer_preferred_format, acquisition_offers_metadata,
     ArtifactInput,
     CategoryDefinition,
     Dependency,
@@ -29,12 +30,12 @@ from .models import (
     UiActionContribution, UiPageContribution, UiPageHost, UiIdentityHost, UiIdentityViewHost, UiMasterDetailHost, UiBookMasterDetailView, UiBookListEntry, UiBookDetailAction, UiBookDetailPresentation, UiPageActionHost, UiPageProvider, UiTitlebarProvider, WidgetCatalog,
     ResolvedPluginService, Provenance, BookRef, DetailField, DetailSection, FacetTag, ArtifactFormat, ArtifactRef, ArtifactVariant,
     ArtifactPlacementRef, ArtifactPossessionRef, LogicalBookArtifacts, LibraryMutationOperation, LibraryMutationRequest, LibraryMutationPlan, LibraryMutationResult,
-    ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncSourceRef,
+    ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncSourceRef, AdeptProfileRef, RuntimeAcquisitionCapabilities,
     MaintenanceToolInfo, MaintenanceContext, MaintenancePlan, MaintenanceResult, MaintenanceTool,
-    TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, HealthCheckResult, DiagnosticsCheckProvider, DocumentTransformer,
+    TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, CatalogServiceFactory, HealthCheckResult, DiagnosticsCheckProvider, DocumentTransformer,
     UiActionContext, UiBookListHost, UiBookDetailHost, UiFacetHost, UiActionHost, UiPluginManagementHost,
 )
-from .brokers import (CatalogBroker, AcquisitionBroker, SynchronizationBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker,
+from .brokers import (CatalogBroker, AcquisitionBroker, SynchronizationBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker, RuntimeCapabilitiesBroker, AdeptProfileBroker, AdeptLoanBroker,
     ArtifactExecutionBroker, LibraryReadBroker, LibraryMaintenanceBroker, ArtifactRoutingBroker, CacheBroker, TaskBroker)
 from .version import MANIFEST_VERSION, PLUGIN_API_VERSION
 from .contracts import (ContractStatus, ContractDefinition, ContractCheck, CONTRACT_REGISTRY, contract_definition, split_contract, capability_name_valid, contract_version_matches, check_service_contract)
@@ -48,10 +49,14 @@ from .bundles import (
     BUNDLE_MANIFEST_NAME, BUNDLE_MANIFEST_VERSION, BundleError, BundleManifest, BundleMember,
     bundle_search_values, load_bundle_manifest, write_bundle_manifest,
 )
+from .acquisition_recipes import (
+    BundleRecipeError, BundleTrack, BundleAcquisitionRecipe,
+    normalize_audio_format, validate_audio_bundle_manifest,
+)
 
 __all__ = [
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
-    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "ArtifactInput",
+    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
     "StorageTarget", "StorageResult", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
     "PluginDescriptor", "PluginDirectories", "PluginLifecycle", "PluginState", "InstantiationMode",
@@ -59,17 +64,18 @@ __all__ = [
     "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
-    "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
+    "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef", "AdeptProfileRef", "RuntimeAcquisitionCapabilities",
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
-    "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult", "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
+    "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult", "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "CatalogServiceFactory", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiPluginManagementHost",
-    "CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker",
+    "CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",
     "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
     "ContractStatus", "ContractDefinition", "ContractCheck", "CONTRACT_REGISTRY", "contract_definition", "split_contract", "capability_name_valid", "contract_version_matches", "check_service_contract",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
+    "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest",
     "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "SearchResult",
     "CredentialField", "ProviderCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",

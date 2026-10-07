@@ -130,6 +130,35 @@ def available_formats(row):
     return tuple(out)
 
 
+def project_acquisition_offer_formats(
+    row: Mapping[str, Any],
+    offers: object,
+) -> dict[str, Any]:
+    """Add attested offer alternatives to filter metadata without choosing a format."""
+    from cifereca.plugin_api import acquisition_offers_metadata
+
+    projected = dict(row)
+    meta = _metadata(row)
+    offer_meta = acquisition_offers_metadata(offers)
+    offered = tuple(offer_meta.get("available_formats") or ())
+    if not offered:
+        projected["metadata"] = meta
+        return projected
+
+    merged: list[str] = list(available_formats(row))
+    for value in offered:
+        normalized = file_format(value)
+        if normalized and normalized not in merged:
+            merged.append(normalized)
+    meta["available_formats"] = merged
+    meta["offer_format_source"] = "acquisition_offers"
+    preferred = file_format(offer_meta.get("preferred_format"))
+    if preferred and preferred in merged:
+        meta["preferred_format"] = preferred
+    projected["metadata"] = meta
+    return projected
+
+
 def _content_type(row: Mapping[str, Any]) -> str:
     explicit = str(row.get("content_type") or "").casefold()
     if explicit in {"ebook", "audiobook"}:
@@ -279,4 +308,4 @@ class KnownCatalogSearch:
         )
 
 
-__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results"]
+__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "available_formats", "project_acquisition_offer_formats"]

@@ -2113,6 +2113,78 @@ class LibraryService:
             )
         return service
 
+    @staticmethod
+    def _http_plain_transport_proof(request: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize the Core proof required for direct HTTP dispatch."""
+        handling_values: list[str] = []
+        drm_labels: list[str] = []
+        protected_attested = False
+
+        for owner in (request, source):
+            if "handling" in owner:
+                handling = str(owner.get("handling") or "").strip().casefold()
+                if handling:
+                    handling_values.append(handling)
+            if "drm" not in owner:
+                continue
+            drm = owner.get("drm")
+            if isinstance(drm, dict):
+                if "protected" in drm:
+                    if drm.get("protected") is not False:
+                        raise AttentionRequired(
+                            "Cette source HTTP est protégée ou sa protection n’est pas explicitement levée.",
+                            code="http_drm_not_plain",
+                        )
+                    protected_attested = True
+                for key in ("raw_type", "family", "type"):
+                    value = str(drm.get(key) or "").strip()
+                    if value:
+                        drm_labels.append(value)
+            elif drm is None:
+                raise AttentionRequired(
+                    "Cette source HTTP ne fournit pas de preuve DRM exploitable.",
+                    code="http_drm_attestation_required",
+                )
+            else:
+                value = str(drm).strip()
+                if value:
+                    drm_labels.append(value)
+
+        if not handling_values:
+            raise AttentionRequired(
+                "Cette source HTTP n’atteste pas le handling http_plain.",
+                code="http_handling_attestation_required",
+            )
+        if any(value != "http_plain" for value in handling_values):
+            raise AttentionRequired(
+                "Cette source HTTP nécessite un traitement dédié.",
+                code="http_handling_not_plain",
+            )
+
+        normalized_labels = [
+            re.sub(r"[^a-z0-9]", "", value.casefold())
+            for value in drm_labels
+        ]
+        allowed = {"none", "nodrm", "signednodrm"}
+        if any(value not in allowed for value in normalized_labels):
+            raise AttentionRequired(
+                "Cette source HTTP nécessite un traitement DRM explicite.",
+                code="http_drm_not_plain",
+            )
+        if not normalized_labels and not protected_attested:
+            raise AttentionRequired(
+                "Cette source HTTP n’atteste pas explicitement l’absence de DRM.",
+                code="http_drm_attestation_required",
+            )
+
+        label = drm_labels[0] if drm_labels else "none"
+        return {
+            "handling": "http_plain",
+            "drm": label,
+            "protected": False,
+            "attested": True,
+        }
+
     def execute_acquisition_request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Execute a normalized acquisition recipe through Plugin API services.
 
@@ -2138,13 +2210,11 @@ class LibraryService:
             destination = Path(str(request.get("destination") or ""))
             if not destination.name:
                 raise ProviderConfigurationError("Recette HTTP sans destination")
-            # Preserve policy information; never relabel protected content as plain.
+            # Core owns the DRM/handling boundary. The transport receives the
+            # original source plus a normalized proof of the policy decision.
+            proof = self._http_plain_transport_proof(request, source)
             fetch_source = dict(source)
-            for owner in (request, source):
-                if "drm" in owner and (not isinstance(owner["drm"], str) or owner["drm"].casefold() not in {"none", "nodrm", "signednodrm", ""}):
-                    raise AttentionRequired("Cette source HTTP nécessite un traitement DRM explicite.", code="http_drm_not_plain")
-                if "handling" in owner and owner["handling"] != "http_plain":
-                    raise AttentionRequired("Cette source HTTP nécessite un traitement dédié.", code="http_handling_not_plain")
+            fetch_source["protection"] = proof
             fetch_source["headers"] = dict(source.get("headers") or {})
             if request.get("format") and not fetch_source.get("expected_format"):
                 fetch_source["expected_format"] = str(request.get("format") or "").casefold()

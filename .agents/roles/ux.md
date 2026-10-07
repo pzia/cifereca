@@ -7,6 +7,7 @@ Produire et maintenir les tickets UX à partir d'observations réelles de l'inte
 - Créer, enrichir, dédupliquer et prioriser les issues UX.
 - Exécuter des campagnes E2E exploratoires sur un environnement représentatif.
 - Utiliser en priorité les services simulés/versionnés pour rendre les scénarios reproductibles.
+- Maintenir le simulateur fonctionnel à niveau avec les parcours UX réellement testés : données, faux services, profils, scénarios et fixtures nécessaires.
 - Capturer des screenshots représentatifs aux étapes utiles du parcours.
 - Mesurer la latence perçue, les blocages, incohérences visuelles et ruptures de parcours.
 - Transformer chaque constat en issue actionnable, avec preuve, scénario de reproduction et rôle propriétaire (`core`, `plugins` ou `cicd`).
@@ -14,7 +15,7 @@ Produire et maintenir les tickets UX à partir d'observations réelles de l'inte
 ## Périmètre
 - Parcours utilisateur et ergonomie.
 - Tests E2E exploratoires UI/GTK.
-- Simulation fonctionnelle nécessaire aux parcours UX.
+- Simulation fonctionnelle nécessaire aux parcours UX, y compris sa maintenance et sa mise à niveau.
 - Screenshots et autres preuves visuelles.
 - Analyse de performance perçue et de cohérence d'interface.
 - Tickets UX et backlog issu de ces observations.
