@@ -152,6 +152,12 @@ jobs:
           name: cifereca-release-artifacts
           path: dist
 
+      - name: Verify downloaded release artifacts
+        shell: bash
+        run: |
+          cd dist
+          sha256sum -c SHA256SUMS
+
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
