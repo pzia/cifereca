@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from concurrent.futures import Future
+from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import shutil
-from typing import Any
+import threading
+from typing import Any, Callable
 
 from .paths import cache_dir
 from .plugin_api import CacheNamespaceInfo, CachePurgeResult
@@ -51,11 +53,48 @@ def _purge_tree(root: Path) -> tuple[int, int, tuple[str, ...]]:
     return max(0, entries - after_entries), max(0, size - after_size), tuple(warnings)
 
 
+_CACHE_MISS = object()
+
+
+class _SingleFlight:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._futures: dict[tuple[str, str], Future[Any]] = {}
+
+    def run(self, namespace: str, key: str, producer: Callable[[], Any]) -> Any:
+        token = (namespace, key)
+        with self._lock:
+            future = self._futures.get(token)
+            if future is None:
+                future = Future()
+                self._futures[token] = future
+                leader = True
+            else:
+                leader = False
+
+        if not leader:
+            return future.result()
+
+        try:
+            result = producer()
+        except BaseException as exc:
+            future.set_exception(exc)
+            raise
+        else:
+            future.set_result(result)
+            return result
+        finally:
+            with self._lock:
+                if self._futures.get(token) is future:
+                    self._futures.pop(token, None)
+
+
 @dataclass(slots=True)
 class ScopedCacheBroker:
     service: Any
     plugin_id: str
     allow_global: bool = False
+    _singleflight: _SingleFlight = field(default_factory=_SingleFlight, repr=False)
 
     @property
     def _plugin_root(self) -> Path:
@@ -73,8 +112,7 @@ class ScopedCacheBroker:
         return key
 
     def get(self, key: str, default: Any = None) -> Any:
-        value = self.service.storage.cache_get(self._db_namespace, self._key(key))
-        return default if value is None else value
+        return self.service.storage.cache_get(self._db_namespace, self._key(key), default)
 
     def put(self, key: str, value: Any, *, ttl_seconds: int = 300) -> None:
         ttl = int(ttl_seconds)
@@ -84,6 +122,27 @@ class ScopedCacheBroker:
 
     def delete(self, key: str) -> bool:
         return bool(self.service.storage.cache_delete(self._db_namespace, self._key(key)))
+
+    def get_or_compute(self, key: str, producer: Callable[[], Any], *, ttl_seconds: int = 300) -> Any:
+        if not callable(producer):
+            raise TypeError("producer must be callable")
+        ttl = int(ttl_seconds)
+        if ttl < 1:
+            raise ValueError("ttl_seconds must be >= 1")
+        cache_key = self._key(key)
+        cached = self.service.storage.cache_get(self._db_namespace, cache_key, _CACHE_MISS)
+        if cached is not _CACHE_MISS:
+            return cached
+
+        def load() -> Any:
+            cached_again = self.service.storage.cache_get(self._db_namespace, cache_key, _CACHE_MISS)
+            if cached_again is not _CACHE_MISS:
+                return cached_again
+            value = producer()
+            self.service.storage.cache_put(self._db_namespace, cache_key, value, ttl)
+            return value
+
+        return self._singleflight.run(self._db_namespace, cache_key, load)
 
     def _core_db_namespaces(self) -> list[CacheNamespaceInfo]:
         rows: list[CacheNamespaceInfo] = []
@@ -195,21 +254,33 @@ class ScopedCacheBroker:
 @dataclass(slots=True)
 class CacheBrokerImpl:
     service: Any
+    _singleflight: _SingleFlight = field(default_factory=_SingleFlight, init=False, repr=False)
+
+    def _scope(self, plugin_id: str = "core", *, trusted: bool = True) -> ScopedCacheBroker:
+        return ScopedCacheBroker(
+            self.service,
+            str(plugin_id),
+            allow_global=bool(trusted),
+            _singleflight=self._singleflight,
+        )
 
     def for_plugin(self, plugin_id: str, *, trusted: bool = False) -> ScopedCacheBroker:
-        return ScopedCacheBroker(self.service, str(plugin_id), allow_global=bool(trusted))
+        return self._scope(plugin_id, trusted=trusted)
 
     def get(self, key: str, default: Any = None) -> Any:
-        return ScopedCacheBroker(self.service, "core", allow_global=True).get(key, default)
+        return self._scope().get(key, default)
 
     def put(self, key: str, value: Any, *, ttl_seconds: int = 300) -> None:
-        ScopedCacheBroker(self.service, "core", allow_global=True).put(key, value, ttl_seconds=ttl_seconds)
+        self._scope().put(key, value, ttl_seconds=ttl_seconds)
 
     def delete(self, key: str) -> bool:
-        return ScopedCacheBroker(self.service, "core", allow_global=True).delete(key)
+        return self._scope().delete(key)
+
+    def get_or_compute(self, key: str, producer: Callable[[], Any], *, ttl_seconds: int = 300) -> Any:
+        return self._scope().get_or_compute(key, producer, ttl_seconds=ttl_seconds)
 
     def namespaces(self) -> tuple[CacheNamespaceInfo, ...]:
-        return ScopedCacheBroker(self.service, "core", allow_global=True).namespaces()
+        return self._scope().namespaces()
 
     def purge(self, namespace_id: str = "", *, expired_only: bool = False) -> CachePurgeResult:
-        return ScopedCacheBroker(self.service, "core", allow_global=True).purge(namespace_id, expired_only=expired_only)
+        return self._scope().purge(namespace_id, expired_only=expired_only)

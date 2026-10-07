@@ -948,7 +948,7 @@ class Storage:
         except AttributeError:
             pass
 
-    def cache_get(self, namespace: str, key: str) -> Any | None:
+    def cache_get(self, namespace: str, key: str, default: Any = None) -> Any:
         now = int(time.time())
         with self._lock, self._connect() as db:
             row = db.execute(
@@ -956,15 +956,15 @@ class Storage:
                 (namespace, key),
             ).fetchone()
             if not row:
-                return None
+                return default
             payload, expires_at = row
             if expires_at < now:
                 db.execute("DELETE FROM cache WHERE namespace=? AND cache_key=?", (namespace, key))
-                return None
+                return default
             try:
                 return json.loads(payload)
             except Exception:
-                return None
+                return default
 
     def cache_put(self, namespace: str, key: str, value: Any, ttl_seconds: int) -> None:
         now = int(time.time())

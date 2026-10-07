@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -138,6 +141,48 @@ def test_cache_broker_key_value_ttl_is_scoped(tmp_path, monkeypatch):
         result = second.purge("db:plugin:plugin.b")
         assert result.ok
         assert second.get("shared-key") is None
+    finally:
+        service.close()
+
+
+def test_cache_broker_singleflight_collapses_concurrent_misses(tmp_path):
+    service = _service(tmp_path)
+    try:
+        broker = CacheBrokerImpl(service)
+        scopes = [broker.for_plugin("plugin.singleflight", trusted=False) for _ in range(8)]
+        barrier = threading.Barrier(len(scopes))
+        calls = 0
+        calls_lock = threading.Lock()
+
+        def producer():
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+                value = calls
+            time.sleep(0.08)
+            return {"value": value}
+
+        def run(scope):
+            barrier.wait(timeout=2)
+            return scope.get_or_compute("expensive", producer, ttl_seconds=60)
+
+        with ThreadPoolExecutor(max_workers=len(scopes)) as pool:
+            results = list(pool.map(run, scopes))
+
+        assert calls == 1
+        assert results == [{"value": 1}] * len(scopes)
+
+        called_again = False
+        def should_not_run():
+            nonlocal called_again
+            called_again = True
+            return {"value": 2}
+        assert scopes[0].get_or_compute("expensive", should_not_run, ttl_seconds=60) == {"value": 1}
+        assert called_again is False
+
+        other = broker.for_plugin("plugin.other", trusted=False)
+        assert other.get_or_compute("expensive", lambda: {"value": 9}, ttl_seconds=60) == {"value": 9}
+        assert scopes[0].get("expensive") == {"value": 1}
     finally:
         service.close()
 
