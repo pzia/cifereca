@@ -21,6 +21,13 @@ def _module_source(path: Path) -> str:
     return ast.unparse(ast.parse(path.read_text()))
 
 
+def _nested_class_source(path: Path, outer_name: str, inner_name: str) -> str:
+    tree = ast.parse(path.read_text())
+    outer = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == outer_name)
+    inner = next(node for node in outer.body if isinstance(node, ast.ClassDef) and node.name == inner_name)
+    return ast.unparse(inner)
+
+
 def test_refresh_identity_loans_is_scoped_to_loan_capable_sessions_and_read_only_adept_refresh():
     source = _method_source(SERVICES, "LibraryService", "refresh_identity_loans")
 
@@ -77,7 +84,7 @@ def test_identity_view_host_is_an_optional_extension_of_existing_identity_host()
 
 
 def test_ui_host_exposes_filtered_navigation_without_removing_old_library_broker():
-    source = _method_source(MAIN, "MainWindow", "_UiHost")
+    source = _nested_class_source(MAIN, "MainWindow", "_UiHost")
 
     assert "def open_identity_library" in source
     assert "def supports_identity_view_filters" in source
