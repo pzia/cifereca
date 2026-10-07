@@ -33,6 +33,37 @@ def _validate_url(value: Any) -> str:
     return url
 
 
+def _validate_core_protection(source: Mapping[str, Any]) -> None:
+    """Validate the normalized Core proof without constraining direct provider calls."""
+    core_policy = any(key in source for key in ("handling", "drm", "protection"))
+    if not core_policy:
+        return
+
+    proof = source.get("protection")
+    if not isinstance(proof, Mapping):
+        raise UnsupportedOperation("transport.http: preuve de protection Core requise")
+    handling = str(proof.get("handling") or "").strip().casefold()
+    if handling != "http_plain":
+        raise UnsupportedOperation("transport.http: handling Core non http_plain")
+    if proof.get("protected") is not False or proof.get("attested") is not True:
+        raise UnsupportedOperation("transport.http: preuve Core non attestée")
+    source_handling = str(source.get("handling") or "").strip().casefold()
+    if source_handling and source_handling != handling:
+        raise UnsupportedOperation("transport.http: preuve Core incohérente")
+
+    source_drm = source.get("drm")
+    if isinstance(source_drm, Mapping):
+        if "protected" in source_drm and source_drm.get("protected") is not False:
+            raise UnsupportedOperation("transport.http: preuve DRM Core incohérente")
+    elif source_drm is not None:
+        normalized = "".join(
+            char for char in str(source_drm).casefold()
+            if char.isalnum()
+        )
+        if normalized and normalized not in {"none", "nodrm", "signednodrm"}:
+            raise UnsupportedOperation("transport.http: preuve DRM Core incohérente")
+
+
 def _safe_headers(value: Any) -> dict[str, str]:
     if value is None:
         return {}
@@ -84,6 +115,7 @@ class HttpTransport:
     def fetch(self, source: Mapping[str, Any], destination: Path) -> Path:
         if not isinstance(source, Mapping):
             raise UnsupportedOperation("transport.http: source invalide")
+        _validate_core_protection(source)
         url = _validate_url(source.get("url"))
         headers = _safe_headers(source.get("headers"))
         timeout, maximum, max_redirects = self._limits(source)

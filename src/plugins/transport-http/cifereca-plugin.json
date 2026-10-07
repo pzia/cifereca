@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.transport.http",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "name": "Transport HTTP",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "transport.http",
       "type": "transport",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "entrypoint": "cifereca_http_transport:PLUGIN",
       "display_name": "Transport HTTP",
       "description": "Téléchargement HTTP/HTTPS borné, redirections sûres et publication atomique.",
-      "help_text": "Service transversal pour les acquisitions HTTP publiques : flux borné en taille, délai réseau, redirections contrôlées, suppression des en-têtes sensibles lors d’un changement d’origine, refus des réponses HTML et publication atomique dans le fichier cible.",
+      "help_text": "Service transversal pour les acquisitions HTTP publiques : flux borné en taille, délai réseau, redirections contrôlées, suppression des en-têtes sensibles lors d’un changement d’origine, refus des réponses HTML et publication atomique dans le fichier cible. Lorsqu’il reçoit une source issue de l’orchestration Core (`handling`/`drm`), il exige et vérifie la preuve normalisée `source.protection`; les appels directs sans politique Core restent compatibles.",
       "enabled_by_default": true,
       "priority": 100,
       "instantiation": "singleton_public",
@@ -68,7 +68,7 @@
     {
       "id": "diagnostics.http-transport",
       "type": "diagnostics.check",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "entrypoint": "cifereca_http_transport_health:PLUGIN",
       "display_name": "Diagnostic transport HTTP",
       "description": "Vérification locale et expurgée du transport HTTP.",
@@ -79,7 +79,7 @@
       "requires": [
         {
           "plugin": "transport.http",
-          "version": ">=1.0.3,<2"
+          "version": ">=1.0.4,<2"
         }
       ],
       "recommends": [],
