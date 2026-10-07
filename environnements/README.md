@@ -6,7 +6,7 @@ Il ne contient ni code applicatif, ni faux services métier de référence. Il d
 
 - du Core et des plugins ;
 - des tests fonctionnels ;
-- de la simulation fonctionnelle (`gen-dataset/` aujourd'hui, `simulation/` à terme).
+- de la simulation fonctionnelle (`simulation/` aujourd'hui, `simulation/` à terme).
 
 Une recette peut fournir du bootstrap rootless, des lanceurs, des tests de validation, Xvfb/D-Bus et des outils de capture. Les caches de paquets, environnements virtuels, captures et autres artefacts générés ne sont pas des sources et ne doivent pas être versionnés.
 
@@ -42,7 +42,7 @@ Cette recette répond à la question « comment reproduire la machine de travail
 | Zone | Responsabilité |
 | --- | --- |
 | `environnements/` | préparer/valider la machine et le runtime |
-| `gen-dataset/` | faux services, données et profils fonctionnels actuels |
+| `simulation/` | faux services, données et profils fonctionnels actuels |
 | futur `simulation/` | cible unique de la simulation fonctionnelle |
 | `tests/` | assertions Core/transversales |
 | `plugins/*/tests/` | assertions propres à un plugin |
