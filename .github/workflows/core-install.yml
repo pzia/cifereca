@@ -6,6 +6,7 @@ on:
       - "src/**"
       - "pyproject.toml"
       - ".github/workflows/core-install.yml"
+      - "scripts/ci-smoke-installed-wheel.sh"
   pull_request:
     paths:
       - "src/**"
@@ -49,18 +50,5 @@ jobs:
       - name: Build wheel
         run: python -m pip wheel --no-deps --no-build-isolation . -w dist
 
-      - name: Install wheel in clean virtualenv
-        shell: bash
-        run: |
-          python -m venv /tmp/cifereca-installed
-          /tmp/cifereca-installed/bin/python -m pip install --disable-pip-version-check dist/cifereca-*.whl
-
       - name: Smoke installed package outside source tree
-        shell: bash
-        run: |
-          cd /tmp
-          /tmp/cifereca-installed/bin/python -c "import cifereca; print(cifereca.__file__)"
-          /tmp/cifereca-installed/bin/cifereca-cli --help >/dev/null
-          /tmp/cifereca-installed/bin/cifereca-update --help >/dev/null
-          /tmp/cifereca-installed/bin/cifereca-update-dev --help >/dev/null
-          /tmp/cifereca-installed/bin/cifereca-plugin-test --help >/dev/null
+        run: bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
