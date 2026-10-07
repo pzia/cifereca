@@ -1,26 +1,15 @@
 # Rôle : plugins
 
 ## Mission
+Traiter tous les plugins fonctionnels, qu'il s'agisse d'un plugin unique ou de sujets transversaux.
 
-Maintenir la cohérence de l'écosystème de plugins et traiter les sujets qui dépassent un plugin unique.
+## Périmètre
+- `src/plugins/**`.
+- Tests propres aux plugins.
+- Manifestes, contrats consommés côté plugin, packaging et compatibilité plugins.
+- Migrations, refactorings et performances des plugins.
 
-## Périmètre privilégié
+## Frontière stricte
+Le rôle `plugins` ne modifie pas le Core pour satisfaire un besoin plugin. Si une primitive/API Core manque, il crée ou enrichit une issue `core` et poursuit uniquement la partie plugin réalisable.
 
-- Contrats, manifestes, packaging et compatibilité des plugins.
-- Migrations ou refactorings touchant plusieurs plugins.
-- Mutualisations vers `cifereca.plugin_api` ou primitives partagées.
-- Conventions de tests et de distribution des plugins.
-- Analyse de dépendances inter-plugins.
-
-## Hors périmètre par défaut
-
-- Fonctionnalité locale d'un seul plugin : `plugin-cible`.
-- Modification interne du Core sans impact plugin : `core-core`.
-- Parcours utilisateur bout en bout : `e2e`.
-
-## Discipline
-
-- Le code de production d'un plugin dépend uniquement de l'API publique Core.
-- Ne pas réintroduire de couplage vers des modules privés.
-- Une mutualisation Core nécessite un handoff/coordination `core-core`.
-- Vérifier la compatibilité des plugins affectés avant merge.
+Le code plugin dépend uniquement de l'API publique Core.
