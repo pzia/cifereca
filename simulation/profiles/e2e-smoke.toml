@@ -1,0 +1,31 @@
+name = "e2e-smoke-profile"
+description = "État E2E déterministe : petite bibliothèque locale + OPDS + Paris simulés."
+
+[runtime]
+startup_timeout_seconds = 15
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = []
+copy_installed_plugins = false
+width = 1100
+height = 760
+
+[library]
+epubs = 3
+seed = 20261007
+
+[services.opds]
+enabled = true
+books_per_source = 6
+seed = 20261007
+
+[services.paris]
+enabled = true
+books = 8
+active_loans = 2
+history_items = 2
+bookings = 1
+digital_ratio = 0.75
+seed = 20261007

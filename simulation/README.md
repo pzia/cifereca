@@ -87,6 +87,38 @@ Pour récupérer les variables XDG :
 python3 simulation/datasetctl.py env ux-library
 ```
 
+
+## Fixtures E2E reproductibles
+
+Les scénarios E2E utilisent des déclarations versionnées dans
+`simulation/e2e-fixtures/*.toml`. Chaque fixture référence un profil de
+simulation dédié, déclare explicitement son état initial et utilise un nom de
+runtime `e2e-*` séparé des profils UX normaux.
+
+Commandes :
+
+```bash
+python3 simulation/e2e_fixtures.py list
+python3 simulation/e2e_fixtures.py describe smoke
+python3 simulation/e2e_fixtures.py prepare smoke
+python3 simulation/e2e_fixtures.py reset smoke
+
+python3 simulation/e2e_fixtures.py run empty -- \
+  python3 -c 'print("scenario")'
+```
+
+`prepare` commence toujours par un reset complet de l'état isolé. `run`
+garantit le nettoyage dans un `finally`, même si la commande échoue. Les
+fixtures désactivent la copie du store de plugins utilisateur afin qu'un test
+ne dépende jamais d'un profil réel. Le manifeste généré
+`e2e-fixture.json` expose le profil, les services attendus, les chemins XDG
+et l'empreinte déterministe de la bibliothèque locale.
+
+Les fixtures livrées sont :
+
+- `empty` : aucune donnée locale et aucun faux service ;
+- `smoke` : 3 EPUB locaux, OPDS simulé et Paris simulé, avec graines fixes.
+
 ## Snapshot GTK
 
 Le harnais GTK reste externe au dépôt. Son chemin peut être fourni par
