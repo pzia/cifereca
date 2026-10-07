@@ -29,6 +29,22 @@ def _manifest(package_id: str, version: str, plugins: list[dict], *, categories:
     }
 
 
+
+
+def _untyped_service_manifest(package_id: str, version: str, plugins: list[dict]) -> dict:
+    normalized = [dict(plugin, type="test.service") for plugin in plugins]
+    return _manifest(
+        package_id,
+        version,
+        normalized,
+        categories=[{
+            "id": "test.service",
+            "display_name": "Test service",
+            "contract": "test.service/1",
+            "resolution": "all",
+        }],
+    )
+
 def _zip(path: Path, manifest: dict, files: dict[str, str] | None = None) -> Path:
     with zipfile.ZipFile(path, "w") as bundle:
         bundle.writestr("cifereca-plugin.json", json.dumps(manifest))
@@ -235,9 +251,9 @@ def test_step_b_disabling_dependency_blocks_dependent_and_reenabling_recovers(tm
 def test_step_b_activation_error_is_isolated_from_other_plugins(tmp_path):
     archive = _zip(
         tmp_path / "isolation.zip",
-        _manifest("org.test.isolation", "1.0.0", [
-            {"id": "test.broken", "type": "transport", "entrypoint": "broken_plugin:PLUGIN"},
-            {"id": "test.good", "type": "transport", "entrypoint": "good_plugin:PLUGIN"},
+        _untyped_service_manifest("org.test.isolation", "1.0.0", [
+            {"id": "test.broken", "entrypoint": "broken_plugin:PLUGIN"},
+            {"id": "test.good", "entrypoint": "good_plugin:PLUGIN"},
         ]),
         {
             "broken_plugin.py": "raise RuntimeError('boom')\n",
@@ -257,12 +273,12 @@ def test_step_b_package_versions_upgrade_and_rollback_reload_code(tmp_path):
     manager = _manager(tmp_path)
     v1 = _zip(
         tmp_path / "v1.zip",
-        _manifest("org.test.versioned", "1.0.0", [{"id": "test.versioned", "type": "transport", "entrypoint": "versioned_plugin:PLUGIN"}]),
+        _untyped_service_manifest("org.test.versioned", "1.0.0", [{"id": "test.versioned", "entrypoint": "versioned_plugin:PLUGIN"}]),
         {"versioned_plugin.py": "class P:\n def activate(self,ctx): return 'v1'\n def deactivate(self): pass\nPLUGIN=P()\n"},
     )
     v2 = _zip(
         tmp_path / "v2.zip",
-        _manifest("org.test.versioned", "2.0.0", [{"id": "test.versioned", "type": "transport", "entrypoint": "versioned_plugin:PLUGIN"}]),
+        _untyped_service_manifest("org.test.versioned", "2.0.0", [{"id": "test.versioned", "entrypoint": "versioned_plugin:PLUGIN"}]),
         {"versioned_plugin.py": "class P:\n def activate(self,ctx): return 'v2'\n def deactivate(self): pass\nPLUGIN=P()\n"},
     )
     manager.install(v1)
@@ -290,9 +306,9 @@ def test_step_b_meta_plugin_can_bundle_dependencies_without_code(tmp_path):
     archive = _zip(
         tmp_path / "meta.zip",
         _manifest("org.test.meta", "1.0.0", [
-            {"id": "test.component", "type": "transport", "entrypoint": "component:PLUGIN"},
+            {"id": "test.component", "type": "test.service", "entrypoint": "component:PLUGIN"},
             {"id": "meta.test-suite", "type": "meta.bundle", "requires": [{"plugin": "test.component"}]},
-        ]),
+        ], categories=[{"id": "test.service", "display_name": "Test service", "contract": "test.service/1", "resolution": "all"}]),
         {"component.py": "class P:\n def activate(self,ctx): return 'component'\n def deactivate(self): pass\nPLUGIN=P()\n"},
     )
     manager = _manager(tmp_path)
@@ -314,12 +330,12 @@ def test_step_b_recommends_are_non_blocking_but_conflicts_only_block_when_enable
         tmp_path / "relations.zip",
         _manifest("org.test.relations", "1.0.0", [
             {
-                "id": "test.primary", "type": "transport", "entrypoint": "primary:PLUGIN",
+                "id": "test.primary", "type": "test.service", "entrypoint": "primary:PLUGIN",
                 "recommends": [{"plugin": "test.optional"}],
                 "conflicts": [{"plugin": "test.conflict"}],
             },
-            {"id": "test.conflict", "type": "transport", "entrypoint": "conflict:PLUGIN", "enabled_by_default": False},
-        ]),
+            {"id": "test.conflict", "type": "test.service", "entrypoint": "conflict:PLUGIN", "enabled_by_default": False},
+        ], categories=[{"id": "test.service", "display_name": "Test service", "contract": "test.service/1", "resolution": "all"}]),
         {
             "primary.py": "class P:\n def activate(self,ctx): return 'primary'\n def deactivate(self): pass\nPLUGIN=P()\n",
             "conflict.py": "class P:\n def activate(self,ctx): return 'conflict'\n def deactivate(self): pass\nPLUGIN=P()\n",
