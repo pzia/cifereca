@@ -670,6 +670,12 @@ class TransportService(Protocol):
     def fetch(self, source: Mapping[str, Any], destination: Path) -> Path: ...
 
 
+@runtime_checkable
+class CatalogServiceFactory(Protocol):
+    """Technical catalogue dependency, not a user-configurable library provider."""
+    def create(self, **options: Any) -> object: ...
+
+
 @dataclass(frozen=True, slots=True)
 class HealthCheckResult:
     check_id: str

@@ -9,6 +9,13 @@ from .errors import ManifestError
 
 CORE_CATEGORIES: tuple[CategoryDefinition, ...] = (
     CategoryDefinition("provider.library", "Fournisseur de bibliothèque", "cifereca.provider/1", "all"),
+    CategoryDefinition(
+        "catalog.service",
+        "Service de catalogue",
+        "cifereca.catalog.service/1",
+        "priority",
+        "Dépendance technique de catalogue ; ce service n’est pas une source utilisateur configurable.",
+    ),
     CategoryDefinition("transport", "Transport", "cifereca.transport/1", "priority"),
     CategoryDefinition("drm.handler", "Gestion DRM", "cifereca.drm/1", "priority"),
     CategoryDefinition("runtime.adapter", "Adaptateur runtime", "cifereca.runtime/1", "priority"),
