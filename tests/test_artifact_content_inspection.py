@@ -40,3 +40,13 @@ def test_inspect_artifact_content_strict_epub_structure():
     result = inspect_artifact_content(_epub_bytes(), "epub", strict_structure=True)
     assert result.valid
     assert result.media_format == "epub"
+
+
+def test_inspect_artifact_accepts_acsm_file(tmp_path):
+    from cifereca.plugin_api import inspect_artifact
+
+    path = tmp_path / "loan.acsm"
+    path.write_bytes(b'<?xml version="1.0"?><fulfillmentToken xmlns="http://ns.adobe.com/adept"><resourceItemInfo/></fulfillmentToken>')
+    result = inspect_artifact(path, "acsm", strict_structure=True)
+    assert result.valid
+    assert result.media_format == "acsm"

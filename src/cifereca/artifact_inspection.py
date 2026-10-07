@@ -58,7 +58,7 @@ def detect_acsm_format(path: Path) -> str | None:
 
 
 def detect_artifact_format(path: Path) -> str | None:
-    """Detect PDF/EPUB from file content rather than its extension."""
+    """Detect PDF/EPUB/ACSM from file content rather than its extension."""
     try:
         with path.open("rb") as handle:
             head = handle.read(8)
@@ -74,7 +74,12 @@ def detect_artifact_format(path: Path) -> str | None:
                         mime = b""
                     if not mime or mime == b"application/epub+zip":
                         return "epub"
-    except (OSError, zipfile.BadZipFile):
+        size = path.stat().st_size
+        if 0 < size <= 2 * 1024 * 1024:
+            root = ElementTree.parse(path).getroot()
+            if _local_name(root.tag) == "fulfillmenttoken":
+                return "acsm"
+    except (OSError, zipfile.BadZipFile, ElementTree.ParseError):
         return None
     return None
 
@@ -232,6 +237,8 @@ def inspect_artifact(
                         protected = True
         except (OSError, zipfile.BadZipFile):
             return ArtifactInspection(actual, False, None, "invalid_epub")
+    elif actual == "acsm":
+        protected = None
     elif actual == "pdf":
         # Do not infer Adobe/ADEPT protection from the generic PDF /Encrypt
         # dictionary.  /Encrypt is part of the PDF security model and may be
