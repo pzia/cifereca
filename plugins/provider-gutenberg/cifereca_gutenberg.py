@@ -1,7 +1,5 @@
 from __future__ import annotations
 from collections import OrderedDict
-from cifereca_gutenberg_description import description_text, description_element
-
 import html
 import logging
 import re
@@ -22,7 +20,7 @@ from cifereca.plugin_api import (
     ProviderDescriptor,
     ProviderError,
     ProviderPlugin,
-    ProviderSession, normalize_language_tag, sanitize_filename_component,
+    ProviderSession, normalize_language_tag, sanitize_filename_component, description_text, description_element,
     SearchResult,
 )
 
@@ -121,7 +119,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.12"
+        user_agent = "cifereca-gutenberg/1.2.13"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent

@@ -1,6 +1,4 @@
 from __future__ import annotations
-from cifereca_gallica_description import description_text, description_element
-
 import html
 from cifereca_gallica_audio import download_bundle
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +16,7 @@ from cifereca.plugin_api import (
     ProviderDescriptor,
     ProviderError,
     ProviderPlugin,
-    ProviderSession, normalize_language_tag, sanitize_filename_component,
+    ProviderSession, normalize_language_tag, sanitize_filename_component, description_text, description_element,
 )
 
 ATOM = "http://www.w3.org/2005/Atom"
@@ -561,7 +559,7 @@ class GallicaSession(ProviderSession):
             "headers": {
                 "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
                 "Referer": "https://gallica.bnf.fr/",
-                "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.12"),
+                "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.13"),
             },
             "max_bytes": self.max_download_bytes,
             "allowed_content_types": allowed,
@@ -630,7 +628,7 @@ class GallicaSession(ProviderSession):
                 "headers": {
                     "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
                     "Referer": "https://gallica.bnf.fr/",
-                    "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.12"),
+                    "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.13"),
                 },
                 "max_bytes": self.max_download_bytes,
                 "allowed_content_types": allowed,

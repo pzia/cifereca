@@ -1,10 +1,8 @@
 from __future__ import annotations
-from cifereca_kobo_description import description_text, description_element
-
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
-from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag
+from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag, description_text, description_element
 
 
 class KoboCatalogService:
