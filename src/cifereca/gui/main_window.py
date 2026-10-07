@@ -732,6 +732,7 @@ class DetailPanel(Gtk.Box):
         medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
+        essential_support = medium if not fmt else ""
         self.show_presentation(book_detail_presentation(
             title=item.title,
             subtitle=item.author,
@@ -741,6 +742,7 @@ class DetailPanel(Gtk.Box):
                 ("Essentiel", [
                     ("Source", source),
                     ("Format", fmt),
+                    ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
                     ("Disponibilité", "Non vérifiée"),
                 ]),
@@ -748,7 +750,7 @@ class DetailPanel(Gtk.Box):
                     ("Type", item.type or ""),
                     ("Éditeur", item.publisher or ""),
                     ("Publication", item.published_at or ""),
-                    ("Support", medium),
+                    ("Support", medium if fmt else ""),
                 ]),
             ],
         ))
@@ -782,6 +784,8 @@ class DetailPanel(Gtk.Box):
         content_type = self.window.service.content_type_for(item)
         medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
         source = self.window.service.provider_display_name(item.source_provider)
+        fmt = file_format(item.format).upper()
+        essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
@@ -791,7 +795,8 @@ class DetailPanel(Gtk.Box):
             section_rows=[
                 ("Essentiel", [
                     ("Source", source),
-                    ("Format", file_format(item.format).upper()),
+                    ("Format", fmt),
+                    ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
                     ("Disponibilité", availability),
                 ]),
@@ -799,7 +804,7 @@ class DetailPanel(Gtk.Box):
                     ("Type", detail.type or item.type or ""),
                     ("Éditeur", item.publisher or ""),
                     ("Publication", detail.year or item.published_at or ""),
-                    ("Support", medium),
+                    ("Support", medium if fmt else ""),
                 ]),
             ],
         ))
