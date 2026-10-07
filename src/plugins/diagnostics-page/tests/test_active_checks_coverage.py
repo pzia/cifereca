@@ -62,5 +62,45 @@ class LazyInitialRenderTests(unittest.TestCase):
         self.assertEqual(calls,["render"])
 
 
+class InventoryDiagnostics:
+    def inventory(self):
+        return (
+            {
+                "plugin_id": "runtime.kobo-adept",
+                "type": "runtime.adapter",
+                "version": "1.2.14",
+                "package_version": "1.2.14",
+                "state": "ready",
+            },
+            {
+                "plugin_id": "provider.paris",
+                "type": "provider.library",
+                "version": "1.2.19",
+                "package_version": "1.2.19",
+                "state": "ready",
+            },
+        )
+
+    def runtime_diagnostic(self, plugin_id):
+        assert plugin_id == "runtime.kobo-adept"
+        return {"operation": "inventory", "returncode": 0, "stdout_mode": "json"}
+
+
+def test_public_inventory_and_bounded_runtime_diagnostic_are_consumed():
+    broker = InventoryDiagnostics()
+    inventory = mod.public_inventory(broker)
+    assert [row["plugin_id"] for row in inventory] == [
+        "runtime.kobo-adept",
+        "provider.paris",
+    ]
+    runtime = mod.relevant_runtime_diagnostics(broker, inventory)
+    assert runtime == [{
+        "plugin_id": "runtime.kobo-adept",
+        "operation": "inventory",
+        "returncode": 0,
+        "stdout_mode": "json",
+    }]
+
+
 if __name__=="__main__":
     unittest.main()
