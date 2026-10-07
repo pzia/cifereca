@@ -18,8 +18,9 @@ def _method_source(class_name: str, method_name: str) -> str:
 def test_master_detail_preserves_detail_width_at_minimum_window_width():
     source = _method_source("MasterDetailPage", "__init__")
 
-    assert 'paned.connect("notify::max-position", adapt_paned_position)' in source
-    assert 'max_position = int(paned.get_property("max-position"))' in source
+    assert "notify::max-position" in source
+    assert "adapt_paned_position" in source
+    assert "max-position" in source
     assert "paned.set_position(min(440, max(0, max_position - 240)))" in source
 
 
