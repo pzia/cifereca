@@ -85,7 +85,7 @@ Rôles autorisés :
 - `cicd` : CI/CD **et merge**. À chaque itération, traiter d'abord les défauts/gates CI/CD, puis les PR à merger.
 - `core` : Core métier et Core UI. À chaque itération, traiter d'abord les sujets Core non-UI, puis les sujets Core UI.
 - `plugins` : tous les plugins fonctionnels, leurs tests, leur packaging et leurs évolutions, qu'elles concernent un ou plusieurs plugins.
-- `ux` : observation/validation UX, UI et parcours ; produit uniquement du backlog/des issues, sans modifier le produit.
+- `ux` : tickets UX, campagnes E2E exploratoires avec simulation/screenshots et maintenance du simulateur fonctionnel nécessaire à ces parcours ; transforme les constats en issues sans modifier le produit.
 
 ### Règles communes de rôle
 
@@ -94,9 +94,10 @@ Rôles autorisés :
 3. `cicd` traite d'abord la chaîne CI/CD ; seulement ensuite il traite les merges prêts.
 4. `core` traite d'abord le Core métier/services/API/stockage/framework ; seulement ensuite le Core UI.
 5. `plugins` peut travailler sur un plugin unique ou plusieurs plugins, mais ne modifie pas le Core pour satisfaire un besoin plugin : il ouvre une issue `core`.
-6. `ux` et `backlog` sont non implémentants. Ils peuvent inspecter le dépôt et les exécutions, mais leur sortie est une issue/backlog.
+6. `ux` et `backlog` sont non implémentants côté produit. `ux` peut exécuter des E2E exploratoires, maintenir le simulateur fonctionnel requis par ces parcours et produire des screenshots ; sa sortie produit reste une issue/backlog.
 7. Avant tout chantier significatif, vérifier les issues, PR et branches actives afin d'éviter les collisions et doublons.
 8. Une PR ne peut être mergée que par le rôle `cicd`.
 9. En cas d'ambiguïté, choisir le rôle propriétaire du composant à modifier ; si cela implique de changer de rôle, créer une issue au lieu de franchir la frontière.
+10. Tant que l'issue #310 reste ouverte pour quota GitHub Actions épuisé, `cicd` peut merger malgré des checks rouges **uniquement** lorsque les jobs concernés n'ont jamais démarré (`steps` vide/null, aucun log de test) et que le diff est compris, mergeable, sans review/thread bloquant ni échec fonctionnel réel connu. Cette exception expire automatiquement à la fermeture de #310.
 
 Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique.

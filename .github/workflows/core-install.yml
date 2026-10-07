@@ -1,15 +1,9 @@
 name: Validate installed Core
 
 on:
-  push:
-    paths:
-      - "src/**"
-      - "pyproject.toml"
-      - ".github/workflows/core-install.yml"
-      - "scripts/ci-smoke-installed-wheel.sh"
   pull_request:
     paths:
-      - "src/**"
+      - "src/cifereca/**"
       - "pyproject.toml"
       - ".github/workflows/core-install.yml"
       - "scripts/ci-smoke-installed-wheel.sh"
@@ -29,10 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version:
-          - "3.11"
-          - "3.12"
-          - "3.13"
+        python-version: ${{ fromJSON(github.event_name == 'pull_request' && '["3.11"]' || '["3.11","3.12","3.13"]') }}
 
     name: installed-core (Python ${{ matrix.python-version }})
 

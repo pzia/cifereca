@@ -7,6 +7,7 @@ from recommendation_engine import (
     ProfileVector,
     RankedCandidate,
     _candidate_features,
+    _content_score_prevalidated,
     _jaccard,
     _rrf_scores,
     _text,
@@ -43,12 +44,18 @@ def score_candidate_cached(
     profile: ProfileVector,
     item: Any,
     cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]],
+    *,
+    known_absent: bool = False,
 ) -> tuple[float, tuple[str, ...]]:
     signature = _score_signature(item)
     cached = cache.get(signature)
     if cached is not None:
         return cached
-    scored = content_score(profile, item)
+    scored = (
+        _content_score_prevalidated(profile, item)
+        if known_absent
+        else content_score(profile, item)
+    )
     cache[signature] = scored
     return scored
 
@@ -128,7 +135,9 @@ def rank_candidates_prepared(
             source = _text(get_field(item, "source_provider", ""))
             if source and source not in sources_by_key[key]:
                 sources_by_key[key].append(source)
-            cscore, reasons = score_candidate_cached(profile, item, score_cache)
+            cscore, reasons = score_candidate_cached(
+                profile, item, score_cache, known_absent=True
+            )
             previous = merged.get(key)
             if previous is None or cscore > previous[1]:
                 merged[key] = (item, cscore, reasons)
