@@ -781,18 +781,40 @@ class MasterDetailPage(Gtk.Box):
         self.toolbar.set_hexpand(True)
         self.append(self.toolbar)
 
+        self.detail_back = Gtk.Button(label="Retour à la liste")
+        self.detail_back.set_tooltip_text("Revenir à la liste des documents")
+        self.detail_back.set_halign(Gtk.Align.START)
+        self.detail_back.set_margin_start(18)
+        self.detail_back.set_margin_bottom(8)
+        self.detail_back.set_visible(False)
+        self.detail_back.connect("clicked", lambda _button: self._show_narrow_list())
+        self.append(self.detail_back)
+
         self.paned = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
         self.paned.set_wide_handle(True)
         self.paned.set_position(440)
         self.paned.set_shrink_start_child(True)
         self.paned.set_shrink_end_child(True)
         self.paned.set_vexpand(True)
+        self._narrow_master_detail = False
+        self._narrow_detail_visible = False
+        self._narrow_breakpoint = 860
 
         def adapt_paned_position(paned, _pspec=None) -> None:
             max_position = int(paned.get_property("max-position"))
             if max_position <= 0:
                 return
-            paned.set_position(min(440, max(0, max_position - 240)))
+            narrow = max_position < self._narrow_breakpoint
+            if narrow != self._narrow_master_detail:
+                self._narrow_master_detail = narrow
+                if not narrow:
+                    self._narrow_detail_visible = False
+                    self.detail_back.set_visible(False)
+            if self._narrow_master_detail:
+                paned.set_position(0 if self._narrow_detail_visible else max_position)
+                self.detail_back.set_visible(self._narrow_detail_visible)
+            else:
+                paned.set_position(min(440, max(0, max_position - 360)))
 
         self.paned.connect("notify::max-position", adapt_paned_position)
         self.append(self.paned)
@@ -832,8 +854,12 @@ class MasterDetailPage(Gtk.Box):
         keys = Gtk.EventControllerKey()
         def key_pressed(_controller, keyval, _keycode, state):
             if keyval == Gdk.KEY_Escape:
-                self.selection.set_selected(Gtk.INVALID_LIST_POSITION)
-                self.listview.grab_focus(); return True
+                if self._narrow_master_detail and self._narrow_detail_visible:
+                    self._show_narrow_list()
+                else:
+                    self.selection.set_selected(Gtk.INVALID_LIST_POSITION)
+                    self.listview.grab_focus()
+                return True
             if state & Gdk.ModifierType.CONTROL_MASK and keyval in (Gdk.KEY_f, Gdk.KEY_F):
                 controls = getattr(window, "library_controls" if title == "Bibliothèque" else "search_controls", None)
                 if controls: controls.entry.grab_focus(); return True
@@ -865,6 +891,26 @@ class MasterDetailPage(Gtk.Box):
             self.detail.empty("Aucun document sélectionné", "Sélectionnez un document pour afficher ses détails.")
         for callback in self._selected_callbacks:
             callback(selected)
+        if self._narrow_master_detail and selected is not None:
+            self._show_narrow_detail()
+
+    def _show_narrow_detail(self) -> None:
+        if not self._narrow_master_detail:
+            return
+        self._narrow_detail_visible = True
+        self.detail_back.set_visible(True)
+        self.paned.set_position(0)
+        self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD)
+
+    def _show_narrow_list(self) -> None:
+        if not self._narrow_master_detail:
+            return
+        self._narrow_detail_visible = False
+        self.detail_back.set_visible(False)
+        max_position = int(self.paned.get_property("max-position"))
+        if max_position > 0:
+            self.paned.set_position(max_position)
+        self.listview.grab_focus()
 
     def clear_rows(self) -> None:
         self.selection.set_selected(0xFFFFFFFF)
