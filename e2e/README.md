@@ -46,3 +46,12 @@ les dépendances Python du Core. La CI installe ces dépendances explicitement.
 
 Les scénarios doivent rester déterministes : aucun service réseau réel, aucun
 compte utilisateur réel et aucun état réutilisé entre deux exécutions.
+
+
+## Fixtures reproductibles
+
+Chaque scénario déclare explicitement une fixture versionnée sous `e2e/fixtures/<nom>/`.
+Le runner matérialise cette fixture dans un HOME/XDG temporaire neuf à chaque exécution.
+Les chemins variables utilisent le jeton `${E2E_LIBRARY}`, remplacé par la bibliothèque temporaire du run.
+
+La fixture `startup` fournit une identité E2E stable, une bibliothèque vide et aucun compte provider réel.
