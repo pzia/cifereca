@@ -36,6 +36,7 @@ def test_multiformat_paris_offer_is_attested_without_inventing_preference():
     assert len(choices.offers) == 1
     assert choices.offers[0].formats == ("epub", "pdf")
     assert choices.offers[0].format == ""
+    assert choices.offers[0].drm == "unknown"
     assert choices.preferences.format_order == ()
     assert acquisition_format_projection(choices)["available_formats"] == ("epub", "pdf")
 
