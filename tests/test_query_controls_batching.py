@@ -46,14 +46,14 @@ class Widget:
         if name.startswith('set_'): return lambda *args: None
         raise AttributeError(name)
 
-Gtk=NS(MenuButton=Widget,Popover=Widget,Box=Widget,Button=Widget,CheckButton=Widget,
+Gtk=NS(MenuButton=Widget,Popover=Widget,Box=Widget,Button=Widget,CheckButton=Widget,Label=Widget,
        SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,FlowBoxChild=Widget,Align=NS(START=0),
        Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
 
 source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/query_controls.py'
 tree=ast.parse(source.read_text())
 classes=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name in {'MultiSelect','QueryControls'}]
-ns={'Gtk':Gtk,'QueryState':QueryState,'FIELDS':FIELDS}
+ns={'Gtk':Gtk,'QueryState':QueryState,'FIELDS':FIELDS,'provider_search_summary':lambda *_:''}
 exec(compile(ast.fix_missing_locations(ast.Module(body=classes,type_ignores=[])),str(source),'exec'),ns)
 MultiSelect=ns['MultiSelect']; QueryControls=ns['QueryControls']
 
@@ -74,6 +74,7 @@ class QueryControlBatching(unittest.TestCase):
     def test_set_state_is_atomic_and_duplicate_signal_is_ignored(self):
         calls=[]
         control=QueryControls([('paris','Paris'),('gallica','Gallica')],lambda:calls.append(control.state()),lambda:None)
+        control._provider_search_capabilities={}
         target=QueryState('Dumas','author','physical',('paris','gallica'),('epub','pdf'),('fr','en'))
         control.set_state(target)
         self.assertEqual(calls,[target])
