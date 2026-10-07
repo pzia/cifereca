@@ -29,7 +29,10 @@ class CardLayout(unittest.TestCase):
         methods=[n for n in obj.body if isinstance(n,ast.FunctionDef) and n.name in {'_append_package','_plugin_row'}]
         gtk=NS(**{name:type(name,(Widget,),{}) for name in ['Box','Frame','Label','MenuButton','Popover','Button','SpinButton','Switch','CheckButton']},Orientation=NS(VERTICAL='vertical',HORIZONTAL='horizontal'),Align=NS(CENTER='center'))
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
-        ns={'Gtk':gtk,'_STATE_LABELS':{'ready':'Prêt'}}
+        adaptive=type('AdaptiveActionBar',(Widget,),{})
+        def action_button(label, icon_name=None, **properties):
+            return gtk.Button(label=label, icon_name=icon_name, **properties)
+        ns={'Gtk':gtk,'_STATE_LABELS':{'ready':'Prêt'},'AdaptiveActionBar':adaptive,'action_button':action_button}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(path),'exec'),ns)
         cls.builder=staticmethod(ns['_plugin_row']);cls.packager=staticmethod(ns['_append_package'])
     def setUp(self):
@@ -51,8 +54,9 @@ class CardLayout(unittest.TestCase):
     def test_all_action_buttons_share_footer_and_switch_is_last(self):
         card=self.card();footer=card.children[-1]
         self.assertEqual([w.properties['label'] for w in footer.children if type(w).__name__=='Button'],['Configurer…','Diagnostic','Revenir à 1.1.0','Désinstaller'])
+        self.assertEqual(type(footer).__name__,'AdaptiveActionBar')
         self.assertEqual(type(footer.children[-1]).__name__,'Switch')
-        self.assertTrue(footer.children[-2].properties['hexpand'])
+        self.assertTrue(footer.children[3].properties['destructive'])
         footer.children[1].handlers['clicked'](None)
         footer.children[3].handlers['clicked'](None)
         self.assertEqual(self.calls,[('diag','plugin.test'),('remove','package.test')])
