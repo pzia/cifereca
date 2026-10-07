@@ -162,3 +162,90 @@ def test_missing_origin_and_identity_binding_never_uses_implicit_profile(tmp_pat
         assert binding["return_available"] is False
     finally:
         service.close()
+
+
+def test_duplicate_exact_inventory_matches_are_ambiguous(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path)
+    runtime, calls = _runtime("hb", path)
+    inventory = runtime.loan_inventories(["hb"])
+    inventory["profiles"][0]["loans"].append(dict(inventory["profiles"][0]["loans"][0]))
+    runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        result = service.reconcile_adept_acquisition(acquisition_id)
+
+        assert result["status"] == "ambiguous"
+        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
+        assert binding["adept_loan_id"] is None
+        assert binding["return_available"] is False
+    finally:
+        service.close()
+
+
+def test_partial_inventory_cannot_establish_unique_binding(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path)
+    runtime, calls = _runtime("hb", path)
+    inventory = runtime.loan_inventories(["hb"])
+    inventory["complete"] = False
+    runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        result = service.reconcile_adept_acquisition(acquisition_id)
+
+        assert result["status"] == "inventory_error"
+        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
+        assert binding["adept_loan_id"] is None
+        assert binding["return_available"] is False
+    finally:
+        service.close()
+
+
+def test_matching_title_with_old_migrated_path_is_not_binding_proof(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path)
+    runtime, calls = _runtime("hb", path)
+    inventory = runtime.loan_inventories(["hb"])
+    inventory["profiles"][0]["loans"][0].update({
+        "local_book": "/previous/Livre.epub",
+        "title": "Livre",
+    })
+    runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        result = service.reconcile_adept_acquisition(acquisition_id)
+
+        assert result["status"] == "unresolved"
+        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
+        assert binding["adept_loan_id"] is None
+        assert binding["return_available"] is False
+    finally:
+        service.close()
+
+
+def test_conflicting_inventory_id_never_overwrites_existing_binding(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path)
+    row = service.storage.acquisition_get(acquisition_id)
+    row["metadata"]["adept_binding"]["adept_loan_id"] = "original"
+    service.storage.acquisition_put(row)
+    runtime, calls = _runtime("hb", path)
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        result = service.reconcile_adept_acquisition(acquisition_id)
+
+        assert result["status"] == "binding_conflict"
+        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
+        assert binding["adept_loan_id"] == "original"
+        assert binding["return_available"] is False
+    finally:
+        service.close()
