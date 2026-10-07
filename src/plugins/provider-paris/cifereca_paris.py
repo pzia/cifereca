@@ -84,6 +84,7 @@ def _paris_acquisition_offer_set(item: SearchResult) -> AcquisitionOfferSet:
         media_type=item.content_type or "ebook",
         format=formats[0] if len(formats) == 1 else "",
         formats=tuple(formats),
+        drm="unknown",
         source_kind="provider",
         source={
             "provider_id": "paris",
