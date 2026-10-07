@@ -7,8 +7,8 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 
-ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_ROOT = ROOT / "plugins" / "provider-bnf-catalogue"
+ROOT = Path(__file__).resolve().parents[4]
+PLUGIN_ROOT = ROOT / "src" / "plugins" / "provider-bnf-catalogue"
 DATASET_PATH = ROOT / "simulation" / "bnf" / "pseudo_bnf_sru_service.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
