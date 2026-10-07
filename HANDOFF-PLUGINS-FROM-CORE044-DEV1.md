@@ -47,6 +47,6 @@ La PR expérimentale multi-catalogues #13 a été fermée et ne doit pas être r
 
 Conserver le travail **un plugin à la fois**, avec :
 1. une branche dédiée ;
-2. un test d’intégration utilisant autant que possible les brokers publics Core et le harness `gen-dataset` ;
+2. un test d’intégration utilisant autant que possible les brokers publics Core et le harness `simulation` ;
 3. packaging + suite plugins + smoke dataset lorsque pertinent ;
 4. pas d’accès aux APIs privées Core ni de mutation directe lorsque le Core possède déjà le domaine.

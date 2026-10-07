@@ -9,7 +9,7 @@ from http.server import ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_ROOT = ROOT / "plugins" / "provider-gutenberg"
-DATASET_PATH = ROOT / "gen-dataset" / "opds" / "pseudo_opds_server.py"
+DATASET_PATH = ROOT / "simulation" / "opds" / "pseudo_opds_server.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))

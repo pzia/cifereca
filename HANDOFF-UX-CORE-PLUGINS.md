@@ -17,7 +17,7 @@ Dans ce document, les chemins `src/cifereca/...` désignent les modules correspo
 | **UI intégrée au Core** | `builtin_ui/cifereca_builtin_ui.py` : `Pages`, `SystemPages`, `Widgets`. Leur exposition comme plugins ne les transforme pas en packages externes. |
 | **Plugin Accueil** | `plugins/home-page/cifereca_home.py` : carte, explications, actions proposées via le host Core. |
 | **Plugins fournisseurs** | Paris/Gallica/etc. : adaptation des protocoles et remontée d’erreurs ; aucun calcul parallèle des compteurs ou correctif de mise en page. |
-| **Banc de test** | `gen-dataset/datasetctl.py`, profils TOML et harnais GTK externe : dimensions, plein écran, contrôles géométriques et snapshots. |
+| **Banc de test** | `simulation/datasetctl.py`, profils TOML et harnais GTK externe : dimensions, plein écran, contrôles géométriques et snapshots. |
 
 ## 2. Core — correctifs et évolutions
 

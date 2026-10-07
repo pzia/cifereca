@@ -11,7 +11,7 @@ Utiliser ce skill lorsqu'une tâche ajoute des tests, corrige une régression, m
 
 - `tests/` : Core et scénarios transverses.
 - `plugins/<plugin>/tests/` : comportement propre au plugin.
-- `gen-dataset/tests/` : qualité du banc de simulation lui-même.
+- `simulation/tests/` : qualité du banc de simulation lui-même.
 - `environnements/<env>/` : self-tests de l'environnement technique.
 
 La dépendance à un faux service ne détermine pas l'emplacement du test. Par exemple, un test de `provider-kobo` contre le faux Kobo reste un test du plugin Kobo.
@@ -28,7 +28,7 @@ Ne pas appeler « E2E » un test qui remplace l'étape essentielle par un stub.
 
 ## Règle simulateur / consommateur
 
-`gen-dataset/` construit le monde fonctionnel de test. Ses tests vérifient que ce monde est fidèle et déterministe.
+`simulation/` construit le monde fonctionnel de test. Ses tests vérifient que ce monde est fidèle et déterministe.
 
 Les assertions telles que recherche, acquisition, synchronisation, navigation ou rendu Cifereca restent dans les suites Core/plugins/fonctionnelles qui consomment ce monde.
 
@@ -53,10 +53,10 @@ done
 Simulation :
 
 ```bash
-python -m unittest discover -s gen-dataset/tests -v
+python -m unittest discover -s simulation/tests -v
 ```
 
-Après modification d'un faux service, tester à la fois son contrat dans `gen-dataset/tests/` et les consommateurs concernés.
+Après modification d'un faux service, tester à la fois son contrat dans `simulation/tests/` et les consommateurs concernés.
 
 ## Régressions
 

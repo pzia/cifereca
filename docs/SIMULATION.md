@@ -4,7 +4,7 @@
 
 ## État actuel
 
-Le dépôt possède `gen-dataset/`.
+Le dépôt possède `simulation/`.
 
 Il contient notamment :
 
@@ -20,10 +20,10 @@ Le dépôt ne possède pas encore de répertoire `simulation/`.
 
 `simulation/` doit devenir l'environnement fonctionnel simulé de référence.
 
-La cible n'est pas de copier `gen-dataset/` puis de maintenir deux systèmes. La migration doit aboutir à une seule référence :
+La cible n'est pas de copier `simulation/` puis de maintenir deux systèmes. La migration doit aboutir à une seule référence :
 
 ```text
-gen-dataset/  -- migration progressive -->  simulation/
+simulation/  -- migration progressive -->  simulation/
                                       \
                                        -> suppression des éléments obsolètes
 ```
@@ -59,7 +59,7 @@ Exemple d'un E2E :
 3. Cifereca est lancé contre cet état isolé ;
 4. le scénario vérifie le comportement fonctionnel/UX.
 
-## Plan de migration de `gen-dataset/`
+## Plan de migration de `simulation/`
 
 Aucun déplacement n'est effectué par le lot documentaire.
 
@@ -70,11 +70,11 @@ Migration recommandée :
 3. migrer les briques génériques (`fake_books`, profils, health checks) sans duplication ;
 4. migrer les protocoles fournisseur avec leurs tests ;
 5. mettre à jour les recettes E2E et les skills ;
-6. retirer les chemins `gen-dataset/` devenus inutilisés ;
-7. supprimer `gen-dataset/` lorsque plus aucun consommateur ne dépend de lui.
+6. retirer les chemins `simulation/` devenus inutilisés ;
+7. supprimer `simulation/` lorsque plus aucun consommateur ne dépend de lui.
 
 ## Règle pendant la transition
 
-Tant que `simulation/` n'existe pas, `gen-dataset/` reste la référence fonctionnelle pratique.
+Tant que `simulation/` n'existe pas, `simulation/` reste la référence fonctionnelle pratique.
 
 Ne pas créer un nouveau faux service dans une arborescence concurrente sans lot de migration explicite.

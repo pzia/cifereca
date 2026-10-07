@@ -2,13 +2,13 @@
 """Orchestrateur des jeux de données UX Cifereca.
 
 Exemples :
-    python3 gen-dataset/datasetctl.py profiles
-    python3 gen-dataset/datasetctl.py up ux-search
-    python3 gen-dataset/datasetctl.py status ux-search
-    python3 gen-dataset/datasetctl.py cifereca ux-search
-    python3 gen-dataset/datasetctl.py exec ux-library -- capture-app ...
-    python3 gen-dataset/datasetctl.py down ux-search
-    python3 gen-dataset/datasetctl.py rebuild ux-search
+    python3 simulation/datasetctl.py profiles
+    python3 simulation/datasetctl.py up ux-search
+    python3 simulation/datasetctl.py status ux-search
+    python3 simulation/datasetctl.py cifereca ux-search
+    python3 simulation/datasetctl.py exec ux-library -- capture-app ...
+    python3 simulation/datasetctl.py down ux-search
+    python3 simulation/datasetctl.py rebuild ux-search
 
 Chaque profil dispose de ses propres XDG_CONFIG/DATA/CACHE/STATE afin de ne
 jamais modifier la configuration ni la bibliothèque Cifereca réelles.

@@ -9,7 +9,7 @@ from http.server import ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_ROOT = ROOT / "plugins" / "provider-bnf-catalogue"
-DATASET_PATH = ROOT / "gen-dataset" / "bnf" / "pseudo_bnf_sru_service.py"
+DATASET_PATH = ROOT / "simulation" / "bnf" / "pseudo_bnf_sru_service.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))

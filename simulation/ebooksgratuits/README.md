@@ -8,7 +8,7 @@ téléchargement d'un EPUB valide. Les livres sont fictifs et déterministes.
 Lancement :
 
 ```bash
-python3 gen-dataset/ebooksgratuits/pseudo_ebooksgratuits_service.py --books 500
+python3 simulation/ebooksgratuits/pseudo_ebooksgratuits_service.py --books 500
 ```
 
 Configuration du plugin :

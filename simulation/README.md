@@ -21,7 +21,7 @@ entièrement isolé.
 - exécution de n'importe quel outil UX dans le même environnement ;
 - capture directe via le harnais GTK/Xvfb `gtk4-environnement-tests`.
 
-Les fichiers runtime sont stockés dans `gen-dataset/.runtime/` par défaut.
+Les fichiers runtime sont stockés dans `simulation/.runtime/` par défaut.
 Définissez `CIFERECA_DATASET_RUNTIME` pour les placer ailleurs.
 
 Par défaut, `datasetctl` copie le store de plugins actif depuis le
@@ -37,18 +37,18 @@ change.
 ## Commandes
 
 ```bash
-python3 gen-dataset/datasetctl.py profiles
+python3 simulation/datasetctl.py profiles
 
-python3 gen-dataset/datasetctl.py up ux-search
-python3 gen-dataset/datasetctl.py status ux-search
-python3 gen-dataset/datasetctl.py summary ux-search
-python3 gen-dataset/datasetctl.py logs ux-search
-python3 gen-dataset/datasetctl.py config ux-search
+python3 simulation/datasetctl.py up ux-search
+python3 simulation/datasetctl.py status ux-search
+python3 simulation/datasetctl.py summary ux-search
+python3 simulation/datasetctl.py logs ux-search
+python3 simulation/datasetctl.py config ux-search
 
-python3 gen-dataset/datasetctl.py cifereca ux-search
+python3 simulation/datasetctl.py cifereca ux-search
 
-python3 gen-dataset/datasetctl.py down ux-search
-python3 gen-dataset/datasetctl.py rebuild ux-search
+python3 simulation/datasetctl.py down ux-search
+python3 simulation/datasetctl.py rebuild ux-search
 ```
 
 `up` est idempotent : un service déjà sain avec la même configuration est
@@ -72,19 +72,19 @@ sortie exploitable par les scripts de recette.
 | `ux-errors` | états atypiques, assets OPDS/Kobo cassés de façon déterministe et erreurs visibles |
 | `ux-all` | environnement complet |
 
-Les profils sont dans `gen-dataset/profiles/*.toml`.
+Les profils sont dans `simulation/profiles/*.toml`.
 
 ## Lancer une commande dans l'environnement isolé
 
 ```bash
-python3 gen-dataset/datasetctl.py exec ux-library -- \
+python3 simulation/datasetctl.py exec ux-library -- \
   cifereca-cli catalog-scan
 ```
 
 Pour récupérer les variables XDG :
 
 ```bash
-python3 gen-dataset/datasetctl.py env ux-library
+python3 simulation/datasetctl.py env ux-library
 ```
 
 ## Snapshot GTK
@@ -95,7 +95,7 @@ Le harnais GTK reste externe au dépôt. Son chemin peut être fourni par
 ```bash
 export CIFERECA_GTK_TEST_HARNESS=/chemin/gtk4-environnement-tests
 
-python3 gen-dataset/datasetctl.py snapshot ux-library \
+python3 simulation/datasetctl.py snapshot ux-library \
   --out snapshots/library.png \
   --width 1300 --height 850 --wait 4
 ```
@@ -103,7 +103,7 @@ python3 gen-dataset/datasetctl.py snapshot ux-library \
 Interactions X11 optionnelles :
 
 ```bash
-python3 gen-dataset/datasetctl.py snapshot ux-search \
+python3 simulation/datasetctl.py snapshot ux-search \
   --out snapshots/search.png \
   --click 408,185 \
   --type-text tour \
@@ -115,14 +115,14 @@ tout en conservant les faux services et la configuration Cifereca du profil.
 
 ## Ajouter un service
 
-1. ajouter son script dans `gen-dataset/<service>/` ;
-2. le déclarer dans `gen-dataset/services/catalog.toml` ;
+1. ajouter son script dans `simulation/<service>/` ;
+2. le déclarer dans `simulation/services/catalog.toml` ;
 3. ajouter les paramètres voulus dans un profil ;
 4. si nécessaire, compléter la génération de configuration provider dans
    `datasetctl.py`.
 
 Les données de livre, couvertures PNG et EPUB doivent réutiliser
-`gen-dataset/common/fake_books.py` quand leur nature est générique. Les
+`simulation/common/fake_books.py` quand leur nature est générique. Les
 protocoles et états métier restent propres aux services.
 
 OPDS et Kobo acceptent `--broken-assets-every N` pour faire échouer de façon
@@ -157,5 +157,5 @@ seed = 20261006
 Validez-le avec :
 
 ```bash
-python3 gen-dataset/datasetctl.py doctor ux-mon-test
+python3 simulation/datasetctl.py doctor ux-mon-test
 ```
