@@ -1,0 +1,8 @@
+version = 1
+name = "empty"
+description = "Démarrage sans livre local ni faux service."
+profile = "e2e-empty"
+
+[initial]
+local_epubs = 0
+services = []

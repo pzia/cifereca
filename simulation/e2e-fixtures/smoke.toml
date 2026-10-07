@@ -1,0 +1,8 @@
+version = 1
+name = "smoke"
+description = "Petit état représentatif pour les parcours bibliothèque/recherche/emprunts simulés."
+profile = "e2e-smoke"
+
+[initial]
+local_epubs = 3
+services = ["opds", "paris"]
