@@ -16,7 +16,7 @@ Réservé à :
 - interactions entre plusieurs sous-systèmes Core ;
 - invariants publics qui ne sont pas propres à un provider.
 
-### `plugins/<plugin>/tests/`
+### `src/plugins/<plugin>/tests/`
 
 Réservé à :
 
@@ -60,7 +60,7 @@ Le tree courant contient encore `tests/test_095_consolidation.py` sous forme de 
 La couverture utile est désormais répartie entre :
 
 - `tests/test_sync_state_contract.py` ;
-- `plugins/provider-paris/tests/test_sync082_regressions.py` ;
+- `src/plugins/provider-paris/tests/test_sync082_regressions.py` ;
 - `tests/test_adept_profile_readiness.py` ;
 - `tests/test_adept_artifact_orchestration.py` ;
 - `tests/test_kobo_sync_modes.py` ;
@@ -72,7 +72,7 @@ L'ancien module `test_sync_082.py` n'est pas présent dans le tree actif et ne d
 
 La couverture utile est répartie entre :
 
-- `plugins/provider-kobo/tests/test_vault_contract.py` ;
+- `src/plugins/provider-kobo/tests/test_vault_contract.py` ;
 - `tests/test_kobo_executor_retries.py` ;
 - `tests/test_kobo_backup_fault_isolation.py` ;
 - `tests/test_kobo_backup_observability.py` ;

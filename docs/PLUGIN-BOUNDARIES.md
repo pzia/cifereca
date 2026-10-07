@@ -51,11 +51,11 @@ L'inspection et la publication d'artefacts ont été remontées dans les primiti
 
 ### Gallica
 
-Les régressions OPDS/audio sont couvertes dans `plugins/provider-gallica/tests/`. Le Core n'embarque pas les règles métier Gallica.
+Les régressions OPDS/audio sont couvertes dans `src/plugins/provider-gallica/tests/`. Le Core n'embarque pas les règles métier Gallica.
 
 ### Kobo
 
-Le contrat provider est couvert dans `plugins/provider-kobo/tests/`. Les mécanismes Kobo spécialisés restent dans le plugin ou dans le runtime dédié.
+Le contrat provider est couvert dans `src/plugins/provider-kobo/tests/`. Les mécanismes Kobo spécialisés restent dans le plugin ou dans le runtime dédié.
 
 ### Kobo-Adept
 

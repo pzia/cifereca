@@ -56,8 +56,8 @@ Ces fichiers historiques ne sont pas présents dans le tree courant à la date d
 
 - `src/cifereca/builtin_ui/` reste intégré au Core.
 - `src/cifereca/kobo/` conserve seulement l'orchestration résiduelle Core ; le client HTTP Kobo-Vault appartient au plugin provider-kobo.
-- les plugins fonctionnels restent sous `plugins/` à la racine ;
-- la cible future `src/plugins/` n'est pas encore matérialisée.
+- les plugins fonctionnels sont désormais sous `src/plugins/`, source canonique unique ;
+- le répertoire racine `plugins/` n'est plus une source active.
 
 Voir [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -71,7 +71,7 @@ Le validateur local reste plus strict que l'inspection Core sur plusieurs invari
 
 ### Sessions HTTP fournisseur
 
-Paris est désormais entièrement porté par `plugins/provider-paris/`. Numilog, Kobo et d'autres providers peuvent garder une session HTTP spécialisée lorsque l'authentification, les cookies ou la navigation métier dépassent le contrat générique `transport.http`.
+Paris est désormais entièrement porté par `src/plugins/provider-paris/`. Numilog, Kobo et d'autres providers peuvent garder une session HTTP spécialisée lorsque l'authentification, les cookies ou la navigation métier dépassent le contrat générique `transport.http`.
 
 ## Simulation
 

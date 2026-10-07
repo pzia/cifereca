@@ -14,8 +14,8 @@ import zipfile
 from cifereca.brokers import AcquisitionBrokerImpl, IdentityBrokerImpl
 from cifereca.services import LibraryService
 
-ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_ROOT = ROOT / "plugins" / "provider-numilog"
+ROOT = Path(__file__).resolve().parents[4]
+PLUGIN_ROOT = ROOT / "src" / "plugins" / "provider-numilog"
 DATASET_PATH = ROOT / "simulation" / "numilog" / "pseudo_numilog_service.py"
 
 if str(PLUGIN_ROOT) not in sys.path:

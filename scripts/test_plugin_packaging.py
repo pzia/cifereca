@@ -134,7 +134,7 @@ class PluginPackagingTests(unittest.TestCase):
                     )
 
     def test_real_repository_discovers_all_packages(self) -> None:
-        plugins = Path(__file__).resolve().parents[1] / "plugins"
+        plugins = Path(__file__).resolve().parents[1] / "src" / "plugins"
         expected = sorted(path.parent.resolve() for path in plugins.glob("*/cifereca-plugin.json"))
         self.assertEqual(discover_plugins(plugins), expected)
         self.assertGreater(len(expected), 0)
