@@ -690,12 +690,17 @@ def validate_plugin_zip(path: Path) -> dict:
         raise PackagingError(f"ZIP plugin invalide: {path}") from exc
     if not isinstance(manifest, dict):
         raise PackagingError(f"{path}: manifest plugin invalide")
-    package = manifest.get("package")
-    if not isinstance(package, dict) or not package.get("id") or not package.get("version"):
-        raise PackagingError(f"{path}: package.id/version absent")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(package["id"])):
-        raise PackagingError(f"{path}: package.id invalide")
-    return manifest
+
+    # Keep ZIP validation aligned with the same static manifest contract used
+    # when packaging a plugin directory, without importing Core/runtime code.
+    with tempfile.TemporaryDirectory(prefix="cifereca-plugin-manifest-") as tmp:
+        manifest_dir = Path(tmp)
+        (manifest_dir / PLUGIN_MANIFEST).write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        validated = read_plugin_manifest(manifest_dir)
+    return validated
 
 
 def _git_value(args: Sequence[str], default: str) -> str:
