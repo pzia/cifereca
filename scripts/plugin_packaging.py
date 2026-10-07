@@ -135,40 +135,62 @@ def _validate_manifest_versions(plugin_dir: Path, manifest: dict) -> None:
 
 
 def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
-    categories = manifest.get("categories")
-    if isinstance(categories, list):
-        for index, category in enumerate(categories):
-            if isinstance(category, dict):
-                _validate_id(
-                    category.get("id"),
-                    f"{plugin_dir}: categories[{index}].id",
-                )
+    categories = manifest.get("categories", [])
+    if not isinstance(categories, list):
+        raise PackagingError(f"{plugin_dir}: categories doit être une liste")
+    for index, category in enumerate(categories):
+        if not isinstance(category, dict):
+            raise PackagingError(
+                f"{plugin_dir}: categories[{index}] doit être un objet"
+            )
+        _validate_id(
+            category.get("id"),
+            f"{plugin_dir}: categories[{index}].id",
+        )
 
     for index, descriptor in enumerate(manifest.get("plugins") or []):
         if not isinstance(descriptor, dict):
             continue
         for field in ("requires", "recommends", "conflicts"):
             rows = descriptor.get(field)
-            if not isinstance(rows, list):
+            if rows is None:
                 continue
-            for dep_index, row in enumerate(rows):
-                plugin_id = row if isinstance(row, str) else (
-                    row.get("plugin") if isinstance(row, dict) else None
+            if not isinstance(rows, list):
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].{field} doit être une liste"
                 )
-                if plugin_id is not None:
-                    _validate_id(
-                        plugin_id,
-                        f"{plugin_dir}: plugins[{index}].{field}[{dep_index}].plugin",
+            for dep_index, row in enumerate(rows):
+                if isinstance(row, str):
+                    plugin_id = row
+                elif isinstance(row, dict):
+                    plugin_id = row.get("plugin")
+                else:
+                    raise PackagingError(
+                        f"{plugin_dir}: plugins[{index}].{field}[{dep_index}] "
+                        "doit être une chaîne ou un objet"
                     )
+                _validate_id(
+                    plugin_id,
+                    f"{plugin_dir}: plugins[{index}].{field}[{dep_index}].plugin",
+                )
 
         rows = descriptor.get("requires_contracts")
-        if isinstance(rows, list):
-            for req_index, row in enumerate(rows):
-                if isinstance(row, dict):
-                    _validate_id(
-                        row.get("category"),
-                        f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].category",
-                    )
+        if rows is None:
+            continue
+        if not isinstance(rows, list):
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].requires_contracts doit être une liste"
+            )
+        for req_index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}] "
+                    "doit être un objet"
+                )
+            _validate_id(
+                row.get("category"),
+                f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].category",
+            )
 
 
 def read_plugin_manifest(plugin_dir: Path) -> dict:
