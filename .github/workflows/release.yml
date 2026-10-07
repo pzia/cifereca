@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "VERSION"
+      - "pyproject.toml"
+      - "scripts/**"
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          expected="v$(cat VERSION)"
+          if [ "${GITHUB_REF_NAME}" != "$expected" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match VERSION ($expected)" >&2
+            exit 1
+          fi
+
+      - name: Install build and test dependencies
+        run: python -m pip install --disable-pip-version-check "setuptools>=69" wheel "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26"
+
+      - name: Validate packaging
+        run: |
+          python scripts/verify-packaging.py
+          python -m unittest scripts.test_plugin_packaging
+
+      - name: Build Core wheel
+        run: python -m pip wheel --no-deps --no-build-isolation . -w dist
+
+      - name: Build plugin bundle
+        run: python scripts/package-all-in-one.py
+
+      - name: Build development snapshot
+        run: python scripts/package-dev-snapshot.py
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cifereca-release-artifacts
+          path: |
+            dist/*.whl
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cifereca-release-artifacts
+          path: dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
