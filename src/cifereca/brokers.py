@@ -353,6 +353,42 @@ class AdeptProfileBrokerImpl:
 
 
 @dataclass(slots=True)
+class AdeptLoanBrokerImpl:
+    """Public facade over Core ADEPT binding and confirmed-return orchestration."""
+
+    service: Any
+
+    @staticmethod
+    def _profiles(profile_ids: tuple[str, ...]) -> list[str] | None:
+        values = [str(value).strip() for value in profile_ids if str(value).strip()]
+        if len(values) != len(set(values)):
+            values = list(dict.fromkeys(values))
+        return values or None
+
+    def reconcile(self, acquisition_id: str, *, profile_ids: tuple[str, ...] = ()):
+        return self.service.reconcile_adept_acquisition(
+            str(acquisition_id),
+            profile_references=self._profiles(profile_ids),
+        )
+
+    def choices(self, acquisition_id: str, *, profile_ids: tuple[str, ...] = ()):
+        return self.service.adept_loan_choices(
+            str(acquisition_id),
+            profile_references=self._profiles(profile_ids),
+        )
+
+    def attach(self, acquisition_id: str, profile_id: str, adept_loan_id: str):
+        return self.service.attach_adept_loan(
+            str(acquisition_id),
+            str(profile_id),
+            str(adept_loan_id),
+        )
+
+    def return_acquisition(self, acquisition_id: str):
+        return self.service.return_adept_acquisition(str(acquisition_id))
+
+
+@dataclass(slots=True)
 class DiagnosticsBrokerImpl:
     service: Any
 
@@ -526,6 +562,7 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "reconciliation": ReconciliationBrokerImpl(service),
         "identities": IdentityBrokerImpl(service),
         "adept.profiles": AdeptProfileBrokerImpl(service),
+        "adept.loans": AdeptLoanBrokerImpl(service),
         "diagnostics": DiagnosticsBrokerImpl(service),
         "library.naming": LibraryNamingBrokerImpl(service),
         "artifact.execution": artifact_execution,
