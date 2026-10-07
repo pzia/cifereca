@@ -44,3 +44,21 @@ def test_dashboard_exposes_local_background_connection_state():
     assert "Connexion aux sources en arrière-plan…" in build
     assert "dashboard_loading_status" in connect
     assert "La navigation locale reste disponible." in connect
+
+def test_core_open_keeps_plugin_activation_enabled_by_default():
+    runtime = (ROOT / "src/cifereca/core/runtime.py").read_text()
+    assert "activate_plugins: bool = True" in runtime
+    assert "if activate_plugins:" in runtime
+    assert "plugins.activate()" in runtime
+
+def test_gui_defers_plugin_activation_until_after_present():
+    app = APP.read_text()
+    assert "activate_plugins=False" in app
+    present = app.index("self.window.present()")
+    schedule = app.index("GLib.idle_add(self.window.activate_startup_plugins)")
+    assert present < schedule
+
+def test_fallback_pages_remain_available_before_plugin_activation():
+    source = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_rebuild_plugin_pages"))
+    assert "if not contributed:" in source
+    assert "contributed = list(fallback)" in source
