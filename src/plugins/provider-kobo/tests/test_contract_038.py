@@ -12,7 +12,7 @@ class Contract040Tests(unittest.TestCase):
     def test_manifest_explicit_negotiation_fields(self):
         data = json.loads((ROOT / "cifereca-plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(data.get("manifest"), 1)
-        self.assertEqual(data.get("package", {}).get("plugin_api"), ">=1.3,<2")
+        self.assertEqual(data.get("package", {}).get("plugin_api"), ">=1.4,<2")
         self.assertTrue(data.get("plugins"))
         package_version = data["package"]["version"]
         for plugin in data["plugins"]:
@@ -22,6 +22,26 @@ class Contract040Tests(unittest.TestCase):
                 self.assertIsInstance(plugin[field], list)
             self.assertTrue(str(plugin.get("help_text") or "").strip())
             self.assertNotIn("requires_services", plugin)
+
+    def test_catalog_is_technical_service_and_provider_requires_public_contract(self):
+        data = json.loads((ROOT / "cifereca-plugin.json").read_text(encoding="utf-8"))
+        plugins = {row["id"]: row for row in data["plugins"]}
+        self.assertEqual(plugins["provider.kobo.catalog"]["type"], "catalog.service")
+        self.assertEqual(plugins["provider.kobo"]["requires"], [])
+        self.assertEqual(
+            plugins["provider.kobo"]["requires_contracts"],
+            [{
+                "category": "catalog.service",
+                "contract": "cifereca.catalog.service",
+                "version": ">=1,<2",
+                "mode": "required",
+                "capabilities": [],
+            }],
+        )
+        source = (ROOT / "cifereca_kobo.py").read_text(encoding="utf-8")
+        self.assertIn('context.select_service(', source)
+        self.assertIn('"catalog.service"', source)
+        self.assertNotIn("context.service('provider.kobo.catalog')", source)
 
     def test_no_private_cifereca_import(self):
         violations = []
