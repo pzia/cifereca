@@ -52,9 +52,11 @@ class SaveSettings(unittest.TestCase):
         self.assertGreaterEqual(self.window._render_dashboard.call_count,1)
         self.assertEqual(self.service.identities[0].identity_id,before_identity)
     def test_failed_save_does_not_refresh_identity_selection(self):
+        self.service.save_configuration.side_effect=RuntimeError('save failed')
         self.assertTrue(self.ns['save_settings']())
         args=self.runner.submit.call_args.args
-        args[3](RuntimeError('save failed'))
+        with self.assertRaises(RuntimeError):
+            args[1]()
         self.window._populate_accounts.assert_not_called()
         self.window._render_dashboard.assert_not_called()
         self.assertEqual(self.service.identities[0].identity_id,'stable-id')
