@@ -44,6 +44,9 @@ EXCLUDED_DIRS = {
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 CANONICAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,127}$")
+CANONICAL_CAPABILITY_RE = re.compile(
+    r"^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$"
+)
 
 
 class PackagingError(RuntimeError):
@@ -74,6 +77,13 @@ def _validate_id(value: object, field: str) -> str:
     raw = str(value or "").strip()
     if not CANONICAL_ID_RE.fullmatch(raw):
         raise PackagingError(f"{field} invalide: {raw!r}")
+    return raw
+
+
+def _validate_capability(value: object, field: str) -> str:
+    raw = str(value or "").strip()
+    if not CANONICAL_CAPABILITY_RE.fullmatch(raw):
+        raise PackagingError(f"{field} non canonique: {raw!r}")
     return raw
 
 
@@ -256,6 +266,13 @@ def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
                     f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].capabilities "
                     "doit être une liste de chaînes non vides"
                 )
+            if isinstance(capabilities, list):
+                for capability_index, value in enumerate(capabilities):
+                    _validate_capability(
+                        value,
+                        f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}]."
+                        f"capabilities[{capability_index}]",
+                    )
 
 
 def _validate_system_requirements(plugin_dir: Path, manifest: dict) -> None:
@@ -368,6 +385,12 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
                     f"{plugin_dir}: plugins[{index}].{field} "
                     "doit être une liste de chaînes non vides"
                 )
+            if field == "capabilities":
+                for capability_index, value in enumerate(values):
+                    _validate_capability(
+                        value,
+                        f"{plugin_dir}: plugins[{index}].capabilities[{capability_index}]",
+                    )
         if plugin_id in seen_plugin_ids:
             raise PackagingError(
                 f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"
