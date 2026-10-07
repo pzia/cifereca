@@ -20,6 +20,7 @@ from .. import __version__
 from ..config import Config
 from ..core.search import file_format
 from ..identity_selection import identity_change_required
+from ..language import language_label
 from ..diagnostics import Diagnostics
 from ..descriptions import description_text
 from ..epub_metadata import notice_rows
@@ -66,6 +67,52 @@ def detail_display_value(label: str, value: Any) -> tuple[str, str]:
     return full, full
 
 
+def detail_language(metadata: object) -> str:
+    """Return a compact, human-readable language list for shared book details."""
+    data = metadata if isinstance(metadata, dict) else {}
+    raw = data.get("languages") or data.get("language") or ()
+    values = raw if isinstance(raw, (list, tuple, set)) else (raw,)
+    labels: list[str] = []
+    for value in values:
+        label = language_label(value)
+        if label and label not in labels:
+            labels.append(label)
+    return ", ".join(labels)
+
+
+def compact_availability_label(value: object) -> str:
+    """Normalize verbose provider prose into a short business status."""
+    text = str(value or "").strip()
+    folded = text.casefold()
+    if not text:
+        return ""
+    if "non vérifi" in folded or "non verifi" in folded:
+        return "Non vérifiée"
+    if "dans votre bibliothèque" in folded or "dans votre bibliotheque" in folded:
+        return "Dans la bibliothèque"
+    if "téléchargement libre" in folded or "telechargement libre" in folded:
+        return "Téléchargement libre"
+    if "disponible à l’emprunt" in folded or "disponible a l'emprunt" in folded:
+        return "Empruntable"
+    if "disponible" in folded and len(text) > 32:
+        return "Disponible"
+    if len(text) > 40 and " — " in text:
+        return text.split(" — ", 1)[0].strip()
+    return text
+
+
+def compact_detail_rows(rows: Iterable[tuple[str, object]]) -> tuple[tuple[str, object], ...]:
+    """Drop empty filler cells from dense detail sections."""
+    result: list[tuple[str, object]] = []
+    for label, value in rows:
+        text = str(value or "").strip()
+        if not text or text in {"—", "Inconnu"}:
+            continue
+        result.append((str(label), value))
+    return tuple(result)
+
+
+
 def book_detail_presentation(
     *,
     title: str,
@@ -74,23 +121,34 @@ def book_detail_presentation(
     badges: Iterable[str] = (),
     group_title: str | None = None,
     rows: Iterable[tuple[str, object]] = (),
+    section_rows: Iterable[tuple[str, Iterable[tuple[str, object]]]] = (),
 ) -> UiBookDetailPresentation:
     """Build the neutral book-detail projection used by Core and plugin views."""
-    sections: tuple[DetailSection, ...] = ()
-    if group_title:
+    sections_list: list[DetailSection] = []
+    for order, (section_title, section_values) in enumerate(section_rows):
+        compact_rows = compact_detail_rows(section_values)
+        fields = tuple(
+            DetailField(id=f"section-{order}-field-{index}", label=str(label), value=value)
+            for index, (label, value) in enumerate(compact_rows)
+        )
+        if fields:
+            sections_list.append(
+                DetailSection(id=f"section-{order}", title=str(section_title), fields=fields, order=order)
+            )
+    if not sections_list and group_title:
         fields = tuple(
             DetailField(id=f"field-{index}", label=str(label), value=value)
-            for index, (label, value) in enumerate(rows)
+            for index, (label, value) in enumerate(compact_detail_rows(rows))
         )
-        sections = (DetailSection(id="primary", title=group_title, fields=fields, order=0),)
+        if fields:
+            sections_list.append(DetailSection(id="primary", title=group_title, fields=fields, order=0))
     return UiBookDetailPresentation(
         title=str(title or "Sans titre"),
         subtitle=str(subtitle or ""),
         thumbnail_url=thumbnail,
-        badges=tuple(str(value) for value in badges if value),
-        sections=sections,
+        badges=tuple(dict.fromkeys(str(value) for value in badges if value)),
+        sections=tuple(sections_list),
     )
-
 
 def clear_box(box: Gtk.Box) -> None:
     child = box.get_first_child()
@@ -308,7 +366,7 @@ class DetailPanel(Gtk.Box):
     ) -> CoverView:
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
         self._append_content(header)
-        cover = CoverView(128, 190)
+        cover = CoverView(112, 168)
         header.append(cover)
         if thumbnail:
             cover.bind_url(self.window.covers, thumbnail, priority=0)
@@ -319,11 +377,18 @@ class DetailPanel(Gtk.Box):
         label = Gtk.Label(label=title or "Sans titre", xalign=0)
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_lines(3)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_tooltip_text(title or "Sans titre")
         add_css(label, "detail-title")
         text.append(label)
         if subtitle:
             sub = Gtk.Label(label=subtitle, xalign=0)
             sub.set_wrap(True)
+            sub.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            sub.set_lines(2)
+            sub.set_ellipsize(Pango.EllipsizeMode.END)
+            sub.set_tooltip_text(subtitle)
             add_css(sub, "detail-subtitle", "dim-label")
             text.append(sub)
             self._subtitle_label = sub
@@ -349,25 +414,23 @@ class DetailPanel(Gtk.Box):
         text.append(badges_box)
         return cover
 
+
     def _group(self, title: str, rows: list[tuple[str, str]]) -> None:
         group = Adw.PreferencesGroup()
         group.set_title(title)
         grid = None
-        if title in {"Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
+        if title in {"Essentiel","Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
             grid = Gtk.FlowBox(); grid.set_selection_mode(Gtk.SelectionMode.NONE)
-            grid.set_min_children_per_line(1); grid.set_max_children_per_line(3)
+            columns = 2 if title == "Essentiel" else 3
+            grid.set_min_children_per_line(1); grid.set_max_children_per_line(columns)
             grid.set_homogeneous(True); grid.set_column_spacing(12); grid.set_row_spacing(8)
             group.add(grid)
         for label, value in rows:
             row = Adw.ActionRow()
             display_value, tooltip_value = detail_display_value(label, value)
             row.set_title(label); row.set_subtitle(display_value)
-            row.set_subtitle_lines(1 if grid is not None else 0)
+            row.set_subtitle_lines(1 if title == "Essentiel" else (2 if grid is not None else 0))
             row.set_tooltip_text(label+' : '+tooltip_value)
-            field={'Auteur':'author','Éditeur':'publisher','Sujets':'subject','Sujet':'subject','Collection / série':'collection','Collection':'collection','Série':'series','Langue':'language','Langues':'language','Source':'source','Fournisseur':'source','Format':'format'}.get(label)
-            if field and value and value!='—':
-                row.set_activatable(True)
-                row._cifereca_facet_handler = row.connect('activated',lambda _row,f=field,text=str(value):self.window._search_facet(f,text,self.window.search_controls))
             if grid is not None:
                 row.set_size_request(160, -1); grid.insert(row, -1)
             else:
@@ -515,18 +578,28 @@ class DetailPanel(Gtk.Box):
 
     def show_loan(self, loan: Loan, include_pnb_action: bool = True) -> None:
         self._cancel_meta_request()
-        clear_box(self.content)
-        self._clear_actions()
-        badge = "Numérique" if loan.medium == "digital" else "Physique"
-        state = "En retard" if loan.is_late else (loan.state or "En cours")
-        self._cover_and_title(loan.title, loan.document_type, loan.thumbnail_url, [badge, state])
-        self._group("Prêt", [
-            ("Retour prévu", fr_date(loan.due_at)),
-            ("Bibliothèque", loan.library or "—"),
-            ("État", state),
-            ("Fournisseur", loan.provider),
-            ("Support", loan.access_medium or loan.document_type or "—"),
-        ])
+        source = self.window.service.provider_display_name(str(loan.source_provider or loan.provider))
+        state = "En retard" if loan.is_late else (loan.state or "Emprunté")
+        self.show_presentation(book_detail_presentation(
+            title=loan.title,
+            subtitle=loan.author or "",
+            thumbnail=loan.thumbnail_url,
+            badges=[],
+            section_rows=[
+                ("Essentiel", [
+                    ("Source", source),
+                    ("Format", file_format(loan.media_format).upper()),
+                    ("Langue", detail_language(loan.raw)),
+                    ("Disponibilité", compact_availability_label(state)),
+                ]),
+                ("Prêt", [
+                    ("Retour prévu", fr_date(loan.due_at)),
+                    ("Bibliothèque", loan.library or ""),
+                    ("État", state),
+                    ("Support", loan.access_medium or loan.document_type or ""),
+                ]),
+            ],
+        ))
         buttons: list[Gtk.Button] = []
         if include_pnb_action and self.window.service.can_download_loan(loan):
             prepare = self.window.action_button("Télécharger le livre du prêt", "document-save-symbolic", suggested=True)
@@ -624,22 +697,30 @@ class DetailPanel(Gtk.Box):
         ])
         self._decorate(item)
 
+
     def show_search(self, item: SearchResult, loading: bool = False) -> None:
         content_type = self.window.service.content_type_for(item)
         medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
         source = self.window.service.provider_display_name(item.source_provider)
+        fmt = file_format(item.format).upper()
         self.show_presentation(book_detail_presentation(
             title=item.title,
             subtitle=item.author,
             thumbnail=item.thumbnail_url,
-            badges=[source, medium, item.type or ""],
-            group_title="Notice",
-            rows=[
-                ("Source", source),
-                ("Type", item.type or "—"),
-                ("Format", file_format(item.format).upper() or "Inconnu"),
-                ("Éditeur", item.publisher or "—"),
-                ("Publication", item.published_at or "—"),
+            badges=[],
+            section_rows=[
+                ("Essentiel", [
+                    ("Source", source),
+                    ("Format", fmt),
+                    ("Langue", detail_language(item.metadata)),
+                    ("Disponibilité", "Non vérifiée"),
+                ]),
+                ("Notice", [
+                    ("Type", item.type or ""),
+                    ("Éditeur", item.publisher or ""),
+                    ("Publication", item.published_at or ""),
+                    ("Support", medium),
+                ]),
             ],
         ))
         self._show_description(item.description)
@@ -649,14 +730,13 @@ class DetailPanel(Gtk.Box):
         self._direct_download_action(item)
         availability = Adw.PreferencesGroup()
         availability.set_title("Disponibilités")
+        row = Adw.ActionRow()
         if loading:
-            row = Adw.ActionRow()
             row.set_title("Chargement des exemplaires…")
             spinner = Gtk.Spinner(); spinner.start(); row.add_suffix(spinner)
-            availability.add(row)
         else:
-            row = Adw.ActionRow(); row.set_title("Sélectionnez de nouveau ce résultat pour actualiser les disponibilités")
-            availability.add(row)
+            row.set_title("Disponibilités non actualisées")
+        availability.add(row)
         self._append_content(availability)
         self._decorate(item)
 
@@ -668,30 +748,37 @@ class DetailPanel(Gtk.Box):
         label = Gtk.Label(label=text, xalign=0); label.set_wrap(True); label.set_selectable(True)
         group.add(label); self._append_content(group)
 
+
     def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
         content_type = self.window.service.content_type_for(item)
         medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
         source = self.window.service.provider_display_name(item.source_provider)
-        availability = self.window.service.availability_display_label(item, detail)
+        availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
             thumbnail=detail.thumbnail_url or item.thumbnail_url,
-            badges=[source, medium, availability],
-            group_title="Notice",
-            rows=[
-                ("Source", source),
-                ("Type", detail.type or item.type or "—"),
-                ("Format", file_format(item.format).upper() or "Inconnu"),
-                ("Année", detail.year or item.published_at or "—"),
-                ("Disponibilité", availability),
+            badges=[],
+            section_rows=[
+                ("Essentiel", [
+                    ("Source", source),
+                    ("Format", file_format(item.format).upper()),
+                    ("Langue", detail_language(item.metadata)),
+                    ("Disponibilité", availability),
+                ]),
+                ("Notice", [
+                    ("Type", detail.type or item.type or ""),
+                    ("Éditeur", item.publisher or ""),
+                    ("Publication", detail.year or item.published_at or ""),
+                    ("Support", medium),
+                ]),
             ],
         ))
         self._show_description(getattr(detail, "description", None) or item.description)
         direct_download = self.window.service.can_direct_download(item)
         if direct_download:
             self._direct_download_action(item)
-        elif item.medium == "digital" and availability == "Disponible à l’emprunt":
+        elif item.medium == "digital" and availability == "Empruntable":
             action = Adw.PreferencesGroup()
             action.set_title("Action")
             if self.window.can_borrow_item(item):
@@ -716,9 +803,10 @@ class DetailPanel(Gtk.Box):
         if direct_download and not detail.holdings:
             return
         group = Adw.PreferencesGroup()
-        group.set_title(f"Exemplaires ({len(detail.holdings)})")
+        group.set_title("Disponibilités")
         if not detail.holdings:
-            row = Adw.ActionRow(); row.set_title("Aucun exemplaire détaillé renvoyé")
+            row = Adw.ActionRow()
+            row.set_title("Détail des exemplaires non fourni par cette source")
             group.add(row)
         for holding in detail.holdings:
             row = Adw.ActionRow()
@@ -741,10 +829,6 @@ class DetailPanel(Gtk.Box):
                 row.add_suffix(chip)
             group.add(row)
         self._append_content(group)
-
-
-class MasterDetailPage(Gtk.Box):
-    """Page maître/détail basée sur Gtk.ListView virtualisé."""
 
     def __init__(self, window: "MainWindow", title: str, subtitle: str, empty_title: str, empty_desc: str):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -2855,6 +2939,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.search_page.show_rows(ui_rows)
         return len(ui_rows)
 
+
     def _search_selected(self, row: BookListItem | None) -> None:
         if row is None:
             self._selected_search_id = None
@@ -2865,16 +2950,31 @@ class MainWindow(Adw.ApplicationWindow):
             if not item:
                 return
             self._selected_search_id = row.key
+            provider = str(item.get("provider_id") or "local")
+            availability = self._library_availability_label(item)
+            if not availability and str(item.get("state") or "") == "local":
+                availability = "Disponible hors ligne"
+            identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
+            sync_label = self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
+            if sync_label == "À jour":
+                sync_label = ""
             self.search_page.detail.show_presentation(book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
                 subtitle=str(item.get("author") or ""),
                 thumbnail=item.get("thumbnail_url"),
-                badges=["Connu", self._library_state_label(item)],
-                group_title="Catalogue connu",
-                rows=[
-                    ("Source", self.service.provider_display_name(str(item.get("provider_id") or "local"))),
-                    ("Format", str(item.get("media_format") or "—").upper()),
-                    ("Fichier local", str(item.get("local_path") or "—")),
+                badges=[],
+                section_rows=[
+                    ("Essentiel", [
+                        ("Source", self.service.provider_display_name(provider)),
+                        ("Format", str(item.get("media_format") or "").upper()),
+                        ("Langue", detail_language(item.get("metadata"))),
+                        ("Disponibilité", availability),
+                    ]),
+                    ("Bibliothèque", [
+                        ("Identité", identity.label if identity else str(item.get("identity_id") or "")),
+                        ("Fichier local", str(item.get("local_path") or "")),
+                        ("État acquisition", sync_label),
+                    ]),
                 ],
             ))
             actions = []
@@ -3112,7 +3212,7 @@ class MainWindow(Adw.ApplicationWindow):
         if state == "local":
             return "Local"
         if state == "remote_owned":
-            return "Disponible"
+            return "Possédé en ligne"
         if state == "remote_loan_active":
             return "Emprunté"
         if state == "remote_loan_realized":
@@ -3196,6 +3296,7 @@ class MainWindow(Adw.ApplicationWindow):
             row.tags=[(facet,lambda _b,f=facet.field,text=facet.value:self._search_facet(f,text,controls)) for facet in facets]
             row.author_actions=[];row.source_action=None;row.facet_actions=[]
 
+
     def _add_facets(self, detail, item, controls):
         values = self._facet_values(item)
         def bind_rows(widget):
@@ -3206,14 +3307,26 @@ class MainWindow(Adw.ApplicationWindow):
                 if not choices and field in {'author', 'publisher', 'subject', 'series', 'collection', 'language'}:
                     displayed = widget.get_subtitle()
                     if displayed and displayed != '—': choices = [displayed]
-                if choices:
-                    previous = getattr(widget, '_cifereca_facet_handler', None)
-                    if previous is not None: widget.disconnect(previous)
-                    value = choices[0] if len(choices) == 1 else widget.get_subtitle()
-                    # Mixed identifier schemes must never become an ISBN query.
-                    if field == 'isbn' and len(choices) != 1: return
+                previous = getattr(widget, '_cifereca_facet_handler', None)
+                if previous is not None:
+                    widget.disconnect(previous)
+                    widget._cifereca_facet_handler = None
+                if choices and len(choices) == 1:
+                    if field == 'isbn' and len(choices) != 1:
+                        return
                     widget.set_activatable(True)
-                    widget._cifereca_facet_handler = widget.connect("activated", lambda _row, f=field, text=value: self._search_facet(f, text, controls))
+                    indicator = getattr(widget, '_cifereca_facet_indicator', None)
+                    if indicator is None:
+                        indicator = Gtk.Image.new_from_icon_name("system-search-symbolic")
+                        indicator.set_tooltip_text("Utiliser cette valeur comme facette")
+                        widget.add_suffix(indicator)
+                        widget._cifereca_facet_indicator = indicator
+                    widget._cifereca_facet_handler = widget.connect(
+                        "activated",
+                        lambda _row, f=field, text=choices[0]: self._search_facet(f, text, controls),
+                    )
+                else:
+                    widget.set_activatable(False)
             child = widget.get_first_child()
             while child:
                 bind_rows(child)
@@ -3559,13 +3672,17 @@ class MainWindow(Adw.ApplicationWindow):
             except Exception as exc: self.show_error(str(exc), 'Ouverture du catalogue impossible')
         button.connect('clicked', open_catalogue); detail.add_actions([button])
 
+
     def _add_book_notice(self, detail, item):
         metadata=item.get('metadata') or {}
-        rows=notice_rows(metadata)
+        description=(metadata.get('epub_metadata') or {}).get('description') or metadata.get('description')
+        detail._show_description(description)
+        essential_labels={'Source','Provenance','Format','Langue','Langues','Disponibilité'}
+        rows=[row for row in notice_rows(metadata) if row[0] not in essential_labels]
         if rows:detail.add_group('Notice EPUB' if metadata.get('epub_metadata') else 'Notice',rows)
         catalogue=metadata.get('catalogue_metadata') or {}
         if catalogue:
-            catalogue_rows=notice_rows(catalogue)
+            catalogue_rows=[row for row in notice_rows(catalogue) if row[0] not in essential_labels]
             if catalogue_rows:detail.add_group('Catalogue',catalogue_rows)
         if metadata.get('epub_metadata_schema'):
             cover=metadata.get('epub_cover') or {}
@@ -3574,8 +3691,6 @@ class MainWindow(Adw.ApplicationWindow):
             facts=[('Couverture',labels.get(status,'À réinspecter'))]
             if cover.get('method'):facts.append(('Détection',{'declared':'Déclaration EPUB','declared_page':'Page de couverture déclarée','guide':'Guide de couverture','first_spine':'Image unique de la première page (déduction)'}.get(cover['method'],cover['method'])))
             detail.add_group('Image du livre',facts)
-        description=(metadata.get('epub_metadata') or {}).get('description') or metadata.get('description')
-        detail._show_description(description)
 
     def _recent_selected(self, row: BookListItem | None) -> None:
         if not row:
@@ -3601,6 +3716,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _render_kobo_loans(self) -> None:
         self._render_library()
 
+
     def _library_selected(self, row: BookListItem | None) -> None:
         if not row:
             return
@@ -3623,27 +3739,31 @@ class MainWindow(Adw.ApplicationWindow):
 
         detail = self.library_page.detail
         provider = str(item.get("provider_id") or "local")
-        state = self._library_availability_label(item)
-        provider_label = "Kobo" if provider == "kobo" else provider.capitalize()
+        availability = self._library_availability_label(item)
+        if not availability and str(item.get("state") or "") == "local":
+            availability = "Disponible hors ligne"
         identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
-        detail_rows = [
-            ("Identité", identity.label if identity else str(item.get("identity_id") or "—")),
-            ("Provenance", provider_label),
-        ]
-        if state:
-            detail_rows.append(("Disponibilité", state))
-        detail_rows.extend([
-            ("Format", str(item.get("media_format") or "—").upper()),
-            ("Fichier local", str(item.get("local_path") or "—")),
-            ("État acquisition", self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else "—"),
-        ])
+        sync_label = self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
+        if sync_label == "À jour":
+            sync_label = ""
         detail.show_presentation(book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
             thumbnail=item.get("thumbnail_url"),
-            badges=[provider_label, state],
-            group_title="Bibliothèque",
-            rows=detail_rows,
+            badges=[],
+            section_rows=[
+                ("Essentiel", [
+                    ("Source", self.service.provider_display_name(provider)),
+                    ("Format", str(item.get("media_format") or "").upper()),
+                    ("Langue", detail_language(item.get("metadata"))),
+                    ("Disponibilité", availability),
+                ]),
+                ("Bibliothèque", [
+                    ("Identité", identity.label if identity else str(item.get("identity_id") or "")),
+                    ("Fichier local", str(item.get("local_path") or "")),
+                    ("État acquisition", sync_label),
+                ]),
+            ],
         ))
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])
@@ -3653,14 +3773,16 @@ class MainWindow(Adw.ApplicationWindow):
             identity_ref = self.service.identity_by_id(iid) if iid else None
             owner = identity_ref.label if identity_ref else (iid or 'Bibliothèque')
             target = placement.get('storage_target_id') or placement.get('provider_id') or 'local'
-            presence_rows.append((owner, f"{placement.get('kind') or 'local'} · {target}"))
+            presence_rows.append((owner, f"Stockage : {target}"))
         for possession in possessions:
             iid = str(possession.get('identity_id') or '')
             identity_ref = self.service.identity_by_id(iid) if iid else None
             owner = identity_ref.label if identity_ref else (iid or 'Compte')
-            presence_rows.append((owner, f"{possession.get('kind') or 'droit'} · {self.service.provider_display_name(str(possession.get('provider_id') or ''))}"))
-        if presence_rows:
-            detail.add_group('Présence / Bibliothèques / Sources', presence_rows)
+            provider_name = self.service.provider_display_name(str(possession.get('provider_id') or ''))
+            presence_rows.append((owner, f"Droit distant : {provider_name}"))
+        unique_presence = list(dict.fromkeys(presence_rows))
+        if len(unique_presence) > 1:
+            detail.add_group('Présence / Bibliothèques / Sources', unique_presence)
         self._add_book_notice(detail,item)
         self._add_local_book_actions(detail,item)
         self._add_facets(self.library_page.detail, item, self.library_controls)
