@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
+from cifereca.locking import LockBusyError
+from cifereca.plugin_api import AttentionRequired
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -403,5 +406,94 @@ def test_missing_inventory_entry_preserves_historical_binding_and_artifact(tmp_p
         assert binding["return_available"] is False
         assert path.read_bytes() == before
         assert path.is_file()
+    finally:
+        service.close()
+
+
+def test_missing_artifact_skips_inventory_lookup(tmp_path: Path):
+    service = _service(tmp_path)
+    missing = tmp_path / "EBooks" / "hugues" / "paris" / "missing.epub"
+    acquisition_id = _acquisition(service, missing)
+    calls = []
+    service._kobo_adapter = lambda: SimpleNamespace(
+        loan_inventories=lambda names: calls.append(list(names))
+    )
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        result = service.reconcile_adept_acquisition(acquisition_id)
+
+        assert result["status"] == "artifact_missing"
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_busy_lock_skips_inventory_lookup(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path)
+    calls = []
+    service._kobo_adapter = lambda: SimpleNamespace(
+        loan_inventories=lambda names: calls.append(list(names))
+    )
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        with patch("cifereca.services.InterProcessLock") as lock:
+            lock.return_value.__enter__.side_effect = LockBusyError("busy")
+            try:
+                service.reconcile_adept_acquisition(acquisition_id)
+                raise AssertionError("busy reconciliation must fail")
+            except AttentionRequired as exc:
+                assert exc.code == "acquisition_busy"
+
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_identity_batch_reuses_inventory_for_same_profile_combination(tmp_path: Path):
+    service = _service(tmp_path)
+    first = _artifact(tmp_path)
+    second = first.with_name("Livre-2.epub")
+    second.write_bytes(b"existing-local-artifact-2")
+    _acquisition(service, first, acquisition_id="acq-1")
+    _acquisition(service, second, acquisition_id="acq-2")
+
+    calls = []
+    inventory = {
+        "complete": True,
+        "profiles": [{
+            "profile": "hb",
+            "loans": [
+                {
+                    "id": "registry-id-1",
+                    "expired": False,
+                    "returned": False,
+                    "token_present": True,
+                    "local_book": str(first),
+                },
+                {
+                    "id": "registry-id-2",
+                    "expired": False,
+                    "returned": False,
+                    "token_present": True,
+                    "local_book": str(second),
+                },
+            ],
+        }],
+        "errors": [],
+    }
+
+    runtime = SimpleNamespace(
+        loan_inventories=lambda names: (calls.append(list(names)) or inventory)
+    )
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        summary = service._reconcile_identity_adept_inventory("default")
+
+        assert summary["resolved"] == 2
+        assert summary["errors"] == 0
+        assert calls == [["hb"]]
     finally:
         service.close()
