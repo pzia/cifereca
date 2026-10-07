@@ -20,10 +20,10 @@ def _run_once_on_first_map(widget, callback):
         on_map(widget)
 
 
-def _run_profile_task(runtime, fn, *, reload_profiles: bool):
-    """Run runtime work entirely off the GTK thread and return renderable profiles."""
+def _run_profile_task(profiles_broker, fn, *, reload_profiles: bool):
+    """Run profile work off the GTK thread through the public broker when applicable."""
     value = fn()
-    profiles = runtime.profiles() if reload_profiles else value
+    profiles = profiles_broker.profiles() if reload_profiles else value
     return value, profiles
 
 
@@ -31,15 +31,19 @@ class AdeptProfilesPagePlugin:
     def __init__(self):
         self.context=None
         self.runtime=None
+        self.profiles_broker=None
         self.tasks=None
         self._task_handles=[]
 
     def activate(self,context):
         self.context=context
         self.runtime=context.service("runtime.kobo-adept")
+        self.profiles_broker=context.broker("adept.profiles")
         self.tasks=context.broker("tasks")
         if self.runtime is None:
             raise RuntimeError("runtime.kobo-adept indisponible")
+        if self.profiles_broker is None:
+            raise RuntimeError("broker adept.profiles indisponible")
         if self.tasks is None:
             raise RuntimeError("broker tasks indisponible")
         return self
@@ -98,16 +102,17 @@ class AdeptProfilesPagePlugin:
 
         def render(payload):
             clear(profiles)
-            rows=payload.get("profiles",[]) if isinstance(payload,dict) else []
+            rows=tuple(payload or ()) if isinstance(payload,(list,tuple)) else ()
             if not rows:
                 empty=Gtk.Label(label="Aucun profil ADEPT.",xalign=0); profiles.append(empty); return
             for row in rows:
-                if not isinstance(row,dict): continue
-                profile_name=str(row.get("name") or row.get("profile") or "")
-                provisioning=row.get("provisioning") if isinstance(row.get("provisioning"),dict) else {}
-                ready=row.get("complete") is True and row.get("fetch_capable") is True and provisioning.get("acsm_fetch_ready") is True
-                devices=row.get("devices") if isinstance(row.get("devices"),list) else []
-                button=Gtk.Button(label=f"{profile_name} · {'prêt ACSM' if ready else 'incomplet'} · {len(devices)} liseuse(s)")
+                profile_name=str(getattr(row,"name","") or "")
+                ready=(
+                    getattr(row,"complete",False) is True
+                    and getattr(row,"fetch_capable",False) is True
+                    and getattr(row,"acsm_fetch_ready",False) is True
+                )
+                button=Gtk.Button(label=f"{profile_name} · {'prêt ACSM' if ready else 'incomplet'}")
                 button.set_halign(Gtk.Align.FILL)
                 button.connect("clicked",lambda _b,value=profile_name:name.set_text(value))
                 profiles.append(button)
@@ -115,7 +120,7 @@ class AdeptProfilesPagePlugin:
         def async_call(fn,success_message=None,*,reload_profiles=False):
             set_busy(True)
             handle=self.tasks.submit(
-                lambda _control:_run_profile_task(self.runtime,fn,reload_profiles=reload_profiles),
+                lambda _control:_run_profile_task(self.profiles_broker,fn,reload_profiles=reload_profiles),
                 label="Gestion profil ADEPT",kind="adept-profile")
             self._task_handles.append(handle)
 
@@ -141,9 +146,9 @@ class AdeptProfilesPagePlugin:
 
             handle.add_done_callback(finished)
 
-        refresh.connect("clicked",lambda _b:async_call(self.runtime.profiles))
+        refresh.connect("clicked",lambda _b:async_call(self.profiles_broker.profiles))
         create.connect("clicked",lambda _b:async_call(
-            lambda:self.runtime.provision_profile(name.get_text(),email.get_text()),
+            lambda:self.profiles_broker.provision(name.get_text(),email.get_text()),
             "Profil ADEPT prêt",reload_profiles=True))
         associate.connect("clicked",lambda _b:async_call(
             lambda:self.runtime.associate_profile(name.get_text(),mount.get_text()),
@@ -155,7 +160,7 @@ class AdeptProfilesPagePlugin:
             confirm.set_active(False)
         remove.connect("clicked",do_remove)
 
-        _run_once_on_first_map(scroll, lambda: async_call(self.runtime.profiles))
+        _run_once_on_first_map(scroll, lambda: async_call(self.profiles_broker.profiles))
         return scroll
 
     def deactivate(self):
@@ -164,6 +169,7 @@ class AdeptProfilesPagePlugin:
             except Exception: pass
         self._task_handles.clear()
         self.tasks=None
+        self.profiles_broker=None
         self.runtime=None
         self.context=None
 
