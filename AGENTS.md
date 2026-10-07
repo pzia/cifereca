@@ -9,7 +9,7 @@ Ces règles s'appliquent à tout le dépôt.
 - Le Core applicatif vit sous `src/cifereca/`.
 - Les plugins fonctionnels vivent sous `plugins/<plugin>/` et leurs tests spécifiques restent avec eux.
 - `src/cifereca/plugins/` est le framework de plugins (loader, manager, manifeste, dépendances, état), pas l'emplacement des plugins fonctionnels.
-- `src/cifereca/builtin_ui/` et `src/cifereca/kobo/` existent encore : ce sont des reliquats structurels à rationaliser. Paris est porté exclusivement par `plugins/provider-paris/`.
+- `src/cifereca/builtin_ui/` et l'orchestration résiduelle `src/cifereca/kobo/` restent à rationaliser. Le client Kobo-Vault appartient à `plugins/provider-kobo/`, et Paris à `plugins/provider-paris/`.
 - `bundled_plugins/` et `integrations/` ne sont plus des sources actives.
 - Le code de production d'un plugin ne doit dépendre que de l'API publique `cifereca.plugin_api`, pas des modules privés du Core.
 
