@@ -36,12 +36,14 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/plugins/epub_optimizer
         run: |
           mkdir -p evidence
-          xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
-            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format epub --report evidence/epub-report.json &
+          xvfb-run -a -s "-screen 0 1000x700x24" bash -c '
+            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format epub --report evidence/epub-report.json --state-prefix evidence/epub &
             pid=$!
-            sleep 1.4
+            for _ in $(seq 1 160); do [ -f evidence/epub-progress.ready ] && break; sleep 0.05; done
+            test -f evidence/epub-progress.ready
             scrot evidence/epub-progress.png
-            sleep 1.7
+            for _ in $(seq 1 160); do [ -f evidence/epub-final.ready ] && break; sleep 0.05; done
+            test -f evidence/epub-final.ready
             scrot evidence/epub-final.png
             wait "$pid"
           '
@@ -50,12 +52,14 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/plugins/epub_optimizer
         run: |
-          xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
-            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format pdf --report evidence/pdf-report.json &
+          xvfb-run -a -s "-screen 0 1000x700x24" bash -c '
+            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format pdf --report evidence/pdf-report.json --state-prefix evidence/pdf &
             pid=$!
-            sleep 1.4
+            for _ in $(seq 1 160); do [ -f evidence/pdf-progress.ready ] && break; sleep 0.05; done
+            test -f evidence/pdf-progress.ready
             scrot evidence/pdf-progress.png
-            sleep 1.7
+            for _ in $(seq 1 160); do [ -f evidence/pdf-final.ready ] && break; sleep 0.05; done
+            test -f evidence/pdf-final.ready
             scrot evidence/pdf-final.png
             wait "$pid"
           '

@@ -79,7 +79,7 @@ class OptimizerPage:
             current = Gtk.Label(
                 label=(
                     "Livre courant : " + str(getattr(artifact, "filename", "") or getattr(artifact, "artifact_id", "artefact local"))
-                    + ". La transformation et la persistance de la variante sont gérées par artifact.execution."
+                    + ". Cifereca gère automatiquement la variante dans la bibliothèque."
                 ),
                 xalign=0,
             )
@@ -507,13 +507,13 @@ class OptimizerPage:
     def _artifact_success_ui(self, artifact):
         self._set_busy(False)
         self.progress.set_fraction(1.0)
-        self.progress.set_text("Terminé")
+        self.progress.set_text("100% — Terminé")
         filename = str(getattr(artifact, "filename", "") or getattr(artifact, "artifact_id", "variante"))
-        self.status.set_text(f"Variante intégrée à la bibliothèque : {filename}")
+        self.status.set_text(f"Variante disponible dans la bibliothèque : {filename}")
         refresh = getattr(self.action_host, "refresh_context", None)
         if callable(refresh):
             refresh()
-        self.host.toast("Variante optimisée créée et enregistrée")
+        self.host.toast("Variante optimisée disponible dans la bibliothèque")
         return False
 
     def _failure_ui(self, message: str):

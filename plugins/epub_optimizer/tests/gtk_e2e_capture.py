@@ -32,15 +32,23 @@ class ProfileService:
 
 
 class Execution:
-    def __init__(self):
+    def __init__(self, state_prefix: Path):
         self.calls = []
+        self.state_prefix = state_prefix
+
+    def _mark(self, name: str) -> None:
+        marker = Path(str(self.state_prefix) + f"-{name}.ready")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("ready\n", encoding="utf-8")
 
     def execute_transform(self, request, *, transformer_plugin_id="", control=None):
         self.calls.append((request.capability_id, transformer_plugin_id, dict(request.options)))
         control.report(current=10, total=100, message="Analyse")
         time.sleep(0.55)
         control.report(current=55, total=100, message="Optimisation des images")
-        time.sleep(0.70)
+        time.sleep(0.15)
+        self._mark("progress")
+        time.sleep(0.55)
         control.report(current=90, total=100, message="Validation")
         time.sleep(0.45)
         fmt = request.source.format
@@ -105,6 +113,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--format", choices=("epub", "pdf"), required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--state-prefix", type=Path, required=True)
     args = parser.parse_args()
 
     fmt = args.format
@@ -119,7 +128,7 @@ def main():
     )
 
     app = Gtk.Application(application_id=f"org.cifereca.optimizer.e2e.{fmt}")
-    execution = Execution()
+    execution = Execution(args.state_prefix)
     host = Host()
     action_host = ActionHost()
     state = {"heartbeats": 0, "started": False, "controller": None}
@@ -177,11 +186,19 @@ def main():
             assert execution.calls and execution.calls[0][0] == expected_capability, report
             assert execution.calls[0][1] == expected_transformer, report
             assert ctl.progress.get_fraction() == 1.0, report
-            assert "Variante intégrée" in ctl.status.get_text(), report
+            assert "Variante disponible" in ctl.status.get_text(), report
             assert action_host.refreshes == 1, report
             assert not ctl.source_entry.get_sensitive(), report
             assert not ctl.output_entry.get_sensitive(), report
-            application.quit()
+            marker = Path(str(args.state_prefix) + "-final.ready")
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("ready\n", encoding="utf-8")
+
+            def quit_later():
+                application.quit()
+                return False
+
+            GLib.timeout_add(800, quit_later)
             return False
 
         GLib.timeout_add(50, heartbeat)
