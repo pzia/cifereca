@@ -230,6 +230,36 @@ class DetailSection:
 
 
 @dataclass(frozen=True, slots=True)
+class UiBookListEntry:
+    """Neutral book-row model rendered by the shell's standard list widget."""
+    key: str
+    title: str
+    subtitle: str = ""
+    meta: str = ""
+    badge: str = ""
+    thumbnail_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiBookDetailAction:
+    id: str
+    title: str
+    icon_name: str = "view-more-symbolic"
+    uri: str = ""
+    callback: Callable[[], object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UiBookDetailPresentation:
+    title: str
+    subtitle: str = ""
+    thumbnail_url: str | None = None
+    badges: tuple[str, ...] = ()
+    sections: tuple[DetailSection, ...] = ()
+    actions: tuple[UiBookDetailAction, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class FacetTag:
     id: str
     label: str
@@ -717,6 +747,29 @@ class UiIdentityViewHost(UiIdentityHost, Protocol):
 
 
 @runtime_checkable
+class UiBookMasterDetailView(Protocol):
+    """Public façade over Cifereca's standard virtualized book master/detail UI."""
+    @property
+    def widget(self) -> object: ...
+    def append_toolbar(self, widget: object) -> None: ...
+    def show_rows(self, rows: tuple[UiBookListEntry, ...], total_count: int | None = None) -> None: ...
+    def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None: ...
+    def connect_selected(self, callback: Callable[[UiBookListEntry | None], None]) -> None: ...
+    def show_detail(self, detail: UiBookDetailPresentation) -> None: ...
+    def empty_detail(self, title: str = "Aucun document sélectionné", description: str = "Sélectionnez un document pour afficher ses détails.") -> None: ...
+
+
+@runtime_checkable
+class UiMasterDetailHost(UiPageHost, Protocol):
+    """Optional standard book master/detail factory, Core 0.9.44+."""
+    def build_book_master_detail(
+        self, *, title: str, subtitle: str = "",
+        empty_title: str = "Aucun document",
+        empty_desc: str = "Aucun document à afficher.",
+    ) -> UiBookMasterDetailView: ...
+
+
+@runtime_checkable
 class UiPageActionHost(UiPageHost, Protocol):
     """Optional standard action-bar factory, Core 0.9.33 and later."""
     def build_action_bar(self, actions: tuple[UiActionContribution, ...]) -> object: ...
@@ -767,7 +820,7 @@ __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
     "PluginDirectories", "AcquisitionOffer", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
-    "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag",
+    "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
@@ -775,6 +828,6 @@ __all__ = [
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
     "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
-    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
