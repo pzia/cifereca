@@ -16,7 +16,7 @@ from cifereca.services import LibraryService
 
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_ROOT = ROOT / "plugins" / "provider-numilog"
-DATASET_PATH = ROOT / "gen-dataset" / "numilog" / "pseudo_numilog_service.py"
+DATASET_PATH = ROOT / "simulation" / "numilog" / "pseudo_numilog_service.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
