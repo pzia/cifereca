@@ -166,7 +166,7 @@ class BnfCatalogueSession(ProviderSession):
             first = lambda key: (values.get(key) or [None])[0]
             rows[ark] = SearchResult(
                 id=f"bnf-catalogue:{ark.rsplit('/', 1)[-1]}", record_id=ark,
-                docbase="BNF-CATALOGUE", medium="digital" if digital else "physical",
+                docbase="BNF-CATALOGUE", medium=support,
                 title=first("title") or "Sans titre", author=" ; ".join(values.get("creator", [])) or None,
                 type="Notice bibliographique", format=fmt, publisher=first("publisher"),
                 published_at=first("date"), description=description_text("\n".join(values.get("description", []))),
@@ -177,8 +177,13 @@ class BnfCatalogueSession(ProviderSession):
                           "subjects": values.get("subject", []), "languages": languages,
                           "series": series, "collections": collections,
                           "rights": values.get("rights", []), "bibliographic_formats": formats,
-                          "bibliographic_types": kinds, "gallica_links": links, "support": support,
-                          "medium_fallback": support == "unknown", "format_evidence": "dc.format-mime" if fmt else "unknown"},
+                          "bibliographic_types": kinds,
+                          "document_links": [
+                              {"relation": "gallica", "url": link}
+                              for link in links
+                          ],
+                          "support": support,
+                          "format_evidence": "dc.format-mime" if fmt else "unknown"},
             )
         return list(rows.values())
 
