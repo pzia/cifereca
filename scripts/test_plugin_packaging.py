@@ -14,7 +14,9 @@ from scripts.plugin_packaging import (
     build_plugin_zip,
     discover_plugins,
     validate_dev_snapshot,
+    validate_plugin_entrypoints,
     validate_plugin_source,
+    verify_repository,
 )
 
 
@@ -135,6 +137,87 @@ class PluginPackagingTests(unittest.TestCase):
                         row["sha256"],
                     )
 
+    def test_entrypoint_module_file_is_validated_without_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest = json.loads(
+                (plugin / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            validate_plugin_entrypoints(plugin, manifest)
+
+    def test_entrypoint_python_package_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["entrypoint"] = "alpha_plugin.runtime:PLUGIN"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            package = plugin / "alpha_plugin" / "runtime"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text(
+                "raise RuntimeError('must not be imported while packaging')\n"
+                "PLUGIN = object()\n",
+                encoding="utf-8",
+            )
+            validate_plugin_entrypoints(plugin, manifest)
+
+    def test_entrypoint_cannot_live_in_development_only_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for dirname in ("tests", "simulation"):
+                plugin = make_plugin(
+                    root, f"alpha-{dirname}", f"org.cifereca.{dirname}", "1.0"
+                )
+                manifest_path = plugin / "cifereca-plugin.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["plugins"][0]["entrypoint"] = f"{dirname}.fake:PLUGIN"
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                directory = plugin / dirname
+                directory.mkdir()
+                (directory / "fake.py").write_text(
+                    "PLUGIN = object()\n", encoding="utf-8"
+                )
+
+                with self.assertRaisesRegex(
+                    PackagingError, r"entrypoint hors production"
+                ):
+                    build_plugin_zip(plugin, root / f"dist-{dirname}")
+
+    def test_packaging_refuses_missing_entrypoint_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["entrypoint"] = "missing.module:PLUGIN"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(
+                PackagingError,
+                r"module entrypoint absent.*missing\.module",
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_entrypoint_must_use_module_colon_attribute_form(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest = json.loads(
+                (plugin / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            manifest["plugins"][0]["entrypoint"] = "plugin.PLUGIN"
+            with self.assertRaisesRegex(PackagingError, "entrypoint invalide"):
+                validate_plugin_entrypoints(plugin, manifest)
+
     def test_production_plugin_may_only_import_public_plugin_api(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -180,6 +263,27 @@ class PluginPackagingTests(unittest.TestCase):
                 )
             validate_plugin_source(plugin)
 
+    def test_tests_and_simulation_are_excluded_from_production_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            for dirname in ("tests", "simulation"):
+                directory = plugin / dirname
+                directory.mkdir()
+                (directory / "fixture.txt").write_text(
+                    "development-only\n", encoding="utf-8"
+                )
+
+            output = build_plugin_zip(plugin, root / "dist")
+            with zipfile.ZipFile(output) as archive:
+                names = archive.namelist()
+
+            self.assertIn("plugin.py", names)
+            self.assertFalse(any(name.startswith("tests/") for name in names))
+            self.assertFalse(any(name.startswith("simulation/") for name in names))
+
     def test_packaging_refuses_private_core_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -191,6 +295,317 @@ class PluginPackagingTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(PackagingError, "cifereca.storage"):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_all_in_one_refuses_duplicate_plugin_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugins = root / "plugins"
+            plugins.mkdir()
+            first = make_plugin(
+                plugins, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            second = make_plugin(
+                plugins, "beta", "org.cifereca.provider.beta", "1.0"
+            )
+            first_manifest = json.loads(
+                (first / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            second_manifest_path = second / "cifereca-plugin.json"
+            second_manifest = json.loads(
+                second_manifest_path.read_text(encoding="utf-8")
+            )
+            second_manifest["plugins"][0]["id"] = first_manifest["plugins"][0]["id"]
+            second_manifest_path.write_text(
+                json.dumps(second_manifest), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(PackagingError, r"plugin\.id dupliqué"):
+                build_all_in_one(
+                    discover_plugins(plugins),
+                    root / "dist",
+                    filename="all.zip",
+                )
+
+    def test_verify_repository_refuses_duplicate_plugin_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugins = root / "plugins"
+            plugins.mkdir()
+            first = make_plugin(
+                plugins, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            second = make_plugin(
+                plugins, "beta", "org.cifereca.provider.beta", "1.0"
+            )
+            first_manifest = json.loads(
+                (first / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            second_manifest_path = second / "cifereca-plugin.json"
+            second_manifest = json.loads(
+                second_manifest_path.read_text(encoding="utf-8")
+            )
+            second_manifest["plugins"][0]["id"] = first_manifest["plugins"][0]["id"]
+            second_manifest_path.write_text(
+                json.dumps(second_manifest), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(PackagingError, r"plugin\.id dupliqué"):
+                verify_repository(plugins)
+
+    def test_packaging_refuses_noncanonical_plugin_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["id"] = "Provider.Alpha"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"plugins\[0\]\.id invalide"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_duplicate_plugin_id_in_same_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            duplicate = dict(manifest["plugins"][0])
+            duplicate["entrypoint"] = "plugin:PLUGIN"
+            manifest["plugins"].append(duplicate)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"plugin\.id dupliqué dans le package"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_noncanonical_dependency_plugin_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires"] = [
+                {"plugin": "Provider.Beta", "version": ">=1"}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"requires\[0\]\.plugin invalide"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_noncanonical_contract_category_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires_contracts"] = [
+                {"category": "Library.Read", "contract": "library.read"}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"requires_contracts\[0\]\.category invalide"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_dependency_field_that_is_not_a_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires"] = "provider.beta"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"plugins\[0\]\.requires doit être une liste"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_invalid_dependency_entry_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires"] = [42]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"requires\[0\].*chaîne ou un objet"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_categories_that_are_not_a_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["categories"] = {"id": "provider.library"}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"categories doit être une liste"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_contract_requirements_that_are_not_a_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires_contracts"] = {
+                "category": "provider.library",
+                "contract": "provider.library",
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"requires_contracts doit être une liste"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_unknown_system_requirement_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["system_requires"] = [{"type": "daemon"}]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"system_requires\[0\]\.type invalide"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_requires_name_for_python_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["system_requires"] = [
+                {"type": "python-package"}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"name requis pour python-package"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_invalid_system_requirement_version_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["system_requires"] = [
+                {"type": "binary", "name": "tool", "version_args": [42]}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"version_args doit être une liste de chaînes"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_invalid_category_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["categories"] = [
+                {"id": "provider.library", "resolution": "random"}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"categories\[0\]\.resolution invalide"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_non_object_config_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["config_schema"] = []
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"plugins\[0\]\.config_schema doit être un objet"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_invalid_package_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["package"]["version"] = "not a version"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(PackagingError, r"package\.version invalide"):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_invalid_dependency_specifier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires"] = [
+                {"plugin": "provider.beta", "version": "=>1.0"}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"requires\[0\]\.version invalide"
+            ):
                 build_plugin_zip(plugin, root / "dist")
 
     def test_real_repository_discovers_all_packages(self) -> None:

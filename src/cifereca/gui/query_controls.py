@@ -47,7 +47,6 @@ class QueryControls(Gtk.Box):
         flow = Gtk.FlowBox(); flow.set_selection_mode(Gtk.SelectionMode.NONE)
         flow.set_min_children_per_line(1); flow.set_max_children_per_line(4)
         flow.set_row_spacing(6); flow.set_column_spacing(6); self.append(flow)
-
         def insert_filter(widget):
             flow.insert(widget, -1)
             child = widget.get_parent()
