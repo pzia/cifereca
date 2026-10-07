@@ -50,12 +50,8 @@ class QueryControls(Gtk.Box):
 
         def insert_filter(widget):
             flow.insert(widget, -1)
-            child = flow.get_child_at_index(len([x for x in (
-                getattr(self, 'provider', None), getattr(self, 'types', None),
-                getattr(self, 'languages', None), getattr(self, 'field', None),
-                getattr(self, 'scope', None),
-            ) if x is not None]))
-            if child is not None:
+            child = widget.get_parent()
+            if isinstance(child, Gtk.FlowBoxChild):
                 child.set_focusable(False)
             return widget
 
