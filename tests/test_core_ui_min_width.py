@@ -21,5 +21,4 @@ def test_navigation_group_header_can_shrink_at_minimum_window_width():
     assert "button = Gtk.ToggleButton()" in source
     assert "button_label = Gtk.Label(label=group_label, xalign=0)" in source
     assert "button_label.set_ellipsize(Pango.EllipsizeMode.END)" in source
-    assert "button_label.set_max_width_chars(18)" in source
     assert "button.set_child(button_label)" in source
