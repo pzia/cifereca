@@ -1005,10 +1005,8 @@ class MainWindow(Adw.ApplicationWindow):
         _TRACE_LOG.info("TRACE gui shell-interactive duration_ms=%.1f", shell_ms)
         self.connect("close-request", self._on_close_request)
         self._install_shell_shortcuts()
-        # Provider sessions are secondary startup work: the shell is already
-        # visible and navigable while connection continues asynchronously.
-        _TRACE_LOG.info("TRACE gui schedule connect-configured")
-        GLib.idle_add(self.connect_configured_sources)
+        # Provider sessions are secondary startup work. They are scheduled
+        # after deferred plugin activation so provider services are available.
 
     def action_button(
         self, label: str, icon_name: str | None = None, *,
@@ -1295,6 +1293,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.plugin_manager.activate()
             self.service.attach_plugin_manager(self.plugin_manager)
             self._plugins_changed()
+            _TRACE_LOG.info("TRACE gui schedule connect-configured")
+            GLib.idle_add(self.connect_configured_sources)
         except Exception as exc:
             self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
             if hasattr(self, "dashboard_loading_status"):
