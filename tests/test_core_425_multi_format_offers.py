@@ -11,7 +11,7 @@ from cifereca.plugin_api import (
     acquisition_offer_preferred_format,
     acquisition_offers_metadata,
 )
-from cifereca.providers import ProviderDescriptor, ProviderSession
+from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
 
 
 class Session(ProviderSession):
@@ -93,7 +93,7 @@ def test_provider_session_contract_has_empty_offer_fallback():
             display_name="Test",
             description="Test provider",
             state="ready",
-            capabilities=__import__("cifereca.providers", fromlist=["ProviderCapabilities"]).ProviderCapabilities(),
+            capabilities=ProviderCapabilities(),
         ),
         credential_id="cred",
         label="Test",
