@@ -1620,9 +1620,29 @@ class MainWindow(Adw.ApplicationWindow):
         self.header_actions = Gtk.Box(spacing=4); header.pack_start(self.header_actions)
         updater = getattr(self, "_update_navigation_buttons", None)
         if callable(updater): updater()
-        self.identity_dropdown = Gtk.DropDown(); self.identity_dropdown.set_tooltip_text("Identité active")
+        def compact_dropdown(tooltip: str) -> Gtk.DropDown:
+            dropdown = Gtk.DropDown()
+            factory = Gtk.SignalListItemFactory()
+            def setup(_factory, list_item):
+                label = Gtk.Label(xalign=0)
+                label.set_ellipsize(Pango.EllipsizeMode.END)
+                label.set_single_line_mode(True)
+                list_item.set_child(label)
+            def bind(_factory, list_item):
+                item = list_item.get_item()
+                label = list_item.get_child()
+                text = item.get_string() if isinstance(item, Gtk.StringObject) else str(item or "")
+                label.set_label(text)
+                label.set_tooltip_text(text)
+            factory.connect("setup", setup)
+            factory.connect("bind", bind)
+            dropdown.set_factory(factory)
+            dropdown.set_tooltip_text(tooltip)
+            return dropdown
+
+        self.identity_dropdown = compact_dropdown("Identité active")
         self.identity_dropdown.connect("notify::selected", self._identity_changed)
-        self.account_dropdown = Gtk.DropDown(); self.account_dropdown.set_tooltip_text("Délégations de l’identité active")
+        self.account_dropdown = compact_dropdown("Délégations de l’identité active")
         self.account_dropdown.connect("notify::selected", self._account_changed)
         self.pages_menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
         self.pages_menu_button.set_tooltip_text("Menu des pages (F10)")

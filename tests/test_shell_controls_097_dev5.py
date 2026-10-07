@@ -46,7 +46,7 @@ class ShellControls(unittest.TestCase):
         names={'_create_shell_header','_refresh_header_actions','_invoke_ui_action','_install_shell_shortcuts','_quit_application','_open_pages_menu','_cycle_page'}
         methods=[n for n in main.body if isinstance(n,ast.FunctionDef) and n.name in names]
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
-        gtk=NS(Button=Widget,HeaderBar=Widget,Label=Widget,Box=Widget,DropDown=Widget,MenuButton=Widget,PopoverMenu=Widget,Orientation=NS(VERTICAL=0,HORIZONTAL=1))
+        gtk=NS(Button=Widget,HeaderBar=Widget,Label=Widget,Box=Widget,DropDown=Widget,MenuButton=Widget,PopoverMenu=Widget,SignalListItemFactory=Widget,Orientation=NS(VERTICAL=0,HORIZONTAL=1))
         ns={'Gtk':gtk,'Adw':gtk,'Gio':NS(Menu=Menu,SimpleAction=Action,SimpleActionGroup=ActionGroup),
             'menu_sections':menu_sections,'visible_actions':lambda *args:[],'clear_box':lambda box:box.children.clear()}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(source),'exec'),ns)
