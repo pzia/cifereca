@@ -548,6 +548,19 @@ class AdeptProfileRef:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeAcquisitionCapabilities:
+    """Bounded public snapshot of runtime acquisition capabilities."""
+    provider_id: str
+    available: bool = False
+    compatible: bool = False
+    operational: bool = False
+    contract_version: int | None = None
+    modes: tuple[str, ...] = ()
+    formats: tuple[str, ...] = ()
+    software_version: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceToolInfo:
     id: str
     title: str
