@@ -10,7 +10,10 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
-from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer
+from cifereca.plugin_api import (
+    Account, ItemDetail, SearchResult, AcquisitionOffer,
+    BundleAcquisitionRecipe,
+)
 from cifereca.plugin_api import (
     ProviderCapabilities,
     ProviderDescriptor,
@@ -63,6 +66,19 @@ DESCRIPTOR = ProviderDescriptor(
         "Les EPUB utilisent OPDS ; les documents sonores utilisent le SRU Gallica puis OAIRecord pour les pistes.",
     ),
 )
+
+
+def _gallica_audio_recipe(item: SearchResult) -> BundleAcquisitionRecipe | None:
+    ark = GallicaSession._extract_ark(item.record_id, item.friendly_url, item.download_url)
+    if not ark:
+        return None
+    resolver_url = _public_url(str(item.friendly_url or f"https://gallica.bnf.fr/{ark}"))
+    return BundleAcquisitionRecipe(
+        recipe_id=f"gallica:{ark}:audio",
+        resolver_url=resolver_url,
+        tracks=(),
+        metadata={"provider_id": "gallica", "ark": ark},
+    ).validate()
 
 
 class GallicaSession(ProviderSession):
@@ -602,13 +618,18 @@ class GallicaSession(ProviderSession):
         return tracks
 
     def _download_audio(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
-        return download_bundle(self, item, target_dir)
+        recipe = _gallica_audio_recipe(item)
+        if recipe is None:
+            raise ProviderError("Gallica : recette audio sans ARK")
+        return download_bundle(self, item, target_dir, recipe=recipe)
 
     def acquisition_offers(self, item: SearchResult) -> list[AcquisitionOffer]:
-        # An ARK page identifies a bundle to resolve, not an HTTP media file.
-        # API v1 has no bundle recipe; download_direct resolves OAI tracks.
-        if item.content_type == 'audiobook':
-            return []
+        # An ARK page identifies the resolver for a bundle, never a media track.
+        if item.content_type == "audiobook":
+            recipe = _gallica_audio_recipe(item)
+            return [] if recipe is None else [
+                recipe.to_offer(offer_id=f"gallica:{item.record_id}:audio")
+            ]
         if not item.download_url:
             return []
         fmt = str(item.format or "").lower()
