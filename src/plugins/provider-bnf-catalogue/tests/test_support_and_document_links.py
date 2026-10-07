@@ -39,7 +39,11 @@ def _dc(*, ark: str, title: str = "Titre", formats=(), types=(), relations=(), i
 
 
 def _parse(*records: str):
+    # Parser-focused test double: keep the public ProviderSession identity
+    # fields that real construction always initializes.
     session = object.__new__(mod.BnfCatalogueSession)
+    session.provider_id = mod.DESCRIPTOR.id
+    session.credential_id = "public"
     return session.parse_records(_records(*records))
 
 

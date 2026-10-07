@@ -53,7 +53,9 @@ class Widget:
     def append(self,w):self.children.append(w)
     def add(self,w):self.children.append(w)
     def add_suffix(self,w):self.children.append(w)
+    def add_css_class(self,_name):pass
     def insert(self,w,*a):self.append(w)
+    def get_parent(self):return None
     def connect(self,*a):pass
     def get_selected(self):return self.selected
     def set_selected(self,n):self.selected=n
@@ -103,10 +105,11 @@ class SearchRegression(unittest.TestCase):
 
 class DigitalDefault(unittest.TestCase):
     def test_new_controls_default_digital_but_changes_stay_in_session(self):
-        gtk=NS(Box=Widget,SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
+        gtk=NS(Box=Widget,SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,Label=Widget,FlowBoxChild=Widget,Align=NS(START=0),Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
         def multi(*a):return Widget()
         funcs=methods('query_controls.py','QueryControls',{'__init__','state','set_state'},{'Gtk':gtk,'MultiSelect':multi,'QueryState':QueryState,'FIELDS':FIELDS})
         cls=funcs
+        cls._changed=lambda self:None
         for library in [False,True]:
             control=cls([],lambda:None,lambda:None,library=library)
             self.assertEqual(control.state().scope,'digital')
@@ -118,14 +121,14 @@ class DigitalDefault(unittest.TestCase):
 class SummaryRegression(unittest.TestCase):
     def test_summary_remains_when_holdings_replace_initial_view(self):
         gtk=NS(Label=Widget,Spinner=Widget);adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
-        helpers=functions('main_window.py',{'book_detail_presentation','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation})
-        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:s.lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'text_or_dash':helpers['text_or_dash']})
+        helpers=functions('main_window.py',{'book_detail_presentation','compact_detail_rows','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation})
+        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:str(s or '').lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'compact_detail_rows':helpers['compact_detail_rows'],'text_or_dash':helpers['text_or_dash'],'detail_language':lambda _metadata:'','compact_availability_label':lambda value:value,'document_links':lambda _row:(),'result_row':lambda _item:{},'Pango':NS(WrapMode=NS(WORD_CHAR=0),EllipsizeMode=NS(END=1,NONE=0))})
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
-        host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a:None,_direct_download_action=lambda *a:None)
+        host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,_focused_action_key=lambda:'',content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a:None,_direct_download_action=lambda *a:None)
         host._append_content=host.content.append
         host.show_presentation=lambda presentation:funcs['show_presentation'](host,presentation)
         host._show_description=lambda text:funcs['_show_description'](host,text)
-        item=NS(title='Livre',author=None,thumbnail_url=None,source_provider='paris',medium='digital',type='Livre numérique',format='EPUB',publisher=None,published_at=None,description='Résumé durable.',owned=False)
+        item=NS(title='Livre',author=None,thumbnail_url=None,source_provider='paris',medium='digital',type='Livre numérique',format='EPUB',publisher=None,published_at=None,description='Résumé durable.',owned=False,metadata={})
         detail=NS(title='Livre',author=None,thumbnail_url=None,type=None,year=None,holdings=[])
         funcs['show_search'](host,item,loading=True)
         def summaries():return [w.children[0].props['label'] for w in host.content.children if w.props.get('title')=='Résumé']

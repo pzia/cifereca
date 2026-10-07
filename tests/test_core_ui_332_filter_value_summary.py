@@ -2,9 +2,76 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace as NS
 
 ROOT = Path(__file__).resolve().parents[1]
 QUERY_CONTROLS = ROOT / "src/cifereca/gui/query_controls.py"
+
+
+class _Widget:
+    def __init__(self, *args, **kwargs):
+        self.children = []
+        self.signals = {}
+        self.active = False
+        self.label = kwargs.get("label", "")
+        self.tooltip = None
+
+    def connect(self, name, callback):
+        self.signals.setdefault(name, []).append(callback)
+
+    def emit(self, name):
+        for callback in list(self.signals.get(name, ())):
+            callback(self)
+
+    def append(self, child):
+        self.children.append(child)
+
+    def set_child(self, child):
+        self.child = child
+
+    def set_popover(self, popover):
+        self.popover = popover
+
+    def set_label(self, label):
+        self.label = label
+
+    def set_tooltip_text(self, text):
+        self.tooltip = text
+
+    def set_active(self, active):
+        if self.active == active:
+            return
+        self.active = active
+        self.emit("toggled")
+
+    def get_active(self):
+        return self.active
+
+    def __getattr__(self, name):
+        if name.startswith("set_"):
+            return lambda *args: None
+        raise AttributeError(name)
+
+
+_GTK = NS(
+    MenuButton=_Widget,
+    Popover=_Widget,
+    Box=_Widget,
+    Button=_Widget,
+    CheckButton=_Widget,
+    Orientation=NS(VERTICAL=1),
+)
+
+
+def _multiselect_class():
+    tree = ast.parse(QUERY_CONTROLS.read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MultiSelect")
+    ns = {"Gtk": _GTK}
+    exec(
+        compile(ast.fix_missing_locations(ast.Module(body=[cls], type_ignores=[])), str(QUERY_CONTROLS), "exec"),
+        ns,
+    )
+    return ns["MultiSelect"]
 
 
 def _method_source(class_name: str, method_name: str) -> str:
@@ -28,7 +95,7 @@ def test_multiselect_shows_selected_values_and_full_tooltip():
 
 
 def test_summary_and_tooltip_follow_atomic_programmatic_changes():
-    from test_query_controls_batching import MultiSelect
+    MultiSelect = _multiselect_class()
     calls = []
     control = MultiSelect('Formats', iter([('epub', 'EPUB'), ('pdf', 'PDF'), ('mp3', 'MP3')]), lambda: calls.append(1))
     control.set_values(('epub',))

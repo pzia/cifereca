@@ -45,7 +45,8 @@ def test_compact_mode_preserves_accessible_label_and_button_order():
 def test_restore_mode_reuses_original_labels_and_icons():
     resize = _method_source("AdaptiveActionBar", "_resize")
 
-    assert "content.set_label(label)" in resize
+    assert "shown_label = compact_label if compact else label" in resize
+    assert "content.set_label(shown_label)" in resize
     assert "content.set_icon_name(icon)" in resize
     assert "button.set_child(content)" in resize
 

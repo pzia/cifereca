@@ -27,11 +27,11 @@ SCENARIOS = {
     "core-navigation": {
         "plugin": "core",
         "fixture": "startup",
-        "description": "Interaction X11 réelle depuis l'écran de démarrage vers le shell principal.",
+        "description": "Interaction X11 réelle depuis la Bibliothèque familiale vers la page Recherche.",
         "args": ["--no-plugins"],
         "capture_args": [
             "--wait", "0.75",
-            "--click", "458,501",
+            "--click", "90,204",
             "--settle-after-actions", "2.0",
         ],
         "min_visual_change_ratio": 0.05,

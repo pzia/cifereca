@@ -2,7 +2,7 @@ import ast
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
-from cifereca.gui.shell_model import menu_sections
+from cifereca.gui.shell_model import menu_sections, validate_action_selection
 from cifereca.gui.shortcuts import SHORTCUTS, adjacent_route, shortcuts_text
 from cifereca.plugin_api import UiPageContribution, UiActionContribution
 
@@ -43,12 +43,12 @@ class ShellControls(unittest.TestCase):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
         cls.path=source
         tree=ast.parse(source.read_text());main=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MainWindow')
-        names={'_create_shell_header','_refresh_header_actions','_invoke_ui_action','_install_shell_shortcuts','_quit_application','_open_pages_menu','_cycle_page'}
+        names={'_create_shell_header','_ensure_pages_menu_rightmost','_refresh_header_actions','_invoke_ui_action','_install_shell_shortcuts','_quit_application','_open_pages_menu','_cycle_page'}
         methods=[n for n in main.body if isinstance(n,ast.FunctionDef) and n.name in names]
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         gtk=NS(Button=Widget,HeaderBar=Widget,Label=Widget,Box=Widget,DropDown=Widget,MenuButton=Widget,PopoverMenu=Widget,SignalListItemFactory=Widget,Orientation=NS(VERTICAL=0,HORIZONTAL=1))
         ns={'Gtk':gtk,'Adw':gtk,'Gio':NS(Menu=Menu,SimpleAction=Action,SimpleActionGroup=ActionGroup),
-            'menu_sections':menu_sections,'visible_actions':lambda *args:[],'clear_box':lambda box:box.children.clear()}
+            'menu_sections':menu_sections,'validate_action_selection':validate_action_selection,'visible_actions':lambda *args:[],'clear_box':lambda box:box.children.clear()}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(source),'exec'),ns)
         cls.methods=ns
     def call(self,name,host,*args):return self.methods[name](host,*args)
@@ -73,8 +73,9 @@ class ShellControls(unittest.TestCase):
         self.assertEqual(len(keys),len(set(keys)))
         self.assertIn('Échap',shortcuts_text());self.assertIn('Ctrl+Q',shortcuts_text())
     def host(self):
-        host=NS(plugin_manager=None,_account_changed=lambda *args:None,_identity_changed=lambda *args:None)
+        host=NS(plugin_manager=None,diagnostics=NS(add=lambda *args,**kwargs:None),_account_changed=lambda *args:None,_identity_changed=lambda *args:None)
         host._UiHost=lambda window:window
+        host._ensure_pages_menu_rightmost=lambda:self.call('_ensure_pages_menu_rightmost',host)
         return host
     def test_menu_is_native_and_rightmost_application_control(self):
         host=self.host();header=self.call('_create_shell_header',host)

@@ -36,48 +36,14 @@ def test_library_group_uses_same_three_column_truncation_contract_as_notice():
     tree = ast.parse(SOURCE.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_group")
-    nodes = list(ast.walk(method))
+    source = ast.unparse(method)
 
-    assert any(isinstance(node, ast.Constant) and node.value == "Bibliothèque" for node in nodes)
-
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "set_max_children_per_line"
-        and len(node.args) == 1
-        and isinstance(node.args[0], ast.Constant)
-        and node.args[0].value == 3
-        for node in nodes
-    )
-
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "set_subtitle_lines"
-        and len(node.args) == 1
-        and isinstance(node.args[0], ast.IfExp)
-        and isinstance(node.args[0].body, ast.Constant)
-        and node.args[0].body.value == 1
-        and isinstance(node.args[0].orelse, ast.Constant)
-        and node.args[0].orelse.value == 0
-        for node in nodes
-    )
-
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "set_tooltip_text"
-        and any(
-            isinstance(inner, ast.Call)
-            and isinstance(inner.func, ast.Name)
-            and inner.func.id == "text_or_dash"
-            and len(inner.args) == 1
-            and isinstance(inner.args[0], ast.Name)
-            and inner.args[0].id == "value"
-            for inner in ast.walk(node)
-        )
-        for node in nodes
-    )
+    assert "'Bibliothèque'" in source
+    assert "columns = 2 if title == 'Essentiel' else 3" in source
+    assert "set_max_children_per_line(columns)" in source
+    assert "detail_display_value(label, value)" in source
+    assert "detail_subtitle_lines(title, display_value)" in source
+    assert "set_tooltip_text(label + ' : ' + tooltip_value)" in source
 
 
 def test_action_width_budget_has_exact_fit_boundary():
@@ -95,6 +61,15 @@ def test_detail_facets_do_not_append_duplicate_footer_tags_and_disconnect_previo
 
     assert not any(isinstance(node.func, ast.Attribute) and node.func.attr == "_append_content" for node in calls)
     assert any(isinstance(node.func, ast.Attribute) and node.func.attr == "disconnect" for node in calls)
+
+
+class _Image:
+    @classmethod
+    def new_from_icon_name(cls, _name):
+        return cls()
+
+    def set_tooltip_text(self, _text):
+        pass
 
 
 class _Row:
@@ -121,6 +96,9 @@ class _Row:
     def disconnect(self, identifier):
         del self.handlers[identifier]
 
+    def add_suffix(self, widget):
+        self.suffix = widget
+
     def get_first_child(self):
         return None
 
@@ -137,7 +115,7 @@ def test_inline_source_uses_provider_id_and_rebinding_does_not_duplicate_handler
     detail = NS(content=row, _subtitle_label=None, add_actions=lambda buttons: None)
     controls = object()
     adw = NS(ActionRow=_Row)
-    fn = _method("MainWindow", "_add_facets", {"Adw": adw, "Gtk": NS(Button=object), "TaskPriority": NS(USER_ACTION=0)})
+    fn = _method("MainWindow", "_add_facets", {"Adw": adw, "Gtk": NS(Button=object, Image=_Image), "TaskPriority": NS(USER_ACTION=0)})
 
     fn(host, detail, {}, controls)
     fn(host, detail, {}, controls)
@@ -157,7 +135,7 @@ def test_epub_only_publisher_remains_searchable_from_inline_detail():
     )
     detail = NS(content=row, _subtitle_label=None, add_actions=lambda buttons: None)
     controls = object()
-    fn = _method("MainWindow", "_add_facets", {"Adw": NS(ActionRow=_Row), "Gtk": NS(Button=object), "TaskPriority": NS(USER_ACTION=0)})
+    fn = _method("MainWindow", "_add_facets", {"Adw": NS(ActionRow=_Row), "Gtk": NS(Button=object, Image=_Image), "TaskPriority": NS(USER_ACTION=0)})
 
     fn(host, detail, {}, controls)
 

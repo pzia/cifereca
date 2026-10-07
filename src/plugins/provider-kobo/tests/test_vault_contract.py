@@ -101,7 +101,7 @@ def test_kobo_provider_requires_vault_api_23_or_newer():
             return {
                 "ok": True,
                 "api_version": self.api_version,
-                "capabilities": [],
+                "capabilities": ["acquisition"],
                 "capability_details": [],
                 "acquisition_access": "configured",
             }

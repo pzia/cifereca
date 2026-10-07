@@ -115,7 +115,7 @@ class Selection(unittest.TestCase):
         module=ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0),method],type_ignores=[])
         ns={'BookListItem':type('BookListItem',(),{})};exec(compile(ast.fix_missing_locations(module),str(source),'exec'),ns)
         calls=[]
-        page=NS(selection=NS(get_selected_item=lambda:None),detail=NS(empty=lambda *args:calls.append('clear')), _selected_callbacks=[lambda selected:calls.append(selected)])
+        page=NS(selection=NS(get_selected_item=lambda:None),detail=NS(empty=lambda *args:calls.append('clear')), _selected_callbacks=[lambda selected:calls.append(selected)], _narrow_master_detail=False)
         ns['_selection_changed'](page,None,None)
         self.assertEqual(calls,['clear',None])
 

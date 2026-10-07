@@ -103,7 +103,7 @@ class Core0915(unittest.TestCase):
         grid=factory();group=factory();content=factory();rows=[]
         def row():
             result=factory();rows.append(result);return result
-        ns={'Gtk':NS(FlowBox=lambda:grid,SelectionMode=NS(NONE=0)),'Adw':NS(PreferencesGroup=lambda:group,ActionRow=row),'text_or_dash':lambda x:x or '—'}
+        ns={'Gtk':NS(FlowBox=lambda:grid,SelectionMode=NS(NONE=0)),'Adw':NS(PreferencesGroup=lambda:group,ActionRow=row),'detail_display_value':lambda _label,value:(value or '—',value or '—'),'detail_subtitle_lines':lambda _section,_value:2}
         exec(self.extract('_group'),ns);ns['_group'](NS(content=content,_append_content=content.append),'Notice',[('Source','Paris'),('Format','EPUB'),('Éditeur','Long')])
         grid.set_max_children_per_line.assert_called_once_with(3);self.assertEqual(len(grid.children),3)
         self.assertEqual(group.children,[grid]);self.assertEqual(content.children,[group])
