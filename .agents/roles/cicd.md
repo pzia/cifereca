@@ -20,3 +20,22 @@ Posséder la CI/CD, les quality gates, le packaging, les releases et les merges.
 - Ne pas merger une PR avec gate requis rouge ou contenu obsolète/non compris.
 
 Si un défaut révélé par CI appartient au Core, aux plugins ou à l'UX, ouvrir une issue pour le rôle propriétaire.
+
+## Exception temporaire — quota GitHub Actions (#310)
+Tant que l'issue #310 reste **ouverte**, un échec de check dû au quota GitHub-hosted peut être traité comme **gate indisponible** et non comme échec fonctionnel.
+
+Le bypass est autorisé uniquement si :
+- le job n'a jamais démarré réellement : `steps` vide/null et aucun log de test exploitable ;
+- la PR est mergeable sur le `main` courant et son diff est compris ;
+- aucune review ni thread bloquant n'est ouvert ;
+- aucun check ayant réellement exécuté des tests sur le head courant ne signale un échec fonctionnel ;
+- les collisions/divergences pertinentes avec `main` ont été réévaluées ;
+- le merge est documenté comme exception quota liée à #310.
+
+Le bypass ne couvre **jamais** :
+- un vrai échec de test, packaging, lint, build ou smoke ayant exécuté des étapes ;
+- un conflit, une PR obsolète/non comprise, ou un blocker de review ;
+- un contournement produit destiné à masquer un échec.
+
+La fermeture de #310 désactive immédiatement cette exception et rétablit la règle normale : gate requis rouge = pas de merge.
+

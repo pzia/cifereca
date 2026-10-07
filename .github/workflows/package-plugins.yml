@@ -1,11 +1,6 @@
 name: Package plugins
 
 on:
-  push:
-    paths:
-      - "src/plugins/**"
-      - "scripts/**"
-      - ".github/workflows/package-plugins.yml"
   pull_request:
     paths:
       - "src/plugins/**"
