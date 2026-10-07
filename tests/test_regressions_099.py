@@ -120,14 +120,14 @@ class DigitalDefault(unittest.TestCase):
 class SummaryRegression(unittest.TestCase):
     def test_summary_remains_when_holdings_replace_initial_view(self):
         gtk=NS(Label=Widget,Spinner=Widget);adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
-        helpers=functions('main_window.py',{'book_detail_presentation','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation})
-        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:s.lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'text_or_dash':helpers['text_or_dash']})
+        helpers=functions('main_window.py',{'book_detail_presentation','compact_detail_rows','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation})
+        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:str(s or '').lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'compact_detail_rows':helpers['compact_detail_rows'],'text_or_dash':helpers['text_or_dash'],'detail_language':lambda _metadata:'','compact_availability_label':lambda value:value,'document_links':lambda _row:(),'result_row':lambda _item:{}})
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
-        host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a:None,_direct_download_action=lambda *a:None)
+        host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,_focused_action_key=lambda:'',content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a:None,_direct_download_action=lambda *a:None)
         host._append_content=host.content.append
         host.show_presentation=lambda presentation:funcs['show_presentation'](host,presentation)
         host._show_description=lambda text:funcs['_show_description'](host,text)
-        item=NS(title='Livre',author=None,thumbnail_url=None,source_provider='paris',medium='digital',type='Livre numérique',format='EPUB',publisher=None,published_at=None,description='Résumé durable.',owned=False)
+        item=NS(title='Livre',author=None,thumbnail_url=None,source_provider='paris',medium='digital',type='Livre numérique',format='EPUB',publisher=None,published_at=None,description='Résumé durable.',owned=False,metadata={})
         detail=NS(title='Livre',author=None,thumbnail_url=None,type=None,year=None,holdings=[])
         funcs['show_search'](host,item,loading=True)
         def summaries():return [w.children[0].props['label'] for w in host.content.children if w.props.get('title')=='Résumé']
