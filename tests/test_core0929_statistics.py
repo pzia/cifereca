@@ -65,7 +65,28 @@ def test_dashboard_reuses_identity_statistics_projection():
 
 def test_cli_statistics_uses_identity_statistics_projection():
     tree = ast.parse(CLI.read_text())
-    source = ast.unparse(tree)
 
-    assert 'a.cmd == "statistics"' in source
-    assert "service.identity_statistics(i.identity_id)" in source
+    has_statistics_branch = any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Attribute)
+        and isinstance(node.left.value, ast.Name)
+        and node.left.value.id == "a"
+        and node.left.attr == "cmd"
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.Eq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == "statistics"
+        for node in ast.walk(tree)
+    )
+    has_projection_call = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "service"
+        and node.func.attr == "identity_statistics"
+        for node in ast.walk(tree)
+    )
+
+    assert has_statistics_branch
+    assert has_projection_call
