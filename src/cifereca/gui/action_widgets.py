@@ -66,6 +66,16 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         for button in self._buttons: self.box.remove(button)
         self._buttons.clear(); self._widths.clear(); self._compact = None
 
+    @staticmethod
+    def _compact_label(label, icon, icon_count):
+        if icon_count <= 1:
+            return None
+        text = str(label or '')
+        if icon == 'document-send-symbolic' and text.casefold().startswith('envoyer à '):
+            destination = text[len('Envoyer à '):].strip()
+            return f'→ {destination}' if destination else text
+        return text
+
     def _resize(self, _widget, _clock):
         source = self.source or self.get_parent()
         if source is None or source.get_width() <= 0: return True
@@ -74,18 +84,25 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
             self.set_size_request(budget, -1); self._budget = budget
         compact = compact_actions(self._widths.values(), budget)
         if compact != self._compact:
+            icon_counts = {}
+            for button in self._buttons:
+                icon = getattr(button, '_cifereca_action_icon', None)
+                if icon:
+                    icon_counts[icon] = icon_counts.get(icon, 0) + 1
             for button in self._buttons:
                 label = getattr(button, '_cifereca_action_label', None)
                 if not label: continue  # Existing icon-only controls keep their tooltip.
                 icon = button._cifereca_action_icon
-                if compact:
+                compact_label = self._compact_label(label, icon, icon_counts.get(icon, 0))
+                if compact and compact_label is None:
                     button.set_child(Gtk.Image.new_from_icon_name(icon))
                 else:
+                    shown_label = compact_label if compact else label
                     try:
-                        content = Adw.ButtonContent(); content.set_label(label); content.set_icon_name(icon)
+                        content = Adw.ButtonContent(); content.set_label(shown_label); content.set_icon_name(icon)
                         button.set_child(content)
                     except (AttributeError, TypeError):
-                        button.set_label(label)
+                        button.set_label(shown_label)
                 button.update_property([Gtk.AccessibleProperty.LABEL], [label])
             self._compact = compact
         return True
