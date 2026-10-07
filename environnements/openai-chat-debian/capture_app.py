@@ -120,6 +120,22 @@ def main() -> int:
         return_code = 0
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"
+        try:
+            failure_image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+            failure_image.save(output, format="PNG")
+            with Image.open(output) as image:
+                image.load()
+                colors = image.convert("RGB").getcolors(maxcolors=2)
+                report["screenshot"] = {
+                    "file": str(output),
+                    "width": image.width,
+                    "height": image.height,
+                    "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+                    "nonblank": colors is None or len(colors) > 1,
+                    "failure_capture": True,
+                }
+        except Exception as capture_error:
+            report["screenshot_error"] = f"{type(capture_error).__name__}: {capture_error}"
         traceback.print_exc()
     finally:
         if device:
