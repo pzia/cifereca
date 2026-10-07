@@ -44,6 +44,12 @@ jobs:
         working-directory: environnements/chatgpt-work
         run: ./work check-import
 
+      - name: Install Core Python dependencies in GTK environment
+        working-directory: environnements/chatgpt-work
+        run: |
+          source ./env.sh
+          .venv/bin/python -m pip install --disable-pip-version-check -e ../..
+
       - name: Capture Core-only GTK smoke
         working-directory: environnements/chatgpt-work
         run: |
