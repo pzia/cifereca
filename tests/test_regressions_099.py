@@ -9,6 +9,7 @@ import httpx
 from cifereca.search_failures import is_technical_search_error
 from cifereca.gui.sync_issues import sync_issues_text
 from cifereca.gui.query_model import QueryState,FIELDS
+from cifereca.gui.main_window import book_detail_presentation, text_or_dash
 from cifereca.models import SearchResult
 from cifereca.descriptions import description_text
 from cifereca.config import Config
@@ -110,10 +111,11 @@ class DigitalDefault(unittest.TestCase):
 class SummaryRegression(unittest.TestCase):
     def test_summary_remains_when_holdings_replace_initial_view(self):
         gtk=NS(Label=Widget,Spinner=Widget);adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
-        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:s.lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text})
+        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:s.lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':book_detail_presentation,'text_or_dash':text_or_dash})
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
         host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a:None,_direct_download_action=lambda *a:None)
         host._append_content=host.content.append
+        host.show_presentation=lambda presentation:funcs['show_presentation'](host,presentation)
         host._show_description=lambda text:funcs['_show_description'](host,text)
         item=NS(title='Livre',author=None,thumbnail_url=None,source_provider='paris',medium='digital',type='Livre numérique',format='EPUB',publisher=None,published_at=None,description='Résumé durable.',owned=False)
         detail=NS(title='Livre',author=None,thumbnail_url=None,type=None,year=None,holdings=[])
