@@ -288,3 +288,29 @@ def test_compute_builds_library_profile_once(monkeypatch):
 
     assert result.ranked
     assert calls == 1
+
+
+
+class SinglePassBooks(list):
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.iterations = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        if self.iterations > 1:
+            raise AssertionError("library books rescanned while building queries")
+        return super().__iter__()
+
+
+def test_build_queries_does_not_rescan_library_after_profile_build():
+    books = SinglePassBooks([
+        {"title": "Un", "author": "Alice Martin", "metadata": {"subjects": ["histoire"], "series": ["Paris"]}},
+        {"title": "Deux", "author": "Alice Martin", "metadata": {"subjects": ["mémoire"], "series": ["Paris"]}},
+    ])
+
+    queries = engine.build_queries(books)
+
+    assert queries[0] == "Alice Martin"
+    assert "Paris" in queries
+    assert books.iterations == 1
