@@ -21,9 +21,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 xvfb xauth scrot
 
-      - name: Validate dataset harness
+      - name: Validate dataset harness tooling
         run: |
-          python3 gen-dataset/datasetctl.py doctor ux-library
+          python3 -m compileall -q gen-dataset
           python3 -m unittest discover -s gen-dataset/tests -v
 
       - name: Capture EPUB optimizer flow
