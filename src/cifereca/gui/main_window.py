@@ -699,6 +699,14 @@ class MasterDetailPage(Gtk.Box):
         self.paned.set_shrink_start_child(True)
         self.paned.set_shrink_end_child(True)
         self.paned.set_vexpand(True)
+
+        def adapt_paned_position(paned, _pspec=None) -> None:
+            max_position = int(paned.get_property("max-position"))
+            if max_position <= 0:
+                return
+            paned.set_position(min(440, max(0, max_position - 240)))
+
+        self.paned.connect("notify::max-position", adapt_paned_position)
         self.append(self.paned)
 
         self.list_stack = Gtk.Stack()
@@ -1335,6 +1343,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._nav_group_expanded = {}
         self.view_stack = Gtk.Stack()
         self.view_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.view_stack.set_hhomogeneous(False)
         self.view_stack.set_hexpand(True); self.view_stack.set_vexpand(True)
         body.append(self.view_stack)
         self._rebuild_plugin_pages()
