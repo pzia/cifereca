@@ -35,6 +35,7 @@ class ContractCheck:
 CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
     ContractDefinition("provider.library", "cifereca.provider", "1", capabilities=("catalog.search", "catalog.holdings", "acquisition.borrow", "acquisition.download")),
     ContractDefinition("catalog.service", "cifereca.catalog.service", "1", protocol_name="CatalogServiceFactory"),
+    ContractDefinition("catalog.service", "cifereca.catalog.service", "1", protocol_name="CatalogServiceFactory"),
     ContractDefinition("transport", "cifereca.transport", "1", protocol_name="TransportService"),
     ContractDefinition("drm.handler", "cifereca.drm", "1"),
     ContractDefinition("runtime.adapter", "cifereca.runtime", "1"),
@@ -57,6 +58,7 @@ _BY_CATEGORY = {item.category: item for item in CONTRACT_REGISTRY}
 _PROTOCOLS = {
     "catalog.service": CatalogServiceFactory,
     "transport": TransportService,
+    "catalog.service": CatalogServiceFactory,
     "ui.page": UiPageProvider,
     "ui.titlebar": UiTitlebarProvider,
     "ui.widgets": WidgetCatalog,
