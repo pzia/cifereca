@@ -98,3 +98,27 @@ def test_pending_selection_explains_active_filter_without_resetting_it():
 def test_library_render_retries_pending_selection_after_rows_are_present():
     source = ast.unparse(_method("MainWindow", "_render_library"))
     assert source.index("library_page.show_rows") < source.index("_select_pending_library_item")
+
+
+def test_detail_panel_and_master_detail_keep_distinct_class_boundaries():
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    classes = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    assert "DetailPanel" in classes
+    assert "MasterDetailPage" in classes
+
+    detail_init = next(
+        node for node in classes["DetailPanel"].body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    master_init = next(
+        node for node in classes["MasterDetailPage"].body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    assert [arg.arg for arg in detail_init.args.args] == ["self", "window"]
+    assert [arg.arg for arg in master_init.args.args] == [
+        "self", "window", "title", "subtitle", "empty_title", "empty_desc"
+    ]
