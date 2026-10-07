@@ -3,13 +3,13 @@ name: Test plugins
 on:
   push:
     paths:
-      - "plugins/**"
+      - "src/plugins/**"
       - "src/cifereca/**"
       - "pyproject.toml"
       - ".github/workflows/plugin-tests.yml"
   pull_request:
     paths:
-      - "plugins/**"
+      - "src/plugins/**"
       - "src/cifereca/**"
       - "pyproject.toml"
       - ".github/workflows/plugin-tests.yml"
@@ -38,7 +38,7 @@ jobs:
         run: |
           failed=0
           count=0
-          for p in plugins/*; do
+          for p in src/plugins/*; do
             if [ -f "$p/cifereca-plugin.json" ] && [ -d "$p/tests" ]; then
               count=$((count + 1))
               echo "::group::$(basename "$p")"
