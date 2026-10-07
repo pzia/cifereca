@@ -2,10 +2,10 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.gallica",
-    "version": "1.2.13",
+    "version": "1.2.14",
     "name": "Gallica",
     "publisher": "cifereca",
-    "plugin_api": ">=1.3,<2"
+    "plugin_api": ">=1.4,<2"
   },
   "plugins": [
     {
@@ -63,7 +63,7 @@
       },
       "recommends": [],
       "help_text": "Recherchez les livres EPUB/PDF publics et les documents sonores de Gallica sans compte BnF. Les liens EPUB/PDF proviennent des offres OPDS ; une simple notice ARK ne suffit pas. La recherche générale conserve les deux branches. Désactivez include_audio pour rechercher seulement les ebooks. Les champs titre, auteur, ISBN et sujet sont pris en charge ; séries/collections ne le sont pas. Les paramètres réseau prennent effet à la prochaine connexion ou après redémarrage. Le filtre Livres numériques limite la recherche aux ebooks ; le filtre audio active seulement la branche sonore. Une source temporairement indisponible est signalée sans masquer les résultats de l’autre branche. Les formats audio restent inconnus jusqu’à la résolution/validation des pistes. Les bundles audio sont publiés complets et sans écrasement ; la publication atomique nécessite Linux avec renameat2. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
-      "version": "1.2.13",
+      "version": "1.2.14",
       "capabilities": [
         "catalog.search",
         "catalog.detail",

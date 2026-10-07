@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from cifereca_library_audits import CoverAuditTool, LanguageAuditTool, NamingAuditTool
 
 
@@ -45,3 +48,10 @@ def test_naming_audit_never_renames():
     plan = tool.plan(type("MC", (), {"identity_id": None})())
     assert plan.facts["mismatch"] == 1
     assert "aucune mutation" in " ".join(plan.warnings).lower()
+
+
+def test_manifest_requires_plugin_api_14_for_maintenance_contracts():
+    manifest = json.loads((Path(__file__).resolve().parents[1] / "cifereca-plugin.json").read_text(encoding="utf-8"))
+    assert manifest["package"]["plugin_api"] == ">=1.4,<2"
+    assert manifest["package"]["version"] == "0.2.2"
+    assert {row["version"] for row in manifest["plugins"]} == {"0.2.2"}

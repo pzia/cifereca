@@ -1,13 +1,6 @@
 name: Test plugins
 
 on:
-  push:
-    paths:
-      - "src/plugins/**"
-      - "src/cifereca/**"
-      - "pyproject.toml"
-      - ".github/workflows/plugin-tests.yml"
-      - "scripts/ci-run-plugin-tests.sh"
   pull_request:
     paths:
       - "src/plugins/**"

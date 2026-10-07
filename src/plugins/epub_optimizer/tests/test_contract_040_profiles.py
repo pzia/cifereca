@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from types import SimpleNamespace
 
 from cifereca_epub_optimizer.profiles import discover_profiles, profile_from_service
@@ -38,3 +41,12 @@ def test_discovery_filters_by_core041_contract_and_capability():
         "version": ">=1,<2",
         "capabilities": ("device.profile.describe",),
     })]
+
+
+def test_manifest_requires_plugin_api_14_for_artifact_contracts():
+    manifest = json.loads((Path(__file__).resolve().parents[1] / "cifereca-plugin.json").read_text(encoding="utf-8"))
+    assert manifest["package"]["plugin_api"] == ">=1.4,<2"
+    assert manifest["package"]["version"] == "0.3.1"
+    assert {row["version"] for row in manifest["plugins"]} == {"0.3.1"}
+    ui = next(row for row in manifest["plugins"] if row["id"] == "ui.page.epub-optimizer")
+    assert {dep["version"] for dep in ui["requires"]} == {">=0.3.1,<1"}
