@@ -54,7 +54,7 @@ jobs:
             --out evidence/core-smoke.png \
             --cwd "${GITHUB_WORKSPACE}" \
             -- \
-            ./run-cifereca --no-plugins --verbose
+            environnements/chatgpt-work/run-cifereca --no-plugins --verbose
 
       - name: Upload GTK evidence
         if: always()
