@@ -1,0 +1,69 @@
+name: Optimizer GTK E2E temporary
+
+on:
+  push:
+    paths:
+      - ".github/workflows/optimizer-gtk-e2e.yml"
+      - "plugins/epub_optimizer/**"
+
+permissions:
+  contents: read
+
+jobs:
+  gtk-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 xvfb xauth scrot
+
+      - name: Validate dataset harness
+        run: |
+          python3 gen-dataset/datasetctl.py doctor ux-library
+          python3 -m unittest discover -s gen-dataset/tests -v
+
+      - name: Capture EPUB optimizer flow
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/plugins/epub_optimizer
+        run: |
+          mkdir -p evidence
+          xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
+            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format epub --report evidence/epub-report.json &
+            pid=$!
+            sleep 1.4
+            scrot evidence/epub-progress.png
+            sleep 1.7
+            scrot evidence/epub-final.png
+            wait "$pid"
+          '
+
+      - name: Capture PDF optimizer flow
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/plugins/epub_optimizer
+        run: |
+          xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
+            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format pdf --report evidence/pdf-report.json &
+            pid=$!
+            sleep 1.4
+            scrot evidence/pdf-progress.png
+            sleep 1.7
+            scrot evidence/pdf-final.png
+            wait "$pid"
+          '
+
+      - name: Show reports
+        if: always()
+        run: |
+          cat evidence/epub-report.json || true
+          cat evidence/pdf-report.json || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optimizer-gtk-e2e
+          path: evidence/
+          if-no-files-found: error
