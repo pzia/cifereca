@@ -16,6 +16,7 @@ from scripts.plugin_packaging import (
     validate_dev_snapshot,
     validate_plugin_entrypoints,
     validate_plugin_source,
+    verify_repository,
 )
 
 
@@ -273,6 +274,62 @@ class PluginPackagingTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(PackagingError, "cifereca.storage"):
                 build_plugin_zip(plugin, root / "dist")
+
+    def test_all_in_one_refuses_duplicate_plugin_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugins = root / "plugins"
+            plugins.mkdir()
+            first = make_plugin(
+                plugins, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            second = make_plugin(
+                plugins, "beta", "org.cifereca.provider.beta", "1.0"
+            )
+            first_manifest = json.loads(
+                (first / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            second_manifest_path = second / "cifereca-plugin.json"
+            second_manifest = json.loads(
+                second_manifest_path.read_text(encoding="utf-8")
+            )
+            second_manifest["plugins"][0]["id"] = first_manifest["plugins"][0]["id"]
+            second_manifest_path.write_text(
+                json.dumps(second_manifest), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(PackagingError, r"plugin\.id dupliqué"):
+                build_all_in_one(
+                    discover_plugins(plugins),
+                    root / "dist",
+                    filename="all.zip",
+                )
+
+    def test_verify_repository_refuses_duplicate_plugin_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugins = root / "plugins"
+            plugins.mkdir()
+            first = make_plugin(
+                plugins, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            second = make_plugin(
+                plugins, "beta", "org.cifereca.provider.beta", "1.0"
+            )
+            first_manifest = json.loads(
+                (first / "cifereca-plugin.json").read_text(encoding="utf-8")
+            )
+            second_manifest_path = second / "cifereca-plugin.json"
+            second_manifest = json.loads(
+                second_manifest_path.read_text(encoding="utf-8")
+            )
+            second_manifest["plugins"][0]["id"] = first_manifest["plugins"][0]["id"]
+            second_manifest_path.write_text(
+                json.dumps(second_manifest), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(PackagingError, r"plugin\.id dupliqué"):
+                verify_repository(plugins)
 
     def test_real_repository_discovers_all_packages(self) -> None:
         plugins = Path(__file__).resolve().parents[1] / "src" / "plugins"
