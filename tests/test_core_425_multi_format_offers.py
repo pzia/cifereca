@@ -88,7 +88,13 @@ def test_single_consistent_preference_is_projected():
 
 def test_provider_session_contract_has_empty_offer_fallback():
     session = Session(
-        descriptor=ProviderDescriptor(id="test", display_name="Test"),
+        descriptor=ProviderDescriptor(
+            id="test",
+            display_name="Test",
+            description="Test provider",
+            state="ready",
+            capabilities=__import__("cifereca.providers", fromlist=["ProviderCapabilities"]).ProviderCapabilities(),
+        ),
         credential_id="cred",
         label="Test",
         credentials={},
