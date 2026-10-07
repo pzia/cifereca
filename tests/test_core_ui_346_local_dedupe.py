@@ -53,7 +53,8 @@ def test_library_list_does_not_add_empty_redundant_state():
 def test_library_detail_omits_redundant_availability_row_and_badge():
     source = ast.unparse(_method("_library_selected"))
 
-    assert "state = self._library_availability_label(item)" in source
-    assert "if state:" in source
-    assert "detail_rows.append(('Disponibilité', state))" in source
-    assert "badges=[provider_label, state]" in source
+    assert "availability = self._library_availability_label(item)" in source
+    assert "Disponible hors ligne" not in source
+    assert "('Disponibilité', availability)" in source
+    assert "badges=[]" in source
+
