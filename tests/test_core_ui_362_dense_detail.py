@@ -119,3 +119,16 @@ def test_unknown_file_format_promotes_support_to_essential_without_duplication()
         assert essential < support < notice
         assert "essential_support = medium if not fmt else ''" in source
         assert "('Support', medium if fmt else '')" in source
+
+
+def test_long_summaries_are_collapsible_but_remain_selectable():
+    source = ast.unparse(_method("DetailPanel", "_show_description"))
+    assert "set_selectable(True)" in source
+    assert "len(text) > 700" in source
+    assert "text.count('\\n') >= 6" in source
+    assert "set_lines(6)" in source
+    assert "Pango.EllipsizeMode.END" in source
+    assert "'Lire la suite'" in source
+    assert "'Réduire'" in source
+    assert "set_lines(-1)" in source
+    assert "Pango.EllipsizeMode.NONE" in source

@@ -776,8 +776,39 @@ class DetailPanel(Gtk.Box):
         if not text:
             return
         group = Adw.PreferencesGroup(); group.set_title("Résumé")
-        label = Gtk.Label(label=text, xalign=0); label.set_wrap(True); label.set_selectable(True)
-        group.add(label); self._append_content(group)
+        label = Gtk.Label(label=text, xalign=0)
+        label.set_wrap(True)
+        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_selectable(True)
+        is_long = len(text) > 700 or text.count("\n") >= 6
+        if is_long:
+            label.set_lines(6)
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            box.append(label)
+            toggle = Gtk.Button(label="Lire la suite")
+            toggle.add_css_class("flat")
+            toggle.set_halign(Gtk.Align.START)
+
+            expanded = {"value": False}
+
+            def toggle_summary(button):
+                expanded["value"] = not expanded["value"]
+                if expanded["value"]:
+                    label.set_lines(-1)
+                    label.set_ellipsize(Pango.EllipsizeMode.NONE)
+                    button.set_label("Réduire")
+                else:
+                    label.set_lines(6)
+                    label.set_ellipsize(Pango.EllipsizeMode.END)
+                    button.set_label("Lire la suite")
+
+            toggle.connect("clicked", toggle_summary)
+            box.append(toggle)
+            group.add(box)
+        else:
+            group.add(label)
+        self._append_content(group)
 
 
     def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
