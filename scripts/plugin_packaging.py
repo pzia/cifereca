@@ -276,6 +276,16 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}].config_schema doit être un objet"
             )
+        instantiation = str(
+            descriptor.get("instantiation") or "multiple"
+        ).strip().lower().replace("-", "_")
+        if instantiation == "singleton":
+            instantiation = "singleton_public"
+        if instantiation not in {"multiple", "per_identity", "singleton_public"}:
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].instantiation invalide: "
+                f"{instantiation!r}"
+            )
         if plugin_id in seen_plugin_ids:
             raise PackagingError(
                 f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"
