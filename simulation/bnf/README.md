@@ -12,12 +12,12 @@ Par défaut :
 - liens Gallica sur une partie des notices numériques ;
 - diagnostics SRU pour requêtes invalides ;
 - cache SQLite persistant ;
-- métadonnées générées via `gen-dataset/common/fake_books.py`.
+- métadonnées générées via `simulation/common/fake_books.py`.
 
 Lancement :
 
 ```bash
-python3 gen-dataset/bnf/pseudo_bnf_sru_service.py
+python3 simulation/bnf/pseudo_bnf_sru_service.py
 ```
 
 Configuration du plugin :
