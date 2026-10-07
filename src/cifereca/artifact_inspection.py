@@ -84,36 +84,87 @@ def detect_artifact_format(path: Path) -> str | None:
     return None
 
 
+_EPUB_MAX_ENTRIES = 20000
+_EPUB_MAX_MIMETYPE_BYTES = 100
+_EPUB_MAX_CONTAINER_BYTES = 1024 * 1024
+_EPUB_MAX_PACKAGE_BYTES = 5 * 1024 * 1024
+
+
+def _bounded_zip_read(archive: zipfile.ZipFile, name: str, maximum: int) -> bytes:
+    info = archive.getinfo(name)
+    if info.file_size > maximum:
+        raise ValueError("zip entry too large")
+    return archive.read(name)
+
+
+def _validate_epub_archive(archive: zipfile.ZipFile) -> str | None:
+    infos = archive.infolist()
+    names = [info.filename for info in infos]
+    if len(infos) > _EPUB_MAX_ENTRIES:
+        return "epub_too_many_entries"
+    if len(set(names)) != len(names):
+        return "epub_duplicate_entries"
+    if any(info.flag_bits & 1 for info in infos):
+        return "epub_zip_encrypted"
+
+    try:
+        mime = _bounded_zip_read(archive, "mimetype", _EPUB_MAX_MIMETYPE_BYTES).strip()
+    except KeyError:
+        return "epub_mimetype_missing"
+    except ValueError:
+        return "epub_mimetype_oversized"
+    if mime != b"application/epub+zip":
+        return "epub_mimetype_invalid"
+
+    try:
+        container = ElementTree.fromstring(
+            _bounded_zip_read(archive, "META-INF/container.xml", _EPUB_MAX_CONTAINER_BYTES)
+        )
+    except KeyError:
+        return "epub_container_missing"
+    except ValueError:
+        return "epub_container_oversized"
+    except ElementTree.ParseError:
+        return "epub_container_invalid"
+
+    roots = [
+        node.attrib.get("full-path")
+        for node in container.iter()
+        if _local_name(node.tag) == "rootfile"
+    ]
+    if not roots:
+        return "epub_rootfile_missing"
+
+    archive_names = set(names)
+    for root in roots:
+        if not root:
+            return "epub_package_missing"
+        if root.startswith("/") or ".." in root.split("/"):
+            return "epub_package_path_invalid"
+        if root not in archive_names:
+            return "epub_package_missing"
+        try:
+            package = ElementTree.fromstring(
+                _bounded_zip_read(archive, root, _EPUB_MAX_PACKAGE_BYTES)
+            )
+        except ValueError:
+            return "epub_package_oversized"
+        except ElementTree.ParseError:
+            return "epub_package_invalid"
+        if _local_name(package.tag) != "package":
+            return "epub_package_invalid"
+
+    if archive.testzip() is not None:
+        return "epub_crc_invalid"
+    return None
+
+
 def _validate_epub_package(path: Path) -> str | None:
     try:
         with zipfile.ZipFile(path) as archive:
-            names = set(archive.namelist())
-            try:
-                mime = archive.read("mimetype").strip()
-            except KeyError:
-                return "epub_mimetype_missing"
-            if mime != b"application/epub+zip":
-                return "epub_mimetype_invalid"
-            try:
-                container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
-            except KeyError:
-                return "epub_container_missing"
-            except ElementTree.ParseError:
-                return "epub_container_invalid"
-            roots = [
-                node.attrib.get("full-path")
-                for node in container.iter()
-                if _local_name(node.tag) == "rootfile"
-            ]
-            if not roots:
-                return "epub_rootfile_missing"
-            if not all(root and root in names for root in roots):
-                return "epub_package_missing"
-            if archive.testzip() is not None:
-                return "epub_crc_invalid"
+            return _validate_epub_archive(archive)
     except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError):
         return "invalid_epub"
-    return None
 
 
 
@@ -171,29 +222,9 @@ def inspect_artifact_content(
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             names = set(archive.namelist())
             if strict_structure:
-                try:
-                    mime = archive.read("mimetype").strip()
-                except KeyError:
-                    return ArtifactInspection(actual, False, None, "epub_mimetype_missing")
-                if mime != b"application/epub+zip":
-                    return ArtifactInspection(actual, False, None, "epub_mimetype_invalid")
-                try:
-                    container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
-                except KeyError:
-                    return ArtifactInspection(actual, False, None, "epub_container_missing")
-                except ElementTree.ParseError:
-                    return ArtifactInspection(actual, False, None, "epub_container_invalid")
-                roots = [
-                    node.attrib.get("full-path")
-                    for node in container.iter()
-                    if _local_name(node.tag) == "rootfile"
-                ]
-                if not roots:
-                    return ArtifactInspection(actual, False, None, "epub_rootfile_missing")
-                if not all(root and root in names for root in roots):
-                    return ArtifactInspection(actual, False, None, "epub_package_missing")
-                if archive.testzip() is not None:
-                    return ArtifactInspection(actual, False, None, "epub_crc_invalid")
+                invalid_reason = _validate_epub_archive(archive)
+                if invalid_reason:
+                    return ArtifactInspection(actual, False, None, invalid_reason)
             if "META-INF/encryption.xml" in names:
                 xml = archive.read("META-INF/encryption.xml").decode("utf-8", "ignore").casefold()
                 if "aes" in xml or "xmlenc" in xml or "adobe.com/adept" in xml:
