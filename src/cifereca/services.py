@@ -2297,10 +2297,8 @@ class LibraryService:
         for group in inventory["profiles"]:
             profile = next(p for p in candidates if self._adept_profile_name(p) == group["profile"])
             for loan in group["loans"]:
-                if loan["returned"] and not loan["token_present"] and not provider_active:
-                    continue
                 conflict = bool(loan['returned'] and (loan['token_present'] or provider_active))
-                state = ("Retour à vérifier · jeton présent" if loan['token_present'] else "Restitué côté ADEPT · prêt fournisseur encore actif") if conflict else ("Expiré" if loan["expired"] else ("Actif" if loan["token_present"] else "Sans jeton"))
+                state = ("Retour à vérifier · jeton présent" if loan['token_present'] else "Restitué côté ADEPT · prêt fournisseur encore actif") if conflict else ("Restitué" if loan["returned"] else ("Expiré" if loan["expired"] else ("Actif" if loan["token_present"] else "Sans jeton")))
                 options.append({"profile_id": self._adept_profile_ref(profile), "profile_name": group["profile"],
                     "loan_id": loan["id"], "title": loan.get("title") or "Titre non disponible",
                     "state": state, "conflict": conflict, "validity": loan.get("validity"), "local_book": loan.get("local_book")})
@@ -2333,8 +2331,6 @@ class LibraryService:
                 loan = matches[0]
                 metadata = dict(row.get("metadata") or {}); previous = dict(metadata.get("adept_binding") or {})
                 provider_active = self._provider_loan_active_for_acquisition(row)
-                if loan["returned"] and not loan["token_present"] and not provider_active:
-                    raise AttentionRequired("Ce prêt est déjà restitué. Actualisez la liste.", code="adept_loan_selection_stale")
                 returned = loan["returned"]
                 binding = {"adept_profile_id": profile_id, "adept_profile_name": name, "adept_loan_id": loan_id,
                     "loan_state": "returned" if returned else ("expired" if loan["expired"] else "active"),
