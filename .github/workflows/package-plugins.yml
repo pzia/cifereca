@@ -2,6 +2,8 @@ name: Package plugins
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "src/plugins/**"
       - "scripts/**"
