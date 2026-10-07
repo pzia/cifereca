@@ -103,7 +103,7 @@ def _provided_plugin_api_version() -> Version:
             f"version Plugin API illisible: {PLUGIN_API_VERSION_FILE}: {exc}"
         ) from exc
     match = re.search(
-        r'^PLUGIN_API_VERSION\\s*=\\s*["\\\']([^"\\\']+)["\\\']',
+        r"^PLUGIN_API_VERSION\s*=\s*['\"]([^'\"]+)['\"]",
         source,
         re.MULTILINE,
     )
