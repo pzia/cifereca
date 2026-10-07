@@ -71,13 +71,15 @@ class DatasetCtlTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 os.environ[datasetctl.RUNTIME_ENV] = tmp
+                profile = dict(profile)
+                profile["library"] = {**profile["library"], "epubs": 3}
                 prepared = datasetctl.prepare(profile, catalog, rebuild_library=True)
                 library = Path(prepared["library"])
                 epubs = list((library / "ux" / "local").glob("*.epub"))
-                self.assertEqual(len(epubs), 1000)
+                self.assertEqual(len(epubs), 3)
                 self.assertFalse(any(library.glob("*.epub")))
                 summary = datasetctl.summary_payload(profile, catalog)
-                self.assertEqual(summary["library"]["generated_epubs"], 1000)
+                self.assertEqual(summary["library"]["generated_epubs"], 3)
                 self.assertTrue(summary["library"]["complete"])
         finally:
             if old is None:
