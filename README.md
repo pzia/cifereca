@@ -1,3 +1,21 @@
+# Architecture et rationalisation
+
+La documentation de référence de l'architecture actuelle, de la cible et des travaux structurels restants est dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+Repères rapides :
+
+- le Core applicatif vit sous `src/cifereca/` ;
+- les plugins fonctionnels vivent actuellement sous `plugins/<plugin>/` ;
+- `src/cifereca/plugins/` contient le framework/loader/manager de plugins, pas les plugins fonctionnels ;
+- `src/cifereca/builtin_ui/`, `src/cifereca/paris/` et `src/cifereca/kobo/` restent des zones historiques à rationaliser ;
+- `bundled_plugins/` et `integrations/` ne sont plus des sources actives ;
+- l'organisation des tests est décrite dans [docs/TEST-ORGANIZATION.md](docs/TEST-ORGANIZATION.md) ;
+- l'état global du chantier est indexé dans [docs/RATIONALIZATION-STATUS.md](docs/RATIONALIZATION-STATUS.md).
+
+> Les sections ci-dessous conservent l'historique des livraisons. Elles ne constituent pas la carte d'architecture de référence.
+
+---
+
 # Core 0.9.33+dev.1
 
 Détails partagés et denses, actions et liens catalogue/local, refresh des prêts ciblé, rattachement ADEPT en cas de contradiction, navigation filtrée Accueil032 et barres adaptatives. Voir [RELEASE-NOTES-0.9.33-dev.1.md](docs/RELEASE-NOTES-0.9.33-dev.1.md) et le [contrat plugins](docs/CONTRAT-PLUGINS-CIFERECA-0.9.33.md). Les recettes GTK et Paris/ADEPT authentifiées restent à valider.
