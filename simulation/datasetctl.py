@@ -303,8 +303,17 @@ def generate_local_library(profile: dict, *, rebuild: bool = False) -> Path:
     config = profile.get("library") or {}
     count = int(config.get("epubs") or 0)
     seed = int(config.get("seed") or 20261006)
+    identity_dir = str(config.get("identity_dir") or "ux").strip() or "ux"
+    provider_dir = str(config.get("provider_dir") or "local").strip() or "local"
+    content_dir = library / identity_dir / provider_dir
     marker = library / ".dataset.json"
-    wanted = {"version": 1, "epubs": count, "seed": seed}
+    wanted = {
+        "version": 2,
+        "epubs": count,
+        "seed": seed,
+        "identity_dir": identity_dir,
+        "provider_dir": provider_dir,
+    }
 
     current = None
     if marker.exists():
@@ -316,14 +325,14 @@ def generate_local_library(profile: dict, *, rebuild: bool = False) -> Path:
     if rebuild or current != wanted:
         if library.exists():
             shutil.rmtree(library)
-        library.mkdir(parents=True, exist_ok=True)
+        content_dir.mkdir(parents=True, exist_ok=True)
         if count:
             generator = ROOT / "Epub" / "gen_fake_epubs.py"
             log_dir = runtime / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             with (log_dir / "library-generator.log").open("w", encoding="utf-8") as log:
                 result = subprocess.run(
-                    [sys.executable, str(generator), "-n", str(count), "-o", str(library), "--seed", str(seed)],
+                    [sys.executable, str(generator), "-n", str(count), "-o", str(content_dir), "--seed", str(seed)],
                     cwd=str(ROOT.parent),
                     stdout=log,
                     stderr=subprocess.STDOUT,
@@ -333,7 +342,7 @@ def generate_local_library(profile: dict, *, rebuild: bool = False) -> Path:
                 raise DatasetError(f"génération EPUB échouée (voir {log_dir / 'library-generator.log'})")
         marker.write_text(json.dumps(wanted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     else:
-        library.mkdir(parents=True, exist_ok=True)
+        content_dir.mkdir(parents=True, exist_ok=True)
     return library
 
 
@@ -797,7 +806,7 @@ def summary_payload(profile: dict, catalog: dict[str, dict]) -> dict:
     library = runtime / "library"
     library_cfg = profile.get("library") or {}
     configured_epubs = int(library_cfg.get("epubs") or 0)
-    generated_epubs = sum(1 for path in library.glob("*.epub") if path.is_file()) if library.is_dir() else 0
+    generated_epubs = sum(1 for path in library.rglob("*.epub") if path.is_file()) if library.is_dir() else 0
     state = load_state(profile)
     services = []
     for name, config in enabled_service_configs(profile).items():
