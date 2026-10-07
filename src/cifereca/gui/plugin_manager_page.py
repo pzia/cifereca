@@ -354,16 +354,29 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             typ = str(spec.get("type") or "string")
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); label = Gtk.Label(label=title, xalign=0); label.set_size_request(180, -1); line.append(label)
             if name == "actions" and status.descriptor.type == "ui.titlebar":
-                from .shell_model import page_actions
+                from .shell_model import action_registry, validate_action_selection
                 widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
                 checks = {}
-                pages = getattr(self.window, "_pages", {}).values()
-                for page in pages:
-                    for action in page_actions(page):
-                        key = f"{page.route}.{action.id}"
-                        check = Gtk.CheckButton(label=f"{page.title} · {action.title}")
-                        check.set_active(key in current.get(name, [])); widget.append(check); checks[key] = check
-                spec = dict(spec); spec["_action_checks"] = checks
+                pages = tuple(getattr(self.window, "_pages", {}).values())
+                configured = current.get(name, [])
+                configured = configured if isinstance(configured, list) else []
+                valid, obsolete = validate_action_selection(pages, configured)
+                selected = set(valid)
+                for entry in action_registry(pages):
+                    scope = "Globale" if entry.scope == "global" else f"Page · {entry.page_title}"
+                    check = Gtk.CheckButton(label=f"{entry.title} — {scope}")
+                    check.set_tooltip_text(entry.key)
+                    check.set_active(entry.key in selected)
+                    widget.append(check)
+                    checks[entry.key] = check
+                for key in obsolete:
+                    warning = Gtk.Label(label=f"Action obsolète : {key}", xalign=0)
+                    warning.set_wrap(True)
+                    warning.add_css_class("warning")
+                    widget.append(warning)
+                spec = dict(spec)
+                spec["_action_checks"] = checks
+                spec["_obsolete_actions"] = obsolete
             elif typ == "boolean":
                 widget: Gtk.Widget = Gtk.Switch(); widget.set_active(bool(current.get(name, spec.get("default", False))))
             elif typ in {"integer", "number"}:
