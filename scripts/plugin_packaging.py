@@ -271,6 +271,11 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
         _validate_id(
             descriptor.get("type"), f"{plugin_dir}: plugins[{index}].type"
         )
+        schema = descriptor.get("config_schema")
+        if schema is not None and not isinstance(schema, dict):
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].config_schema doit être un objet"
+            )
         if plugin_id in seen_plugin_ids:
             raise PackagingError(
                 f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"
