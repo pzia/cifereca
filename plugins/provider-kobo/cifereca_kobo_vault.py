@@ -1,40 +1,13 @@
 from __future__ import annotations
 
 import json
-from urllib.parse import quote, urlsplit
-import re
+from urllib.parse import quote
 from typing import Any
 
 import httpx
 
-from cifereca.plugin_api import ProviderError
+from cifereca.plugin_api import ProviderError, redact_text
 
-
-def _redact_url(url: str) -> str:
-    try:
-        parsed = urlsplit(url)
-        if parsed.query or parsed.fragment or parsed.username or re.search(r"(?i)/(?:LOAN|URLLink\.acsm)(?:/|$)", parsed.path):
-            return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
-        return url
-    except ValueError:
-        return "<redacted-url>"
-
-
-def _redact_text(text: str) -> str:
-    """Plugin-local redaction; never depend on Core private diagnostics."""
-    text = re.sub(r"https?://[^\s<>\"']+", lambda match: _redact_url(match.group()), str(text), flags=re.I)
-    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text)
-    text = re.sub(
-        r"(?i)\b(password|cookie|token|secret|authorization|session|barcode|readerid)\b\s*[:=]\s*[^\s,;]+",
-        r"\1=<redacted>",
-        text,
-    )
-    text = re.sub(
-        r"(?i)([\"']?(?:password|cookie|token|secret|authorization|session|barcode|readerid)[\"']?\s*[:=]\s*)(?:[\"'][^\"']*[\"']|[^\s,;}]+)",
-        r"\1<redacted>",
-        text,
-    )
-    return text
 
 
 class KoboVaultError(ProviderError):
@@ -138,7 +111,7 @@ class KoboVaultClient:
                 if retry:
                     text = f"{text} (réessayer dans {retry}s)"
             raise KoboVaultError(
-                f"Kobo-Vault : {_redact_text(text)}",
+                f"Kobo-Vault : {redact_text(text)}",
                 code=code,
                 status_code=response.status_code,
             )
