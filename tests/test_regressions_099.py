@@ -9,13 +9,13 @@ import httpx
 from cifereca.search_failures import is_technical_search_error
 from cifereca.gui.sync_issues import sync_issues_text
 from cifereca.gui.query_model import QueryState,FIELDS
-from cifereca.gui.main_window import book_detail_presentation, text_or_dash
 from cifereca.models import SearchResult
 from cifereca.descriptions import description_text
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
+from cifereca.plugin_api import DetailField, DetailSection, UiBookDetailPresentation
 
 def _service(tmp: str) -> LibraryService:
     root = Path(tmp)
@@ -29,6 +29,13 @@ def _service(tmp: str) -> LibraryService:
     return LibraryService(cfg, Storage(root / "db.sqlite3"), Diagnostics())
 
 ROOT=Path(__file__).resolve().parents[1]
+def functions(file,names,ns):
+    tree=ast.parse((ROOT/'src/cifereca/gui'/file).read_text())
+    selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
+    future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+selected,type_ignores=[])),file,'exec'),ns)
+    return {name:ns[name] for name in names}
+
 def methods(file,cls,names,ns):
     tree=ast.parse((ROOT/'src/cifereca/gui'/file).read_text())
     obj=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==cls)
@@ -111,7 +118,8 @@ class DigitalDefault(unittest.TestCase):
 class SummaryRegression(unittest.TestCase):
     def test_summary_remains_when_holdings_replace_initial_view(self):
         gtk=NS(Label=Widget,Spinner=Widget);adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
-        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:s.lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':book_detail_presentation,'text_or_dash':text_or_dash})
+        helpers=functions('main_window.py',{'book_detail_presentation','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation})
+        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:s.lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'text_or_dash':helpers['text_or_dash']})
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
         host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a:None,_direct_download_action=lambda *a:None)
         host._append_content=host.content.append
