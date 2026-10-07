@@ -274,6 +274,27 @@ def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> list[Path]:
     return found
 
 
+def validate_unique_plugin_ids(plugin_dirs: Sequence[Path]) -> None:
+    """Refuse descriptor id collisions across packages before bundling/release."""
+    seen: dict[str, tuple[str, Path]] = {}
+    for plugin_dir in plugin_dirs:
+        manifest = read_plugin_manifest(plugin_dir)
+        package_id = str(manifest["package"]["id"])
+        for index, descriptor in enumerate(manifest.get("plugins") or []):
+            plugin_id = str(descriptor.get("id") or "").strip()
+            if not plugin_id:
+                continue
+            previous = seen.get(plugin_id)
+            if previous is not None:
+                previous_package, previous_dir = previous
+                raise PackagingError(
+                    f"plugin.id dupliqué {plugin_id}: "
+                    f"{previous_package} ({previous_dir}) / "
+                    f"{package_id} ({plugin_dir})"
+                )
+            seen[plugin_id] = (package_id, plugin_dir)
+
+
 def build_plugin_zip(plugin_dir: Path, output_dir: Path = DIST_DIR) -> Path:
     plugin_dir = plugin_dir.resolve()
     manifest = read_plugin_manifest(plugin_dir)
@@ -393,6 +414,7 @@ def _package_record(path: Path, manifest: dict) -> dict:
 def _build_all_plugin_zips(
     plugin_dirs: Sequence[Path], temporary_dir: Path
 ) -> list[tuple[Path, dict]]:
+    validate_unique_plugin_ids(plugin_dirs)
     records: list[tuple[Path, dict]] = []
     for plugin_dir in plugin_dirs:
         manifest = read_plugin_manifest(plugin_dir)
@@ -620,8 +642,10 @@ def validate_with_update_dev(
 
 
 def verify_repository(plugins_dir: Path = PLUGINS_DIR) -> list[dict]:
+    plugin_dirs = discover_plugins(plugins_dir)
+    validate_unique_plugin_ids(plugin_dirs)
     rows = []
-    for plugin_dir in discover_plugins(plugins_dir):
+    for plugin_dir in plugin_dirs:
         manifest = read_plugin_manifest(plugin_dir)
         validate_plugin_entrypoints(plugin_dir, manifest)
         validate_plugin_source(plugin_dir)
