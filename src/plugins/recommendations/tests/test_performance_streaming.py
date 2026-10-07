@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import recommendation_engine as engine
 import recommendation_engine_fast as fast
 from recommendation_engine import RankedCandidate
-from recommendation_service_v022 import compute_recommendations
+from recommendation_service_v022 import _provisional_head, compute_recommendations
 
 
 class Control:
@@ -168,3 +168,40 @@ def test_candidate_scoring_reuses_precomputed_profile_aggregates():
 
     assert score > 0
     assert reasons
+
+
+def test_provisional_head_matches_full_sort_without_returning_the_tail():
+    provisional = {
+        f"k-{i}": (
+            {"title": f"Book {i:03d}", "author": f"Author {i % 7}"},
+            float((i * 37) % 101),
+            ("test",),
+            ["p"],
+        )
+        for i in range(250)
+    }
+    expected = sorted(
+        (
+            RankedCandidate(
+                item=item,
+                score=max(1, min(100, int(round(score)))),
+                reasons=reasons,
+                sources=tuple(sources),
+                query_hits=0,
+            )
+            for item, score, reasons, sources in provisional.values()
+            if score > 0.0
+        ),
+        key=lambda row: (
+            -row.score,
+            engine.normalize(engine.get_field(row.item, "title", "")),
+            engine.normalize(engine.get_field(row.item, "author", "")),
+        ),
+    )[:40]
+
+    actual = _provisional_head(provisional, 40)
+
+    assert len(actual) == 40
+    assert [(row.score, row.item["title"]) for row in actual] == [
+        (row.score, row.item["title"]) for row in expected
+    ]
