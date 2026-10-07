@@ -23,11 +23,41 @@ def _method_source(path: Path, class_name: str, method_name: str) -> str:
 
 
 def test_epub_cover_supports_guide_and_first_spine_fallbacks():
-    source = _module_source(EPUB)
+    tree = ast.parse(EPUB.read_text())
+    constants = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
 
-    assert "pages.extend((node.attrib.get('href'), 'guide')" in source
-    assert "pages.extend((node.attrib.get('href'), 'first_spine')" in source
-    assert "if method == 'first_spine' and len(refs) != 1:" in source
+    assert "guide" in constants
+    assert "first_spine" in constants
+    assert any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name)
+        and node.left.id == "method"
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.Eq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == "first_spine"
+        for node in ast.walk(tree)
+    )
+    assert any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Call)
+        and isinstance(node.left.func, ast.Name)
+        and node.left.func.id == "len"
+        and len(node.left.args) == 1
+        and isinstance(node.left.args[0], ast.Name)
+        and node.left.args[0].id == "refs"
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.NotEq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == 1
+        for node in ast.walk(tree)
+    )
 
 
 def test_cover_provenance_and_content_cache_are_persisted():
