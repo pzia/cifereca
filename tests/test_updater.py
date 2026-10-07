@@ -175,6 +175,40 @@ def test_github_dry_run_resolves_sha_without_mutating_runtime(tmp_path, monkeypa
     assert not target.exists()
 
 
+@pytest.mark.parametrize(
+    ("ref", "api_ref"),
+    [
+        ("v0.9.44-dev.1", "v0.9.44-dev.1"),
+        ("refs/tags/v0.9.44-dev.1", "v0.9.44-dev.1"),
+    ],
+)
+def test_github_dry_run_accepts_tags(tmp_path, monkeypatch, ref, api_ref):
+    target = tmp_path / "runtime"
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(target))
+    monkeypatch.setattr(updater.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
+
+    def fake_run(command, **kwargs):
+        command = [str(x) for x in command]
+        if command[1:3] == ["api", f"repos/pzia/cifereca/commits/{api_ref}"]:
+            return SimpleNamespace(returncode=0, stdout="tagged123\n", stderr="")
+        if command[1:3] == ["repo", "clone"]:
+            source = Path(command[4])
+            _mini_project(source, "9.9.9")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "fetch" in command or "checkout" in command:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    result = updater.install_github(ref, dry_run=True, python=os.sys.executable)
+
+    assert result["github_ref"] == ref
+    assert result["github_commit"] == "tagged123"
+    assert result["provenance"]["ref"] == ref
+    assert not target.exists()
+
+
 def test_backup_persistent_state_copies_db_config_and_plugins(tmp_path, monkeypatch):
     config_home = tmp_path / "config-home"
     data_home = tmp_path / "data-home"
