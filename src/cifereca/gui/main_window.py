@@ -112,6 +112,17 @@ def compact_detail_rows(rows: Iterable[tuple[str, object]]) -> tuple[tuple[str, 
     return tuple(result)
 
 
+def detail_subtitle_lines(section: str, value: object) -> int:
+    """Keep short metadata dense while leaving long values fully readable."""
+    text = str(value or "")
+    if "\n" in text:
+        return 0
+    limit = 36 if section == "Essentiel" else 72
+    if len(text) > limit:
+        return 0
+    return 1 if section == "Essentiel" else 2
+
+
 
 def book_detail_presentation(
     *,
@@ -431,7 +442,7 @@ class DetailPanel(Gtk.Box):
             row = Adw.ActionRow()
             display_value, tooltip_value = detail_display_value(label, value)
             row.set_title(label); row.set_subtitle(display_value)
-            row.set_subtitle_lines(1 if title == "Essentiel" else (2 if grid is not None else 0))
+            row.set_subtitle_lines(detail_subtitle_lines(title, display_value) if grid is not None else 0)
             row.set_tooltip_text(label+' : '+tooltip_value)
             if grid is not None:
                 row.set_size_request(160, -1); grid.insert(row, -1)

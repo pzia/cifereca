@@ -50,7 +50,7 @@ def test_essential_grid_is_two_columns_and_neutral_by_default():
     assert "'Essentiel'" in group
     assert "2 if title == 'Essentiel' else 3" in group
     assert "search_controls" not in group
-    assert "set_subtitle_lines(1 if title == 'Essentiel'" in group
+    assert "detail_subtitle_lines(title, display_value)" in group
 
 
 def test_search_library_and_loan_use_shared_essential_projection():
@@ -154,3 +154,16 @@ def test_missing_detail_cover_compacts_only_after_absence_is_known():
     assert "_show_missing()" in bind_url
     assert "_show_missing()" in apply_result
     assert "_start_cover_request(force=True)" in apply_result
+
+
+def test_long_metadata_is_fully_readable_without_tooltip():
+    policy = ast.unparse(_function("detail_subtitle_lines"))
+    group = ast.unparse(_method("DetailPanel", "_group"))
+
+    assert "limit = 36 if section == 'Essentiel' else 72" in policy
+    assert "if '\\n' in text" in policy
+    assert "if len(text) > limit" in policy
+    assert "return 0" in policy
+    assert "return 1 if section == 'Essentiel' else 2" in policy
+    assert "set_tooltip_text" in group
+    assert "detail_subtitle_lines(title, display_value)" in group
