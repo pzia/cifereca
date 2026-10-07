@@ -1243,9 +1243,14 @@ class MainWindow(Adw.ApplicationWindow):
         _TRACE_LOG.info("TRACE gui connect-configured-sources begin")
         if hasattr(self, "startup_status"):
             self.startup_status.set_label("Connexion aux sources configurées…")
+        if hasattr(self, "dashboard_loading_status"):
+            self.dashboard_loading_status.set_label("Connexion aux sources en arrière-plan…")
+            self.dashboard_loading_status.set_visible(True)
 
         def ok(result: dict[str, Any]) -> None:
             _TRACE_LOG.info("TRACE gui connect-configured ok connected=%s errors=%s", len(result.get("connected", [])), len(result.get("errors", {}) or {}))
+            if hasattr(self, "dashboard_loading_status"):
+                self.dashboard_loading_status.set_visible(False)
             _TRACE_LOG.info("TRACE gui populate-accounts begin")
             self._populate_accounts()
             _TRACE_LOG.info("TRACE gui populate-accounts end")
@@ -1264,6 +1269,9 @@ class MainWindow(Adw.ApplicationWindow):
         def err(exc: BaseException) -> None:
             if hasattr(self, "startup_status"):
                 self.startup_status.set_label(str(exc))
+            if hasattr(self, "dashboard_loading_status"):
+                self.dashboard_loading_status.set_label("Connexion aux sources indisponible. La navigation locale reste disponible.")
+                self.dashboard_loading_status.set_visible(True)
 
         control = getattr(self, "startup_connect_button", None)
         self.runner.submit(
@@ -1979,6 +1987,9 @@ class MainWindow(Adw.ApplicationWindow):
         heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.append(heading)
         title = Gtk.Label(label="Bibliothèque familiale", xalign=0); title.set_hexpand(True); title.set_wrap(True); add_css(title, "page-title"); heading.append(title)
         subtitle = Gtk.Label(label="État des identités et de la synchronisation automatique", xalign=0); add_css(subtitle, "dim-label"); outer.append(subtitle)
+        self.dashboard_loading_status = Gtk.Label(label="Connexion aux sources en arrière-plan…", xalign=0)
+        self.dashboard_loading_status.set_wrap(True); add_css(self.dashboard_loading_status, "dim-label", "caption")
+        outer.append(self.dashboard_loading_status)
         actions = AdaptiveActionBar(source=heading)
         refresh = self.action_button("Synchronisation rapide", "view-refresh-symbolic", suggested=True)
         refresh.connect("clicked", lambda _b: self.run_opening_sync(refresh, deep=False)); actions.append(refresh)
