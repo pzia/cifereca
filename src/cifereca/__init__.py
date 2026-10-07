@@ -1,6 +1,6 @@
 from pathlib import Path
 
-__version__ = "0.9.44+dev.2"
+__version__ = "0.9.44+dev.3"
 PROJECT_NAME = "cifereca"
 
 
