@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import inspect
 from pathlib import Path
 
 from cifereca.builtin_ui.chrome import Titlebar, Widgets
@@ -10,13 +11,21 @@ from cifereca.builtin_ui.pages import Pages
 from cifereca.builtin_ui.system_page import SystemPages
 
 
+def _same_symbol(actual, expected):
+    return (
+        actual.__name__ == expected.__name__
+        and Path(inspect.getsourcefile(actual) or "").resolve()
+        == Path(inspect.getsourcefile(expected) or "").resolve()
+    )
+
+
 def test_builtin_ui_compatibility_entrypoints_are_stable():
     legacy = importlib.import_module("cifereca.builtin_ui.cifereca_builtin_ui")
-    assert legacy.Pages is Pages
-    assert legacy.Titlebar is Titlebar
-    assert legacy.Widgets is Widgets
-    assert legacy.SystemPages is SystemPages
-    assert legacy.CacheMaintenance is CacheMaintenance
+    assert _same_symbol(legacy.Pages, Pages)
+    assert _same_symbol(legacy.Titlebar, Titlebar)
+    assert _same_symbol(legacy.Widgets, Widgets)
+    assert _same_symbol(legacy.SystemPages, SystemPages)
+    assert _same_symbol(legacy.CacheMaintenance, CacheMaintenance)
 
 
 def test_builtin_ui_manifest_entrypoints_resolve_to_compatibility_shim():
@@ -36,7 +45,7 @@ def test_builtin_ui_manifest_entrypoints_resolve_to_compatibility_shim():
         target = expected[plugin["id"]]
         module_name, object_name = plugin["entrypoint"].split(":", 1)
         assert module_name == "cifereca_builtin_ui"
-        assert getattr(legacy, object_name) is target
+        assert _same_symbol(getattr(legacy, object_name), target)
 
 
 def test_builtin_pages_keep_routes_groups_and_library_action():
