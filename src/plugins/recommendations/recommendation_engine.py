@@ -123,6 +123,8 @@ class ProfileVector:
     title_terms: Counter[str]
     description_terms: Counter[str]
     lexical_terms: Counter[str]
+    author_labels: dict[str, str]
+    series_labels: dict[str, str]
     max_author_count: int
     max_subject_count: int
     max_series_count: int
@@ -138,6 +140,8 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
     series: Counter[str] = Counter()
     title_terms: Counter[str] = Counter()
     description_terms: Counter[str] = Counter()
+    author_labels: dict[str, str] = {}
+    series_labels: dict[str, str] = {}
     identifiers: set[str] = set()
     existing_pairs: set[str] = set()
 
@@ -146,6 +150,7 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
             key = normalize(author)
             if key:
                 authors[key] += 1
+                author_labels.setdefault(key, author)
         for subject in subject_values(book):
             for token in tokens(subject):
                 subjects[token] += 1
@@ -153,6 +158,7 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
             key = normalize(value)
             if key:
                 series[key] += 1
+                series_labels.setdefault(key, value)
         for token in tokens(get_field(book, "title", "")):
             title_terms[token] += 1
         for token in tokens(get_field(book, "description", "") or metadata(book).get("description")):
@@ -171,6 +177,8 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
         title_terms=title_terms,
         description_terms=description_terms,
         lexical_terms=lexical_terms,
+        author_labels=author_labels,
+        series_labels=series_labels,
         max_author_count=max(authors.values(), default=1),
         max_subject_count=max(subjects.values(), default=1),
         max_series_count=max(series.values(), default=1),
@@ -295,21 +303,14 @@ def build_queries(
     profile: ProfileVector | None = None,
 ) -> tuple[str, ...]:
     profile = profile if profile is not None else build_profile(books)
-    original_authors: dict[str, str] = {}
-    original_series: dict[str, str] = {}
-    for book in books:
-        for author in author_values(book):
-            original_authors.setdefault(normalize(author), author)
-        for series in series_values(book):
-            original_series.setdefault(normalize(series), series)
 
     queries: list[str] = []
     for key, _ in profile.authors.most_common(4):
-        if key in original_authors:
-            queries.append(original_authors[key])
+        if key in profile.author_labels:
+            queries.append(profile.author_labels[key])
     for key, _ in profile.series.most_common(2):
-        if key in original_series:
-            queries.append(original_series[key])
+        if key in profile.series_labels:
+            queries.append(profile.series_labels[key])
     queries.extend(term for term, _ in profile.subjects.most_common(4))
     if len(queries) < 3:
         terms = [term for term, _ in profile.title_terms.most_common(5)]
