@@ -17,6 +17,8 @@ class DeviceProfile:
     label: str
     width: int
     height: int
+    max_zoom_factor: float | None
+    allow_landscape: bool
     grayscale: bool
     gray_levels: tuple[int, ...] | None
     autocontrast_cutoff: float | None
@@ -50,6 +52,11 @@ def profile_from_service(service: Any, *, plugin_id: str = "", plugin_version: s
     if not profile_id or width <= 0 or height <= 0:
         raise ValueError("device.profile service must expose id, width and height")
 
+    raw_zoom = _value(raw, "max_zoom_factor", None)
+    max_zoom_factor = None if raw_zoom in {None, ""} else float(raw_zoom)
+    if max_zoom_factor is not None and max_zoom_factor < 1.0:
+        raise ValueError("invalid device profile max_zoom_factor")
+
     gray_levels = _value(raw, "gray_levels", None)
     if gray_levels is not None:
         gray_levels = tuple(int(value) for value in gray_levels)
@@ -61,6 +68,8 @@ def profile_from_service(service: Any, *, plugin_id: str = "", plugin_version: s
         label=label,
         width=width,
         height=height,
+        max_zoom_factor=max_zoom_factor,
+        allow_landscape=bool(_value(raw, "allow_landscape", False)),
         grayscale=bool(_value(raw, "grayscale", True)),
         gray_levels=gray_levels,
         autocontrast_cutoff=(

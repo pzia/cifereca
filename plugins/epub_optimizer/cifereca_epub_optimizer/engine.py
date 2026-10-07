@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import posixpath
+import re
 import tempfile
 import threading
 import zipfile
@@ -57,6 +59,7 @@ class OptimizationReport:
     images_optimized: int = 0
     images_kept: int = 0
     image_errors: list[str] = field(default_factory=list)
+    image_notes: list[str] = field(default_factory=list)
     changes: list[ImageChange] = field(default_factory=list)
 
     @property
@@ -102,6 +105,8 @@ def _emit(callback: ProgressCallback | None, percent: int, message: str) -> None
 
 
 def _safe_entry_name(name: str) -> bool:
+    if "\\" in name or "\x00" in name:
+        return False
     path = PurePosixPath(name)
     return not path.is_absolute() and ".." not in path.parts
 
@@ -112,6 +117,99 @@ def _find_case_insensitive(names: list[str], wanted: str) -> str | None:
         if name.lower() == lower:
             return name
     return None
+
+
+_CSS_PX_RE = re.compile(r"^\\s*(\\d+(?:\\.\\d+)?)\\s*(?:px)?\\s*$", re.IGNORECASE)
+_STYLE_SIZE_RE = re.compile(r"(?:^|;)\\s*(width|height)\\s*:\\s*(\\d+(?:\\.\\d+)?)px\\s*(?:;|$)", re.IGNORECASE)
+
+
+def _css_px(value: str | None) -> int | None:
+    if not value:
+        return None
+    match = _CSS_PX_RE.match(str(value))
+    if not match:
+        return None
+    parsed = int(round(float(match.group(1))))
+    return parsed if parsed > 0 else None
+
+
+def _layout_hints(archive: zipfile.ZipFile, infos: list[zipfile.ZipInfo]) -> dict[str, tuple[int | None, int | None]]:
+    """Extract conservative rendered-size hints from XHTML img attributes/inline CSS.
+
+    External stylesheet cascade is deliberately not guessed. Hints are only
+    actionable for profiles that explicitly publish max_zoom_factor.
+    """
+    names = {info.filename for info in infos}
+    hints: dict[str, tuple[int | None, int | None]] = {}
+    for info in infos:
+        suffix = Path(info.filename).suffix.lower()
+        if suffix not in {".xhtml", ".html", ".htm"} or info.file_size > 8 * 1024 * 1024:
+            continue
+        try:
+            root = ET.fromstring(archive.read(info))
+        except Exception:
+            continue
+        base = posixpath.dirname(info.filename)
+        for node in root.iter():
+            if node.tag.rsplit("}", 1)[-1].lower() != "img":
+                continue
+            src = str(node.attrib.get("src") or "").split("#", 1)[0].split("?", 1)[0].strip()
+            if not src or "://" in src or src.startswith("data:"):
+                continue
+            resolved = posixpath.normpath(posixpath.join(base, src))
+            if resolved.startswith("../") or resolved not in names:
+                continue
+            width = _css_px(node.attrib.get("width"))
+            height = _css_px(node.attrib.get("height"))
+            style = str(node.attrib.get("style") or "")
+            for axis, value in _STYLE_SIZE_RE.findall(style):
+                if axis.lower() == "width":
+                    width = int(round(float(value)))
+                else:
+                    height = int(round(float(value)))
+            if width or height:
+                previous = hints.get(resolved)
+                if previous is None:
+                    hints[resolved] = (width, height)
+                else:
+                    # Keep the largest declared rendering: it is the least
+                    # destructive choice when the same resource is reused.
+                    hints[resolved] = (
+                        max(v for v in (previous[0], width) if v is not None) if previous[0] or width else None,
+                        max(v for v in (previous[1], height) if v is not None) if previous[1] or height else None,
+                    )
+    return hints
+
+
+def _effective_target_box(
+    profile: DeviceProfile,
+    original_size: tuple[int, int],
+    layout_hint: tuple[int | None, int | None] | None,
+) -> tuple[int, int]:
+    original_width, original_height = original_size
+    screen_width, screen_height = profile.width, profile.height
+    if profile.allow_landscape and original_width > original_height and screen_height > screen_width:
+        screen_width, screen_height = screen_height, screen_width
+
+    zoom = profile.max_zoom_factor
+    if zoom is None:
+        return screen_width, screen_height
+
+    max_width = max(1, int(round(screen_width * zoom)))
+    max_height = max(1, int(round(screen_height * zoom)))
+    if not layout_hint:
+        return max_width, max_height
+
+    hinted_width, hinted_height = layout_hint
+    if hinted_width is None and hinted_height is not None and original_height > 0:
+        hinted_width = max(1, int(round(hinted_height * original_width / original_height)))
+    if hinted_height is None and hinted_width is not None and original_width > 0:
+        hinted_height = max(1, int(round(hinted_width * original_height / original_width)))
+    if hinted_width is not None:
+        max_width = min(max_width, max(1, int(round(hinted_width * zoom))))
+    if hinted_height is not None:
+        max_height = min(max_height, max(1, int(round(hinted_height * zoom))))
+    return max_width, max_height
 
 
 def _has_content_drm(archive: zipfile.ZipFile) -> bool:
@@ -206,23 +304,54 @@ def _encode_like_source(image: Image.Image, suffix: str, profile: DeviceProfile)
     return out.getvalue()
 
 
-def _optimize_image(data: bytes, name: str, profile: DeviceProfile) -> tuple[bytes, ImageChange]:
+def _optimize_image(
+    data: bytes,
+    name: str,
+    profile: DeviceProfile,
+    *,
+    layout_hint: tuple[int | None, int | None] | None = None,
+    max_image_pixels: int = 64_000_000,
+) -> tuple[bytes, ImageChange]:
     suffix = Path(name).suffix.lower()
     try:
         with Image.open(io.BytesIO(data)) as opened:
+            original_mode = opened.mode
+            original_width, original_height = opened.size
+            pixels = original_width * original_height
+            if pixels > max_image_pixels:
+                return data, ImageChange(
+                    path=name, original_bytes=len(data), optimized_bytes=len(data),
+                    original_width=original_width, original_height=original_height,
+                    optimized_width=original_width, optimized_height=original_height,
+                    original_mode=original_mode, optimized_mode=original_mode,
+                    action=f"conservée (limite sécurité {max_image_pixels} pixels)",
+                )
             if getattr(opened, "is_animated", False):
-                opened.seek(0)
+                return data, ImageChange(
+                    path=name, original_bytes=len(data), optimized_bytes=len(data),
+                    original_width=original_width, original_height=original_height,
+                    optimized_width=original_width, optimized_height=original_height,
+                    original_mode=original_mode, optimized_mode=original_mode,
+                    action="conservée (animation)",
+                )
+            if opened.mode in {"RGBA", "LA"} or (opened.mode == "P" and "transparency" in opened.info):
+                return data, ImageChange(
+                    path=name, original_bytes=len(data), optimized_bytes=len(data),
+                    original_width=original_width, original_height=original_height,
+                    optimized_width=original_width, optimized_height=original_height,
+                    original_mode=original_mode, optimized_mode=original_mode,
+                    action="conservée (transparence)",
+                )
             image = ImageOps.exif_transpose(opened).copy()
-    except (UnidentifiedImageError, OSError) as exc:
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ValueError(f"image illisible: {exc}") from exc
 
-    original_mode = image.mode
-    original_width, original_height = image.size
-    image = _flatten_alpha(image)
-
+    target_width, target_height = _effective_target_box(
+        profile, (original_width, original_height), layout_hint
+    )
     resized = False
-    if image.width > profile.width or image.height > profile.height:
-        image.thumbnail((profile.width, profile.height), Image.Resampling.LANCZOS)
+    if image.width > target_width or image.height > target_height:
+        image.thumbnail((target_width, target_height), Image.Resampling.LANCZOS)
         resized = True
 
     if profile.grayscale:
@@ -297,6 +426,8 @@ def optimize_epub(
     *,
     profile: DeviceProfile,
     max_uncompressed_mb: int = 2048,
+    max_image_mb: int = 64,
+    max_image_pixels: int = 64_000_000,
     progress: ProgressCallback | None = None,
     cancel_event: threading.Event | None = None,
 ) -> OptimizationReport:
@@ -338,6 +469,9 @@ def optimize_epub(
                     raise EpubOptimizationError(f"chemin ZIP dangereux : {info.filename}")
 
             names = [info.filename for info in infos]
+            canonical_names = [name.casefold() for name in names]
+            if len(canonical_names) != len(set(canonical_names)):
+                raise EpubOptimizationError("EPUB invalide : chemins ZIP dupliqués")
             mimetype_name = _find_case_insensitive(names, "mimetype")
             if mimetype_name is None:
                 raise EpubOptimizationError("EPUB sans entrée mimetype")
@@ -359,6 +493,9 @@ def optimize_epub(
             ]
             report.images_seen = len(image_infos)
             image_names = {info.filename for info in image_infos}
+            layout_hints = _layout_hints(zin, infos)
+            total_image_weight = max(1, sum(max(1, info.file_size) for info in image_infos))
+            processed_weight = 0
 
             _emit(progress, 5, f"{len(image_infos)} image(s) détectée(s)")
             _check_cancel(cancel_event)
@@ -384,19 +521,39 @@ def optimize_epub(
                     data = zin.read(info)
                     if info.filename in image_names:
                         processed_index += 1
-                        pct = 5 + int(88 * processed_index / max(1, len(image_infos)))
-                        _emit(progress, pct, f"Image {processed_index}/{len(image_infos)} : {Path(info.filename).name}")
                         try:
-                            optimized, change = _optimize_image(data, info.filename, profile)
-                            report.changes.append(change)
-                            if optimized != data:
-                                report.images_optimized += 1
-                                data = optimized
-                            else:
+                            if info.file_size > max_image_mb * 1024 * 1024:
                                 report.images_kept += 1
+                                report.image_notes.append(
+                                    f"{info.filename}: conservée (image > {max_image_mb} Mio)"
+                                )
+                            else:
+                                optimized, change = _optimize_image(
+                                    data,
+                                    info.filename,
+                                    profile,
+                                    layout_hint=layout_hints.get(info.filename),
+                                    max_image_pixels=max_image_pixels,
+                                )
+                                report.changes.append(change)
+                                if optimized != data:
+                                    report.images_optimized += 1
+                                    data = optimized
+                                else:
+                                    report.images_kept += 1
+                                    if "conservée (" in change.action:
+                                        report.image_notes.append(f"{info.filename}: {change.action}")
                         except Exception as exc:
                             report.images_kept += 1
                             report.image_errors.append(f"{info.filename}: {exc}")
+                        finally:
+                            processed_weight += max(1, info.file_size)
+                            pct = 5 + int(88 * processed_weight / total_image_weight)
+                            _emit(
+                                progress,
+                                pct,
+                                f"Image {processed_index}/{len(image_infos)} : {Path(info.filename).name}",
+                            )
 
                     compression = zipfile.ZIP_DEFLATED
                     clone = _clone_info(info, compress_type=compression)

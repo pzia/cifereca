@@ -114,6 +114,8 @@ class EpubOptimizerTransformer:
                 "profile_id": profile.id,
                 "profile_width": profile.width,
                 "profile_height": profile.height,
+                "max_zoom_factor": profile.max_zoom_factor,
+                "allow_landscape": profile.allow_landscape,
                 "grayscale": profile.grayscale,
             },
             estimated_size_bytes=source_size or None,
@@ -125,6 +127,8 @@ class EpubOptimizerTransformer:
         context = self._require_context()
         profile_plugin_id, profile = self._profile(request)
         max_uncompressed_mb = int(request.options.get("max_uncompressed_mb") or context.config.get("max_uncompressed_mb") or 2048)
+        max_image_mb = int(request.options.get("max_image_mb") or context.config.get("max_image_mb") or 64)
+        max_image_pixels = int(request.options.get("max_image_pixels") or context.config.get("max_image_pixels") or 64_000_000)
         proposed = default_output_path(Path(source.path).name, profile).name
 
         def progress(percent: int, message: str) -> None:
@@ -142,6 +146,8 @@ class EpubOptimizerTransformer:
                 destination.path,
                 profile=profile,
                 max_uncompressed_mb=max_uncompressed_mb,
+                max_image_mb=max_image_mb,
+                max_image_pixels=max_image_pixels,
                 progress=progress,
                 cancel_event=_ControlEvent(control),
             )

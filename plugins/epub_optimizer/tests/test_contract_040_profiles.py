@@ -8,6 +8,7 @@ class DescribeOnlyProfile:
         return {
             "id": "third-party", "label": "Third party", "width": 600, "height": 800,
             "grayscale": True, "gray_levels": [0, 255], "jpeg_quality": 75,
+            "max_zoom_factor": 2.0, "allow_landscape": True,
             "suffix": "third", "description": "External contract profile",
         }
 
@@ -16,6 +17,7 @@ def test_profile_contract_prefers_describe_without_shared_python_class():
     profile = profile_from_service(DescribeOnlyProfile(), plugin_id="device.profile.third-party", plugin_version="1.0.0")
     assert profile.id == "third-party"
     assert profile.width == 600 and profile.height == 800
+    assert profile.max_zoom_factor == 2.0 and profile.allow_landscape is True
     assert profile.plugin_id == "device.profile.third-party"
 
 
