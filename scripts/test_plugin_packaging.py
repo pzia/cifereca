@@ -8,11 +8,13 @@ import unittest
 import zipfile
 
 from scripts.plugin_packaging import (
+    PackagingError,
     build_all_in_one,
     build_dev_snapshot,
     build_plugin_zip,
     discover_plugins,
     validate_dev_snapshot,
+    validate_plugin_source,
 )
 
 
@@ -132,6 +134,64 @@ class PluginPackagingTests(unittest.TestCase):
                         hashlib.sha256(payload).hexdigest(),
                         row["sha256"],
                     )
+
+    def test_production_plugin_may_only_import_public_plugin_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            (plugin / "plugin.py").write_text(
+                "from cifereca.plugin_api import ProviderError\n"
+                "from cifereca.services import LibraryService\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                PackagingError,
+                r"plugin\.py:2: cifereca\.services",
+            ):
+                validate_plugin_source(plugin)
+
+    def test_public_plugin_api_submodule_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            (plugin / "plugin.py").write_text(
+                "import cifereca.plugin_api.models\n"
+                "from cifereca.plugin_api import ProviderError\n",
+                encoding="utf-8",
+            )
+            validate_plugin_source(plugin)
+
+    def test_tests_and_simulation_are_not_production_boundary_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            for dirname in ("tests", "simulation"):
+                directory = plugin / dirname
+                directory.mkdir()
+                (directory / "helper.py").write_text(
+                    "from cifereca.services import LibraryService\n",
+                    encoding="utf-8",
+                )
+            validate_plugin_source(plugin)
+
+    def test_packaging_refuses_private_core_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            (plugin / "plugin.py").write_text(
+                "import cifereca.storage\nPLUGIN = object()\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PackagingError, "cifereca.storage"):
+                build_plugin_zip(plugin, root / "dist")
 
     def test_real_repository_discovers_all_packages(self) -> None:
         plugins = Path(__file__).resolve().parents[1] / "src" / "plugins"
