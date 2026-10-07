@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from recommendation_service import compute_recommendations
+from recommendation_service_v022 import compute_recommendations
 
 
 class Metadata:
