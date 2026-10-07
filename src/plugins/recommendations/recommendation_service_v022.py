@@ -9,7 +9,6 @@ from recommendation_engine import (
     build_profile,
     build_queries,
     candidate_key,
-    content_score,
     get_field,
     is_already_present,
     normalize,
