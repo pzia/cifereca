@@ -28,6 +28,7 @@ class Widget:
     def set_popover(self, popover): self.popover=popover
     def set_label(self, label): self.label=label
     def set_tooltip_text(self, text): self.tooltip=text
+    def add_css_class(self, _name): pass
     def set_text(self, text):
         if self.text == text: return
         self.text=text; self.emit('search-changed')
