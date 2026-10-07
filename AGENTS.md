@@ -77,31 +77,26 @@ Pour les tâches spécialisées, utiliser les skills repo-locaux sous `.agents/s
 
 ## Rôles de travail des agents
 
-Chaque fil/agent doit choisir **un rôle principal** avant de modifier le dépôt. Le rôle détermine son périmètre, ses fichiers privilégiés et les sujets qu'il doit transmettre à un autre fil plutôt que traiter opportunément.
+Chaque fil/agent choisit **un seul rôle** et ne sort jamais de son périmètre. Un besoin hors périmètre doit être consigné dans une issue destinée au rôle propriétaire, sans implémentation opportuniste.
 
-Rôles disponibles :
+Rôles autorisés :
 
-- `core-core` : modèle métier, orchestration, services Core, API publique, stockage, configuration et framework de plugins ; voir `.agents/roles/core-core.md`.
-- `core-ui` : IHM GTK/libadwaita, navigation, composants UI partagés, contrats UI publics et ergonomie Core ; voir `.agents/roles/core-ui.md`.
-- `plugins` : architecture transversale des plugins, contrats, packaging, compatibilité et évolutions touchant plusieurs plugins ; voir `.agents/roles/plugins.md`.
-- `plugin-cible` : travail sur un seul plugin fonctionnel, ses tests et sa documentation ; voir `.agents/roles/plugin-cible.md`.
-- `backlog` : triage pur du dépôt — création, déduplication, enrichissement et priorisation d'issues ; aucune implémentation tant que le fil reste dans ce rôle ; voir `.agents/roles/backlog.md`.
-- `e2e` : parcours utilisateur de bout en bout, simulation, environnement GTK, fixtures, captures et diagnostic fonctionnel ; voir `.agents/roles/e2e.md`.
-- `cicd` : quality gates, orchestration des suites de tests, reproductibilité CI, packaging, installation propre et chaîne de release ; voir `.agents/roles/cicd.md`.
+- `backlog` : triage, déduplication, priorisation et création/enrichissement d'issues ; aucune implémentation.
+- `cicd` : CI/CD **et merge**. À chaque itération, traiter d'abord les défauts/gates CI/CD, puis les PR à merger.
+- `core` : Core métier et Core UI. À chaque itération, traiter d'abord les sujets Core non-UI, puis les sujets Core UI.
+- `plugins` : tous les plugins fonctionnels, leurs tests, leur packaging et leurs évolutions, qu'elles concernent un ou plusieurs plugins.
+- `ux` : observation/validation UX, UI et parcours ; produit uniquement du backlog/des issues, sans modifier le produit.
 
 ### Règles communes de rôle
 
-1. Annoncer ou consigner le rôle choisi dans le handoff, la branche ou l'issue de travail.
-2. Ne pas modifier hors périmètre sauf changement minimal nécessaire à la tâche.
-3. Lorsqu'un besoin appartient clairement à un autre rôle, créer ou enrichir une issue puis faire un handoff explicite.
-4. Ne pas dupliquer un travail déjà pris par un autre fil : vérifier issues/PR/branches actives avant un chantier significatif.
-5. Préférer des branches et PR petites, spécialisées par rôle.
-6. Les changements de contrat public entre Core et plugins exigent coordination entre `core-core` et `plugins`.
-7. Les changements visuels ou de parcours imposent une validation adaptée par `core-ui` ou `e2e`.
-8. Le rôle `backlog` est strictement non implémentant : un « go next » y signifie uniquement poursuivre le triage. Toute implémentation exige un changement explicite de rôle ou de fil.
-9. Le rôle `e2e` ne corrige pas silencieusement le produit pour faire passer un test : il ouvre/transmet le défaut au rôle propriétaire.
-10. Le rôle `cicd` possède la chaîne d'exécution et les gates, mais pas le défaut métier révélé par un test ; celui-ci doit être transmis au rôle propriétaire du composant.
-11. En cas d'ambiguïté, choisir le rôle correspondant au **composant propriétaire de la modification**, pas au symptôme observé.
+1. Le périmètre d'un rôle est strict : aucun code, test, workflow ou merge hors périmètre.
+2. Lorsqu'une évolution hors périmètre est nécessaire, créer ou enrichir une issue pour le rôle propriétaire et poursuivre uniquement ce qui reste dans le périmètre courant.
+3. `cicd` traite d'abord la chaîne CI/CD ; seulement ensuite il traite les merges prêts.
+4. `core` traite d'abord le Core métier/services/API/stockage/framework ; seulement ensuite le Core UI.
+5. `plugins` peut travailler sur un plugin unique ou plusieurs plugins, mais ne modifie pas le Core pour satisfaire un besoin plugin : il ouvre une issue `core`.
+6. `ux` et `backlog` sont non implémentants. Ils peuvent inspecter le dépôt et les exécutions, mais leur sortie est une issue/backlog.
+7. Avant tout chantier significatif, vérifier les issues, PR et branches actives afin d'éviter les collisions et doublons.
+8. Une PR ne peut être mergée que par le rôle `cicd`.
+9. En cas d'ambiguïté, choisir le rôle propriétaire du composant à modifier ; si cela implique de changer de rôle, créer une issue au lieu de franchir la frontière.
 
-Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique des règles communes.
-
+Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique.
