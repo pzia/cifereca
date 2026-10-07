@@ -73,7 +73,7 @@ class ShellControls(unittest.TestCase):
         self.assertEqual(len(keys),len(set(keys)))
         self.assertIn('Échap',shortcuts_text());self.assertIn('Ctrl+Q',shortcuts_text())
     def host(self):
-        host=NS(plugin_manager=None,_account_changed=lambda *args:None,_identity_changed=lambda *args:None)
+        host=NS(plugin_manager=None,diagnostics=NS(add=lambda *args,**kwargs:None),_account_changed=lambda *args:None,_identity_changed=lambda *args:None)
         host._UiHost=lambda window:window
         host._ensure_pages_menu_rightmost=lambda:self.call('_ensure_pages_menu_rightmost',host)
         return host
