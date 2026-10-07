@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import sqlite3
 import os
 import shutil
 import stat
@@ -13,8 +15,10 @@ import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
+from urllib.parse import quote
 
 from .install_paths import ArchiveNotFoundError, resolve_archive
+from .paths import config_dir, data_dir, database_file, state_dir
 
 PROJECT_NAME = "cifereca"
 PROJECT_DIR_NAME = "cifereca"
@@ -27,6 +31,7 @@ PUBLIC_COMMANDS = (
     "cifereca-update",
 )
 DEV_COMMAND = "cifereca-update-dev"
+DEFAULT_GITHUB_REPOSITORY = "pzia/cifereca"
 
 
 class UpdateError(RuntimeError):
@@ -301,12 +306,48 @@ def _gc(root: Path, keep: int) -> None:
         shutil.rmtree(release, ignore_errors=True)
 
 
+def _backup_persistent_state(label: str) -> Path:
+    """Create a local pre-activation backup of mutable user state."""
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:10]
+    base = state_dir() / "update-backups"
+    target = base / f"{stamp}-{digest}"
+    tmp = base / f".{target.name}.{os.getpid()}.tmp"
+    tmp.mkdir(parents=True, exist_ok=False)
+    try:
+        db_path = database_file()
+        if db_path.is_file():
+            with sqlite3.connect(db_path) as source_db, sqlite3.connect(tmp / "library.sqlite3") as backup_db:
+                source_db.backup(backup_db)
+
+        cfg = config_dir()
+        if cfg.is_dir():
+            shutil.copytree(cfg, tmp / "config")
+
+        plugins = data_dir() / "plugins"
+        if plugins.is_dir():
+            shutil.copytree(plugins, tmp / "plugins")
+
+        (tmp / "backup.json").write_text(
+            json.dumps({"label": label, "created_at": stamp}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        base.mkdir(parents=True, exist_ok=True)
+        os.replace(tmp, target)
+        return target
+    except Exception as exc:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise UpdateError(f"Sauvegarde pré-activation impossible: {exc}") from exc
+
+
 def install_source(
     source: Path,
     *,
     python: str | None = None,
     keep: int = 3,
     dry_run: bool = False,
+    provenance: dict[str, str] | None = None,
+    backup_persistent: bool = False,
 ) -> dict[str, Any]:
     source = source.resolve()
     _, version = _metadata(source)
@@ -319,6 +360,8 @@ def install_source(
         "python": py,
         "dry_run": bool(dry_run),
     }
+    if provenance:
+        result["provenance"] = dict(provenance)
     if dry_run:
         return result
 
@@ -330,10 +373,20 @@ def install_source(
         _copy_source(source, release)
         _create_venv(release, py)
         smoke = _smoke(release) or {}
+        backup = _backup_persistent_state(
+            (provenance or {}).get("commit", version)
+        ) if backup_persistent else None
         from datetime import datetime, timezone
-        (release / ".cifereca-install.json").write_text(json.dumps({
-            "version": version, "installed_at": datetime.now(timezone.utc).isoformat()
-        }) + "\n", encoding="utf-8")
+        install_metadata: dict[str, Any] = {
+            "version": version,
+            "installed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if provenance:
+            install_metadata["provenance"] = dict(provenance)
+        (release / ".cifereca-install.json").write_text(
+            json.dumps(install_metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         old = _symlink_target(root / "current")
         if old and old.is_dir():
             _replace_symlink(root / "previous", old)
@@ -353,8 +406,73 @@ def install_source(
         "core_ready": smoke.get("core_ready", True),
         "desktop_ready": smoke.get("desktop_ready", False),
         "desktop_error": smoke.get("desktop_error", ""),
+        "backup": str(backup) if backup else None,
     })
     return result
+
+
+def _github_checkout(repository: str, ref: str, destination: Path) -> str:
+    gh = shutil.which("gh")
+    git = shutil.which("git")
+    if not gh:
+        raise UpdateError("GitHub CLI 'gh' absent; installer gh puis exécuter 'gh auth login'")
+    if not git:
+        raise UpdateError("git absent du PATH")
+    endpoint = f"repos/{repository}/commits/{quote(ref, safe='')}"
+    resolved = subprocess.run(
+        [gh, "api", endpoint, "--jq", ".sha"],
+        text=True, capture_output=True, timeout=30, check=False,
+    )
+    if resolved.returncode != 0 or not resolved.stdout.strip():
+        detail = (resolved.stderr or resolved.stdout or "").strip()
+        raise UpdateError(f"Référence GitHub introuvable ou accès refusé: {detail[-800:]}")
+    sha = resolved.stdout.strip().splitlines()[-1]
+    clone = subprocess.run(
+        [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
+        text=True, capture_output=True, timeout=180, check=False,
+    )
+    if clone.returncode != 0:
+        detail = (clone.stderr or clone.stdout or "").strip()
+        raise UpdateError(f"Clone GitHub impossible: {detail[-800:]}")
+    fetched = subprocess.run(
+        [git, "-C", str(destination), "fetch", "--depth", "1", "origin", sha],
+        text=True, capture_output=True, timeout=180, check=False,
+    )
+    if fetched.returncode != 0:
+        detail = (fetched.stderr or fetched.stdout or "").strip()
+        raise UpdateError(f"Fetch GitHub impossible: {detail[-800:]}")
+    checkout = subprocess.run(
+        [git, "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
+        text=True, capture_output=True, timeout=60, check=False,
+    )
+    if checkout.returncode != 0:
+        detail = (checkout.stderr or checkout.stdout or "").strip()
+        raise UpdateError(f"Checkout GitHub impossible: {detail[-800:]}")
+    return sha
+
+
+def install_github(
+    ref: str = "main",
+    *,
+    repository: str = DEFAULT_GITHUB_REPOSITORY,
+    python: str | None = None,
+    keep: int = 3,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="cifereca-github-") as tmp:
+        source = Path(tmp) / "source"
+        sha = _github_checkout(repository, ref, source)
+        provenance = {"type": "github", "repository": repository, "ref": ref, "commit": sha}
+        result = install_source(
+            source,
+            python=python,
+            keep=keep,
+            dry_run=dry_run,
+            provenance=provenance,
+            backup_persistent=True,
+        )
+        result.update({"github_repository": repository, "github_ref": ref, "github_commit": sha})
+        return result
 
 
 def install_archive(
@@ -422,6 +540,7 @@ def _print(value: dict[str, Any], as_json: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Updater atomique cifereca")
     p.add_argument("archive", nargs="?")
+    p.add_argument("--github", nargs="?", const="main", metavar="REF", help="Installe directement depuis pzia/cifereca (défaut: main)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--status", action="store_true")
     p.add_argument("--rollback", action="store_true")
@@ -435,9 +554,13 @@ def main(argv: list[str] | None = None) -> int:
             result = status()
         elif a.rollback:
             result = rollback(a.to)
+        elif a.github is not None:
+            if a.archive:
+                p.error("archive ZIP incompatible avec --github")
+            result = install_github(a.github, python=a.python, keep=a.keep, dry_run=a.dry_run)
         else:
             if not a.archive:
-                p.error("archive ZIP requise")
+                p.error("archive ZIP requise (ou utiliser --github [ref])")
             result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
         _print(result, a.json)
         return 0
