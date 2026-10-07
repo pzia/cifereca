@@ -134,6 +134,43 @@ def _validate_manifest_versions(plugin_dir: Path, manifest: dict) -> None:
                     )
 
 
+def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
+    categories = manifest.get("categories")
+    if isinstance(categories, list):
+        for index, category in enumerate(categories):
+            if isinstance(category, dict):
+                _validate_id(
+                    category.get("id"),
+                    f"{plugin_dir}: categories[{index}].id",
+                )
+
+    for index, descriptor in enumerate(manifest.get("plugins") or []):
+        if not isinstance(descriptor, dict):
+            continue
+        for field in ("requires", "recommends", "conflicts"):
+            rows = descriptor.get(field)
+            if not isinstance(rows, list):
+                continue
+            for dep_index, row in enumerate(rows):
+                plugin_id = row if isinstance(row, str) else (
+                    row.get("plugin") if isinstance(row, dict) else None
+                )
+                if plugin_id is not None:
+                    _validate_id(
+                        plugin_id,
+                        f"{plugin_dir}: plugins[{index}].{field}[{dep_index}].plugin",
+                    )
+
+        rows = descriptor.get("requires_contracts")
+        if isinstance(rows, list):
+            for req_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_id(
+                        row.get("category"),
+                        f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].category",
+                    )
+
+
 def read_plugin_manifest(plugin_dir: Path) -> dict:
     plugin_dir = plugin_dir.resolve()
     manifest = _read_json(plugin_dir / PLUGIN_MANIFEST)
@@ -169,6 +206,7 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
             )
         seen_plugin_ids.add(plugin_id)
     _validate_manifest_versions(plugin_dir, manifest)
+    _validate_manifest_reference_ids(plugin_dir, manifest)
     return manifest
 
 
