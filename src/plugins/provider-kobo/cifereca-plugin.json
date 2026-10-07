@@ -46,7 +46,7 @@
       ],
       "requires": [],
       "version": "1.2.10",
-      "help_text": "Expose le compte et la bibliothèque Kobo via Kobo-Vault. Résout le catalogue via le contrat public cifereca.catalog.service/1. Un format absent reste inconnu jusqu’à une offre attestée ou au fichier final de backup ; le profil Adobe est nécessaire seulement pour ACSM. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les couvertures du catalogue sont lues dans des champs URL identifiés ; les identifiants d’image seuls ne produisent pas d’URL. Cela ne génère ni première page ni couverture locale EPUB et ne déclenche aucune acquisition. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
+      "help_text": "Expose le compte et la bibliothèque Kobo via Kobo-Vault. Résout le catalogue via le contrat public cifereca.catalog.service/1. Les capacités d’acquisition Vault sont croisées avec les modes réellement publiés par le broker `runtime.capabilities` ; un format absent reste inconnu jusqu’à une offre attestée ou au fichier final de backup ; le profil Adobe est nécessaire seulement pour ACSM. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif. Les couvertures du catalogue sont lues dans des champs URL identifiés ; les identifiants d’image seuls ne produisent pas d’URL. Cela ne génère ni première page ni couverture locale EPUB et ne déclenche aucune acquisition. Les langues attestées par la source sont émises sous forme canonique via normalize_language_tag lorsque disponibles.",
       "capabilities": [
         "catalog.search",
         "catalog.detail",
@@ -55,7 +55,9 @@
         "acquisition.download"
       ],
       "system_requires": [],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "runtime.capabilities"
+      ],
       "requires_contracts": [
         {
           "category": "catalog.service",
