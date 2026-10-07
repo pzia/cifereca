@@ -1328,6 +1328,14 @@ class LibraryService:
             out.append((session.provider_id, session.descriptor.display_name))
         return out
 
+    @staticmethod
+    def _session_search_capabilities(session: ProviderSession) -> ProviderSearchCapabilities:
+        """Resolve search capabilities while tolerating legacy/provider test doubles."""
+        contract = getattr(session, "search_capabilities", None)
+        if contract is None:
+            contract = getattr(getattr(session, "descriptor", None), "search_capabilities", None)
+        return contract if isinstance(contract, ProviderSearchCapabilities) else ProviderSearchCapabilities()
+
     def provider_search_capabilities(self) -> dict[str, ProviderSearchCapabilities]:
         """Return declared search limits for connected providers, keyed by provider id."""
         result: dict[str, ProviderSearchCapabilities] = {}
@@ -1336,12 +1344,12 @@ class LibraryService:
                 continue
             if not self._provider_enabled_for_identity(session.provider_id):
                 continue
-            result.setdefault(session.provider_id, session.search_capabilities)
+            result.setdefault(session.provider_id, self._session_search_capabilities(session))
         return result
 
     @staticmethod
     def _search_contract_warning(session: ProviderSession, field: str, scope: str) -> str:
-        contract = session.search_capabilities
+        contract = LibraryService._session_search_capabilities(session)
         if not contract.supports_field(field):
             return f"{session.descriptor.display_name}: champ de recherche non pris en charge ({field})"
         if not contract.supports_scope(scope):
@@ -1401,7 +1409,7 @@ class LibraryService:
         for session in searchable:
             provider_rows: list[SearchResult] = []
             provider_seen: set[tuple[str, str, str]] = set()
-            contract_warning = self._search_contract_warning(session, field, scope)
+            contract_warning = LibraryService._search_contract_warning(session, field, provider_scope)
             if contract_warning:
                 warnings.append(contract_warning)
                 continue
@@ -1512,7 +1520,7 @@ class LibraryService:
         provider_rows: list[SearchResult] = []
         provider_seen: set[tuple[str, str, str]] = set()
         warnings: list[str] = []
-        contract_warning = self._search_contract_warning(session, field, scope)
+        contract_warning = LibraryService._search_contract_warning(session, field, provider_scope)
         if contract_warning:
             return [], [contract_warning], "", ""
         variants = self._search_query_variants(query)
