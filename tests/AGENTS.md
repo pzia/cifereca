@@ -2,13 +2,9 @@
 
 Hérite de `/AGENTS.md`.
 
-Classer le test selon l'invariant affirmé :
+- invariant Core, contrat transversal Core ou test Core UI : rôle `core` ;
+- orchestration, découverte, stabilité ou chaînage des suites : rôle `cicd` ;
+- assertion propre à un plugin : rôle `plugins` ;
+- observation de parcours/ergonomie visant à produire des défauts : rôle `ux`.
 
-- invariant Core ou contrat transversal : rôle propriétaire `core-core` ou `core-ui` ;
-- orchestration, découverte, exécution, stabilité ou chaînage des suites : rôle **`cicd`** ;
-- parcours traversant Core/UI/plugins : rôle **`e2e`** ;
-- assertion propre à un plugin : déplacer le test dans `src/plugins/<plugin>/tests/` et utiliser `plugin-cible`.
-
-Le rôle `e2e` ne modifie pas silencieusement le produit pour faire passer un scénario : il documente le défaut et le transmet au rôle propriétaire.
-
-Profils : `/.agents/roles/e2e.md` et `/.agents/roles/cicd.md`.
+Aucun rôle ne corrige hors de son périmètre : créer une issue pour le propriétaire concerné.
