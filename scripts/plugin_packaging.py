@@ -298,6 +298,13 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
         _validate_id(
             descriptor.get("type"), f"{plugin_dir}: plugins[{index}].type"
         )
+        try:
+            int(descriptor.get("priority", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].priority invalide: "
+                f"{descriptor.get('priority')!r}"
+            ) from exc
         schema = descriptor.get("config_schema")
         if schema is not None and not isinstance(schema, dict):
             raise PackagingError(
