@@ -47,17 +47,27 @@ class QueryControls(Gtk.Box):
         flow = Gtk.FlowBox(); flow.set_selection_mode(Gtk.SelectionMode.NONE)
         flow.set_min_children_per_line(1); flow.set_max_children_per_line(4)
         flow.set_row_spacing(6); flow.set_column_spacing(6); self.append(flow)
-        self.provider = MultiSelect('Forme · Sources', providers, changed); flow.insert(self.provider, -1)
-        self.types = MultiSelect('Forme · Formats', [('epub','EPUB'),('pdf','PDF'),('mp3','MP3'),('m4a','M4A'),('ogg','OGG'),('opus','OPUS'),('flac','FLAC'),('wav','WAV')], changed)
-        flow.insert(self.types, -1)
-        self.languages = MultiSelect('Langues', [('fr','Français'),('en','English'),('de','Deutsch'),('es','Español'),('it','Italiano'),('pt','Português'),('nl','Nederlands')], changed)
-        flow.insert(self.languages, -1)
-        self.field = Gtk.DropDown.new_from_strings(['Fond / forme · Tous','Fond · Titre','Fond · Auteur','Forme · ISBN','Fond · Sujet','Fond · Série','Fond · Collection','Fond · Langue'])
+
+        def insert_filter(widget):
+            flow.insert(widget, -1)
+            child = flow.get_child_at_index(len([x for x in (
+                getattr(self, 'provider', None), getattr(self, 'types', None),
+                getattr(self, 'languages', None), getattr(self, 'field', None),
+                getattr(self, 'scope', None),
+            ) if x is not None]))
+            if child is not None:
+                child.set_focusable(False)
+            return widget
+
+        self.provider = insert_filter(MultiSelect('Forme · Sources', providers, changed))
+        self.types = insert_filter(MultiSelect('Forme · Formats', [('epub','EPUB'),('pdf','PDF'),('mp3','MP3'),('m4a','M4A'),('ogg','OGG'),('opus','OPUS'),('flac','FLAC'),('wav','WAV')], changed))
+        self.languages = insert_filter(MultiSelect('Langues', [('fr','Français'),('en','English'),('de','Deutsch'),('es','Español'),('it','Italiano'),('pt','Português'),('nl','Nederlands')], changed))
+        self.field = insert_filter(Gtk.DropDown.new_from_strings(['Fond / forme · Tous','Fond · Titre','Fond · Auteur','Forme · ISBN','Fond · Sujet','Fond · Série','Fond · Collection','Fond · Langue']))
         self.field.set_tooltip_text("Fond : titre, auteur, sujet, série, collection. Forme : ISBN, source, format.")
-        self.field.connect('notify::selected', lambda *_: changed()); flow.insert(self.field, -1)
-        self.scope = Gtk.DropDown.new_from_strings(['Tous','Physiques','Numériques'])
+        self.field.connect('notify::selected', lambda *_: changed())
+        self.scope = insert_filter(Gtk.DropDown.new_from_strings(['Tous','Physiques','Numériques']))
         self.scope.set_selected(2)
-        self.scope.connect('notify::selected', lambda *_: changed()); flow.insert(self.scope, -1)
+        self.scope.connect('notify::selected', lambda *_: changed())
 
     def state(self):
         return QueryState(self.entry.get_text().strip(), FIELDS[self.field.get_selected()],
