@@ -37,7 +37,7 @@ jobs:
         run: |
           mkdir -p evidence
           xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
-            .venv/bin/python plugins/epub_optimizer/tests/gtk_e2e_capture.py --format epub --report evidence/epub-report.json &
+            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format epub --report evidence/epub-report.json &
             pid=$!
             sleep 1.4
             scrot evidence/epub-progress.png
@@ -51,7 +51,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/plugins/epub_optimizer
         run: |
           xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
-            .venv/bin/python plugins/epub_optimizer/tests/gtk_e2e_capture.py --format pdf --report evidence/pdf-report.json &
+            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format pdf --report evidence/pdf-report.json &
             pid=$!
             sleep 1.4
             scrot evidence/pdf-progress.png
