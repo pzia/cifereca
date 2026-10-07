@@ -104,7 +104,7 @@ def compute_recommendations(
     # Persisted projection only: never trigger a filesystem scan here.
     books = list(metadata_broker.library_entries(identity_id=identity_id, scan=False) or [])
     profile = build_profile(books)
-    queries = build_queries(books, max_queries=max_queries)
+    queries = build_queries(books, max_queries=max_queries, profile=profile)
     providers = tuple(catalog_broker.searchable_providers() or ())
     if not books or not queries or not providers:
         return RecommendationResult(len(books), queries, (), providers)
