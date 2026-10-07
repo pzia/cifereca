@@ -535,7 +535,6 @@ class SyncSourceRef:
 
 
 @dataclass(frozen=True, slots=True)
-@dataclass(frozen=True, slots=True)
 class AdeptProfileRef:
     """Stable public ADEPT profile reference.
 
@@ -548,6 +547,7 @@ class AdeptProfileRef:
     acsm_fetch_ready: bool = False
 
 
+@dataclass(frozen=True, slots=True)
 class MaintenanceToolInfo:
     id: str
     title: str
