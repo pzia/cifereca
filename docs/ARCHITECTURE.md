@@ -19,7 +19,7 @@ src/cifereca/
 ├── plugins/        # framework/loader/manager de plugins
 ├── gui/            # shell et primitives UI Core
 ├── builtin_ui/     # UI historique encore intégrée au Core
-├── kobo/           # code historique Kobo encore présent
+├── kobo/           # orchestration Kobo Core résiduelle ; client Vault provider-owned
 └── ...
 ```
 
