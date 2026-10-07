@@ -62,3 +62,23 @@ cifereca-cli plugin install cifereca-recommendations-0.2.4.zip --replace
 ```
 
 Puis redémarrer Cifereca si une ancienne version du module était déjà chargée.
+
+
+## Performance UI
+
+Le calcul est exécuté via le broker `tasks`, mais le scoring reste du Python CPU/GIL :
+des candidats identiques renvoyés par plusieurs requêtes/catalogues peuvent donc affecter la
+réactivité générale s'ils sont rescored inutilement.
+
+Depuis 0.2.7, le scoring de contenu est mémorisé sur une signature des champs réellement
+consommés par l'algorithme (auteurs, thèmes, série, titre, description et complétude).
+Le cache est partagé entre le classement provisoire et le classement final.
+
+Mesure reproductible : `tests/test_performance_streaming.py::test_repeated_candidates_are_scored_once_across_streaming_and_final_rank`
+simule 2 requêtes × 2 catalogues renvoyant le même candidat. Le chemin historique pouvait
+appeler `content_score` 8 fois ; le contrat 0.2.7 impose 1 appel. Une occurrence enrichie
+avec un contenu différent possède une signature différente et reste rescored, afin de
+préserver la qualité du classement.
+
+Les autres protections existantes restent actives : classement provisoire limité à la tête
+utile, coalescence des rafraîchissements partiels, MMR borné et rendu GTK virtualisé.
