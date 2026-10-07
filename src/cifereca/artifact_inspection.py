@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import re
 import zipfile
 from dataclasses import dataclass
@@ -109,6 +110,92 @@ def _validate_epub_package(path: Path) -> str | None:
         return "invalid_epub"
     return None
 
+
+
+
+def inspect_artifact_content(
+    content: bytes,
+    expected_format: str | None = None,
+    *,
+    strict_structure: bool = False,
+) -> ArtifactInspection:
+    """Validate in-memory PDF/EPUB/ACSM content without publishing it first."""
+    data = bytes(content)
+    actual: str | None = None
+    acsm_root = None
+
+    if data.startswith(b"%PDF-"):
+        actual = "pdf"
+    else:
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                names = set(archive.namelist())
+                if "META-INF/container.xml" in names:
+                    try:
+                        mime = archive.read("mimetype").strip()
+                    except KeyError:
+                        mime = b""
+                    if not mime or mime == b"application/epub+zip":
+                        actual = "epub"
+        except (zipfile.BadZipFile, OSError):
+            pass
+
+    if actual is None:
+        try:
+            acsm_root = ElementTree.fromstring(data)
+        except ElementTree.ParseError:
+            acsm_root = None
+        if acsm_root is not None and _local_name(acsm_root.tag) == "fulfillmenttoken":
+            actual = "acsm"
+
+    if actual is None:
+        return ArtifactInspection(None, False, None, "unknown_or_invalid_format")
+    if expected_format and expected_format not in {actual, "kepub" if actual == "epub" else actual}:
+        return ArtifactInspection(actual, False, None, f"format_mismatch:{expected_format}->{actual}")
+
+    if actual == "pdf":
+        if strict_structure and b"%%EOF" not in data[-2048:]:
+            return ArtifactInspection(actual, False, None, "pdf_eof_missing")
+        return ArtifactInspection(actual, True, None, None)
+
+    if actual == "acsm":
+        return ArtifactInspection(actual, True, None, None)
+
+    protected = False
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = set(archive.namelist())
+            if strict_structure:
+                try:
+                    mime = archive.read("mimetype").strip()
+                except KeyError:
+                    return ArtifactInspection(actual, False, None, "epub_mimetype_missing")
+                if mime != b"application/epub+zip":
+                    return ArtifactInspection(actual, False, None, "epub_mimetype_invalid")
+                try:
+                    container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
+                except KeyError:
+                    return ArtifactInspection(actual, False, None, "epub_container_missing")
+                except ElementTree.ParseError:
+                    return ArtifactInspection(actual, False, None, "epub_container_invalid")
+                roots = [
+                    node.attrib.get("full-path")
+                    for node in container.iter()
+                    if _local_name(node.tag) == "rootfile"
+                ]
+                if not roots:
+                    return ArtifactInspection(actual, False, None, "epub_rootfile_missing")
+                if not all(root and root in names for root in roots):
+                    return ArtifactInspection(actual, False, None, "epub_package_missing")
+                if archive.testzip() is not None:
+                    return ArtifactInspection(actual, False, None, "epub_crc_invalid")
+            if "META-INF/encryption.xml" in names:
+                xml = archive.read("META-INF/encryption.xml").decode("utf-8", "ignore").casefold()
+                if "aes" in xml or "xmlenc" in xml or "adobe.com/adept" in xml:
+                    protected = True
+    except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError):
+        return ArtifactInspection(actual, False, None, "invalid_epub")
+    return ArtifactInspection(actual, True, protected, None)
 
 def inspect_artifact(
     path: Path,
