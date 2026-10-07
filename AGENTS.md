@@ -86,7 +86,8 @@ Rôles disponibles :
 - `plugins` : architecture transversale des plugins, contrats, packaging, compatibilité et évolutions touchant plusieurs plugins ; voir `.agents/roles/plugins.md`.
 - `plugin-cible` : travail sur un seul plugin fonctionnel, ses tests et sa documentation ; voir `.agents/roles/plugin-cible.md`.
 - `backlog` : triage pur du dépôt — création, déduplication, enrichissement et priorisation d'issues ; aucune implémentation tant que le fil reste dans ce rôle ; voir `.agents/roles/backlog.md`.
-- `e2e` : parcours utilisateur de bout en bout, simulation, environnement GTK, fixtures, captures et diagnostic CI ; voir `.agents/roles/e2e.md`.
+- `e2e` : parcours utilisateur de bout en bout, simulation, environnement GTK, fixtures, captures et diagnostic fonctionnel ; voir `.agents/roles/e2e.md`.
+- `cicd` : quality gates, orchestration des suites de tests, reproductibilité CI, packaging, installation propre et chaîne de release ; voir `.agents/roles/cicd.md`.
 
 ### Règles communes de rôle
 
@@ -99,7 +100,8 @@ Rôles disponibles :
 7. Les changements visuels ou de parcours imposent une validation adaptée par `core-ui` ou `e2e`.
 8. Le rôle `backlog` est strictement non implémentant : un « go next » y signifie uniquement poursuivre le triage. Toute implémentation exige un changement explicite de rôle ou de fil.
 9. Le rôle `e2e` ne corrige pas silencieusement le produit pour faire passer un test : il ouvre/transmet le défaut au rôle propriétaire.
-10. En cas d'ambiguïté, choisir le rôle correspondant au **composant propriétaire de la modification**, pas au symptôme observé.
+10. Le rôle `cicd` possède la chaîne d'exécution et les gates, mais pas le défaut métier révélé par un test ; celui-ci doit être transmis au rôle propriétaire du composant.
+11. En cas d'ambiguïté, choisir le rôle correspondant au **composant propriétaire de la modification**, pas au symptôme observé.
 
 Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique des règles communes.
 
