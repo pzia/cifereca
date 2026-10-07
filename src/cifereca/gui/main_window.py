@@ -2536,9 +2536,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not current(): return False
             if batch.results:
                 self._remote_search_results = merge_results(self._remote_search_results, list(batch.results))
-                self._populate_search(self._remote_search_results)
-            if batch.error_message and not batch.results:
-                self.toast(f"{batch.provider_label} : recherche indisponible", 4)
+                self._populate_search(self._remote_search_results, announce=False)
             return False
         def on_batch(batch):
             GLib.idle_add(deliver_batch, batch)
@@ -2549,7 +2547,7 @@ class MainWindow(Adw.ApplicationWindow):
             # Batch delivery is progressive; the final render only reconciles
             # ranking/deduplication with the authoritative aggregate.
             self._remote_search_results = merge_results(self._remote_search_results, list(self.service.last_search))
-            self._populate_search(self._remote_search_results)
+            self._populate_search(self._remote_search_results, announce=True)
         self.runner.submit("Recherche en ligne…", lambda: progressive_online_search(self.service, state, on_batch), done, failed,
                            control=self.search_global_button, priority=TaskPriority.USER_ACTION, kind="search-online")
 
@@ -2561,11 +2559,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.search_global_button.set_sensitive(True)
         self.toast(f"{shown} résultat(s) dans le connu", 5)
 
-    def _populate_search(self, rows: list[SearchResult]) -> None:
+    def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -> None:
         self._search_mode = "global"
         self.service.last_search = rows
         self.search_objects = {f"{x.source_provider}:{x.id}": x for x in rows}
         shown = self._render_search_results()
+        if not announce:
+            return
         warnings = list(getattr(self.service, "last_search_warnings", []) or [])
         if warnings:
             self.toast(f"{shown} résultat(s) affiché(s) · résultats partiels : {warnings[0]}", 6)
