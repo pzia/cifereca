@@ -334,9 +334,8 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
     package = manifest.get("package")
     if not isinstance(package, dict):
         raise PackagingError(f"{plugin_dir}: package absent")
-    for key in ("id", "version"):
-        if not isinstance(package.get(key), str) or not package[key].strip():
-            raise PackagingError(f"{plugin_dir}: package.{key} absent")
+    if not isinstance(package.get("id"), str) or not package["id"].strip():
+        raise PackagingError(f"{plugin_dir}: package.id absent")
     _validate_id(package["id"], f"{plugin_dir}: package.id")
     descriptors = manifest.get("plugins")
     if not isinstance(descriptors, list) or not descriptors:
