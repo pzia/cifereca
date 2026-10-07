@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+BOOK_WIDGETS = Path(__file__).resolve().parents[1] / "src/cifereca/gui/book_widgets.py"
 
 
 def _tree():
@@ -19,6 +20,12 @@ def _method(class_name: str, method_name: str) -> ast.FunctionDef:
 
 def _function(name: str) -> ast.FunctionDef:
     return next(node for node in _tree().body if isinstance(node, ast.FunctionDef) and node.name == name)
+
+
+def _book_widget_method(class_name: str, method_name: str) -> ast.FunctionDef:
+    tree = ast.parse(BOOK_WIDGETS.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+    return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
 
 
 def test_shared_projection_supports_ordered_sections_and_drops_filler_cells():
@@ -132,3 +139,18 @@ def test_long_summaries_are_collapsible_but_remain_selectable():
     assert "'Réduire'" in source
     assert "set_lines(-1)" in source
     assert "Pango.EllipsizeMode.NONE" in source
+
+
+def test_missing_detail_cover_compacts_only_after_absence_is_known():
+    header = ast.unparse(_method("DetailPanel", "_cover_and_title"))
+    bind_url = ast.unparse(_book_widget_method("CoverView", "bind_url"))
+    apply_result = ast.unparse(_book_widget_method("CoverView", "_apply_result"))
+    reset = ast.unparse(_book_widget_method("CoverView", "reset"))
+
+    assert "CoverView(112, 168)" in header
+    assert "set_missing_size(40, 60)" in header
+    assert "bind_url(self.window.covers, thumbnail" in header
+    assert "_set_logical_size(self._width, self._height)" in reset
+    assert "_show_missing()" in bind_url
+    assert "_show_missing()" in apply_result
+    assert "_start_cover_request(force=True)" in apply_result
