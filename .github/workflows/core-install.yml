@@ -1,0 +1,51 @@
+name: Validate installed Core
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/core-install.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "pyproject.toml"
+      - ".github/workflows/core-install.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: python -m pip install --disable-pip-version-check "setuptools>=69" wheel
+
+      - name: Build wheel
+        run: python -m pip wheel --no-deps --no-build-isolation . -w dist
+
+      - name: Install wheel in clean virtualenv
+        shell: bash
+        run: |
+          python -m venv /tmp/cifereca-installed
+          /tmp/cifereca-installed/bin/python -m pip install --disable-pip-version-check dist/cifereca-*.whl
+
+      - name: Smoke installed package outside source tree
+        shell: bash
+        run: |
+          cd /tmp
+          /tmp/cifereca-installed/bin/python -c "import cifereca; print(cifereca.__file__)"
+          /tmp/cifereca-installed/bin/cifereca-cli --help >/dev/null
+          /tmp/cifereca-installed/bin/cifereca-update --help >/dev/null
+          /tmp/cifereca-installed/bin/cifereca-update-dev --help >/dev/null
+          /tmp/cifereca-installed/bin/cifereca-plugin-test --help >/dev/null
