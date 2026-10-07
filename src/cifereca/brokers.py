@@ -399,6 +399,56 @@ class DiagnosticsBrokerImpl:
         from .system_status import system_status
         return system_status(getattr(self.service, "plugin_manager", None))
 
+    def inventory(self) -> tuple[dict[str, Any], ...]:
+        """Return the versions and states of the plugin manifests actually loaded."""
+        from .diagnostics import redact
+        manager = getattr(self.service, "plugin_manager", None) or getattr(self.service, "_plugin_manager", None)
+        if manager is None:
+            return ()
+        rows = []
+        for raw in manager.diagnostic():
+            row = {
+                "plugin_id": str(raw.get("plugin_id") or ""),
+                "display_name": str(raw.get("display_name") or raw.get("plugin_id") or ""),
+                "type": str(raw.get("type") or ""),
+                "version": str(raw.get("version") or ""),
+                "package_id": str(raw.get("package_id") or ""),
+                "package_version": str(raw.get("package_version") or ""),
+                "enabled": bool(raw.get("enabled")),
+                "state": str(raw.get("state") or "unknown"),
+                "builtin": bool(raw.get("builtin")),
+                "installed_at": raw.get("installed_at"),
+                "reason_code": str(raw.get("reason_code") or ""),
+                "capabilities": tuple(str(value) for value in (raw.get("capabilities") or ())),
+            }
+            rows.append(redact(row))
+        return tuple(rows)
+
+    def runtime_diagnostic(self, plugin_id: str) -> dict[str, Any]:
+        """Expose only bounded process metadata, never raw runtime streams or IDs."""
+        from .diagnostics import redact, redact_text
+        getter = getattr(self.service, "runtime_diagnostic", None)
+        if not callable(getter):
+            return {}
+        raw = getter(str(plugin_id or ""))
+        if not isinstance(raw, dict):
+            return {}
+        allowed = {
+            "operation", "duration_ms", "stdout_bytes", "stderr_bytes",
+            "stderr_summary", "returncode", "stdout_mode", "stdout_summary",
+            "json_line", "json_column", "launch_error",
+        }
+        bounded: dict[str, Any] = {}
+        for key in allowed:
+            if key not in raw:
+                continue
+            value = raw[key]
+            if isinstance(value, str):
+                bounded[key] = redact_text(value)[:240]
+            elif isinstance(value, (int, float, bool)) or value is None:
+                bounded[key] = value
+        return dict(redact(bounded))
+
     def active_checks(self) -> tuple[HealthCheckResult, ...]:
         from .diagnostics import redact, redact_text
 
