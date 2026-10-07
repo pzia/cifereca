@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "e2e/**"
-      - "src/**"
+      - "src/cifereca/**"
       - "environnements/openai-chat-debian/capture_app.py"
       - ".github/workflows/e2e-smoke.yml"
   push:
@@ -12,7 +12,7 @@ on:
       - main
     paths:
       - "e2e/**"
-      - "src/**"
+      - "src/cifereca/**"
       - "environnements/openai-chat-debian/capture_app.py"
       - ".github/workflows/e2e-smoke.yml"
   workflow_dispatch:
