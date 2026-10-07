@@ -28,9 +28,9 @@ Ce bloc est la vue courante de la rationalisation. Les sections de versions plus
 
 ## Simulation
 
-- [ ] Créer effectivement `simulation/`.
-- [ ] Migrer progressivement les faux services, fixtures, profils et outils encore utiles depuis `simulation/`.
-- [ ] Supprimer `simulation/` seulement lorsque plus aucun consommateur ne dépend de lui.
+- [x] `simulation/` existe comme banc fonctionnel versionné avec faux services, fixtures, profils et tests.
+- [ ] Rationaliser progressivement les faux services, fixtures, profils et outils encore utiles dans `simulation/`.
+- [ ] Retirer les éléments de simulation devenus inutiles seulement lorsque plus aucun consommateur n’en dépend.
 
 ## Environnements
 
