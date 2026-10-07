@@ -240,6 +240,16 @@ def _weighted_tokens(
 def content_score(profile: ProfileVector, item: Any) -> tuple[float, tuple[str, ...]]:
     if profile.total_books <= 0 or is_already_present(profile, item):
         return 0.0, ()
+    return _content_score_prevalidated(profile, item)
+
+
+def _content_score_prevalidated(
+    profile: ProfileVector,
+    item: Any,
+) -> tuple[float, tuple[str, ...]]:
+    """Score an item after the caller has already excluded library presence."""
+    if profile.total_books <= 0:
+        return 0.0, ()
     score = 0.0
     reasons: list[str] = []
 
