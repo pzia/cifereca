@@ -1,0 +1,20 @@
+{
+  "library": {
+    "directory": "${E2E_LIBRARY}"
+  },
+  "identities": [
+    {
+      "id": "e2e",
+      "label": "E2E",
+      "directory_name": "e2e",
+      "preferences": {
+        "prefer_original_language": false,
+        "reading_languages": ["fr"]
+      }
+    }
+  ],
+  "providers": {
+    "accounts": [],
+    "gallica_migration_031": true
+  }
+}

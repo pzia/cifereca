@@ -19,6 +19,7 @@ SECRET_KEY = re.compile(r"(token|password|secret|authorization|cookie)", re.I)
 SCENARIOS = {
     "startup": {
         "plugin": "core",
+        "fixture": "startup",
         "description": "Démarrage réel de CIFERECA et apparition d'une surface GTK non vide.",
         "args": ["--no-plugins"],
     },
@@ -54,6 +55,32 @@ def _redact(text: str, env: dict[str, str]) -> str:
     )
 
 
+def materialize_fixture(name: str, root: Path) -> dict[str, str]:
+    fixture = ROOT / "e2e" / "fixtures" / name / "config.json"
+    if not fixture.is_file():
+        raise RuntimeError(f"Fixture E2E absente: {fixture}")
+    home = root / "home"
+    library = home / "EBooks" / "e2e"
+    library.mkdir(parents=True, exist_ok=True)
+    config_home = root / "config"
+    data_home = root / "data"
+    cache_home = root / "cache"
+    state_home = root / "state"
+    for path in (config_home, data_home, cache_home, state_home):
+        path.mkdir(parents=True, exist_ok=True)
+    payload = fixture.read_text(encoding="utf-8").replace("${E2E_LIBRARY}", str(library))
+    target = config_home / "cifereca" / "config.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(payload, encoding="utf-8")
+    return {
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(config_home),
+        "XDG_DATA_HOME": str(data_home),
+        "XDG_CACHE_HOME": str(cache_home),
+        "XDG_STATE_HOME": str(state_home),
+    }
+
+
 def _event(path: Path, scenario: str, event: str, **detail) -> None:
     row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -82,14 +109,10 @@ def main() -> int:
     results = []
     for name, scenario in select(args.scenario, args.plugin):
         with tempfile.TemporaryDirectory(prefix="cifereca-e2e-") as tmp:
-            home = Path(tmp) / "home"
-            home.mkdir()
+            fixture_env = materialize_fixture(scenario["fixture"], Path(tmp))
             env = os.environ.copy()
+            env.update(fixture_env)
             env.update({
-                "HOME": str(home),
-                "XDG_CONFIG_HOME": str(home / ".config"),
-                "XDG_DATA_HOME": str(home / ".local/share"),
-                "XDG_CACHE_HOME": str(home / ".cache"),
                 "GDK_BACKEND": "x11",
                 "PYTHONPATH": str(ROOT / "src"),
             })

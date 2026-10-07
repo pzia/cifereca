@@ -35,3 +35,23 @@ def test_capture_waits_for_visible_surface_instead_of_fixed_startup_sleep():
     ).read_text(encoding="utf-8")
     assert "--startup-timeout" in source
     assert "GTK application did not expose a non-blank surface before timeout." in source
+
+
+def test_reference_scenario_declares_versioned_fixture():
+    runner = _module()
+    scenario = runner.SCENARIOS["startup"]
+    assert scenario["fixture"] == "startup"
+    fixture = ROOT / "e2e/fixtures/startup/config.json"
+    assert fixture.is_file()
+
+
+def test_fixture_materialization_isolated_and_deterministic(tmp_path):
+    runner = _module()
+    env = runner.materialize_fixture("startup", tmp_path)
+    config = Path(env["XDG_CONFIG_HOME"]) / "cifereca/config.json"
+    first = config.read_text(encoding="utf-8")
+    assert str(tmp_path / "home/EBooks/e2e") in first
+    assert "${E2E_LIBRARY}" not in first
+    env2 = runner.materialize_fixture("startup", tmp_path)
+    assert env2 == env
+    assert config.read_text(encoding="utf-8") == first
