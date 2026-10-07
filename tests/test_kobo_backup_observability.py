@@ -1,0 +1,305 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+import zipfile
+
+from cifereca.config import Config
+from cifereca.diagnostics import Diagnostics
+from cifereca.kobo.vault import KoboVaultError
+from cifereca.models import Account, SearchResult
+from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
+from cifereca.services import LibraryService
+from cifereca.storage import Storage
+
+
+def _write_epub(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("META-INF/container.xml", "<container/>")
+        archive.writestr("content.xhtml", "<html><body>Test</body></html>")
+
+
+class BackupSession(ProviderSession):
+    api_version = "2.3"
+    supports_acquisition_display_profile = False
+    supports_acquisition_acsm = False
+
+    def __init__(self, *args, manifest, unauthorized=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._manifest = list(manifest)
+        self.unauthorized = unauthorized
+
+    def connect(self):
+        self.connected = True
+        self._accounts = [
+            Account(
+                display_name="Kobo",
+                unique_id="account",
+                provider_id="kobo",
+                credential_id=self.credential_id,
+                identity_id="default",
+            )
+        ]
+        return self.accounts
+
+    def close(self):
+        self.connected = False
+
+    def backup_manifest(self):
+        return list(self._manifest)
+
+    def cover_url(self, _raw):
+        return None
+
+    def normalize_item(self, raw, default_collection="library"):
+        product_id = str(raw["product_id"])
+        return SearchResult(
+            id=f"kobo:{self.credential_id}:{product_id}",
+            record_id=product_id,
+            docbase="KOBO",
+            medium="digital",
+            title=str(raw.get("title") or product_id),
+            author=None,
+            type="Livre numérique Kobo",
+            format=str(raw.get("format") or "EPUB"),
+            publisher=None,
+            published_at=None,
+            description=None,
+            thumbnail_url=None,
+            friendly_url=None,
+            scenario="KOBO",
+            source_provider="kobo",
+            source_credential=self.credential_id,
+            content_type="ebook",
+            source_collection=default_collection,
+            owned=True,
+            downloadable=True,
+            revision_id=str(raw.get("revision_id") or "") or None,
+            metadata={},
+        )
+
+    def resolve_acquisition(
+        self,
+        product_id,
+        *,
+        revision_id=None,
+        mode="descriptor",
+        display_profile=None,
+    ):
+        if self.unauthorized:
+            raise KoboVaultError(
+                "Kobo-Vault : Bearer token invalide",
+                code="unauthorized",
+                status_code=401,
+            )
+        return {
+            "acquisition": {
+                "candidates": [{
+                    "transport": "https",
+                    "method": "GET",
+                    "url": f"https://cdn.example/{product_id}.epub",
+                    "headers": {},
+                    "format": "epub",
+                    "drm_type": "SignedNoDrm",
+                }]
+            }
+        }
+
+
+def _service(tmp_path: Path, *, manifest, unauthorized=False):
+    config = Config(tmp_path / "config.json")
+    config.set("library.directory", str(tmp_path / "EBooks"))
+    config.set(
+        "identities",
+        [{
+            "id": "default",
+            "label": "Hugues",
+            "directory_name": "hugues",
+            "preferences": {"reading_languages": ["fr"]},
+        }],
+    )
+    config.set("providers.accounts", [])
+
+    service = LibraryService(
+        config,
+        Storage(tmp_path / "db.sqlite3"),
+        Diagnostics(level="detailed"),
+    )
+    service.storage.provider_connection_put({
+        "identity_id": "default",
+        "provider_id": "kobo",
+        "credential_id": "vault-1",
+        "label": "Kobo",
+    })
+
+    descriptor = ProviderDescriptor(
+        id="kobo",
+        display_name="Kobo",
+        description="test",
+        state="ready",
+        capabilities=ProviderCapabilities(search=True, backup=True, personal_library=True),
+    )
+    session = BackupSession(
+        descriptor=descriptor,
+        credential_id="vault-1",
+        label="Kobo",
+        credentials={},
+        options={},
+        manifest=manifest,
+        unauthorized=unauthorized,
+    )
+    session.connect()
+    service._sessions[service._session_key("kobo", "vault-1")] = session
+    service.catalog_scan = lambda *args, **kwargs: {"scanned": 0}
+    service.kobo_unlinked_local_count = lambda identity_id: 0
+    service.resolve_adept_profile = lambda **kwargs: ("", "test")
+    service.runtime_diagnostic = lambda _plugin_id: {}
+    service.kobo_adept_state = lambda **kwargs: {
+        "available": True,
+        "compatible": True,
+        "operational": True,
+        "acsm_available": False,
+        "kobo_delegated_available": False,
+        "kobo_pinned_delivery_candidate": False,
+        "kobo_separate_content_keys_replay": False,
+        "kobo_kdrm_available": False,
+        "kobo_formats": ["epub", "pdf"],
+        "contract_version": 8,
+        "software_version": "test",
+        "error": None,
+    }
+    return service, session
+
+
+def test_vault_auth_error_aborts_batch_and_persists_compact_summary(tmp_path: Path, monkeypatch):
+    manifest = [
+        {
+            "product_id": f"book-{index}",
+            "revision_id": f"rev-{index}",
+            "title": f"Book {index}",
+            "format": "EPUB",
+            "content_type": "ebook",
+            "owned": True,
+            "downloadable": True,
+        }
+        for index in range(5)
+    ]
+    service, _session = _service(tmp_path, manifest=manifest, unauthorized=True)
+    monkeypatch.setattr(
+        service,
+        "execute_acquisition_request",
+        lambda request: (_ for _ in ()).throw(AssertionError("runtime must not run after Vault 401")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+
+        assert summary["manifest_items"] == 5
+        assert summary["attempted"] == 1
+        assert summary["errors"] == 1
+        assert summary["vault_errors"] == 1
+        assert summary["integration_errors"] == 0
+        assert summary["adept_errors"] == 0
+        assert summary["aborted"] is True
+        assert summary["remaining"] == 4
+        assert summary["abort_reason"]["phase"] == "vault"
+        assert summary["abort_reason"]["status_code"] == 401
+        assert summary["error_summary"] == [{
+            "phase": "vault",
+            "code": "unauthorized",
+            "status_code": 401,
+            "message": "Kobo-Vault : Bearer token invalide",
+            "count": 1,
+        }]
+
+        assert service.storage.backup_get("kobo", "vault-1", "book-0")["status"] == "error"
+        assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
+
+        diag = service.diagnostics.snapshot()[-1]
+        assert diag["operation"] == "backup sync"
+        assert diag["detail"]["aborted"] is True
+        assert diag["detail"]["error_summary"][0]["code"] == "unauthorized"
+    finally:
+        service.close()
+
+
+def test_backup_diagnostic_aggregates_persisted_errors_without_network(tmp_path: Path):
+    service, _session = _service(tmp_path, manifest=[])
+    try:
+        for index, message in enumerate([
+            "Kobo-Vault : Bearer token invalide",
+            "Kobo-Vault : Bearer token invalide",
+            "Kobo-Vault ne fournit pas de candidat EPUB/PDF HTTP direct compatible",
+        ]):
+            service.storage.backup_put({
+                "provider_id": "kobo",
+                "credential_id": "vault-1",
+                "item_id": f"book-{index}",
+                "revision_id": f"rev-{index}",
+                "title": f"Book {index}",
+                "author": "Author",
+                "format": "EPUB",
+                "status": "error",
+                "error": message,
+            })
+
+        service._sessions = {}
+        service.kobo_adept_state = lambda **kwargs: (_ for _ in ()).throw(AssertionError("diagnostic must stay offline"))
+
+        report = service.kobo_backup_diagnostic()
+
+        assert report["items"] == 3
+        assert report["statuses"] == {"error": 3}
+        assert report["error_summary"][0] == {
+            "message": "Kobo-Vault : Bearer token invalide",
+            "count": 2,
+        }
+        assert len(report["error_examples"]) == 2
+    finally:
+        service.close()
+
+
+def test_backup_emits_progress_events_through_successful_download(tmp_path: Path, monkeypatch):
+    manifest = [{
+        "product_id": "book-1",
+        "revision_id": "rev-1",
+        "title": "Book One",
+        "format": "EPUB",
+        "content_type": "ebook",
+        "owned": True,
+        "downloadable": True,
+    }]
+    service, _session = _service(tmp_path, manifest=manifest)
+
+    def execute(request):
+        target = Path(request["destination"])
+        _write_epub(target)
+        return {
+            "ok": True,
+            "operation": "download",
+            "artifact": {
+                "path": str(target),
+                "format": "epub",
+                "drm": "none",
+                "size": target.stat().st_size,
+                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            },
+        }
+
+    monkeypatch.setattr(service, "execute_acquisition_request", execute)
+    events: list[dict] = []
+    try:
+        summary = service.sync_kobo_backup(progress=events.append)
+
+        assert summary["downloaded"] == 1
+        names = [event.get("event") for event in events]
+        assert names[0] == "adept_probe"
+        assert "manifest_fetch" in names
+        assert "manifest" in names
+        assert "scan" in names
+        assert "acquiring" in names
+        assert "downloaded" in names
+        assert names[-1] == "done"
+    finally:
+        service.close()
