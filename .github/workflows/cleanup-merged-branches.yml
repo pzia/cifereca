@@ -1,0 +1,84 @@
+name: Cleanup merged branches
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.repository == 'pzia/cifereca'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Delete explicit branch allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          branches=(
+            "docs/handoff-mutualisation-core-plugins"
+            "e2e/recommendations-ux-20261007"
+            "feature/cache-broker-kv-ttl"
+            "feature/cache-broker-singleflight"
+            "feature/core-plugin-task-broker"
+            "feature/diagnostics-health-contract"
+            "feature/http-transport-core"
+            "feature/http-transport-health-check"
+            "feature/optimizer-epub-pdf-eink"
+            "feature/recommendations-master-detail"
+            "fix/kobo-adept-plugin-api-14"
+            "integration/diagnostics-health-pr52"
+            "ops/sync-main-vm-20261007"
+            "rationalization/adept-artifact-orchestration"
+            "rationalization/adept-profile-readiness"
+            "rationalization/core-tests-step1a15"
+            "rationalization/core-tests-step1a16"
+            "rationalization/core-tests-step1a17"
+            "rationalization/core-tests-step1a18"
+            "rationalization/core-tests-step1a19"
+            "rationalization/core-tests-step1a20"
+            "rationalization/core-tests-step1a21"
+            "rationalization/core-tests-step1a22"
+            "rationalization/core-tests-step1a23"
+            "rationalization/core-tests-step1a24"
+            "rationalization/core-tests-sync-state"
+            "rationalization/gallica-legacy-regressions"
+            "rationalization/kobo-acsm-archive-metadata"
+            "rationalization/kobo-adept-state"
+            "rationalization/kobo-backup-fault-isolation"
+            "rationalization/kobo-backup-observability"
+            "rationalization/kobo-backup-reconcile-prune"
+            "rationalization/kobo-executor-policy"
+            "rationalization/kobo-executor-retries"
+            "rationalization/kobo-kdrm-contract"
+            "rationalization/kobo-sync-modes"
+            "rationalization/kobo-vault-closure"
+            "rationalization/kobo-vault-provider-contract"
+            "rationalization/paris-sync082-regressions"
+            "refactor/artifact-atomic-publication"
+            "refactor/artifact-content-inspection"
+            "refactor/artifact-validation-step1"
+            "refactor/baen-http-transport"
+            "refactor/core-artifact-inspection"
+            "refactor/ebooksgratuits-http-transport"
+            "refactor/numilog-acsm-inspection"
+            "refactor/numilog-final-publication"
+            "refactor/public-description-normalization"
+            "refactor/public-diagnostic-redaction"
+            "refactor/public-file-publication"
+            "refactor/public-filename-sanitizer"
+          )
+
+          printf 'Deleting %s branches\n' "${#branches[@]}"
+          for branch in "${branches[@]}"; do
+            echo "::group::delete $branch"
+            git push origin --delete "$branch"
+            echo "::endgroup::"
+          done
