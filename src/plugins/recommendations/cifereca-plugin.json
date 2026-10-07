@@ -12,7 +12,7 @@
       "id": "ui.page.recommendations",
       "type": "ui.page",
       "version": "0.2.11",
-      "entrypoint": "recommendations_v024:PLUGIN",
+      "entrypoint": "recommendations:PLUGIN",
       "display_name": "Recommandations",
       "description": "Recommande des livres à partir de la bibliothèque du profil et des catalogues connectés.",
       "help_text": "Ajoute une page Recommandations basée sur la présentation maître/détail standard de Cifereca. La liste reste à gauche ; la sélection affiche à droite la notice, l’affinité, les raisons et les sources. Les résultats provisoires sont signalés et restent interactifs pendant la recherche. Aucun emprunt ni téléchargement n'est déclenché.",

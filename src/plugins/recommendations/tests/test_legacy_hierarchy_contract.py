@@ -8,31 +8,31 @@ from pathlib import Path
 PLUGIN = Path(__file__).resolve().parents[1]
 
 
-def test_active_recommendations_entrypoint_uses_core_tasks_not_private_threading():
+def test_active_recommendations_entrypoint_is_flat_and_uses_core_tasks():
     manifest = json.loads((PLUGIN / "cifereca-plugin.json").read_text(encoding="utf-8"))
-    assert manifest["plugins"][0]["entrypoint"] == "recommendations_v024:PLUGIN"
+    assert manifest["plugins"][0]["entrypoint"] == "recommendations:PLUGIN"
 
-    for name in ("recommendations.py", "recommendations_v022.py", "recommendations_v023.py", "recommendations_v024.py"):
-        tree = ast.parse((PLUGIN / name).read_text(encoding="utf-8"))
-        imported = {
-            alias.name
-            for node in tree.body
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        }
-        assert "threading" not in imported
-
-    base = (PLUGIN / "recommendations.py").read_text(encoding="utf-8")
-    assert 'context.broker("tasks")' in base
-    assert "task_broker.submit(" in base
+    source = (PLUGIN / "recommendations.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported = {
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert "threading" not in imported
+    assert 'context.broker("tasks")' in source
+    assert "task_broker.submit(" in source
+    assert "recommendations_v0" not in source
 
 
 def test_obsolete_recommendations_layers_are_removed():
-    assert not (PLUGIN / "recommendations_v021.py").exists()
-    assert not (PLUGIN / "recommendation_service.py").exists()
-
-
-def test_streaming_layer_no_longer_depends_on_v021():
-    source = (PLUGIN / "recommendations_v022.py").read_text(encoding="utf-8")
-    assert "recommendations_v021" not in source
-    assert "class ProgressRecommendationsView" in source
+    for name in (
+        "recommendations_v021.py",
+        "recommendations_v022.py",
+        "recommendations_v023.py",
+        "recommendations_v024.py",
+        "recommendation_service_v022.py",
+    ):
+        assert not (PLUGIN / name).exists()
+    assert (PLUGIN / "recommendation_service.py").exists()

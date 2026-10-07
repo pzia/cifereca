@@ -2,10 +2,10 @@ from collections import Counter
 from types import SimpleNamespace
 
 import recommendation_engine as engine
-import recommendation_service_v022 as service
+import recommendation_service as service
 import recommendation_engine_fast as fast
 from recommendation_engine import RankedCandidate
-from recommendation_service_v022 import _provisional_head, compute_recommendations
+from recommendation_service import _provisional_head, compute_recommendations
 
 
 class Control:

@@ -1,4 +1,4 @@
-import recommendations_v024 as recommendations
+import recommendations
 
 
 def test_page_is_single_and_named_recommendations():
@@ -9,5 +9,4 @@ def test_page_is_single_and_named_recommendations():
 
 
 def test_master_detail_entrypoint_is_public_only():
-    import recommendations_v024
-    assert recommendations_v024.PLUGIN is recommendations.PLUGIN
+    assert recommendations.PLUGIN is not None

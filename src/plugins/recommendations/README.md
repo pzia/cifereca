@@ -1,6 +1,12 @@
-# Recommandations CIFERECA 0.2.4
+# Recommandations CIFERECA 0.2.11
 
 Version fonctionnelle pour **Cifereca Core 0.9.44-dev.1 / Plugin API 1.4**.
+
+## Structure courante
+
+L'entrypoint stable est `recommendations:PLUGIN`. La vue active est aplatie dans
+`recommendations.py` et s'exécute via le broker public `tasks`; les anciennes couches
+`recommendations_v022/v023/v024` ne font plus partie du chemin d'exécution.
 
 ## 0.2.4 — ajustements UX issus de l'E2E
 
