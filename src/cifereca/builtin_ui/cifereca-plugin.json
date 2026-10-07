@@ -62,10 +62,13 @@
       "type": "ui.page",
       "version": "0.9.44+dev.3",
       "entrypoint": "cifereca_builtin_ui:SystemPages",
-      "display_name": "État du système",
-      "priority": 100,
-      "description": "Inventaire du système",
-      "help_text": "Affiche les versions, états et dates d’installation disponibles du core et des plugins. Dépliez un composant pour consulter son rôle et ses détails ; Actualiser recharge l’inventaire."
+      "display_name": "Diagnostic système (repli)",
+      "priority": -100,
+      "requires_brokers": [
+        "diagnostics"
+      ],
+      "description": "Repli intégré de la page Diagnostics",
+      "help_text": "Page de secours fournie par le Core lorsque la page Diagnostics externe n’est pas disponible. Elle lit uniquement le broker public diagnostics et est automatiquement remplacée par une contribution plus prioritaire sur la route diagnostics."
     },
     {
       "id": "core.maintenance.cache",

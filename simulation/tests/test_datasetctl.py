@@ -64,6 +64,29 @@ class DatasetCtlTests(unittest.TestCase):
             else:
                 os.environ[datasetctl.RUNTIME_ENV] = old
 
+    def test_ux_all_library_uses_identity_provider_layout(self):
+        catalog = datasetctl.load_catalog()
+        _, profile = datasetctl.load_profile("ux-all")
+        old = os.environ.get(datasetctl.RUNTIME_ENV)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ[datasetctl.RUNTIME_ENV] = tmp
+                profile = dict(profile)
+                profile["library"] = {**profile["library"], "epubs": 3}
+                prepared = datasetctl.prepare(profile, catalog, rebuild_library=True)
+                library = Path(prepared["library"])
+                epubs = list((library / "ux" / "local").glob("*.epub"))
+                self.assertEqual(len(epubs), 3)
+                self.assertFalse(any(library.glob("*.epub")))
+                summary = datasetctl.summary_payload(profile, catalog)
+                self.assertEqual(summary["library"]["generated_epubs"], 3)
+                self.assertTrue(summary["library"]["complete"])
+        finally:
+            if old is None:
+                os.environ.pop(datasetctl.RUNTIME_ENV, None)
+            else:
+                os.environ[datasetctl.RUNTIME_ENV] = old
+
     def test_derived_plugins_are_deduplicated(self):
         catalog = datasetctl.load_catalog()
         _, profile = datasetctl.load_profile("ux-all")

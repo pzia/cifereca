@@ -33,7 +33,7 @@ from .plugin_manager_page import PluginManagerPage
 from .query_controls import QueryControls, MultiSelect
 from .action_widgets import AdaptiveActionBar
 from .query_model import result_row, online_search, progressive_online_search, merge_results
-from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions
+from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions, validate_action_selection
 from ..plugin_api import (
     ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, DetailField, DetailSection,
     MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution,
@@ -781,18 +781,40 @@ class MasterDetailPage(Gtk.Box):
         self.toolbar.set_hexpand(True)
         self.append(self.toolbar)
 
+        self.detail_back = Gtk.Button(label="Retour à la liste")
+        self.detail_back.set_tooltip_text("Revenir à la liste des documents")
+        self.detail_back.set_halign(Gtk.Align.START)
+        self.detail_back.set_margin_start(18)
+        self.detail_back.set_margin_bottom(8)
+        self.detail_back.set_visible(False)
+        self.detail_back.connect("clicked", lambda _button: self._show_narrow_list())
+        self.append(self.detail_back)
+
         self.paned = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
         self.paned.set_wide_handle(True)
         self.paned.set_position(440)
         self.paned.set_shrink_start_child(True)
         self.paned.set_shrink_end_child(True)
         self.paned.set_vexpand(True)
+        self._narrow_master_detail = False
+        self._narrow_detail_visible = False
+        self._narrow_breakpoint = 860
 
         def adapt_paned_position(paned, _pspec=None) -> None:
             max_position = int(paned.get_property("max-position"))
             if max_position <= 0:
                 return
-            paned.set_position(min(440, max(0, max_position - 240)))
+            narrow = max_position < self._narrow_breakpoint
+            if narrow != self._narrow_master_detail:
+                self._narrow_master_detail = narrow
+                if not narrow:
+                    self._narrow_detail_visible = False
+                    self.detail_back.set_visible(False)
+            if self._narrow_master_detail:
+                paned.set_position(0 if self._narrow_detail_visible else max_position)
+                self.detail_back.set_visible(self._narrow_detail_visible)
+            else:
+                paned.set_position(min(440, max(0, max_position - 360)))
 
         self.paned.connect("notify::max-position", adapt_paned_position)
         self.append(self.paned)
@@ -832,8 +854,12 @@ class MasterDetailPage(Gtk.Box):
         keys = Gtk.EventControllerKey()
         def key_pressed(_controller, keyval, _keycode, state):
             if keyval == Gdk.KEY_Escape:
-                self.selection.set_selected(Gtk.INVALID_LIST_POSITION)
-                self.listview.grab_focus(); return True
+                if self._narrow_master_detail and self._narrow_detail_visible:
+                    self._show_narrow_list()
+                else:
+                    self.selection.set_selected(Gtk.INVALID_LIST_POSITION)
+                    self.listview.grab_focus()
+                return True
             if state & Gdk.ModifierType.CONTROL_MASK and keyval in (Gdk.KEY_f, Gdk.KEY_F):
                 controls = getattr(window, "library_controls" if title == "Bibliothèque" else "search_controls", None)
                 if controls: controls.entry.grab_focus(); return True
@@ -865,6 +891,26 @@ class MasterDetailPage(Gtk.Box):
             self.detail.empty("Aucun document sélectionné", "Sélectionnez un document pour afficher ses détails.")
         for callback in self._selected_callbacks:
             callback(selected)
+        if self._narrow_master_detail and selected is not None:
+            self._show_narrow_detail()
+
+    def _show_narrow_detail(self) -> None:
+        if not self._narrow_master_detail:
+            return
+        self._narrow_detail_visible = True
+        self.detail_back.set_visible(True)
+        self.paned.set_position(0)
+        self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD)
+
+    def _show_narrow_list(self) -> None:
+        if not self._narrow_master_detail:
+            return
+        self._narrow_detail_visible = False
+        self.detail_back.set_visible(False)
+        max_position = int(self.paned.get_property("max-position"))
+        if max_position > 0:
+            self.paned.set_position(max_position)
+        self.listview.grab_focus()
 
     def clear_rows(self) -> None:
         self.selection.set_selected(0xFFFFFFFF)
@@ -1081,23 +1127,31 @@ class MainWindow(Adw.ApplicationWindow):
         self.root_stack = Gtk.Stack()
         self.root_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.toast_overlay.set_child(self.root_stack)
+        startup_started = time.perf_counter()
         _TRACE_LOG.info("TRACE gui build-startup begin")
         self.root_stack.add_named(self._build_startup(), "startup")
         _TRACE_LOG.info("TRACE gui build-startup end")
-        self.root_stack.set_visible_child_name("startup")
+        _TRACE_LOG.info("TRACE gui build-main-shell begin")
+        self.main_shell = self._build_main_shell()
+        self.root_stack.add_named(self.main_shell, "main")
+        self.root_stack.set_visible_child_name("main")
+        shell_ms = (time.perf_counter() - startup_started) * 1000.0
+        self.ui_perf.record("startup.shell_interactive", shell_ms)
+        _TRACE_LOG.info("TRACE gui shell-interactive duration_ms=%.1f", shell_ms)
         self.connect("close-request", self._on_close_request)
         self._install_shell_shortcuts()
-        # No blocking login screen in 0.3: provider credentials live in local
-        # preferences and sessions are opened lazily at application startup.
-        _TRACE_LOG.info("TRACE gui schedule connect-configured")
-        GLib.idle_add(self.connect_configured_sources)
+        # Provider sessions are secondary startup work. They are scheduled
+        # after deferred plugin activation so provider services are available.
 
     def action_button(
         self, label: str, icon_name: str | None = None, *,
         suggested: bool = False, destructive: bool = False, tooltip: str | None = None,
     ) -> Gtk.Button:
         """Create an action using the highest-priority ``ui.widgets`` catalog."""
-        catalog = self.plugin_manager.widget_catalog() if self.plugin_manager is not None else None
+        try:
+            catalog = self.plugin_manager.widget_catalog() if self.plugin_manager is not None else None
+        except Exception:
+            catalog = None
         role = "action.primary" if suggested else ("action.destructive" if destructive else "action.secondary")
         if catalog is not None:
             try:
@@ -1325,21 +1379,20 @@ class MainWindow(Adw.ApplicationWindow):
         _TRACE_LOG.info("TRACE gui connect-configured-sources begin")
         if hasattr(self, "startup_status"):
             self.startup_status.set_label("Connexion aux sources configurées…")
+        if hasattr(self, "dashboard_loading_status"):
+            self.dashboard_loading_status.set_label("Connexion aux sources en arrière-plan…")
+            self.dashboard_loading_status.set_visible(True)
 
         def ok(result: dict[str, Any]) -> None:
             _TRACE_LOG.info("TRACE gui connect-configured ok connected=%s errors=%s", len(result.get("connected", [])), len(result.get("errors", {}) or {}))
-            if self.main_shell is None:
-                _TRACE_LOG.info("TRACE gui build-main-shell begin")
-                self.main_shell = self._build_main_shell()
-                _TRACE_LOG.info("TRACE gui build-main-shell end")
-                self.root_stack.add_named(self.main_shell, "main")
+            if hasattr(self, "dashboard_loading_status"):
+                self.dashboard_loading_status.set_visible(False)
             _TRACE_LOG.info("TRACE gui populate-accounts begin")
             self._populate_accounts()
             _TRACE_LOG.info("TRACE gui populate-accounts end")
             _TRACE_LOG.info("TRACE gui populate-loans begin count=%s", len(self.service.last_loans))
             self._populate_loans(self.service.last_loans)
             _TRACE_LOG.info("TRACE gui populate-loans end")
-            self.root_stack.set_visible_child_name("main")
             connected = len(result.get("connected", []))
             errors = result.get("errors", {}) or {}
             if errors:
@@ -1352,6 +1405,9 @@ class MainWindow(Adw.ApplicationWindow):
         def err(exc: BaseException) -> None:
             if hasattr(self, "startup_status"):
                 self.startup_status.set_label(str(exc))
+            if hasattr(self, "dashboard_loading_status"):
+                self.dashboard_loading_status.set_label("Connexion aux sources indisponible. La navigation locale reste disponible.")
+                self.dashboard_loading_status.set_visible(True)
 
         control = getattr(self, "startup_connect_button", None)
         self.runner.submit(
@@ -1361,8 +1417,29 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def reconnect_sources(self) -> None:
-        self.root_stack.set_visible_child_name("startup")
         self.connect_configured_sources()
+
+    def activate_startup_plugins(self) -> bool:
+        if self.plugin_manager is None:
+            return False
+        _TRACE_LOG.info("TRACE gui plugin-activation begin")
+        started = time.perf_counter()
+        try:
+            self.plugin_manager.activate()
+            self.service.attach_plugin_manager(self.plugin_manager)
+            self._plugins_changed()
+            _TRACE_LOG.info("TRACE gui schedule connect-configured")
+            GLib.idle_add(self.connect_configured_sources)
+        except Exception as exc:
+            self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
+            if hasattr(self, "dashboard_loading_status"):
+                self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
+                self.dashboard_loading_status.set_visible(True)
+        finally:
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            self.ui_perf.record("startup.plugins_activation", duration_ms)
+            _TRACE_LOG.info("TRACE gui plugin-activation end duration_ms=%.1f", duration_ms)
+        return False
 
     # ---------- compatibility / source configuration ----------
     def logout(self) -> None:
@@ -1499,9 +1576,6 @@ class MainWindow(Adw.ApplicationWindow):
             return self.window._build_standard_page(route)
         def import_acsm(self):
             self.window.choose_acsm()
-        def system_status(self):
-            from ..system_status import system_status
-            return system_status(self.window.plugin_manager)
         def identity_overview(self) -> list[dict[str, Any]]:
             from copy import deepcopy
             return deepcopy(self.window.service.dashboard_state())
@@ -1536,6 +1610,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.shell_root.remove(old)
         self.shell_header = self._create_shell_header()
         self.shell_root.prepend(self.shell_header)
+        self._ensure_pages_menu_rightmost()
         self._rebuild_plugin_pages()
         self._populate_accounts()
 
@@ -1579,9 +1654,14 @@ class MainWindow(Adw.ApplicationWindow):
         from ..builtin_ui.cifereca_builtin_ui import Pages
         from dataclasses import replace
         fallback = [replace(page, priority=-10000) for page in Pages().pages()]
-        contributed = self.plugin_manager.page_contributions() if self.plugin_manager else fallback
+        try:
+            contributed = self.plugin_manager.page_contributions() if self.plugin_manager else []
+        except Exception:
+            contributed = []
+        if not contributed:
+            contributed = list(fallback)
         # Management pages remain reachable to recover from broken/disabled UI.
-        contributed += [p for p in fallback if p.route in {"plugins", "settings"}]
+        contributed += [p for p in fallback if p.route in {"plugins", "settings"} and all(x.route != p.route for x in contributed)]
         resolved = resolve_pages(contributed)
         self._pages = {}
         host = self._UiHost(self)
@@ -1694,8 +1774,11 @@ class MainWindow(Adw.ApplicationWindow):
         host = self._UiHost(self)
         self._titlebar_service = None
         if self.plugin_manager:
-            selected = self.plugin_manager.select("ui.titlebar")
-            self._titlebar_service = self.plugin_manager.service(selected.descriptor.id) if selected else None
+            try:
+                selected = self.plugin_manager.select("ui.titlebar")
+                self._titlebar_service = self.plugin_manager.service(selected.descriptor.id) if selected else None
+            except Exception:
+                self._titlebar_service = None
         try:
             header = self._titlebar_service.build(host) if self._titlebar_service else Adw.HeaderBar()
             if not isinstance(header, Adw.HeaderBar): raise TypeError("Titlebar must return Adw.HeaderBar")
@@ -1765,8 +1848,30 @@ class MainWindow(Adw.ApplicationWindow):
         self.statistics_button.connect('clicked',lambda _b:self._show_statistics())
         controls.append(self.identity_dropdown); controls.append(self.account_dropdown)
         controls.append(self.statistics_button)
-        controls.append(self.pages_menu_button); header.pack_end(controls)
+        controls.append(self.pages_menu_button)
+        self._header_controls = controls
+        header.pack_end(controls)
+        self._ensure_pages_menu_rightmost()
         return header
+
+    def _ensure_pages_menu_rightmost(self):
+        controls = getattr(self, "_header_controls", None)
+        menu = getattr(self, "pages_menu_button", None)
+        if controls is None or menu is None:
+            return
+        children = getattr(controls, "children", None)
+        if isinstance(children, list):
+            if menu in children:
+                children.remove(menu)
+            children.append(menu)
+            return
+        get_last = getattr(controls, "get_last_child", None)
+        if callable(get_last) and get_last() is menu:
+            return
+        get_parent = getattr(menu, "get_parent", None)
+        if callable(get_parent) and get_parent() is controls:
+            controls.remove(menu)
+        controls.append(menu)
 
     def _refresh_header_actions(self, route):
         clear_box(self.header_actions)
@@ -1775,6 +1880,17 @@ class MainWindow(Adw.ApplicationWindow):
             selected = self._titlebar_service.selected_actions() if self._titlebar_service else defaults
         except Exception:
             selected = defaults
+        selected, obsolete = validate_action_selection(self._pages.values(), selected)
+        previous_obsolete = getattr(self, "_obsolete_titlebar_actions", ())
+        if obsolete and obsolete != previous_obsolete:
+            self.diagnostics.add(
+                "UI",
+                "titlebar action configuration",
+                "warning",
+                detail={"obsolete_action_ids": list(obsolete)},
+                level="normal",
+            )
+        self._obsolete_titlebar_actions = obsolete
         host = self._UiHost(self)
         for key, action in visible_actions(self._pages.values(), route, selected):
             button = Gtk.Button.new_from_icon_name(action.icon_name); button.set_tooltip_text(action.title)
@@ -1800,6 +1916,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.insert_action_group("pagemenu", group)
         self._page_menu_actions = group
         self.shell_menu.set_menu_model(model)
+        self._ensure_pages_menu_rightmost()
 
     def _invoke_ui_action(self, action, host):
         self.shell_menu.popdown()
@@ -2068,6 +2185,9 @@ class MainWindow(Adw.ApplicationWindow):
         heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.append(heading)
         title = Gtk.Label(label="Bibliothèque familiale", xalign=0); title.set_hexpand(True); title.set_wrap(True); add_css(title, "page-title"); heading.append(title)
         subtitle = Gtk.Label(label="État des identités et de la synchronisation automatique", xalign=0); add_css(subtitle, "dim-label"); outer.append(subtitle)
+        self.dashboard_loading_status = Gtk.Label(label="Connexion aux sources en arrière-plan…", xalign=0)
+        self.dashboard_loading_status.set_wrap(True); add_css(self.dashboard_loading_status, "dim-label", "caption")
+        outer.append(self.dashboard_loading_status)
         actions = AdaptiveActionBar(source=heading)
         refresh = self.action_button("Synchronisation rapide", "view-refresh-symbolic", suggested=True)
         refresh.connect("clicked", lambda _b: self.run_opening_sync(refresh, deep=False)); actions.append(refresh)
@@ -2626,9 +2746,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not current(): return False
             if batch.results:
                 self._remote_search_results = merge_results(self._remote_search_results, list(batch.results))
-                self._populate_search(self._remote_search_results)
-            if batch.error_message and not batch.results:
-                self.toast(f"{batch.provider_label} : recherche indisponible", 4)
+                self._populate_search(self._remote_search_results, announce=False)
             return False
         def on_batch(batch):
             GLib.idle_add(deliver_batch, batch)
@@ -2639,7 +2757,7 @@ class MainWindow(Adw.ApplicationWindow):
             # Batch delivery is progressive; the final render only reconciles
             # ranking/deduplication with the authoritative aggregate.
             self._remote_search_results = merge_results(self._remote_search_results, list(self.service.last_search))
-            self._populate_search(self._remote_search_results)
+            self._populate_search(self._remote_search_results, announce=True)
         self.runner.submit("Recherche en ligne…", lambda: progressive_online_search(self.service, state, on_batch), done, failed,
                            control=self.search_global_button, priority=TaskPriority.USER_ACTION, kind="search-online")
 
@@ -2651,11 +2769,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.search_global_button.set_sensitive(True)
         self.toast(f"{shown} résultat(s) dans le connu", 5)
 
-    def _populate_search(self, rows: list[SearchResult]) -> None:
+    def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -> None:
         self._search_mode = "global"
         self.service.last_search = rows
         self.search_objects = {f"{x.source_provider}:{x.id}": x for x in rows}
         shown = self._render_search_results()
+        if not announce:
+            return
         warnings = list(getattr(self.service, "last_search_warnings", []) or [])
         if warnings:
             self.toast(f"{shown} résultat(s) affiché(s) · résultats partiels : {warnings[0]}", 6)

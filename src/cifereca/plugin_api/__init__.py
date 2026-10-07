@@ -8,6 +8,7 @@ from .context import PluginContext
 from .errors import (AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled)
 from .models import (
     AcquisitionOffer,
+    normalize_acquisition_format, acquisition_offer_formats, acquisition_offer_preferred_format, acquisition_offers_metadata,
     ArtifactInput,
     CategoryDefinition,
     Dependency,
@@ -48,10 +49,14 @@ from .bundles import (
     BUNDLE_MANIFEST_NAME, BUNDLE_MANIFEST_VERSION, BundleError, BundleManifest, BundleMember,
     bundle_search_values, load_bundle_manifest, write_bundle_manifest,
 )
+from .acquisition_recipes import (
+    BundleRecipeError, BundleTrack, BundleAcquisitionRecipe,
+    normalize_audio_format, validate_audio_bundle_manifest,
+)
 
 __all__ = [
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
-    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "ArtifactInput",
+    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
     "StorageTarget", "StorageResult", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
     "PluginDescriptor", "PluginDirectories", "PluginLifecycle", "PluginState", "InstantiationMode",
@@ -70,6 +75,7 @@ __all__ = [
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
+    "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest",
     "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "SearchResult",
     "CredentialField", "ProviderCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",

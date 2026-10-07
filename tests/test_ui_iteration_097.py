@@ -37,7 +37,7 @@ class Iteration097(unittest.TestCase):
             self.assertEqual(installation_date(d),date)
     def test_system_plugin_is_technical(self):
         page=SystemPages().pages()[0]
-        self.assertEqual((page.route,page.group),('system-status','configuration'))
+        self.assertEqual((page.route,page.group),('diagnostics','configuration'))
     def test_status_counts_and_builtin_date(self):
         class Manager:
             def diagnostic(self):return [dict(state='ready',enabled=True,builtin=True),dict(state='blocked',enabled=True),dict(state='disabled',enabled=False)]

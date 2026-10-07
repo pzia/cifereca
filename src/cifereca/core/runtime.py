@@ -38,6 +38,7 @@ class CiferecaCore:
         diagnostics_level: str | None = None,
         no_plugins: bool = False,
         force_plugins: tuple[str, ...] = (),
+        activate_plugins: bool = True,
     ) -> Self:
         config = Config(config_path) if config_path is not None else Config()
         diagnostics = Diagnostics(
@@ -69,7 +70,8 @@ class CiferecaCore:
             config_store=plugin_config_store,
             diagnostics=diagnostics,
         )
-        plugins.activate()
+        if activate_plugins:
+            plugins.activate()
         library.attach_plugin_manager(plugins)
         return cls(
             config=config,
