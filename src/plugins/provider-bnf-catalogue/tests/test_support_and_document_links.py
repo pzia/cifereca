@@ -39,12 +39,17 @@ def _dc(*, ark: str, title: str = "Titre", formats=(), types=(), relations=(), i
 
 
 def _parse(*records: str):
-    # Parser-focused test double: keep the public ProviderSession identity
-    # fields that real construction always initializes.
-    session = object.__new__(mod.BnfCatalogueSession)
-    session.provider_id = mod.DESCRIPTOR.id
-    session.credential_id = "public"
-    return session.parse_records(_records(*records))
+    session = mod.BnfCatalogueSession(
+        credential_id="bnf-test", label="BnF test", credentials={}, options={},
+        diagnostics=None,
+    )
+    try:
+        rows = session.parse_records(_records(*records))
+        assert all(row.source_provider == mod.DESCRIPTOR.id for row in rows)
+        assert all(row.source_credential == "bnf-test" for row in rows)
+        return rows
+    finally:
+        session.close()
 
 
 def test_support_projection_distinguishes_physical_digital_and_unknown():

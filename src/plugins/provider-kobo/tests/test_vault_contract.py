@@ -147,13 +147,14 @@ def test_kobo_provider_requires_vault_api_23_or_newer():
         session.close()
 
 
-def test_vault_capabilities_are_intersected_with_runtime_modes():
+@pytest.mark.parametrize("vault_acquisition", [True, False])
+def test_vault_capabilities_are_intersected_with_runtime_modes(vault_acquisition):
     class FakeVault:
         def status(self, authenticated=False):
             return {
                 "ok": True,
                 "api_version": "2.3",
-                "capabilities": ["acquisition"],
+                "capabilities": ["acquisition"] if vault_acquisition else [],
                 "capability_details": [],
                 "acquisition_access": "configured",
             }
@@ -193,13 +194,13 @@ def test_vault_capabilities_are_intersected_with_runtime_modes():
     session.client = FakeVault()
     try:
         session.connect()
-        assert session.supports_acquisition_acsm is True
+        assert session.supports_acquisition_acsm is vault_acquisition
         assert session.supports_acquisition_display_profile is False
 
         session.runtime_capabilities = Broker(("kobo_delegated",))
         session.connect()
         assert session.supports_acquisition_acsm is False
-        assert session.supports_acquisition_display_profile is True
+        assert session.supports_acquisition_display_profile is vault_acquisition
 
         session.runtime_capabilities = Broker(())
         session.connect()
