@@ -57,6 +57,15 @@ def text_or_dash(value: Any) -> str:
     return text or "—"
 
 
+def detail_display_value(label: str, value: Any) -> tuple[str, str]:
+    """Return the compact value and the complete tooltip value for a detail row."""
+    full = text_or_dash(value)
+    if label == "Fichier local" and full != "—":
+        compact = Path(full).name or full
+        return compact, full
+    return full, full
+
+
 def book_detail_presentation(
     *,
     title: str,
@@ -341,9 +350,10 @@ class DetailPanel(Gtk.Box):
             group.add(grid)
         for label, value in rows:
             row = Adw.ActionRow()
-            row.set_title(label); row.set_subtitle(text_or_dash(value))
+            display_value, tooltip_value = detail_display_value(label, value)
+            row.set_title(label); row.set_subtitle(display_value)
             row.set_subtitle_lines(1 if grid is not None else 0)
-            row.set_tooltip_text(label+' : '+text_or_dash(value))
+            row.set_tooltip_text(label+' : '+tooltip_value)
             field={'Auteur':'author','Éditeur':'publisher','Sujets':'subject','Sujet':'subject','Collection / série':'collection','Collection':'collection','Série':'series','Langue':'language','Langues':'language','Source':'source','Fournisseur':'source','Format':'format'}.get(label)
             if field and value and value!='—':
                 row.set_activatable(True)
