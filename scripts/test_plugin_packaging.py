@@ -16,6 +16,7 @@ from scripts.plugin_packaging import (
     validate_dev_snapshot,
     validate_plugin_entrypoints,
     validate_plugin_source,
+    validate_plugin_zip,
     verify_repository,
 )
 
@@ -67,6 +68,35 @@ class PluginPackagingTests(unittest.TestCase):
                 self.assertFalse(
                     any(name.startswith("alpha/") for name in archive.namelist())
                 )
+
+    def test_plugin_zip_reuses_full_manifest_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "bad-plugin.zip"
+            manifest = {
+                "manifest": 1,
+                "package": {
+                    "id": "org.cifereca.provider.alpha",
+                    "version": "1.0",
+                    "plugin_api": ">=99",
+                },
+                "plugins": [
+                    {
+                        "id": "alpha.service",
+                        "type": "provider.library",
+                        "entrypoint": "plugin:PLUGIN",
+                        "version": "1.0",
+                    }
+                ],
+            }
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr("cifereca-plugin.json", json.dumps(manifest))
+                output.writestr("plugin.py", "PLUGIN = object()\n")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"package\.plugin_api incompatible"
+            ):
+                validate_plugin_zip(archive)
 
     def test_all_in_one_contains_individual_plugin_zips(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
