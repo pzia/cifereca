@@ -41,10 +41,16 @@ def test_dropdown_refresh_preserves_existing_string_list_model():
 
 
 def test_task_completion_is_ignored_after_window_close():
-    source = _source(TASK_RUNNER, "TaskRunner", "submit")
+    method = _method(TASK_RUNNER, "TaskRunner", "submit")
+    source = ast.unparse(method)
 
-    closed_guard = "if getattr(self.window, '_closed', False):\n            return False"
-    assert closed_guard in source
+    guards = [
+        node for node in ast.walk(method)
+        if isinstance(node, ast.If)
+        and "getattr(self.window, '_closed', False)" in ast.unparse(node.test)
+        and any(isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Constant) and stmt.value.value is False for stmt in node.body)
+    ]
+    assert guards
 
     finished = source.index("self.window._task_finished")
     guard = source.index("getattr(self.window, '_closed', False)")

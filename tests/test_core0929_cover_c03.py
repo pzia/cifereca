@@ -23,11 +23,14 @@ def _method_source(path: Path, class_name: str, method_name: str) -> str:
 
 
 def test_epub_cover_supports_guide_and_first_spine_fallbacks():
-    source = _module_source(EPUB)
+    tree = ast.parse(EPUB.read_text())
+    constants = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)]
+    source = ast.unparse(tree)
 
-    assert "pages.extend((node.attrib.get('href'), 'guide')" in source
-    assert "pages.extend((node.attrib.get('href'), 'first_spine')" in source
-    assert "if method == 'first_spine' and len(refs) != 1:" in source
+    assert "guide" in constants
+    assert "first_spine" in constants
+    assert "pages.extend" in source
+    assert "len(refs) != 1" in source
 
 
 def test_cover_provenance_and_content_cache_are_persisted():

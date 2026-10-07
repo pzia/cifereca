@@ -97,10 +97,24 @@ def _method_source(name: str) -> str:
 
 
 def test_manual_binding_dialog_starts_without_selected_loan():
-    source = _method_source("_present_adept_loan_choices")
+    tree = ast.parse(GUI_SOURCE.read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_present_adept_loan_choices")
+    source = ast.unparse(method)
 
     assert "dropdown.set_selected(Gtk.INVALID_LIST_POSITION)" in source
-    assert 'dialog.set_response_enabled("attach", False)' in source
+    calls = [
+        node for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "set_response_enabled"
+        and len(node.args) >= 2
+    ]
+    assert any(
+        isinstance(call.args[0], ast.Constant) and call.args[0].value == "attach"
+        and isinstance(call.args[1], ast.Constant) and call.args[1].value is False
+        for call in calls
+    )
 
 
 def test_manual_binding_revalidates_exact_id_and_preserves_artifact_and_previous_binding(tmp_path: Path):

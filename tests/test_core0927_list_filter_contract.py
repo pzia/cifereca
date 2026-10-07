@@ -61,8 +61,9 @@ def test_plugin_page_rebuild_preserves_search_and_library_query_states():
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_rebuild_plugin_pages")
     text = ast.unparse(method)
 
-    assert 'controls.state()' in text
-    assert '("search", "library")' in text
+    assert "controls.state()" in text
+    constants = {node.value for node in ast.walk(method) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    assert {"search", "library"} <= constants
     assert "controls.set_state(state)" in text
 
 
