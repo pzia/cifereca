@@ -134,7 +134,9 @@ def compute_recommendations(
             key = candidate_key(item)
             if is_already_present(profile, item):
                 continue
-            score, reasons = score_candidate_cached(profile, item, score_cache)
+            score, reasons = score_candidate_cached(
+                profile, item, score_cache, known_absent=True
+            )
             source = str(get_field(item, "source_provider", "") or "")
             previous = provisional.get(key)
             if previous is None:
