@@ -360,6 +360,7 @@ class DetailPanel(Gtk.Box):
     def _clear_actions(self):
         self._action_ids = set()
         self._action_buttons = []
+        self._rendered_action_count = 0
         self.action_scroll.clear()
         self.action_scroll.set_visible(False)
 
@@ -409,9 +410,12 @@ class DetailPanel(Gtk.Box):
             changed = True
         if not changed:
             return
+        priority = getattr(self, '_detail_action_priority', None)
+        if not callable(priority):
+            priority = lambda _button: 50
         ordered = sorted(
             enumerate(current),
-            key=lambda item: (self._detail_action_priority(item[1]), item[0]),
+            key=lambda item: (priority(item[1]), item[0]),
         )
         current[:] = [button for _index, button in ordered]
         primary_styled = False
@@ -420,7 +424,7 @@ class DetailPanel(Gtk.Box):
             if callable(remover):
                 remover('suggested-action')
         for button in current:
-            if not primary_styled and self._detail_action_priority(button) < 20:
+            if not primary_styled and priority(button) < 20:
                 adder = getattr(button, 'add_css_class', None)
                 if callable(adder):
                     adder('suggested-action')
