@@ -5,8 +5,7 @@ import json
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "plugins/recommendations"
+PLUGIN = Path(__file__).resolve().parents[1]
 
 
 def test_active_recommendations_entrypoint_uses_core_tasks_not_private_threading():
