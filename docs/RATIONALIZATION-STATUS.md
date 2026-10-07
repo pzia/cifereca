@@ -78,14 +78,14 @@ Paris, Numilog, Kobo et d'autres providers peuvent garder une session HTTP spéc
 
 État :
 
-- `gen-dataset/` existe et reste l'environnement fonctionnel simulé actuel ;
+- `simulation/` existe et reste l'environnement fonctionnel simulé actuel ;
 - `simulation/` n'existe pas encore.
 
 Cible :
 
 - une seule référence future sous `simulation/` ;
 - migration progressive des faux services, fixtures et profils utiles ;
-- suppression de `gen-dataset/` lorsque ses consommateurs sont migrés.
+- suppression de `simulation/` lorsque ses consommateurs sont migrés.
 
 Voir [SIMULATION.md](SIMULATION.md).
 
@@ -101,7 +101,7 @@ Voir [SIMULATION.md](SIMULATION.md).
 ### Encore utiles comme contexte
 
 - [HANDOFF-MUTUALISATION-CORE-PLUGINS.md](../HANDOFF-MUTUALISATION-CORE-PLUGINS.md) — clôture des primitives mutualisées.
-- [HANDOFF-GEN-DATASET.md](../HANDOFF-GEN-DATASET.md) — état détaillé du banc `gen-dataset`, à lire avec la cible `simulation/`.
+- [HANDOFF-GEN-DATASET.md](../HANDOFF-GEN-DATASET.md) — état détaillé du banc `simulation`, à lire avec la cible `simulation/`.
 - [HANDOFF-PLUGINS-FROM-CORE044-DEV1.md](../HANDOFF-PLUGINS-FROM-CORE044-DEV1.md) — contexte de la vague plugins/Core044.
 
 ### Historiques / non autoritatifs pour l'état courant
@@ -114,7 +114,7 @@ En cas de contradiction, l'état réel du tree, [ARCHITECTURE.md](ARCHITECTURE.m
 ## Prochaines étapes de rationalisation
 
 1. poursuivre le triage historique `0921 → 0933` ;
-2. décider et exécuter la migration `gen-dataset/` → `simulation/` ;
+2. décider et exécuter la migration `simulation/` → `simulation/` ;
 3. traiter l'extraction de `builtin_ui`, Paris et Kobo dans des PR de code séparées ;
 4. traiter le déplacement physique des plugins seulement avec packaging/tests adaptés ;
 5. nettoyer la hiérarchie legacy Recommendations ;

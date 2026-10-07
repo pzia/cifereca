@@ -10,7 +10,7 @@ from http.server import ThreadingHTTPServer
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_ROOT = ROOT / "plugins" / "ebooksgratuits"
 TRANSPORT_ROOT = ROOT / "plugins" / "transport-http"
-DATASET_PATH = ROOT / "gen-dataset" / "ebooksgratuits" / "pseudo_ebooksgratuits_service.py"
+DATASET_PATH = ROOT / "simulation" / "ebooksgratuits" / "pseudo_ebooksgratuits_service.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))

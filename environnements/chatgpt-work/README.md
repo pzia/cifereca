@@ -67,7 +67,7 @@ Les clics utilisent des coordonnées X11 absolues dans l'écran virtuel. Faire d
 ## Boucle UX recommandée
 
 1. ./work reset si un état vierge est nécessaire ;
-2. préparer les données dans runtime/home/EBooks et/ou démarrer les pseudo-services sous gen-dataset/ ;
+2. préparer les données dans runtime/home/EBooks et/ou démarrer les pseudo-services sous simulation/ ;
 3. lancer d'abord --no-plugins, puis --force-plugin <id> si le scénario cible un plugin ;
 4. capturer en 1300×900 ou à la largeur explicitement testée ;
 5. inspecter le PNG et runtime/state/cifereca/cifereca.log ;

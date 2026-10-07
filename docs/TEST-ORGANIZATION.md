@@ -27,7 +27,7 @@ Réservé à :
 - régressions spécifiques au plugin ;
 - contrats publics vus depuis ce plugin.
 
-### `gen-dataset/tests/`
+### `simulation/tests/`
 
 Valide le banc de simulation **actuel** : faux services, profils et orchestration de dataset. Ces tests ne remplacent ni les tests Core ni les tests fournisseur.
 

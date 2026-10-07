@@ -31,7 +31,7 @@ Classer un test selon ce qu'il affirme, pas selon les dépendances qu'il utilise
 - Assertion propre à un plugin : `plugins/<plugin>/tests/`.
 - Assertion Core, contrat transversal ou orchestration générique : `tests/`.
 - Scénario traversant plusieurs plugins/Core/IHM : test fonctionnel ou E2E central.
-- Validation d'un faux service ou de son orchestrateur : `gen-dataset/tests/` tant que la migration vers `simulation/` n'est pas réalisée.
+- Validation d'un faux service ou de son orchestrateur : `simulation/tests/` tant que la migration vers `simulation/` n'est pas réalisée.
 - Validation de GTK/Xvfb/bootstrap : self-test sous `environnements/`.
 
 Ne jamais restaurer en bloc les anciens tests `_bundled`. Les invariants historiques doivent être migrés méthode par méthode sans chaîne de dépendances vers d'anciens tests.
@@ -42,9 +42,9 @@ Exécuter d'abord les tests les plus ciblés, puis la suite pertinente. Un `pyte
 
 ## Simulation et environnements
 
-- `gen-dataset/` est le banc de simulation fonctionnelle **actuel** : faux services, données, profils et orchestration.
+- `simulation/` est le banc de simulation fonctionnelle **actuel** : faux services, données, profils et orchestration.
 - `simulation/` n'existe pas encore ; il est la **cible future** pour l'environnement fonctionnel simulé de référence.
-- Ne pas construire deux environnements de simulation concurrents : les outils utiles de `gen-dataset/` devront être migrés ou retirés progressivement.
+- Ne pas construire deux environnements de simulation concurrents : les outils utiles de `simulation/` devront être migrés ou retirés progressivement.
 - `environnements/` contient des recettes machine/runtime (GTK, Xvfb, D-Bus, bootstrap, capture), pas du code applicatif ni un substitut à la simulation fonctionnelle.
 
 Voir `docs/SIMULATION.md` et `environnements/README.md`.

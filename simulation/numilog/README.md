@@ -7,13 +7,13 @@ Par défaut :
 - 1 000 livres possédés ;
 - 50 livres par page ;
 - couvertures PNG générées/cache à la demande ;
-- EPUB générés/cache à la demande via `gen-dataset/common/fake_books.py` ;
+- EPUB générés/cache à la demande via `simulation/common/fake_books.py` ;
 - quelques liens expirés et parcours à redirections multiples pour tester les erreurs.
 
 Lancement :
 
 ```bash
-python3 gen-dataset/numilog/pseudo_numilog_service.py
+python3 simulation/numilog/pseudo_numilog_service.py
 ```
 
 Configuration du plugin Numilog :

@@ -13,7 +13,7 @@ Utiliser ce skill pour toute modification sous `plugins/<plugin>/` ou pour crée
 2. Le code de production du plugin peut dépendre de `cifereca.plugin_api`, mais pas des modules privés `cifereca.*`.
 3. Déclarer explicitement dans le manifeste les contrats, brokers, capabilities et prérequis nécessaires. Ne pas contourner la négociation de contrats par un import privé.
 4. Conserver les tests spécifiques dans `plugins/<plugin>/tests/`.
-5. Si le comportement dépend d'un service externe simulé, utiliser le banc `gen-dataset/` plutôt que réimplémenter un faux service local, sauf faux minimal strictement unitaire.
+5. Si le comportement dépend d'un service externe simulé, utiliser le banc `simulation/` plutôt que réimplémenter un faux service local, sauf faux minimal strictement unitaire.
 
 ## Tests
 

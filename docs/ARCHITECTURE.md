@@ -78,14 +78,14 @@ Voir [PLUGIN-BOUNDARIES.md](PLUGIN-BOUNDARIES.md) pour les règles détaillées.
 
 - `tests/` : Core, contrats transversaux et orchestration générique.
 - `plugins/<plugin>/tests/` : comportement propre à un plugin.
-- `gen-dataset/tests/` : validation du banc de simulation actuel.
+- `simulation/tests/` : validation du banc de simulation actuel.
 - `environnements/**` : self-tests d'environnement/runtime.
 
 Voir [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md).
 
 ## 5. Simulation et environnements
 
-- `gen-dataset/` : simulation fonctionnelle actuelle.
+- `simulation/` : simulation fonctionnelle actuelle.
 - `simulation/` : cible future, actuellement absente.
 - `environnements/` : recettes machine/runtime, distinctes des faux services fonctionnels.
 
@@ -99,7 +99,7 @@ Les sujets suivants restent hors du présent lot documentaire :
 2. extraire ou supprimer progressivement `src/cifereca/builtin_ui/` ;
 3. extraire le code fournisseur encore présent sous `src/cifereca/paris/` ;
 4. extraire le code fournisseur encore présent sous `src/cifereca/kobo/` ;
-5. créer effectivement `simulation/` et y migrer les éléments utiles de `gen-dataset/` ;
+5. créer effectivement `simulation/` et y migrer les éléments utiles de `simulation/` ;
 6. poursuivre la rationalisation des tests historiques sans restauration transitive ;
 7. supprimer le code historique uniquement dans des PR dédiées après preuve d'équivalence.
 

@@ -2,7 +2,7 @@
 """Génère un jeu de données d'EPUB fictifs.
 
 Le contenu, les métadonnées, les titres et les couvertures sont produits par le
-socle commun ``gen-dataset/common/fake_books.py``.
+socle commun ``simulation/common/fake_books.py``.
 
 Exemples :
     python3 gen_fake_epubs.py -n 10 -o ./jdd_epub

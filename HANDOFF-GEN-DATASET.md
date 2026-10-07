@@ -1,13 +1,13 @@
-# Handoff — gen-dataset
+# Handoff — simulation
 
 > **Statut de rationalisation (7 octobre 2026)**  
-> `gen-dataset/` reste le banc de simulation fonctionnelle **actuel**. La cible documentaire est un futur répertoire `simulation/`, qui n'existe pas encore. Ce handoff décrit donc l'outil actuel et ne doit pas être interprété comme une décision de maintenir deux environnements concurrents. La migration est décrite dans `docs/SIMULATION.md`.
+> `simulation/` reste le banc de simulation fonctionnelle **actuel**. La cible documentaire est un futur répertoire `simulation/`, qui n'existe pas encore. Ce handoff décrit donc l'outil actuel et ne doit pas être interprété comme une décision de maintenir deux environnements concurrents. La migration est décrite dans `docs/SIMULATION.md`.
 
 État de reprise au 6 octobre 2026.
 
 ## Situation
 
-`gen-dataset` est désormais un environnement de recette UX industrialisé, reproductible et isolé pour Cifereca.
+`simulation` est désormais un environnement de recette UX industrialisé, reproductible et isolé pour Cifereca.
 
 Le dernier lot de robustesse a été mergé par la PR #9 :
 - merge : `b6e570b0110b09409b6be646dd00a31b5c7c900a` ;
@@ -27,7 +27,7 @@ Le dernier lot de robustesse a été mergé par la PR #9 :
 | Paris / PNB | 10 000 |
 | Numilog | 1 000 |
 
-Services enregistrés dans `gen-dataset/services/catalog.toml` :
+Services enregistrés dans `simulation/services/catalog.toml` :
 - `opds`
 - `bnf`
 - `kobo`
@@ -44,11 +44,11 @@ Profils versionnés :
 
 ## Architecture
 
-- `gen-dataset/common/fake_books.py`
+- `simulation/common/fake_books.py`
   - métadonnées déterministes ;
   - couvertures PNG ;
   - EPUB 3 minimal valide.
-- `gen-dataset/datasetctl.py`
+- `simulation/datasetctl.py`
   - isolation XDG ;
   - caches par profil ;
   - démarrage/arrêt/health checks ;
@@ -56,7 +56,7 @@ Profils versionnés :
   - copie isolée du store de plugins ;
   - snapshots GTK via le harnais externe ;
   - résumé des volumes avec `summary`.
-- `gen-dataset/.runtime/`
+- `simulation/.runtime/`
   - état runtime, caches, logs, bibliothèque et configurations isolées ;
   - ignoré par Git.
 
@@ -77,26 +77,26 @@ Les données génériques doivent continuer à passer par `common/fake_books.py`
 ## Commandes de reprise
 
 ```bash
-python3 gen-dataset/datasetctl.py profiles
-python3 gen-dataset/datasetctl.py doctor ux-small
-python3 gen-dataset/datasetctl.py up ux-small
-python3 gen-dataset/datasetctl.py status ux-small
-python3 gen-dataset/datasetctl.py summary ux-small
-python3 gen-dataset/datasetctl.py down ux-small
+python3 simulation/datasetctl.py profiles
+python3 simulation/datasetctl.py doctor ux-small
+python3 simulation/datasetctl.py up ux-small
+python3 simulation/datasetctl.py status ux-small
+python3 simulation/datasetctl.py summary ux-small
+python3 simulation/datasetctl.py down ux-small
 ```
 
 Pour le gros environnement :
 
 ```bash
-python3 gen-dataset/datasetctl.py up ux-all
-python3 gen-dataset/datasetctl.py summary ux-all --json
+python3 simulation/datasetctl.py up ux-all
+python3 simulation/datasetctl.py summary ux-all --json
 ```
 
 Snapshot :
 
 ```bash
 export CIFERECA_GTK_TEST_HARNESS=/chemin/gtk4-environnement-tests
-python3 gen-dataset/datasetctl.py snapshot ux-library \
+python3 simulation/datasetctl.py snapshot ux-library \
   --out snapshots/library.png --width 1300 --height 850 --wait 4
 ```
 
@@ -131,8 +131,8 @@ python3 gen-dataset/datasetctl.py snapshot ux-library \
 Commencer par :
 
 ```bash
-python3 gen-dataset/datasetctl.py doctor ux-small
-python3 -m unittest discover -s gen-dataset/tests -v
+python3 simulation/datasetctl.py doctor ux-small
+python3 -m unittest discover -s simulation/tests -v
 ```
 
 Puis traiter les points de la « Prochaine vague recommandée » par lots cohérents.
