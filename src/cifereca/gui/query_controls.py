@@ -6,6 +6,8 @@ class MultiSelect(Gtk.MenuButton):
     def __init__(self, label, choices, changed):
         super().__init__()
         self.caption = label
+        choices = tuple(choices)
+        self.choice_labels = dict(choices)
         self.buttons = {}
         self._changed_callback = changed
         self._programmatic_update = False
@@ -29,8 +31,18 @@ class MultiSelect(Gtk.MenuButton):
         if self._programmatic_update:
             return
         values = self.values()
-        count = len(values)
-        self.set_label(f'{self.caption} : {count}' if count else self.caption + ' : Tous')
+        titles = [self.choice_labels.get(value, str(value)) for value in values]
+        if not titles:
+            summary = 'Tous'
+        elif len(titles) == 1:
+            summary = titles[0]
+        elif len(titles) == 2 and sum(len(title) for title in titles) <= 22:
+            summary = ' + '.join(titles)
+        else:
+            summary = f'{titles[0]} +{len(titles) - 1}'
+        tooltip = ', '.join(titles) if titles else None
+        self.set_label(f'{self.caption} : {summary}')
+        self.set_tooltip_text(tooltip)
         if values == self._last_notified_values:
             return
         self._last_notified_values = values
