@@ -1033,6 +1033,7 @@ class MainWindow(Adw.ApplicationWindow):
         .success-badge { background: alpha(@success_color, 0.20); color: @success_color; }
         .cover-frame { border-radius: 7px; background: alpha(currentColor, 0.06); }
         .busy-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 8px 14px; }
+        .settings-tabs button { padding-left: 8px; padding-right: 8px; min-width: 0; }
         .activity-success { color: @success_color; }
         .activity-error { color: @error_color; }
         .metric { font-size: 1.35em; font-weight: 700; }
@@ -3658,7 +3659,7 @@ class MainWindow(Adw.ApplicationWindow):
         tabs = Gtk.Stack(); tabs.set_hexpand(True)
         if not standalone:
             self._settings_tabs = tabs
-        switcher = Gtk.StackSwitcher(); switcher.set_stack(tabs)
+        switcher = Gtk.StackSwitcher(); switcher.set_stack(tabs); switcher.add_css_class("settings-tabs")
         tab_scroll = Gtk.ScrolledWindow(); tab_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
         tab_scroll.set_child(switcher); settings_root.append(tab_scroll); settings_root.append(tabs)
         sections = {}
