@@ -2,6 +2,7 @@ from collections import Counter
 from types import SimpleNamespace
 
 import recommendation_engine as engine
+import recommendation_service_v022 as service
 import recommendation_engine_fast as fast
 from recommendation_engine import RankedCandidate
 from recommendation_service_v022 import _provisional_head, compute_recommendations
@@ -256,6 +257,33 @@ def test_repeated_candidates_are_scored_once_across_streaming_and_final_rank(mon
         "id-1",
         max_queries=2,
         partial=lambda _snapshot: None,
+    )
+
+    assert result.ranked
+    assert calls == 1
+
+
+
+def test_compute_builds_library_profile_once(monkeypatch):
+    calls = 0
+    original = engine.build_profile
+
+    def counted(books):
+        nonlocal calls
+        calls += 1
+        return original(books)
+
+    def forbidden(_books):
+        raise AssertionError("build_queries rebuilt the prepared library profile")
+
+    monkeypatch.setattr(service, "build_profile", counted)
+    monkeypatch.setattr(engine, "build_profile", forbidden)
+
+    result = service.compute_recommendations(
+        Metadata(),
+        Catalog(),
+        "id-1",
+        max_queries=2,
     )
 
     assert result.ranked

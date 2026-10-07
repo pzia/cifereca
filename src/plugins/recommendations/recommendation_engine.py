@@ -288,8 +288,13 @@ def content_score(profile: ProfileVector, item: Any) -> tuple[float, tuple[str, 
     return min(100.0, score), tuple(reasons[:3])
 
 
-def build_queries(books: Sequence[Any], max_queries: int = 8) -> tuple[str, ...]:
-    profile = build_profile(books)
+def build_queries(
+    books: Sequence[Any],
+    max_queries: int = 8,
+    *,
+    profile: ProfileVector | None = None,
+) -> tuple[str, ...]:
+    profile = profile if profile is not None else build_profile(books)
     original_authors: dict[str, str] = {}
     original_series: dict[str, str] = {}
     for book in books:
