@@ -162,6 +162,11 @@ def validate_plugin_entrypoints(plugin_dir: Path, manifest: dict) -> None:
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}].entrypoint invalide: {entrypoint!r}"
             )
+        if any(part in PRODUCTION_EXCLUDED_DIRS for part in module_parts):
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].entrypoint hors production: "
+                f"{entrypoint!r}"
+            )
         module_path = plugin_dir.joinpath(*module_parts)
         module_file = module_path.with_suffix(".py")
         package_init = module_path / "__init__.py"
