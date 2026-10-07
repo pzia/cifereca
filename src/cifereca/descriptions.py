@@ -1,8 +1,8 @@
 """Readable catalogue descriptions; no HTML execution or network access.
 
 The provider contract exposes plain text. Preserve paragraphs/list boundaries
-rather than passing arbitrary HTML to GTK/Pango. Kept identical in each package
-under a package-specific module name to avoid import collisions.
+rather than passing arbitrary HTML to GTK/Pango. This Core implementation is
+exported through the public Plugin API for provider reuse.
 """
 from html import unescape
 from html.parser import HTMLParser

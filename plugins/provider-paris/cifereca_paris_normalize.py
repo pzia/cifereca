@@ -1,5 +1,5 @@
 from __future__ import annotations
-from cifereca_paris_description import description_text, description_element
+from cifereca.plugin_api import description_text, description_element
 from cifereca_paris_formats import projection
 import html
 import re

@@ -1,7 +1,5 @@
 """Public BnF bibliographic catalogue, Provider Plugin API v1 only."""
 from __future__ import annotations
-from cifereca_bnf_description import description_text, description_element
-
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -10,6 +8,8 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from cifereca.plugin_api import (
+    description_text,
+    description_element,
     Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor,
     ProviderError, ProviderPlugin, ProviderSession, normalize_language_tag,
 )
