@@ -205,3 +205,58 @@ def test_provisional_head_matches_full_sort_without_returning_the_tail():
     assert [(row.score, row.item["title"]) for row in actual] == [
         (row.score, row.item["title"]) for row in expected
     ]
+
+
+
+def test_repeated_candidates_are_scored_once_across_streaming_and_final_rank(monkeypatch):
+    calls = 0
+    original = fast.content_score
+
+    def counted(profile, item):
+        nonlocal calls
+        calls += 1
+        return original(profile, item)
+
+    monkeypatch.setattr(fast, "content_score", counted)
+
+    repeated = {
+        "isbn": "9781234567890",
+        "title": "Paris et mémoire",
+        "author": "Alice",
+        "description": "histoire patrimoine architecture",
+        "source_provider": "a",
+    }
+
+    class DuplicateCatalog:
+        def searchable_providers(self):
+            return [("a", "Catalogue A"), ("b", "Catalogue B")]
+
+        def search_progressive(self, query, *, on_batch, control=None, **kwargs):
+            on_batch(SimpleNamespace(
+                provider_id="a",
+                results=(dict(repeated),),
+                warnings=(),
+                error_message="",
+                cached=True,
+            ))
+            duplicate = dict(repeated)
+            duplicate["source_provider"] = "b"
+            on_batch(SimpleNamespace(
+                provider_id="b",
+                results=(duplicate,),
+                warnings=(),
+                error_message="",
+                cached=True,
+            ))
+            return SimpleNamespace(warnings=(), cancelled=False)
+
+    result = compute_recommendations(
+        Metadata(),
+        DuplicateCatalog(),
+        "id-1",
+        max_queries=2,
+        partial=lambda _snapshot: None,
+    )
+
+    assert result.ranked
+    assert calls == 1
