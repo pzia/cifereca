@@ -369,18 +369,86 @@ class DetailPanel(Gtk.Box):
 
     def _clear_actions(self):
         self._action_ids = set()
+        self._action_buttons = []
+        self._rendered_action_count = 0
         self.action_scroll.clear()
         self.action_scroll.set_visible(False)
 
+    @staticmethod
+    def _detail_action_priority(button) -> int:
+        explicit = getattr(button, '_cifereca_action_priority', None)
+        if isinstance(explicit, int):
+            return explicit
+        identifier = str(getattr(button, '_cifereca_action_id', '') or '')
+        label = str(getattr(button, '_cifereca_action_label', '') or '')
+        if not label:
+            getter = getattr(button, 'get_label', None)
+            if callable(getter):
+                label = str(getter() or '')
+        folded = label.casefold()
+        if identifier == 'open-local' or folded.startswith('ouvrir'):
+            return 10
+        if folded.startswith('emprunter'):
+            return 11
+        if folded.startswith(('télécharger', 'sauvegarder')):
+            return 12
+        if 'voir dans bibliothèque' in folded:
+            return 20
+        if identifier == 'open-catalogue' or folded.startswith(('disponibilités', 'étendre en ligne', 'en ligne', 'chercher en ligne', 'catalogue en ligne')):
+            return 30
+        if identifier.startswith('send-local:') or identifier == 'artifact-routing' or folded.startswith('envoyer'):
+            return 40
+        return 50
+
     def _actions(self, buttons: list[Gtk.Button]) -> None:
-        if not buttons:return
+        if not buttons:
+            return
+        current = getattr(self, '_action_buttons', None)
+        if current is None:
+            current = []
+            self._action_buttons = current
+        changed = False
         for button in buttons:
             identifier = getattr(button, '_cifereca_action_id', None)
             if identifier:
                 seen = getattr(self, '_action_ids', set())
-                if identifier in seen: continue
-                seen.add(identifier); self._action_ids = seen
+                if identifier in seen:
+                    continue
+                seen.add(identifier)
+                self._action_ids = seen
+            current.append(button)
+            changed = True
+        if not changed:
+            return
+        priority = getattr(self, '_detail_action_priority', None)
+        if not callable(priority):
+            priority = lambda _button: 50
+        ordered = sorted(
+            enumerate(current),
+            key=lambda item: (priority(item[1]), item[0]),
+        )
+        current[:] = [button for _index, button in ordered]
+        primary_styled = False
+        for button in current:
+            remover = getattr(button, 'remove_css_class', None)
+            if callable(remover):
+                remover('suggested-action')
+        for button in current:
+            if not primary_styled and priority(button) < 20:
+                adder = getattr(button, 'add_css_class', None)
+                if callable(adder):
+                    adder('suggested-action')
+                primary_styled = True
+        clear = getattr(self.action_scroll, 'clear', None)
+        if callable(clear):
+            clear()
+        else:
+            existing = getattr(self, '_rendered_action_count', 0)
+            if existing:
+                return
+        for button in current:
             self.action_scroll.append(button)
+        self._rendered_action_count = len(current)
         self.action_scroll.set_visible(True)
 
     def show_presentation(self, presentation: UiBookDetailPresentation) -> None:
