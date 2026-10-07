@@ -1,5 +1,4 @@
 from __future__ import annotations
-from cifereca_paris_download import atomic_write
 from cifereca_paris_formats import explicit_formats
 
 import logging
@@ -21,6 +20,7 @@ from cifereca.plugin_api import (
     ProviderSession,
     ProviderError,
     inspect_artifact_content,
+    publish_artifact_content,
 )
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -370,7 +370,7 @@ class ParisProviderSession(ProviderSession):
         _TRACE_LOG.info("TRACE download paris document-validated loan_id=%s kind=%s bytes=%s", loan.id, fmt, len(content))
         name = _SAFE_FILENAME.sub("_", str(loan.title)).strip(" ._") or "download"
         path = target_dir / (name[:160] + '.' + fmt)
-        atomic_write(path, content)
+        publish_artifact_content(path, content)
         _TRACE_LOG.info(
             "TRACE download paris acsm-write loan_id=%s file=%s bytes=%s detected_acsm=%s total_dt=%.3fs",
             loan.id, path, len(content), path.suffix.casefold() == ".acsm", time.monotonic()-started,
