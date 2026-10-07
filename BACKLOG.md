@@ -29,8 +29,8 @@ Ce bloc est la vue courante de la rationalisation. Les sections de versions plus
 ## Simulation
 
 - [ ] Créer effectivement `simulation/`.
-- [ ] Migrer progressivement les faux services, fixtures, profils et outils encore utiles depuis `gen-dataset/`.
-- [ ] Supprimer `gen-dataset/` seulement lorsque plus aucun consommateur ne dépend de lui.
+- [ ] Migrer progressivement les faux services, fixtures, profils et outils encore utiles depuis `simulation/`.
+- [ ] Supprimer `simulation/` seulement lorsque plus aucun consommateur ne dépend de lui.
 
 ## Environnements
 
