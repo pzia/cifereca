@@ -830,6 +830,9 @@ class DetailPanel(Gtk.Box):
             group.add(row)
         self._append_content(group)
 
+class MasterDetailPage(Gtk.Box):
+    """Page maître/détail basée sur Gtk.ListView virtualisé."""
+
     def __init__(self, window: "MainWindow", title: str, subtitle: str, empty_title: str, empty_desc: str):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.window = window
