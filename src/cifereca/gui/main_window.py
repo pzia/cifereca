@@ -992,14 +992,21 @@ class MainWindow(Adw.ApplicationWindow):
         self.root_stack = Gtk.Stack()
         self.root_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.toast_overlay.set_child(self.root_stack)
+        startup_started = time.perf_counter()
         _TRACE_LOG.info("TRACE gui build-startup begin")
         self.root_stack.add_named(self._build_startup(), "startup")
         _TRACE_LOG.info("TRACE gui build-startup end")
-        self.root_stack.set_visible_child_name("startup")
+        _TRACE_LOG.info("TRACE gui build-main-shell begin")
+        self.main_shell = self._build_main_shell()
+        self.root_stack.add_named(self.main_shell, "main")
+        self.root_stack.set_visible_child_name("main")
+        shell_ms = (time.perf_counter() - startup_started) * 1000.0
+        self.ui_perf.record("startup.shell_interactive", shell_ms)
+        _TRACE_LOG.info("TRACE gui shell-interactive duration_ms=%.1f", shell_ms)
         self.connect("close-request", self._on_close_request)
         self._install_shell_shortcuts()
-        # No blocking login screen in 0.3: provider credentials live in local
-        # preferences and sessions are opened lazily at application startup.
+        # Provider sessions are secondary startup work: the shell is already
+        # visible and navigable while connection continues asynchronously.
         _TRACE_LOG.info("TRACE gui schedule connect-configured")
         GLib.idle_add(self.connect_configured_sources)
 
@@ -1239,18 +1246,12 @@ class MainWindow(Adw.ApplicationWindow):
 
         def ok(result: dict[str, Any]) -> None:
             _TRACE_LOG.info("TRACE gui connect-configured ok connected=%s errors=%s", len(result.get("connected", [])), len(result.get("errors", {}) or {}))
-            if self.main_shell is None:
-                _TRACE_LOG.info("TRACE gui build-main-shell begin")
-                self.main_shell = self._build_main_shell()
-                _TRACE_LOG.info("TRACE gui build-main-shell end")
-                self.root_stack.add_named(self.main_shell, "main")
             _TRACE_LOG.info("TRACE gui populate-accounts begin")
             self._populate_accounts()
             _TRACE_LOG.info("TRACE gui populate-accounts end")
             _TRACE_LOG.info("TRACE gui populate-loans begin count=%s", len(self.service.last_loans))
             self._populate_loans(self.service.last_loans)
             _TRACE_LOG.info("TRACE gui populate-loans end")
-            self.root_stack.set_visible_child_name("main")
             connected = len(result.get("connected", []))
             errors = result.get("errors", {}) or {}
             if errors:
@@ -1272,7 +1273,6 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def reconnect_sources(self) -> None:
-        self.root_stack.set_visible_child_name("startup")
         self.connect_configured_sources()
 
     # ---------- compatibility / source configuration ----------
