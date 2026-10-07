@@ -329,7 +329,13 @@ def _validate_system_requirements(plugin_dir: Path, manifest: dict) -> None:
 def read_plugin_manifest(plugin_dir: Path) -> dict:
     plugin_dir = plugin_dir.resolve()
     manifest = _read_json(plugin_dir / PLUGIN_MANIFEST)
-    if manifest.get("manifest") != 1:
+    try:
+        manifest_version = int(manifest.get("manifest", 0) or 0)
+    except (TypeError, ValueError) as exc:
+        raise PackagingError(
+            f"{plugin_dir}: manifest=1 attendu"
+        ) from exc
+    if manifest_version != 1:
         raise PackagingError(f"{plugin_dir}: manifest=1 attendu")
     package = manifest.get("package")
     if not isinstance(package, dict):
