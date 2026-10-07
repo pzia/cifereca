@@ -3,7 +3,7 @@
   "package": {
     "id": "org.cifereca.epub-optimizer",
     "version": "0.3.0",
-    "name": "Cifereca EPUB Optimizer",
+    "name": "Cifereca EPUB/PDF Optimizer",
     "publisher": "Cifereca",
     "plugin_api": ">=1.3,<2"
   },
@@ -47,6 +47,79 @@
             "minimum": 64,
             "maximum": 4096,
             "default": 2048
+          },
+          "max_image_mb": {
+            "type": "integer",
+            "minimum": 8,
+            "maximum": 512,
+            "default": 64
+          },
+          "max_image_pixels": {
+            "type": "integer",
+            "minimum": 1000000,
+            "maximum": 250000000,
+            "default": 64000000
+          }
+        }
+      },
+      "requires_brokers": [],
+      "requires_contracts": [
+        {
+          "category": "device.profile",
+          "contract": "cifereca.device.profile",
+          "version": ">=1,<2",
+          "mode": "required",
+          "capabilities": [
+            "device.profile.describe"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "document.transformer.pdf-eink-optimizer",
+      "type": "document.transformer",
+      "version": "0.3.0",
+      "entrypoint": "cifereca_pdf_optimizer_transformer:PLUGIN",
+      "display_name": "Optimiseur PDF e-ink",
+      "description": "Crée une variante PDF e-ink en conservant texte/vectoriel et en optimisant seulement les images raster compatibles.",
+      "help_text": "Transformer PDF→PDF conservateur via artifact.execution. Refuse les PDF nécessitant un mot de passe et les PDF signés ; aucune rasterisation de page.",
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "priority": 50,
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "artifact.plan",
+        "artifact.transform"
+      ],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "Pillow",
+          "version": ">=11,<13",
+          "import": "PIL"
+        },
+        {
+          "type": "python-package",
+          "name": "PyMuPDF",
+          "version": ">=1.26,<2",
+          "import": "pymupdf"
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "default_profile": {
+            "type": "string",
+            "default": "device.profile.xteink-x3"
+          },
+          "max_pdf_pages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20000,
+            "default": 5000
           },
           "max_image_mb": {
             "type": "integer",

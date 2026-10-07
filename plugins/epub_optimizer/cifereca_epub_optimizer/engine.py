@@ -321,6 +321,7 @@ def _optimize_image(
     profile: DeviceProfile,
     *,
     layout_hint: tuple[int | None, int | None] | None = None,
+    target_box: tuple[int, int] | None = None,
     max_image_pixels: int = 64_000_000,
 ) -> tuple[bytes, ImageChange]:
     suffix = Path(name).suffix.lower()
@@ -357,9 +358,13 @@ def _optimize_image(
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ValueError(f"image illisible: {exc}") from exc
 
-    target_width, target_height = _effective_target_box(
-        profile, (original_width, original_height), layout_hint
-    )
+    if target_box is None:
+        target_width, target_height = _effective_target_box(
+            profile, (original_width, original_height), layout_hint
+        )
+    else:
+        target_width = max(1, int(target_box[0]))
+        target_height = max(1, int(target_box[1]))
     resized = False
     if image.width > target_width or image.height > target_height:
         image.thumbnail((target_width, target_height), Image.Resampling.LANCZOS)
