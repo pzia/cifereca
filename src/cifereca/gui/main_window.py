@@ -848,9 +848,10 @@ class MasterDetailPage(Gtk.Box):
                 self.store.append(row)
         self._update_count(total_count if total_count is not None else len(rows))
         self.list_stack.set_visible_child_name("list" if rows else "empty")
-        if rows:
+        if rows and selected_key is not None:
             restored = next((index for index, row in enumerate(rows) if row.key == selected_key), None)
-            self.selection.set_selected(restored if restored is not None else 0)
+            if restored is not None:
+                self.selection.set_selected(restored)
         if hasattr(self.window, "ui_perf"):
             self.window.ui_perf.record(f"list:{self.title}:replace", (time.perf_counter() - started) * 1000.0)
 
