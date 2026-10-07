@@ -411,6 +411,16 @@ def install_source(
     return result
 
 
+def _github_commitish(ref: str) -> str:
+    """Normalize an explicit GitHub branch/tag ref for the commits endpoint."""
+    for prefix in ("refs/tags/", "refs/heads/"):
+        if ref.startswith(prefix):
+            value = ref[len(prefix):]
+            if value:
+                return value
+    return ref
+
+
 def _github_checkout(repository: str, ref: str, destination: Path) -> str:
     gh = shutil.which("gh")
     git = shutil.which("git")
@@ -418,14 +428,15 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
         raise UpdateError("GitHub CLI 'gh' absent; installer gh puis exécuter 'gh auth login'")
     if not git:
         raise UpdateError("git absent du PATH")
-    endpoint = f"repos/{repository}/commits/{quote(ref, safe='')}"
+    commitish = _github_commitish(ref)
+    endpoint = f"repos/{repository}/commits/{quote(commitish, safe='')}"
     resolved = subprocess.run(
         [gh, "api", endpoint, "--jq", ".sha"],
         text=True, capture_output=True, timeout=30, check=False,
     )
     if resolved.returncode != 0 or not resolved.stdout.strip():
         detail = (resolved.stderr or resolved.stdout or "").strip()
-        raise UpdateError(f"Référence GitHub introuvable ou accès refusé: {detail[-800:]}")
+        raise UpdateError(f"Branche, tag ou commit GitHub introuvable ou accès refusé: {detail[-800:]}")
     sha = resolved.stdout.strip().splitlines()[-1]
     clone = subprocess.run(
         [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
@@ -540,7 +551,13 @@ def _print(value: dict[str, Any], as_json: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Updater atomique cifereca")
     p.add_argument("archive", nargs="?")
-    p.add_argument("--github", nargs="?", const="main", metavar="REF", help="Installe directement depuis pzia/cifereca (défaut: main)")
+    p.add_argument(
+        "--github",
+        nargs="?",
+        const="main",
+        metavar="BRANCHE|TAG|COMMIT",
+        help="Installe directement depuis pzia/cifereca à partir d'une branche, d'un tag ou d'un commit (défaut: main)",
+    )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--status", action="store_true")
     p.add_argument("--rollback", action="store_true")
@@ -560,7 +577,7 @@ def main(argv: list[str] | None = None) -> int:
             result = install_github(a.github, python=a.python, keep=a.keep, dry_run=a.dry_run)
         else:
             if not a.archive:
-                p.error("archive ZIP requise (ou utiliser --github [ref])")
+                p.error("archive ZIP requise (ou utiliser --github [branche|tag|commit])")
             result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
         _print(result, a.json)
         return 0
