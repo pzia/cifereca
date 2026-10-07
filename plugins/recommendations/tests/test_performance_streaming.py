@@ -3,7 +3,20 @@ from types import SimpleNamespace
 import recommendation_engine_fast as fast
 from recommendation_engine import RankedCandidate
 from recommendation_service_v022 import compute_recommendations
-from recommendations_v022 import RecommendationTaskControl
+
+
+class Control:
+    def __init__(self):
+        self._cancelled = False
+    def cancel(self):
+        self._cancelled = True
+    def cancelled(self):
+        return self._cancelled
+    def check_cancelled(self):
+        if self._cancelled:
+            raise RuntimeError("cancelled")
+    def report(self, **_kwargs):
+        return None
 
 
 class Metadata:
@@ -44,7 +57,7 @@ class Catalog:
 
 def test_progressive_results_and_control_are_forwarded():
     catalog = Catalog()
-    control = RecommendationTaskControl()
+    control = Control()
     partials = []
     progress = []
     result = compute_recommendations(
@@ -68,7 +81,7 @@ def test_progressive_results_and_control_are_forwarded():
 
 def test_cancelled_task_does_not_start_catalog_search():
     catalog = Catalog()
-    control = RecommendationTaskControl()
+    control = Control()
     control.cancel()
     result = compute_recommendations(
         Metadata(),

@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.runtime.kobo-adept",
-    "version": "1.2.9",
+    "version": "1.2.10",
     "name": "Kobo-Adept Runtime",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -46,7 +46,7 @@
           }
         }
       },
-      "version": "1.2.9",
+      "version": "1.2.10",
       "help_text": "Acquiert des fichiers et restitue les prêts ADEPT via Kobo-Adept. Le service expose aussi le cycle de vie explicite des profils : création/provisioning JSON via `profile add`, association d’une liseuse déjà autorisée via `profile associate`, et suppression sans `--force`. Un profil nouvellement créé n’est déclaré prêt qu’après vérification complete/fetch_capable/acsm_fetch_ready. Chaque restitution reste confirmée par l’inventaire local exact avant succès Core.",
       "capabilities": [
         "runtime.drm",
@@ -69,7 +69,7 @@
       "priority": 82,
       "display_name": "Profils Adobe",
       "description": "Création, association et suppression contrôlée des profils ADEPT Kobo-Adept.",
-      "version": "1.2.9",
+      "version": "1.2.10",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "help_text": "Page de gestion Kobo-Adept : crée un profil ADEPT prêt pour ACSM, associe une liseuse déjà autorisée avec la même identité et supprime un profil uniquement après confirmation. Les opérations sont exécutées hors du thread GTK ; aucune suppression forcée n’est utilisée.",
@@ -80,7 +80,7 @@
       "requires": [
         {
           "plugin": "runtime.kobo-adept",
-          "version": ">=1.2.9,<2"
+          "version": ">=1.2.10,<2"
         }
       ],
       "recommends": [],
@@ -94,7 +94,9 @@
           ]
         }
       ],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "tasks"
+      ],
       "requires_contracts": []
     }
   ]

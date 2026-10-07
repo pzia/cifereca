@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.epub-optimizer",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "name": "Cifereca EPUB Optimizer",
     "publisher": "Cifereca",
     "plugin_api": ">=1.3,<2"
@@ -11,7 +11,7 @@
     {
       "id": "document.transformer.epub-optimizer",
       "type": "document.transformer",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "cifereca_epub_optimizer_transformer:PLUGIN",
       "display_name": "Optimiseur EPUB e-ink",
       "description": "Transforme un EPUB sans DRM en variante e-ink en optimisant uniquement les images raster.",
@@ -66,7 +66,7 @@
     {
       "id": "device.profile.xteink-x3",
       "type": "device.profile",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "cifereca_epub_optimizer_profiles:XTEINK_X3_PLUGIN",
       "display_name": "Xteink X3 / CrossPoint",
       "description": "Profil 528×792, 4 niveaux de gris.",
@@ -85,7 +85,7 @@
     {
       "id": "device.profile.xteink-x4",
       "type": "device.profile",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "cifereca_epub_optimizer_profiles:XTEINK_X4_PLUGIN",
       "display_name": "Xteink X4 / CrossPoint",
       "description": "Profil 480×800, 4 niveaux de gris.",
@@ -104,7 +104,7 @@
     {
       "id": "device.profile.kobo-clara-bw",
       "type": "device.profile",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "cifereca_epub_optimizer_profiles:KOBO_CLARA_BW_PLUGIN",
       "display_name": "Kobo Clara BW",
       "description": "Profil 1072×1448, 300 ppp, niveaux de gris 8 bits.",
@@ -123,7 +123,7 @@
     {
       "id": "device.profile.generic-eink",
       "type": "device.profile",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "cifereca_epub_optimizer_profiles:GENERIC_EINK_PLUGIN",
       "display_name": "E-ink générique",
       "description": "Profil prudent 1200×1600 en niveaux de gris.",
@@ -142,7 +142,7 @@
     {
       "id": "ui.page.epub-optimizer",
       "type": "ui.page",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "cifereca_epub_optimizer_plugin:PLUGIN",
       "display_name": "Optimiseur EPUB e-ink",
       "description": "Page de recette manuelle et contribution d’action book.detail pour EPUB Optimizer.",
@@ -152,7 +152,7 @@
       "requires": [
         {
           "plugin": "document.transformer.epub-optimizer",
-          "version": ">=0.2.4,<1"
+          "version": ">=0.2.5,<1"
         }
       ],
       "recommends": [],
@@ -185,7 +185,8 @@
         }
       },
       "requires_brokers": [
-        "artifact.execution"
+        "artifact.execution",
+        "tasks"
       ],
       "requires_contracts": []
     }

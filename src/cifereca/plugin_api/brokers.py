@@ -5,7 +5,7 @@ from .models import (
     AccountRef, ActionStatistics, ArtifactFormat, ArtifactInputLease, ArtifactOutputLease, ArtifactRef, ArtifactRoutePlan,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, LibraryMutationPlan,
     LibraryMutationRequest, LibraryMutationResult, LogicalBookArtifacts, SyncRequest, SyncResult, SyncSourceRef,
-    TaskControl, TransformRequest, TransformResult,
+    TaskControl, TaskHandle, TransformRequest, TransformResult,
 )
 
 @runtime_checkable
@@ -52,6 +52,19 @@ class CacheBroker(Protocol):
     def namespaces(self) -> tuple[CacheNamespaceInfo, ...]: ...
     def purge(self, namespace_id: str = "", *, expired_only: bool = False) -> CachePurgeResult: ...
 
+
+@runtime_checkable
+class TaskBroker(Protocol):
+    def submit(
+        self,
+        operation: Callable[[TaskControl], Any],
+        *,
+        priority: int = 40,
+        label: str = "",
+        kind: str = "plugin",
+        on_progress: Callable[[int | None, int | None, str], None] | None = None,
+    ) -> TaskHandle: ...
+
 @runtime_checkable
 class DiagnosticsBroker(Protocol):
     def snapshot(self) -> tuple[Mapping[str, Any], ...]: ...
@@ -90,4 +103,4 @@ class ArtifactRoutingBroker(Protocol):
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult: ...
 
 __all__ = ["CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker",
-    "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker"]
+    "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]

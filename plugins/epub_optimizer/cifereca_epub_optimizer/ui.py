@@ -1,29 +1,16 @@
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 from .profiles import default_output_path, discover_profiles
 
 
-class _ArtifactTaskControl:
-    def __init__(self, cancel_event, progress):
-        self._cancel_event = cancel_event
-        self._progress = progress
+class _CancelEventAdapter:
+    def __init__(self, control):
+        self._control = control
 
-    def cancelled(self) -> bool:
-        return bool(self._cancel_event.is_set())
-
-    def check_cancelled(self) -> None:
-        if self.cancelled():
-            raise RuntimeError("Traitement annulé")
-
-    def report(self, *, current=None, total=None, message="") -> None:
-        if current is None or not total:
-            percent = 0
-        else:
-            percent = max(0, min(100, int((int(current) * 100) / int(total))))
-        self._progress(percent, str(message or ""))
+    def is_set(self) -> bool:
+        return bool(self._control.cancelled())
 
 
 class OptimizerPage:
@@ -34,11 +21,14 @@ class OptimizerPage:
         self.context = context
         self.artifact = artifact
         self.action_host = action_host
-        self._cancel_event = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._task_handle = None
+        self._closed = False
         self._output_auto = True
         self._setting_output = False
         self._dialogs = []
+        self._tasks = context.broker("tasks")
+        if self._tasks is None:
+            raise RuntimeError("broker tasks indisponible")
 
         config = dict(getattr(context, "config", {}) or {})
         self.default_profile = str(config.get("default_profile", "device.profile.xteink-x3") or "device.profile.xteink-x3")
@@ -177,14 +167,7 @@ class OptimizerPage:
 
     def _choose_source(self, _button):
         from gi.repository import Gtk
-
-        dialog = Gtk.FileChooserNative.new(
-            "Choisir un EPUB",
-            self._parent_window(),
-            Gtk.FileChooserAction.OPEN,
-            "Ouvrir",
-            "Annuler",
-        )
+        dialog = Gtk.FileChooserNative.new("Choisir un EPUB", self._parent_window(), Gtk.FileChooserAction.OPEN, "Ouvrir", "Annuler")
         file_filter = Gtk.FileFilter()
         file_filter.set_name("EPUB")
         file_filter.add_pattern("*.epub")
@@ -196,7 +179,6 @@ class OptimizerPage:
 
     def _source_response(self, dialog, response):
         from gi.repository import Gtk
-
         try:
             if response == Gtk.ResponseType.ACCEPT:
                 gio_file = dialog.get_file()
@@ -212,14 +194,7 @@ class OptimizerPage:
 
     def _choose_output(self, _button):
         from gi.repository import Gtk
-
-        dialog = Gtk.FileChooserNative.new(
-            "Enregistrer l'EPUB optimisé",
-            self._parent_window(),
-            Gtk.FileChooserAction.SAVE,
-            "Enregistrer",
-            "Annuler",
-        )
+        dialog = Gtk.FileChooserNative.new("Enregistrer l'EPUB optimisé", self._parent_window(), Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler")
         current = self.output_entry.get_text().strip()
         if current:
             dialog.set_current_name(Path(current).name)
@@ -229,7 +204,6 @@ class OptimizerPage:
 
     def _output_response(self, dialog, response):
         from gi.repository import Gtk
-
         try:
             if response == Gtk.ResponseType.ACCEPT:
                 gio_file = dialog.get_file()
@@ -260,10 +234,10 @@ class OptimizerPage:
             selected = next(iter(self.profiles))
         if selected is not None:
             self.profile_combo.set_active_id(selected)
-        self.optimize_button.set_sensitive(bool(self.profiles) and not (self._thread and self._thread.is_alive())) if hasattr(self, "optimize_button") else None
+        active = self._task_handle is not None and not self._task_handle.done()
+        self.optimize_button.set_sensitive(bool(self.profiles) and not active) if hasattr(self, "optimize_button") else None
 
     def _services_changed(self):
-        # Service callbacks must stay short; marshal widget updates to GTK.
         try:
             from gi.repository import GLib
             GLib.idle_add(self._reload_profiles)
@@ -329,7 +303,9 @@ class OptimizerPage:
         self.profile_combo.set_sensitive(not busy)
 
     def _start(self, _button):
-        if self._thread is not None and self._thread.is_alive():
+        from gi.repository import GLib
+
+        if self._task_handle is not None and not self._task_handle.done():
             return
         plugin_id = self.profile_combo.get_active_id()
         profile = self.profiles.get(plugin_id) if plugin_id else None
@@ -337,18 +313,15 @@ class OptimizerPage:
             self.host.toast("Choisissez un profil actif")
             return
 
-        self._cancel_event = threading.Event()
         self._set_busy(True)
         self.progress.set_fraction(0.0)
         self.progress.set_text("Démarrage…")
         self.status.set_text("")
-        if self.artifact is not None:
-            self._thread = threading.Thread(
-                target=self._run_artifact,
-                args=(self.artifact, plugin_id),
-                name="cifereca-epub-optimizer-artifact",
-                daemon=True,
-            )
+
+        artifact_mode = self.artifact is not None
+        if artifact_mode:
+            operation = lambda control: self._execute_artifact(self.artifact, plugin_id, control)
+            label = "Optimisation EPUB"
         else:
             source = self.source_entry.get_text().strip()
             target = self.output_entry.get_text().strip()
@@ -356,16 +329,33 @@ class OptimizerPage:
                 self._set_busy(False)
                 self.host.toast("Choisissez un EPUB et un fichier de sortie")
                 return
-            self._thread = threading.Thread(
-                target=self._run,
-                args=(source, target, profile),
-                name="cifereca-epub-optimizer",
-                daemon=True,
-            )
-        self._thread.start()
+
+            def operation(control):
+                from .engine import optimize_epub
+                return optimize_epub(
+                    source,
+                    target,
+                    profile=profile,
+                    max_uncompressed_mb=self.max_uncompressed_mb,
+                    progress=lambda pct, msg: control.report(current=pct, total=100, message=msg),
+                    cancel_event=_CancelEventAdapter(control),
+                )
+            label = "Optimisation EPUB locale"
+
+        def progress(current, total, message):
+            if current is None or not total:
+                percent = 0
+            else:
+                percent = max(0, min(100, int((int(current) * 100) / int(total))))
+            GLib.idle_add(self._progress_ui, percent, message)
+
+        handle = self._tasks.submit(operation, label=label, kind="epub-optimizer", on_progress=progress)
+        self._task_handle = handle
+        handle.add_done_callback(lambda done: self._task_done(done, artifact_mode))
 
     def _cancel_clicked(self, _button):
-        self._cancel_event.set()
+        if self._task_handle is not None:
+            self._task_handle.cancel()
         self.progress.set_text("Annulation…")
         self.cancel_button.set_sensitive(False)
 
@@ -386,43 +376,27 @@ class OptimizerPage:
             control=control,
         )
 
-    def _run_artifact(self, artifact, profile_plugin_id: str):
+    def _task_done(self, handle, artifact_mode: bool):
         from gi.repository import GLib
-        control = _ArtifactTaskControl(
-            self._cancel_event,
-            lambda pct, msg: GLib.idle_add(self._progress_ui, pct, msg),
-        )
-        try:
-            result = self._execute_artifact(artifact, profile_plugin_id, control)
-            GLib.idle_add(self._artifact_success_ui, result)
-        except Exception as exc:
-            if self._cancel_event.is_set():
-                GLib.idle_add(self._failure_ui, "Traitement annulé")
-            else:
-                self.context.logger.error("EPUB artifact optimization failed: %s", type(exc).__name__)
-                GLib.idle_add(self._failure_ui, f"Échec : {exc}")
-
-    def _run(self, source: str, target: str, profile):
-        from gi.repository import GLib
-
-        try:
-            from .engine import CancelledError, DrmProtectedError, optimize_epub
-            report = optimize_epub(
-                source,
-                target,
-                profile=profile,
-                max_uncompressed_mb=self.max_uncompressed_mb,
-                progress=lambda pct, msg: GLib.idle_add(self._progress_ui, pct, msg),
-                cancel_event=self._cancel_event,
-            )
-            GLib.idle_add(self._success_ui, report)
-        except CancelledError:
+        if self._closed:
+            return
+        if handle.control.cancelled():
             GLib.idle_add(self._failure_ui, "Traitement annulé")
-        except DrmProtectedError as exc:
-            GLib.idle_add(self._failure_ui, str(exc))
+            return
+        try:
+            result = handle.result()
         except Exception as exc:
-            self.context.logger.error("EPUB optimization failed: %s", type(exc).__name__)
-            GLib.idle_add(self._failure_ui, f"Échec : {exc}")
+            from .engine import CancelledError, DrmProtectedError
+            if isinstance(exc, CancelledError):
+                message = "Traitement annulé"
+            elif isinstance(exc, DrmProtectedError):
+                message = str(exc)
+            else:
+                self.context.logger.error("EPUB optimization failed: %s", type(exc).__name__)
+                message = f"Échec : {exc}"
+            GLib.idle_add(self._failure_ui, message)
+        else:
+            GLib.idle_add(self._artifact_success_ui if artifact_mode else self._success_ui, result)
 
     def _progress_ui(self, pct: int, message: str):
         self.progress.set_fraction(pct / 100.0)
@@ -430,6 +404,7 @@ class OptimizerPage:
         return False
 
     def _success_ui(self, report):
+        self._task_handle = None
         self._set_busy(False)
         self.progress.set_fraction(1.0)
         self.progress.set_text("Terminé")
@@ -445,6 +420,7 @@ class OptimizerPage:
         return False
 
     def _artifact_success_ui(self, artifact):
+        self._task_handle = None
         self._set_busy(False)
         self.progress.set_fraction(1.0)
         self.progress.set_text("Terminé")
@@ -457,6 +433,7 @@ class OptimizerPage:
         return False
 
     def _failure_ui(self, message: str):
+        self._task_handle = None
         self._set_busy(False)
         self.progress.set_fraction(0.0)
         self.progress.set_text("Échec")
@@ -465,7 +442,10 @@ class OptimizerPage:
         return False
 
     def cancel(self):
-        self._cancel_event.set()
+        self._closed = True
+        if self._task_handle is not None:
+            self._task_handle.cancel()
+            self._task_handle = None
         unsubscribe = getattr(self, "_unsubscribe_profiles", None)
         if callable(unsubscribe):
             unsubscribe()

@@ -9,6 +9,7 @@ from typing import Any, Callable
 from cifereca.plugin_api import AccountRef, SyncRequest, SyncResult, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
+from .task_runtime import TaskBrokerImpl
 
 
 def _account_id(account: Any) -> str:
@@ -303,4 +304,5 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "library.maintenance": LibraryMaintenanceBrokerImpl(service),
         "artifact.routing": ArtifactRoutingBrokerImpl(service, artifact_execution),
         "cache": CacheBrokerImpl(service),
+        "tasks": TaskBrokerImpl(service),
     }
