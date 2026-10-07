@@ -3,9 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..models import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult
+
+if TYPE_CHECKING:
+    from ..plugin_api.models import AcquisitionOffer
 
 
 ImplementationState = Literal["ready", "skeleton"]
@@ -123,6 +126,10 @@ class ProviderSession(ABC):
 
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         raise ProviderCapabilityError(f"{self.provider_id}: holdings unsupported")
+
+    def acquisition_offers(self, item: SearchResult) -> list["AcquisitionOffer"]:
+        """Return explicit acquisition alternatives; empty means not published."""
+        return []
 
     def library(self) -> list[SearchResult]:
         raise ProviderCapabilityError(f"{self.provider_id}: personal library unsupported")
