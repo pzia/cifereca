@@ -84,7 +84,7 @@ __all__ = [
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
     "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest",
     "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "SearchResult",
-    "CredentialField", "ProviderCapabilities", "ProviderCapabilityError",
+    "CredentialField", "ProviderCapabilities", "ProviderSearchCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",
     "ProviderPlugin", "ProviderSession",
 ]
@@ -93,7 +93,7 @@ __all__ = [
 # through plugin_api so external provider packages never import core internals.
 from cifereca.models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from cifereca.providers.base import (
-    CredentialField, ProviderCapabilities, ProviderCapabilityError, ProviderConfigurationError,
+    CredentialField, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderConfigurationError,
     ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession,
 )
 
