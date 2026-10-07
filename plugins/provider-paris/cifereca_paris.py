@@ -21,11 +21,11 @@ from cifereca.plugin_api import (
     ProviderError,
     inspect_artifact_content,
     publish_artifact_content,
+    sanitize_filename_component,
 )
 
 _TRACE_LOG = logging.getLogger("cifereca")
 
-_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
 
 
 DESCRIPTOR = ProviderDescriptor(
@@ -368,7 +368,7 @@ class ParisProviderSession(ProviderSession):
             }
             raise ProviderError(labels.get(fmt, "Format numérique non pris en charge"))
         _TRACE_LOG.info("TRACE download paris document-validated loan_id=%s kind=%s bytes=%s", loan.id, fmt, len(content))
-        name = _SAFE_FILENAME.sub("_", str(loan.title)).strip(" ._") or "download"
+        name = sanitize_filename_component(str(loan.title), "download")
         path = target_dir / (name[:160] + '.' + fmt)
         publish_artifact_content(path, content)
         _TRACE_LOG.info(

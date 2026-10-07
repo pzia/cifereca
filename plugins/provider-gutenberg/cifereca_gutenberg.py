@@ -22,7 +22,7 @@ from cifereca.plugin_api import (
     ProviderDescriptor,
     ProviderError,
     ProviderPlugin,
-    ProviderSession, normalize_language_tag,
+    ProviderSession, normalize_language_tag, sanitize_filename_component,
     SearchResult,
 )
 
@@ -57,8 +57,6 @@ def _safe_url(value: str) -> str:
     except Exception:
         return "<invalid-url>"
 
-
-_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
 
 
 DESCRIPTOR = ProviderDescriptor(
@@ -123,7 +121,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.11"
+        user_agent = "cifereca-gutenberg/1.2.12"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
@@ -197,7 +195,7 @@ class GutenbergSession(ProviderSession):
 
     @staticmethod
     def _safe_name(value: str, fallback: str = "gutenberg") -> str:
-        return _SAFE_FILENAME.sub("_", value or fallback).strip(" ._") or fallback
+        return sanitize_filename_component(value, fallback)
 
     def _parse_feed(self, content: bytes, base_url: str) -> list[SearchResult]:
         started = time.perf_counter()
