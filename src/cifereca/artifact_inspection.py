@@ -78,7 +78,44 @@ def detect_artifact_format(path: Path) -> str | None:
     return None
 
 
-def inspect_artifact(path: Path, expected_format: str | None = None) -> ArtifactInspection:
+def _validate_epub_package(path: Path) -> str | None:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+            try:
+                mime = archive.read("mimetype").strip()
+            except KeyError:
+                return "epub_mimetype_missing"
+            if mime != b"application/epub+zip":
+                return "epub_mimetype_invalid"
+            try:
+                container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
+            except KeyError:
+                return "epub_container_missing"
+            except ElementTree.ParseError:
+                return "epub_container_invalid"
+            roots = [
+                node.attrib.get("full-path")
+                for node in container.iter()
+                if _local_name(node.tag) == "rootfile"
+            ]
+            if not roots:
+                return "epub_rootfile_missing"
+            if not all(root and root in names for root in roots):
+                return "epub_package_missing"
+            if archive.testzip() is not None:
+                return "epub_crc_invalid"
+    except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError):
+        return "invalid_epub"
+    return None
+
+
+def inspect_artifact(
+    path: Path,
+    expected_format: str | None = None,
+    *,
+    strict_structure: bool = False,
+) -> ArtifactInspection:
     """Validate a final artifact and detect obvious remaining protection.
 
     This is deliberately conservative. It does not implement DRM removal; it
@@ -93,6 +130,10 @@ def inspect_artifact(path: Path, expected_format: str | None = None) -> Artifact
 
     protected: bool | None = None
     if actual == "epub":
+        if strict_structure:
+            invalid_reason = _validate_epub_package(path)
+            if invalid_reason:
+                return ArtifactInspection(actual, False, None, invalid_reason)
         protected = False
         try:
             with zipfile.ZipFile(path) as archive:
