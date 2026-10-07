@@ -355,7 +355,21 @@ def cmd_capture(args: argparse.Namespace) -> int:
                 device.key(key, True); device.key(key, False); report["actions"].append({"type":"key","keysym":key}); time.sleep(0.1)
             if process.poll() is not None:
                 raise RuntimeError(f"Application fermée avant capture (code {process.returncode})")
-            image = ImageGrab.grab(xdisplay=env["DISPLAY"])
+            previous_display = os.environ.get("DISPLAY")
+            previous_xauthority = os.environ.get("XAUTHORITY")
+            os.environ["DISPLAY"] = env["DISPLAY"]
+            os.environ["XAUTHORITY"] = env["XAUTHORITY"]
+            try:
+                image = ImageGrab.grab(xdisplay=env["DISPLAY"])
+            finally:
+                if previous_display is None:
+                    os.environ.pop("DISPLAY", None)
+                else:
+                    os.environ["DISPLAY"] = previous_display
+                if previous_xauthority is None:
+                    os.environ.pop("XAUTHORITY", None)
+                else:
+                    os.environ["XAUTHORITY"] = previous_xauthority
             image.save(output, format="PNG")
             with Image.open(output) as loaded:
                 loaded.load(); colors = loaded.convert("RGB").getcolors(maxcolors=2)
