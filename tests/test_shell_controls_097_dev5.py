@@ -43,7 +43,7 @@ class ShellControls(unittest.TestCase):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
         cls.path=source
         tree=ast.parse(source.read_text());main=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MainWindow')
-        names={'_create_shell_header','_refresh_header_actions','_invoke_ui_action','_install_shell_shortcuts','_quit_application','_open_pages_menu','_cycle_page'}
+        names={'_create_shell_header','_ensure_pages_menu_rightmost','_refresh_header_actions','_invoke_ui_action','_install_shell_shortcuts','_quit_application','_open_pages_menu','_cycle_page'}
         methods=[n for n in main.body if isinstance(n,ast.FunctionDef) and n.name in names]
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         gtk=NS(Button=Widget,HeaderBar=Widget,Label=Widget,Box=Widget,DropDown=Widget,MenuButton=Widget,PopoverMenu=Widget,SignalListItemFactory=Widget,Orientation=NS(VERTICAL=0,HORIZONTAL=1))
