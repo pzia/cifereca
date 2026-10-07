@@ -136,3 +136,70 @@ def test_expected_format_validates_before_publish(server, tmp_path):
         assert not destination.exists()
     finally:
         transport.close()
+
+
+def test_core_orchestration_requires_normalized_protection_proof(server, tmp_path):
+    transport = HttpTransport(Context())
+    try:
+        core_source = {
+            "url": server + "/book.epub",
+            "handling": "http_plain",
+            "drm": "none",
+        }
+        with pytest.raises(UnsupportedOperation, match="preuve de protection Core requise"):
+            transport.fetch(core_source, tmp_path / "missing-proof.epub")
+
+        bad = {
+            **core_source,
+            "protection": {
+                "handling": "acsm_adept",
+                "drm": "none",
+                "protected": False,
+                "attested": True,
+            },
+        }
+        with pytest.raises(UnsupportedOperation, match="handling Core non http_plain"):
+            transport.fetch(bad, tmp_path / "bad-proof.epub")
+
+        contradictory = {
+            **core_source,
+            "drm": "adobe",
+            "protection": {
+                "handling": "http_plain",
+                "drm": "none",
+                "protected": False,
+                "attested": True,
+            },
+        }
+        with pytest.raises(UnsupportedOperation, match="preuve DRM Core incohérente"):
+            transport.fetch(contradictory, tmp_path / "contradictory.epub")
+
+        good = {
+            **core_source,
+            "protection": {
+                "handling": "http_plain",
+                "drm": "none",
+                "protected": False,
+                "attested": True,
+            },
+        }
+        destination = tmp_path / "core-proof.epub"
+        assert transport.fetch(good, destination) == destination
+        assert destination.read_bytes() == PAYLOAD
+    finally:
+        transport.close()
+
+
+def test_direct_provider_call_without_core_policy_remains_supported(server, tmp_path):
+    transport = HttpTransport(Context())
+    try:
+        destination = tmp_path / "direct.epub"
+        assert transport.fetch(
+            {
+                "url": server + "/book.epub",
+                "allowed_content_types": ["application/epub+zip"],
+            },
+            destination,
+        ) == destination
+    finally:
+        transport.close()
