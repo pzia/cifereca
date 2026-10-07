@@ -6,7 +6,10 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import gi\ngi.require_version("Gtk", "4.0")\nfrom gi.repository import GLib, Gtk
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk
 
 from cifereca.plugin_api import ArtifactFormat, ArtifactRef
 from cifereca_epub_optimizer.ui import OptimizerPage
@@ -52,7 +55,6 @@ class Execution:
         control.report(current=90, total=100, message="Validation")
         time.sleep(0.45)
         fmt = request.source.format
-        suffix = fmt.format
         return ArtifactRef(
             "sha256:" + "1" * 64,
             "book-1",
@@ -60,13 +62,14 @@ class Execution:
             99,
             "1" * 64,
             variant_kind="optimized",
-            filename=f"Livre [X3].{suffix}",
+            filename=f"Livre [X3].{fmt.format}",
         )
 
 
 class Host:
     def __init__(self):
         self.toasts = []
+
     def toast(self, message):
         self.toasts.append(str(message))
 
@@ -74,6 +77,7 @@ class Host:
 class ActionHost:
     def __init__(self):
         self.refreshes = 0
+
     def refresh_context(self):
         self.refreshes += 1
 
@@ -98,12 +102,15 @@ class Context:
             plugin_id="device.profile.xteink-x3",
             plugin_version="0.3.0",
         )
+
     def services(self, category, **kwargs):
         assert category == "device.profile"
         return (self._row,)
+
     def subscribe_services(self, category, callback):
         assert category == "device.profile"
         return lambda: None
+
     def broker(self, name):
         assert name == "artifact.execution"
         return self._execution
@@ -112,7 +119,7 @@ class Context:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--format", choices=("epub", "pdf"), required=True)
-    parser.add_argument("--report", type=Path, required=True)\n    parser.add_argument("--markers-dir", type=Path, required=True)
+    parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--state-prefix", type=Path, required=True)
     args = parser.parse_args()
 
@@ -131,7 +138,7 @@ def main():
     execution = Execution(args.state_prefix)
     host = Host()
     action_host = ActionHost()
-    state = {"heartbeats": 0, "started": False, "controller": None, "progress_marked": False, "final_marked": False}
+    state = {"heartbeats": 0, "started": False, "controller": None}
 
     def activate(application):
         controller = OptimizerPage(
@@ -141,6 +148,7 @@ def main():
             action_host=action_host,
         )
         state["controller"] = controller
+
         window = Gtk.ApplicationWindow(application=application)
         window.set_title(f"Cifereca optimizer E2E — {fmt.upper()}")
         window.set_default_size(1000, 700)
@@ -149,13 +157,6 @@ def main():
 
         def heartbeat():
             state["heartbeats"] += 1
-            ctl = state["controller"]
-            if ctl is not None and not state["progress_marked"] and ctl.progress.get_fraction() >= 0.5:
-                (args.markers_dir / f"{fmt}-progress.ready").touch()
-                state["progress_marked"] = True
-            if ctl is not None and not state["final_marked"] and "Variante intégrée" in ctl.status.get_text():
-                (args.markers_dir / f"{fmt}-final.ready").touch()
-                state["final_marked"] = True
             return True
 
         def start():
@@ -188,18 +189,21 @@ def main():
                 "profile_help": ctl.profile_help.get_text(),
             }
             args.report.parent.mkdir(parents=True, exist_ok=True)
-            args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            args.report.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
             assert state["heartbeats"] >= 25, report
             assert execution.calls and execution.calls[0][0] == expected_capability, report
             assert execution.calls[0][1] == expected_transformer, report
-            assert ctl.progress.get_fraction() == 1.0, report\n            assert ctl.progress.get_text().startswith("100%"), report\n            assert state["progress_marked"] and state["final_marked"], report
+            assert ctl.progress.get_fraction() == 1.0, report
+            assert ctl.progress.get_text().startswith("100%"), report
             assert "Variante disponible" in ctl.status.get_text(), report
             assert action_host.refreshes == 1, report
             assert not ctl.source_entry.get_sensitive(), report
             assert not ctl.output_entry.get_sensitive(), report
-            marker = Path(str(args.state_prefix) + "-final.ready")
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text("ready\n", encoding="utf-8")
+
+            execution._mark("final")
 
             def quit_later():
                 application.quit()
@@ -210,7 +214,7 @@ def main():
 
         GLib.timeout_add(50, heartbeat)
         GLib.timeout_add(500, start)
-        GLib.timeout_add(5500, finish)
+        GLib.timeout_add(3000, finish)
 
     app.connect("activate", activate)
     raise SystemExit(app.run([]))
