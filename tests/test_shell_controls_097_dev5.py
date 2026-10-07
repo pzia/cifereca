@@ -75,6 +75,7 @@ class ShellControls(unittest.TestCase):
     def host(self):
         host=NS(plugin_manager=None,_account_changed=lambda *args:None,_identity_changed=lambda *args:None)
         host._UiHost=lambda window:window
+        host._ensure_pages_menu_rightmost=lambda:self.call('_ensure_pages_menu_rightmost',host)
         return host
     def test_menu_is_native_and_rightmost_application_control(self):
         host=self.host();header=self.call('_create_shell_header',host)
