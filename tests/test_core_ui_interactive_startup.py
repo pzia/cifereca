@@ -37,3 +37,10 @@ def test_application_records_window_presented_timing():
     source = APP.read_text()
     assert "TRACE gui window-presented duration_ms=%.1f" in source
     assert 'self.window.ui_perf.record("startup.window_presented", presented_ms)' in source
+
+def test_dashboard_exposes_local_background_connection_state():
+    build = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_build_dashboard_page"))
+    connect = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "connect_configured_sources"))
+    assert "Connexion aux sources en arrière-plan…" in build
+    assert "dashboard_loading_status" in connect
+    assert "La navigation locale reste disponible." in connect
