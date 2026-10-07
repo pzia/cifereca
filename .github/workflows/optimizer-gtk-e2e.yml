@@ -13,6 +13,11 @@ jobs:
   gtk-e2e:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      XDG_DATA_HOME: /tmp/cifereca-gtk-e2e/data
+      XDG_CONFIG_HOME: /tmp/cifereca-gtk-e2e/config
+      XDG_CACHE_HOME: /tmp/cifereca-gtk-e2e/cache
+      XDG_STATE_HOME: /tmp/cifereca-gtk-e2e/state
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +37,7 @@ jobs:
         run: |
           mkdir -p evidence
           xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
-            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format epub --report evidence/epub-report.json &
+            .venv/bin/python plugins/epub_optimizer/tests/gtk_e2e_capture.py --format epub --report evidence/epub-report.json &
             pid=$!
             sleep 1.4
             scrot evidence/epub-progress.png
@@ -46,7 +51,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/plugins/epub_optimizer
         run: |
           xvfb-run -a -s "-screen 0 1200x850x24" bash -c '
-            python3 plugins/epub_optimizer/tests/gtk_e2e_capture.py --format pdf --report evidence/pdf-report.json &
+            .venv/bin/python plugins/epub_optimizer/tests/gtk_e2e_capture.py --format pdf --report evidence/pdf-report.json &
             pid=$!
             sleep 1.4
             scrot evidence/pdf-progress.png
