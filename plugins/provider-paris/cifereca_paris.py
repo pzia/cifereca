@@ -1,5 +1,5 @@
 from __future__ import annotations
-from cifereca_paris_download import validate_document, atomic_write
+from cifereca_paris_download import atomic_write
 from cifereca_paris_formats import explicit_formats
 
 import logging
@@ -19,6 +19,8 @@ from cifereca.plugin_api import (
     ProviderDescriptor,
     ProviderPlugin,
     ProviderSession,
+    ProviderError,
+    inspect_artifact_content,
 )
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -357,7 +359,14 @@ class ParisProviderSession(ProviderSession):
         content = response.content
         content_type = response.headers.get("content-type", "")
         fmt = 'pdf' if content.startswith(b'%PDF-') else ('epub' if content.startswith(b'PK') else 'acsm')
-        validate_document(content, fmt)
+        inspected = inspect_artifact_content(content, fmt, strict_structure=True)
+        if not inspected.valid:
+            labels = {
+                "pdf": "PDF invalide ou tronqué",
+                "epub": "EPUB invalide ou tronqué",
+                "acsm": "ACSM invalide ou réponse HTML",
+            }
+            raise ProviderError(labels.get(fmt, "Format numérique non pris en charge"))
         _TRACE_LOG.info("TRACE download paris document-validated loan_id=%s kind=%s bytes=%s", loan.id, fmt, len(content))
         name = _SAFE_FILENAME.sub("_", str(loan.title)).strip(" ._") or "download"
         path = target_dir / (name[:160] + '.' + fmt)
