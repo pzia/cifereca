@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import httpx
+import pytest
+
+from cifereca.plugin_api import ProviderError
+from cifereca_kobo import DESCRIPTOR, KoboSession
+from cifereca_kobo_catalog import KoboCatalogService
+from cifereca_kobo_vault import KoboVaultClient
+
+
+class Diagnostics:
+    def add(self, *_args, **_kwargs):
+        return None
+
+
+def test_vault_public_status_and_authenticated_library_contract():
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/api/v2/status":
+            assert request.headers.get("authorization") is None
+            return httpx.Response(200, json={
+                "ok": True,
+                "api_version": "2.3",
+                "capabilities": ["catalog_search", "library_search", "library", "acquisition"],
+                "capability_details": [],
+                "acquisition_access": "configured",
+            })
+
+        assert request.headers.get("authorization") == "Bearer secret"
+        if request.url.path == "/api/v2/catalog/search":
+            assert request.url.params["field"] == "title"
+            return httpx.Response(200, json={"items": [
+                {"product_id": "p1", "title": "Germinal", "owned": True},
+                {"product_id": "p2", "title": "Nana", "owned": False},
+            ]})
+        if request.url.path == "/api/v2/library/search":
+            return httpx.Response(200, json={"items": [
+                {"product_id": "p1", "revision_id": "r1", "title": "Germinal", "owned": True},
+            ], "next_cursor": None})
+        if request.url.path == "/api/v2/library/manifest":
+            return httpx.Response(200, json={"items": [
+                {"product_id": "p1", "revision_id": "r1", "title": "Germinal", "owned": True},
+            ], "next_cursor": None})
+        return httpx.Response(404, json={"error": {"code": "not_found", "message": "missing"}})
+
+    client = KoboVaultClient("https://vault.example.test", "secret", transport=httpx.MockTransport(handler))
+    try:
+        assert client.status()["api_version"] == "2.3"
+        items = client.search("Germinal", field="title")["items"]
+        assert [item["product_id"] for item in items] == ["p1", "p2"]
+        assert items[0]["revision_id"] == "r1"
+        assert client.library_manifest()[0]["revision_id"] == "r1"
+        assert not any("jobs" in path or "/agent/" in path for path in paths)
+    finally:
+        client.close()
+
+
+def test_vault_acquisition_sends_current_optional_contract_fields():
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v2/library/p1/acquisition"
+        assert request.headers.get("authorization") == "Bearer secret"
+        seen.update(json.loads(request.content))
+        return httpx.Response(200, json={"acquisition": {"candidates": []}})
+
+    client = KoboVaultClient("https://vault.example.test", "secret", transport=httpx.MockTransport(handler))
+    try:
+        client.acquisition(
+            "p1",
+            revision_id="r1",
+            mode="descriptor",
+            display_profile="Desktop",
+            include_acsm=True,
+        )
+        assert seen == {
+            "mode": "descriptor",
+            "revision_id": "r1",
+            "display_profile": "Desktop",
+            "include_acsm": True,
+        }
+        with pytest.raises(ProviderError, match="DisplayProfile invalide"):
+            client.acquisition("p1", display_profile="Unsupported")
+    finally:
+        client.close()
+
+
+def test_kobo_provider_requires_vault_api_23_or_newer():
+    class FakeVault:
+        def __init__(self, api_version: str):
+            self.api_version = api_version
+
+        def status(self, authenticated=False):
+            assert authenticated is False
+            return {
+                "ok": True,
+                "api_version": self.api_version,
+                "capabilities": [],
+                "capability_details": [],
+                "acquisition_access": "configured",
+            }
+
+        def account(self):
+            return {"id": "acct", "display_name": "Kobo"}
+
+        def close(self):
+            return None
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="vault-1",
+        label="Kobo",
+        credentials={"api_token": "x"},
+        options={"base_url": "https://vault.example"},
+        config={},
+        storage={},
+        diagnostics=Diagnostics(),
+    )
+    session.client.close()
+    try:
+        session.client = FakeVault("2.2")
+        with pytest.raises(ProviderError, match=r"v2\.3\+ requise"):
+            session.connect()
+
+        session.client = FakeVault("2.3")
+        accounts = session.connect()
+        assert accounts[0].unique_id == "acct"
+        assert session.supports_acquisition_display_profile is True
+        assert session.supports_acquisition_acsm is True
+    finally:
+        session.close()
+
+
+def test_kobo_cover_url_normalizes_relative_and_nested_shapes():
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="https://vault.example/base"),
+        credential_id="vault",
+    )
+
+    assert catalog.cover_url({"cover_url": "/covers/book.jpg"}) == "https://vault.example/covers/book.jpg"
+    assert catalog.cover_url({"images": {"medium": {"url": "https://cdn.example/book.jpg"}}}) == "https://cdn.example/book.jpg"
+
+    item = catalog.normalize_item({
+        "product_id": "b1",
+        "title": "Book",
+        "images": [{"thumbnail": "/covers/thumb.jpg"}],
+    })
+    assert item.thumbnail_url == "https://vault.example/covers/thumb.jpg"
