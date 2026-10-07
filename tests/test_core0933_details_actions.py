@@ -96,6 +96,9 @@ class _Row:
     def disconnect(self, identifier):
         del self.handlers[identifier]
 
+    def add_suffix(self, widget):
+        self.suffix = widget
+
     def get_first_child(self):
         return None
 
