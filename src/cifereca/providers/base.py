@@ -3,7 +3,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cifereca.plugin_api.models import AcquisitionOffer, AcquisitionOfferSet
 
 from ..models import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult
 
@@ -144,6 +147,14 @@ class ProviderSession(ABC):
     def download_direct(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
         """Acquire a non-loan digital resource (e.g. future Gallica plugin)."""
         raise ProviderCapabilityError(f"{self.provider_id}: direct download unsupported")
+
+    def acquisition_offers(self, item: SearchResult) -> "AcquisitionOfferSet | list[AcquisitionOffer]":
+        """Return explicit acquisition choices.
+
+        Legacy providers may return a list. New providers can return the richer
+        AcquisitionOfferSet with explicit format/offer preferences.
+        """
+        return []
 
     def renew(self, loan: Loan, account: Account) -> dict[str, Any]:
         raise ProviderCapabilityError(f"{self.provider_id}: renew unsupported")
