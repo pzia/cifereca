@@ -768,6 +768,45 @@ class PluginPackagingTests(unittest.TestCase):
             ):
                 build_plugin_zip(plugin, root / "dist")
 
+    def test_packaging_refuses_noncanonical_plugin_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["capabilities"] = ["Catalog.Read"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"capabilities\[0\].*non canonique"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_noncanonical_contract_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires_contracts"] = [
+                {
+                    "category": "provider.library",
+                    "contract": "cifereca.provider",
+                    "capabilities": ["catalog"],
+                }
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError,
+                r"requires_contracts\[0\]\.capabilities\[0\].*non canonique",
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
     def test_packaging_refuses_invalid_package_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
