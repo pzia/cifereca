@@ -227,6 +227,7 @@ def test_expired_tokenless_and_disabled_return_capability_bind_informatively(tmp
 
     for index, (name, state, capability) in enumerate(cases):
         case_dir = tmp_path / name
+        case_dir.mkdir(parents=True, exist_ok=True)
         service = _service(case_dir)
         path = _artifact(case_dir, f"{name}.epub")
         acquisition_id = _acquisition(service, path, acquisition_id=f"acq-{index}")
