@@ -10,7 +10,7 @@ Utiliser ce skill lorsqu'une tâche ajoute des tests, corrige une régression, m
 ## Choisir l'emplacement par responsabilité
 
 - `tests/` : Core et scénarios transverses.
-- `plugins/<plugin>/tests/` : comportement propre au plugin.
+- `src/plugins/<plugin>/tests/` : comportement propre au plugin.
 - `simulation/tests/` : qualité du banc de simulation lui-même.
 - `environnements/<env>/` : self-tests de l'environnement technique.
 
@@ -43,7 +43,7 @@ python -m pytest -q
 Plugins :
 
 ```bash
-for p in plugins/*; do
+for p in src/plugins/*; do
   if [ -f "$p/cifereca-plugin.json" ] && [ -d "$p/tests" ]; then
     (cd "$p" && python -m pytest -q) || exit 1
   fi

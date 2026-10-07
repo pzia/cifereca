@@ -31,7 +31,7 @@ python -m pytest -q
 Pour les plugins modifiés :
 
 ```bash
-(cd plugins/<plugin> && python -m pytest -q)
+(cd src/plugins/<plugin> && python -m pytest -q)
 ```
 
 Pour le packaging :
@@ -48,7 +48,7 @@ Ajouter les suites d'intégration, simulation ou GUI lorsque la modification les
 Plugin individuel :
 
 ```bash
-python scripts/package-plugin.py plugins/<plugin>
+python scripts/package-plugin.py src/plugins/<plugin>
 ```
 
 Bundle :

@@ -7,8 +7,8 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 
-ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_ROOT = ROOT / "plugins" / "provider-kobo"
+ROOT = Path(__file__).resolve().parents[4]
+PLUGIN_ROOT = ROOT / "src" / "plugins" / "provider-kobo"
 DATASET_PATH = ROOT / "simulation" / "kobo" / "pseudo_kobo_services.py"
 
 if str(PLUGIN_ROOT) not in sys.path:

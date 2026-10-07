@@ -7,8 +7,8 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 
-ROOT = Path(__file__).resolve().parents[3]
-PLUGIN_ROOT = ROOT / "plugins" / "provider-gutenberg"
+ROOT = Path(__file__).resolve().parents[4]
+PLUGIN_ROOT = ROOT / "src" / "plugins" / "provider-gutenberg"
 DATASET_PATH = ROOT / "simulation" / "opds" / "pseudo_opds_server.py"
 
 if str(PLUGIN_ROOT) not in sys.path:

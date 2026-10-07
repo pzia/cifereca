@@ -14,7 +14,7 @@ from typing import Iterable, Sequence
 import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGINS_DIR = REPO_ROOT / "plugins"
+PLUGINS_DIR = REPO_ROOT / "src" / "plugins"
 DIST_DIR = REPO_ROOT / "dist"
 PLUGIN_MANIFEST = "cifereca-plugin.json"
 DEV_MANIFEST = "cifereca-dev.json"

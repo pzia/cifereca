@@ -7,9 +7,9 @@ Ces règles s'appliquent à tout le dépôt.
 ### État actuel
 
 - Le Core applicatif vit sous `src/cifereca/`.
-- Les plugins fonctionnels vivent sous `plugins/<plugin>/` et leurs tests spécifiques restent avec eux.
+- Les plugins fonctionnels vivent sous `src/plugins/<plugin>/` et leurs tests spécifiques restent avec eux.
 - `src/cifereca/plugins/` est le framework de plugins (loader, manager, manifeste, dépendances, état), pas l'emplacement des plugins fonctionnels.
-- `src/cifereca/builtin_ui/` et l'orchestration résiduelle `src/cifereca/kobo/` restent à rationaliser. Le client Kobo-Vault appartient à `plugins/provider-kobo/`, et Paris à `plugins/provider-paris/`.
+- `src/cifereca/builtin_ui/` et l'orchestration résiduelle `src/cifereca/kobo/` restent à rationaliser. Le client Kobo-Vault appartient à `src/plugins/provider-kobo/`, et Paris à `src/plugins/provider-paris/`.
 - `bundled_plugins/` et `integrations/` ne sont plus des sources actives.
 - Le code de production d'un plugin ne doit dépendre que de l'API publique `cifereca.plugin_api`, pas des modules privés du Core.
 
@@ -20,15 +20,13 @@ Voir `docs/ARCHITECTURE.md` et `docs/PLUGIN-BOUNDARIES.md`.
 La cible structurelle distingue explicitement :
 
 - `src/cifereca/` : Core, API publique, framework de plugins, GUI et primitives transversales ;
-- `src/plugins/` : cible future des plugins fonctionnels lorsque leur déplacement physique sera traité dans un lot distinct.
-
-Ce dépôt n'a pas encore effectué ce déplacement : ne pas présenter `src/plugins/` comme l'état courant.
+- `src/plugins/` : source canonique des plugins fonctionnels.
 
 ## Tests
 
 Classer un test selon ce qu'il affirme, pas selon les dépendances qu'il utilise.
 
-- Assertion propre à un plugin : `plugins/<plugin>/tests/`.
+- Assertion propre à un plugin : `src/plugins/<plugin>/tests/`.
 - Assertion Core, contrat transversal ou orchestration générique : `tests/`.
 - Scénario traversant plusieurs plugins/Core/IHM : test fonctionnel ou E2E central.
 - Validation d'un faux service ou de son orchestrateur : `simulation/tests/` tant que la migration vers `simulation/` n'est pas réalisée.
