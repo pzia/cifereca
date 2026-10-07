@@ -96,6 +96,11 @@ class AcquisitionManager:
         probe = " ".join([str(item.type or ""), str(item.format or "")]).casefold()
         if any(token in probe for token in ("audio", "sonore", "mp3", "m4a", "ogg", "opus", "flac")):
             return "audiobook"
+        fmt = str(item.format or "").strip().casefold()
+        if fmt in {"epub", "kepub", "pdf", "application/epub+zip", "application/pdf"}:
+            return "ebook"
+        if item.medium == "unknown":
+            return "unknown"
         return "ebook"
 
     @staticmethod

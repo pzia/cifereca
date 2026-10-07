@@ -3005,6 +3005,8 @@ class MainWindow(Adw.ApplicationWindow):
             content_type = self.service.content_type_for(item)
             if item.medium == "physical":
                 medium = "Physique"
+            elif item.medium == "unknown" and not file_format(item.format):
+                medium = "Support indéterminé"
             elif content_type == "audiobook":
                 medium = "Livre audio"
             else:

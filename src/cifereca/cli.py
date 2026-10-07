@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("history")
     s = sub.add_parser("search")
     s.add_argument("query")
-    s.add_argument("--scope", choices=["all", "physical", "digital"], default="all")
+    s.add_argument("--scope", choices=["all", "physical", "digital", "unknown"], default="all")
     s.add_argument("--provider", default="all", help="Provider id (paris, gallica, kobo, ...)")
     s.add_argument("--field", choices=["all", "title", "author", "isbn", "subject"], default="all")
     ks_sync = sub.add_parser("kobo-sync", help="Synchronise localement les ebooks Kobo possédés")

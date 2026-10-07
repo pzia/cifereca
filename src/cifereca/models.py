@@ -6,7 +6,7 @@ from typing import Any, Literal
 # (e.g. SYRACUSE/DILICOM). `source_provider` identifies the application
 # provider plugin (e.g. paris, gallica, kobo).
 Provider = str
-Medium = Literal["digital", "physical"]
+Medium = Literal["digital", "physical", "unknown"]
 
 @dataclass
 class Account:

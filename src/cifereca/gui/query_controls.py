@@ -95,7 +95,7 @@ class QueryControls(Gtk.Box):
         self.field = insert_filter(Gtk.DropDown.new_from_strings(['Fond / forme · Tous','Fond · Titre','Fond · Auteur','Forme · ISBN','Fond · Sujet','Fond · Série','Fond · Collection','Fond · Langue']))
         self.field.set_tooltip_text("Fond : titre, auteur, sujet, série, collection. Forme : ISBN, source, format.")
         self.field.connect('notify::selected', lambda *_: self._changed())
-        self.scope = insert_filter(Gtk.DropDown.new_from_strings(['Tous','Physiques','Numériques']))
+        self.scope = insert_filter(Gtk.DropDown.new_from_strings(['Tous','Physiques','Numériques','Support indéterminé']))
         self.scope.set_selected(2)
         self.scope.connect('notify::selected', lambda *_: self._changed())
         self.capability_hint = Gtk.Label(xalign=0)
@@ -130,13 +130,13 @@ class QueryControls(Gtk.Box):
 
     def state(self):
         return QueryState(self.entry.get_text().strip(), FIELDS[self.field.get_selected()],
-                          ('all','physical','digital')[self.scope.get_selected()], self.provider.values(), self.types.values(), self.languages.values())
+                          ('all','physical','digital','unknown')[self.scope.get_selected()], self.provider.values(), self.types.values(), self.languages.values())
 
     def set_state(self, state):
         self._programmatic_update = True
         try:
             self.entry.set_text(state.text); self.field.set_selected(FIELDS.index(state.field))
-            self.scope.set_selected(('all','physical','digital').index(state.scope))
+            self.scope.set_selected(('all','physical','digital','unknown').index(state.scope))
             self.provider.set_values(state.providers); self.types.set_values(state.types); self.languages.set_values(getattr(state, 'languages', ()))
         finally:
             self._programmatic_update = False

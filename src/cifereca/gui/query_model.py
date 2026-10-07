@@ -58,6 +58,8 @@ def apply_facet(state, field, value):
         return replace(state, types=(fmt,)) if fmt else state
     if field == 'source':
         return replace(state, providers=(str(value),)) if value else state
+    if field == 'support' and str(value) in {'physical','digital','unknown'}:
+        return replace(state, scope=str(value))
     text = author_search_text(value) if field == 'author' else str(value)
     if field in {'series','collection','publisher'}:
         return replace(state,text=text,field='all') if text else state

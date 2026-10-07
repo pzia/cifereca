@@ -83,7 +83,7 @@ __all__ = [
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
     "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest",
-    "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "SearchResult",
+    "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "Medium", "SearchResult",
     "CredentialField", "ProviderCapabilities", "ProviderSearchCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",
     "ProviderPlugin", "ProviderSession",
@@ -91,7 +91,7 @@ __all__ = [
 
 # Provider compatibility contract v1.  These names are deliberately exported
 # through plugin_api so external provider packages never import core internals.
-from cifereca.models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
+from cifereca.models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, Medium, SearchResult
 from cifereca.providers.base import (
     CredentialField, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderConfigurationError,
     ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession,

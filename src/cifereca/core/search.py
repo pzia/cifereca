@@ -159,16 +159,38 @@ def project_acquisition_offer_formats(
     return projected
 
 
+def support_kind(row: Mapping[str, Any]) -> str:
+    """Return physical/digital only from explicit evidence; otherwise unknown."""
+    raw = str(row.get("medium") or "").strip().casefold()
+    if raw in {"physical", "digital"}:
+        return raw
+    meta = _metadata(row)
+    declared = str(meta.get("medium") or meta.get("support") or "").strip().casefold()
+    if declared in {"physical", "digital"}:
+        return declared
+    if row.get("local") or row.get("local_path") or file_format(row.get("media_format")) or file_format(row.get("format")):
+        return "digital"
+    explicit_type = str(row.get("content_type") or "").strip().casefold()
+    if explicit_type in {"ebook", "audiobook"}:
+        return "digital"
+    return "unknown"
+
+
 def _content_type(row: Mapping[str, Any]) -> str:
     explicit = str(row.get("content_type") or "").casefold()
-    if explicit in {"ebook", "audiobook"}:
+    if explicit in {"ebook", "audiobook", "physical", "unknown"}:
         return explicit
+    support = support_kind(row)
+    if support == "physical":
+        return "physical"
     media = str(row.get("media_format") or row.get("format") or "").casefold()
     kind = str(row.get("type") or "").casefold()
     audio_formats = {"mp3", "m4a", "ogg", "opus", "flac", "wav", "audiobook"}
     if media in audio_formats or "audio" in kind:
         return "audiobook"
-    return "ebook"
+    if file_format(media):
+        return "ebook"
+    return "unknown" if support == "unknown" else "ebook"
 
 
 def filter_loaded_results(
@@ -204,10 +226,8 @@ def filter_loaded_results(
             row_languages = set(_field_values(row, "language"))
             if not row_languages.intersection(language_set):
                 continue
-        medium = str(row.get("medium") or "digital").casefold()
-        if wanted_scope == "physical" and medium != "physical":
-            continue
-        if wanted_scope == "digital" and medium == "physical":
+        medium = support_kind(row)
+        if wanted_scope in {"physical", "digital", "unknown"} and medium != wanted_scope:
             continue
         if query and not _matches_query(row, query, field):
             continue
@@ -289,7 +309,7 @@ class KnownCatalogSearch:
                 "local": row.get("local_state") == "local",
                 "local_path": meta.get("path"),
                 "media_format": row.get("media_format"),
-                "medium": str(meta.get("medium") or "digital"),
+                "medium": str(meta.get("medium") or "unknown"),
                 "source": "known_catalog",
                 "thumbnail_url": meta.get("cover_url") or meta.get("thumbnail_url"),
                 "metadata": meta,
@@ -308,4 +328,4 @@ class KnownCatalogSearch:
         )
 
 
-__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "available_formats", "project_acquisition_offer_formats"]
+__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "available_formats", "project_acquisition_offer_formats", "support_kind"]

@@ -1362,6 +1362,7 @@ class LibraryService:
         return all(token in target for token in tokens)
 
     def search(self, query: str, scope: str = "all", force: bool = False, *, provider_id: str = "all", field: str = "all", content_types: tuple[str, ...] | list[str] | None = None) -> list[SearchResult]:
+        provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
         # Search is global: one connected session per provider is queried,
         # independently of the reader account currently selected in the GUI.
         searchable: list[ProviderSession] = []
@@ -1417,13 +1418,13 @@ class LibraryService:
                         kwargs = {"field": field}
                         if "content_types" in parameters:
                             kwargs["content_types"] = tuple(content_types or ())
-                        session_rows = session.search(variant, scope, **kwargs)
+                        session_rows = session.search(variant, provider_scope, **kwargs)
                     except TypeError as exc:
                         # 0.4 keeps source compatibility with small third-party
                         # provider prototypes that still implement the 0.3 signature.
                         if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                             raise
-                        session_rows = session.search(variant, scope)
+                        session_rows = session.search(variant, provider_scope)
                     for row in session_rows:
                         key = (row.source_provider, row.docbase, row.record_id)
                         if key not in provider_seen:
@@ -1458,6 +1459,9 @@ class LibraryService:
                         break
             if field in {"title", "author"}:
                 provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
+            if str(scope or "all").casefold() == "unknown":
+                from .core.search import support_kind
+                provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
             rows.extend(provider_rows)
 
         # Stable de-duplication across plugins; source provider remains visible.
@@ -1504,6 +1508,7 @@ class LibraryService:
         This is deliberately safe to run in parallel with *other* provider sessions;
         a given session is still called sequentially for its own query variants.
         """
+        provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
         provider_rows: list[SearchResult] = []
         provider_seen: set[tuple[str, str, str]] = set()
         warnings: list[str] = []
@@ -1523,11 +1528,11 @@ class LibraryService:
                     kwargs = {"field": field}
                     if "content_types" in parameters:
                         kwargs["content_types"] = tuple(content_types or ())
-                    session_rows = session.search(variant, scope, **kwargs)
+                    session_rows = session.search(variant, provider_scope, **kwargs)
                 except TypeError as exc:
                     if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                         raise
-                    session_rows = session.search(variant, scope)
+                    session_rows = session.search(variant, provider_scope)
                 for row in session_rows:
                     key = (row.source_provider, row.docbase, row.record_id)
                     if key not in provider_seen:
@@ -1557,6 +1562,9 @@ class LibraryService:
                     break
         if field in {"title", "author"}:
             provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
+        if str(scope or "all").casefold() == "unknown":
+            from .core.search import support_kind
+            provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
         return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
     def search_progressive(
