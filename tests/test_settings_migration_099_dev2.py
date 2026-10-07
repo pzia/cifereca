@@ -18,7 +18,7 @@ class SaveSettings(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.config=Config(Path(self.tmp.name)/'config.json')
         self.config.set('identities',[{'id':'stable-id','label':'Ma bibliothèque','directory_name':'ma-bibliotheque'}]);self.config.set('providers.accounts',[]);self.config.set('library.directory',str(Path(self.tmp.name)/'EBooks'))
         self.runner=NS(submit=Mock());self.service=NS(identities=[NS(identity_id='stable-id',directory_name='ma-bibliotheque')],save_configuration=Mock(return_value={'migrated':1,'collisions':0}))
-        self.window=NS(config=self.config,service=self.service,runner=self.runner,_active_tasks={},show_error=Mock(),diagnostics=NS(enabled=True,level='normal'),refresh_library=Mock(),refresh_recent=Mock(),_render_dashboard=Mock(),toast=Mock(),_configure_kobo_backup_timer=Mock(),reconnect_sources=Mock())
+        self.window=NS(config=self.config,service=self.service,runner=self.runner,_active_tasks={},show_error=Mock(),diagnostics=NS(enabled=True,level='normal'),refresh_library=Mock(),refresh_recent=Mock(),_render_dashboard=Mock(),toast=Mock(),_configure_kobo_backup_timer=Mock(),reconnect_sources=Mock(),identity_dropdown=object(),_populate_accounts=Mock())
         editor={'id':Value('stable-id'),'label':Value('Hugues'),'directory':Value('hugues'),'adept_profile':Value(),'languages':Value('fr'),'prefer_vo':Value(active=False)}
         path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py';tree=ast.parse(path.read_text())
         nested={n.name:n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name in {'save_settings','save_and_reconnect'}}
@@ -41,3 +41,22 @@ class SaveSettings(unittest.TestCase):
     def test_directory_change_is_rejected_while_another_task_runs(self):
         before=deepcopy(self.config.data);self.window._active_tasks={1:'download'}
         self.assertFalse(self.ns['save_settings']());self.runner.submit.assert_not_called();self.assertEqual(self.config.data,before)
+
+    def test_success_refreshes_identity_selector_delegations_and_dashboard(self):
+        before_identity=self.service.identities[0].identity_id
+        self.assertTrue(self.ns['save_settings']())
+        args=self.runner.submit.call_args.args
+        result=args[1]()
+        args[2](result)
+        self.window._populate_accounts.assert_called_once()
+        self.assertGreaterEqual(self.window._render_dashboard.call_count,1)
+        self.assertEqual(self.service.identities[0].identity_id,before_identity)
+    def test_failed_save_does_not_refresh_identity_selection(self):
+        self.service.save_configuration.side_effect=RuntimeError('save failed')
+        self.assertTrue(self.ns['save_settings']())
+        args=self.runner.submit.call_args.args
+        with self.assertRaises(RuntimeError):
+            args[1]()
+        self.window._populate_accounts.assert_not_called()
+        self.window._render_dashboard.assert_not_called()
+        self.assertEqual(self.service.identities[0].identity_id,'stable-id')
