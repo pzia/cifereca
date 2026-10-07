@@ -55,7 +55,7 @@ Ces fichiers historiques ne sont pas présents dans le tree courant à la date d
 ### Core / plugins
 
 - `src/cifereca/builtin_ui/` reste intégré au Core.
-- `src/cifereca/kobo/` reste présent.
+- `src/cifereca/kobo/` conserve seulement l'orchestration résiduelle Core ; le client HTTP Kobo-Vault appartient au plugin provider-kobo.
 - les plugins fonctionnels restent sous `plugins/` à la racine ;
 - la cible future `src/plugins/` n'est pas encore matérialisée.
 
