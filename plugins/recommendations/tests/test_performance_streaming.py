@@ -46,20 +46,24 @@ def test_progressive_results_and_control_are_forwarded():
     catalog = Catalog()
     control = RecommendationTaskControl()
     partials = []
+    progress = []
     result = compute_recommendations(
         Metadata(),
         catalog,
         "id-1",
         max_queries=2,
         partial=partials.append,
+        progress=lambda *args: progress.append(args),
         control=control,
     )
     assert result.ranked
+    assert any("Profil prêt" in event[2] and "2 livres" in event[2] for event in progress)
     assert partials
     assert all(item is control for item in catalog.controls)
     assert result.cache_batches == len(result.queries)
     assert result.network_batches == len(result.queries)
     assert partials[0].provider_done == 1
+    assert partials[0].providers == (("a", "Catalogue A"), ("b", "Catalogue B"))
 
 
 def test_cancelled_task_does_not_start_catalog_search():
