@@ -97,6 +97,15 @@ def test_detail_facets_do_not_append_duplicate_footer_tags_and_disconnect_previo
     assert any(isinstance(node.func, ast.Attribute) and node.func.attr == "disconnect" for node in calls)
 
 
+class _Image:
+    @classmethod
+    def new_from_icon_name(cls, _name):
+        return cls()
+
+    def set_tooltip_text(self, _text):
+        pass
+
+
 class _Row:
     def __init__(self, title="Provenance", subtitle="Bibliothèques de Paris"):
         self.title = title
@@ -137,7 +146,7 @@ def test_inline_source_uses_provider_id_and_rebinding_does_not_duplicate_handler
     detail = NS(content=row, _subtitle_label=None, add_actions=lambda buttons: None)
     controls = object()
     adw = NS(ActionRow=_Row)
-    fn = _method("MainWindow", "_add_facets", {"Adw": adw, "Gtk": NS(Button=object), "TaskPriority": NS(USER_ACTION=0)})
+    fn = _method("MainWindow", "_add_facets", {"Adw": adw, "Gtk": NS(Button=object, Image=_Image), "TaskPriority": NS(USER_ACTION=0)})
 
     fn(host, detail, {}, controls)
     fn(host, detail, {}, controls)
@@ -157,7 +166,7 @@ def test_epub_only_publisher_remains_searchable_from_inline_detail():
     )
     detail = NS(content=row, _subtitle_label=None, add_actions=lambda buttons: None)
     controls = object()
-    fn = _method("MainWindow", "_add_facets", {"Adw": NS(ActionRow=_Row), "Gtk": NS(Button=object), "TaskPriority": NS(USER_ACTION=0)})
+    fn = _method("MainWindow", "_add_facets", {"Adw": NS(ActionRow=_Row), "Gtk": NS(Button=object, Image=_Image), "TaskPriority": NS(USER_ACTION=0)})
 
     fn(host, detail, {}, controls)
 
