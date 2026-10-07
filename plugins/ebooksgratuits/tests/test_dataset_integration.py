@@ -9,12 +9,16 @@ from http.server import ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_ROOT = ROOT / "plugins" / "ebooksgratuits"
+TRANSPORT_ROOT = ROOT / "plugins" / "transport-http"
 DATASET_PATH = ROOT / "gen-dataset" / "ebooksgratuits" / "pseudo_ebooksgratuits_service.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
+if str(TRANSPORT_ROOT) not in sys.path:
+    sys.path.insert(0, str(TRANSPORT_ROOT))
 
 from cifereca_ebooksgratuits import EbooksSession
+from cifereca_http_transport import HttpTransport
 
 spec = importlib.util.spec_from_file_location("dataset_ebooksgratuits", DATASET_PATH)
 dataset = importlib.util.module_from_spec(spec)
@@ -26,6 +30,12 @@ spec.loader.exec_module(dataset)
 class Diagnostics:
     def add(self, *args, **kwargs):
         return None
+
+
+class TransportContext:
+    config = {"timeout_seconds": 5, "max_download_bytes": 16 * 1024 * 1024, "max_redirects": 4}
+    import logging
+    logger = logging.getLogger("test.ebooksgratuits.transport")
 
 
 class RunningServer:
@@ -52,6 +62,7 @@ def test_local_dataset_search_filters_and_download():
         first = cache.get(1)
         assert first is not None
         with RunningServer(dataset.EbooksGratuitsApp(cache)) as server:
+            transport = HttpTransport(TransportContext())
             session = EbooksSession(
                 credential_id="public",
                 label="",
@@ -59,6 +70,7 @@ def test_local_dataset_search_filters_and_download():
                 options={"base_url": server.base, "search_page_size": 20},
                 config={},
                 diagnostics=Diagnostics(),
+                transport=transport,
             )
             try:
                 session.connect()
@@ -77,3 +89,4 @@ def test_local_dataset_search_filters_and_download():
                 assert path.read_bytes().startswith(b"PK")
             finally:
                 session.close()
+                transport.close()
