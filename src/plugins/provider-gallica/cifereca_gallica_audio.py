@@ -6,7 +6,14 @@ from pathlib import Path
 import shutil
 import tempfile
 from urllib.parse import urlsplit
-from cifereca.plugin_api import ProviderError
+from cifereca.plugin_api import (
+    ProviderError,
+    BundleAcquisitionRecipe,
+    BundleTrack,
+    normalize_audio_format,
+    validate_audio_bundle_manifest,
+    write_bundle_manifest,
+)
 
 EXTENSIONS = {'audio/mpeg':'.mp3','audio/mp3':'.mp3','audio/mp4':'.m4a','audio/x-m4a':'.m4a',
               'audio/ogg':'.ogg','audio/opus':'.opus','audio/flac':'.flac','audio/wav':'.wav','audio/x-wav':'.wav'}
@@ -41,7 +48,7 @@ def identical_bundle(a,b):
     first={p.name for p in a.iterdir()};second={p.name for p in b.iterdir()}
     return first==second and all((b/name).is_file() and not (b/name).is_symlink() and (a/name).read_bytes()==(b/name).read_bytes() for name in first)
 
-def download_bundle(session,item,target_dir):
+def download_bundle(session,item,target_dir,*,recipe: BundleAcquisitionRecipe):
     ark=session._extract_ark(item.record_id,item.friendly_url,item.download_url)
     if not ark:raise ProviderError('Gallica : ARK absent pour le document sonore')
     tracks=session._audio_tracks(ark)
@@ -49,7 +56,7 @@ def download_bundle(session,item,target_dir):
     target_dir=Path(target_dir);target_dir.mkdir(parents=True,exist_ok=True)
     name=session._safe_name(item.title)[:120]+'_'+session._safe_name(ark.split('/')[-1],'audio')[:24]
     staged=Path(tempfile.mkdtemp(prefix='.gallica-audio-',dir=target_dir))
-    total=0;names=[];formats=[]
+    total=0;names=[];formats=[];resolved_tracks=[];member_metadata={}
     try:
         for index,(title,url) in enumerate(tracks,1):
             if urlsplit(url).scheme not in {'http','https'}:raise ProviderError('Gallica : lien audio invalide')
@@ -68,10 +75,40 @@ def download_bundle(session,item,target_dir):
             ext=validated_extension(bytes(prefix),mime)
             filename=f'{index:02d} - {session._safe_name(title,"Plage")[:100]}{ext}'
             raw.replace(staged/filename)
-            names.append(filename);formats.append(ext[1:].upper())
+            normalized_format=ext[1:].casefold()
+            names.append(filename);formats.append(normalized_format.upper())
+            member_metadata[filename]={"format":normalized_format,"title":title}
+            declared_format=normalize_audio_format(mime)
+            resolved_tracks.append(BundleTrack(
+                url=url,
+                title=title,
+                format=normalized_format,
+                mime_type=mime if declared_format == normalized_format else "",
+                size_bytes=size,
+                evidence={"source":"gallica-oai","declared_mime":mime},
+            ))
         playlist='00 - playlist.m3u8'
         with (staged/playlist).open('w',encoding='utf-8') as handle:
             handle.write('#EXTM3U\n'+'\n'.join(names)+'\n');handle.flush();os.fsync(handle.fileno())
+        resolved_recipe=BundleAcquisitionRecipe(
+            recipe_id=recipe.recipe_id,
+            resolver_url=recipe.resolver_url,
+            tracks=tuple(resolved_tracks),
+            media_type=recipe.media_type,
+            bundle_format=recipe.bundle_format,
+            playlist=playlist,
+            metadata=recipe.metadata,
+        ).validate()
+        manifest=write_bundle_manifest(
+            staged,
+            media_format="audiobook",
+            title=str(item.title or ""),
+            author=str(item.author or ""),
+            playlist=playlist,
+            member_metadata=member_metadata,
+            metadata={"provider_id":"gallica","recipe_id":recipe.recipe_id},
+        )
+        validate_audio_bundle_manifest(manifest,recipe=resolved_recipe)
         folder=target_dir/name
         for serial in range(1000):
             candidate=folder if serial==0 else folder.with_name(folder.name+f'_{serial}')
