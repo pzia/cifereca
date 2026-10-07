@@ -4,10 +4,7 @@ from cifereca_gallica_description import description_text, description_element
 import html
 from cifereca_gallica_audio import download_bundle
 from concurrent.futures import ThreadPoolExecutor
-import io
 import re
-import tempfile
-import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urljoin, urlsplit, urlunsplit
@@ -584,28 +581,6 @@ class GallicaSession(ProviderSession):
             level="detailed",
         )
         return path, url
-
-    @staticmethod
-    def _validate_epub(content: bytes) -> None:
-        try:
-            with zipfile.ZipFile(io.BytesIO(content)) as archive:
-                infos = archive.infolist()
-                if len(infos) > 10000 or sum(n.file_size for n in infos) > 256 * 1024 * 1024:
-                    raise ValueError("archive excessive")
-                if archive.read("mimetype") != b"application/epub+zip":
-                    raise ValueError("mimetype")
-                container = ET.fromstring(archive.read("META-INF/container.xml"))
-                roots = container.findall(".//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile")
-                if not roots:
-                    raise ValueError("container")
-                for root in roots:
-                    package = ET.fromstring(archive.read(root.attrib["full-path"]))
-                    if package.tag != "{http://www.idpf.org/2007/opf}package":
-                        raise ValueError("package")
-                if archive.testzip() is not None:
-                    raise ValueError("CRC")
-        except (ValueError, KeyError, zipfile.BadZipFile, ET.ParseError, RuntimeError, OSError, NotImplementedError) as exc:
-            raise ProviderError("Gallica : EPUB invalide (archive, mimetype ou package)") from exc
 
     def _audio_tracks(self, ark: str) -> list[tuple[str, str]]:
         response = self.client.get(self.oai_url, params={"ark": ark})
