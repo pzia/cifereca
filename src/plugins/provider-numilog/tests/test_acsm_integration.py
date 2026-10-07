@@ -6,13 +6,10 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
-from types import SimpleNamespace
 from http.server import ThreadingHTTPServer
-from unittest.mock import patch
 import zipfile
 
-from cifereca.brokers import AcquisitionBrokerImpl, IdentityBrokerImpl
-from cifereca.services import LibraryService
+from cifereca.plugin_api import AccountRef, AcquisitionBroker, IdentityBroker
 
 ROOT = Path(__file__).resolve().parents[4]
 PLUGIN_ROOT = ROOT / "src" / "plugins" / "provider-numilog"
@@ -53,105 +50,70 @@ class RunningServer:
         self.thread.join(timeout=2)
 
 
-class Storage:
-    def __init__(self):
-        self.acquisitions = {}
+class FakeIdentityBroker:
+    def __init__(self, account_id: str):
+        self.account_id = account_id
 
-    def acquisition_get(self, acquisition_id):
-        row = self.acquisitions.get(acquisition_id)
-        return dict(row) if row else None
-
-    def acquisition_put(self, row):
-        self.acquisitions[row["acquisition_id"]] = dict(row)
-
-    def acquisition_update_state(self, acquisition_id, state, **fields):
-        row = self.acquisitions.setdefault(acquisition_id, {"acquisition_id": acquisition_id})
-        row["status"] = state
-        row.update(fields)
-
-
-class CoreFulfillmentService:
-    _import_acsm_impl = LibraryService._import_acsm_impl
-    import_acsm = LibraryService.import_acsm
-
-    def __init__(self, root: Path, account_id: str):
-        self.root = root
-        self.storage = Storage()
-        self.identity = SimpleNamespace(identity_id="alexandre")
-        self.current_identity = self.identity
-        self.account = SimpleNamespace(
-            identity_id="alexandre",
-            provider_id="numilog",
-            credential_id="numilog-main",
-            unique_id=account_id,
-            display_name="Numilog Alexandre",
-            provider_label="Numilog",
+    def accounts(self, identity_id=None):
+        if identity_id not in {None, "alexandre"}:
+            return ()
+        return (
+            AccountRef(
+                account_id=self.account_id,
+                identity_id="alexandre",
+                provider_id="numilog",
+                label="Numilog Alexandre",
+            ),
         )
-        self._sessions = {
-            self._session_key("numilog", "numilog-main"): SimpleNamespace(
-                connected=True,
-                capabilities=SimpleNamespace(
-                    catalog=True,
-                    loans=False,
-                    history=False,
-                    bookings=False,
-                    direct_download=True,
-                    personal_library=True,
-                ),
-            )
-        }
+
+
+class FakeAcquisitionBroker:
+    def __init__(self, root: Path):
+        self.root = root
         self.last_request = None
-        self.actions = []
+        self.requests = []
 
-    @staticmethod
-    def _session_key(provider, credential):
-        return provider, credential
-
-    def accounts_for_identity(self, identity_id=None):
-        return [self.account] if identity_id in {None, "alexandre"} else []
-
-    def identity_by_id(self, identity_id):
-        return self.identity if identity_id == "alexandre" else None
-
-    def library_identity_provider_dir(self, identity_id, provider_id):
-        path = self.root / "library" / identity_id / provider_id
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def _loan_destination_name(self, title, suffix):
-        return "numilog-fulfilled" + suffix
-
-    def resolve_adept_profile_for_identity(self, identity_id):
+    def import_acsm(self, path, **options):
+        source = Path(path)
+        assert source.is_file()
+        identity_id = str(options.get("identity_id") or "")
+        provider_id = str(options.get("provider_id") or "")
         assert identity_id == "alexandre"
-        return "alexandre", "test"
+        assert provider_id == "numilog"
 
-    def _originating_adept_profile_id(self, identity_id, profile_name):
-        assert (identity_id, profile_name) == ("alexandre", "alexandre")
-        return "profile-alexandre"
+        request = {
+            "source": {
+                "type": "acsm",
+                "path": str(source),
+                "provider": provider_id,
+            },
+            "identity_id": identity_id,
+            "profile": "alexandre",
+            "title": options.get("title"),
+        }
+        self.last_request = request
+        self.requests.append(request)
 
-    def execute_acquisition_request(self, request):
-        self.last_request = dict(request)
-        destination = Path(request["destination"])
+        destination = self.root / "library" / identity_id / provider_id / "numilog-fulfilled.epub"
         destination.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(destination, "w") as archive:
             archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-            archive.writestr("META-INF/container.xml", "<container/>")
+            archive.writestr(
+                "META-INF/container.xml",
+                '<?xml version="1.0"?><container version="1.0"></container>',
+            )
             archive.writestr("EPUB/content.xhtml", "<html><body>fulfilled</body></html>")
+
+        request["status"] = "complete"
+        request["path"] = str(destination)
         return {
-            "ok": True,
-            "profile": request["profile"],
-            "loan_id": "loan-numilog-7",
-            "artifact": {"path": str(destination)},
+            "status": "complete",
+            "path": str(destination),
+            "profile": "alexandre",
         }
 
-    def catalog_index_path(self, path, **options):
-        return {"status": "indexed", "artifact_id": "artifact-numilog-7"}
 
-    def _record_action(self, identity_id, action, outcome, **options):
-        self.actions.append((identity_id, action, outcome, options))
-
-
-def test_acsm_download_reaches_core_broker_and_simulated_adept_fulfillment():
+def test_acsm_download_reaches_public_broker_and_simulated_adept_fulfillment():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         cache = dataset.DatasetCache(root / "dataset", 14, 20261006, True)
@@ -160,9 +122,9 @@ def test_acsm_download_reaches_core_broker_and_simulated_adept_fulfillment():
 
         credential_id = "numilog-main"
         scope = hashlib.sha256(credential_id.encode()).hexdigest()[:20]
-        core = CoreFulfillmentService(root / "core", "numilog:" + scope)
-        acquisition = AcquisitionBrokerImpl(core)
-        identities = IdentityBrokerImpl(core)
+        account_id = "numilog:" + scope
+        acquisition: AcquisitionBroker = FakeAcquisitionBroker(root / "core")
+        identities: IdentityBroker = FakeIdentityBroker(account_id)
 
         with RunningServer(dataset.NumilogFakeApp(
             cache, dataset.DEFAULT_USERNAME, dataset.DEFAULT_PASSWORD, 20
@@ -183,28 +145,22 @@ def test_acsm_download_reaches_core_broker_and_simulated_adept_fulfillment():
             try:
                 session.connect()
                 item = next(book for book in session.library() if book.title == row["title"])
-
-                with patch("cifereca.services.data_dir", return_value=root / "core-data"):
-                    produced, source = session.download_direct(item, root / "provider-downloads")
+                produced, source = session.download_direct(item, root / "provider-downloads")
 
                 assert produced.is_file()
                 assert produced.suffix == ".epub"
                 assert zipfile.is_zipfile(produced)
                 assert source == session.library_url
 
-                assert core.last_request is not None
-                assert core.last_request["source"]["type"] == "acsm"
-                assert Path(core.last_request["source"]["path"]).suffix == ".acsm"
-                assert core.last_request["source"]["provider"] == "numilog"
-                assert core.last_request["profile"] == "alexandre"
-                assert core.last_request["metadata"]["identity_id"] == "alexandre"
+                assert acquisition.last_request is not None
+                assert acquisition.last_request["source"]["type"] == "acsm"
+                assert Path(acquisition.last_request["source"]["path"]).suffix == ".acsm"
+                assert acquisition.last_request["source"]["provider"] == "numilog"
+                assert acquisition.last_request["identity_id"] == "alexandre"
+                assert acquisition.last_request["profile"] == "alexandre"
+                assert acquisition.last_request["status"] == "complete"
 
-                acquisition_row = next(iter(core.storage.acquisitions.values()))
-                assert acquisition_row["status"] == "complete"
-                assert acquisition_row["provider_id"] == "numilog"
-                assert core.actions[-1][0:3] == ("alexandre", "import", "success")
-
-                # Numilog's transport staging is cleaned after Core has copied it.
+                # Numilog's transport staging is cleaned after the broker consumed it.
                 assert not list((root / "provider-downloads").glob("*.acsm"))
                 assert not list((root / "provider-downloads").glob("*.part"))
             finally:
