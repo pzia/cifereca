@@ -12,8 +12,14 @@ class Diagnostics:
     def __init__(self):
         self.rows = []
 
-    def add(self, operation, status="ok", detail=None, **kwargs):
-        self.rows.append({"operation": operation, "status": status, "detail": detail or {}})
+    def add(self, category, operation, status="ok", duration_ms=None, detail=None, **kwargs):
+        self.rows.append({
+            "category": category,
+            "operation": operation,
+            "status": status,
+            "duration_ms": duration_ms,
+            "detail": detail or {},
+        })
 
 
 def _result(record_id: str, title: str, base: str = "SYRACUSE") -> dict:
