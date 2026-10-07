@@ -68,6 +68,7 @@ avec `CIFERECA_CMD`.
 ./headless --screen 1300x900x24 -- \
   ./capture-app \
     --wait 3 \
+    --settle-after-actions 0.5 \
     --out evidence/accueil.png \
     --cwd "$(cd ../.. && pwd)" \
     -- \
@@ -75,7 +76,9 @@ avec `CIFERECA_CMD`.
 ```
 
 `capture-app` accepte également `--click X,Y`, `--type-text` et `--key` pour
-des scénarios X11 reproductibles.
+des scénarios X11 reproductibles. Lorsqu’un scénario injecte des actions,
+`--settle-after-actions SECONDES` attend explicitement leur stabilisation avant
+la capture (valeur entre 0 et 60 s) et enregistre ce délai dans le rapport JSON.
 
 ## Validation de la recette
 
