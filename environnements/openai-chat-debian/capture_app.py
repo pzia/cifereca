@@ -27,7 +27,8 @@ def coordinate(value: str) -> tuple[int, int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--wait", type=float, default=2.0, help="seconds to wait for the initial window (default: 2)")
+    parser.add_argument("--wait", type=float, default=0.0, help="legacy extra delay after visibility detection")
+    parser.add_argument("--startup-timeout", type=float, default=10.0, help="maximum seconds to wait for a non-blank application surface")
     parser.add_argument("--out", type=Path, default=Path("evidence/application.png"), help="PNG screenshot path")
     parser.add_argument("--click", action="append", default=[], type=coordinate, metavar="X,Y", help="inject a mouse click (repeatable)")
     parser.add_argument("--type-text", help="inject keyboard text after the clicks; omitted from the report")
@@ -40,6 +41,8 @@ def main() -> int:
         parser.error("provide the application command after --")
     if args.wait < 0 or args.wait > 60:
         parser.error("--wait must be between 0 and 60 seconds")
+    if args.startup_timeout <= 0 or args.startup_timeout > 60:
+        parser.error("--startup-timeout must be in ]0,60] seconds")
     if not os.environ.get("DISPLAY") or os.environ.get("GDK_BACKEND") != "x11":
         parser.error("run capture-app under the Xvfb launcher: ./headless -- ./capture-app ...")
 
@@ -63,11 +66,19 @@ def main() -> int:
     try:
         process = subprocess.Popen(command, cwd=args.cwd.resolve(), env=os.environ.copy())
         report["pid"] = process.pid
-        deadline = time.monotonic() + args.wait
-        while time.monotonic() < deadline:
+        deadline = time.monotonic() + args.startup_timeout
+        while True:
             if process.poll() is not None:
                 raise RuntimeError(f"GTK application exited during startup (exit {process.returncode}).")
+            probe = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
+            colors = probe.getcolors(maxcolors=2)
+            if colors is None or len(colors) > 1:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("GTK application did not expose a non-blank surface before timeout.")
             time.sleep(0.025)
+        if args.wait:
+            time.sleep(args.wait)
 
         if args.click or args.type_text or args.key:
             device = X11Input()
