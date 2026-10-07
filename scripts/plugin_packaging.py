@@ -193,6 +193,49 @@ def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
             )
 
 
+def _validate_system_requirements(plugin_dir: Path, manifest: dict) -> None:
+    allowed = {"binary", "file", "directory", "os", "python", "python-package"}
+    for index, descriptor in enumerate(manifest.get("plugins") or []):
+        if not isinstance(descriptor, dict):
+            continue
+        rows = descriptor.get("system_requires")
+        if rows is None:
+            continue
+        if not isinstance(rows, list):
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].system_requires doit être une liste"
+            )
+        for req_index, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].system_requires[{req_index}] "
+                    "doit être un objet"
+                )
+            kind = str(row.get("type") or "").strip().lower()
+            if kind not in allowed:
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].system_requires[{req_index}].type "
+                    f"invalide: {kind!r}"
+                )
+            if kind == "python" and str(row.get("name") or "").strip():
+                kind = "python-package"
+            if kind == "python-package" and not str(row.get("name") or "").strip():
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].system_requires[{req_index}].name "
+                    "requis pour python-package"
+                )
+            args = row.get("version_args", ["--version"])
+            if isinstance(args, str):
+                args = [args]
+            if not isinstance(args, list) or not all(
+                isinstance(value, str) for value in args
+            ):
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].system_requires[{req_index}].version_args "
+                    "doit être une liste de chaînes"
+                )
+
+
 def read_plugin_manifest(plugin_dir: Path) -> dict:
     plugin_dir = plugin_dir.resolve()
     manifest = _read_json(plugin_dir / PLUGIN_MANIFEST)
@@ -229,6 +272,7 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
         seen_plugin_ids.add(plugin_id)
     _validate_manifest_versions(plugin_dir, manifest)
     _validate_manifest_reference_ids(plugin_dir, manifest)
+    _validate_system_requirements(plugin_dir, manifest)
     return manifest
 
 
