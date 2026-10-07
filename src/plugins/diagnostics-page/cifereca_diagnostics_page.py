@@ -34,6 +34,23 @@ def active_checks(diagnostics_broker) -> list[dict[str, Any]]:
     return rows
 
 
+def _run_once_on_first_map(widget, callback):
+    """Run the initial page work once, only after the page is effectively mapped."""
+    fired = False
+
+    def on_map(_widget):
+        nonlocal fired
+        if fired:
+            return
+        fired = True
+        callback()
+
+    widget.connect("map", on_map)
+    get_mapped = getattr(widget, "get_mapped", None)
+    if callable(get_mapped) and get_mapped():
+        on_map(widget)
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
@@ -281,7 +298,7 @@ class DiagnosticsPagePlugin:
         refresh.connect("clicked", render)
         check.connect("clicked", run_checks)
         copy.connect("clicked", copy_report)
-        render()
+        _run_once_on_first_map(scroll, render)
         return scroll
 
     def deactivate(self):
