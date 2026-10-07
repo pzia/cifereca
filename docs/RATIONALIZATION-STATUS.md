@@ -55,7 +55,6 @@ Ces fichiers historiques ne sont pas présents dans le tree courant à la date d
 ### Core / plugins
 
 - `src/cifereca/builtin_ui/` reste intégré au Core.
-- `src/cifereca/paris/` reste présent.
 - `src/cifereca/kobo/` reste présent.
 - les plugins fonctionnels restent sous `plugins/` à la racine ;
 - la cible future `src/plugins/` n'est pas encore matérialisée.
@@ -72,7 +71,7 @@ Le validateur local reste plus strict que l'inspection Core sur plusieurs invari
 
 ### Sessions HTTP fournisseur
 
-Paris, Numilog, Kobo et d'autres providers peuvent garder une session HTTP spécialisée lorsque l'authentification, les cookies ou la navigation métier dépassent le contrat générique `transport.http`.
+Paris est désormais entièrement porté par `plugins/provider-paris/`. Numilog, Kobo et d'autres providers peuvent garder une session HTTP spécialisée lorsque l'authentification, les cookies ou la navigation métier dépassent le contrat générique `transport.http`.
 
 ## Simulation
 
@@ -115,7 +114,7 @@ En cas de contradiction, l'état réel du tree, [ARCHITECTURE.md](ARCHITECTURE.m
 
 1. poursuivre le triage historique `0921 → 0933` ;
 2. décider et exécuter la migration `simulation/` → `simulation/` ;
-3. traiter l'extraction de `builtin_ui`, Paris et Kobo dans des PR de code séparées ;
+3. poursuivre la rationalisation de `builtin_ui` et Kobo dans des PR de code séparées ;
 4. traiter le déplacement physique des plugins seulement avec packaging/tests adaptés ;
 5. nettoyer la hiérarchie legacy Recommendations ;
 6. enrichir éventuellement l'inspection EPUB Core avant toute suppression du validateur strict Numilog.
