@@ -1506,7 +1506,6 @@ class MainWindow(Adw.ApplicationWindow):
                 button = Gtk.ToggleButton()
                 button_label = Gtk.Label(label=group_label, xalign=0)
                 button_label.set_ellipsize(Pango.EllipsizeMode.END)
-                button_label.set_max_width_chars(18)
                 button.set_child(button_label)
                 button.set_active(expanded)
                 button.set_tooltip_text(f"{group_label} — Déplier / replier la rubrique")
