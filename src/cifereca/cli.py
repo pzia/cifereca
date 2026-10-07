@@ -26,6 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--account", help="ID local du credential provider à sélectionner")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("diagnose")
+    doctor = sub.add_parser("doctor", help="Diagnostic technique consolidé, expurgé et copiable")
+    doctor.add_argument("--verbose", action="store_true")
+    doctor.add_argument("--json", action="store_true")
     sub.add_parser("loans")
     sub.add_parser("history")
     s = sub.add_parser("search")
@@ -80,6 +83,13 @@ def main(argv: list[str] | None = None) -> int:
     core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
     service = core.library
     try:
+        if a.cmd == "doctor":
+            from .support_diagnostic import build_support_report, support_report_text
+            if a.json:
+                print(json.dumps(build_support_report(service, verbose=a.verbose), ensure_ascii=False, indent=2))
+            else:
+                print(support_report_text(service, verbose=a.verbose), end="")
+            return 0
         if a.cmd == "identity-directory":
             if not a.identity_id or not a.directory_name:
                 p.error("identity-directory exige identity_id et directory_name, ou --abort")
