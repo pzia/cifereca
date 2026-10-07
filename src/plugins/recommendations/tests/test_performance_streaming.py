@@ -1,5 +1,7 @@
+from collections import Counter
 from types import SimpleNamespace
 
+import recommendation_engine as engine
 import recommendation_engine_fast as fast
 from recommendation_engine import RankedCandidate
 from recommendation_service_v022 import compute_recommendations
@@ -116,3 +118,53 @@ def test_fast_mmr_extracts_candidate_features_once(monkeypatch):
     result = fast._mmr_fast(rows, exploration=25, limit=20)
     assert len(result) == 20
     assert calls == 40
+
+
+class GuardedCounter(Counter):
+    def values(self):
+        raise AssertionError("profile counter rescan during candidate scoring")
+
+    def __add__(self, other):
+        raise AssertionError("profile counter rebuilt during candidate scoring")
+
+
+def test_candidate_scoring_reuses_precomputed_profile_aggregates():
+    profile = engine.build_profile([
+        {
+            "title": "Histoire de Paris",
+            "author": "Alice",
+            "description": "mémoire urbaine architecture",
+            "metadata": {"subjects": ["histoire", "ville"], "series": ["Paris"]},
+        },
+        {
+            "title": "Mémoire des rues",
+            "author": "Alice",
+            "description": "archives et patrimoine",
+            "metadata": {"subjects": ["histoire", "patrimoine"], "series": ["Paris"]},
+        },
+    ])
+
+    # Candidate scoring must use only the aggregates prepared once by build_profile().
+    # Re-scanning values() or rebuilding title_terms + description_terms would fail here.
+    for name in (
+        "authors",
+        "subjects",
+        "series",
+        "title_terms",
+        "description_terms",
+        "lexical_terms",
+    ):
+        object.__setattr__(profile, name, GuardedCounter(getattr(profile, name)))
+
+    score, reasons = engine.content_score(
+        profile,
+        {
+            "title": "Paris, mémoire d'une ville",
+            "author": "Alice",
+            "description": "histoire architecture patrimoine",
+            "metadata": {"subjects": ["histoire", "patrimoine"], "series": ["Paris"]},
+        },
+    )
+
+    assert score > 0
+    assert reasons
