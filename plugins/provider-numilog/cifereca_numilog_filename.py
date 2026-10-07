@@ -1,11 +1,12 @@
 """Safe readable filenames for Numilog EPUBs."""
 from pathlib import Path
 import hashlib
-import os
 import re
 import unicodedata
 import zipfile
 from xml.etree import ElementTree as ET
+
+from cifereca.plugin_api import publish_artifact_file
 
 def _clean(value: str) -> str:
     value = unicodedata.normalize("NFC", str(value or ""))
@@ -32,7 +33,9 @@ def publish(part: Path, directory: Path, *, title: str, author: str | None, book
     digest = hashlib.sha256(part.read_bytes()).hexdigest(); suffix = hashlib.sha256(str(book_id).encode()).hexdigest()[:8]
     for candidate in (stem, f"{stem} - {suffix}", f"{stem} - {suffix}-{digest[:12]}"):
         target = directory / f"{candidate}.epub"
-        try: os.link(part, target); return target
+        try:
+            publish_artifact_file(part, target, overwrite=False, accept_identical=True)
+            return target
         except FileExistsError:
-            if target.is_file() and not target.is_symlink() and hashlib.sha256(target.read_bytes()).hexdigest() == digest: return target
+            pass
     raise FileExistsError("Numilog : nom de fichier déjà occupé ; fichier existant conservé")

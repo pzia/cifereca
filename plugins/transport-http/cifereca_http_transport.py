@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -10,7 +9,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from cifereca.plugin_api import Conflict, TemporaryUnavailable, UnsupportedOperation, inspect_artifact
+from cifereca.plugin_api import Conflict, TemporaryUnavailable, UnsupportedOperation, inspect_artifact, publish_artifact_file
 
 
 _REDIRECTS = {301, 302, 303, 307, 308}
@@ -50,14 +49,6 @@ def _safe_headers(value: Any) -> dict[str, str]:
             raise UnsupportedOperation("transport.http: header invalide")
         out[name] = val
     return out
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class HttpTransport:
@@ -188,17 +179,17 @@ class HttpTransport:
                 if inspected.protected is True and not bool(source.get("allow_protected", False)):
                     raise UnsupportedOperation("transport.http: artefact protégé refusé")
 
-            if overwrite:
-                os.replace(temporary, destination)
-            else:
-                try:
-                    os.link(temporary, destination)
-                except FileExistsError:
-                    if destination.is_file() and _sha256(destination) == _sha256(temporary):
-                        temporary.unlink(missing_ok=True)
-                        return destination
-                    raise Conflict(f"transport.http: destination déjà existante: {destination.name}")
-                temporary.unlink(missing_ok=True)
+            try:
+                publish_artifact_file(
+                    temporary,
+                    destination,
+                    overwrite=overwrite,
+                    accept_identical=True,
+                )
+            except FileExistsError:
+                raise Conflict(
+                    f"transport.http: destination déjà existante: {destination.name}"
+                ) from None
 
             self.logger.info(
                 "TRACE http-transport fetch host=%s status=%s bytes=%s redirects=%s file=%s",
