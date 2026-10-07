@@ -3,13 +3,13 @@ name: Test Core
 on:
   push:
     paths:
-      - "src/**"
+      - "src/cifereca/**"
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/core-tests.yml"
   pull_request:
     paths:
-      - "src/**"
+      - "src/cifereca/**"
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/core-tests.yml"
