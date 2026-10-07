@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, SyncRequest, SyncResult, SyncSourceRef
+from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
@@ -261,6 +261,76 @@ class IdentityBrokerImpl:
     def select(self, identity_id: str): return self.service.select_identity(identity_id)
     def accounts(self, identity_id: str | None = None): return tuple(_account_ref(self.service, row) for row in self.service.accounts_for_identity(identity_id))
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000): return self.service.identity_statistics(identity_id, window_seconds=window_seconds)
+
+
+@dataclass(slots=True)
+class RuntimeCapabilitiesBrokerImpl:
+    service: Any
+
+    @staticmethod
+    def _formats(download: Any, fallback: Any) -> tuple[str, ...]:
+        values: list[str] = []
+        if isinstance(download, dict):
+            for name in ("http", "acsm", "kobo"):
+                row = download.get(name)
+                if not isinstance(row, dict):
+                    continue
+                formats = row.get("formats")
+                if not isinstance(formats, (list, tuple)):
+                    continue
+                for value in formats:
+                    normalized = str(value or "").strip().casefold()
+                    if normalized and normalized not in values:
+                        values.append(normalized)
+        if isinstance(fallback, (list, tuple)):
+            for value in fallback:
+                normalized = str(value or "").strip().casefold()
+                if normalized and normalized not in values:
+                    values.append(normalized)
+        return tuple(values)
+
+    def acquisition(self, provider_id: str, *, refresh: bool = False) -> RuntimeAcquisitionCapabilities:
+        provider = str(provider_id or "").strip().casefold()
+        if provider != "kobo":
+            return RuntimeAcquisitionCapabilities(provider_id=provider)
+
+        state = self.service.kobo_adept_state(force=bool(refresh))
+        if not isinstance(state, dict):
+            state = {}
+        caps = state.get("capabilities") if isinstance(state.get("capabilities"), dict) else {}
+        download = caps.get("download") if isinstance(caps.get("download"), dict) else {}
+        declared = {
+            str(value)
+            for value in (state.get("declared_capabilities") or ())
+            if str(value)
+        }
+
+        modes: list[str] = []
+        http = download.get("http") if isinstance(download.get("http"), dict) else {}
+        if bool(http.get("available")) or "download_http_epub_pdf" in declared:
+            modes.append("http_plain")
+        if state.get("acsm_available") is True:
+            modes.append("adobe_adept")
+        if state.get("kobo_delegated_available") is True:
+            modes.append("kobo_delegated")
+        if state.get("kobo_kdrm_available") is True:
+            modes.append("kobo_kdrm")
+
+        try:
+            contract_version = int(state.get("contract_version")) if state.get("contract_version") is not None else None
+        except (TypeError, ValueError):
+            contract_version = None
+
+        return RuntimeAcquisitionCapabilities(
+            provider_id="kobo",
+            available=state.get("available") is True,
+            compatible=state.get("compatible") is True,
+            operational=state.get("operational") is True,
+            contract_version=contract_version,
+            modes=tuple(modes),
+            formats=self._formats(download, state.get("kobo_formats")),
+            software_version=str(state.get("software_version") or "")[:80],
+        )
 
 
 @dataclass(slots=True)
@@ -611,6 +681,7 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "metadata": MetadataBrokerImpl(service),
         "reconciliation": ReconciliationBrokerImpl(service),
         "identities": IdentityBrokerImpl(service),
+        "runtime.capabilities": RuntimeCapabilitiesBrokerImpl(service),
         "adept.profiles": AdeptProfileBrokerImpl(service),
         "adept.loans": AdeptLoanBrokerImpl(service),
         "diagnostics": DiagnosticsBrokerImpl(service),
