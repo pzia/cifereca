@@ -23,6 +23,6 @@ def test_progressive_batches_update_results_without_toast():
 
 def test_search_result_toast_is_reserved_for_announced_render():
     source = _method_source("_populate_search")
-    assert "announce: bool=True" in source.replace(" ", "")
+    assert "announce:bool=True" in source.replace(" ", "")
     assert "if not announce:" in source
     assert "self.toast" in source
