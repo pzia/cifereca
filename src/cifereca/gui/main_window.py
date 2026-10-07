@@ -1637,6 +1637,17 @@ class MainWindow(Adw.ApplicationWindow):
             factory.connect("setup", setup)
             factory.connect("bind", bind)
             dropdown.set_factory(factory)
+
+            list_factory = Gtk.SignalListItemFactory()
+            def setup_list(_factory, list_item):
+                label = Gtk.Label(xalign=0)
+                label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+                label.set_single_line_mode(True)
+                label.set_max_width_chars(44)
+                list_item.set_child(label)
+            list_factory.connect("setup", setup_list)
+            list_factory.connect("bind", bind)
+            dropdown.set_list_factory(list_factory)
             dropdown.set_tooltip_text(tooltip)
             return dropdown
 
