@@ -34,11 +34,12 @@ DESCRIPTOR = ProviderDescriptor(
 class KoboSession(ProviderSession):
     """Projection of Kobo-Vault API 2.3+ into Paris' Provider model."""
 
-    def __init__(self, *, config: Any, storage: Any, diagnostics: Any, catalog_factory=None, **kwargs: Any) -> None:
+    def __init__(self, *, config: Any, storage: Any, diagnostics: Any, catalog_factory=None, runtime_capabilities=None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.config = config
         self.storage = storage
         self.diagnostics = diagnostics
+        self.runtime_capabilities = runtime_capabilities
         base_url = str(self.options.get("base_url") or "").strip()
         token = str(self.credentials.get("api_token") or "").strip()
         timeout = float(self.options.get("timeout_seconds") or (config.request_timeout_seconds("kobo", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
@@ -72,8 +73,6 @@ class KoboSession(ProviderSession):
         if major != 2 or minor < 3:
             shown = self.api_version or "inconnue"
             raise ProviderError(f"Kobo-Vault : version API incompatible ({shown}, v2.3+ requise)")
-        self.supports_acquisition_display_profile = True
-        self.supports_acquisition_acsm = True
         caps = status.get("capabilities")
         if isinstance(caps, list):
             self.capability_names = {str(x) for x in caps}
@@ -85,6 +84,21 @@ class KoboSession(ProviderSession):
                 if isinstance(row, dict) and row.get("id")
             }
         self.acquisition_access = str(status.get("acquisition_access") or "unknown")
+
+        runtime = (
+            self.runtime_capabilities.acquisition("kobo")
+            if self.runtime_capabilities is not None
+            else None
+        )
+        runtime_modes = set(getattr(runtime, "modes", ()) or ())
+        vault_acquisition = "acquisition" in self.capability_names
+        self.supports_acquisition_acsm = (
+            vault_acquisition and "adobe_adept" in runtime_modes
+        )
+        self.supports_acquisition_display_profile = (
+            vault_acquisition
+            and bool(runtime_modes & {"kobo_delegated", "kobo_kdrm"})
+        )
         account = self.client.account()
         account_id = str(account.get("id") or account.get("account_id") or "kobo")
         display = str(account.get("display_name") or account.get("name") or account.get("email_hint") or "Compte Kobo")
@@ -221,6 +235,9 @@ class KoboPlugin(ProviderPlugin):
     descriptor = DESCRIPTOR
 
     def activate(self, context):
+        self._runtime_capabilities = context.broker("runtime.capabilities")
+        if self._runtime_capabilities is None:
+            raise ProviderError("Kobo : broker runtime.capabilities requis et indisponible")
         resolved = context.select_service(
             "catalog.service",
             contract="cifereca.catalog.service",
@@ -233,6 +250,7 @@ class KoboPlugin(ProviderPlugin):
 
     def deactivate(self):
         self._catalog_factory = None
+        self._runtime_capabilities = None
 
     def create_session(
         self,
@@ -252,6 +270,7 @@ class KoboPlugin(ProviderPlugin):
             credentials=credentials,
             options=options,
             catalog_factory=getattr(self, '_catalog_factory', None),
+            runtime_capabilities=getattr(self, "_runtime_capabilities", None),
             config=config,
             storage=storage,
             diagnostics=diagnostics,
