@@ -40,6 +40,29 @@ def test_archive_rejects_path_traversal(tmp_path):
             updater.install_archive(archive, dry_run=True)
 
 
+def test_archive_rejects_windows_drive_paths():
+    info = zipfile.ZipInfo("C:/escape.txt")
+    with pytest.raises(updater.UpdateError, match="Chemin interdit"):
+        updater._safe_member(info)
+
+
+def test_archive_resource_limits_are_enforced(tmp_path, monkeypatch):
+    archive = tmp_path / "oversized.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("Project/pyproject.toml", "[project]\nname='cifereca'\nversion='1.0.0'\n")
+        z.writestr("Project/a", "a")
+        z.writestr("Project/b", "b")
+
+    monkeypatch.setattr(updater, "MAX_RELEASE_FILES", 2)
+    with pytest.raises(updater.UpdateError, match="nombre de fichiers"):
+        updater.install_archive(archive, dry_run=True)
+
+    monkeypatch.setattr(updater, "MAX_RELEASE_FILES", 20000)
+    monkeypatch.setattr(updater, "MAX_RELEASE_UNCOMPRESSED_BYTES", 16)
+    with pytest.raises(updater.UpdateError, match="après extraction"):
+        updater.install_archive(archive, dry_run=True)
+
+
 def test_atomic_current_switch_and_previous(tmp_path, monkeypatch):
     source1 = _mini_project(tmp_path / "src1", "1.0.0")
     source2 = _mini_project(tmp_path / "src2", "2.0.0")
