@@ -71,22 +71,8 @@ def detect_artifact_format(path: Path) -> str | None:
                         mime = archive.read("mimetype").strip()
                     except KeyError:
                         mime = b""
-                    if mime and mime != b"application/epub+zip":
-                        return None
-                    try:
-                        container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
-                    except (KeyError, ElementTree.ParseError):
-                        return None
-                    roots = [
-                        node.attrib.get("full-path")
-                        for node in container.iter()
-                        if _local_name(node.tag) == "rootfile"
-                    ]
-                    if not roots or not all(root and root in names for root in roots):
-                        return None
-                    if archive.testzip() is not None:
-                        return None
-                    return "epub"
+                    if not mime or mime == b"application/epub+zip":
+                        return "epub"
     except (OSError, zipfile.BadZipFile):
         return None
     return None
