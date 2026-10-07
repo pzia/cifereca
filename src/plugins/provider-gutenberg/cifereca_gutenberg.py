@@ -16,6 +16,7 @@ from cifereca.plugin_api import (
     AcquisitionOffer,
     ItemDetail,
     ProviderCapabilities,
+    ProviderSearchCapabilities,
     ProviderConfigurationError,
     ProviderDescriptor,
     ProviderError,
@@ -40,6 +41,8 @@ LANGUAGE_SEARCH_CODES = {
     "italian": "it", "portuguese": "pt", "dutch": "nl",
 }
 DEFAULT_OPDS_SEARCH_URL = "https://www.gutenberg.org/ebooks/search.opds/"
+GUTENBERG_PAGE_SIZE = 25
+MAX_REQUESTED_PAGES = 101
 _EPUB_REL = "http://opds-spec.org/acquisition"
 _EBOOK_RE = re.compile(r"(?:urn:gutenberg:|/ebooks/)(\d+)", re.I)
 _LOG = logging.getLogger("cifereca.plugin.provider.gutenberg")
@@ -63,6 +66,17 @@ DESCRIPTOR = ProviderDescriptor(
     description="Project Gutenberg : bibliothèque publique de livres du domaine public, via OPDS.",
     state="ready",
     capabilities=ProviderCapabilities(search=True, holdings=True, direct_download=True),
+    search_capabilities=ProviderSearchCapabilities(
+        fields=("all", "title", "author", "subject", "language"),
+        scopes=("all", "digital"),
+        pagination="next-link",
+        page_size=GUTENBERG_PAGE_SIZE,
+        max_pages=MAX_REQUESTED_PAGES,
+        notes=(
+            "title/author/subject/language are local post-filters on the fetched OPDS page, not server-side fields",
+            "bookshelf remains available through the general query prefix bookshelf:...",
+        ),
+    ),
     homepage="https://www.gutenberg.org",
     notes=(
         "Catalogue public sans authentification.",
@@ -119,7 +133,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.13"
+        user_agent = "cifereca-gutenberg/1.2.15"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
@@ -508,7 +522,7 @@ class GutenbergSession(ProviderSession):
         if len(query) < 2:
             _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
         page = max(0, int(page))
-        if page > 100: raise ProviderError("Project Gutenberg : numéro de page hors limite")
+        if page >= MAX_REQUESTED_PAGES: raise ProviderError("Project Gutenberg : numéro de page hors limite")
         self._require_contact(); started = time.perf_counter(); rows_cache=self._page_cache(query)
         cached_indexes=[i for i,u in enumerate(rows_cache) if u and i<=page]
         if cached_indexes:
