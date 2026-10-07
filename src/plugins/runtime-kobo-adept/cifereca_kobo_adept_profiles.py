@@ -3,6 +3,23 @@ from __future__ import annotations
 from cifereca.plugin_api import UiPageContribution
 
 
+def _run_once_on_first_map(widget, callback):
+    """Run a callback once, and only when the page is effectively mapped."""
+    fired = False
+
+    def on_map(_widget):
+        nonlocal fired
+        if fired:
+            return
+        fired = True
+        callback()
+
+    widget.connect("map", on_map)
+    get_mapped = getattr(widget, "get_mapped", None)
+    if callable(get_mapped) and get_mapped():
+        on_map(widget)
+
+
 class AdeptProfilesPagePlugin:
     def __init__(self):
         self.context=None
@@ -127,7 +144,7 @@ class AdeptProfilesPagePlugin:
             confirm.set_active(False)
         remove.connect("clicked",do_remove)
 
-        async_call(self.runtime.profiles)
+        _run_once_on_first_map(scroll, lambda: async_call(self.runtime.profiles))
         return scroll
 
     def deactivate(self):
