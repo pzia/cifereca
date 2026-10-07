@@ -151,6 +151,7 @@ def test_github_dry_run_resolves_sha_without_mutating_runtime(tmp_path, monkeypa
     target = tmp_path / "runtime"
     monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(target))
     monkeypatch.setattr(updater.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
 
     def fake_run(command, **kwargs):
         command = [str(x) for x in command]
