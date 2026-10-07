@@ -1979,7 +1979,7 @@ class MainWindow(Adw.ApplicationWindow):
         heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.append(heading)
         title = Gtk.Label(label="Bibliothèque familiale", xalign=0); title.set_hexpand(True); title.set_wrap(True); add_css(title, "page-title"); heading.append(title)
         subtitle = Gtk.Label(label="État des identités et de la synchronisation automatique", xalign=0); add_css(subtitle, "dim-label"); outer.append(subtitle)
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        actions = AdaptiveActionBar(source=heading)
         refresh = self.action_button("Synchronisation rapide", "view-refresh-symbolic", suggested=True)
         refresh.connect("clicked", lambda _b: self.run_opening_sync(refresh, deep=False)); actions.append(refresh)
         deep = self.action_button("Vérifier toute la bibliothèque", "system-search-symbolic")
