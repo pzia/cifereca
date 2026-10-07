@@ -135,20 +135,21 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
 
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        footer = AdaptiveActionBar(source=box)
         if d.config_schema:
-            cfg = Gtk.Button(label="Configurer…")
+            cfg = action_button("Configurer…", "preferences-system-symbolic")
             cfg.connect("clicked", lambda _b, pid=d.id: self._configure(pid)); footer.append(cfg)
-        diag = Gtk.Button(label="Diagnostic")
+        diag = action_button("Diagnostic", "dialog-information-symbolic")
         diag.connect("clicked", lambda _b, pid=d.id: self._diagnostic(pid)); footer.append(diag)
         previous = package.get("previous")
         if previous:
-            rollback = Gtk.Button(label=f"Revenir à {previous}")
+            rollback = action_button(f"Revenir à {previous}", "edit-undo-symbolic")
             rollback.connect("clicked", lambda _b, pid=d.package_id: self._rollback(pid)); footer.append(rollback)
         if not package.get("builtin"):
-            remove = Gtk.Button(label="Désinstaller")
-            remove.set_tooltip_text("Désinstaller le package et tous ses plugins")
-            remove.add_css_class("destructive-action")
+            remove = action_button(
+                "Désinstaller", "edit-delete-symbolic", destructive=True,
+                tooltip="Désinstaller le package et tous ses plugins",
+            )
             remove.connect("clicked", lambda _b, pid=d.package_id: self._confirm_remove(pid)); footer.append(remove)
         if d.instantiation == "singleton_public":
             identities = Gtk.MenuButton(label="Identités…")
@@ -170,7 +171,6 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         priority.set_tooltip_text("Priorité effective dans sa catégorie")
         priority.connect("value-changed", lambda sp, pid=d.id: self._priority(pid, int(sp.get_value())))
         footer.append(priority)
-        spacer = Gtk.Box(); spacer.set_hexpand(True); footer.append(spacer)
         toggle = Gtk.Switch(); toggle.set_active(bool(status.enabled)); toggle.set_valign(Gtk.Align.CENTER)
         toggle.set_tooltip_text(f"Activer {d.display_name or d.id}")
         toggle.connect("notify::active", lambda sw, _p, pid=d.id: self._toggle(pid, sw.get_active()))
