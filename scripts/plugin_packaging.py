@@ -14,6 +14,9 @@ import tempfile
 from typing import Iterable, Sequence
 import zipfile
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = REPO_ROOT / "src" / "plugins"
 DIST_DIR = REPO_ROOT / "dist"
@@ -65,6 +68,64 @@ def _read_json(path: Path) -> dict:
     return value
 
 
+def _validate_version(value: object, field: str) -> None:
+    raw = str(value or "").strip()
+    try:
+        Version(raw)
+    except InvalidVersion as exc:
+        raise PackagingError(f"{field} invalide: {raw!r}") from exc
+
+
+def _validate_specifier(value: object, field: str) -> None:
+    raw = str(value or "").strip()
+    if not raw:
+        return
+    try:
+        SpecifierSet(raw)
+    except InvalidSpecifier as exc:
+        raise PackagingError(f"{field} invalide: {raw!r}") from exc
+
+
+def _validate_manifest_versions(plugin_dir: Path, manifest: dict) -> None:
+    package = manifest["package"]
+    _validate_version(package.get("version"), f"{plugin_dir}: package.version")
+    _validate_specifier(package.get("plugin_api"), f"{plugin_dir}: package.plugin_api")
+
+    for index, descriptor in enumerate(manifest.get("plugins") or []):
+        if not isinstance(descriptor, dict):
+            continue
+        _validate_version(
+            descriptor.get("version") or package.get("version"),
+            f"{plugin_dir}: plugins[{index}].version",
+        )
+        for field in ("requires", "recommends", "conflicts"):
+            rows = descriptor.get(field)
+            if not isinstance(rows, list):
+                continue
+            for dep_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_specifier(
+                        row.get("version"),
+                        f"{plugin_dir}: plugins[{index}].{field}[{dep_index}].version",
+                    )
+        rows = descriptor.get("system_requires")
+        if isinstance(rows, list):
+            for req_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_specifier(
+                        row.get("version"),
+                        f"{plugin_dir}: plugins[{index}].system_requires[{req_index}].version",
+                    )
+        rows = descriptor.get("requires_contracts")
+        if isinstance(rows, list):
+            for req_index, row in enumerate(rows):
+                if isinstance(row, dict):
+                    _validate_specifier(
+                        row.get("version"),
+                        f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].version",
+                    )
+
+
 def read_plugin_manifest(plugin_dir: Path) -> dict:
     plugin_dir = plugin_dir.resolve()
     manifest = _read_json(plugin_dir / PLUGIN_MANIFEST)
@@ -88,6 +149,7 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}] requiert id et type"
             )
+    _validate_manifest_versions(plugin_dir, manifest)
     return manifest
 
 
