@@ -8,6 +8,7 @@ from .context import PluginContext
 from .errors import (AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled)
 from .models import (
     AcquisitionOffer,
+    normalize_acquisition_format, acquisition_offer_formats, acquisition_offer_preferred_format, acquisition_offers_metadata,
     ArtifactInput,
     CategoryDefinition,
     Dependency,
@@ -51,7 +52,7 @@ from .bundles import (
 
 __all__ = [
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
-    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "ArtifactInput",
+    "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
     "StorageTarget", "StorageResult", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
     "PluginDescriptor", "PluginDirectories", "PluginLifecycle", "PluginState", "InstantiationMode",
