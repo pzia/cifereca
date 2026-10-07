@@ -37,8 +37,13 @@ def test_library_group_uses_same_three_column_truncation_contract_as_notice():
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_group")
     text = ast.unparse(method)
+    constants = {
+        node.value
+        for node in ast.walk(method)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
 
-    assert '"Bibliothèque"' in text
+    assert "Bibliothèque" in constants
     assert "set_max_children_per_line(3)" in text
     assert "set_subtitle_lines(1 if grid is not None else 0)" in text
     assert "set_tooltip_text(label + ' : ' + text_or_dash(value))" in text
