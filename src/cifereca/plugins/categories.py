@@ -14,6 +14,13 @@ CORE_CATEGORIES: tuple[CategoryDefinition, ...] = (
         "Service de catalogue",
         "cifereca.catalog.service/1",
         "priority",
+        "Dépendance technique de catalogue ; n’est pas une source utilisateur configurable.",
+    ),
+    CategoryDefinition(
+        "catalog.service",
+        "Service de catalogue",
+        "cifereca.catalog.service/1",
+        "priority",
         "Dépendance technique de catalogue ; ce service n’est pas une source utilisateur configurable.",
     ),
     CategoryDefinition("transport", "Transport", "cifereca.transport/1", "priority"),
