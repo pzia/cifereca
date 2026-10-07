@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "VERSION"
+      - "pyproject.toml"
+      - "scripts/**"
   push:
     tags:
       - "v*"
@@ -10,8 +16,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -87,4 +93,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/*             --repo "${GITHUB_REPOSITORY}"             --title "${GITHUB_REF_NAME}"             --generate-notes
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
