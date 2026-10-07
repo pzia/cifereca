@@ -1015,7 +1015,10 @@ class MainWindow(Adw.ApplicationWindow):
         suggested: bool = False, destructive: bool = False, tooltip: str | None = None,
     ) -> Gtk.Button:
         """Create an action using the highest-priority ``ui.widgets`` catalog."""
-        catalog = self.plugin_manager.widget_catalog() if self.plugin_manager is not None else None
+        try:
+            catalog = self.plugin_manager.widget_catalog() if self.plugin_manager is not None else None
+        except Exception:
+            catalog = None
         role = "action.primary" if suggested else ("action.destructive" if destructive else "action.secondary")
         if catalog is not None:
             try:
@@ -1283,6 +1286,26 @@ class MainWindow(Adw.ApplicationWindow):
     def reconnect_sources(self) -> None:
         self.connect_configured_sources()
 
+    def activate_startup_plugins(self) -> bool:
+        if self.plugin_manager is None:
+            return False
+        _TRACE_LOG.info("TRACE gui plugin-activation begin")
+        started = time.perf_counter()
+        try:
+            self.plugin_manager.activate()
+            self.service.attach_plugin_manager(self.plugin_manager)
+            self._plugins_changed()
+        except Exception as exc:
+            self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
+            if hasattr(self, "dashboard_loading_status"):
+                self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
+                self.dashboard_loading_status.set_visible(True)
+        finally:
+            duration_ms = (time.perf_counter() - started) * 1000.0
+            self.ui_perf.record("startup.plugins_activation", duration_ms)
+            _TRACE_LOG.info("TRACE gui plugin-activation end duration_ms=%.1f", duration_ms)
+        return False
+
     # ---------- compatibility / source configuration ----------
     def logout(self) -> None:
         # Kept as a compatibility alias: credentials are persistent provider
@@ -1498,9 +1521,14 @@ class MainWindow(Adw.ApplicationWindow):
         from ..builtin_ui.cifereca_builtin_ui import Pages
         from dataclasses import replace
         fallback = [replace(page, priority=-10000) for page in Pages().pages()]
-        contributed = self.plugin_manager.page_contributions() if self.plugin_manager else fallback
+        try:
+            contributed = self.plugin_manager.page_contributions() if self.plugin_manager else []
+        except Exception:
+            contributed = []
+        if not contributed:
+            contributed = list(fallback)
         # Management pages remain reachable to recover from broken/disabled UI.
-        contributed += [p for p in fallback if p.route in {"plugins", "settings"}]
+        contributed += [p for p in fallback if p.route in {"plugins", "settings"} and all(x.route != p.route for x in contributed)]
         resolved = resolve_pages(contributed)
         self._pages = {}
         host = self._UiHost(self)
