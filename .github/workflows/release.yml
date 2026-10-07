@@ -146,14 +146,16 @@ jobs:
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         shell: bash
         run: |
-          args=(--repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --generate-notes --draft)
+          create_args=(--repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --generate-notes --draft)
+          edit_args=(--repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --draft)
           if [[ "$PRERELEASE" == "true" ]]; then
-            args+=(--prerelease)
+            create_args+=(--prerelease)
+            edit_args+=(--prerelease)
           fi
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" "${args[@]}"
+            gh release edit "$RELEASE_TAG" "${edit_args[@]}"
           else
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" "${args[@]}"
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" "${create_args[@]}"
           fi
           gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
 
