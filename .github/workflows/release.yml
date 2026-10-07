@@ -1,13 +1,6 @@
 name: Release
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/release.yml"
-      - "VERSION"
-      - "pyproject.toml"
-      - "scripts/**"
-      - "src/plugins/**"
   push:
     branches:
       - "main"

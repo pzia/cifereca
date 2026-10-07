@@ -2,10 +2,10 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.ebooksgratuits",
-    "version": "0.1.9",
+    "version": "0.1.10",
     "name": "Ebooks libres et gratuits",
     "publisher": "cifereca",
-    "plugin_api": ">=1.3,<2"
+    "plugin_api": ">=1.4,<2"
   },
   "plugins": [
     {
@@ -44,7 +44,7 @@
         }
       },
       "help_text": "Catalogue public sans compte. Recherche par titre, auteur et sujet (catégorie/genre) via les filtres publics du site ; pagination serveur et parsing HTML structuré. Le flux EPUB final est téléchargé par transport.http avec limite de taille, validation EPUB et publication atomique.",
-      "version": "0.1.9",
+      "version": "0.1.10",
       "capabilities": [
         "catalog.search",
         "catalog.detail",
