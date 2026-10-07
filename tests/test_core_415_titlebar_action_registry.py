@@ -48,9 +48,9 @@ def test_action_registry_exposes_stable_keys_and_scope():
     rows = action_registry(_pages())
 
     assert [(row.key, row.scope) for row in rows] == [
-        ("search.open", "page"),
+        ("search.open", "global"),
         ("search.online", "page"),
-        ("library.open", "page"),
+        ("library.open", "global"),
         ("library.import-acsm", "global"),
     ]
     assert rows[1].page_title == "Recherche"
@@ -76,6 +76,7 @@ def test_visible_actions_never_renders_unknown_ids_and_respects_scope():
 
     assert [key for key, _action in rows] == [
         "search.online",
+        "library.open",
         "library.import-acsm",
     ]
 
