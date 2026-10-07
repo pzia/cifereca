@@ -74,9 +74,10 @@ DESCRIPTOR = ProviderDescriptor(
 class GallicaSession(ProviderSession):
     """Session anonyme Gallica, EPUB + documents sonores du domaine public."""
 
-    def __init__(self, *, config: Any, diagnostics: Any, **kwargs: Any) -> None:
+    def __init__(self, *, config: Any, diagnostics: Any, transport: Any = None, **kwargs: Any) -> None:
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         self.diagnostics = diagnostics
+        self.transport = transport
         timeout = float(self.options.get("timeout_seconds") or self.options.get("request_timeout_seconds") or (config.request_timeout_seconds("gallica", self.credential_id) if hasattr(config, "request_timeout_seconds") else config.get("request_timeout_seconds", 25)))
         self.epub_search_url = str(self.options.get("epub_search_url") or EPUB_SEARCH)
         self.max_download_bytes = int(self.options.get("max_download_bytes") or 100 * 1024 * 1024)
@@ -537,56 +538,52 @@ class GallicaSession(ProviderSession):
         return _SAFE_FILENAME.sub("_", value or fallback).strip(" ._") or fallback
 
     def _download_ebook(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
-        url = str(item.download_url or "").strip()
+        url = _public_url(str(item.download_url or "").strip())
         if not url:
             raise ProviderError("Gallica : aucun lien de téléchargement attesté")
-        with self.client.stream("GET", _public_url(url), headers={"Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2"}) as response:
-            response.raise_for_status()
-            content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].lower()
-            chunks: list[bytes] = []
-            size = 0
-            for chunk in response.iter_bytes():
-                size += len(chunk)
-                if size > self.max_download_bytes:
-                    raise ProviderError("Gallica : téléchargement trop volumineux")
-                chunks.append(chunk)
-            content = b"".join(chunks)
-            final_url = str(response.url)
+        if self.transport is None:
+            raise ProviderError("Gallica : transport.http indisponible")
         fmt = str(item.format or "").upper()
-        if fmt == "EPUB":
-            self._validate_epub(content)
-        elif fmt == "PDF":
-            if not content.startswith(b"%PDF-"):
-                raise ProviderError("Gallica : PDF invalide")
-        else:
+        if fmt not in {"EPUB", "PDF"}:
             raise ProviderError("Gallica : format numérique non pris en charge")
-        if not content or "text/html" in content_type:
-            raise ProviderError(f"Gallica : téléchargement numérique invalide (content-type={content_type or 'inconnu'})")
         ext = ".pdf" if fmt == "PDF" else ".epub"
         target_dir.mkdir(parents=True, exist_ok=True)
         stable = self._safe_name(item.record_id.split("/")[-1], "")
-        path = target_dir / (self._safe_name(item.title)[:145] + (f"_{stable[:24]}" if stable else "") + ext)
-        # Validate first; publish without overwriting a pre-existing artifact.
-        temporary = None
+        base = target_dir / (self._safe_name(item.title)[:145] + (f"_{stable[:24]}" if stable else "") + ext)
+        path = base
+        serial = 1
+        while path.exists():
+            path = base.with_name(f"{base.stem}_{serial}{base.suffix}")
+            serial += 1
+        allowed = (
+            ("application/pdf", "application/octet-stream")
+            if fmt == "PDF"
+            else ("application/epub+zip", "application/zip", "application/octet-stream")
+        )
+        source = {
+            "url": url,
+            "headers": {
+                "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
+                "Referer": "https://gallica.bnf.fr/",
+                "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.11"),
+            },
+            "max_bytes": self.max_download_bytes,
+            "allowed_content_types": allowed,
+            "expected_format": fmt.casefold(),
+        }
         try:
-            with tempfile.NamedTemporaryFile(dir=target_dir, suffix=".part", delete=False) as handle:
-                temporary = Path(handle.name)
-                handle.write(content)
-            candidate = path
-            serial = 1
-            while candidate.exists():
-                if candidate.read_bytes() == content:
-                    return candidate, final_url
-                candidate = path.with_name(f"{path.stem}_{serial}{path.suffix}")
-                serial += 1
-            # Hard link is atomic and refuses a racing collision.
-            candidate.hardlink_to(temporary)
-            path = candidate
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
-        self.diagnostics.add("GALLICA", "ebook download", "ok", detail={"bytes": len(content), "format": fmt or ext[1:].upper()}, level="detailed")
-        return path, final_url
+            path = Path(self.transport.fetch(source, path))
+        except Exception as exc:
+            path.unlink(missing_ok=True)
+            if isinstance(exc, ProviderError):
+                raise
+            raise ProviderError(f"Gallica : téléchargement numérique indisponible ({exc})") from exc
+        self.diagnostics.add(
+            "GALLICA", "ebook download", "ok",
+            detail={"bytes": path.stat().st_size, "format": fmt, "transport": "transport.http"},
+            level="detailed",
+        )
+        return path, url
 
     @staticmethod
     def _validate_epub(content: bytes) -> None:
@@ -643,7 +640,30 @@ class GallicaSession(ProviderSession):
         if not item.download_url:
             return []
         fmt = str(item.format or "").lower()
-        return [AcquisitionOffer(offer_id=f"gallica:{item.record_id}", media_type=item.content_type or "ebook", format=fmt, drm="none", source_kind="http", source={"url": item.download_url}, priority=10)]
+        allowed = (
+            ("application/pdf", "application/octet-stream")
+            if fmt == "pdf"
+            else ("application/epub+zip", "application/zip", "application/octet-stream")
+        )
+        return [AcquisitionOffer(
+            offer_id=f"gallica:{item.record_id}",
+            media_type=item.content_type or "ebook",
+            format=fmt,
+            drm="none",
+            source_kind="http",
+            source={
+                "url": _public_url(item.download_url),
+                "headers": {
+                    "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
+                    "Referer": "https://gallica.bnf.fr/",
+                    "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.11"),
+                },
+                "max_bytes": self.max_download_bytes,
+                "allowed_content_types": allowed,
+                "expected_format": fmt,
+            },
+            priority=10,
+        )]
 
     def download_direct(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
         if item.content_type == "audiobook":
@@ -656,6 +676,9 @@ class GallicaPlugin(ProviderPlugin):
 
     def activate(self, context):
         self._configuration = dict(context.config)
+        self._transport = context.service("transport.http")
+        if self._transport is None:
+            raise ProviderError("Gallica : transport.http requis")
         return self
     @staticmethod
     def parse_feed(content: bytes, base_url: str) -> list[dict[str, object]]:
@@ -687,6 +710,7 @@ class GallicaPlugin(ProviderPlugin):
         return GallicaSession(
             credential_id=credential_id, label=label, credentials=credentials,
             options={**getattr(self, "_configuration", {}), **options}, config=config, diagnostics=diagnostics,
+            transport=self._transport,
         )
 
 

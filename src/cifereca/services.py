@@ -2146,6 +2146,8 @@ class LibraryService:
                 if "handling" in owner and owner["handling"] != "http_plain":
                     raise AttentionRequired("Cette source HTTP nécessite un traitement dédié.", code="http_handling_not_plain")
             fetch_source["headers"] = dict(source.get("headers") or {})
+            if request.get("format") and not fetch_source.get("expected_format"):
+                fetch_source["expected_format"] = str(request.get("format") or "").casefold()
             matches = getattr(transport, "matches", None)
             if callable(matches) and not matches(fetch_source):
                 raise AttentionRequired("Le transport HTTP refuse cette source.", code="http_source_not_supported")
@@ -2153,6 +2155,12 @@ class LibraryService:
             inspected = inspect_artifact(path)
             if not inspected.valid:
                 raise ProviderConfigurationError(f"Artefact HTTP invalide: {inspected.reason or 'format inconnu'}")
+            if inspected.protected is True:
+                path.unlink(missing_ok=True)
+                raise AttentionRequired(
+                    "Le téléchargement HTTP contient encore une protection DRM.",
+                    code="http_artifact_protected",
+                )
             return {
                 "ok": True, "operation": "download",
                 "artifact": {
