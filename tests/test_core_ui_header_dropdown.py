@@ -14,3 +14,6 @@ def test_header_dropdowns_can_ellipsize_long_labels():
     assert 'self.identity_dropdown = compact_dropdown("Identité active")' in source
     assert 'self.account_dropdown = compact_dropdown("Délégations de l’identité active")' in source
     assert "label.set_tooltip_text(text)" in source
+    assert "dropdown.set_list_factory(list_factory)" in source
+    assert "label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)" in source
+    assert "label.set_max_width_chars(44)" in source
