@@ -1,0 +1,24 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.ui.page.diagnostics-preflight",
+    "version": "0.1.0",
+    "name": "Cifereca Diagnostics Preflight",
+    "publisher": "cifereca",
+    "plugin_api": ">=1,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.diagnostics-preflight",
+      "type": "ui.page",
+      "entrypoint": "cifereca_diagnostics_preflight:PLUGIN",
+      "display_name": "Prédiagnostic",
+      "description": "Diagnostic autonome et expurgé compatible avec les anciens Core Cifereca.",
+      "priority": 90,
+      "enabled_by_default": true,
+      "version": "0.1.0",
+      "capabilities": ["ui.page", "diagnostics.read"],
+      "requires_brokers": ["diagnostics"]
+    }
+  ]
+}
