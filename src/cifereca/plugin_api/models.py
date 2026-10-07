@@ -120,6 +120,21 @@ class AcquisitionOffer:
 
 
 @dataclass(frozen=True, slots=True)
+class AcquisitionPreferences:
+    """Ordered user/provider preferences applied only to attested offers."""
+    format_order: tuple[str, ...] = ()
+    offer_order: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionOfferSet:
+    """A complete acquisition choice set without implicit format inference."""
+    offers: tuple[AcquisitionOffer, ...] = ()
+    preferences: AcquisitionPreferences = field(default_factory=AcquisitionPreferences)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class ArtifactInput:
     path: Path
     artifact_id: str = ""
