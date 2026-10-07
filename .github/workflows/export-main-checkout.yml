@@ -1,0 +1,28 @@
+name: Export main checkout
+
+on:
+  push:
+    branches:
+      - uxui/sync-main-20261007-2
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Bundle main
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git bundle create /tmp/cifereca-main.bundle main
+          git rev-parse main > /tmp/MAIN_COMMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cifereca-main-git-bundle
+          path: |
+            /tmp/cifereca-main.bundle
+            /tmp/MAIN_COMMIT
+          retention-days: 1
