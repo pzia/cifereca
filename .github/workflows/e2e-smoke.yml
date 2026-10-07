@@ -7,6 +7,14 @@ on:
       - "src/**"
       - "environnements/openai-chat-debian/capture_app.py"
       - ".github/workflows/e2e-smoke.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "e2e/**"
+      - "src/**"
+      - "environnements/openai-chat-debian/capture_app.py"
+      - ".github/workflows/e2e-smoke.yml"
   workflow_dispatch:
 
 permissions:
@@ -14,10 +22,11 @@ permissions:
 
 concurrency:
   group: e2e-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   startup:
+    name: E2E GTK · startup
     runs-on: ubuntu-24.04
     timeout-minutes: 10
 
@@ -37,3 +46,28 @@ jobs:
         env:
           CIFERECA_E2E_PYTHON: /usr/bin/python3
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario startup
+
+      - name: Publish E2E summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## E2E GTK"
+            echo
+            if [ -f e2e-artifacts/summary.json ]; then
+              echo '~~~json'
+              cat e2e-artifacts/summary.json
+              echo '~~~'
+            else
+              echo "Aucun résumé produit."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload E2E debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-startup-debug
+          path: e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
