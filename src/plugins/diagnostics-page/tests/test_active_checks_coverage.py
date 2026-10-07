@@ -27,5 +27,40 @@ class ActiveChecksTests(unittest.TestCase):
         self.assertTrue(any(r["message"]=="Providers chargés" for r in rows))
 
 
+class FakeWidget:
+    def __init__(self, mapped=False):
+        self.mapped=mapped
+        self.callback=None
+    def connect(self, signal, callback):
+        assert signal=="map"
+        self.callback=callback
+        return 1
+    def get_mapped(self):
+        return self.mapped
+    def emit_map(self):
+        self.mapped=True
+        self.callback(self)
+
+
+class LazyInitialRenderTests(unittest.TestCase):
+    def test_waits_for_first_map_and_runs_once(self):
+        widget=FakeWidget()
+        calls=[]
+        mod._run_once_on_first_map(widget, lambda: calls.append("render"))
+        self.assertEqual(calls,[])
+        widget.emit_map()
+        self.assertEqual(calls,["render"])
+        widget.emit_map()
+        self.assertEqual(calls,["render"])
+
+    def test_already_mapped_widget_runs_immediately_once(self):
+        widget=FakeWidget(mapped=True)
+        calls=[]
+        mod._run_once_on_first_map(widget, lambda: calls.append("render"))
+        self.assertEqual(calls,["render"])
+        widget.emit_map()
+        self.assertEqual(calls,["render"])
+
+
 if __name__=="__main__":
     unittest.main()
