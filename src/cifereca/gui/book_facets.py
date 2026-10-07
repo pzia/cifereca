@@ -1,11 +1,11 @@
 """Shared attribute vocabulary for rows, notices and search controls."""
 from dataclasses import dataclass
-from cifereca.core.search import available_formats
+from cifereca.core.search import available_formats, support_kind
 from cifereca.language import normalize_language_tag, language_label
 
 CONTENT_FIELDS=frozenset({'title','author','subject','series','collection'})
-FORM_FIELDS=frozenset({'source','format','publisher','isbn','language','date'})
-LABELS={'author':'Auteur','subject':'Sujet','series':'Série','collection':'Collection','publisher':'Éditeur','source':'Source','format':'Format','isbn':'ISBN','language':'Langue'}
+FORM_FIELDS=frozenset({'source','format','support','publisher','isbn','language','date'})
+LABELS={'author':'Auteur','subject':'Sujet','series':'Série','collection':'Collection','publisher':'Éditeur','source':'Source','format':'Format','support':'Support','isbn':'ISBN','language':'Langue'}
 
 @dataclass(frozen=True)
 class BookFacet:
@@ -36,6 +36,9 @@ def facets_for_book(row,provider_name=lambda value:value):
         code=normalize_language_tag(raw_language)
         if code and ('language',code) not in seen:
             seen.add(('language',code));out.append(BookFacet('language',language_label(code),code))
+    support=support_kind(row)
+    support_labels={'physical':'Physique','digital':'Numérique','unknown':'Support indéterminé'}
+    out.append(BookFacet('support',support_labels[support],support))
     for fmt in available_formats(row):out.append(BookFacet('format',fmt.upper(),fmt))
     providers=row.get('providers') or [row.get('provider_id') or row.get('source_provider')]
     if not isinstance(providers,(list,tuple,set)): providers=[providers]
