@@ -1,0 +1,39 @@
+name: E2E Smoke
+
+on:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - "src/**"
+      - "environnements/openai-chat-debian/capture_app.py"
+      - ".github/workflows/e2e-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  startup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK E2E runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth dbus-x11 libxtst6 \
+            python3-gi python3-gi-cairo python3-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Run reference E2E
+        env:
+          CIFERECA_E2E_PYTHON: /usr/bin/python3
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario startup
