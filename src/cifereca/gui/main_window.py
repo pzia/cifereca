@@ -3959,9 +3959,10 @@ class MainWindow(Adw.ApplicationWindow):
         diag_text = Gtk.TextView(); diag_text.set_editable(False); diag_text.set_monospace(True); diag_text.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         diag_text.set_top_margin(10); diag_text.set_bottom_margin(10); diag_text.set_left_margin(10); diag_text.set_right_margin(10)
         diag_scroll = Gtk.ScrolledWindow(); diag_scroll.set_min_content_height(330); diag_scroll.set_child(diag_text); diag_group.add(diag_scroll)
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); box.append(buttons)
-        refresh = Gtk.Button(label="Actualiser"); copy = Gtk.Button(label="Copier dans le presse-papiers"); clear = Gtk.Button(label="Effacer")
-        copy.add_css_class("suggested-action")
+        buttons = AdaptiveActionBar(source=box); box.append(buttons)
+        refresh = self.action_button("Actualiser", "view-refresh-symbolic")
+        copy = self.action_button("Copier dans le presse-papiers", "edit-copy-symbolic", suggested=True)
+        clear = self.action_button("Effacer", "edit-clear-symbolic")
         buttons.append(refresh); buttons.append(copy); buttons.append(clear)
 
         def refresh_text() -> None:
