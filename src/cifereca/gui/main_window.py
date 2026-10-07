@@ -3159,7 +3159,7 @@ class MainWindow(Adw.ApplicationWindow):
                 " · ".join(part for part in meta_parts if part), provider_label, item.get("thumbnail_url"),
             ))
         self._attach_row_facets(rows, self._library_objects, self.library_controls)
-        self.library_page.show_rows(rows)
+        self.library_page.show_rows(rows, total_count=len(entries))
         self.ui_perf.record("render_library", (time.perf_counter() - _perf_started) * 1000.0)
 
     # ---------- Récupérations récentes ----------
