@@ -86,7 +86,7 @@ class DiagnosticsPagePlugin:
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
         refresh.set_tooltip_text("Actualiser les diagnostics")
         copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
-        copy.set_tooltip_text("Copier le rapport texte expurgé")
+        copy.set_tooltip_text("Copier le diagnostic support expurgé")
         check = Gtk.Button.new_from_icon_name("system-run-symbolic")
         check.set_tooltip_text("Vérifier les services configurés et runtimes")
         action_row.append(refresh)
@@ -121,7 +121,7 @@ class DiagnosticsPagePlugin:
         check_hint.set_wrap(True)
         check_box.append(check_hint)
 
-        export_title = Gtk.Label(label="Rapport texte", xalign=0)
+        export_title = Gtk.Label(label="Rapport support", xalign=0)
         export_title.add_css_class("heading")
         outer.append(export_title)
         export_view = Gtk.TextView()
@@ -199,7 +199,8 @@ class DiagnosticsPagePlugin:
                 for row in snapshot:
                     if isinstance(row, Mapping):
                         add_diag(row)
-                report = str(broker.export_text() or "")
+                exporter = getattr(broker, "export_support_text", None)
+                report = str((exporter() if callable(exporter) else broker.export_text()) or "")
                 export_view.get_buffer().set_text(report)
             except Exception as exc:
                 host.toast(f"Diagnostics indisponibles : {type(exc).__name__}")
@@ -267,12 +268,13 @@ class DiagnosticsPagePlugin:
 
         def copy_report(_button) -> None:
             try:
-                text = str(broker.export_text() or "")
+                exporter = getattr(broker, "export_support_text", None)
+                text = str((exporter() if callable(exporter) else broker.export_text()) or "")
                 display = Gdk.Display.get_default()
                 if display is None:
                     raise RuntimeError("display indisponible")
                 display.get_clipboard().set(text)
-                host.toast("Rapport de diagnostic copié")
+                host.toast("Diagnostic support copié")
             except Exception as exc:
                 host.toast(f"Copie impossible : {type(exc).__name__}")
 
