@@ -49,7 +49,7 @@ def normalize_acquisition_offers(
         normalized = file_format(raw)
         if not normalized:
             raise ValueError(f"unknown acquisition format preference: {raw}")
-        if normalized not in available:
+        if normalized not in available and format_family(normalized) not in {format_family(value) for value in available}:
             raise ValueError(f"format preference is not attested by an offer: {raw}")
         if normalized not in format_order:
             format_order.append(normalized)
@@ -103,19 +103,28 @@ def rank_acquisition_offers(
     """Rank by explicit offer, explicit format, then provider priority."""
     result = normalize_acquisition_offers(value)
     offer_order = {offer_id: index for index, offer_id in enumerate(result.preferences.offer_order)}
-    format_order = {fmt: index for index, fmt in enumerate(result.preferences.format_order)}
+    format_order = tuple(result.preferences.format_order)
     default_offer_rank = len(offer_order)
-    default_format_rank = len(format_order)
 
     indexed = list(enumerate(result.offers))
+
+    def format_score(fmt: str) -> tuple[int, int]:
+        for index, preferred in enumerate(format_order):
+            if fmt == preferred:
+                return index, 0
+            if fmt and format_family(fmt) == format_family(preferred):
+                return index, 1
+        return len(format_order), 2
 
     def score(entry):
         index, offer = entry
         offer_id = str(offer.offer_id or "").strip()
         fmt = file_format(offer.format)
+        fmt_rank, family_rank = format_score(fmt)
         return (
             offer_order.get(offer_id, default_offer_rank),
-            format_order.get(fmt, default_format_rank),
+            fmt_rank,
+            family_rank,
             -int(offer.priority or 0),
             index,
         )
