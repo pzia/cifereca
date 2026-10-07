@@ -221,9 +221,14 @@ class KoboPlugin(ProviderPlugin):
     descriptor = DESCRIPTOR
 
     def activate(self, context):
-        self._catalog_factory = context.service('provider.kobo.catalog')
-        if not callable(getattr(self._catalog_factory, 'create', None)):
-            raise ProviderError('Kobo : service catalogue requis et indisponible')
+        resolved = context.select_service(
+            "catalog.service",
+            contract="cifereca.catalog.service",
+            version=">=1,<2",
+        )
+        self._catalog_factory = None if resolved is None else resolved.service
+        if not callable(getattr(self._catalog_factory, "create", None)):
+            raise ProviderError("Kobo : service catalogue requis et indisponible")
         return self
 
     def deactivate(self):
