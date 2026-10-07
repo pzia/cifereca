@@ -362,8 +362,8 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
                 f"{plugin_dir}: plugins[{index}].priority invalide: "
                 f"{descriptor.get('priority')!r}"
             ) from exc
-        schema = descriptor.get("config_schema")
-        if schema is not None and not isinstance(schema, dict):
+        schema = descriptor.get("config_schema") or {}
+        if not isinstance(schema, dict):
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}].config_schema doit être un objet"
             )
