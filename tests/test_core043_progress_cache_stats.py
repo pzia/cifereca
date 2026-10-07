@@ -99,7 +99,7 @@ def test_cache_broker_is_scoped_per_plugin(tmp_path, monkeypatch):
         other = cache_root / "plugin.b"; other.mkdir(parents=True); (other / "b.bin").write_bytes(b"bb")
         broker = CacheBrokerImpl(service)
         scoped = broker.for_plugin("plugin.a", trusted=False)
-        assert [row.namespace_id for row in scoped.namespaces()] == ["plugin:plugin.a"]
+        assert {row.namespace_id for row in scoped.namespaces()} == {"db:plugin:plugin.a", "plugin:plugin.a"}
         denied = scoped.purge("plugin:plugin.b")
         assert not denied.ok and (other / "b.bin").exists()
         own_result = scoped.purge("plugin:plugin.a")
@@ -108,6 +108,36 @@ def test_cache_broker_is_scoped_per_plugin(tmp_path, monkeypatch):
         trusted = broker.for_plugin("core.maintenance.cache", trusted=True)
         ids = {row.namespace_id for row in trusted.namespaces()}
         assert "plugin:plugin.b" in ids
+    finally:
+        service.close()
+
+
+def test_cache_broker_key_value_ttl_is_scoped(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        broker = CacheBrokerImpl(service)
+        first = broker.for_plugin("plugin.a", trusted=False)
+        second = broker.for_plugin("plugin.b", trusted=False)
+
+        assert first.get("missing", {"fallback": True}) == {"fallback": True}
+        first.put("shared-key", {"value": 1}, ttl_seconds=60)
+        second.put("shared-key", {"value": 2}, ttl_seconds=60)
+        assert first.get("shared-key") == {"value": 1}
+        assert second.get("shared-key") == {"value": 2}
+
+        assert first.delete("shared-key") is True
+        assert first.delete("shared-key") is False
+        assert second.get("shared-key") == {"value": 2}
+
+        import cifereca.storage as storage_module
+        now = storage_module.time.time()
+        first.put("short", "alive", ttl_seconds=1)
+        monkeypatch.setattr(storage_module.time, "time", lambda: now + 2)
+        assert first.get("short") is None
+
+        result = second.purge("db:plugin:plugin.b")
+        assert result.ok
+        assert second.get("shared-key") is None
     finally:
         service.close()
 
