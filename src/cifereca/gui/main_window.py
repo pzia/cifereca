@@ -1502,9 +1502,14 @@ class MainWindow(Adw.ApplicationWindow):
             if page.group != group:
                 group = page.group
                 expanded = self._nav_group_expanded.setdefault(group, group != "configuration")
-                button = Gtk.ToggleButton(label={"usage":"Pages", "configuration":"Configuration / Technique"}.get(group, group))
+                group_label = {"usage":"Pages", "configuration":"Configuration / Technique"}.get(group, group)
+                button = Gtk.ToggleButton()
+                button_label = Gtk.Label(label=group_label, xalign=0)
+                button_label.set_ellipsize(Pango.EllipsizeMode.END)
+                button_label.set_max_width_chars(18)
+                button.set_child(button_label)
                 button.set_active(expanded)
-                button.set_tooltip_text("Déplier / replier la rubrique")
+                button.set_tooltip_text(f"{group_label} — Déplier / replier la rubrique")
                 button.connect("toggled", lambda b, g=group: self._toggle_nav_group(g, b.get_active()))
                 row = Gtk.ListBoxRow(); row.set_selectable(False); row.set_activatable(False); row.set_child(button)
                 self.nav_list.append(row)
