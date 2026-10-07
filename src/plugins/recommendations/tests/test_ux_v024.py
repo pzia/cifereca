@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from recommendations_v024 import UxRecommendationsView
+from recommendations_v024 import UxRecommendationsView, _refresh_on_first_map
 
 
 def ranked(title, score=50, provider="a"):
@@ -28,3 +28,61 @@ def test_provider_ids_are_never_user_facing_when_label_is_known():
     view._provider_labels = {"": "Tous les catalogues", "a": "Catalogue A"}
     assert view._display_source("a") == "Catalogue A"
     assert view._display_source("unknown") == "unknown"
+
+
+class _FakeWidget:
+    def __init__(self):
+        self.callback = None
+        self.mapped = False
+
+    def connect(self, signal, callback):
+        assert signal == "map"
+        self.callback = callback
+        return 1
+
+    def get_mapped(self):
+        return self.mapped
+
+    def emit_map(self):
+        assert self.callback is not None
+        self.mapped = True
+        self.callback(self)
+
+
+class _FakeGLib:
+    def __init__(self):
+        self.calls = []
+
+    def idle_add(self, callback):
+        self.calls.append(callback)
+        return len(self.calls)
+
+
+class _FakeView:
+    def refresh(self):
+        raise AssertionError("refresh must be scheduled, not executed synchronously")
+
+
+def test_initial_refresh_waits_for_first_map_and_is_scheduled_once():
+    widget = _FakeWidget()
+    glib = _FakeGLib()
+    view = _FakeView()
+
+    _refresh_on_first_map(view, widget, glib)
+    assert glib.calls == []
+
+    widget.emit_map()
+    assert glib.calls == [view.refresh]
+
+    widget.emit_map()
+    assert glib.calls == [view.refresh]
+
+
+def test_already_mapped_widget_schedules_initial_refresh_immediately():
+    widget = _FakeWidget()
+    widget.mapped = True
+    glib = _FakeGLib()
+    view = _FakeView()
+
+    _refresh_on_first_map(view, widget, glib)
+    assert glib.calls == [view.refresh]

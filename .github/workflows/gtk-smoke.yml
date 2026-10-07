@@ -8,13 +8,6 @@ on:
       - "src/cifereca/builtin_ui/**"
       - "environnements/chatgpt-work/**"
       - ".github/workflows/gtk-smoke.yml"
-  push:
-    paths:
-      - "src/cifereca/app.py"
-      - "src/cifereca/gui/**"
-      - "src/cifereca/builtin_ui/**"
-      - "environnements/chatgpt-work/**"
-      - ".github/workflows/gtk-smoke.yml"
   workflow_dispatch:
 
 permissions:

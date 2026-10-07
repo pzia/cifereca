@@ -98,5 +98,6 @@ Rôles autorisés :
 7. Avant tout chantier significatif, vérifier les issues, PR et branches actives afin d'éviter les collisions et doublons.
 8. Une PR ne peut être mergée que par le rôle `cicd`.
 9. En cas d'ambiguïté, choisir le rôle propriétaire du composant à modifier ; si cela implique de changer de rôle, créer une issue au lieu de franchir la frontière.
+10. Tant que l'issue #310 reste ouverte pour quota GitHub Actions épuisé, `cicd` peut merger malgré des checks rouges **uniquement** lorsque les jobs concernés n'ont jamais démarré (`steps` vide/null, aucun log de test) et que le diff est compris, mergeable, sans review/thread bloquant ni échec fonctionnel réel connu. Cette exception expire automatiquement à la fermeture de #310.
 
 Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique.
