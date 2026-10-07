@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from cifereca.plugin_api import AdeptProfileRef
+
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -59,38 +61,65 @@ def test_already_mapped_page_runs_immediately_once():
 
 
 
-class FakeRuntime:
+class FakeProfilesBroker:
     def __init__(self):
         self.calls = []
 
     def profiles(self):
         self.calls.append("profiles")
-        return {"profiles": [{"name": "alexandre"}]}
+        return (
+            AdeptProfileRef(
+                profile_id="stable-alexandre",
+                name="alexandre",
+                complete=True,
+                fetch_capable=True,
+                acsm_fetch_ready=True,
+            ),
+        )
+
+    def provision(self, name, username):
+        self.calls.append(("provision", name, username))
+        return AdeptProfileRef(
+            profile_id="stable-" + name,
+            name=name,
+            complete=True,
+            fetch_capable=True,
+            acsm_fetch_ready=True,
+        )
 
 
 def test_refresh_task_lists_profiles_once():
-    runtime = FakeRuntime()
+    broker = FakeProfilesBroker()
 
     value, payload = mod._run_profile_task(
-        runtime, runtime.profiles, reload_profiles=False
+        broker, broker.profiles, reload_profiles=False
     )
 
     assert value == payload
-    assert payload["profiles"][0]["name"] == "alexandre"
-    assert runtime.calls == ["profiles"]
+    assert payload[0].name == "alexandre"
+    assert broker.calls == ["profiles"]
 
 
 def test_mutation_task_reloads_profiles_inside_worker():
-    runtime = FakeRuntime()
+    broker = FakeProfilesBroker()
 
     def mutate():
-        runtime.calls.append("mutate")
+        broker.calls.append("mutate")
         return {"ok": True}
 
     value, payload = mod._run_profile_task(
-        runtime, mutate, reload_profiles=True
+        broker, mutate, reload_profiles=True
     )
 
     assert value == {"ok": True}
-    assert payload["profiles"][0]["name"] == "alexandre"
-    assert runtime.calls == ["mutate", "profiles"]
+    assert payload[0].name == "alexandre"
+    assert broker.calls == ["mutate", "profiles"]
+
+
+def test_profile_page_uses_public_broker_for_listing_and_provisioning():
+    source = (ROOT / "cifereca_kobo_adept_profiles.py").read_text(encoding="utf-8")
+    assert 'context.broker("adept.profiles")' in source
+    assert "self.profiles_broker.profiles" in source
+    assert "self.profiles_broker.provision" in source
+    assert "self.runtime.profiles" not in source
+    assert "self.runtime.provision_profile" not in source
