@@ -886,6 +886,20 @@ class PluginPackagingTests(unittest.TestCase):
             output = build_plugin_zip(plugin, root / "dist")
             self.assertTrue(output.exists())
 
+    def test_packaging_accepts_string_manifest_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["manifest"] = "1"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            output = build_plugin_zip(plugin, root / "dist")
+            self.assertTrue(output.exists())
+
     def test_packaging_refuses_invalid_package_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
