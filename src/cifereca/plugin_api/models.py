@@ -535,6 +535,19 @@ class SyncSourceRef:
 
 
 @dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)
+class AdeptProfileRef:
+    """Stable public ADEPT profile reference.
+
+    profile_id is the durable Core identity; name is the current CLI name.
+    """
+    profile_id: str
+    name: str
+    complete: bool = False
+    fetch_capable: bool = False
+    acsm_fetch_ready: bool = False
+
+
 class MaintenanceToolInfo:
     id: str
     title: str
