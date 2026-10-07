@@ -43,6 +43,9 @@ class OptimizerPage:
         config = dict(getattr(context, "config", {}) or {})
         self.default_profile = str(config.get("default_profile", "device.profile.xteink-x3") or "device.profile.xteink-x3")
         self.max_uncompressed_mb = int(config.get("max_uncompressed_mb", 2048) or 2048)
+        self.max_pdf_pages = int(config.get("max_pdf_pages", 5000) or 5000)
+        self.max_image_pixels = int(config.get("max_image_pixels", 64_000_000) or 64_000_000)
+        self.max_image_mb = int(config.get("max_image_mb", 64) or 64)
         self.profiles = discover_profiles(context)
         self._unsubscribe_profiles = None
 
@@ -57,10 +60,15 @@ class OptimizerPage:
         outer.set_child(box)
         self.widget = outer
 
+        title = Gtk.Label(label="Optimisation e-ink — EPUB / PDF", xalign=0)
+        title.add_css_class("title-2")
+        box.append(title)
+
         intro = Gtk.Label(
             label=(
-                "Crée une variante allégée pour liseuse e-ink. L'original n'est jamais modifié : "
-                "le plugin conserve texte, CSS, polices, métadonnées et structure EPUB, et optimise uniquement les images."
+                "Crée une variante adaptée à une liseuse e-ink sans modifier l'original. "
+                "EPUB : structure, texte, CSS et polices conservés ; animations et transparence préservées. "
+                "PDF : texte et vectoriel conservés ; seules les images raster compatibles sont remplacées."
             )
         )
         intro.set_wrap(True)
@@ -83,16 +91,16 @@ class OptimizerPage:
         grid.set_hexpand(True)
         box.append(grid)
 
-        grid.attach(self._label(Gtk, "Source EPUB"), 0, 0, 1, 1)
+        grid.attach(self._label(Gtk, "Source EPUB/PDF"), 0, 0, 1, 1)
         self.source_entry = Gtk.Entry()
         self.source_entry.set_hexpand(True)
-        self.source_entry.set_placeholder_text("Choisir un fichier .epub")
+        self.source_entry.set_placeholder_text("Choisir un fichier .epub ou .pdf")
         grid.attach(self.source_entry, 1, 0, 1, 1)
         source_button = Gtk.Button(label="Choisir…")
         source_button.connect("clicked", self._choose_source)
         grid.attach(source_button, 2, 0, 1, 1)
 
-        grid.attach(self._label(Gtk, "Profil"), 0, 1, 1, 1)
+        grid.attach(self._label(Gtk, "Profil liseuse"), 0, 1, 1, 1)
         self.profile_combo = Gtk.ComboBoxText()
         self._populate_profiles()
         self.profile_combo.connect("changed", self._profile_changed)
@@ -117,7 +125,7 @@ class OptimizerPage:
         self.source_button = source_button
         self.output_button = output_button
         if self.artifact is not None:
-            self.source_entry.set_text(str(getattr(self.artifact, "filename", "") or getattr(self.artifact, "artifact_id", "EPUB courant")))
+            self.source_entry.set_text(str(getattr(self.artifact, "filename", "") or getattr(self.artifact, "artifact_id", "Document courant")))
             self.source_entry.set_sensitive(False)
             self.source_button.set_sensitive(False)
             self.output_entry.set_text("Variante gérée par Cifereca")
@@ -149,8 +157,9 @@ class OptimizerPage:
 
         note = Gtk.Label(
             label=(
-                "DRM : les EPUB chiffrés sont refusés. Depuis le détail d’un livre, Core041 fournit ArtifactRef et "
-                "artifact.execution ; en ouverture manuelle, la page conserve la recette fichier vers fichier."
+                "Sécurité : EPUB chiffrés refusés ; PDF protégés ou signés refusés. "
+                "Si le zoom du profil est inconnu, les tailles CSS/PDF ne servent jamais à réduire "
+                "sous la résolution physique de l'écran."
             )
         )
         note.set_wrap(True)
@@ -179,16 +188,18 @@ class OptimizerPage:
         from gi.repository import Gtk
 
         dialog = Gtk.FileChooserNative.new(
-            "Choisir un EPUB",
+            "Choisir un EPUB ou PDF",
             self._parent_window(),
             Gtk.FileChooserAction.OPEN,
             "Ouvrir",
             "Annuler",
         )
         file_filter = Gtk.FileFilter()
-        file_filter.set_name("EPUB")
+        file_filter.set_name("EPUB / PDF")
         file_filter.add_pattern("*.epub")
         file_filter.add_pattern("*.EPUB")
+        file_filter.add_pattern("*.pdf")
+        file_filter.add_pattern("*.PDF")
         dialog.set_filter(file_filter)
         dialog.connect("response", self._source_response)
         self._dialogs.append(dialog)
@@ -214,7 +225,7 @@ class OptimizerPage:
         from gi.repository import Gtk
 
         dialog = Gtk.FileChooserNative.new(
-            "Enregistrer l'EPUB optimisé",
+            "Enregistrer la variante optimisée",
             self._parent_window(),
             Gtk.FileChooserAction.SAVE,
             "Enregistrer",
@@ -235,14 +246,22 @@ class OptimizerPage:
                 gio_file = dialog.get_file()
                 path = gio_file.get_path() if gio_file else None
                 if path:
-                    if not path.lower().endswith(".epub"):
-                        path += ".epub"
+                    suffix = self._source_suffix()
+                    if suffix and not path.casefold().endswith(suffix):
+                        path += suffix
                     self._output_auto = False
                     self.output_entry.set_text(path)
         finally:
             dialog.hide()
             if dialog in self._dialogs:
                 self._dialogs.remove(dialog)
+
+    def _source_suffix(self) -> str:
+        if self.artifact is not None:
+            fmt = str(getattr(getattr(self.artifact, "format", None), "format", "") or "").casefold()
+            return ".pdf" if fmt == "pdf" else ".epub" if fmt == "epub" else ""
+        suffix = Path(self.source_entry.get_text().strip()).suffix.casefold()
+        return suffix if suffix in {".epub", ".pdf"} else ""
 
     def _profile_changed(self, _combo):
         self._refresh_profile_help()
@@ -286,41 +305,45 @@ class OptimizerPage:
     def _refresh_profile_help(self):
         plugin_id = self.profile_combo.get_active_id()
         profile = self.profiles.get(plugin_id) if plugin_id else None
-        self.profile_help.set_text(profile.description if profile else "Aucun profil device.profile actif.")
+        if profile is None:
+            self.profile_help.set_text("Aucun profil device.profile actif.")
+            return
+        zoom = (
+            f"zoom ×{profile.max_zoom_factor:g}"
+            if profile.max_zoom_factor is not None
+            else "zoom inconnu → mode conservateur"
+        )
+        self.profile_help.set_text(f"{profile.description} · {zoom}")
 
     def _set_default_output(self):
         plugin_id = self.profile_combo.get_active_id()
         profile = self.profiles.get(plugin_id) if plugin_id else None
         if profile is None:
             return
-        if self.artifact is not None:
-            source = str(getattr(self.artifact, "filename", "") or "Livre.epub")
-            try:
-                proposed = default_output_path(source, profile).name
-            except Exception:
-                proposed = "Variante gérée par Cifereca"
-            self._setting_output = True
-            try:
-                self.output_entry.set_text(proposed)
-            finally:
-                self._setting_output = False
-            return
-        source = self.source_entry.get_text().strip()
+        source = (
+            str(getattr(self.artifact, "filename", "") or "Livre.epub")
+            if self.artifact is not None
+            else self.source_entry.get_text().strip()
+        )
         if not source:
             return
         try:
-            output = default_output_path(source, profile)
+            source_path = Path(source)
+            if source_path.suffix.casefold() == ".pdf":
+                output = source_path.with_name(f"{source_path.stem} [{profile.suffix}].pdf")
+            else:
+                output = default_output_path(source_path, profile)
         except Exception:
             return
         self._output_auto = True
         self._setting_output = True
         try:
-            self.output_entry.set_text(str(output))
+            self.output_entry.set_text(output.name if self.artifact is not None else str(output))
         finally:
             self._setting_output = False
 
     def _set_busy(self, busy: bool):
-        self.optimize_button.set_sensitive(not busy)
+        self.optimize_button.set_sensitive(not busy and bool(self.profiles))
         self.cancel_button.set_sensitive(busy)
         self.source_entry.set_sensitive(not busy and self.artifact is None)
         self.output_entry.set_sensitive(not busy and self.artifact is None)
@@ -337,16 +360,21 @@ class OptimizerPage:
             self.host.toast("Choisissez un profil actif")
             return
 
+        suffix = self._source_suffix()
+        if suffix not in {".epub", ".pdf"}:
+            self.host.toast("Choisissez un fichier EPUB ou PDF")
+            return
+
         self._cancel_event = threading.Event()
         self._set_busy(True)
         self.progress.set_fraction(0.0)
-        self.progress.set_text("Démarrage…")
+        self.progress.set_text("0% — Démarrage…")
         self.status.set_text("")
         if self.artifact is not None:
             self._thread = threading.Thread(
                 target=self._run_artifact,
                 args=(self.artifact, plugin_id),
-                name="cifereca-epub-optimizer-artifact",
+                name="cifereca-document-optimizer-artifact",
                 daemon=True,
             )
         else:
@@ -354,12 +382,12 @@ class OptimizerPage:
             target = self.output_entry.get_text().strip()
             if not source or not target:
                 self._set_busy(False)
-                self.host.toast("Choisissez un EPUB et un fichier de sortie")
+                self.host.toast("Choisissez un document et un fichier de sortie")
                 return
             self._thread = threading.Thread(
-                target=self._run,
+                target=self._run_manual,
                 args=(source, target, profile),
-                name="cifereca-epub-optimizer",
+                name="cifereca-document-optimizer",
                 daemon=True,
             )
         self._thread.start()
@@ -374,15 +402,34 @@ class OptimizerPage:
         broker = self.context.broker("artifact.execution")
         if broker is None:
             raise RuntimeError("broker artifact.execution indisponible")
+        fmt = str(getattr(getattr(artifact, "format", None), "format", "") or "").casefold()
+        if fmt == "pdf":
+            capability_id = "pdf.image-optimize-eink"
+            transformer_id = "document.transformer.pdf-eink-optimizer"
+            options = {
+                "max_pdf_pages": self.max_pdf_pages,
+                "max_image_pixels": self.max_image_pixels,
+                "max_image_mb": self.max_image_mb,
+            }
+        elif fmt == "epub":
+            capability_id = "epub.image-optimize-eink"
+            transformer_id = "document.transformer.epub-optimizer"
+            options = {
+                "max_uncompressed_mb": self.max_uncompressed_mb,
+                "max_image_pixels": self.max_image_pixels,
+                "max_image_mb": self.max_image_mb,
+            }
+        else:
+            raise ValueError("format non supporté")
         request = TransformRequest(
             source=artifact,
-            capability_id="epub.image-optimize-eink",
+            capability_id=capability_id,
             profile_plugin_id=profile_plugin_id,
-            options={"max_uncompressed_mb": self.max_uncompressed_mb},
+            options=options,
         )
         return broker.execute_transform(
             request,
-            transformer_plugin_id="document.transformer.epub-optimizer",
+            transformer_plugin_id=transformer_id,
             control=control,
         )
 
@@ -399,40 +446,53 @@ class OptimizerPage:
             if self._cancel_event.is_set():
                 GLib.idle_add(self._failure_ui, "Traitement annulé")
             else:
-                self.context.logger.error("EPUB artifact optimization failed: %s", type(exc).__name__)
+                self.context.logger.error("Document artifact optimization failed: %s", type(exc).__name__)
                 GLib.idle_add(self._failure_ui, f"Échec : {exc}")
 
-    def _run(self, source: str, target: str, profile):
+    def _run_manual(self, source: str, target: str, profile):
         from gi.repository import GLib
 
         try:
-            from .engine import CancelledError, DrmProtectedError, optimize_epub
-            report = optimize_epub(
-                source,
-                target,
-                profile=profile,
-                max_uncompressed_mb=self.max_uncompressed_mb,
-                progress=lambda pct, msg: GLib.idle_add(self._progress_ui, pct, msg),
-                cancel_event=self._cancel_event,
-            )
+            common = {
+                "profile": profile,
+                "max_image_pixels": self.max_image_pixels,
+                "max_image_mb": self.max_image_mb,
+                "progress": lambda pct, msg: GLib.idle_add(self._progress_ui, pct, msg),
+                "cancel_event": self._cancel_event,
+            }
+            if Path(source).suffix.casefold() == ".pdf":
+                from .pdf_engine import optimize_pdf
+                report = optimize_pdf(
+                    source,
+                    target,
+                    max_pages=self.max_pdf_pages,
+                    **common,
+                )
+            else:
+                from .engine import optimize_epub
+                report = optimize_epub(
+                    source,
+                    target,
+                    max_uncompressed_mb=self.max_uncompressed_mb,
+                    **common,
+                )
             GLib.idle_add(self._success_ui, report)
-        except CancelledError:
-            GLib.idle_add(self._failure_ui, "Traitement annulé")
-        except DrmProtectedError as exc:
-            GLib.idle_add(self._failure_ui, str(exc))
         except Exception as exc:
-            self.context.logger.error("EPUB optimization failed: %s", type(exc).__name__)
-            GLib.idle_add(self._failure_ui, f"Échec : {exc}")
+            if self._cancel_event.is_set():
+                GLib.idle_add(self._failure_ui, "Traitement annulé")
+            else:
+                self.context.logger.error("Document optimization failed: %s", type(exc).__name__)
+                GLib.idle_add(self._failure_ui, f"Échec : {exc}")
 
     def _progress_ui(self, pct: int, message: str):
         self.progress.set_fraction(pct / 100.0)
-        self.progress.set_text(message)
+        self.progress.set_text(f"{pct}% — {message}" if message else f"{pct}%")
         return False
 
     def _success_ui(self, report):
         self._set_busy(False)
         self.progress.set_fraction(1.0)
-        self.progress.set_text("Terminé")
+        self.progress.set_text("100% — Terminé")
         before = _human_size(report.source_bytes)
         after = _human_size(report.output_bytes)
         self.status.set_text(
@@ -441,7 +501,7 @@ class OptimizerPage:
             f"Sortie : {report.output_path}"
             + (f"\n{len(report.image_errors)} image(s) conservée(s) après erreur de décodage." if report.image_errors else "")
         )
-        self.host.toast("Variante EPUB créée")
+        self.host.toast("Variante optimisée créée")
         return False
 
     def _artifact_success_ui(self, artifact):
@@ -453,7 +513,7 @@ class OptimizerPage:
         refresh = getattr(self.action_host, "refresh_context", None)
         if callable(refresh):
             refresh()
-        self.host.toast("Variante EPUB créée et enregistrée")
+        self.host.toast("Variante optimisée créée et enregistrée")
         return False
 
     def _failure_ui(self, message: str):

@@ -229,14 +229,18 @@
       "type": "ui.page",
       "version": "0.3.0",
       "entrypoint": "cifereca_epub_optimizer_plugin:PLUGIN",
-      "display_name": "Optimiseur EPUB e-ink",
-      "description": "Page de recette manuelle et contribution d’action book.detail pour EPUB Optimizer.",
-      "help_text": "Ajoute l’action Optimiser… au détail d’un EPUB local. Core044 fournit artifact.execution : la variante est créée et persistée par le Core, sans chemin ou placement privé.",
+      "display_name": "Optimiseur EPUB / PDF e-ink",
+      "description": "Page de recette et action book.detail pour créer une variante e-ink EPUB ou PDF.",
+      "help_text": "Ajoute l’action Optimiser… aux EPUB et PDF locaux non DRM. Le Core gère leases, persistance et réutilisation des variantes identiques.",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "requires": [
         {
           "plugin": "document.transformer.epub-optimizer",
+          "version": ">=0.3.0,<1"
+        },
+        {
+          "plugin": "document.transformer.pdf-eink-optimizer",
           "version": ">=0.3.0,<1"
         }
       ],
@@ -250,6 +254,12 @@
           "name": "Pillow",
           "version": ">=11,<13",
           "import": "PIL"
+        },
+        {
+          "type": "python-package",
+          "name": "PyMuPDF",
+          "version": ">=1.26,<2",
+          "import": "pymupdf"
         }
       ],
       "config_schema": {
@@ -266,6 +276,24 @@
             "minimum": 64,
             "maximum": 4096,
             "default": 2048
+          },
+          "max_pdf_pages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20000,
+            "default": 5000
+          },
+          "max_image_mb": {
+            "type": "integer",
+            "minimum": 8,
+            "maximum": 512,
+            "default": 64
+          },
+          "max_image_pixels": {
+            "type": "integer",
+            "minimum": 1000000,
+            "maximum": 250000000,
+            "default": 64000000
           }
         }
       },
