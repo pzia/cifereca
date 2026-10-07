@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, HealthCheckResult, SyncRequest, SyncResult, SyncSourceRef
+from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, SyncRequest, SyncResult, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
@@ -264,6 +264,95 @@ class IdentityBrokerImpl:
 
 
 @dataclass(slots=True)
+class AdeptProfileBrokerImpl:
+    service: Any
+
+    @staticmethod
+    def _payload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        nested = value.get("profile")
+        return dict(nested) if isinstance(nested, dict) else dict(value)
+
+    def _ref(self, row: dict[str, Any]) -> AdeptProfileRef:
+        stable = str(row.get("profile_id") or row.get("id") or "").strip()
+        name = str(row.get("name") or row.get("profile") or "").strip()
+        if not stable or not name:
+            raise AttentionRequired(
+                "Le runtime ADEPT ne publie pas de référence de profil stable.",
+                code="adept_profile_stable_id_required",
+            )
+        provisioning = row.get("provisioning") if isinstance(row.get("provisioning"), dict) else {}
+        return AdeptProfileRef(
+            profile_id=stable,
+            name=name,
+            complete=row.get("complete") is True,
+            fetch_capable=row.get("fetch_capable") is True,
+            acsm_fetch_ready=provisioning.get("acsm_fetch_ready") is True,
+        )
+
+    def profiles(self) -> tuple[AdeptProfileRef, ...]:
+        return tuple(self._ref(row) for row in self.service.kobo_profiles())
+
+    def _find(self, profile_id: str) -> AdeptProfileRef:
+        wanted = str(profile_id or "").strip()
+        matches = [row for row in self.profiles() if row.profile_id == wanted]
+        if len(matches) != 1:
+            raise AttentionRequired("Profil ADEPT absent ou ambigu.", code="adept_origin_profile_missing")
+        return matches[0]
+
+    def bound(self, identity_id: str) -> AdeptProfileRef | None:
+        identity = self.service.identity_by_id(str(identity_id or ""))
+        if identity is None:
+            raise ValueError("unknown identity")
+        stable = self.service.storage.adept_profile_binding_get("identity", identity.identity_id)
+        return self._find(stable) if stable else None
+
+    def resolve_name(self, profile_id: str) -> str:
+        return self._find(profile_id).name
+
+    def bind(self, identity_id: str, profile_id: str) -> AdeptProfileRef:
+        identity = self.service.identity_by_id(str(identity_id or ""))
+        if identity is None:
+            raise ValueError("unknown identity")
+        profile = self._find(profile_id)
+        if not (profile.complete and profile.fetch_capable and profile.acsm_fetch_ready):
+            raise AttentionRequired(
+                "Le profil ADEPT n’est pas prêt pour les ACSM.",
+                code="adept_profile_not_ready",
+            )
+        self.service.storage.adept_profile_binding_set("identity", identity.identity_id, profile.profile_id)
+        return profile
+
+    def provision(self, name: str, username: str, *, identity_id: str | None = None) -> AdeptProfileRef:
+        if identity_id is not None and self.service.identity_by_id(str(identity_id)) is None:
+            raise ValueError("unknown identity")
+        runtime = self.service._kobo_adapter()
+        provision = getattr(runtime, "provision_profile", None)
+        if not callable(provision):
+            raise AttentionRequired(
+                "Provisioning de profil ADEPT indisponible.",
+                code="adept_profile_provisioning_unsupported",
+            )
+        shown = self._payload(provision(name, username))
+        refresh_capabilities = getattr(runtime, "capabilities", None)
+        if callable(refresh_capabilities):
+            refresh_capabilities()
+        rows = list(self.service.kobo_profiles())
+        shown_name = str(shown.get("name") or shown.get("profile") or name or "").strip()
+        candidates = [row for row in rows if str(row.get("name") or row.get("profile") or "").strip() == shown_name]
+        profile = self._ref(candidates[0] if len(candidates) == 1 else shown)
+        if not (profile.complete and profile.fetch_capable and profile.acsm_fetch_ready):
+            raise AttentionRequired(
+                "Le profil ADEPT a été créé mais n’est pas prêt pour les ACSM.",
+                code="adept_profile_provisioning_incomplete",
+            )
+        if identity_id is not None:
+            self.service.storage.adept_profile_binding_set("identity", str(identity_id), profile.profile_id)
+        return profile
+
+
+@dataclass(slots=True)
 class DiagnosticsBrokerImpl:
     service: Any
 
@@ -436,6 +525,7 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "metadata": MetadataBrokerImpl(service),
         "reconciliation": ReconciliationBrokerImpl(service),
         "identities": IdentityBrokerImpl(service),
+        "adept.profiles": AdeptProfileBrokerImpl(service),
         "diagnostics": DiagnosticsBrokerImpl(service),
         "library.naming": LibraryNamingBrokerImpl(service),
         "artifact.execution": artifact_execution,
