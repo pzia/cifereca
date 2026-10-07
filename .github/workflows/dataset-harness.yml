@@ -1,17 +1,13 @@
 name: Dataset UX harness
 
 on:
-  pull_request:
-    paths:
-      - "simulation/**"
-      - ".github/workflows/dataset-harness.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
