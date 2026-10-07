@@ -63,40 +63,23 @@ def checked_url(value, allowed_origins=None):
     raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
 
 def validate_epub(path):
+    inspected = inspect_artifact(Path(path), 'epub', strict_structure=True)
+    if not inspected.valid:
+        raise ProviderError('Numilog : le fichier reçu n’est pas un EPUB valide')
     try:
         with zipfile.ZipFile(path) as z:
-            if len(z.infolist()) > 20000 or len({i.filename for i in z.infolist()}) != len(z.infolist()):
-                raise ValueError()
-            if any(i.flag_bits & 1 for i in z.infolist()):
-                raise ProviderCapabilityError('Numilog : archive EPUB chiffrée non prise en charge')
-            def read(name, maximum):
-                if z.getinfo(name).file_size > maximum:
-                    raise ValueError()
-                return z.read(name)
-            if read('mimetype',100) != b'application/epub+zip':
-                raise ValueError()
-            container = ET.fromstring(read('META-INF/container.xml',1024*1024))
-            roots = container.findall('.//{*}rootfile')
-            if not roots:
-                raise ValueError()
-            for root in roots:
-                opf = root.get('full-path','')
-                if not opf or opf.startswith('/') or '..' in opf.split('/'):
-                    raise ValueError()
-                if ET.fromstring(read(opf,5*1024*1024)).tag.split('}')[-1] != 'package':
-                    raise ValueError()
             names = set(z.namelist())
             if 'META-INF/license.lcpl' in names or 'META-INF/rights.xml' in names:
                 raise ProviderCapabilityError('Numilog : EPUB protégé Adobe/LCP non pris en charge dans cette version')
             if 'META-INF/encryption.xml' in names:
-                encryption = ET.fromstring(read('META-INF/encryption.xml',1024*1024))
+                encryption = ET.fromstring(z.read('META-INF/encryption.xml'))
                 methods = encryption.findall('.//{*}EncryptionMethod')
                 fonts = {'http://www.idpf.org/2008/embedding','http://ns.adobe.com/pdf/enc#RC'}
                 if not methods or any(m.get('Algorithm') not in fonts for m in methods):
                     raise ProviderCapabilityError('Numilog : chiffrement EPUB non pris en charge dans cette version')
     except ProviderCapabilityError:
         raise
-    except (ValueError,KeyError,OSError,zipfile.BadZipFile,ET.ParseError,RuntimeError,NotImplementedError):
+    except (KeyError,OSError,zipfile.BadZipFile,ET.ParseError,RuntimeError,NotImplementedError):
         raise ProviderError('Numilog : le fichier reçu n’est pas un EPUB valide') from None
 
 class NumilogSession(ProviderSession):
