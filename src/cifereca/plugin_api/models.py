@@ -338,6 +338,15 @@ class UiBookDetailAction:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentLink:
+    id: str
+    label: str
+    url: str
+    relation: str = "notice"
+    icon_name: str = "external-link-symbolic"
+
+
+@dataclass(frozen=True, slots=True)
 class UiBookDetailPresentation:
     title: str
     subtitle: str = ""
@@ -345,6 +354,7 @@ class UiBookDetailPresentation:
     badges: tuple[str, ...] = ()
     sections: tuple[DetailSection, ...] = ()
     actions: tuple[UiBookDetailAction, ...] = ()
+    links: tuple[DocumentLink, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -971,7 +981,7 @@ __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
     "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
-    "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation",
+    "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
