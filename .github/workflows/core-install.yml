@@ -12,6 +12,7 @@ on:
       - "src/**"
       - "pyproject.toml"
       - ".github/workflows/core-install.yml"
+      - "scripts/ci-smoke-installed-wheel.sh"
   workflow_dispatch:
 
 permissions:
