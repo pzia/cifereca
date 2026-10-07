@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.recommendations",
-    "version": "0.2.2",
+    "version": "0.2.5",
     "name": "Recommandations CIFERECA",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,18 +11,19 @@
     {
       "id": "ui.page.recommendations",
       "type": "ui.page",
-      "version": "0.2.2",
-      "entrypoint": "recommendations_v022:PLUGIN",
+      "version": "0.2.5",
+      "entrypoint": "recommendations_v024:PLUGIN",
       "display_name": "Recommandations",
       "description": "Recommande des livres à partir de la bibliothèque du profil et des catalogues connectés.",
-      "help_text": "Ajoute une page Recommandations. Le plugin lit la projection publique de la bibliothèque via le broker metadata et interroge les catalogues via le broker catalog. Il combine les affinités auteur/sujets/série avec une fusion RRF, déduplique les notices déjà possédées et diversifie le classement avec MMR. Aucun emprunt ni téléchargement n'est déclenché.",
+      "help_text": "Ajoute une page Recommandations basée sur la présentation maître/détail standard de Cifereca. La liste reste à gauche ; la sélection affiche à droite la notice, l’affinité, les raisons et les sources. Les résultats provisoires sont signalés et restent interactifs pendant la recherche. Aucun emprunt ni téléchargement n'est déclenché.",
       "enabled_by_default": true,
       "priority": 0,
       "instantiation": "singleton_public",
       "requires_brokers": [
         "metadata",
         "catalog",
-        "identities"
+        "identities",
+        "tasks"
       ],
       "config_schema": {
         "type": "object",
@@ -63,7 +64,7 @@
             "minimum": 0,
             "maximum": 100,
             "default": 15,
-            "description": "Score minimal affiché par défaut."
+            "description": "Affinité minimale affichée par défaut."
           },
           "exploration": {
             "type": "integer",

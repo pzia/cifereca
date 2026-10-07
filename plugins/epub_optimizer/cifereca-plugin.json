@@ -231,7 +231,7 @@
       "entrypoint": "cifereca_epub_optimizer_plugin:PLUGIN",
       "display_name": "Optimiseur EPUB / PDF e-ink",
       "description": "Page de recette et action book.detail pour créer une variante e-ink EPUB ou PDF.",
-      "help_text": "Ajoute l’action Optimiser… aux EPUB et PDF locaux non DRM. Le Core gère leases, persistance et réutilisation des variantes identiques.",
+      "help_text": "Ajoute l’action Optimiser… aux EPUB et PDF locaux non DRM. Le Core gère tâches, progression, annulation, leases, persistance et réutilisation des variantes identiques.",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "requires": [
@@ -298,7 +298,8 @@
         }
       },
       "requires_brokers": [
-        "artifact.execution"
+        "artifact.execution",
+        "tasks"
       ],
       "requires_contracts": []
     }

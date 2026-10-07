@@ -803,6 +803,88 @@ class MasterDetailPage(Gtk.Box):
             self.window.ui_perf.record(f"list:{self.title}:append", (time.perf_counter() - started) * 1000.0)
 
 
+class PublicBookMasterDetailView:
+    """Public adapter backed by the same MasterDetailPage used by Core pages."""
+
+    def __init__(
+        self, window: "MainWindow", *, title: str, subtitle: str = "",
+        empty_title: str = "Aucun document",
+        empty_desc: str = "Aucun document à afficher.",
+    ) -> None:
+        self._page = MasterDetailPage(window, title, subtitle, empty_title, empty_desc)
+        self._rows: dict[str, Any] = {}
+
+    @property
+    def widget(self):
+        return self._page
+
+    def append_toolbar(self, widget: object) -> None:
+        self._page.toolbar.append(widget)
+
+    def show_rows(self, rows, total_count: int | None = None) -> None:
+        self._rows = {str(row.key): row for row in rows}
+        ui_rows = [
+            BookListItem(
+                str(row.key),
+                str(row.title or "Sans titre"),
+                str(row.subtitle or ""),
+                str(row.meta or ""),
+                str(row.badge or ""),
+                getattr(row, "thumbnail_url", None),
+            )
+            for row in rows
+        ]
+        self._page.show_rows(ui_rows, total_count=total_count)
+
+    def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None:
+        self._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
+        self._page.empty_page.set_title(str(title))
+        self._page.empty_page.set_description(str(description or ""))
+        self._page.empty_page.set_icon_name(str(icon_name or "system-search-symbolic"))
+        self._page.list_stack.set_visible_child_name("empty")
+
+    def connect_selected(self, callback) -> None:
+        def selected(item):
+            callback(self._rows.get(str(item.key)) if item is not None else None)
+        self._page.connect_selected(selected)
+
+    def show_detail(self, detail) -> None:
+        panel = self._page.detail
+        panel.show_summary(
+            title=str(detail.title or "Sans titre"),
+            subtitle=str(detail.subtitle or "") or None,
+            thumbnail=getattr(detail, "thumbnail_url", None),
+            badges=tuple(str(value) for value in (getattr(detail, "badges", ()) or ()) if value),
+        )
+        for section in sorted(getattr(detail, "sections", ()) or (), key=lambda row: row.order):
+            rows = [(str(field.label), text_or_dash(field.value)) for field in section.fields]
+            if rows:
+                panel.add_group(str(section.title), rows)
+        buttons = []
+        for action in getattr(detail, "actions", ()) or ():
+            uri = str(getattr(action, "uri", "") or "")
+            if uri.startswith(("http://", "https://")):
+                button = Gtk.LinkButton(uri=uri, label=str(action.title))
+                button.set_tooltip_text(str(action.title))
+            else:
+                button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
+                callback = getattr(action, "callback", None)
+                if callable(callback):
+                    button.connect("clicked", lambda _button, cb=callback: cb())
+            button._cifereca_action_id = str(action.id)
+            buttons.append(button)
+        panel.add_actions(buttons)
+
+    def empty_detail(
+        self,
+        title: str = "Aucun document sélectionné",
+        description: str = "Sélectionnez un document pour afficher ses détails.",
+    ) -> None:
+        self._page.detail.empty(title, description)
+
+
+
+
 class MainWindow(Adw.ApplicationWindow):
     NAV_ITEMS = [
         ("dashboard", "Accueil", "view-dashboard-symbolic"),
@@ -1270,6 +1352,11 @@ class MainWindow(Adw.ApplicationWindow):
                 button.connect('clicked', lambda _button, contribution=action: contribution.callback(self))
                 bar.append(button)
             return bar
+        def build_book_master_detail(self, *, title: str, subtitle: str = "", empty_title: str = "Aucun document", empty_desc: str = "Aucun document à afficher."):
+            return PublicBookMasterDetailView(
+                self.window, title=title, subtitle=subtitle,
+                empty_title=empty_title, empty_desc=empty_desc,
+            )
         def build_standard_page(self, route: str):
             return self.window._build_standard_page(route)
         def import_acsm(self):

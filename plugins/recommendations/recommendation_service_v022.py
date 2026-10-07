@@ -39,6 +39,7 @@ class RecommendationPartial:
     results_seen: int
     cache_batches: int
     network_batches: int
+    providers: tuple[tuple[str, str], ...] = ()
 
 
 def _merge_provider_rows(grouped: dict[str, list[Any]], providers: tuple[tuple[str, str], ...]) -> list[Any]:
@@ -87,6 +88,13 @@ def compute_recommendations(
     total_units = max(1, len(queries) * provider_total)
     progressive = getattr(catalog_broker, "search_progressive", None)
     was_cancelled = False
+
+    if progress:
+        progress(
+            0,
+            total_units,
+            f"Profil prêt · {len(books)} livres · {len(queries)} signaux · catalogues 0/{provider_total}",
+        )
 
     # Provisional ranking is intentionally lightweight: content score once per
     # candidate, no RRF/MMR. Full ranking runs once after all catalog queries.
@@ -143,6 +151,7 @@ def compute_recommendations(
                 results_seen=results_seen,
                 cache_batches=cache_batches,
                 network_batches=network_batches,
+                providers=providers,
             )
         )
 

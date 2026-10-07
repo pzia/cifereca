@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from cifereca.plugin_api import UiPageContribution
 
 
@@ -8,12 +7,17 @@ class AdeptProfilesPagePlugin:
     def __init__(self):
         self.context=None
         self.runtime=None
+        self.tasks=None
+        self._task_handles=[]
 
     def activate(self,context):
         self.context=context
         self.runtime=context.service("runtime.kobo-adept")
+        self.tasks=context.broker("tasks")
         if self.runtime is None:
             raise RuntimeError("runtime.kobo-adept indisponible")
+        if self.tasks is None:
+            raise RuntimeError("broker tasks indisponible")
         return self
 
     def pages(self):
@@ -86,12 +90,20 @@ class AdeptProfilesPagePlugin:
 
         def async_call(fn,success_message=None):
             set_busy(True)
-            def worker():
+            handle=self.tasks.submit(lambda _control:fn(),label="Gestion profil ADEPT",kind="adept-profile")
+            self._task_handles.append(handle)
+
+            def finished(done_handle):
                 try:
-                    value=fn(); error=None
+                    value=done_handle.result(); error=None
                 except Exception as exc:
                     value=None; error=exc
+
                 def done():
+                    if done_handle in self._task_handles:
+                        self._task_handles.remove(done_handle)
+                    if self.context is None:
+                        return False
                     set_busy(False)
                     if error is not None:
                         host.toast(str(error)[:240])
@@ -101,7 +113,8 @@ class AdeptProfilesPagePlugin:
                         except Exception as exc: host.toast(str(exc)[:240])
                     return False
                 GLib.idle_add(done)
-            threading.Thread(target=worker,daemon=True).start()
+
+            handle.add_done_callback(finished)
 
         refresh.connect("clicked",lambda _b:async_call(self.runtime.profiles))
         create.connect("clicked",lambda _b:async_call(
@@ -118,6 +131,11 @@ class AdeptProfilesPagePlugin:
         return scroll
 
     def deactivate(self):
+        for handle in tuple(self._task_handles):
+            try: handle.cancel()
+            except Exception: pass
+        self._task_handles.clear()
+        self.tasks=None
         self.runtime=None
         self.context=None
 
