@@ -345,3 +345,63 @@ def test_missing_inventory_return_token_disables_return(tmp_path: Path):
         assert binding["token_present"] is False
     finally:
         service.close()
+
+
+def test_returned_state_is_revalidated_from_public_inventory(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path)
+    runtime, calls = _runtime("hb", path)
+    inventory = runtime.loan_inventories(["hb"])
+    inventory["profiles"][0]["loans"][0].update({
+        "returned": True,
+        "token_present": False,
+    })
+    runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        result = service.reconcile_adept_acquisition(acquisition_id)
+
+        assert result["status"] == "resolved"
+        assert result["return_available"] is False
+        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
+        assert binding["adept_loan_id"] == "registry-id"
+        assert binding["loan_state"] == "returned"
+        assert binding["return_verification"] == "confirmed"
+        assert binding["token_present"] is False
+    finally:
+        service.close()
+
+
+def test_missing_inventory_entry_preserves_historical_binding_and_artifact(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path)
+    row = service.storage.acquisition_get(acquisition_id)
+    row["metadata"]["adept_binding"].update({
+        "adept_loan_id": "historical-id",
+        "loan_state": "active",
+        "token_present": True,
+        "return_available": True,
+    })
+    service.storage.acquisition_put(row)
+    runtime, calls = _runtime("hb", path)
+    inventory = runtime.loan_inventories(["hb"])
+    inventory["profiles"][0]["loans"] = []
+    runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
+    try:
+        before = path.read_bytes()
+        result = service.reconcile_adept_acquisition(acquisition_id)
+
+        assert result["status"] == "unresolved"
+        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
+        assert binding["adept_loan_id"] == "historical-id"
+        assert binding["inventory_status"] == "unresolved"
+        assert binding["return_available"] is False
+        assert path.read_bytes() == before
+        assert path.is_file()
+    finally:
+        service.close()
