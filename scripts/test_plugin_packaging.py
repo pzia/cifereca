@@ -490,6 +490,58 @@ class PluginPackagingTests(unittest.TestCase):
             ):
                 build_plugin_zip(plugin, root / "dist")
 
+    def test_packaging_refuses_unknown_system_requirement_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["system_requires"] = [{"type": "daemon"}]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"system_requires\[0\]\.type invalide"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_requires_name_for_python_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["system_requires"] = [
+                {"type": "python-package"}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"name requis pour python-package"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_refuses_invalid_system_requirement_version_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["system_requires"] = [
+                {"type": "binary", "name": "tool", "version_args": [42]}
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"version_args doit être une liste de chaînes"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
     def test_packaging_refuses_invalid_package_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
