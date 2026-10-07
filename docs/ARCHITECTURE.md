@@ -27,10 +27,10 @@ Point important : `src/cifereca/plugins/` ne contient pas les plugins fonctionne
 
 ### Plugins fonctionnels
 
-Les plugins fonctionnels sont actuellement versionnés à la racine :
+Les plugins fonctionnels sont versionnés sous `src/plugins/` :
 
 ```text
-plugins/
+src/plugins/
 ├── provider-paris/
 ├── provider-kobo/
 ├── provider-gallica/
@@ -60,12 +60,10 @@ src/
 │   ├── plugins/       # framework/loader/manager uniquement
 │   ├── gui/
 │   └── ...
-└── plugins/           # cible future des plugins fonctionnels
+└── plugins/           # plugins fonctionnels
 ```
 
-Cette cible n'est **pas encore matérialisée** dans le dépôt : les plugins fonctionnels restent aujourd'hui sous `plugins/` à la racine.
-
-Le déplacement physique doit être traité dans une PR structurelle distincte, avec adaptation du packaging et des chemins de test. Le présent lot documentaire ne déplace aucun code.
+Cette cible est désormais matérialisée : les plugins fonctionnels résident sous `src/plugins/`. Le répertoire racine `plugins/` n'est plus une source active.
 
 ## 3. Frontière Core / plugins
 
@@ -76,7 +74,7 @@ Voir [PLUGIN-BOUNDARIES.md](PLUGIN-BOUNDARIES.md) pour les règles détaillées.
 ## 4. Tests
 
 - `tests/` : Core, contrats transversaux et orchestration générique.
-- `plugins/<plugin>/tests/` : comportement propre à un plugin.
+- `src/plugins/<plugin>/tests/` : comportement propre à un plugin.
 - `simulation/tests/` : validation du banc de simulation actuel.
 - `environnements/**` : self-tests d'environnement/runtime.
 
@@ -94,9 +92,9 @@ Voir [SIMULATION.md](SIMULATION.md).
 
 Les sujets suivants restent hors du présent lot documentaire :
 
-1. déplacer physiquement les plugins fonctionnels vers la cible retenue ;
+1. maintenir `src/plugins/` comme unique source canonique des plugins fonctionnels ;
 2. extraire ou supprimer progressivement `src/cifereca/builtin_ui/` ;
-3. maintenir Paris exclusivement dans `plugins/provider-paris/` ;
+3. maintenir Paris exclusivement dans `src/plugins/provider-paris/` ;
 4. extraire le code fournisseur encore présent sous `src/cifereca/kobo/` ;
 5. créer effectivement `simulation/` et y migrer les éléments utiles de `simulation/` ;
 6. poursuivre la rationalisation des tests historiques sans restauration transitive ;
