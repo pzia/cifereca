@@ -156,9 +156,9 @@ def test_missing_origin_and_identity_binding_never_uses_implicit_profile(tmp_pat
         result = service.reconcile_adept_acquisition(acquisition_id)
 
         assert result["status"] == "profile_missing"
-        assert result["return_available"] is False
         assert calls == []
         binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
         assert binding["adept_loan_id"] is None
+        assert binding["return_available"] is False
     finally:
         service.close()
