@@ -1641,8 +1641,11 @@ class MainWindow(Adw.ApplicationWindow):
         host = self._UiHost(self)
         self._titlebar_service = None
         if self.plugin_manager:
-            selected = self.plugin_manager.select("ui.titlebar")
-            self._titlebar_service = self.plugin_manager.service(selected.descriptor.id) if selected else None
+            try:
+                selected = self.plugin_manager.select("ui.titlebar")
+                self._titlebar_service = self.plugin_manager.service(selected.descriptor.id) if selected else None
+            except Exception:
+                self._titlebar_service = None
         try:
             header = self._titlebar_service.build(host) if self._titlebar_service else Adw.HeaderBar()
             if not isinstance(header, Adw.HeaderBar): raise TypeError("Titlebar must return Adw.HeaderBar")
