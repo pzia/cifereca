@@ -136,6 +136,40 @@ def _private_core_imports(path: Path) -> list[tuple[int, str]]:
     return violations
 
 
+def validate_plugin_entrypoints(plugin_dir: Path, manifest: dict) -> None:
+    """Validate entrypoint syntax and module presence without importing plugin code."""
+    plugin_dir = plugin_dir.resolve()
+    for index, descriptor in enumerate(manifest.get("plugins") or []):
+        if not isinstance(descriptor, dict):
+            continue
+        if str(descriptor.get("type") or "").strip() == "meta.bundle":
+            continue
+        entrypoint = str(descriptor.get("entrypoint") or "").strip()
+        if entrypoint.count(":") != 1:
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].entrypoint invalide: {entrypoint!r}"
+            )
+        module_name, attr = (part.strip() for part in entrypoint.split(":", 1))
+        module_parts = module_name.split(".")
+        if (
+            not module_name
+            or not attr
+            or not attr.isidentifier()
+            or any(not part or not part.isidentifier() for part in module_parts)
+        ):
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].entrypoint invalide: {entrypoint!r}"
+            )
+        module_path = plugin_dir.joinpath(*module_parts)
+        module_file = module_path.with_suffix(".py")
+        package_init = module_path / "__init__.py"
+        if not module_file.is_file() and not package_init.is_file():
+            raise PackagingError(
+                f"{plugin_dir}: module entrypoint absent pour plugins[{index}]: "
+                f"{module_name}"
+            )
+
+
 def validate_plugin_source(plugin_dir: Path) -> None:
     """Enforce the production plugin boundary: Core access goes through plugin_api only."""
     plugin_dir = plugin_dir.resolve()
@@ -241,6 +275,7 @@ def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> list[Path]:
 def build_plugin_zip(plugin_dir: Path, output_dir: Path = DIST_DIR) -> Path:
     plugin_dir = plugin_dir.resolve()
     manifest = read_plugin_manifest(plugin_dir)
+    validate_plugin_entrypoints(plugin_dir, manifest)
     validate_plugin_source(plugin_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / package_zip_name(manifest)
@@ -586,6 +621,7 @@ def verify_repository(plugins_dir: Path = PLUGINS_DIR) -> list[dict]:
     rows = []
     for plugin_dir in discover_plugins(plugins_dir):
         manifest = read_plugin_manifest(plugin_dir)
+        validate_plugin_entrypoints(plugin_dir, manifest)
         validate_plugin_source(plugin_dir)
         files = _source_files(plugin_dir)
         rows.append(
