@@ -43,7 +43,7 @@ from cifereca.filename_normalization import sanitize_filename_component
 from cifereca.descriptions import description_text, description_element
 from cifereca.diagnostics import redact_text
 from cifereca.artifact_inspection import ArtifactInspection, detect_artifact_format, inspect_artifact, inspect_artifact_content
-from cifereca.artifact_publication import publish_artifact_content
+from cifereca.artifact_publication import publish_artifact_content, publish_artifact_file
 from .bundles import (
     BUNDLE_MANIFEST_NAME, BUNDLE_MANIFEST_VERSION, BundleError, BundleManifest, BundleMember,
     bundle_search_values, load_bundle_manifest, write_bundle_manifest,
@@ -65,7 +65,7 @@ __all__ = [
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiPluginManagementHost",
     "CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",
-    "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content",
+    "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
     "ContractStatus", "ContractDefinition", "ContractCheck", "CONTRACT_REGISTRY", "contract_definition", "split_contract", "capability_name_valid", "contract_version_matches", "check_service_contract",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
