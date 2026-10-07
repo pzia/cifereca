@@ -67,6 +67,8 @@ class QueryControls(Gtk.Box):
         flow.set_min_children_per_line(1); flow.set_max_children_per_line(4)
         flow.set_row_spacing(6); flow.set_column_spacing(6); self.append(flow)
         def insert_filter(widget):
+            widget.set_hexpand(False)
+            widget.set_halign(Gtk.Align.START)
             flow.insert(widget, -1)
             child = widget.get_parent()
             if isinstance(child, Gtk.FlowBoxChild):

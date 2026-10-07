@@ -23,6 +23,7 @@ class Widget:
         for callback in list(self.signals.get(name, ())): callback(self)
     def append(self, child): self.children.append(child)
     def insert(self, child, *_): self.children.append(child)
+    def get_parent(self): return None
     def set_child(self, child): self.child=child
     def set_popover(self, popover): self.popover=popover
     def set_label(self, label): self.label=label
@@ -45,7 +46,7 @@ class Widget:
         raise AttributeError(name)
 
 Gtk=NS(MenuButton=Widget,Popover=Widget,Box=Widget,Button=Widget,CheckButton=Widget,
-       SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,
+       SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,FlowBoxChild=Widget,Align=NS(START=0),
        Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
 
 source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/query_controls.py'
@@ -84,3 +85,4 @@ class QueryControlBatching(unittest.TestCase):
         self.assertEqual(calls[-1].types,('epub','pdf','mp3'))
 
 if __name__ == '__main__': unittest.main()
+
