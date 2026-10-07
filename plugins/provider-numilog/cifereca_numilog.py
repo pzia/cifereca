@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.11, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.12, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -15,11 +15,11 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderCapabilities,
     ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderError,
-    ProviderPlugin, ProviderSession, SearchResult, inspect_artifact)
+    ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
 from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.11'
+VERSION = '0.1.12'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -366,7 +366,7 @@ class NumilogSession(ProviderSession):
                     if title:
                         destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
                     else:
-                        os.replace(part,destination)
+                        publish_artifact_file(part, destination, overwrite=True)
                 finally:
                     part.unlink(missing_ok=True)
                 self._diag('téléchargement',bytes=size,format='EPUB')
