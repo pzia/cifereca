@@ -2,6 +2,8 @@ name: Validate installed Core
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "src/**"
       - "pyproject.toml"
