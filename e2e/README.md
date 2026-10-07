@@ -22,8 +22,17 @@ utiliser l'identifiant du plugin comme filtre.
 
 ## Artefacts
 
-Les captures et rapports JSON sont écrits dans `e2e-artifacts/` par défaut.
-Ce dossier est généré et ne doit pas être versionné.
+Les artefacts sont écrits dans `e2e-artifacts/<scenario>/` avec des noms stables :
+
+- `screen.png` : capture de succès ou capture de diagnostic lors d'un échec ;
+- `screen.json` : rapport structuré de capture ;
+- `stdout.log` / `stderr.log` : sortie du scénario, expurgée des secrets connus ;
+- `trace.jsonl` : événements horodatés corrélés au nom du scénario.
+
+Le runner écrit aussi `e2e-artifacts/summary.json`. Ce dossier est généré et ne doit pas être versionné.
+Les variables d'environnement dont le nom contient `token`, `password`, `secret`,
+`authorization` ou `cookie` sont masquées dans les logs, ainsi que les formes
+inline usuelles `token=...`, `password:...`, etc.
 
 ## Scénario de référence
 
