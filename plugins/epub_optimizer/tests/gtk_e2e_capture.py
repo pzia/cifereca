@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from gi.repository import GLib, Gtk
+import gi\ngi.require_version("Gtk", "4.0")\nfrom gi.repository import GLib, Gtk
 
 from cifereca.plugin_api import ArtifactFormat, ArtifactRef
 from cifereca_epub_optimizer.ui import OptimizerPage
@@ -112,7 +112,7 @@ class Context:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--format", choices=("epub", "pdf"), required=True)
-    parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--report", type=Path, required=True)\n    parser.add_argument("--markers-dir", type=Path, required=True)
     parser.add_argument("--state-prefix", type=Path, required=True)
     args = parser.parse_args()
 
@@ -131,7 +131,7 @@ def main():
     execution = Execution(args.state_prefix)
     host = Host()
     action_host = ActionHost()
-    state = {"heartbeats": 0, "started": False, "controller": None}
+    state = {"heartbeats": 0, "started": False, "controller": None, "progress_marked": False, "final_marked": False}
 
     def activate(application):
         controller = OptimizerPage(
@@ -149,6 +149,13 @@ def main():
 
         def heartbeat():
             state["heartbeats"] += 1
+            ctl = state["controller"]
+            if ctl is not None and not state["progress_marked"] and ctl.progress.get_fraction() >= 0.5:
+                (args.markers_dir / f"{fmt}-progress.ready").touch()
+                state["progress_marked"] = True
+            if ctl is not None and not state["final_marked"] and "Variante intégrée" in ctl.status.get_text():
+                (args.markers_dir / f"{fmt}-final.ready").touch()
+                state["final_marked"] = True
             return True
 
         def start():
@@ -185,7 +192,7 @@ def main():
             assert state["heartbeats"] >= 25, report
             assert execution.calls and execution.calls[0][0] == expected_capability, report
             assert execution.calls[0][1] == expected_transformer, report
-            assert ctl.progress.get_fraction() == 1.0, report
+            assert ctl.progress.get_fraction() == 1.0, report\n            assert ctl.progress.get_text().startswith("100%"), report\n            assert state["progress_marked"] and state["final_marked"], report
             assert "Variante disponible" in ctl.status.get_text(), report
             assert action_host.refreshes == 1, report
             assert not ctl.source_entry.get_sensitive(), report
@@ -203,7 +210,7 @@ def main():
 
         GLib.timeout_add(50, heartbeat)
         GLib.timeout_add(500, start)
-        GLib.timeout_add(3900, finish)
+        GLib.timeout_add(5500, finish)
 
     app.connect("activate", activate)
     raise SystemExit(app.run([]))
