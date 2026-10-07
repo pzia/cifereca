@@ -9,12 +9,11 @@ from recommendation_engine import (
     build_profile,
     build_queries,
     candidate_key,
-    content_score,
     get_field,
     is_already_present,
     normalize,
 )
-from recommendation_engine_fast import rank_candidates_prepared
+from recommendation_engine_fast import rank_candidates_prepared, score_candidate_cached
 
 
 @dataclass(frozen=True)
@@ -128,13 +127,14 @@ def compute_recommendations(
     # Provisional ranking is intentionally lightweight: content score once per
     # candidate, no RRF/MMR. Full ranking runs once after all catalog queries.
     provisional: dict[str, tuple[Any, float, tuple[str, ...], list[str]]] = {}
+    score_cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]] = {}
 
     def ingest_provisional(rows: list[Any]) -> None:
         for item in rows:
             key = candidate_key(item)
             if is_already_present(profile, item):
                 continue
-            score, reasons = content_score(profile, item)
+            score, reasons = score_candidate_cached(profile, item, score_cache)
             source = str(get_field(item, "source_provider", "") or "")
             previous = provisional.get(key)
             if previous is None:
@@ -277,6 +277,7 @@ def compute_recommendations(
         batches,
         limit=max_results,
         exploration=exploration,
+        score_cache=score_cache,
     )
     return RecommendationResult(
         len(books),

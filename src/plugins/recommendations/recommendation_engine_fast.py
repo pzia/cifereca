@@ -10,13 +10,47 @@ from recommendation_engine import (
     _jaccard,
     _rrf_scores,
     _text,
+    author_values,
     build_profile,
     candidate_key,
     content_score,
     get_field,
+    metadata,
     is_already_present,
     normalize,
+    series_values,
+    subject_values,
 )
+
+
+def _score_signature(item: Any) -> tuple[Any, ...]:
+    """Stable signature of every field consumed by content_score()."""
+    md = metadata(item)
+    return (
+        tuple(sorted(normalize(value) for value in author_values(item) if normalize(value))),
+        tuple(sorted(normalize(value) for value in subject_values(item) if normalize(value))),
+        tuple(sorted(normalize(value) for value in series_values(item) if normalize(value))),
+        normalize(get_field(item, "title", "")),
+        normalize(get_field(item, "description", "") or md.get("description")),
+        bool(_text(get_field(item, "author", ""))),
+        bool(_text(get_field(item, "description", ""))),
+        bool(_text(get_field(item, "published_at", ""))),
+        bool(_text(get_field(item, "format", ""))),
+    )
+
+
+def score_candidate_cached(
+    profile: ProfileVector,
+    item: Any,
+    cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]],
+) -> tuple[float, tuple[str, ...]]:
+    signature = _score_signature(item)
+    cached = cache.get(signature)
+    if cached is not None:
+        return cached
+    scored = content_score(profile, item)
+    cache[signature] = scored
+    return scored
 
 
 def _feature_similarity(
@@ -78,11 +112,13 @@ def rank_candidates_prepared(
     *,
     limit: int = 120,
     exploration: int = 25,
+    score_cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]] | None = None,
 ) -> list[RankedCandidate]:
     """Rank against a profile built once, with cached content scores and fast MMR."""
     rrf, query_hits = _rrf_scores(batches)
     merged: dict[str, tuple[Any, float, tuple[str, ...]]] = {}
     sources_by_key: defaultdict[str, list[str]] = defaultdict(list)
+    score_cache = score_cache if score_cache is not None else {}
 
     for batch in batches:
         for item in batch:
@@ -92,7 +128,7 @@ def rank_candidates_prepared(
             source = _text(get_field(item, "source_provider", ""))
             if source and source not in sources_by_key[key]:
                 sources_by_key[key].append(source)
-            cscore, reasons = content_score(profile, item)
+            cscore, reasons = score_candidate_cached(profile, item, score_cache)
             previous = merged.get(key)
             if previous is None or cscore > previous[1]:
                 merged[key] = (item, cscore, reasons)
