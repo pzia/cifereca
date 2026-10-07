@@ -590,7 +590,23 @@ class PluginPackagingTests(unittest.TestCase):
             ):
                 build_plugin_zip(plugin, root / "dist")
 
-    def test_packaging_refuses_non_object_config_schema(self) -> None:
+    def test_packaging_refuses_truthy_non_object_config_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["config_schema"] = ["bad"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"plugins\[0\]\.config_schema doit être un objet"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
+    def test_packaging_accepts_falsy_non_object_config_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             plugin = make_plugin(
@@ -601,10 +617,8 @@ class PluginPackagingTests(unittest.TestCase):
             manifest["plugins"][0]["config_schema"] = []
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-            with self.assertRaisesRegex(
-                PackagingError, r"plugins\[0\]\.config_schema doit être un objet"
-            ):
-                build_plugin_zip(plugin, root / "dist")
+            output = build_plugin_zip(plugin, root / "dist")
+            self.assertTrue(output.exists())
 
     def test_packaging_refuses_invalid_instantiation_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
