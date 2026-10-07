@@ -16,6 +16,30 @@ def _safe_text(value: Any) -> str:
     return str(value)
 
 
+def public_inventory(diagnostics_broker) -> list[dict[str, Any]]:
+    """Return the Core-owned plugin/version inventory as plain mappings."""
+    rows: list[dict[str, Any]] = []
+    for item in tuple(diagnostics_broker.inventory()):
+        if isinstance(item, Mapping):
+            rows.append(dict(item))
+    return rows
+
+
+def relevant_runtime_diagnostics(diagnostics_broker, inventory_rows) -> list[dict[str, Any]]:
+    """Read only bounded runtime diagnostics for runtimes present in inventory."""
+    rows: list[dict[str, Any]] = []
+    runtime_ids = {
+        str(row.get("plugin_id") or "")
+        for row in inventory_rows
+        if str(row.get("type") or "") == "runtime.adapter"
+    }
+    for plugin_id in sorted(value for value in runtime_ids if value):
+        result = diagnostics_broker.runtime_diagnostic(plugin_id)
+        if isinstance(result, Mapping) and result:
+            rows.append({"plugin_id": plugin_id, **dict(result)})
+    return rows
+
+
 def active_checks(diagnostics_broker) -> list[dict[str, Any]]:
     """Normalize Core-owned health checks for this presentation-only page."""
     rows: list[dict[str, Any]] = []
@@ -212,6 +236,27 @@ class DiagnosticsPagePlugin:
                         add_status(str(key), status[key])
                 else:
                     add_status("État", status)
+                inventory = public_inventory(broker)
+                for row in inventory:
+                    plugin_id = str(row.get("plugin_id") or "Plugin")
+                    version = str(row.get("version") or "—")
+                    package_version = str(row.get("package_version") or "")
+                    state = str(row.get("state") or "")
+                    value = f"{version}"
+                    if package_version and package_version != version:
+                        value += f" · package {package_version}"
+                    if state:
+                        value += f" · {state}"
+                    add_status(plugin_id, value)
+
+                for row in relevant_runtime_diagnostics(broker, inventory):
+                    add_diag({
+                        "message": f"Runtime {row.get('plugin_id')}",
+                        "status": "ok",
+                        "plugin_id": row.get("plugin_id"),
+                        "detail": {key: value for key, value in row.items() if key != "plugin_id"},
+                    })
+
                 snapshot = broker.snapshot()
                 for row in snapshot:
                     if isinstance(row, Mapping):
