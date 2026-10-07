@@ -114,8 +114,14 @@ jobs:
       - name: Build plugin bundle
         run: python scripts/package-all-in-one.py
 
-      - name: Build development snapshot
-        run: python scripts/package-dev-snapshot.py
+      - name: Build and validate development snapshot
+        shell: bash
+        run: |
+          python -m venv /tmp/cifereca-release-snapshot
+          /tmp/cifereca-release-snapshot/bin/python -m pip install --disable-pip-version-check dist/cifereca-*.whl
+          python scripts/package-dev-snapshot.py \
+            --validate-with-update-dev \
+            --update-dev /tmp/cifereca-release-snapshot/bin/cifereca-update-dev
 
       - name: Generate SHA-256 checksums
         shell: bash
