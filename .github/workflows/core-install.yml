@@ -20,13 +20,22 @@ jobs:
   installed-core:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
+
+    name: installed-core (Python ${{ matrix.python-version }})
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install build tooling
         run: python -m pip install --disable-pip-version-check "setuptools>=69" wheel
