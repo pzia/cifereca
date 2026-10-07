@@ -36,8 +36,8 @@ from .action_widgets import AdaptiveActionBar
 from .query_model import result_row, online_search, progressive_online_search, merge_results
 from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions, validate_action_selection
 from ..plugin_api import (
-    ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, DetailField, DetailSection,
-    MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution,
+    ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, DetailField, DetailSection, DocumentLink,
+    MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution, document_links,
 )
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -133,6 +133,7 @@ def book_detail_presentation(
     group_title: str | None = None,
     rows: Iterable[tuple[str, object]] = (),
     section_rows: Iterable[tuple[str, Iterable[tuple[str, object]]]] = (),
+    links: Iterable[DocumentLink] = (),
 ) -> UiBookDetailPresentation:
     """Build the neutral book-detail projection used by Core and plugin views."""
     sections_list: list[DetailSection] = []
@@ -159,6 +160,7 @@ def book_detail_presentation(
         thumbnail_url=thumbnail,
         badges=tuple(dict.fromkeys(str(value) for value in badges if value)),
         sections=tuple(sections_list),
+        links=tuple(links),
     )
 
 def clear_box(box: Gtk.Box) -> None:
@@ -579,6 +581,20 @@ class DetailPanel(Gtk.Box):
             rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
             if rows:
                 self._group(section.title, rows)
+        link_buttons = []
+        self._rendered_document_urls = set()
+        for link in presentation.links:
+            uri = str(link.url or "")
+            if not uri.startswith(("http://", "https://")) or uri in self._rendered_document_urls:
+                continue
+            button = Gtk.LinkButton(uri=uri, label=str(link.label))
+            button.set_tooltip_text(str(link.label))
+            button._cifereca_action_id = f"document-link:{link.id}"
+            button._cifereca_action_priority = 30
+            link_buttons.append(button)
+            self._rendered_document_urls.add(uri)
+        if link_buttons:
+            self._actions(link_buttons)
 
     def show_summary(
         self,
@@ -849,6 +865,7 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
+            links=document_links(result_row(item)),
         ))
         self._show_description(getattr(detail, "description", None) or item.description)
         direct_download = self.window.service.can_direct_download(item)
@@ -3788,7 +3805,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _add_catalogue_action(self, detail, item):
         url = self.service.public_catalogue_url(item)
-        if not url: return
+        if not url or url in getattr(detail, "_rendered_document_urls", set()): return
         button = self.action_button('Catalogue en ligne', 'web-browser-symbolic')
         button._cifereca_action_id = 'open-catalogue'
         button.set_tooltip_text('Ouvrir la notice connue, sinon le site de la source ou un catalogue public pour rechercher le titre')
@@ -3892,6 +3909,7 @@ class MainWindow(Adw.ApplicationWindow):
                     ("État acquisition", sync_label),
                 ]),
             ],
+            links=document_links(item),
         ))
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])
