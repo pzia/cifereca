@@ -170,8 +170,16 @@ def _validate_manifest_versions(plugin_dir: Path, manifest: dict) -> None:
         if isinstance(rows, list):
             for req_index, row in enumerate(rows):
                 if isinstance(row, dict):
+                    version = row.get("version")
+                    if version is None:
+                        contract = str(row.get("contract") or "").strip()
+                        if "/" in contract:
+                            _, embedded_version = contract.rsplit("/", 1)
+                            embedded_version = embedded_version.strip()
+                            if embedded_version:
+                                version = f"=={embedded_version}"
                     _validate_specifier(
-                        row.get("version"),
+                        version,
                         f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].version",
                     )
 
