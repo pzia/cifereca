@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AcquisitionOffer
+from cifereca.plugin_api import (
+    Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult,
+    AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
+    acquisition_format_projection, normalize_acquisition_format,
+)
 from cifereca_paris_client import ParisClient
 from cifereca.plugin_api import (
     CredentialField,
@@ -53,6 +57,62 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     homepage="https://bibliotheques.paris.fr",
 )
+
+
+def _paris_acquisition_offer_set(item: SearchResult) -> AcquisitionOfferSet:
+    """Build acquisition choices only from structured Paris file-format evidence."""
+    metadata = item.metadata if isinstance(item.metadata, dict) else {}
+    values = metadata.get("available_formats")
+    if not isinstance(values, (list, tuple)):
+        values = ()
+    formats: list[str] = []
+    for value in values:
+        normalized = normalize_acquisition_format(value)
+        if normalized and normalized not in formats:
+            formats.append(normalized)
+    if not formats:
+        return AcquisitionOfferSet()
+
+    raw_evidence = metadata.get("format_evidence")
+    evidence = tuple(
+        str(value)
+        for value in (raw_evidence if isinstance(raw_evidence, (list, tuple)) else ())
+        if str(value).strip()
+    )
+    offer = AcquisitionOffer(
+        offer_id=f"paris:{item.docbase}:{item.record_id}",
+        media_type=item.content_type or "ebook",
+        format=formats[0] if len(formats) == 1 else "",
+        formats=tuple(formats),
+        drm="unknown",
+        source_kind="provider",
+        source={
+            "provider_id": "paris",
+            "record_id": item.record_id,
+            "docbase": item.docbase,
+            "scenario": item.scenario,
+        },
+        format_evidence={
+            "source": "paris_explicit",
+            "fields": evidence,
+        },
+    )
+    return AcquisitionOfferSet(
+        offers=(offer,),
+        preferences=AcquisitionPreferences(),
+    )
+
+
+def _project_paris_acquisition_formats(item: SearchResult) -> SearchResult:
+    metadata = item.metadata if isinstance(item.metadata, dict) else {}
+    raw_evidence = metadata.get("format_evidence")
+    choices = _paris_acquisition_offer_set(item)
+    projection = acquisition_format_projection(choices)
+    if raw_evidence:
+        metadata["paris_format_evidence"] = raw_evidence
+    metadata.update(projection)
+    item.metadata = metadata
+    return item
 
 
 class ParisProviderSession(ProviderSession):
@@ -295,9 +355,17 @@ class ParisProviderSession(ProviderSession):
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
         try:
-            return self._decorate(self.client.search(query, scope, page), self.provider_id, self.credential_id)
+            rows = self._decorate(
+                self.client.search(query, scope, page),
+                self.provider_id,
+                self.credential_id,
+            )
+            return [_project_paris_acquisition_formats(item) for item in rows]
         finally:
             self.last_search_warnings = list(self.client.last_search_warnings)
+
+    def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
+        return _paris_acquisition_offer_set(item)
 
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         detail = self.client.holdings(item.docbase, item.record_id, item.scenario, search_terms)
