@@ -108,3 +108,14 @@ def test_async_detail_refresh_preserves_logical_action_focus():
     assert "_cifereca_action_id" in identity
     assert "_cifereca_action_label" in identity
     assert "has_focus()" in focus_key
+
+
+def test_unknown_file_format_promotes_support_to_essential_without_duplication():
+    for method_name in ("show_search", "show_item_detail"):
+        source = ast.unparse(_method("DetailPanel", method_name))
+        essential = source.index("'Essentiel'")
+        notice = source.index("'Notice'")
+        support = source.index("'Support'", essential)
+        assert essential < support < notice
+        assert "essential_support = medium if not fmt else ''" in source
+        assert "('Support', medium if fmt else '')" in source
