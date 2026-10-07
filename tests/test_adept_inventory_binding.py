@@ -249,3 +249,34 @@ def test_conflicting_inventory_id_never_overwrites_existing_binding(tmp_path: Pa
         assert binding["return_available"] is False
     finally:
         service.close()
+
+
+def test_multiple_explicit_profiles_keep_namespace_and_ambiguity(tmp_path: Path):
+    service = _service(tmp_path)
+    path = _artifact(tmp_path)
+    acquisition_id = _acquisition(service, path, profile_id=None)
+    runtime, calls = _runtime("hb", path)
+    inventory = runtime.loan_inventories(["hb"])
+    inventory["profiles"].append({
+        "profile": "Hugues",
+        "loans": [dict(inventory["profiles"][0]["loans"][0])],
+    })
+    runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
+    service._kobo_adapter = lambda: runtime
+    service.kobo_profiles = lambda: [
+        {"profile_id": "stable-profile", "name": "hb"},
+        {"profile_id": "other", "name": "Hugues"},
+    ]
+    try:
+        result = service.reconcile_adept_acquisition(
+            acquisition_id,
+            profile_references=["stable-profile", "other"],
+        )
+
+        assert result["status"] == "ambiguous"
+        assert calls[-1] == ["hb", "Hugues"]
+        binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
+        assert binding["adept_loan_id"] is None
+        assert binding["return_available"] is False
+    finally:
+        service.close()
