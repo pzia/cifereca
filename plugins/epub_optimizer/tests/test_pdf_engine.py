@@ -123,7 +123,7 @@ def test_pdf_inspection_honours_preexisting_cancellation():
             )
 
 
-def test_pdf_inventory_exposes_bpc_and_colorspace_for_stencil_policy():
+def test_pdf_inventory_exposes_bpc_and_colorspace_name_for_stencil_policy():
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / "book.pdf"
         make_pdf(src, jpeg((200, 300)))
@@ -132,8 +132,9 @@ def test_pdf_inventory_exposes_bpc_and_colorspace_for_stencil_policy():
             inventory = _image_inventory(doc)
             assert inventory
             item = next(iter(inventory.values()))
-            assert "bpc" in item and "colorspace" in item
+            assert "bpc" in item and "colorspace_name" in item
             assert item["bpc"] > 1
-            assert item["colorspace"] > 0
+            assert isinstance(item["colorspace_name"], str)
+            assert item["colorspace_name"]
         finally:
             doc.close()

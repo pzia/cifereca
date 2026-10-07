@@ -133,7 +133,7 @@ def _image_inventory(doc, *, cancel_event: threading.Event | None = None) -> dic
             width = int(row[2] or 0)
             height = int(row[3] or 0)
             bpc = int(row[4] or 0)
-            colorspace = int(row[5] or 0)
+            colorspace_name = str(row[5] or "")
             item = inventory.setdefault(
                 xref,
                 {
@@ -142,14 +142,15 @@ def _image_inventory(doc, *, cancel_event: threading.Event | None = None) -> dic
                     "width": width,
                     "height": height,
                     "bpc": bpc,
-                    "colorspace": colorspace,
+                    "colorspace_name": colorspace_name,
                     "pages": [],
                     "occurrences": [],
                 },
             )
             item["smask"] = max(int(item["smask"]), smask)
             item["bpc"] = min(int(item.get("bpc", bpc) or bpc), bpc) if bpc else int(item.get("bpc", 0) or 0)
-            item["colorspace"] = max(int(item.get("colorspace", 0) or 0), colorspace)
+            if not item.get("colorspace_name"):
+                item["colorspace_name"] = colorspace_name
             item["pages"].append(page_index)
             try:
                 rects = page.get_image_rects(xref)
@@ -222,7 +223,7 @@ def inspect_pdf(
         estimated_delta = 0
         for xref, item in inventory.items():
             _check_cancel(cancel_event)
-            if item["smask"] or int(item.get("bpc", 0) or 0) <= 1 or int(item.get("colorspace", 0) or 0) <= 0:
+            if item["smask"] or int(item.get("bpc", 0) or 0) <= 1:
                 preserved_images += 1
                 continue
             try:
@@ -354,7 +355,7 @@ def optimize_pdf(
                 if item["smask"]:
                     report.images_kept += 1
                     report.image_notes.append(f"xref {xref}: transparence/masque préservé")
-                elif int(item.get("bpc", 0) or 0) <= 1 or int(item.get("colorspace", 0) or 0) <= 0:
+                elif int(item.get("bpc", 0) or 0) <= 1:
                     report.images_kept += 1
                     report.image_notes.append(f"xref {xref}: masque/stencil 1-bit préservé")
                 elif not suffix:
