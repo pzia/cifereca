@@ -145,3 +145,58 @@ def test_rollback_repoints_current(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "_smoke", lambda release: None)
     result = updater.rollback()
     assert Path(result["current"]).resolve() == a.resolve()
+
+
+def test_github_dry_run_resolves_sha_without_mutating_runtime(tmp_path, monkeypatch):
+    target = tmp_path / "runtime"
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(target))
+    monkeypatch.setattr(updater.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command, **kwargs):
+        command = [str(x) for x in command]
+        if command[1:3] == ["api", "repos/pzia/cifereca/commits/main"]:
+            return SimpleNamespace(returncode=0, stdout="abc123\n", stderr="")
+        if command[1:3] == ["repo", "clone"]:
+            source = Path(command[4])
+            _mini_project(source, "9.9.9")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "fetch" in command or "checkout" in command:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+    result = updater.install_github("main", dry_run=True, python=os.sys.executable)
+
+    assert result["dry_run"] is True
+    assert result["github_commit"] == "abc123"
+    assert result["github_repository"] == "pzia/cifereca"
+    assert result["provenance"]["ref"] == "main"
+    assert not target.exists()
+
+
+def test_backup_persistent_state_copies_db_config_and_plugins(tmp_path, monkeypatch):
+    config_home = tmp_path / "config-home"
+    data_home = tmp_path / "data-home"
+    state_home = tmp_path / "state-home"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+
+    cfg = updater.config_dir()
+    (cfg / "config.json").write_text('{"ok": true}\n', encoding="utf-8")
+    db = updater.database_file()
+    with updater.sqlite3.connect(db) as conn:
+        conn.execute("create table sample(value text)")
+        conn.execute("insert into sample values ('kept')")
+    plugins = updater.data_dir() / "plugins"
+    plugins.mkdir(parents=True)
+    (plugins / "state.json").write_text('{"active": true}\n', encoding="utf-8")
+
+    backup = updater._backup_persistent_state("abc123")
+
+    assert (backup / "config" / "config.json").is_file()
+    assert (backup / "plugins" / "state.json").is_file()
+    with updater.sqlite3.connect(backup / "library.sqlite3") as conn:
+        assert conn.execute("select value from sample").fetchone()[0] == "kept"
+    metadata = (backup / "backup.json").read_text(encoding="utf-8")
+    assert "abc123" in metadata
