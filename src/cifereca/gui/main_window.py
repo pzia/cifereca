@@ -34,7 +34,10 @@ from .query_controls import QueryControls, MultiSelect
 from .action_widgets import AdaptiveActionBar
 from .query_model import result_row, online_search, progressive_online_search, merge_results
 from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions
-from ..plugin_api import ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, MaintenanceContext, SyncRequest, UiActionContext, UiPageContribution
+from ..plugin_api import (
+    ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, DetailField, DetailSection,
+    MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution,
+)
 
 _TRACE_LOG = logging.getLogger("cifereca")
 
@@ -52,6 +55,32 @@ def fr_date(value: str | None, with_time: bool = False) -> str:
 def text_or_dash(value: Any) -> str:
     text = str(value or "").strip()
     return text or "—"
+
+
+def book_detail_presentation(
+    *,
+    title: str,
+    subtitle: str | None = None,
+    thumbnail: str | None = None,
+    badges: Iterable[str] = (),
+    group_title: str | None = None,
+    rows: Iterable[tuple[str, object]] = (),
+) -> UiBookDetailPresentation:
+    """Build the neutral book-detail projection used by Core and plugin views."""
+    sections: tuple[DetailSection, ...] = ()
+    if group_title:
+        fields = tuple(
+            DetailField(id=f"field-{index}", label=str(label), value=value)
+            for index, (label, value) in enumerate(rows)
+        )
+        sections = (DetailSection(id="primary", title=group_title, fields=fields, order=0),)
+    return UiBookDetailPresentation(
+        title=str(title or "Sans titre"),
+        subtitle=str(subtitle or ""),
+        thumbnail_url=thumbnail,
+        badges=tuple(str(value) for value in badges if value),
+        sections=sections,
+    )
 
 
 def clear_box(box: Gtk.Box) -> None:
@@ -344,6 +373,22 @@ class DetailPanel(Gtk.Box):
             self.action_scroll.append(button)
         self.action_scroll.set_visible(True)
 
+    def show_presentation(self, presentation: UiBookDetailPresentation) -> None:
+        """Render the shared neutral book-detail projection."""
+        self._cancel_meta_request()
+        clear_box(self.content)
+        self._clear_actions()
+        self._cover_and_title(
+            presentation.title,
+            presentation.subtitle or None,
+            presentation.thumbnail_url,
+            presentation.badges,
+        )
+        for section in sorted(presentation.sections, key=lambda item: item.order):
+            rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
+            if rows:
+                self._group(section.title, rows)
+
     def show_summary(
         self,
         *,
@@ -354,13 +399,15 @@ class DetailPanel(Gtk.Box):
         group_title: str | None = None,
         rows: list[tuple[str, str]] | None = None,
     ) -> None:
-        """Render the common identity card shared by library-like contexts."""
-        self._cancel_meta_request()
-        clear_box(self.content)
-        self._clear_actions()
-        self._cover_and_title(title, subtitle, thumbnail, badges)
-        if group_title and rows is not None:
-            self._group(group_title, rows)
+        """Compatibility helper backed by the shared detail projection."""
+        self.show_presentation(book_detail_presentation(
+            title=title,
+            subtitle=subtitle,
+            thumbnail=thumbnail,
+            badges=badges,
+            group_title=group_title,
+            rows=rows or (),
+        ))
 
     def add_group(self, title: str, rows: list[tuple[str, str]]) -> None:
         self._group(title, rows)
@@ -490,20 +537,23 @@ class DetailPanel(Gtk.Box):
         self._decorate(item)
 
     def show_search(self, item: SearchResult, loading: bool = False) -> None:
-        self._cancel_meta_request()
-        clear_box(self.content)
-        self._clear_actions()
         content_type = self.window.service.content_type_for(item)
         medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
         source = self.window.service.provider_display_name(item.source_provider)
-        self._cover_and_title(item.title, item.author, item.thumbnail_url, [source, medium, item.type or ""])
-        self._group("Notice", [
-            ("Source", source),
-            ("Type", item.type or "—"),
-            ("Format", file_format(item.format).upper() or "Inconnu"),
-            ("Éditeur", item.publisher or "—"),
-            ("Publication", item.published_at or "—"),
-        ])
+        self.show_presentation(book_detail_presentation(
+            title=item.title,
+            subtitle=item.author,
+            thumbnail=item.thumbnail_url,
+            badges=[source, medium, item.type or ""],
+            group_title="Notice",
+            rows=[
+                ("Source", source),
+                ("Type", item.type or "—"),
+                ("Format", file_format(item.format).upper() or "Inconnu"),
+                ("Éditeur", item.publisher or "—"),
+                ("Publication", item.published_at or "—"),
+            ],
+        ))
         self._show_description(item.description)
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
@@ -531,26 +581,24 @@ class DetailPanel(Gtk.Box):
         group.add(label); self._append_content(group)
 
     def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
-        self._cancel_meta_request()
-        clear_box(self.content)
-        self._clear_actions()
         content_type = self.window.service.content_type_for(item)
         medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
         source = self.window.service.provider_display_name(item.source_provider)
         availability = self.window.service.availability_display_label(item, detail)
-        self._cover_and_title(
-            detail.title or item.title,
-            detail.author or item.author,
-            detail.thumbnail_url or item.thumbnail_url,
-            [source, medium, availability],
-        )
-        self._group("Notice", [
-            ("Source", source),
-            ("Type", detail.type or item.type or "—"),
-            ("Format", file_format(item.format).upper() or "Inconnu"),
-            ("Année", detail.year or item.published_at or "—"),
-            ("Disponibilité", availability),
-        ])
+        self.show_presentation(book_detail_presentation(
+            title=detail.title or item.title,
+            subtitle=detail.author or item.author,
+            thumbnail=detail.thumbnail_url or item.thumbnail_url,
+            badges=[source, medium, availability],
+            group_title="Notice",
+            rows=[
+                ("Source", source),
+                ("Type", detail.type or item.type or "—"),
+                ("Format", file_format(item.format).upper() or "Inconnu"),
+                ("Année", detail.year or item.published_at or "—"),
+                ("Disponibilité", availability),
+            ],
+        ))
         self._show_description(getattr(detail, "description", None) or item.description)
         direct_download = self.window.service.can_direct_download(item)
         if direct_download:
@@ -850,16 +898,7 @@ class PublicBookMasterDetailView:
 
     def show_detail(self, detail) -> None:
         panel = self._page.detail
-        panel.show_summary(
-            title=str(detail.title or "Sans titre"),
-            subtitle=str(detail.subtitle or "") or None,
-            thumbnail=getattr(detail, "thumbnail_url", None),
-            badges=tuple(str(value) for value in (getattr(detail, "badges", ()) or ()) if value),
-        )
-        for section in sorted(getattr(detail, "sections", ()) or (), key=lambda row: row.order):
-            rows = [(str(field.label), text_or_dash(field.value)) for field in section.fields]
-            if rows:
-                panel.add_group(str(section.title), rows)
+        panel.show_presentation(detail)
         buttons = []
         for action in getattr(detail, "actions", ()) or ():
             uri = str(getattr(action, "uri", "") or "")
@@ -2569,7 +2608,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not item:
                 return
             self._selected_search_id = row.key
-            self.search_page.detail.show_summary(
+            self.search_page.detail.show_presentation(book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
                 subtitle=str(item.get("author") or ""),
                 thumbnail=item.get("thumbnail_url"),
@@ -2580,7 +2619,7 @@ class MainWindow(Adw.ApplicationWindow):
                     ("Format", str(item.get("media_format") or "—").upper()),
                     ("Fichier local", str(item.get("local_path") or "—")),
                 ],
-            )
+            ))
             actions = []
             open_library = Gtk.Button(label="Voir dans Bibliothèque")
             open_library.connect("clicked", lambda _b: self.navigate("library"))
@@ -3321,7 +3360,7 @@ class MainWindow(Adw.ApplicationWindow):
         state = self._library_state_label(item)
         provider_label = "Kobo" if provider == "kobo" else provider.capitalize()
         identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
-        detail.show_summary(
+        detail.show_presentation(book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
             thumbnail=item.get("thumbnail_url"),
@@ -3335,7 +3374,7 @@ class MainWindow(Adw.ApplicationWindow):
                 ("Fichier local", str(item.get("local_path") or "—")),
                 ("État acquisition", self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else "—"),
             ],
-        )
+        ))
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])
         presence_rows = []
