@@ -14,6 +14,7 @@ on:
       - "src/cifereca/**"
       - "pyproject.toml"
       - ".github/workflows/plugin-tests.yml"
+      - "scripts/ci-run-plugin-tests.sh"
   workflow_dispatch:
 
 permissions:
