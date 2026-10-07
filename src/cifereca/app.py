@@ -66,7 +66,11 @@ def main() -> int:
 
     logger.info("TRACE startup gtk-import-ok dt=%.3fs", time.monotonic()-t0)
     logger.info("TRACE startup core-open begin")
-    core = CiferecaCore.open(no_plugins=no_plugins, force_plugins=tuple(force_plugins))
+    core = CiferecaCore.open(
+        no_plugins=no_plugins,
+        force_plugins=tuple(force_plugins),
+        activate_plugins=False,
+    )
     config, service, diagnostics = core.config, core.library, core.diagnostics
     set_diagnostics_level("trace" if verbose else diagnostics.level)
     logger.info(
@@ -92,6 +96,10 @@ def main() -> int:
                 self.window.ui_perf.record("startup.window_presented", presented_ms)
             except Exception:
                 pass
+            if not getattr(self, "_startup_plugins_scheduled", False):
+                self._startup_plugins_scheduled = True
+                from gi.repository import GLib
+                GLib.idle_add(self.window.activate_startup_plugins)
 
         def do_shutdown(self):
             try:
