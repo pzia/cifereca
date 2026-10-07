@@ -63,7 +63,26 @@ class ParisProviderSession(ProviderSession):
         self.diagnostics = diagnostics
         self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)
         self.last_loan_errors: list[dict[str, str]] = []
+        self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
+
+    @staticmethod
+    def _account_unusable_reason(summary: dict[str, Any]) -> str | None:
+        """Return a stable reason only for explicit unusable-account signals."""
+        for key in ("IsDisabled", "Disabled", "IsBlocked", "Blocked", "IsSuspended", "Suspended"):
+            if summary.get(key) is True:
+                return key
+        for key in ("IsActive", "Active", "Enabled"):
+            if key in summary and summary.get(key) is False:
+                return key
+        for key in ("Status", "State", "AccountStatus", "MembershipStatus"):
+            raw = summary.get(key)
+            if raw is None:
+                continue
+            value = unicodedata.normalize("NFKD", str(raw)).encode("ascii", "ignore").decode().casefold().strip()
+            if value in {"disabled", "inactive", "blocked", "suspended", "expired", "desactive", "bloque", "suspendu", "expire"}:
+                return f"{key}:{raw}"
+        return None
 
     def _decorate_account(self, account: Account) -> Account:
         account.provider_id = self.provider_id
@@ -78,6 +97,26 @@ class ParisProviderSession(ProviderSession):
             raise ProviderConfigurationError("Bibliothèques de Paris : identifiant et mot de passe requis")
         self.client.login(username, password)
         summary = self.client.summary("SYRACUSE", "")
+        unusable_reason = self._account_unusable_reason(summary)
+        if unusable_reason:
+            self.account_status = {"usable": False, "reason": unusable_reason}
+            try:
+                self.diagnostics.add(
+                    "AUTH", "account status", "error",
+                    detail={
+                        "provider": self.provider_id,
+                        "credential_id": self.credential_id,
+                        "usable": False,
+                        "reason": unusable_reason,
+                    },
+                )
+            except Exception:
+                pass
+            raise ProviderConfigurationError(
+                "Bibliothèques de Paris : compte désactivé ou inutilisable ; "
+                "synchronisation et acquisition arrêtées avant ADEPT"
+            )
+        self.account_status = {"usable": True, "reason": None}
         primary = self._decorate_account(Account(
             display_name=str(summary.get("DisplayName") or self.label or "Compte principal"),
             barcode=str(summary.get("Barcode") or ""),
@@ -293,6 +332,7 @@ class ParisProviderSession(ProviderSession):
     def diagnostic_state(self) -> dict[str, Any]:
         state = super().diagnostic_state()
         state["pnb_borrow"] = dict(getattr(self.client, "last_pnb_borrow", {"phase": "unknown"}))
+        state["account_status"] = dict(self.account_status)
         return state
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path) -> tuple[Path, str]:
