@@ -652,6 +652,12 @@ class TaskHandle(Protocol):
 
 
 @runtime_checkable
+class TransportService(Protocol):
+    def matches(self, source: Mapping[str, Any]) -> bool: ...
+    def fetch(self, source: Mapping[str, Any], destination: Path) -> Path: ...
+
+
+@runtime_checkable
 class DocumentTransformer(Protocol):
     def capabilities(self) -> tuple[TransformCapability, ...]: ...
     def plan(self, request: TransformRequest, source: ArtifactInputLease, control: TaskControl | None = None) -> TransformPlan: ...
@@ -836,7 +842,7 @@ __all__ = [
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
-    "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "DocumentTransformer",
+    "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",

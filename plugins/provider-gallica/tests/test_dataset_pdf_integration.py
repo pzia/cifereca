@@ -9,12 +9,16 @@ from http.server import ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[3]
 PLUGIN_ROOT = ROOT / "plugins" / "provider-gallica"
+TRANSPORT_ROOT = ROOT / "plugins" / "transport-http"
 DATASET_PATH = ROOT / "gen-dataset" / "opds" / "pseudo_opds_server.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
+if str(TRANSPORT_ROOT) not in sys.path:
+    sys.path.insert(0, str(TRANSPORT_ROOT))
 
 from cifereca_gallica import GallicaSession
+from cifereca_http_transport import HttpTransport
 
 spec = importlib.util.spec_from_file_location("dataset_opds_gallica", DATASET_PATH)
 dataset = importlib.util.module_from_spec(spec)
@@ -26,6 +30,12 @@ spec.loader.exec_module(dataset)
 class Diagnostics:
     def add(self, *args, **kwargs):
         return None
+
+
+class TransportContext:
+    config = {"timeout_seconds": 5, "max_download_bytes": 1024 * 1024, "max_redirects": 4}
+    import logging
+    logger = logging.getLogger("test.gallica.transport")
 
 
 class RunningServer:
@@ -53,6 +63,7 @@ def test_pdf_search_and_download_against_local_opds():
         assert row is not None
 
         with RunningServer(dataset.FakeOPDSApp(cache)) as server:
+            transport = HttpTransport(TransportContext())
             session = GallicaSession(
                 credential_id="public",
                 label="",
@@ -64,6 +75,7 @@ def test_pdf_search_and_download_against_local_opds():
                 },
                 config={},
                 diagnostics=Diagnostics(),
+                transport=transport,
             )
             try:
                 session.connect()
@@ -79,3 +91,4 @@ def test_pdf_search_and_download_against_local_opds():
                 assert final_url.endswith("/gallica/pdf/2.pdf")
             finally:
                 session.close()
+                transport.close()

@@ -1,0 +1,69 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.transport.http",
+    "version": "1.0.0",
+    "name": "Transport HTTP",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "transport.http",
+      "type": "transport",
+      "version": "1.0.0",
+      "entrypoint": "cifereca_http_transport:PLUGIN",
+      "display_name": "Transport HTTP",
+      "description": "Téléchargement HTTP/HTTPS borné, redirections sûres et publication atomique.",
+      "help_text": "Service transversal pour les acquisitions HTTP publiques : flux borné en taille, délai réseau, redirections contrôlées, suppression des en-têtes sensibles lors d’un changement d’origine, refus des réponses HTML et publication atomique dans le fichier cible.",
+      "enabled_by_default": true,
+      "priority": 100,
+      "instantiation": "singleton_public",
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "transport.http",
+        "transport.streaming",
+        "transport.atomic"
+      ],
+      "requires_brokers": [],
+      "requires_contracts": [],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "httpx",
+          "version": ">=0.28.1,<0.29",
+          "import": "httpx"
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "timeout_seconds": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 120,
+            "default": 30,
+            "title": "Délai réseau maximal"
+          },
+          "max_download_bytes": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 2147483648,
+            "default": 268435456,
+            "title": "Taille maximale d’un téléchargement"
+          },
+          "max_redirects": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 8,
+            "title": "Nombre maximal de redirections"
+          }
+        }
+      }
+    }
+  ]
+}

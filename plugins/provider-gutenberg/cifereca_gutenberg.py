@@ -1,7 +1,6 @@
 from __future__ import annotations
 from collections import OrderedDict
 from cifereca_gutenberg_description import description_text, description_element
-from cifereca_gutenberg_download import validate_document, atomic_write
 
 import html
 import logging
@@ -108,9 +107,10 @@ class GutenbergSession(ProviderSession):
     beyond the requested page or crawls the catalog.
     """
 
-    def __init__(self, *, config: Any, diagnostics: Any, **kwargs: Any) -> None:
+    def __init__(self, *, config: Any, diagnostics: Any, transport: Any = None, **kwargs: Any) -> None:
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         self.diagnostics = diagnostics
+        self.transport = transport
         timeout = float(
             self.options.get("timeout_seconds")
             or (
@@ -123,9 +123,10 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.2"
+        user_agent = "cifereca-gutenberg/1.2.11"
         if self.contact:
             user_agent += f" (+{self.contact})"
+        self.user_agent = user_agent
         self.client = httpx.Client(
             timeout=timeout,
             follow_redirects=True,
@@ -646,58 +647,62 @@ class GutenbergSession(ProviderSession):
             format="epub",
             drm="none",
             source_kind="http",
-            source={"url": url},
+            source={
+                "url": url,
+                "headers": {
+                    "User-Agent": self.user_agent,
+                    "Accept": "application/epub+zip, application/octet-stream;q=0.5, */*;q=0.2",
+                },
+                "max_bytes": self.max_download_bytes,
+                "allowed_content_types": (
+                    "application/epub+zip",
+                    "application/octet-stream",
+                    "application/zip",
+                ),
+                "expected_format": "epub",
+                "overwrite": True,
+            },
             priority=20,
             metadata={"rights": item.metadata.get("rights"), "provider": "gutenberg"},
         )]
 
     def download_direct(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
         self._require_contact()
-        url = self._resolve_epub_url(item)
+        if self.transport is None:
+            raise ProviderConfigurationError("Project Gutenberg : transport.http indisponible")
+        offer = self.acquisition_offers(item)[0]
+        url = str(offer.source.get("url") or "")
         started = time.perf_counter()
         _LOG.info(
             "TRACE gutenberg download begin record_id=%s url=%s",
             item.record_id, _safe_url(url),
         )
-        try:
-            with self.client.stream("GET", url, headers={"Accept": "application/epub+zip, */*;q=0.2"}) as response:
-                response.raise_for_status()
-                chunks, size = [], 0
-                for chunk in response.iter_bytes():
-                    size += len(chunk)
-                    if size > self.max_download_bytes:
-                        raise ProviderError("Project Gutenberg : téléchargement trop volumineux")
-                    chunks.append(chunk)
-                content = b''.join(chunks)
-        except httpx.HTTPError as exc:
-            _LOG.warning(
-                "TRACE gutenberg download failed record_id=%s status=%s exception=%s dt_ms=%s error=%s",
-                item.record_id, getattr(getattr(exc, "response", None), "status_code", None),
-                type(exc).__name__, int((time.perf_counter() - started) * 1000), exc,
-            )
-            raise ProviderError(f"Project Gutenberg : téléchargement EPUB indisponible ({exc})") from exc
-        content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].lower()
-        _LOG.info(
-            "TRACE gutenberg download response record_id=%s status=%s bytes=%s content_type=%s final_url=%s dt_ms=%s",
-            item.record_id, response.status_code, len(content), content_type or "<none>",
-            _safe_url(str(response.url)), int((time.perf_counter() - started) * 1000),
-        )
-        validate_document(content, 'epub')
         target_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{self._safe_name(item.title)[:145]}_{self._safe_name(item.record_id)[:20]}.epub"
         path = target_dir / filename
-        atomic_write(path, content)
+        try:
+            path = Path(self.transport.fetch(dict(offer.source), path))
+        except Exception as exc:
+            path.unlink(missing_ok=True)
+            _LOG.warning(
+                "TRACE gutenberg download failed record_id=%s exception=%s dt_ms=%s error=%s",
+                item.record_id, type(exc).__name__, int((time.perf_counter() - started) * 1000), exc,
+            )
+            if isinstance(exc, ProviderError):
+                raise
+            raise ProviderError(f"Project Gutenberg : téléchargement EPUB indisponible ({exc})") from exc
         duration_ms = int((time.perf_counter() - started) * 1000)
+        size = path.stat().st_size
         _LOG.info(
             "TRACE gutenberg download end record_id=%s path=%s bytes=%s dt_ms=%s",
-            item.record_id, path.name, len(content), duration_ms,
+            item.record_id, path.name, size, duration_ms,
         )
         self.diagnostics.add(
             "GUTENBERG", "EPUB download", "ok", duration_ms=duration_ms,
-            detail={"bytes": len(content), "record_id": item.record_id, "content_type": content_type},
+            detail={"bytes": size, "record_id": item.record_id, "transport": "transport.http"},
             level="detailed",
         )
-        return path, str(response.url)
+        return path, url
 
 
 class GutenbergPlugin(ProviderPlugin):
@@ -705,9 +710,13 @@ class GutenbergPlugin(ProviderPlugin):
 
     def __init__(self) -> None:
         self._plugin_config: dict[str, Any] = {}
+        self._transport = None
 
     def activate(self, context: Any) -> "GutenbergPlugin":
         self._plugin_config = dict(getattr(context, "config", {}) or {})
+        self._transport = context.service("transport.http")
+        if self._transport is None:
+            raise ProviderConfigurationError("Project Gutenberg : transport.http requis")
         return self
 
     def create_session(
@@ -730,6 +739,7 @@ class GutenbergPlugin(ProviderPlugin):
             options=merged_options,
             config=config,
             diagnostics=diagnostics,
+            transport=self._transport,
         )
 
 

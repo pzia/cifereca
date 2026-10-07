@@ -7,7 +7,7 @@ from typing import Literal, Mapping
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from .models import DocumentTransformer, MaintenanceTool, UiPageProvider, UiTitlebarProvider, WidgetCatalog
+from .models import DocumentTransformer, MaintenanceTool, TransportService, UiPageProvider, UiTitlebarProvider, WidgetCatalog
 
 ContractStatus = Literal["experimental", "stable", "deprecated"]
 _CAPABILITY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$")
@@ -34,7 +34,7 @@ class ContractCheck:
 # independently from Plugin API and manifest versions.
 CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
     ContractDefinition("provider.library", "cifereca.provider", "1", capabilities=("catalog.search", "catalog.holdings", "acquisition.borrow", "acquisition.download")),
-    ContractDefinition("transport", "cifereca.transport", "1"),
+    ContractDefinition("transport", "cifereca.transport", "1", protocol_name="TransportService"),
     ContractDefinition("drm.handler", "cifereca.drm", "1"),
     ContractDefinition("runtime.adapter", "cifereca.runtime", "1"),
     ContractDefinition("storage.target", "cifereca.storage", "1"),
@@ -53,6 +53,7 @@ CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
 
 _BY_CATEGORY = {item.category: item for item in CONTRACT_REGISTRY}
 _PROTOCOLS = {
+    "transport": TransportService,
     "ui.page": UiPageProvider,
     "ui.titlebar": UiTitlebarProvider,
     "ui.widgets": WidgetCatalog,
