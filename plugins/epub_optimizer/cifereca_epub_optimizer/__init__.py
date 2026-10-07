@@ -5,8 +5,10 @@ from .profiles import DeviceProfile, discover_profiles, profile_from_service
 _ENGINE_EXPORTS = {
     "CancelledError",
     "DrmProtectedError",
+    "EpubAnalysis",
     "EpubOptimizationError",
     "OptimizationReport",
+    "analyze_epub",
     "default_output_path",
     "optimize_epub",
 }
@@ -18,13 +20,7 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 __all__ = [
-    "CancelledError",
-    "DeviceProfile",
-    "DrmProtectedError",
-    "EpubOptimizationError",
-    "OptimizationReport",
-    "default_output_path",
-    "discover_profiles",
-    "profile_from_service",
-    "optimize_epub",
+    "CancelledError", "DeviceProfile", "DrmProtectedError", "EpubAnalysis",
+    "EpubOptimizationError", "OptimizationReport", "analyze_epub",
+    "default_output_path", "discover_profiles", "profile_from_service", "optimize_epub",
 ]

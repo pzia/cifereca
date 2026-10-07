@@ -79,6 +79,17 @@ class OptimizationReport:
         return data
 
 
+@dataclass(slots=True)
+class EpubAnalysis:
+    source_bytes: int
+    estimated_size_bytes: int
+    images_seen: int
+    images_candidates: int
+    images_semantic_preserved: int
+    images_over_limit: int
+    layout_hints: int
+
+
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 _FONT_ONLY_ENCRYPTION = {
     "http://www.idpf.org/2008/embedding",
@@ -418,6 +429,119 @@ def _clone_info(info: zipfile.ZipInfo, *, compress_type: int) -> zipfile.ZipInfo
 def default_output_path(input_path: str | os.PathLike[str], profile: DeviceProfile) -> Path:
     source = Path(input_path)
     return source.with_name(f"{source.stem} [{profile.suffix}].epub")
+
+
+def analyze_epub(
+    input_path: str | os.PathLike[str],
+    *,
+    profile: DeviceProfile,
+    max_uncompressed_mb: int = 2048,
+    max_image_mb: int = 64,
+    max_image_pixels: int = 64_000_000,
+) -> EpubAnalysis:
+    """Inspect an EPUB cheaply enough for planning and estimate the output size.
+
+    The estimate is deliberately conservative: semantically sensitive or
+    over-limit images are counted at their current compressed size.
+    """
+    source = Path(input_path).expanduser().resolve()
+    if source.suffix.lower() != ".epub" or not source.is_file():
+        raise EpubOptimizationError("le fichier source doit être un EPUB existant")
+    try:
+        archive = zipfile.ZipFile(source, "r")
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise EpubOptimizationError(f"EPUB invalide : {exc}") from exc
+
+    with archive as zin:
+        infos = zin.infolist()
+        if not infos:
+            raise EpubOptimizationError("EPUB vide")
+        for info in infos:
+            if not _safe_entry_name(info.filename):
+                raise EpubOptimizationError(f"chemin ZIP dangereux : {info.filename}")
+        names = [info.filename for info in infos]
+        canonical_names = [name.casefold() for name in names]
+        if len(canonical_names) != len(set(canonical_names)):
+            raise EpubOptimizationError("EPUB invalide : chemins ZIP dupliqués")
+        mimetype_name = _find_case_insensitive(names, "mimetype")
+        if mimetype_name is None or zin.read(mimetype_name).strip() != b"application/epub+zip":
+            raise EpubOptimizationError("mimetype EPUB invalide")
+        total_uncompressed = sum(info.file_size for info in infos)
+        if total_uncompressed > max_uncompressed_mb * 1024 * 1024:
+            raise EpubOptimizationError(
+                f"EPUB décompressé trop volumineux ({total_uncompressed / 1024 / 1024:.0f} Mio > {max_uncompressed_mb} Mio)"
+            )
+        if _has_content_drm(zin):
+            raise DrmProtectedError("EPUB chiffré/DRM : optimisation refusée")
+
+        image_infos = [
+            info for info in infos
+            if not info.is_dir() and Path(info.filename).suffix.lower() in _IMAGE_EXTS
+        ]
+        hints = _layout_hints(zin, infos)
+        source_bytes = source.stat().st_size
+        image_zip_bytes = sum(max(0, int(info.compress_size)) for info in image_infos)
+        estimated_images = 0
+        candidates = 0
+        semantic = 0
+        over_limit = 0
+
+        for info in image_infos:
+            current_bytes = max(0, int(info.compress_size))
+            if info.file_size > max_image_mb * 1024 * 1024:
+                estimated_images += current_bytes
+                over_limit += 1
+                continue
+            try:
+                data = zin.read(info)
+                with Image.open(io.BytesIO(data)) as opened:
+                    width, height = opened.size
+                    pixels = int(width) * int(height)
+                    animated = bool(getattr(opened, "is_animated", False))
+                    transparent = opened.mode in {"RGBA", "LA"} or (
+                        opened.mode == "P" and "transparency" in opened.info
+                    )
+                    mode = opened.mode
+            except Exception:
+                estimated_images += current_bytes
+                continue
+
+            if pixels > max_image_pixels:
+                estimated_images += current_bytes
+                over_limit += 1
+                continue
+            if animated or transparent:
+                estimated_images += current_bytes
+                semantic += 1
+                continue
+
+            candidates += 1
+            target_width, target_height = _effective_target_box(
+                profile, (int(width), int(height)), hints.get(info.filename)
+            )
+            scale = min(
+                1.0,
+                target_width / max(1, int(width)),
+                target_height / max(1, int(height)),
+            )
+            factor = max(0.18, min(1.0, scale * scale))
+            if profile.grayscale and mode not in {"1", "L"}:
+                factor *= 0.82
+            if profile.gray_levels:
+                factor *= 0.88
+            estimated_images += max(1, int(current_bytes * max(0.18, min(1.0, factor))))
+
+        zip_overhead_and_non_images = max(0, source_bytes - image_zip_bytes)
+        estimated = min(source_bytes, max(1, zip_overhead_and_non_images + estimated_images))
+        return EpubAnalysis(
+            source_bytes=source_bytes,
+            estimated_size_bytes=estimated,
+            images_seen=len(image_infos),
+            images_candidates=candidates,
+            images_semantic_preserved=semantic,
+            images_over_limit=over_limit,
+            layout_hints=sum(1 for info in image_infos if info.filename in hints),
+        )
 
 
 def optimize_epub(

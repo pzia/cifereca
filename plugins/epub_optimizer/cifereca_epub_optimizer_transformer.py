@@ -104,7 +104,18 @@ class EpubOptimizerTransformer:
             control.check_cancelled()
         profile_plugin_id, profile = self._profile(request)
         proposed = default_output_path(Path(source.path).name, profile).name
-        source_size = int(getattr(getattr(source, "artifact", None), "size_bytes", 0) or 0)
+        context = self._require_context()
+        max_uncompressed_mb = int(request.options.get("max_uncompressed_mb") or context.config.get("max_uncompressed_mb") or 2048)
+        max_image_mb = int(request.options.get("max_image_mb") or context.config.get("max_image_mb") or 64)
+        max_image_pixels = int(request.options.get("max_image_pixels") or context.config.get("max_image_pixels") or 64_000_000)
+        from cifereca_epub_optimizer.engine import analyze_epub
+        analysis = analyze_epub(
+            source.path,
+            profile=profile,
+            max_uncompressed_mb=max_uncompressed_mb,
+            max_image_mb=max_image_mb,
+            max_image_pixels=max_image_pixels,
+        )
         return TransformPlan(
             output_format=EPUB,
             proposed_filename=proposed,
@@ -117,8 +128,13 @@ class EpubOptimizerTransformer:
                 "max_zoom_factor": profile.max_zoom_factor,
                 "allow_landscape": profile.allow_landscape,
                 "grayscale": profile.grayscale,
+                "images_seen": analysis.images_seen,
+                "images_candidates": analysis.images_candidates,
+                "images_semantic_preserved": analysis.images_semantic_preserved,
+                "images_over_limit": analysis.images_over_limit,
+                "layout_hints": analysis.layout_hints,
             },
-            estimated_size_bytes=source_size or None,
+            estimated_size_bytes=analysis.estimated_size_bytes,
         )
 
     def transform(self, request, source, destination, control):

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from cifereca_epub_optimizer.engine import DrmProtectedError, _effective_target_box, optimize_epub
+from cifereca_epub_optimizer.engine import DrmProtectedError, _effective_target_box, analyze_epub, optimize_epub
 from cifereca_epub_optimizer.builtin_profiles import builtin_profile
 
 
@@ -167,6 +167,18 @@ class EngineTests(unittest.TestCase):
             from cifereca_epub_optimizer.engine import EpubOptimizationError
             with self.assertRaises(EpubOptimizationError):
                 optimize_epub(src, dst, profile=builtin_profile("generic-eink"))
+
+
+    def test_analysis_estimates_output_and_reports_candidates(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "book.epub"
+            make_epub(src, image_bytes("JPEG", size=(2000, 3000)))
+            analysis = analyze_epub(src, profile=builtin_profile("xteink-x3"))
+            self.assertEqual(analysis.images_seen, 1)
+            self.assertEqual(analysis.images_candidates, 1)
+            self.assertEqual(analysis.images_semantic_preserved, 0)
+            self.assertGreater(analysis.estimated_size_bytes, 0)
+            self.assertLessEqual(analysis.estimated_size_bytes, src.stat().st_size)
 
 if __name__ == "__main__":
     unittest.main()

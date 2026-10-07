@@ -14,8 +14,8 @@
       "version": "0.3.0",
       "entrypoint": "cifereca_epub_optimizer_transformer:PLUGIN",
       "display_name": "Optimiseur EPUB e-ink",
-      "description": "Transforme un EPUB sans DRM en variante e-ink en optimisant uniquement les images raster.",
-      "help_text": "Transformer Core041 : travaille exclusivement sur des leases fournis par artifact.execution, préserve l’original et découvre les profils via cifereca.device.profile/1.",
+      "description": "Transforme un EPUB sans DRM en variante e-ink en optimisant prudemment les images raster et en préservant les contenus à sémantique sensible.",
+      "help_text": "Transformer Core044 : leases artifact.execution, original préservé, profils device.profile/1, limites par image, estimation avant transformation et hints layout uniquement quand le profil annonce explicitement son zoom.",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "priority": 50,
@@ -158,7 +158,7 @@
       "entrypoint": "cifereca_epub_optimizer_plugin:PLUGIN",
       "display_name": "Optimiseur EPUB e-ink",
       "description": "Page de recette manuelle et contribution d’action book.detail pour EPUB Optimizer.",
-      "help_text": "Ajoute l’action Optimiser… au détail d’un EPUB local. Core041 fournit artifact.execution : la variante est créée et persistée par le Core, sans chemin ou placement privé.",
+      "help_text": "Ajoute l’action Optimiser… au détail d’un EPUB local. Core044 fournit artifact.execution : la variante est créée et persistée par le Core, sans chemin ou placement privé.",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "requires": [
@@ -193,18 +193,6 @@
             "minimum": 64,
             "maximum": 4096,
             "default": 2048
-          },
-          "max_image_mb": {
-            "type": "integer",
-            "minimum": 8,
-            "maximum": 512,
-            "default": 64
-          },
-          "max_image_pixels": {
-            "type": "integer",
-            "minimum": 1000000,
-            "maximum": 250000000,
-            "default": 64000000
           }
         }
       },
