@@ -894,6 +894,20 @@ class MasterDetailPage(Gtk.Box):
         if self._narrow_master_detail and selected is not None:
             self._show_narrow_detail()
 
+    def select_key(self, key: str) -> bool:
+        """Select a visible row by stable key and reveal it without changing filters."""
+        target = str(key)
+        for index in range(self.store.get_n_items()):
+            row = self.store.get_item(index)
+            if isinstance(row, BookListItem) and row.key == target:
+                self.selection.set_selected(index)
+                try:
+                    self.listview.scroll_to(index, Gtk.ListScrollFlags.FOCUS, None)
+                except (AttributeError, TypeError):
+                    pass
+                return True
+        return False
+
     def _show_narrow_detail(self) -> None:
         if not self._narrow_master_detail:
             return
@@ -2879,7 +2893,7 @@ class MainWindow(Adw.ApplicationWindow):
             ))
             actions = []
             open_library = Gtk.Button(label="Voir dans Bibliothèque")
-            open_library.connect("clicked", lambda _b: self.navigate("library"))
+            open_library.connect("clicked", lambda _b, key=row.key: self._open_library_item(key))
             if item.get("local") or item.get("state") in {"remote_owned", "remote_loan_active", "remote_loan_realized"}:
                 actions.append(open_library)
             if item.get("source") == "known_catalog":
@@ -3341,6 +3355,31 @@ class MainWindow(Adw.ApplicationWindow):
         self._render_library(entries)
         if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
 
+    def _open_library_item(self, key: str) -> None:
+        """Navigate to Library while retaining the current book identity."""
+        self._pending_library_selection_key = str(key)
+        self.navigate("library")
+        self._select_pending_library_item()
+
+    def _select_pending_library_item(self) -> bool:
+        key = getattr(self, "_pending_library_selection_key", None)
+        if not key or not hasattr(self, "library_page"):
+            return False
+        if self.library_page.select_key(key):
+            self._pending_library_selection_key = None
+            return True
+        entries = list(getattr(self, "_library_entries_cache", ()))
+        if not entries:
+            # Keep the request while the initial Library refresh is pending.
+            return False
+        full_keys = {str(item.get("key") or "") for item in entries}
+        if key in full_keys:
+            self.toast("Ce livre est masqué par les filtres actifs de la Bibliothèque.", 5)
+        else:
+            self.toast("Ce livre n’est plus présent dans la Bibliothèque.", 5)
+        self._pending_library_selection_key = None
+        return False
+
     def _render_library(self, entries: list[dict[str, Any]] | None = None) -> None:
         if not hasattr(self, "library_page"):
             return
@@ -3379,6 +3418,7 @@ class MainWindow(Adw.ApplicationWindow):
             ))
         self._attach_row_facets(rows, self._library_objects, self.library_controls)
         self.library_page.show_rows(rows, total_count=len(entries))
+        self._select_pending_library_item()
         self.ui_perf.record("render_library", (time.perf_counter() - _perf_started) * 1000.0)
 
     # ---------- Récupérations récentes ----------
