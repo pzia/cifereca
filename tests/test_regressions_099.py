@@ -103,10 +103,11 @@ class SearchRegression(unittest.TestCase):
 
 class DigitalDefault(unittest.TestCase):
     def test_new_controls_default_digital_but_changes_stay_in_session(self):
-        gtk=NS(Box=Widget,SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
+        gtk=NS(Box=Widget,SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,Label=Widget,Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
         def multi(*a):return Widget()
         funcs=methods('query_controls.py','QueryControls',{'__init__','state','set_state'},{'Gtk':gtk,'MultiSelect':multi,'QueryState':QueryState,'FIELDS':FIELDS})
         cls=funcs
+        cls._changed=lambda self:None
         for library in [False,True]:
             control=cls([],lambda:None,lambda:None,library=library)
             self.assertEqual(control.state().scope,'digital')
