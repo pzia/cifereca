@@ -1,0 +1,5 @@
+{
+  "manifest": 1,
+  "package": {"id":"org.exemple.cifereca.page","version":"1.0.0","name":"Page pédagogique","publisher":"Exemple","plugin_api":">=1,<2"},
+  "plugins": [{"id":"ui.page.example","type":"ui.page","entrypoint":"exemple_page:PLUGIN","display_name":"Page exemple","help_text":"Exemple minimal de contribution UI. Affiche une page et un message ; aucune connexion ni synchronisation."}]
+}
