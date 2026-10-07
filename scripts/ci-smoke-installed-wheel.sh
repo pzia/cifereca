@@ -12,8 +12,18 @@ if [ ! -f "$wheel" ]; then
   exit 2
 fi
 
-venv_dir="$(mktemp -d "${TMPDIR:-/tmp}/cifereca-installed.XXXXXX")"
-trap 'rm -rf "$venv_dir"' EXIT
+if [ -n "${CIFERECA_SMOKE_VENV:-}" ]; then
+  venv_dir="$CIFERECA_SMOKE_VENV"
+  rm -rf "$venv_dir"
+  cleanup=false
+else
+  venv_dir="$(mktemp -d "${TMPDIR:-/tmp}/cifereca-installed.XXXXXX")"
+  cleanup=true
+fi
+
+if [ "$cleanup" = true ]; then
+  trap 'rm -rf "$venv_dir"' EXIT
+fi
 
 python -m venv "$venv_dir"
 "$venv_dir/bin/python" -m pip install --disable-pip-version-check "$wheel"
