@@ -18,7 +18,7 @@ from cifereca.plugins.state import PluginStateStore
 def _manifest(requirement: dict | None = None) -> dict:
     plugin = {
         "id": "test.python-dependency",
-        "type": "transport",
+        "type": "test.service",
         "version": "1.0.0",
         "entrypoint": "dependency_plugin:PLUGIN",
     }
@@ -33,6 +33,12 @@ def _manifest(requirement: dict | None = None) -> dict:
             "publisher": "tests",
             "plugin_api": ">=1,<2",
         },
+        "categories": [{
+            "id": "test.service",
+            "display_name": "Test service",
+            "contract": "test.service/1",
+            "resolution": "all",
+        }],
         "plugins": [plugin],
     }
 

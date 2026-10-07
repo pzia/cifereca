@@ -13,7 +13,10 @@ def _method_source(path: Path, class_name: str, method_name: str) -> str:
     tree = ast.parse(path.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
-    return ast.unparse(method)
+    body = method.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+        body = body[1:]
+    return "\n".join(ast.unparse(stmt) for stmt in body)
 
 
 def test_identity_statistics_is_persisted_projection_only():
