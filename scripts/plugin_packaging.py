@@ -147,6 +147,12 @@ def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
             category.get("id"),
             f"{plugin_dir}: categories[{index}].id",
         )
+        resolution = str(category.get("resolution") or "priority").strip().lower()
+        if resolution not in {"priority", "all", "single"}:
+            raise PackagingError(
+                f"{plugin_dir}: categories[{index}].resolution invalide: "
+                f"{resolution!r}"
+            )
 
     for index, descriptor in enumerate(manifest.get("plugins") or []):
         if not isinstance(descriptor, dict):
