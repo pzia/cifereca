@@ -133,7 +133,9 @@ class OptimizerPage:
             self.output_button.set_sensitive(False)
 
         action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.optimize_button = Gtk.Button(label="Créer la variante optimisée")
+        self.optimize_button = Gtk.Button(
+            label="Obtenir la variante optimisée" if self.artifact is not None else "Créer la variante optimisée"
+        )
         self.optimize_button.add_css_class("suggested-action")
         self.optimize_button.connect("clicked", self._start)
         action_row.append(self.optimize_button)
