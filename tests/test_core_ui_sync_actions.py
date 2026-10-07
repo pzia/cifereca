@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MAIN_WINDOW = ROOT / "src/cifereca/gui/main_window.py"
+
+
+def _method_source(class_name: str, method_name: str) -> str:
+    tree = ast.parse(MAIN_WINDOW.read_text())
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+    return ast.unparse(method)
+
+
+def test_sync_header_actions_use_adaptive_bar():
+    source = _method_source("MainWindow", "_build_sync_page")
+
+    assert "actions = AdaptiveActionBar(source=heading)" in source
+    assert "Actualiser" in source
+    assert "view-refresh-symbolic" in source
+    assert "Synchroniser maintenant" in source
+    assert "emblem-synchronizing-symbolic" in source
+    assert "actions.append(refresh)" in source
+    assert "actions.append(all_now)" in source

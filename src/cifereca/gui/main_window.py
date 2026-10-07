@@ -2154,9 +2154,11 @@ class MainWindow(Adw.ApplicationWindow):
             getattr(outer, "set_margin_" + edge)(20)
         heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
+        actions = AdaptiveActionBar(source=heading)
         refresh = self.action_button("Actualiser", "view-refresh-symbolic")
         all_now = self.action_button("Synchroniser maintenant", "emblem-synchronizing-symbolic", suggested=True)
-        heading.append(title); heading.append(refresh); heading.append(all_now); outer.append(heading)
+        actions.append(refresh); actions.append(all_now)
+        heading.append(title); heading.append(actions); outer.append(heading)
         self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
         refresh.connect("clicked", lambda _b: self._refresh_sync_page())
         def sync_all(button):
