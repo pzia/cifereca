@@ -1,0 +1,121 @@
+# État de rationalisation CIFERECA
+
+État de référence documentaire : 7 octobre 2026.
+
+Ce fichier est l'index de référence pour la rationalisation. Les handoffs historiques restent utiles pour leur contexte, mais ne doivent pas être lus comme une description automatiquement à jour du tree courant.
+
+## Rationalisation terminée
+
+### Frontières et primitives Core/plugins
+
+Le chantier transversal de mutualisation est clos :
+
+- `TaskBroker` public ;
+- présentation maître/détail publique ;
+- `transport.http` ;
+- inspection PDF/EPUB/ACSM publique ;
+- publication atomique de contenu et de fichiers ;
+- health checks / diagnostics publics ;
+- CacheBroker TTL + single-flight ;
+- normalisation langue, noms de fichiers et descriptions ;
+- redaction diagnostics publique.
+
+Référence : [HANDOFF-MUTUALISATION-CORE-PLUGINS.md](../HANDOFF-MUTUALISATION-CORE-PLUGINS.md).
+
+### Tests historiques déjà répartis
+
+Ne pas restaurer en bloc :
+
+- `test_sync_082.py` ;
+- `test_kobo_vault.py` ;
+- anciens scénarios Gallica de `test_gallica_plugin.py` ;
+- anciens scénarios updater de `test_update.py` ;
+- ancienne variante historique de `test_095_consolidation.py`.
+
+La répartition actuelle est décrite dans [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md).
+
+## Rationalisation en cours
+
+### Triage des tests historiques 0.9.21 → 0.9.33
+
+À analyser méthode par méthode, sans restauration transitive :
+
+- `test_core_0921.py` ;
+- `test_core_0923.py` ;
+- `test_core_0925.py` ;
+- `test_core_0927.py` ;
+- `test_core_0929.py` ;
+- `test_core_0931.py` ;
+- `test_core_0933.py`.
+
+Ces fichiers historiques ne sont pas présents dans le tree courant à la date de ce document. Le chantier consiste à récupérer leurs invariants utiles depuis leur source/historique puis à les replacer correctement.
+
+## Dette structurelle restante
+
+### Core / plugins
+
+- `src/cifereca/builtin_ui/` reste intégré au Core.
+- `src/cifereca/paris/` reste présent.
+- `src/cifereca/kobo/` reste présent.
+- les plugins fonctionnels restent sous `plugins/` à la racine ;
+- la cible future `src/plugins/` n'est pas encore matérialisée.
+
+Voir [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Recommendations
+
+L'entrypoint actif utilise les primitives publiques actuelles, mais la hiérarchie conserve du code legacy de threading dans une base historique. Nettoyage à traiter séparément.
+
+### Numilog EPUB strict
+
+Le validateur local reste plus strict que l'inspection Core sur plusieurs invariants ZIP/OPF/protection. Ne pas le supprimer avant équivalence démontrée.
+
+### Sessions HTTP fournisseur
+
+Paris, Numilog, Kobo et d'autres providers peuvent garder une session HTTP spécialisée lorsque l'authentification, les cookies ou la navigation métier dépassent le contrat générique `transport.http`.
+
+## Simulation
+
+État :
+
+- `gen-dataset/` existe et reste l'environnement fonctionnel simulé actuel ;
+- `simulation/` n'existe pas encore.
+
+Cible :
+
+- une seule référence future sous `simulation/` ;
+- migration progressive des faux services, fixtures et profils utiles ;
+- suppression de `gen-dataset/` lorsque ses consommateurs sont migrés.
+
+Voir [SIMULATION.md](SIMULATION.md).
+
+## Environnements
+
+`environnements/` décrit des recettes machine/runtime, pas une seconde simulation :
+
+- `openai-chat-debian/` : recette Debian/OpenAI GTK de référence ;
+- `chatgpt-work/` : recette de travail Ubuntu/ChatGPT Work.
+
+## Index des handoffs
+
+### Encore utiles comme contexte
+
+- [HANDOFF-MUTUALISATION-CORE-PLUGINS.md](../HANDOFF-MUTUALISATION-CORE-PLUGINS.md) — clôture des primitives mutualisées.
+- [HANDOFF-GEN-DATASET.md](../HANDOFF-GEN-DATASET.md) — état détaillé du banc `gen-dataset`, à lire avec la cible `simulation/`.
+- [HANDOFF-PLUGINS-FROM-CORE044-DEV1.md](../HANDOFF-PLUGINS-FROM-CORE044-DEV1.md) — contexte de la vague plugins/Core044.
+
+### Historiques / non autoritatifs pour l'état courant
+
+- [HANDOFF-RECOMMENDATIONS.md](../HANDOFF-RECOMMENDATIONS.md) — état d'une version antérieure du plugin ; utile pour l'historique performance/algorithmes.
+- [HANDOFF-UX-CORE-PLUGINS.md](../HANDOFF-UX-CORE-PLUGINS.md) — analyse/plan UX ; plusieurs éléments y sont explicitement des propositions, pas des décisions d'architecture.
+
+En cas de contradiction, l'état réel du tree, [ARCHITECTURE.md](ARCHITECTURE.md), [PLUGIN-BOUNDARIES.md](PLUGIN-BOUNDARIES.md) et [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md) priment.
+
+## Prochaines étapes de rationalisation
+
+1. poursuivre le triage historique `0921 → 0933` ;
+2. décider et exécuter la migration `gen-dataset/` → `simulation/` ;
+3. traiter l'extraction de `builtin_ui`, Paris et Kobo dans des PR de code séparées ;
+4. traiter le déplacement physique des plugins seulement avec packaging/tests adaptés ;
+5. nettoyer la hiérarchie legacy Recommendations ;
+6. enrichir éventuellement l'inspection EPUB Core avant toute suppression du validateur strict Numilog.
