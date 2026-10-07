@@ -286,6 +286,11 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
                 f"{plugin_dir}: plugins[{index}].instantiation invalide: "
                 f"{instantiation!r}"
             )
+        help_text = descriptor.get("help_text")
+        if help_text is not None and not isinstance(help_text, str):
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].help_text doit être une chaîne"
+            )
         if plugin_id in seen_plugin_ids:
             raise PackagingError(
                 f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"
