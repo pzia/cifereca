@@ -4,7 +4,8 @@ from collections.abc import Iterable
 
 from cifereca.core.search import file_format, format_family
 
-from .models import AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences
+from .models import (AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
+                     acquisition_offer_formats, acquisition_offer_preferred_format)
 
 
 def _ordered_unique(values: Iterable[str]) -> tuple[str, ...]:
@@ -22,7 +23,7 @@ def normalize_acquisition_offers(
     """Normalize legacy offer lists into the public choice-set contract.
 
     No format is inferred from source URL, bibliographic code, media type or
-    metadata. Only AcquisitionOffer.format can attest a file format.
+    metadata. AcquisitionOffer.format and formats carry the attested alternatives.
     """
     if value is None:
         result = AcquisitionOfferSet()
@@ -89,11 +90,11 @@ def attested_offer_formats(
     for offer in offers:
         if not isinstance(offer, AcquisitionOffer):
             raise TypeError("acquisition offers must contain AcquisitionOffer values")
-        normalized = file_format(offer.format)
-        if families and normalized:
-            normalized = format_family(normalized)
-        if normalized and normalized not in out:
-            out.append(normalized)
+        for normalized in acquisition_offer_formats(offer):
+            if families:
+                normalized = format_family(normalized)
+            if normalized not in out:
+                out.append(normalized)
     return tuple(out)
 
 
@@ -119,8 +120,8 @@ def rank_acquisition_offers(
     def score(entry):
         index, offer = entry
         offer_id = str(offer.offer_id or "").strip()
-        fmt = file_format(offer.format)
-        fmt_rank, family_rank = format_score(fmt)
+        formats = acquisition_offer_formats(offer)
+        fmt_rank, family_rank = min((format_score(fmt) for fmt in formats), default=(len(format_order), 2))
         return (
             offer_order.get(offer_id, default_offer_rank),
             fmt_rank,
@@ -139,6 +140,9 @@ def acquisition_format_projection(
     result = normalize_acquisition_offers(value)
     available = attested_offer_formats(result)
     preferred = tuple(result.preferences.format_order)
+    if not preferred:
+        candidates = _ordered_unique(acquisition_offer_preferred_format(offer) for offer in result.offers)
+        preferred = candidates if len(candidates) == 1 else ()
     return {
         "available_formats": available,
         "preferred_formats": preferred,

@@ -20,6 +20,7 @@ from packaging.version import InvalidVersion, Version
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS_DIR = REPO_ROOT / "src" / "plugins"
 DIST_DIR = REPO_ROOT / "dist"
+PLUGIN_API_VERSION_FILE = REPO_ROOT / "src" / "cifereca" / "plugin_api" / "version.py"
 PLUGIN_MANIFEST = "cifereca-plugin.json"
 DEV_MANIFEST = "cifereca-dev.json"
 
@@ -94,10 +95,41 @@ def _validate_specifier(value: object, field: str) -> None:
         raise PackagingError(f"{field} invalide: {raw!r}") from exc
 
 
+def _provided_plugin_api_version() -> Version:
+    try:
+        source = PLUGIN_API_VERSION_FILE.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PackagingError(
+            f"version Plugin API illisible: {PLUGIN_API_VERSION_FILE}: {exc}"
+        ) from exc
+    match = re.search(
+        r"^PLUGIN_API_VERSION\s*=\s*['\"]([^'\"]+)['\"]",
+        source,
+        re.MULTILINE,
+    )
+    if match is None:
+        raise PackagingError(
+            f"PLUGIN_API_VERSION absent: {PLUGIN_API_VERSION_FILE}"
+        )
+    try:
+        return Version(match.group(1))
+    except InvalidVersion as exc:
+        raise PackagingError(
+            f"PLUGIN_API_VERSION invalide: {match.group(1)!r}"
+        ) from exc
+
+
 def _validate_manifest_versions(plugin_dir: Path, manifest: dict) -> None:
     package = manifest["package"]
     _validate_version(package.get("version"), f"{plugin_dir}: package.version")
-    _validate_specifier(package.get("plugin_api"), f"{plugin_dir}: package.plugin_api")
+    plugin_api = str(package.get("plugin_api") or ">=1,<2").strip()
+    _validate_specifier(plugin_api, f"{plugin_dir}: package.plugin_api")
+    provided_plugin_api = _provided_plugin_api_version()
+    if provided_plugin_api not in SpecifierSet(plugin_api):
+        raise PackagingError(
+            f"{plugin_dir}: package.plugin_api incompatible: {plugin_api!r}; "
+            f"Cifereca fournit {provided_plugin_api}"
+        )
 
     for index, descriptor in enumerate(manifest.get("plugins") or []):
         if not isinstance(descriptor, dict):
@@ -197,6 +229,33 @@ def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
                 row.get("category"),
                 f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].category",
             )
+            contract = str(row.get("contract") or "").strip()
+            if not contract:
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].contract "
+                    "est requis"
+                )
+            mode = str(
+                row.get("mode")
+                or ("optional" if row.get("optional") else "required")
+            ).strip().lower()
+            if mode not in {"required", "optional", "degraded"}:
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].mode "
+                    f"invalide: {mode!r}"
+                )
+            capabilities = row.get("capabilities")
+            if capabilities is not None and (
+                not isinstance(capabilities, list)
+                or not all(
+                    isinstance(value, str) and value.strip()
+                    for value in capabilities
+                )
+            ):
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].capabilities "
+                    "doit être une liste de chaînes non vides"
+                )
 
 
 def _validate_system_requirements(plugin_dir: Path, manifest: dict) -> None:
@@ -271,11 +330,44 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
         _validate_id(
             descriptor.get("type"), f"{plugin_dir}: plugins[{index}].type"
         )
+        try:
+            int(descriptor.get("priority", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].priority invalide: "
+                f"{descriptor.get('priority')!r}"
+            ) from exc
         schema = descriptor.get("config_schema")
         if schema is not None and not isinstance(schema, dict):
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}].config_schema doit être un objet"
             )
+        instantiation = str(
+            descriptor.get("instantiation") or "multiple"
+        ).strip().lower().replace("-", "_")
+        if instantiation == "singleton":
+            instantiation = "singleton_public"
+        if instantiation not in {"multiple", "per_identity", "singleton_public"}:
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].instantiation invalide: "
+                f"{instantiation!r}"
+            )
+        help_text = descriptor.get("help_text")
+        if help_text is not None and not isinstance(help_text, str):
+            raise PackagingError(
+                f"{plugin_dir}: plugins[{index}].help_text doit être une chaîne"
+            )
+        for field in ("capabilities", "requires_brokers", "requires_services"):
+            values = descriptor.get(field)
+            if values is None:
+                continue
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) and value.strip() for value in values
+            ):
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].{field} "
+                    "doit être une liste de chaînes non vides"
+                )
         if plugin_id in seen_plugin_ids:
             raise PackagingError(
                 f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"

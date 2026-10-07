@@ -117,6 +117,79 @@ class AcquisitionOffer:
     source: Mapping[str, Any] = field(default_factory=dict)
     priority: int = 0
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    formats: tuple[str, ...] = ()
+    preferred_format: str = ""
+    format_evidence: Mapping[str, Any] = field(default_factory=dict)
+
+
+_ACQUISITION_FILE_FORMATS = {
+    "epub", "kepub", "pdf", "mp3", "m4a", "ogg", "opus", "flac", "wav",
+}
+_ACQUISITION_MIME_FORMATS = {
+    "application/epub+zip": "epub",
+    "application/pdf": "pdf",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/ogg": "ogg",
+    "audio/flac": "flac",
+}
+
+
+def normalize_acquisition_format(value: object) -> str:
+    """Normalize an explicitly attested acquisition file format."""
+    raw = str(value or "").strip().casefold()
+    if raw in _ACQUISITION_FILE_FORMATS:
+        return raw
+    return _ACQUISITION_MIME_FORMATS.get(raw, "")
+
+
+def acquisition_offer_formats(offer: AcquisitionOffer) -> tuple[str, ...]:
+    """Return deduplicated attested alternatives, preserving legacy format."""
+    values = [offer.format, *tuple(offer.formats or ())]
+    out: list[str] = []
+    for value in values:
+        normalized = normalize_acquisition_format(value)
+        if normalized and normalized not in out:
+            out.append(normalized)
+    return tuple(out)
+
+
+def acquisition_offer_preferred_format(offer: AcquisitionOffer) -> str:
+    """Return the preference only when it is one of the attested alternatives."""
+    preferred = normalize_acquisition_format(offer.preferred_format)
+    return preferred if preferred and preferred in acquisition_offer_formats(offer) else ""
+
+
+def acquisition_offers_metadata(offers: object) -> dict[str, Any]:
+    """Project offer alternatives into search metadata without inventing a choice."""
+    if isinstance(offers, AcquisitionOfferSet):
+        from .acquisition import acquisition_format_projection
+        projection = acquisition_format_projection(offers)
+        result = {"available_formats": list(projection["available_formats"]),
+                  "format_source": "acquisition_offers" if projection["available_formats"] else "unknown"}
+        preferred = projection["preferred_formats"]
+        if preferred:
+            result["preferred_format"] = preferred[0]
+        return result
+    rows = tuple(offers or ()) if isinstance(offers, (list, tuple)) else ()
+    formats: list[str] = []
+    preferences: list[str] = []
+    for offer in rows:
+        if not isinstance(offer, AcquisitionOffer):
+            continue
+        for value in acquisition_offer_formats(offer):
+            if value not in formats:
+                formats.append(value)
+        preferred = acquisition_offer_preferred_format(offer)
+        if preferred and preferred not in preferences:
+            preferences.append(preferred)
+    result: dict[str, Any] = {
+        "available_formats": formats,
+        "format_source": "acquisition_offers" if formats else "unknown",
+    }
+    if len(preferences) == 1:
+        result["preferred_format"] = preferences[0]
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -897,7 +970,7 @@ class PluginContext(Protocol):
 __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
-    "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
+    "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
     "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
@@ -909,3 +982,4 @@ __all__ = [
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
+

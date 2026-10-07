@@ -179,3 +179,40 @@ def test_provider_base_keeps_legacy_empty_offer_contract():
     )
 
     assert provider.acquisition_offers(object()) == []
+
+
+def test_multiformat_offer_set_preserves_alternatives_preference_and_core_projection():
+    from cifereca.core.search import project_acquisition_offer_formats
+    from cifereca.plugin_api import acquisition_offers_metadata
+    multi = AcquisitionOffer(offer_id='multi', formats=('EPUB', 'pdf', 'MONE'), preferred_format='pdf')
+    choices = AcquisitionOfferSet(offers=(multi,), preferences=AcquisitionPreferences(format_order=('pdf',)))
+    assert attested_offer_formats(choices) == ('epub', 'pdf')
+    assert acquisition_format_projection(choices)['preferred_formats'] == ('pdf',)
+    assert acquisition_offers_metadata(choices)['preferred_format'] == 'pdf'
+    projected = project_acquisition_offer_formats({'format': '', 'metadata': {}}, choices)
+    assert projected['metadata']['available_formats'] == ['epub', 'pdf']
+    assert projected['format'] == ''
+
+
+def test_multiformat_ranking_uses_every_attested_alternative():
+    multi = AcquisitionOffer(offer_id='multi', formats=('epub', 'pdf'))
+    single = offer('epub', 'epub', priority=100)
+    choices = AcquisitionOfferSet(offers=(single, multi), preferences=AcquisitionPreferences(format_order=('pdf',)))
+    assert rank_acquisition_offers(choices) == (multi, single)
+
+
+def test_offer_preferences_are_preserved_without_inventing_a_cross_offer_choice():
+    from cifereca.plugin_api import acquisition_offers_metadata
+    pdf = AcquisitionOffer(offer_id='pdf', formats=('epub', 'pdf'), preferred_format='pdf')
+    epub = AcquisitionOffer(offer_id='epub', format='epub', preferred_format='epub')
+    assert acquisition_format_projection([pdf])['preferred_formats'] == ('pdf',)
+    assert acquisition_format_projection([pdf, epub])['preferred_formats'] == ()
+    assert 'preferred_format' not in acquisition_offers_metadata(AcquisitionOfferSet(offers=(pdf, epub)))
+
+
+def test_provider_has_exactly_one_acquisition_offers_method():
+    import ast
+    from pathlib import Path
+    tree = ast.parse((Path(__file__).parents[1] / 'src/cifereca/providers/base.py').read_text())
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ProviderSession')
+    assert sum(isinstance(n, ast.FunctionDef) and n.name == 'acquisition_offers' for n in cls.body) == 1

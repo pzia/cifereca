@@ -3,12 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from cifereca.plugin_api.models import AcquisitionOffer, AcquisitionOfferSet
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..models import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult
+
+if TYPE_CHECKING:
+    from ..plugin_api.models import AcquisitionOffer, AcquisitionOfferSet
 
 
 ImplementationState = Literal["ready", "skeleton"]
@@ -194,3 +194,4 @@ class ProviderPlugin(ABC):
         diagnostics: Any,
     ) -> ProviderSession:
         raise NotImplementedError
+
