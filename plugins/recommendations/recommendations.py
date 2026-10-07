@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import threading
 from typing import Any, Mapping
 
 from cifereca.plugin_api import UiActionContribution, UiPageContribution
 
 from recommendation_engine import RankedCandidate, get_field, normalize
-from recommendation_service import RecommendationResult, compute_recommendations
+from recommendation_service_v022 import RecommendationResult, compute_recommendations
 
 
 class RecommendationsPlugin:
@@ -238,24 +237,39 @@ class RecommendationsView:
             label = f"Recherche {done + 1}/{total} · {query}" if query and done < total else "Classement des résultats…"
             self.GLib.idle_add(self._set_progress, generation, label)
 
-        def worker() -> None:
+        task_broker = context.broker("tasks")
+        if task_broker is None:
+            self._busy = False
+            self._refresh_button.set_sensitive(True)
+            self._spinner.stop()
+            self._summary.set_label("Core incompatible : broker tasks indisponible.")
+            return False
+
+        def operation(control):
+            return compute_recommendations(
+                metadata_broker,
+                catalog_broker,
+                identity_id,
+                scope=self._config_str("scope", "digital"),
+                max_queries=self._config_int("max_queries", 8),
+                per_query=self._config_int("per_query", 50),
+                max_results=self._config_int("max_results", 120),
+                exploration=exploration,
+                progress=progress,
+                control=control,
+            )
+
+        handle = task_broker.submit(operation, label="Calcul des recommandations", kind="recommendations")
+
+        def finished(done_handle) -> None:
             try:
-                result = compute_recommendations(
-                    metadata_broker,
-                    catalog_broker,
-                    identity_id,
-                    scope=self._config_str("scope", "digital"),
-                    max_queries=self._config_int("max_queries", 8),
-                    per_query=self._config_int("per_query", 50),
-                    max_results=self._config_int("max_results", 120),
-                    exploration=exploration,
-                    progress=progress,
-                )
-                self.GLib.idle_add(self._complete, generation, result, None)
+                result = done_handle.result()
             except Exception as exc:
                 self.GLib.idle_add(self._complete, generation, None, str(exc))
+            else:
+                self.GLib.idle_add(self._complete, generation, result, None)
 
-        threading.Thread(target=worker, name="cifereca-recommendations", daemon=True).start()
+        handle.add_done_callback(finished)
         return False
 
     def _set_progress(self, generation: int, label: str) -> bool:
