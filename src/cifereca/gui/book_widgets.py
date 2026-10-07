@@ -58,6 +58,8 @@ class CoverView(Gtk.Overlay):
         super().__init__()
         self._width = int(width)
         self._height = int(height)
+        self._missing_width = self._width
+        self._missing_height = self._height
         self.set_size_request(self._width, self._height)
         _add_css(self, "cover-frame")
         self._generation = 0
@@ -87,6 +89,25 @@ class CoverView(Gtk.Overlay):
         self.spinner.set_visible(False)
         self.add_overlay(self.spinner)
 
+    def _set_logical_size(self, width: int, height: int) -> None:
+        width = int(width)
+        height = int(height)
+        self.set_size_request(width, height)
+        self.picture.set_size_request(width, height)
+        self.placeholder.set_pixel_size(max(24, width // 2))
+
+    def set_missing_size(self, width: int, height: int) -> None:
+        """Use a compact placeholder only once cover absence is confirmed."""
+        self._missing_width = int(width)
+        self._missing_height = int(height)
+        if not self._url and self._request is None:
+            self._set_logical_size(self._missing_width, self._missing_height)
+
+    def _show_missing(self) -> None:
+        self.picture.set_paintable(None)
+        self.placeholder.set_visible(True)
+        self._set_logical_size(self._missing_width, self._missing_height)
+
     def reset(self) -> None:
         if self._request is not None:
             try:
@@ -98,6 +119,7 @@ class CoverView(Gtk.Overlay):
         self._loader = None
         self._url = None
         self._decode_retry = False
+        self._set_logical_size(self._width, self._height)
         self.picture.set_paintable(None)
         self.placeholder.set_visible(True)
         self.spinner.stop()
@@ -110,6 +132,7 @@ class CoverView(Gtk.Overlay):
     def bind_url(self, loader: CoverLoader, url: str | None, *, priority: int = 10) -> None:
         self.reset()
         if not url:
+            self._show_missing()
             return
         self._loader = loader
         self._url = url
@@ -139,12 +162,13 @@ class CoverView(Gtk.Overlay):
         self.spinner.stop()
         self.spinner.set_visible(False)
         if not path:
-            self.placeholder.set_visible(True)
+            self._show_missing()
             return False
         try:
             decode_started = time.perf_counter()
             texture = Gdk.Texture.new_from_file(Gio.File.new_for_path(str(path)))
             loader.note_ui_decode((time.perf_counter() - decode_started) * 1000.0)
+            self._set_logical_size(self._width, self._height)
             self.picture.set_paintable(texture)
             self.placeholder.set_visible(False)
             loader.note_ui_applied()
@@ -162,6 +186,8 @@ class CoverView(Gtk.Overlay):
             if not self._decode_retry and self._loader is not None and self._url:
                 self._decode_retry = True
                 self._start_cover_request(force=True)
+            else:
+                self._show_missing()
         return False
 
     def set_path(self, path: Path | None) -> bool:

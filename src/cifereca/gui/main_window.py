@@ -369,9 +369,9 @@ class DetailPanel(Gtk.Box):
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
         self._append_content(header)
         cover = CoverView(112, 168)
+        cover.set_missing_size(40, 60)
         header.append(cover)
-        if thumbnail:
-            cover.bind_url(self.window.covers, thumbnail, priority=0)
+        cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
