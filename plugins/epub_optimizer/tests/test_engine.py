@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from cifereca_epub_optimizer.engine import DrmProtectedError, optimize_epub
+from cifereca_epub_optimizer.engine import DrmProtectedError, _effective_target_box, analyze_epub, optimize_epub
 from cifereca_epub_optimizer.builtin_profiles import builtin_profile
 
 
@@ -100,6 +100,85 @@ class EngineTests(unittest.TestCase):
                 optimize_epub(src, dst, profile=builtin_profile("xteink-x3"))
             self.assertFalse(dst.exists())
 
+
+    def test_animated_image_is_preserved_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "book.epub"
+            dst = Path(td) / "out.epub"
+            frames = [Image.new("RGB", (64, 64), value) for value in ("white", "black")]
+            out = io.BytesIO()
+            frames[0].save(out, format="WEBP", save_all=True, append_images=frames[1:], duration=100, loop=0)
+            animated = out.getvalue()
+            make_epub(src, animated, image_name="OEBPS/images/page.webp")
+            report = optimize_epub(src, dst, profile=builtin_profile("generic-eink"))
+            with zipfile.ZipFile(dst) as zf:
+                self.assertEqual(zf.read("OEBPS/images/page.webp"), animated)
+            self.assertEqual(report.images_kept, 1)
+            self.assertTrue(any("animation" in note for note in report.image_notes))
+
+    def test_transparent_png_is_preserved_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "book.epub"
+            dst = Path(td) / "out.epub"
+            image = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+            out = io.BytesIO()
+            image.save(out, format="PNG")
+            transparent = out.getvalue()
+            make_epub(src, transparent, image_name="OEBPS/images/page.png")
+            report = optimize_epub(src, dst, profile=builtin_profile("xteink-x3"))
+            with zipfile.ZipFile(dst) as zf:
+                self.assertEqual(zf.read("OEBPS/images/page.png"), transparent)
+            self.assertTrue(any("transparence" in note for note in report.image_notes))
+
+    def test_pixel_limit_keeps_image_without_decoding_pipeline(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "book.epub"
+            dst = Path(td) / "out.epub"
+            payload = image_bytes("JPEG", size=(200, 200))
+            make_epub(src, payload)
+            report = optimize_epub(
+                src, dst, profile=builtin_profile("xteink-x3"), max_image_pixels=10_000
+            )
+            with zipfile.ZipFile(dst) as zf:
+                self.assertEqual(zf.read("OEBPS/images/page.jpg"), payload)
+            self.assertTrue(any("limite sécurité" in note for note in report.image_notes))
+
+    def test_unknown_zoom_ignores_layout_hint_below_screen_resolution(self):
+        profile = builtin_profile("xteink-x3")
+        self.assertIsNone(profile.max_zoom_factor)
+        self.assertEqual(_effective_target_box(profile, (2000, 3000), (200, 300)), (528, 792))
+
+    def test_declared_zoom_makes_layout_hint_actionable(self):
+        from dataclasses import replace
+        profile = replace(builtin_profile("generic-eink"), max_zoom_factor=2.0)
+        self.assertEqual(_effective_target_box(profile, (2000, 3000), (300, 400)), (600, 800))
+
+    def test_duplicate_zip_paths_are_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "book.epub"
+            dst = Path(td) / "out.epub"
+            with zipfile.ZipFile(src, "w") as zf:
+                zf.writestr("mimetype", MIMETYPE, compress_type=zipfile.ZIP_STORED)
+                zf.writestr("META-INF/container.xml", CONTAINER)
+                zf.writestr("OEBPS/content.opf", OPF)
+                zf.writestr("OEBPS/page.xhtml", XHTML)
+                zf.writestr("OEBPS/images/page.jpg", image_bytes("JPEG", size=(64, 64)))
+                zf.writestr("oebps/images/page.jpg", image_bytes("JPEG", size=(64, 64)))
+            from cifereca_epub_optimizer.engine import EpubOptimizationError
+            with self.assertRaises(EpubOptimizationError):
+                optimize_epub(src, dst, profile=builtin_profile("generic-eink"))
+
+
+    def test_analysis_estimates_output_and_reports_candidates(self):
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "book.epub"
+            make_epub(src, image_bytes("JPEG", size=(2000, 3000)))
+            analysis = analyze_epub(src, profile=builtin_profile("xteink-x3"))
+            self.assertEqual(analysis.images_seen, 1)
+            self.assertEqual(analysis.images_candidates, 1)
+            self.assertEqual(analysis.images_semantic_preserved, 0)
+            self.assertGreater(analysis.estimated_size_bytes, 0)
+            self.assertLessEqual(analysis.estimated_size_bytes, src.stat().st_size)
 
 if __name__ == "__main__":
     unittest.main()

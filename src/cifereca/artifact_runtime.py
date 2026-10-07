@@ -260,23 +260,101 @@ class ArtifactExecutionBrokerImpl:
         raise NotFound("Aucun transformer compatible", code="artifact_transformer_unavailable")
 
     def execute_transform(self, request: TransformRequest, *, transformer_plugin_id: str = "", control: TaskControl | None = None) -> ArtifactRef:
+        if control is None:
+            control = _NullTaskControl()
+        control.check_cancelled()
         plugin_id, transformer = self._select_transformer(request, transformer_plugin_id)
+        # Validate the current source bytes before considering an existing
+        # derivative. A stale local source must never reuse an older variant.
         source_lease = self.input_lease(request.source)
-        plan = transformer.plan(request, source_lease, control)
-        destination = self.output_lease(request.source, output_format=plan.output_format, proposed_filename=plan.proposed_filename, variant_kind=request.capability_id or "derived")
+        fingerprint = hashlib.sha256(
+            json.dumps(dict(request.options), ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
         identity_id = None
         try:
             placement = self._source_placement(request.source)
             identity_id = placement.get("identity_id")
         except Exception:
             pass
+
+        existing = self.service.storage.artifact_variant_find(
+            source_sha256=request.source.sha256,
+            transformer_plugin_id=plugin_id,
+            profile_plugin_id=request.profile_plugin_id,
+            options_fingerprint=fingerprint,
+        )
+        if existing:
+            metadata = dict(existing.get("metadata") or {})
+            transformer_version = self._version_for_plugin(plugin_id)
+            profile_version = self._version_for_plugin(request.profile_plugin_id)
+            version_match = (
+                str(existing.get("transformer_version") or "") == transformer_version
+                and str(existing.get("profile_version") or "") == profile_version
+                and not bool(metadata.get("stale", False))
+            )
+            if version_match:
+                cached = _artifact_ref(
+                    self.service.storage,
+                    str(existing.get("artifact_id") or ""),
+                    book_id=request.source.book_id,
+                )
+                if cached is not None:
+                    try:
+                        # Also verifies that a present placement still matches
+                        # the canonical checksum.
+                        self.input_lease(cached)
+                    except Exception:
+                        cached = None
+                if cached is not None:
+                    control.check_cancelled()
+                    control.report(current=1, total=1, message="Variante existante réutilisée")
+                    recorder = getattr(self.service, "_record_action", None)
+                    if callable(recorder):
+                        recorder(
+                            identity_id,
+                            "transformation",
+                            "success",
+                            plugin_id=plugin_id,
+                            facts={
+                                "capability": request.capability_id,
+                                "source_artifact_id": request.source.artifact_id,
+                                "artifact_id": cached.artifact_id,
+                                "cache_hit": True,
+                            },
+                        )
+                    return cached
+
+        plan = transformer.plan(request, source_lease, control)
+        destination = self.output_lease(
+            request.source,
+            output_format=plan.output_format,
+            proposed_filename=plan.proposed_filename,
+            variant_kind=request.capability_id or "derived",
+        )
         try:
-            if control is None: control = _NullTaskControl()
             result = transformer.transform(request, source_lease, destination, control)
-            fingerprint = hashlib.sha256(json.dumps(dict(request.options), ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
-            committed = self.commit_variant(source=request.source, destination=destination, result=result, transformer_plugin_id=plugin_id, profile_plugin_id=request.profile_plugin_id, options_fingerprint=fingerprint)
+            committed = self.commit_variant(
+                source=request.source,
+                destination=destination,
+                result=result,
+                transformer_plugin_id=plugin_id,
+                profile_plugin_id=request.profile_plugin_id,
+                options_fingerprint=fingerprint,
+            )
             recorder = getattr(self.service, "_record_action", None)
-            if callable(recorder): recorder(identity_id, "transformation", "success", plugin_id=plugin_id, facts={"capability": request.capability_id, "source_artifact_id": request.source.artifact_id, "artifact_id": committed.artifact_id})
+            if callable(recorder):
+                recorder(
+                    identity_id,
+                    "transformation",
+                    "success",
+                    plugin_id=plugin_id,
+                    facts={
+                        "capability": request.capability_id,
+                        "source_artifact_id": request.source.artifact_id,
+                        "artifact_id": committed.artifact_id,
+                        "cache_hit": False,
+                    },
+                )
             return committed
         except Exception as exc:
             if destination.active:

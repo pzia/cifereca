@@ -20,12 +20,18 @@ class Control:
 
 
 class FakeTransformer:
+    def __init__(self):
+        self.plan_calls = 0
+        self.transform_calls = 0
+
     def capabilities(self):
         fmt=ArtifactFormat('application/epub+zip','epub')
         return (TransformCapability('optimize',(fmt,),(fmt,),supports_plan=True),)
     def plan(self, request, source, control=None):
+        self.plan_calls += 1
         return TransformPlan(ArtifactFormat('application/epub+zip','epub'),'Optimized.epub')
     def transform(self, request, source, destination, control):
+        self.transform_calls += 1
         data=source.path.read_bytes()+b'-optimized'
         destination.path.write_bytes(data)
         return TransformResult(ArtifactFormat('application/epub+zip','epub'),'Optimized.epub',hashlib.sha256(data).hexdigest(),len(data))
@@ -75,6 +81,26 @@ def test_schema_10_and_transform_is_core_authoritative(tmp_path):
     assert len(variants)==1 and variants[0].artifact_id==result.artifact_id
     placements=[p for p in service.storage.placements() if p['artifact_id']==result.artifact_id]
     assert len(placements)==1 and Path(placements[0]['path']).read_bytes().endswith(b'-optimized')
+
+
+def test_identical_transform_reuses_materialized_variant_before_plan(tmp_path):
+    service, source, _pid = make_service(tmp_path)
+    transformer = FakeTransformer()
+    service.plugin_manager = FakeManager(transformer=transformer)
+    broker = ArtifactExecutionBrokerImpl(service)
+
+    request = TransformRequest(source, 'optimize', options={'quality': 80})
+    first = broker.execute_transform(request, control=Control())
+    second = broker.execute_transform(request, control=Control())
+
+    assert second.artifact_id == first.artifact_id
+    assert transformer.plan_calls == 1
+    assert transformer.transform_calls == 1
+
+    changed = TransformRequest(source, 'optimize', options={'quality': 81})
+    broker.execute_transform(changed, control=Control())
+    assert transformer.plan_calls == 2
+    assert transformer.transform_calls == 2
 
 
 def test_library_read_deduplicates_artifact_and_exposes_placements(tmp_path):

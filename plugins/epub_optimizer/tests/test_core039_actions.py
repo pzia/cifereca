@@ -3,18 +3,20 @@ from cifereca_epub_optimizer_plugin import EpubOptimizerPlugin
 
 
 def artifact(fmt='epub', drm='none'):
-    return ArtifactRef('a1','b1',ArtifactFormat('application/epub+zip',fmt,drm),123,'0'*64,filename='Livre.epub')
+    media = 'application/pdf' if fmt == 'pdf' else 'application/epub+zip'
+    return ArtifactRef('a1','b1',ArtifactFormat(media,fmt,drm),123,'0'*64,filename='Livre.'+fmt)
 
 
-def test_book_detail_action_visible_only_for_local_plain_epub():
+def test_book_detail_action_visible_for_plain_epub_or_pdf_only():
     plugin=EpubOptimizerPlugin()
-    assert plugin._visible_for_epub(UiActionContext(target='book.detail',artifact=artifact()))
-    assert not plugin._visible_for_epub(UiActionContext(target='book.detail',artifact=None))
-    assert not plugin._visible_for_epub(UiActionContext(target='book.detail',artifact=artifact('pdf')))
-    assert not plugin._visible_for_epub(UiActionContext(target='book.detail',artifact=artifact('epub','adept')))
+    assert plugin._visible_for_document(UiActionContext(target='book.detail',artifact=artifact('epub')))
+    assert plugin._visible_for_document(UiActionContext(target='book.detail',artifact=artifact('pdf')))
+    assert not plugin._visible_for_document(UiActionContext(target='book.detail',artifact=None))
+    assert not plugin._visible_for_document(UiActionContext(target='book.detail',artifact=artifact('mobi')))
+    assert not plugin._visible_for_document(UiActionContext(target='book.detail',artifact=artifact('epub','adept')))
 
 
-def test_action_uses_public_host_and_navigates_without_private_path():
+def test_action_uses_public_host_and_keeps_stable_route():
     plugin=EpubOptimizerPlugin()
     current=artifact()
     class Host:

@@ -18,6 +18,7 @@ class DeviceProfilePlugin:
         profile = self.profile
         return {
             "id": profile.id, "label": profile.label, "width": profile.width, "height": profile.height,
+            "max_zoom_factor": profile.max_zoom_factor, "allow_landscape": profile.allow_landscape,
             "grayscale": profile.grayscale, "gray_levels": profile.gray_levels,
             "autocontrast_cutoff": profile.autocontrast_cutoff, "contrast_factor": profile.contrast_factor,
             "jpeg_quality": profile.jpeg_quality, "suffix": profile.suffix, "description": profile.description,
@@ -33,13 +34,15 @@ XTEINK_X3_PLUGIN = DeviceProfilePlugin(DeviceProfile(
     label="Xteink X3 / CrossPoint (528×792, 4 gris)",
     width=528,
     height=792,
+    max_zoom_factor=None,
+    allow_landscape=False,
     grayscale=True,
     gray_levels=(0, 85, 170, 255),
     autocontrast_cutoff=1.0,
     contrast_factor=1.50,
     jpeg_quality=70,
     suffix="X3",
-    description="Profil très compact pour X3/CrossPoint : 4 niveaux de gris avec tramage.",
+    description="Profil très compact pour X3/CrossPoint : 4 niveaux de gris avec tramage. Zoom non déclaré : conservation au moins à la résolution écran.",
 ))
 
 XTEINK_X4_PLUGIN = DeviceProfilePlugin(DeviceProfile(
@@ -47,13 +50,15 @@ XTEINK_X4_PLUGIN = DeviceProfilePlugin(DeviceProfile(
     label="Xteink X4 / CrossPoint (480×800, 4 gris)",
     width=480,
     height=800,
+    max_zoom_factor=None,
+    allow_landscape=False,
     grayscale=True,
     gray_levels=(0, 85, 170, 255),
     autocontrast_cutoff=1.0,
     contrast_factor=1.50,
     jpeg_quality=70,
     suffix="X4",
-    description="Profil très compact pour X4/CrossPoint : 4 niveaux de gris avec tramage.",
+    description="Profil très compact pour X4/CrossPoint : 4 niveaux de gris avec tramage. Zoom non déclaré : conservation au moins à la résolution écran.",
 ))
 
 KOBO_CLARA_BW_PLUGIN = DeviceProfilePlugin(DeviceProfile(
@@ -61,13 +66,15 @@ KOBO_CLARA_BW_PLUGIN = DeviceProfilePlugin(DeviceProfile(
     label="Kobo Clara BW (1072×1448, 300 ppp)",
     width=1072,
     height=1448,
+    max_zoom_factor=None,
+    allow_landscape=False,
     grayscale=True,
     gray_levels=None,
     autocontrast_cutoff=0.5,
     contrast_factor=1.05,
     jpeg_quality=82,
     suffix="Clara BW",
-    description="Préserve les dégradés 8 bits tout en supprimant la couleur inutile et les pixels au-delà de l'écran.",
+    description="Préserve les dégradés 8 bits. Zoom non déclaré : les indices CSS ne réduisent jamais sous la résolution écran.",
 ))
 
 GENERIC_EINK_PLUGIN = DeviceProfilePlugin(DeviceProfile(
@@ -75,13 +82,15 @@ GENERIC_EINK_PLUGIN = DeviceProfilePlugin(DeviceProfile(
     label="E-ink générique (1200×1600, gris)",
     width=1200,
     height=1600,
+    max_zoom_factor=None,
+    allow_landscape=False,
     grayscale=True,
     gray_levels=None,
     autocontrast_cutoff=None,
     contrast_factor=1.0,
     jpeg_quality=80,
     suffix="eink",
-    description="Profil prudent pour liseuse noir et blanc de résolution inconnue.",
+    description="Profil prudent pour liseuse noir et blanc de résolution inconnue ; zoom et rotation non supposés.",
 ))
 
 BUILTIN_PROFILE_PLUGINS = (
