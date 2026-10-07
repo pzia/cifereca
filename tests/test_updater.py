@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 import zipfile
 from pathlib import Path
 
@@ -61,6 +62,39 @@ def test_archive_resource_limits_are_enforced(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "MAX_RELEASE_UNCOMPRESSED_BYTES", 16)
     with pytest.raises(updater.UpdateError, match="après extraction"):
         updater.install_archive(archive, dry_run=True)
+
+
+def test_create_venv_prefers_offline_core_wheelhouse(tmp_path, monkeypatch):
+    release = _mini_project(tmp_path / "release")
+    wheelhouse = release / "offline-wheels"
+    wheelhouse.mkdir()
+    (wheelhouse / "cifereca-9.9.9-py3-none-any.whl").write_bytes(b"wheel")
+
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        command = [str(value) for value in command]
+        commands.append(command)
+        if command[1:3] == ["-m", "venv"]:
+            py = release / ".venv" / "bin" / "python"
+            py.parent.mkdir(parents=True)
+            py.write_text("", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+
+    venv = updater._create_venv(release, os.sys.executable)
+
+    assert venv == release / ".venv"
+    assert len(commands) == 2
+    pip = commands[1]
+    assert pip[:4] == [str(release / ".venv" / "bin" / "python"), "-m", "pip", "install"]
+    assert "--no-index" in pip
+    assert "--find-links" in pip
+    assert pip[pip.index("--find-links") + 1] == str(wheelhouse)
+    assert "--ignore-installed" in pip
+    assert "cifereca==9.9.9" in pip
+    assert str(release) not in pip
 
 
 def test_atomic_current_switch_and_previous(tmp_path, monkeypatch):
