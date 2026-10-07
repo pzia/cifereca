@@ -20,7 +20,8 @@ python3 bootstrap.py
 ```
 
 Le bootstrap utilise un état APT isolé et télécharge toute la fermeture de
-dépendances nécessaire à GTK4/libadwaita, Xvfb et D-Bus.
+dépendances nécessaire à GTK4/libadwaita, Xvfb, D-Bus et aux dépendances
+Python applicatives déclarées actuellement par Cifereca.
 
 Paquets explicitement demandés :
 
@@ -28,6 +29,7 @@ Paquets explicitement demandés :
 python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1
 xvfb xauth libxtst6 python3-pil fonts-dejavu-core
 x11-xkb-utils xkb-data dbus-daemon
+python3-packaging python3-httpx
 ```
 
 ## Préparer un cache portable
@@ -55,7 +57,10 @@ avec les versions et SHA-256 effectivement utilisées.
 ```
 
 `run-cifereca` utilise les sources du dépôt (`src/cifereca`) lorsqu'elles sont
-présentes. Une commande externe peut être imposée avec `CIFERECA_CMD`.
+présentes. Le lanceur Python `gtk-python` démarre l'interpréteur avec `-S` : les
+`site-packages`/`dist-packages` de l'hôte ne peuvent donc pas masquer une
+dépendance absente du runtime rootless. Une commande externe peut être imposée
+avec `CIFERECA_CMD`.
 
 ## Capturer et piloter l'IHM
 
@@ -78,6 +83,10 @@ des scénarios X11 reproductibles.
 ./gtk-python check_import.py
 ./headless ./gtk-python test_ui.py
 ```
+
+`check_import.py` relit les dépendances de `pyproject.toml`, vérifie leurs
+contraintes de version et refuse toute distribution résolue hors de
+`runtime/root/usr/lib/python3/dist-packages`.
 
 `test_ui.py` pilote l'application GTK de démonstration locale `app.py` ; le
 self-test est donc autonome et ne dépend d'aucun fichier applicatif non

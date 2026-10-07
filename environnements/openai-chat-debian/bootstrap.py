@@ -18,6 +18,7 @@ PACKAGES = [
     "python3-gi", "python3-gi-cairo", "gir1.2-gtk-4.0", "gir1.2-adw-1",
     "xvfb", "xauth", "libxtst6", "python3-pil", "fonts-dejavu-core",
     "x11-xkb-utils", "xkb-data", "dbus-daemon",
+    "python3-packaging", "python3-httpx",
 ]
 
 
