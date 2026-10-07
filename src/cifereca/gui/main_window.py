@@ -33,7 +33,7 @@ from .plugin_manager_page import PluginManagerPage
 from .query_controls import QueryControls, MultiSelect
 from .action_widgets import AdaptiveActionBar
 from .query_model import result_row, online_search, progressive_online_search, merge_results
-from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions
+from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions, validate_action_selection
 from ..plugin_api import (
     ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, DetailField, DetailSection,
     MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution,
@@ -1610,6 +1610,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.shell_root.remove(old)
         self.shell_header = self._create_shell_header()
         self.shell_root.prepend(self.shell_header)
+        self._ensure_pages_menu_rightmost()
         self._rebuild_plugin_pages()
         self._populate_accounts()
 
@@ -1847,8 +1848,30 @@ class MainWindow(Adw.ApplicationWindow):
         self.statistics_button.connect('clicked',lambda _b:self._show_statistics())
         controls.append(self.identity_dropdown); controls.append(self.account_dropdown)
         controls.append(self.statistics_button)
-        controls.append(self.pages_menu_button); header.pack_end(controls)
+        controls.append(self.pages_menu_button)
+        self._header_controls = controls
+        header.pack_end(controls)
+        self._ensure_pages_menu_rightmost()
         return header
+
+    def _ensure_pages_menu_rightmost(self):
+        controls = getattr(self, "_header_controls", None)
+        menu = getattr(self, "pages_menu_button", None)
+        if controls is None or menu is None:
+            return
+        children = getattr(controls, "children", None)
+        if isinstance(children, list):
+            if menu in children:
+                children.remove(menu)
+            children.append(menu)
+            return
+        get_last = getattr(controls, "get_last_child", None)
+        if callable(get_last) and get_last() is menu:
+            return
+        get_parent = getattr(menu, "get_parent", None)
+        if callable(get_parent) and get_parent() is controls:
+            controls.remove(menu)
+        controls.append(menu)
 
     def _refresh_header_actions(self, route):
         clear_box(self.header_actions)
@@ -1857,6 +1880,17 @@ class MainWindow(Adw.ApplicationWindow):
             selected = self._titlebar_service.selected_actions() if self._titlebar_service else defaults
         except Exception:
             selected = defaults
+        selected, obsolete = validate_action_selection(self._pages.values(), selected)
+        previous_obsolete = getattr(self, "_obsolete_titlebar_actions", ())
+        if obsolete and obsolete != previous_obsolete:
+            self.diagnostics.add(
+                "UI",
+                "titlebar action configuration",
+                "warning",
+                detail={"obsolete_action_ids": list(obsolete)},
+                level="normal",
+            )
+        self._obsolete_titlebar_actions = obsolete
         host = self._UiHost(self)
         for key, action in visible_actions(self._pages.values(), route, selected):
             button = Gtk.Button.new_from_icon_name(action.icon_name); button.set_tooltip_text(action.title)
@@ -1882,6 +1916,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.insert_action_group("pagemenu", group)
         self._page_menu_actions = group
         self.shell_menu.set_menu_model(model)
+        self._ensure_pages_menu_rightmost()
 
     def _invoke_ui_action(self, action, host):
         self.shell_menu.popdown()
