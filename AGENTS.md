@@ -85,7 +85,7 @@ Rôles disponibles :
 - `core-ui` : IHM GTK/libadwaita, navigation, composants UI partagés, contrats UI publics et ergonomie Core ; voir `.agents/roles/core-ui.md`.
 - `plugins` : architecture transversale des plugins, contrats, packaging, compatibilité et évolutions touchant plusieurs plugins ; voir `.agents/roles/plugins.md`.
 - `plugin-cible` : travail sur un seul plugin fonctionnel, ses tests et sa documentation ; voir `.agents/roles/plugin-cible.md`.
-- `backlog` : analyse du dépôt et création/priorisation d'issues, sans implémentation fonctionnelle par défaut ; voir `.agents/roles/backlog.md`.
+- `backlog` : triage pur du dépôt — création, déduplication, enrichissement et priorisation d'issues ; aucune implémentation tant que le fil reste dans ce rôle ; voir `.agents/roles/backlog.md`.
 - `e2e` : parcours utilisateur de bout en bout, simulation, environnement GTK, fixtures, captures et diagnostic CI ; voir `.agents/roles/e2e.md`.
 
 ### Règles communes de rôle
@@ -97,7 +97,7 @@ Rôles disponibles :
 5. Préférer des branches et PR petites, spécialisées par rôle.
 6. Les changements de contrat public entre Core et plugins exigent coordination entre `core-core` et `plugins`.
 7. Les changements visuels ou de parcours imposent une validation adaptée par `core-ui` ou `e2e`.
-8. Le rôle `backlog` ne fusionne pas implémentation et triage dans la même tâche sauf demande explicite.
+8. Le rôle `backlog` est strictement non implémentant : un « go next » y signifie uniquement poursuivre le triage. Toute implémentation exige un changement explicite de rôle ou de fil.
 9. Le rôle `e2e` ne corrige pas silencieusement le produit pour faire passer un test : il ouvre/transmet le défaut au rôle propriétaire.
 10. En cas d'ambiguïté, choisir le rôle correspondant au **composant propriétaire de la modification**, pas au symptôme observé.
 
