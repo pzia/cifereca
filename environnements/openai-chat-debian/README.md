@@ -79,6 +79,10 @@ des scénarios X11 reproductibles.
 ./headless ./gtk-python test_ui.py
 ```
 
+`test_ui.py` pilote l'application GTK de démonstration locale `app.py` ; le
+self-test est donc autonome et ne dépend d'aucun fichier applicatif non
+versionné.
+
 La recette valide X11/Xvfb et le rendu logiciel Cairo. Elle ne valide pas
 Wayland, l'accélération GPU ou un gestionnaire de fenêtres complet.
 
@@ -90,6 +94,7 @@ Wayland, l'accélération GPU ou un gestionnaire de fenêtres complet.
 - `capture-app`, `capture_app.py`, `x11_input.py`, `native_capture.py` :
   interaction et capture ;
 - `run-cifereca` : lancement du Core depuis les sources du dépôt ;
+- `app.py` : application GTK locale et déterministe utilisée par le self-test ;
 - `check_import.py`, `test_ui.py` : validations minimales.
 
 `runtime/`, `deb-cache/`, `evidence/`, `packages-lock.json`, les `.deb` et les
