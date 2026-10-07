@@ -19,7 +19,6 @@ src/cifereca/
 ├── plugins/        # framework/loader/manager de plugins
 ├── gui/            # shell et primitives UI Core
 ├── builtin_ui/     # UI historique encore intégrée au Core
-├── paris/          # code historique Paris encore présent
 ├── kobo/           # code historique Kobo encore présent
 └── ...
 ```
@@ -97,7 +96,7 @@ Les sujets suivants restent hors du présent lot documentaire :
 
 1. déplacer physiquement les plugins fonctionnels vers la cible retenue ;
 2. extraire ou supprimer progressivement `src/cifereca/builtin_ui/` ;
-3. extraire le code fournisseur encore présent sous `src/cifereca/paris/` ;
+3. maintenir Paris exclusivement dans `plugins/provider-paris/` ;
 4. extraire le code fournisseur encore présent sous `src/cifereca/kobo/` ;
 5. créer effectivement `simulation/` et y migrer les éléments utiles de `simulation/` ;
 6. poursuivre la rationalisation des tests historiques sans restauration transitive ;
