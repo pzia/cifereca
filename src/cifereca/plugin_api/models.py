@@ -657,6 +657,21 @@ class TransportService(Protocol):
     def fetch(self, source: Mapping[str, Any], destination: Path) -> Path: ...
 
 
+@dataclass(frozen=True, slots=True)
+class HealthCheckResult:
+    check_id: str
+    component: str
+    status: Literal["ok", "warning", "error", "unknown"] = "ok"
+    message: str = ""
+    detail: Mapping[str, object] = field(default_factory=dict)
+    scope: str = "plugin"
+
+
+@runtime_checkable
+class DiagnosticsCheckProvider(Protocol):
+    def checks(self) -> tuple[HealthCheckResult, ...]: ...
+
+
 @runtime_checkable
 class DocumentTransformer(Protocol):
     def capabilities(self) -> tuple[TransformCapability, ...]: ...
@@ -842,7 +857,7 @@ __all__ = [
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
-    "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "DocumentTransformer",
+    "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",

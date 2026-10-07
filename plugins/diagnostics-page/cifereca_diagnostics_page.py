@@ -16,64 +16,21 @@ def _safe_text(value: Any) -> str:
     return str(value)
 
 
-def active_checks(context, sync_broker=None) -> list[dict[str, Any]]:
-    """Run bounded, non-destructive checks through public plugin surfaces."""
+def active_checks(diagnostics_broker) -> list[dict[str, Any]]:
+    """Normalize Core-owned health checks for this presentation-only page."""
     rows: list[dict[str, Any]] = []
-    if sync_broker is not None:
-        try:
-            sources = tuple(sync_broker.sources())
-            if not sources:
-                rows.append({"message": "Sources configurées", "status": "ok", "detail": {"count": 0}})
-            for source in sources:
-                error = str(getattr(source, "error", "") or "")
-                connected = bool(getattr(source, "connected", False))
-                capable = bool(getattr(source, "sync_capable", True))
-                status = "error" if error else ("ok" if connected and capable else "warning")
-                rows.append({
-                    "message": "Source " + str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "configurée"),
-                    "status": status,
-                    "detail": {
-                        "provider_id": str(getattr(source, "provider_id", "") or ""),
-                        "connected": connected, "sync_capable": capable,
-                        "enabled": bool(getattr(source, "enabled", True)),
-                        "last_success": str(getattr(source, "last_success", "") or ""),
-                        "error": error[:240] if error else "",
-                    },
-                })
-        except Exception as exc:
-            rows.append({"message": "Sources configurées", "status": "error", "detail": {"error_type": type(exc).__name__}})
-    else:
-        rows.append({"message": "Sources configurées", "status": "warning", "detail": {"reason": "broker sync indisponible"}})
-
-    try:
-        runtimes = tuple(context.services("runtime.adapter", contract="cifereca.runtime", version=">=1,<2"))
-    except Exception as exc:
-        runtimes = ()
-        rows.append({"message": "Runtimes", "status": "error", "detail": {"error_type": type(exc).__name__}})
-    for resolved in runtimes:
-        service = resolved.service
-        try:
-            available = getattr(service, "available", None)
-            if callable(available) and available() is False:
-                rows.append({"message": resolved.plugin_id, "status": "error", "detail": {"available": False}})
-                continue
-            probe = getattr(service, "probe", None)
-            payload = probe() if callable(probe) else {}
-            detail = {"available": True, "version": resolved.plugin_version}
-            if isinstance(payload, Mapping):
-                contract = payload.get("contract")
-                if isinstance(contract, Mapping):
-                    detail["contract_version"] = contract.get("contract_version") or contract.get("version")
-                detail["resolved_executable"] = bool(payload.get("resolved_executable")) if "resolved_executable" in payload else None
-            rows.append({"message": resolved.plugin_id, "status": "ok", "detail": detail})
-        except Exception as exc:
-            rows.append({"message": resolved.plugin_id, "status": "error", "detail": {"error_type": type(exc).__name__}})
-
-    try:
-        providers = tuple(context.services("provider.library", contract="cifereca.provider", version=">=1,<2"))
-        rows.append({"message": "Providers chargés", "status": "ok", "detail": {"count": len(providers)}})
-    except Exception as exc:
-        rows.append({"message": "Providers chargés", "status": "error", "detail": {"error_type": type(exc).__name__}})
+    for item in tuple(diagnostics_broker.active_checks()):
+        if isinstance(item, Mapping):
+            rows.append(dict(item))
+            continue
+        rows.append({
+            "check_id": str(getattr(item, "check_id", "") or ""),
+            "component": str(getattr(item, "component", "") or ""),
+            "message": str(getattr(item, "message", "") or "Vérification"),
+            "status": str(getattr(item, "status", "unknown") or "unknown"),
+            "detail": dict(getattr(item, "detail", {}) or {}),
+            "scope": str(getattr(item, "scope", "") or ""),
+        })
     return rows
 
 
@@ -81,14 +38,15 @@ class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
         self.diagnostics = None
-        self.sync = None
+        self.tasks = None
+        self._check_handle = None
 
     def activate(self, context):
         self.context = context
         self.diagnostics = context.broker("diagnostics")
-        self.sync = context.broker("sync")
-        if self.diagnostics is None:
-            raise RuntimeError("broker diagnostics indisponible")
+        self.tasks = context.broker("tasks")
+        if self.diagnostics is None or self.tasks is None:
+            raise RuntimeError("brokers diagnostics/tasks indisponibles")
         return self
 
     def pages(self):
@@ -253,27 +211,59 @@ class DiagnosticsPagePlugin:
                         level="normal",
                     )
 
-        def run_checks(_button) -> None:
+        def render_checks(rows, error=None) -> bool:
             clear_container(check_box)
-            try:
-                rows = active_checks(self.context, self.sync)
-                for row in rows:
-                    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
-                    card.add_css_class("card")
-                    for margin in ("top", "bottom", "start", "end"):
-                        getattr(card, "set_margin_" + margin)(8)
-                    status = str(row.get("status") or "unknown")
-                    title = Gtk.Label(label=str(row.get("message") or "Vérification"), xalign=0)
-                    title.add_css_class("heading")
-                    card.append(title)
-                    detail = Gtk.Label(label=f"{status} · {_safe_text(row.get('detail'))}", xalign=0)
-                    detail.set_wrap(True)
-                    detail.set_selectable(True)
-                    card.append(detail)
-                    check_box.append(card)
-                host.toast("Vérification terminée")
-            except Exception as exc:
-                host.toast(f"Vérification impossible : {type(exc).__name__}")
+            check.set_sensitive(True)
+            self._check_handle = None
+            if error is not None:
+                host.toast(f"Vérification impossible : {error}")
+                return False
+            for row in rows:
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+                card.add_css_class("card")
+                for margin in ("top", "bottom", "start", "end"):
+                    getattr(card, "set_margin_" + margin)(8)
+                status = str(row.get("status") or "unknown")
+                title = Gtk.Label(label=str(row.get("message") or "Vérification"), xalign=0)
+                title.add_css_class("heading")
+                card.append(title)
+                detail = Gtk.Label(label=f"{status} · {_safe_text(row.get('detail'))}", xalign=0)
+                detail.set_wrap(True)
+                detail.set_selectable(True)
+                card.append(detail)
+                check_box.append(card)
+            host.toast("Vérification terminée")
+            return False
+
+        def run_checks(_button) -> None:
+            if self._check_handle is not None and not self._check_handle.done():
+                return
+            clear_container(check_box)
+            running = Gtk.Label(label="Vérification en cours…", xalign=0)
+            running.set_wrap(True)
+            check_box.append(running)
+            check.set_sensitive(False)
+
+            handle = self.tasks.submit(
+                lambda _control: active_checks(broker),
+                label="Vérifications diagnostics",
+                kind="diagnostics",
+            )
+            self._check_handle = handle
+
+            def completed(done_handle) -> None:
+                from gi.repository import GLib
+                if done_handle.control.cancelled():
+                    GLib.idle_add(render_checks, (), "annulée")
+                    return
+                try:
+                    rows = done_handle.result()
+                except Exception as exc:
+                    GLib.idle_add(render_checks, (), type(exc).__name__)
+                else:
+                    GLib.idle_add(render_checks, rows, None)
+
+            handle.add_done_callback(completed)
 
         def copy_report(_button) -> None:
             try:
@@ -293,7 +283,13 @@ class DiagnosticsPagePlugin:
         return scroll
 
     def deactivate(self):
-        self.sync = None
+        if self._check_handle is not None:
+            try:
+                self._check_handle.cancel()
+            except Exception:
+                pass
+        self._check_handle = None
+        self.tasks = None
         self.diagnostics = None
         self.context = None
 

@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.ui.page.diagnostics",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "name": "Cifereca Diagnostics",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -17,8 +17,8 @@
       "priority": 80,
       "instantiation": "singleton_public",
       "enabled_by_default": true,
-      "version": "0.1.3",
-      "help_text": "Affiche l'état système et les diagnostics expurgés fournis par le Core, avec copie du rapport texte. Une vérification explicite contrôle aussi les sources configurées et runtimes via les surfaces publiques, sans synchronisation ni téléchargement. Aucun secret n'est affiché.",
+      "version": "0.1.4",
+      "help_text": "Affiche l’état système et les diagnostics expurgés fournis par le Core. La vérification active consomme uniquement le broker diagnostics : le Core agrège les sources et les contributions cifereca.diagnostics.check/1, puis expurge les détails avant restitution. L’exécution est déportée via le broker tasks.",
       "capabilities": [
         "ui.page",
         "diagnostics.read"
@@ -27,7 +27,8 @@
       "recommends": [],
       "system_requires": [],
       "requires_brokers": [
-        "diagnostics"
+        "diagnostics",
+        "tasks"
       ],
       "requires_contracts": []
     }
