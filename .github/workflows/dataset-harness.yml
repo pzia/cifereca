@@ -2,6 +2,8 @@ name: Dataset UX harness
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "simulation/**"
       - ".github/workflows/dataset-harness.yml"
