@@ -11,16 +11,82 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag à publier (doit être v<VERSION>)"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: release-${{ github.workflow }}-${{ github.event.pull_request.number || inputs.release_tag || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate release metadata
+        id: meta
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ inputs.release_tag }}
+        run: |
+          python - <<'PY'
+          import pathlib
+          import tomllib
+          version = pathlib.Path("VERSION").read_text(encoding="utf-8").strip()
+          project = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+          project_version = project["project"]["version"]
+          if version != project_version:
+              raise SystemExit(f"VERSION ({version}) != pyproject.toml ({project_version})")
+          PY
+          version="$(cat VERSION)"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            tag="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="$DISPATCH_TAG"
+          else
+            tag="v$version"
+          fi
+          expected="v$version"
+          if [[ "$tag" != "$expected" ]]; then
+            echo "Tag $tag does not match VERSION ($expected)" >&2
+            exit 1
+          fi
+          prerelease=false
+          if [[ "$version" == *"+"* || "$version" =~ (a|b|rc)[0-9] ]]; then
+            prerelease=true
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check "setuptools>=69" wheel "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26"
+
+      - name: Run Core tests
+        run: python -m pytest -q tests
+
+      - name: Validate packaging
+        run: |
+          python scripts/verify-packaging.py
+          python -m unittest scripts.test_plugin_packaging
+
   build:
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -31,23 +97,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Validate tag version
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          expected="v$(cat VERSION)"
-          if [ "${GITHUB_REF_NAME}" != "$expected" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match VERSION ($expected)" >&2
-            exit 1
-          fi
-
-      - name: Install build and test dependencies
-        run: python -m pip install --disable-pip-version-check "setuptools>=69" wheel "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26"
-
-      - name: Validate packaging
-        run: |
-          python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging
+      - name: Install build dependencies
+        run: python -m pip install --disable-pip-version-check "setuptools>=69" wheel
 
       - name: Build Core wheel
         run: python -m pip wheel --no-deps --no-build-isolation . -w dist
@@ -75,8 +126,8 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [validate, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -88,12 +139,26 @@ jobs:
           name: cifereca-release-artifacts
           path: dist
 
-      - name: Publish GitHub Release
+      - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         shell: bash
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+          args=(--repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --generate-notes --draft)
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" "${args[@]}"
+          else
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" "${args[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
