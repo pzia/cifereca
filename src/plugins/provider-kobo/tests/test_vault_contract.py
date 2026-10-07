@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from cifereca.plugin_api import ProviderError
+from cifereca.plugin_api import ProviderError, RuntimeAcquisitionCapabilities
 from cifereca_kobo import DESCRIPTOR, KoboSession
 from cifereca_kobo_catalog import KoboCatalogService
 from cifereca_kobo_vault import KoboVaultClient
@@ -121,6 +121,16 @@ def test_kobo_provider_requires_vault_api_23_or_newer():
         config={},
         storage={},
         diagnostics=Diagnostics(),
+        runtime_capabilities=SimpleNamespace(
+            acquisition=lambda _provider: RuntimeAcquisitionCapabilities(
+                provider_id="kobo",
+                available=True,
+                compatible=True,
+                operational=True,
+                modes=("adobe_adept", "kobo_delegated"),
+                formats=("epub", "pdf", "kepub"),
+            )
+        ),
     )
     session.client.close()
     try:
@@ -133,6 +143,68 @@ def test_kobo_provider_requires_vault_api_23_or_newer():
         assert accounts[0].unique_id == "acct"
         assert session.supports_acquisition_display_profile is True
         assert session.supports_acquisition_acsm is True
+    finally:
+        session.close()
+
+
+def test_vault_capabilities_are_intersected_with_runtime_modes():
+    class FakeVault:
+        def status(self, authenticated=False):
+            return {
+                "ok": True,
+                "api_version": "2.3",
+                "capabilities": ["acquisition"],
+                "capability_details": [],
+                "acquisition_access": "configured",
+            }
+
+        def account(self):
+            return {"id": "acct", "display_name": "Kobo"}
+
+        def close(self):
+            return None
+
+    class Broker:
+        def __init__(self, modes):
+            self.modes = modes
+
+        def acquisition(self, provider):
+            assert provider == "kobo"
+            return RuntimeAcquisitionCapabilities(
+                provider_id="kobo",
+                available=True,
+                compatible=True,
+                operational=True,
+                modes=tuple(self.modes),
+            )
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="vault-1",
+        label="Kobo",
+        credentials={"api_token": "x"},
+        options={"base_url": "https://vault.example"},
+        config={},
+        storage={},
+        diagnostics=Diagnostics(),
+        runtime_capabilities=Broker(("adobe_adept",)),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    try:
+        session.connect()
+        assert session.supports_acquisition_acsm is True
+        assert session.supports_acquisition_display_profile is False
+
+        session.runtime_capabilities = Broker(("kobo_delegated",))
+        session.connect()
+        assert session.supports_acquisition_acsm is False
+        assert session.supports_acquisition_display_profile is True
+
+        session.runtime_capabilities = Broker(())
+        session.connect()
+        assert session.supports_acquisition_acsm is False
+        assert session.supports_acquisition_display_profile is False
     finally:
         session.close()
 
