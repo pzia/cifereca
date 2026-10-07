@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
-from cifereca.plugin_api import UiActionContribution, UiPageContribution
+from cifereca.plugin_api import (
+    Cancelled,
+    DetailField,
+    DetailSection,
+    UiActionContribution,
+    UiBookDetailAction,
+    UiBookDetailPresentation,
+    UiBookListEntry,
+    UiPageContribution,
+)
 
-from recommendation_engine import RankedCandidate, get_field, normalize
-from recommendation_service_v022 import RecommendationResult, compute_recommendations
+from recommendation_engine import RankedCandidate, candidate_key, get_field, normalize
+from recommendation_service import RecommendationPartial, RecommendationResult, compute_recommendations
 
 
 class RecommendationsPlugin:
@@ -38,59 +48,89 @@ class RecommendationsPlugin:
         else:
             host.toast("Ouvrez la page Recommandations pour lancer le calcul.")
 
-    def build(self, host):
-        from gi.repository import GLib, Gtk
-
-        view = RecommendationsView(self, host, Gtk, GLib)
-        self._view = view
-        GLib.idle_add(view.refresh)
-        return view.widget
-
     def deactivate(self):
         if self._view is not None:
             self._view.dispose()
         self._view = None
         self.context = None
 
+    def build(self, host):
+        from gi.repository import GLib, Gtk
 
-class RecommendationsView:
-    def __init__(self, plugin: RecommendationsPlugin, host: Any, Gtk: Any, GLib: Any) -> None:
+        view = UxRecommendationsView(self, host, Gtk, GLib)
+        self._view = view
+        _refresh_on_first_map(view, view.widget, GLib)
+        return view.widget
+
+class UxRecommendationsView:
+    """Recommendations UI using only public Core brokers and master/detail contracts."""
+
+    PARTIAL_COALESCE_MS = 180
+
+    def __init__(self, plugin, host, Gtk, GLib):
+        # These fields are deliberately ready before the parent reloads identities:
+        # Gtk.DropDown::notify::selected may call refresh() during construction.
+        self._provider_labels: dict[str, str] = {"": "Tous les catalogues"}
+        self._provisional_order: dict[str, int] = {}
+        self._provisional_active = False
+        self._profile_books_count = 0
+        self._active_identity_id: str | None = None
+        self._diagnostic_cache = 0
+        self._diagnostic_network = 0
+        self._init_master_detail(plugin, host, Gtk, GLib)
+
+        self._refresh_button.set_tooltip_text(
+            "Relancer le calcul en conservant les filtres de vue"
+        )
+        self._provisional_badge = Gtk.Label(label="Provisoire")
+        self._provisional_badge.add_css_class("badge")
+        self._provisional_badge.set_tooltip_text(
+            "Les résultats sont déjà utilisables, mais leur ordre peut encore évoluer."
+        )
+        self._provisional_badge.set_visible(False)
+        parent = self._summary.get_parent()
+        if parent is not None and hasattr(parent, "insert_child_after"):
+            parent.insert_child_after(self._provisional_badge, self._spinner)
+
+    def _init_master_detail(self, plugin, host, Gtk, GLib):
+        # Deliberately do not call the legacy ListBox constructor. The public
+        # host owns the standard MasterDetailPage / BookListCell / DetailPanel.
         self.plugin = plugin
         self.host = host
         self.Gtk = Gtk
         self.GLib = GLib
-        self._ranked: list[RankedCandidate] = []
-        self._identity_ids: list[str] = []
-        self._provider_ids: list[str] = [""]
+        self._ranked = []
+        self._identity_ids = []
+        self._provider_ids = [""]
         self._unsubscribe = None
         self._generation = 0
         self._busy = False
+        self._task_handle = None
+        self._pending_partial = None
+        self._partial_source_id = 0
+        self._render_generation = 0
+        self._ranked_by_key: dict[str, Any] = {}
 
-        self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        for setter in (self.widget.set_margin_top, self.widget.set_margin_bottom, self.widget.set_margin_start, self.widget.set_margin_end):
-            setter(12)
+        builder = getattr(host, "build_book_master_detail", None)
+        if not callable(builder):
+            raise RuntimeError("Core incompatible : présentation maître/détail standard indisponible")
+        self._master = builder(
+            title="Recommandations pour votre bibliothèque",
+            subtitle="Résultats issus des catalogues connectés, classés par affinité puis diversifiés.",
+            empty_title="Aucune recommandation",
+            empty_desc="Lancez le calcul pour rechercher des livres dans les catalogues connectés.",
+        )
+        self.widget = self._master.widget
+        self._master.connect_selected(self._selected_row)
 
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        title_box.set_hexpand(True)
-        title = Gtk.Label(label="Recommandations pour votre bibliothèque", xalign=0)
-        title.add_css_class("title-2")
-        title_box.append(title)
-        subtitle = Gtk.Label(label="Résultats issus des catalogues connectés, classés par affinité puis diversifiés.", xalign=0)
-        subtitle.add_css_class("dim-label")
-        subtitle.set_wrap(True)
-        title_box.append(subtitle)
-        header.append(title_box)
-        self._refresh_button = Gtk.Button(label="Recalculer", icon_name="view-refresh-symbolic")
-        self._refresh_button.connect("clicked", lambda *_: self.refresh())
-        header.append(self._refresh_button)
-        self.widget.append(header)
+        toolbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        toolbox.set_hexpand(True)
 
         controls = Gtk.FlowBox()
         controls.set_selection_mode(Gtk.SelectionMode.NONE)
         controls.set_row_spacing(7)
         controls.set_column_spacing(7)
-        controls.set_max_children_per_line(6)
+        controls.set_max_children_per_line(7)
 
         self._identity_model = Gtk.StringList.new([])
         self._identity = Gtk.DropDown(model=self._identity_model)
@@ -108,17 +148,36 @@ class RecommendationsView:
         self._text.connect("search-changed", lambda *_: self._render())
         controls.insert(self._labeled("Filtrer", self._text), -1)
 
-        adjustment = Gtk.Adjustment(lower=0, upper=100, step_increment=5, page_increment=10, value=self._config_int("minimum_score", 15))
-        self._score = Gtk.SpinButton(adjustment=adjustment, climb_rate=1, digits=0)
+        score_adjustment = Gtk.Adjustment(
+            lower=0, upper=100, step_increment=5, page_increment=10,
+            value=self._config_int("minimum_score", 15),
+        )
+        self._score = Gtk.SpinButton(adjustment=score_adjustment, climb_rate=1, digits=0)
         self._score.connect("value-changed", lambda *_: self._render())
-        controls.insert(self._labeled("Score ≥", self._score), -1)
+        controls.insert(self._labeled("Affinité ≥", self._score), -1)
 
-        exploration = Gtk.Adjustment(lower=0, upper=100, step_increment=5, page_increment=10, value=self._config_int("exploration", 25))
-        self._exploration = Gtk.SpinButton(adjustment=exploration, climb_rate=1, digits=0)
+        exploration_adjustment = Gtk.Adjustment(
+            lower=0, upper=100, step_increment=5, page_increment=10,
+            value=self._config_int("exploration", 25),
+        )
+        self._exploration = Gtk.SpinButton(adjustment=exploration_adjustment, climb_rate=1, digits=0)
         self._exploration.set_tooltip_text("0 = pertinence pure ; 100 = davantage de diversité")
         controls.insert(self._labeled("Diversité", self._exploration), -1)
 
-        self.widget.append(controls)
+        self._refresh_button = Gtk.Button(label="Recalculer", icon_name="view-refresh-symbolic")
+        self._refresh_button.set_tooltip_text("Relancer le calcul en conservant les filtres de vue")
+        self._refresh_button.connect("clicked", lambda *_: self.refresh())
+        controls.insert(self._refresh_button, -1)
+        toolbox.append(controls)
+
+        self._progress = Gtk.ProgressBar()
+        self._progress.set_show_text(True)
+        self._progress.set_fraction(0.0)
+        self._progress.set_text("0 % · Préparation")
+        self._progress.set_tooltip_text(
+            "Progression du calcul : requêtes × catalogues, puis classement et diversification"
+        )
+        toolbox.append(self._progress)
 
         status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._spinner = Gtk.Spinner()
@@ -127,16 +186,13 @@ class RecommendationsView:
         self._summary.set_hexpand(True)
         self._summary.set_wrap(True)
         status_row.append(self._summary)
-        self.widget.append(status_row)
+        toolbox.append(status_row)
 
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_vexpand(True)
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._list = Gtk.ListBox()
-        self._list.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._list.add_css_class("boxed-list")
-        scroller.set_child(self._list)
-        self.widget.append(scroller)
+        self._master.append_toolbar(toolbox)
+        self._master.empty_detail(
+            "Aucune recommandation sélectionnée",
+            "Sélectionnez un livre dans la liste pour afficher la notice et les raisons de la recommandation.",
+        )
 
         self._reload_identities()
         subscribe = getattr(host, "subscribe_identity_overview", None)
@@ -206,9 +262,96 @@ class RecommendationsView:
         if self._identity_ids:
             self.refresh()
 
-    def refresh(self):
-        if self._busy:
-            self._generation += 1  # stale worker results will be ignored
+    def selected_provider_id(self) -> str:
+        index = int(self._provider.get_selected())
+        return self._provider_ids[index] if 0 <= index < len(self._provider_ids) else ""
+
+    def _matches(self, ranked: RankedCandidate) -> bool:
+        if ranked.score < int(self._score.get_value()):
+            return False
+        provider = self.selected_provider_id()
+        if provider and provider not in ranked.sources:
+            return False
+        needle = normalize(self._text.get_text())
+        if needle:
+            item = ranked.item
+            haystack = normalize(" ".join((str(get_field(item, "title", "") or ""), str(get_field(item, "author", "") or ""))))
+            if needle not in haystack:
+                return False
+        return True
+
+    def _base_reload_providers(self, providers: tuple[tuple[str, str], ...]) -> None:
+        selected_id = self.selected_provider_id()
+        self._provider_ids = [""]
+        while self._provider_model.get_n_items() > 1:
+            self._provider_model.remove(1)
+        selected = 0
+        for provider_id, label in providers:
+            pid = str(provider_id or "")
+            if not pid:
+                continue
+            self._provider_ids.append(pid)
+            self._provider_model.append(str(label or pid))
+            if pid == selected_id:
+                selected = len(self._provider_ids) - 1
+        self._provider.set_selected(selected)
+
+    @staticmethod
+    def _candidate_key(ranked: Any) -> str:
+        item = ranked.item
+        key = candidate_key(item)
+        if key:
+            return str(key)
+        return "|".join(
+            (
+                str(get_field(item, "title", "") or ""),
+                str(get_field(item, "author", "") or ""),
+                str(get_field(item, "source_provider", "") or ""),
+            )
+        )
+
+    def _stable_partial(self, ranked_rows) -> list[Any]:
+        for ranked in ranked_rows:
+            key = self._candidate_key(ranked)
+            if key not in self._provisional_order:
+                self._provisional_order[key] = len(self._provisional_order)
+        return sorted(
+            ranked_rows,
+            key=lambda ranked: self._provisional_order[self._candidate_key(ranked)],
+        )
+
+    def _display_source(self, provider_id: str) -> str:
+        provider_id = str(provider_id or "")
+        return self._provider_labels.get(provider_id, provider_id)
+
+    def _provider_label(self) -> str:
+        provider_id = self.selected_provider_id()
+        return self._display_source(provider_id) if provider_id else ""
+
+    def _diagnostic_tooltip(self) -> str:
+        return (
+            "Progression du calcul : requêtes × catalogues, puis classement et diversification.\n"
+            f"Diagnostic : {self._diagnostic_cache} lot(s) depuis le cache Core · "
+            f"{self._diagnostic_network} lot(s) depuis le réseau."
+        )
+
+    def _set_provisional(self, active: bool) -> None:
+        self._provisional_active = bool(active)
+        badge = getattr(self, "_provisional_badge", None)
+        if badge is not None:
+            badge.set_visible(self._provisional_active)
+
+    def _reload_providers(self, providers: tuple[tuple[str, str], ...]) -> None:
+        for provider_id, label in providers:
+            pid = str(provider_id or "")
+            if pid:
+                self._provider_labels[pid] = str(label or pid)
+        self._base_reload_providers(providers)
+
+    def _start_refresh(self):
+        if self._task_handle is not None:
+            self._task_handle.cancel()
+
         identity_id = self.selected_identity_id()
         if not identity_id:
             self._summary.set_label("Aucun profil disponible.")
@@ -219,8 +362,9 @@ class RecommendationsView:
             return False
         metadata_broker = context.broker("metadata")
         catalog_broker = context.broker("catalog")
-        if metadata_broker is None or catalog_broker is None:
-            self._summary.set_label("Core incompatible : brokers metadata/catalog indisponibles.")
+        task_broker = context.broker("tasks")
+        if metadata_broker is None or catalog_broker is None or task_broker is None:
+            self._summary.set_label("Core incompatible : brokers metadata/catalog/tasks indisponibles.")
             return False
 
         self._generation += 1
@@ -228,24 +372,27 @@ class RecommendationsView:
         self._busy = True
         self._refresh_button.set_sensitive(False)
         self._spinner.start()
-        self._summary.set_label("Analyse du profil et recherche dans les catalogues…")
+        self._progress.set_fraction(0.0)
+        self._progress.set_text("0 % · Lecture de la bibliothèque")
+        self._summary.set_label("Lecture de la projection locale de la bibliothèque…")
         exploration = int(self._exploration.get_value())
 
-        def progress(done: int, total: int, query: str) -> None:
-            if generation != self._generation:
-                return
-            label = f"Recherche {done + 1}/{total} · {query}" if query and done < total else "Classement des résultats…"
-            self.GLib.idle_add(self._set_progress, generation, label)
-
-        task_broker = context.broker("tasks")
-        if task_broker is None:
-            self._busy = False
-            self._refresh_button.set_sensitive(True)
-            self._spinner.stop()
-            self._summary.set_label("Core incompatible : broker tasks indisponible.")
-            return False
-
         def operation(control):
+            def progress(done: int, total: int, detail: str) -> None:
+                if generation != self._generation or control.cancelled():
+                    return
+                label = (
+                    f"Recherche {done + 1}/{total} · {detail}"
+                    if detail and done < total
+                    else "Classement des résultats…"
+                )
+                self.GLib.idle_add(self._set_progress, generation, label)
+
+            def partial(snapshot: RecommendationPartial) -> None:
+                if generation != self._generation or control.cancelled():
+                    return
+                self.GLib.idle_add(self._accept_partial, generation, snapshot)
+
             return compute_recommendations(
                 metadata_broker,
                 catalog_broker,
@@ -256,14 +403,24 @@ class RecommendationsView:
                 max_results=self._config_int("max_results", 120),
                 exploration=exploration,
                 progress=progress,
+                partial=partial,
                 control=control,
             )
 
-        handle = task_broker.submit(operation, label="Calcul des recommandations", kind="recommendations")
+        handle = task_broker.submit(
+            operation,
+            label="Calcul des recommandations",
+            kind="recommendations",
+        )
+        self._task_handle = handle
 
         def finished(done_handle) -> None:
+            if done_handle.control.cancelled():
+                return
             try:
                 result = done_handle.result()
+            except Cancelled:
+                return
             except Exception as exc:
                 self.GLib.idle_add(self._complete, generation, None, str(exc))
             else:
@@ -272,12 +429,347 @@ class RecommendationsView:
         handle.add_done_callback(finished)
         return False
 
+    def refresh(self):
+        identity_id = self.selected_identity_id()
+        profile_changed = (
+            self._active_identity_id is not None
+            and identity_id is not None
+            and identity_id != self._active_identity_id
+        )
+        self._active_identity_id = identity_id
+        self._provisional_order.clear()
+        self._set_provisional(False)
+        self._diagnostic_cache = 0
+        self._diagnostic_network = 0
+        if hasattr(self, "_progress"):
+            self._progress.set_tooltip_text(self._diagnostic_tooltip())
+
+        if hasattr(self, "_master"):
+            if profile_changed:
+                self._ranked = []
+                self._ranked_by_key = {}
+                self._master.show_rows((), total_count=0)
+            if not self._ranked:
+                self._master.set_list_state(
+                    "Analyse de la bibliothèque…",
+                    "Lecture du profil local, sans rescan des fichiers. Les premières propositions apparaîtront dès le premier catalogue.",
+                    "system-search-symbolic",
+                )
+                self._master.empty_detail(
+                    "Calcul en cours",
+                    "Les détails seront disponibles dès la première recommandation.",
+                )
+            else:
+                self._summary.set_label(
+                    "Recalcul en cours · résultats précédents conservés jusqu’aux nouvelles propositions"
+                )
+
+        value = self._start_refresh()
+        if self._busy and not self._ranked:
+            self._summary.set_label("Analyse de la bibliothèque…")
+        return value
+
     def _set_progress(self, generation: int, label: str) -> bool:
-        if generation == self._generation:
-            self._summary.set_label(label)
+        if generation != self._generation:
+            return False
+
+        if label == "Classement des résultats…":
+            self._progress.set_fraction(0.96)
+            self._progress.set_text("96 % · Classement et diversification")
+            return False
+
+        match = re.match(r"Recherche\s+(\d+)/(\d+)\s+·\s*(.*)", label or "")
+        if not match:
+            return False
+
+        current = max(1, int(match.group(1)))
+        total = max(1, int(match.group(2)))
+        detail = match.group(3)
+        fraction = min(0.94, current / total * 0.94)
+
+        profile = re.search(
+            r"Profil prêt\s+·\s+(\d+) livres\s+·\s+(\d+) signaux",
+            detail,
+        )
+        if profile:
+            books = int(profile.group(1))
+            signals = int(profile.group(2))
+            self._profile_books_count = books
+            self._progress.set_fraction(max(0.02, fraction))
+            self._progress.set_text(
+                f"{int(round(max(0.02, fraction) * 100))} % · "
+                f"{books} livres analysés · {signals} signaux"
+            )
+            if not self._ranked:
+                self._summary.set_label(
+                    f"{books} livres analysés · recherche des recommandations…"
+                )
+                self._master.set_list_state(
+                    f"{books} livres analysés",
+                    "Recherche dans les catalogues connectés…",
+                    "system-search-symbolic",
+                )
+            return False
+
+        search = re.search(
+            r"requête\s+(\d+)/(\d+).*catalogues\s+(\d+)/(\d+).*?(\d+) résultats",
+            detail,
+        )
+        self._progress.set_fraction(fraction)
+        if search:
+            query_index, query_total, provider_done, provider_total, results_seen = (
+                int(search.group(1)),
+                int(search.group(2)),
+                int(search.group(3)),
+                int(search.group(4)),
+                int(search.group(5)),
+            )
+            self._progress.set_text(
+                f"{int(round(fraction * 100))} % · Recherche {query_index}/{query_total} · "
+                f"{provider_done}/{provider_total} catalogues · {results_seen} résultats"
+            )
+        else:
+            self._progress.set_text(
+                f"{int(round(fraction * 100))} % · Recherche catalogues"
+            )
         return False
 
-    def _complete(self, generation: int, result: RecommendationResult | None, error: str | None) -> bool:
+    def _accept_partial(self, generation: int, snapshot: RecommendationPartial) -> bool:
+        if generation != self._generation or not snapshot.ranked:
+            return False
+        self._pending_partial = snapshot
+        if not self._partial_source_id:
+            self._partial_source_id = self.GLib.timeout_add(
+                self.PARTIAL_COALESCE_MS,
+                self._flush_partial,
+                generation,
+            )
+        return False
+
+    def _flush_partial(self, generation: int) -> bool:
+        self._partial_source_id = 0
+        if generation != self._generation or self._pending_partial is None:
+            return False
+        snapshot: RecommendationPartial = self._pending_partial
+        self._pending_partial = None
+
+        self._diagnostic_cache = snapshot.cache_batches
+        self._diagnostic_network = snapshot.network_batches
+        self._progress.set_tooltip_text(self._diagnostic_tooltip())
+
+        if snapshot.providers:
+            self._reload_providers(snapshot.providers)
+
+        self._ranked = self._stable_partial(list(snapshot.ranked))
+        self._set_provisional(True)
+
+        units = (
+            max(0, snapshot.query_index - 1) * max(1, snapshot.provider_total)
+            + max(0, snapshot.provider_done)
+        )
+        total_units = max(
+            1, snapshot.query_total * max(1, snapshot.provider_total)
+        )
+        fraction = min(0.94, units / total_units * 0.94)
+        self._progress.set_fraction(fraction)
+        self._progress.set_text(
+            f"{int(round(fraction * 100))} % · Recherche "
+            f"{snapshot.query_index}/{snapshot.query_total} · "
+            f"{snapshot.provider_done}/{snapshot.provider_total} catalogues · "
+            f"{snapshot.results_seen} résultats"
+        )
+
+        self._render(preserve_summary=True)
+        self._update_view_summary(provisional=True)
+        return False
+
+    def _update_view_summary(self, *, provisional: bool) -> None:
+        total = len(self._ranked)
+        visible = sum(1 for row in self._ranked if self._matches(row))
+        if not total:
+            return
+
+        provider = self._provider_label()
+        text_filter = str(self._text.get_text() or "").strip()
+        filters = []
+        if text_filter:
+            filters.append(f"« {text_filter} »")
+        if provider:
+            filters.append(provider)
+
+        if filters or visible != total:
+            parts = [f"{visible} sur {total}"]
+        else:
+            parts = [f"{total} recommandation(s)"]
+        parts.extend(filters)
+        if provisional:
+            parts.append("Provisoire · ordre susceptible d’évoluer")
+        else:
+            parts.append("Ordre diversifié")
+        self._summary.set_label(" · ".join(parts))
+
+    def _render(self, preserve_summary: bool = False) -> None:
+        visible = [row for row in self._ranked if self._matches(row)]
+
+        rows = []
+        mapping = {}
+        for index, ranked in enumerate(visible):
+            item = ranked.item
+            key = self._candidate_key(ranked) or f"recommendation-{index}"
+            if key in mapping:
+                key = f"{key}:{index}"
+            mapping[key] = ranked
+
+            author = str(get_field(item, "author", "") or "").strip()
+            source_labels = [
+                self._display_source(source)
+                for source in ranked.sources
+                if str(source or "")
+            ]
+            sources = " · ".join(dict.fromkeys(source_labels))
+            reasons = " · ".join(ranked.reasons)
+            meta_parts = []
+            if sources:
+                meta_parts.append(sources)
+            if reasons:
+                meta_parts.append("Pourquoi : " + reasons)
+
+            rows.append(
+                UiBookListEntry(
+                    key=key,
+                    title=str(get_field(item, "title", "") or "Sans titre"),
+                    subtitle=author,
+                    meta=" · ".join(meta_parts),
+                    badge=f"Affinité {ranked.score}/100",
+                    thumbnail_url=str(
+                        get_field(item, "thumbnail_url", "")
+                        or get_field(item, "cover_url", "")
+                        or ""
+                    ) or None,
+                )
+            )
+
+        self._ranked_by_key = mapping
+        self._master.show_rows(tuple(rows), total_count=len(self._ranked))
+
+        if not rows:
+            self._master.empty_detail(
+                "Aucune recommandation sélectionnée",
+                "Modifiez les filtres ou relancez le calcul.",
+            )
+        if not preserve_summary and self._ranked:
+            self._update_view_summary(provisional=self._provisional_active)
+
+    def _selected_row(self, row: UiBookListEntry | None) -> None:
+        if row is None:
+            self._master.empty_detail(
+                "Aucune recommandation sélectionnée",
+                "Sélectionnez un livre dans la liste pour afficher ses détails.",
+            )
+            return
+        ranked = self._ranked_by_key.get(row.key)
+        if ranked is None:
+            return
+
+        item = ranked.item
+        title = str(get_field(item, "title", "") or "Sans titre")
+        author = str(get_field(item, "author", "") or "").strip()
+        fmt = str(get_field(item, "format", "") or "").strip()
+        published = str(get_field(item, "published_at", "") or "").strip()
+        reasons = " · ".join(ranked.reasons)
+        source_labels = tuple(
+            dict.fromkeys(
+                self._display_source(source)
+                for source in ranked.sources
+                if str(source or "")
+            )
+        )
+        description = str(
+            get_field(item, "description", "")
+            or get_field(item, "summary", "")
+            or ""
+        ).strip()
+
+        recommendation_fields = [
+            DetailField("affinity", "Affinité", f"{ranked.score}/100"),
+            DetailField(
+                "ranking",
+                "Classement",
+                "Ordre diversifié : l’affinité n’est pas l’unique clé de tri.",
+            ),
+            DetailField(
+                "reasons",
+                "Pourquoi",
+                reasons or "Plusieurs signaux concordants",
+            ),
+        ]
+        catalogue_fields = []
+        if source_labels:
+            catalogue_fields.append(
+                DetailField("source", "Source", " · ".join(source_labels))
+            )
+        if fmt:
+            catalogue_fields.append(DetailField("format", "Format", fmt))
+        if published:
+            catalogue_fields.append(
+                DetailField("published", "Publication", published)
+            )
+
+        sections = [
+            DetailSection(
+                "recommendation",
+                "Recommandation",
+                tuple(recommendation_fields),
+                10,
+            )
+        ]
+        if catalogue_fields:
+            sections.append(
+                DetailSection("catalogue", "Catalogue", tuple(catalogue_fields), 20)
+            )
+        if description:
+            sections.append(
+                DetailSection(
+                    "notice",
+                    "Notice",
+                    (DetailField("description", "Description", description),),
+                    30,
+                )
+            )
+
+        actions = []
+        url = str(get_field(item, "friendly_url", "") or "").strip()
+        if url.startswith(("http://", "https://")):
+            actions.append(
+                UiBookDetailAction(
+                    "recommendation.notice",
+                    "Ouvrir la notice",
+                    "external-link-symbolic",
+                    uri=url,
+                )
+            )
+
+        thumbnail = str(
+            get_field(item, "thumbnail_url", "")
+            or get_field(item, "cover_url", "")
+            or ""
+        ) or None
+        badges = [f"Affinité {ranked.score}/100", *source_labels]
+        if self._provisional_active:
+            badges.append("Provisoire")
+
+        self._master.show_detail(
+            UiBookDetailPresentation(
+                title=title,
+                subtitle=author,
+                thumbnail_url=thumbnail,
+                badges=tuple(badges),
+                sections=tuple(sections),
+                actions=tuple(actions),
+            )
+        )
+
+    def _base_complete(self, generation: int, result: RecommendationResult | None, error: str | None) -> bool:
         if generation != self._generation:
             return False
         self._busy = False
@@ -310,100 +802,67 @@ class RecommendationsView:
         self._render(preserve_summary=True)
         return False
 
-    def _reload_providers(self, providers: tuple[tuple[str, str], ...]) -> None:
-        selected_id = self.selected_provider_id()
-        self._provider_ids = [""]
-        while self._provider_model.get_n_items() > 1:
-            self._provider_model.remove(1)
-        selected = 0
-        for provider_id, label in providers:
-            pid = str(provider_id or "")
-            if not pid:
-                continue
-            self._provider_ids.append(pid)
-            self._provider_model.append(str(label or pid))
-            if pid == selected_id:
-                selected = len(self._provider_ids) - 1
-        self._provider.set_selected(selected)
+    def _progress_complete(self, generation, result, error):
+        value = self._base_complete(generation, result, error)
+        if generation != self._generation:
+            return value
+        if error or result is None:
+            self._progress.set_text("Interrompu")
+            return value
+        self._progress.set_fraction(1.0)
+        self._progress.set_text("100 % · Terminé")
+        if result.ranked:
+            suffix = f" · cache {result.cache_batches} lot(s) · réseau {result.network_batches} lot(s)"
+            if result.cache_unknown_calls:
+                suffix += f" · {result.cache_unknown_calls} cache(s) non observables"
+            self._summary.set_label(self._summary.get_label() + suffix)
+        return value
 
-    def selected_provider_id(self) -> str:
-        index = int(self._provider.get_selected())
-        return self._provider_ids[index] if 0 <= index < len(self._provider_ids) else ""
-
-    def _matches(self, ranked: RankedCandidate) -> bool:
-        if ranked.score < int(self._score.get_value()):
+    def _streaming_complete(
+        self,
+        generation: int,
+        result: RecommendationResult | None,
+        error: str | None,
+    ):
+        if generation != self._generation:
             return False
-        provider = self.selected_provider_id()
-        if provider and provider not in ranked.sources:
-            return False
-        needle = normalize(self._text.get_text())
-        if needle:
-            item = ranked.item
-            haystack = normalize(" ".join((str(get_field(item, "title", "") or ""), str(get_field(item, "author", "") or ""))))
-            if needle not in haystack:
-                return False
-        return True
+        self._task_handle = None
+        self._pending_partial = None
+        if self._partial_source_id:
+            try:
+                self.GLib.source_remove(self._partial_source_id)
+            except Exception:
+                pass
+            self._partial_source_id = 0
+        return self._progress_complete(generation, result, error)
 
-    def _clear_list(self) -> None:
-        child = self._list.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling()
-            self._list.remove(child)
-            child = nxt
+    def _complete(
+        self,
+        generation: int,
+        result: RecommendationResult | None,
+        error: str | None,
+    ):
+        value = self._streaming_complete(generation, result, error)
+        if generation != self._generation:
+            return value
 
-    def _render(self, preserve_summary: bool = False) -> None:
-        self._clear_list()
-        visible = [row for row in self._ranked if self._matches(row)]
-        if self._ranked and not preserve_summary:
-            self._summary.set_label(f"{len(visible)} affichée(s) sur {len(self._ranked)} recommandation(s)")
-        for ranked in visible:
-            self._list.append(self._build_row(ranked))
+        self._set_provisional(False)
+        if error or result is None:
+            return value
 
-    def _build_row(self, ranked: RankedCandidate):
-        Gtk = self.Gtk
-        item = ranked.item
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        for setter in (row.set_margin_top, row.set_margin_bottom, row.set_margin_start, row.set_margin_end):
-            setter(8)
+        self._diagnostic_cache = result.cache_batches
+        self._diagnostic_network = result.network_batches
+        self._progress.set_tooltip_text(self._diagnostic_tooltip())
 
-        score = Gtk.Label(label=f"{ranked.score}")
-        score.add_css_class("title-3")
-        score.set_tooltip_text("Score de pertinence sur 100")
-        score.set_width_chars(3)
-        row.append(score)
+        if result.ranked:
+            # Gtk.ListView/Gio.ListStore is virtualized: once the model is
+            # reconciled there is no second "build all row widgets" phase.
+            self._progress.set_fraction(1.0)
+            self._progress.set_text("100 % · Terminé")
+            self._update_view_summary(provisional=False)
+        return value
 
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
-        body.set_hexpand(True)
-        title = Gtk.Label(label=str(get_field(item, "title", "") or "Sans titre"), xalign=0)
-        title.add_css_class("heading")
-        title.set_wrap(True)
-        body.append(title)
-
-        author = str(get_field(item, "author", "") or "").strip()
-        fmt = str(get_field(item, "format", "") or "").strip()
-        date = str(get_field(item, "published_at", "") or "").strip()
-        source = ", ".join(ranked.sources)
-        details = " · ".join(x for x in (author, source, fmt, date) if x)
-        if details:
-            subtitle = Gtk.Label(label=details, xalign=0)
-            subtitle.add_css_class("dim-label")
-            subtitle.set_wrap(True)
-            body.append(subtitle)
-
-        if ranked.reasons:
-            reason = Gtk.Label(label="Pourquoi : " + " · ".join(ranked.reasons), xalign=0)
-            reason.set_wrap(True)
-            body.append(reason)
-        row.append(body)
-
-        url = str(get_field(item, "friendly_url", "") or "").strip()
-        if url.startswith(("http://", "https://")):
-            button = Gtk.LinkButton(uri=url, label="Notice")
-            button.set_tooltip_text("Ouvrir la notice du catalogue")
-            row.append(button)
-        return row
-
-    def dispose(self) -> None:
+    def _base_dispose(self) -> None:
         self._generation += 1
         if callable(self._unsubscribe):
             try:
@@ -412,5 +871,34 @@ class RecommendationsView:
                 pass
         self._unsubscribe = None
 
+    def dispose(self) -> None:
+        if self._task_handle is not None:
+            self._task_handle.cancel()
+        self._task_handle = None
+        self._pending_partial = None
+        self._render_generation += 1
+        if self._partial_source_id:
+            try:
+                self.GLib.source_remove(self._partial_source_id)
+            except Exception:
+                pass
+            self._partial_source_id = 0
+        self._base_dispose()
+
+def _refresh_on_first_map(view, widget, GLib):
+    """Schedule exactly one initial refresh when the page becomes visible."""
+    scheduled = False
+
+    def on_map(_widget):
+        nonlocal scheduled
+        if scheduled:
+            return
+        scheduled = True
+        GLib.idle_add(view.refresh)
+
+    widget.connect("map", on_map)
+    get_mapped = getattr(widget, "get_mapped", None)
+    if callable(get_mapped) and get_mapped():
+        on_map(widget)
 
 PLUGIN = RecommendationsPlugin()

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from recommendations_v024 import UxRecommendationsView, _refresh_on_first_map
+from recommendations import UxRecommendationsView, _refresh_on_first_map
 
 
 def ranked(title, score=50, provider="a"):
