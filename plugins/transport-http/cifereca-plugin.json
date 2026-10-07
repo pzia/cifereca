@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.transport.http",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "name": "Transport HTTP",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "transport.http",
       "type": "transport",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "entrypoint": "cifereca_http_transport:PLUGIN",
       "display_name": "Transport HTTP",
       "description": "Téléchargement HTTP/HTTPS borné, redirections sûres et publication atomique.",

@@ -5,10 +5,8 @@ import logging
 import os
 from pathlib import Path
 import tempfile
-import zipfile
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
-from xml.etree import ElementTree
 
 import httpx
 
@@ -60,23 +58,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _validate_epub_package(path: Path) -> bool:
-    try:
-        with zipfile.ZipFile(path) as archive:
-            names = set(archive.namelist())
-            if archive.read("mimetype").strip() != b"application/epub+zip":
-                return False
-            container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
-            roots = [
-                node.attrib.get("full-path")
-                for node in container.iter()
-                if str(node.tag or "").rsplit("}", 1)[-1].casefold() == "rootfile"
-            ]
-            return bool(roots) and all(root and root in names for root in roots) and archive.testzip() is None
-    except (OSError, KeyError, zipfile.BadZipFile, ElementTree.ParseError):
-        return False
 
 
 class HttpTransport:
@@ -199,13 +180,11 @@ class HttpTransport:
 
             expected_format = str(source.get("expected_format") or "").strip().casefold()
             if expected_format:
-                inspected = inspect_artifact(temporary, expected_format)
+                inspected = inspect_artifact(temporary, expected_format, strict_structure=True)
                 if not inspected.valid:
                     raise UnsupportedOperation(
                         f"transport.http: artefact invalide ({inspected.reason or 'format inconnu'})"
                     )
-                if expected_format == "epub" and not _validate_epub_package(temporary):
-                    raise UnsupportedOperation("transport.http: artefact EPUB incomplet ou invalide")
                 if inspected.protected is True and not bool(source.get("allow_protected", False)):
                     raise UnsupportedOperation("transport.http: artefact protégé refusé")
 
