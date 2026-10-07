@@ -42,6 +42,7 @@ EXCLUDED_DIRS = {
     "simulation",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+CANONICAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,127}$")
 
 
 class PackagingError(RuntimeError):
@@ -66,6 +67,13 @@ def _read_json(path: Path) -> dict:
     if not isinstance(value, dict):
         raise PackagingError(f"objet JSON attendu: {path}")
     return value
+
+
+def _validate_id(value: object, field: str) -> str:
+    raw = str(value or "").strip()
+    if not CANONICAL_ID_RE.fullmatch(raw):
+        raise PackagingError(f"{field} invalide: {raw!r}")
+    return raw
 
 
 def _validate_version(value: object, field: str) -> None:
@@ -137,11 +145,11 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
     for key in ("id", "version"):
         if not isinstance(package.get(key), str) or not package[key].strip():
             raise PackagingError(f"{plugin_dir}: package.{key} absent")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", package["id"]):
-        raise PackagingError(f"{plugin_dir}: package.id invalide")
+    _validate_id(package["id"], f"{plugin_dir}: package.id")
     descriptors = manifest.get("plugins")
     if not isinstance(descriptors, list) or not descriptors:
         raise PackagingError(f"{plugin_dir}: plugins[] vide ou absent")
+    seen_plugin_ids: set[str] = set()
     for index, descriptor in enumerate(descriptors):
         if not isinstance(descriptor, dict):
             raise PackagingError(f"{plugin_dir}: plugins[{index}] invalide")
@@ -149,6 +157,17 @@ def read_plugin_manifest(plugin_dir: Path) -> dict:
             raise PackagingError(
                 f"{plugin_dir}: plugins[{index}] requiert id et type"
             )
+        plugin_id = _validate_id(
+            descriptor.get("id"), f"{plugin_dir}: plugins[{index}].id"
+        )
+        _validate_id(
+            descriptor.get("type"), f"{plugin_dir}: plugins[{index}].type"
+        )
+        if plugin_id in seen_plugin_ids:
+            raise PackagingError(
+                f"{plugin_dir}: plugin.id dupliqué dans le package: {plugin_id}"
+            )
+        seen_plugin_ids.add(plugin_id)
     _validate_manifest_versions(plugin_dir, manifest)
     return manifest
 
