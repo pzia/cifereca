@@ -1,10 +1,6 @@
 name: Dataset UX harness
 
 on:
-  push:
-    paths:
-      - "simulation/**"
-      - ".github/workflows/dataset-harness.yml"
   pull_request:
     paths:
       - "simulation/**"

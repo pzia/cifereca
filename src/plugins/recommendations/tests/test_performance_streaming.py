@@ -2,6 +2,7 @@ from collections import Counter
 from types import SimpleNamespace
 
 import recommendation_engine as engine
+import recommendation_service_v022 as service
 import recommendation_engine_fast as fast
 from recommendation_engine import RankedCandidate
 from recommendation_service_v022 import _provisional_head, compute_recommendations
@@ -210,14 +211,14 @@ def test_provisional_head_matches_full_sort_without_returning_the_tail():
 
 def test_repeated_candidates_are_scored_once_across_streaming_and_final_rank(monkeypatch):
     calls = 0
-    original = fast.content_score
+    original = fast._content_score_prevalidated
 
     def counted(profile, item):
         nonlocal calls
         calls += 1
         return original(profile, item)
 
-    monkeypatch.setattr(fast, "content_score", counted)
+    monkeypatch.setattr(fast, "_content_score_prevalidated", counted)
 
     repeated = {
         "isbn": "9781234567890",
@@ -260,3 +261,110 @@ def test_repeated_candidates_are_scored_once_across_streaming_and_final_rank(mon
 
     assert result.ranked
     assert calls == 1
+
+
+
+def test_compute_builds_library_profile_once(monkeypatch):
+    calls = 0
+    original = engine.build_profile
+
+    def counted(books):
+        nonlocal calls
+        calls += 1
+        return original(books)
+
+    def forbidden(_books):
+        raise AssertionError("build_queries rebuilt the prepared library profile")
+
+    monkeypatch.setattr(service, "build_profile", counted)
+    monkeypatch.setattr(engine, "build_profile", forbidden)
+
+    result = service.compute_recommendations(
+        Metadata(),
+        Catalog(),
+        "id-1",
+        max_queries=2,
+    )
+
+    assert result.ranked
+    assert calls == 1
+
+
+
+class SinglePassBooks(list):
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.iterations = 0
+
+    def __iter__(self):
+        self.iterations += 1
+        if self.iterations > 1:
+            raise AssertionError("library books rescanned while building queries")
+        return super().__iter__()
+
+
+def test_build_queries_does_not_rescan_library_after_profile_build():
+    books = SinglePassBooks([
+        {"title": "Un", "author": "Alice Martin", "metadata": {"subjects": ["histoire"], "series": ["Paris"]}},
+        {"title": "Deux", "author": "Alice Martin", "metadata": {"subjects": ["mémoire"], "series": ["Paris"]}},
+    ])
+
+    queries = engine.build_queries(books)
+
+    assert queries[0] == "Alice Martin"
+    assert "Paris" in queries
+    assert books.iterations == 1
+
+
+
+def test_prepared_ranking_checks_library_presence_once_per_candidate(monkeypatch):
+    profile = engine.build_profile([
+        {"title": "Seed", "author": "Alice", "metadata": {"subjects": ["histoire"]}},
+    ])
+    candidate = {
+        "title": "Candidate",
+        "author": "Alice",
+        "metadata": {"subjects": ["histoire"]},
+        "source_provider": "a",
+    }
+
+    calls = 0
+    original = fast.is_already_present
+
+    def counted(current_profile, item):
+        nonlocal calls
+        calls += 1
+        return original(current_profile, item)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("content scoring repeated the library-presence check")
+
+    monkeypatch.setattr(fast, "is_already_present", counted)
+    monkeypatch.setattr(engine, "is_already_present", forbidden)
+
+    ranked = fast.rank_candidates_prepared(profile, [[candidate]], limit=10)
+
+    assert ranked
+    assert calls == 1
+
+
+def test_streaming_marks_candidate_as_prevalidated_before_scoring(monkeypatch):
+    seen = []
+    original = service.score_candidate_cached
+
+    def wrapped(profile, item, cache, **kwargs):
+        seen.append(kwargs.get("known_absent"))
+        return original(profile, item, cache, **kwargs)
+
+    monkeypatch.setattr(service, "score_candidate_cached", wrapped)
+
+    result = service.compute_recommendations(
+        Metadata(),
+        Catalog(),
+        "id-1",
+        max_queries=1,
+    )
+
+    assert result.ranked
+    assert seen
+    assert all(value is True for value in seen)

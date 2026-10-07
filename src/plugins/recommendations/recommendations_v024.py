@@ -452,13 +452,30 @@ class UxRecommendationsView(MasterDetailRecommendationsView):
         return value
 
 
+def _refresh_on_first_map(view, widget, GLib):
+    """Schedule exactly one initial refresh when the page becomes visible."""
+    scheduled = False
+
+    def on_map(_widget):
+        nonlocal scheduled
+        if scheduled:
+            return
+        scheduled = True
+        GLib.idle_add(view.refresh)
+
+    widget.connect("map", on_map)
+    get_mapped = getattr(widget, "get_mapped", None)
+    if callable(get_mapped) and get_mapped():
+        on_map(widget)
+
+
 class RecommendationsPluginV024(RecommendationsPlugin):
     def build(self, host):
         from gi.repository import GLib, Gtk
 
         view = UxRecommendationsView(self, host, Gtk, GLib)
         self._view = view
-        GLib.idle_add(view.refresh)
+        _refresh_on_first_map(view, view.widget, GLib)
         return view.widget
 
 

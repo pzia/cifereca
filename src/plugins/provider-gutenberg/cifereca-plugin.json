@@ -2,10 +2,10 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.gutenberg",
-    "version": "1.2.13",
+    "version": "1.2.14",
     "name": "Project Gutenberg",
     "publisher": "cifereca",
-    "plugin_api": ">=1.3,<2"
+    "plugin_api": ">=1.4,<2"
   },
   "plugins": [
     {
@@ -57,7 +57,7 @@
       },
       "recommends": [],
       "instantiation": "singleton_public",
-      "version": "1.2.13",
+      "version": "1.2.14",
       "help_text": "Recherche publique OPDS, contact requis. La pagination suit uniquement les liens Atom rel=next et mémorise les URLs déjà parcourues, sans préchargement ; titre/auteur/sujet sont filtrés sur la page obtenue ; la navigation accepte aussi `lang:fr` / champ langue et `bookshelf:...` / champ bookshelf. ISBN non pris en charge. Une panne de résolution d’offre est signalée. Les EPUB sont téléchargés avec une limite de taille puis validés. Couverture issue des liens OPDS thumbnail/image ; repli sur une autre édition du même identifiant Gutenberg. Les notices sans vignette restent sans requête supplémentaire pendant la recherche ; la vignette peut être enrichie paresseusement depuis le feed détail lors de l’ouverture de la notice, avec cache borné. Les résumés HTML sont restitués en texte lisible, avec paragraphes et listes, sans contenu actif.",
       "capabilities": [
         "catalog.search",
