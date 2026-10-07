@@ -4,7 +4,7 @@ from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 from .models import (
     AccountRef, ActionStatistics, AdeptProfileRef, ArtifactFormat, ArtifactInputLease, ArtifactOutputLease, ArtifactRef, ArtifactRoutePlan,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, LibraryMutationPlan,
-    HealthCheckResult, LibraryMutationRequest, LibraryMutationResult, LogicalBookArtifacts, SyncRequest, SyncResult, SyncSourceRef,
+    HealthCheckResult, LibraryMutationRequest, LibraryMutationResult, LogicalBookArtifacts, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncSourceRef,
     TaskControl, TaskHandle, TransformRequest, TransformResult,
 )
 
@@ -46,6 +46,11 @@ class IdentityBroker(Protocol):
     def select(self, identity_id: str) -> Any: ...
     def accounts(self, identity_id: str | None = None) -> tuple[AccountRef, ...]: ...
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000) -> Mapping[str, Any]: ...
+
+@runtime_checkable
+class RuntimeCapabilitiesBroker(Protocol):
+    def acquisition(self, provider_id: str, *, refresh: bool = False) -> RuntimeAcquisitionCapabilities: ...
+
 
 @runtime_checkable
 class AdeptProfileBroker(Protocol):
@@ -128,5 +133,5 @@ class ArtifactRoutingBroker(Protocol):
     def plan(self, request: ArtifactRouteRequest) -> ArtifactRoutePlan: ...
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult: ...
 
-__all__ = ["CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "AdeptProfileBroker", "AdeptLoanBroker",
+__all__ = ["CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]
