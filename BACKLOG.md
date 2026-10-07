@@ -1,3 +1,48 @@
+# Point de rationalisation — 7 octobre 2026
+
+Ce bloc est la vue courante de la rationalisation. Les sections de versions plus anciennes conservées dessous constituent l'historique du backlog et peuvent contenir des états devenus obsolètes. L'index de référence est [docs/RATIONALIZATION-STATUS.md](docs/RATIONALIZATION-STATUS.md).
+
+## Terminé
+
+- [x] Mutualisation Core/plugins : TaskBroker, transport HTTP, inspection/publication d'artefacts, diagnostics/redaction, health checks, cache TTL/single-flight, normalisations communes.
+- [x] Répartition des régressions historiques `test_sync_082.py` entre Core, Paris, ADEPT et Kobo.
+- [x] Répartition des régressions historiques `test_kobo_vault.py` entre contrat plugin Kobo et tests Core spécialisés.
+- [x] Régressions Gallica fournisseur déplacées vers le plugin.
+- [x] Documentation des frontières Core/plugins, de l'organisation des tests, de la simulation et des environnements.
+
+## Dette Core
+
+- [ ] Triage historique méthode par méthode de `test_core_0921.py`, `0923`, `0925`, `0927`, `0929`, `0931`, `0933`.
+- [ ] Extraire/rationaliser les zones historiques `src/cifereca/builtin_ui/`, `src/cifereca/paris/` et `src/cifereca/kobo/` dans des lots de code dédiés.
+- [ ] Évaluer l'enrichissement du validateur EPUB Core avant toute suppression du validateur strict Numilog.
+
+## Dette plugins
+
+- [ ] Nettoyer la hiérarchie legacy du plugin Recommendations sans réintroduire de threading privé dans l'entrypoint actif.
+- [ ] Garder les sessions HTTP authentifiées fournisseur hors `transport.http` tant qu'aucun contrat générique équivalent n'est défini.
+
+## Migration structurelle
+
+- [ ] Décider puis exécuter le déplacement physique des plugins fonctionnels vers la cible documentée ; adapter packaging/imports/tests dans le même chantier.
+- [ ] Ne pas réintroduire `bundled_plugins/` ou `integrations/` comme sources actives.
+
+## Simulation
+
+- [ ] Créer effectivement `simulation/`.
+- [ ] Migrer progressivement les faux services, fixtures, profils et outils encore utiles depuis `gen-dataset/`.
+- [ ] Supprimer `gen-dataset/` seulement lorsque plus aucun consommateur ne dépend de lui.
+
+## Environnements
+
+- [ ] Maintenir séparément les recettes machine/runtime `openai-chat-debian` et `chatgpt-work`.
+- [ ] Ne pas confondre validation d'environnement GTK et validation fonctionnelle/UX.
+
+## UX
+
+- [ ] Continuer à traiter les décisions UX validées dans des lots dédiés ; le handoff UX historique reste une source de propositions, pas l'architecture normative.
+
+---
+
 # Backlog CIFERECA
 
 État : Core 0.9.35+dev.1 avec Plugins 0.9.34-dev.1, 4 octobre 2026. Alternance Core/Plugins conservée. « Livré » indique une implémentation ; la recette bureau GTK et les parcours authentifiés restent distincts.
