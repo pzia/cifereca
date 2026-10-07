@@ -197,6 +197,21 @@ def _validate_manifest_reference_ids(plugin_dir: Path, manifest: dict) -> None:
                 row.get("category"),
                 f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].category",
             )
+            contract = str(row.get("contract") or "").strip()
+            if not contract:
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].contract "
+                    "est requis"
+                )
+            mode = str(
+                row.get("mode")
+                or ("optional" if row.get("optional") else "required")
+            ).strip().lower()
+            if mode not in {"required", "optional", "degraded"}:
+                raise PackagingError(
+                    f"{plugin_dir}: plugins[{index}].requires_contracts[{req_index}].mode "
+                    f"invalide: {mode!r}"
+                )
             capabilities = row.get("capabilities")
             if capabilities is not None and (
                 not isinstance(capabilities, list)
