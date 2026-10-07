@@ -320,13 +320,23 @@ class DetailPanel(Gtk.Box):
             self._subtitle_label = sub
         else:
             self._subtitle_label = None
-        badges_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        badges_box = Gtk.FlowBox()
+        badges_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        badges_box.set_halign(Gtk.Align.START)
+        badges_box.set_hexpand(True)
+        badges_box.set_min_children_per_line(1)
+        badges_box.set_max_children_per_line(4)
+        badges_box.set_column_spacing(6)
+        badges_box.set_row_spacing(6)
         for value in badges:
             if not value:
                 continue
-            chip = Gtk.Label(label=value)
+            chip = Gtk.Label(label=value, xalign=0)
+            chip.set_wrap(True)
+            chip.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            chip.set_tooltip_text(str(value))
             add_css(chip, "badge")
-            badges_box.append(chip)
+            badges_box.insert(chip, -1)
         text.append(badges_box)
         return cover
 
