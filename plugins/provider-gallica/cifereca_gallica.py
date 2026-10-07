@@ -18,7 +18,7 @@ from cifereca.plugin_api import (
     ProviderDescriptor,
     ProviderError,
     ProviderPlugin,
-    ProviderSession, normalize_language_tag,
+    ProviderSession, normalize_language_tag, sanitize_filename_component,
 )
 
 ATOM = "http://www.w3.org/2005/Atom"
@@ -40,7 +40,6 @@ def _public_url(value: str) -> str:
         return urlunsplit(parsed._replace(scheme="https"))
     return value
 
-_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
 _ARK_RE = re.compile(r"(?:https?://gallica\.bnf\.fr/)?(ark:/12148/[^/?#\s]+)", re.I)
 _AUDIO_MIME_EXT = {
     "audio/mpeg": ".mp3",
@@ -532,7 +531,7 @@ class GallicaSession(ProviderSession):
 
     @staticmethod
     def _safe_name(value: str, fallback: str = "gallica") -> str:
-        return _SAFE_FILENAME.sub("_", value or fallback).strip(" ._") or fallback
+        return sanitize_filename_component(value, fallback)
 
     def _download_ebook(self, item: SearchResult, target_dir: Path) -> tuple[Path, str]:
         url = _public_url(str(item.download_url or "").strip())
@@ -562,7 +561,7 @@ class GallicaSession(ProviderSession):
             "headers": {
                 "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
                 "Referer": "https://gallica.bnf.fr/",
-                "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.11"),
+                "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.12"),
             },
             "max_bytes": self.max_download_bytes,
             "allowed_content_types": allowed,
@@ -631,7 +630,7 @@ class GallicaSession(ProviderSession):
                 "headers": {
                     "Accept": "application/epub+zip, application/pdf;q=0.9, */*;q=0.2",
                     "Referer": "https://gallica.bnf.fr/",
-                    "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.11"),
+                    "User-Agent": str(self.client.headers.get("User-Agent") or "cifereca-gallica/1.2.12"),
                 },
                 "max_bytes": self.max_download_bytes,
                 "allowed_content_types": allowed,
