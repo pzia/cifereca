@@ -8,5 +8,6 @@ Ces profils complètent `/AGENTS.md`. Un agent choisit un rôle principal par fi
 - `plugin-cible` : un plugin fonctionnel précis.
 - `backlog` : découverte, découpage et priorisation d'issues.
 - `e2e` : validation de parcours réels de bout en bout.
+- `cicd` : chaînes de tests, quality gates, packaging et release.
 
 Un changement transversal doit être découpé en tâches/handoffs par rôle plutôt qu'être absorbé par un seul fil.
