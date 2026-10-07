@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import ast
 import hashlib
 import json
 import os
@@ -106,6 +107,56 @@ def package_zip_name(manifest: dict) -> str:
     )
 
 
+PRODUCTION_EXCLUDED_DIRS = {"tests", "simulation"}
+
+
+def _is_public_plugin_api(module: str) -> bool:
+    return module == "cifereca.plugin_api" or module.startswith("cifereca.plugin_api.")
+
+
+def _private_core_imports(path: Path) -> list[tuple[int, str]]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        raise PackagingError(f"source Python invalide: {path}: {exc}") from exc
+
+    violations: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module = str(alias.name or "")
+                if module == "cifereca" or module.startswith("cifereca."):
+                    if not _is_public_plugin_api(module):
+                        violations.append((int(getattr(node, "lineno", 0) or 0), module))
+        elif isinstance(node, ast.ImportFrom):
+            module = str(node.module or "")
+            if module == "cifereca" or module.startswith("cifereca."):
+                if not _is_public_plugin_api(module):
+                    violations.append((int(getattr(node, "lineno", 0) or 0), module))
+    return violations
+
+
+def validate_plugin_source(plugin_dir: Path) -> None:
+    """Enforce the production plugin boundary: Core access goes through plugin_api only."""
+    plugin_dir = plugin_dir.resolve()
+    violations: list[str] = []
+    for path in sorted(plugin_dir.rglob("*.py")):
+        relative = path.relative_to(plugin_dir)
+        if any(part in PRODUCTION_EXCLUDED_DIRS for part in relative.parts[:-1]):
+            continue
+        for line, module in _private_core_imports(path):
+            violations.append(f"{relative.as_posix()}:{line}: {module}")
+
+    if violations:
+        detail = "; ".join(violations[:20])
+        if len(violations) > 20:
+            detail += f"; … +{len(violations) - 20}"
+        raise PackagingError(
+            f"{plugin_dir}: imports Core privés interdits "
+            f"(utiliser cifereca.plugin_api): {detail}"
+        )
+
+
 def _source_files(plugin_dir: Path) -> list[Path]:
     plugin_dir = plugin_dir.resolve()
     files: list[Path] = []
@@ -190,6 +241,7 @@ def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> list[Path]:
 def build_plugin_zip(plugin_dir: Path, output_dir: Path = DIST_DIR) -> Path:
     plugin_dir = plugin_dir.resolve()
     manifest = read_plugin_manifest(plugin_dir)
+    validate_plugin_source(plugin_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / package_zip_name(manifest)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
@@ -534,6 +586,7 @@ def verify_repository(plugins_dir: Path = PLUGINS_DIR) -> list[dict]:
     rows = []
     for plugin_dir in discover_plugins(plugins_dir):
         manifest = read_plugin_manifest(plugin_dir)
+        validate_plugin_source(plugin_dir)
         files = _source_files(plugin_dir)
         rows.append(
             {
