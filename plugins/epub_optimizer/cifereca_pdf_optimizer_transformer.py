@@ -115,6 +115,7 @@ class PdfOptimizerTransformer:
             max_pages=max_pages,
             max_image_pixels=max_image_pixels,
             max_image_mb=max_image_mb,
+            cancel_event=_ControlEvent(control) if control is not None else None,
         )
         warnings: list[str] = []
         if profile.max_zoom_factor is None:

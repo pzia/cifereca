@@ -3,12 +3,15 @@ from __future__ import annotations
 import io
 import tempfile
 from pathlib import Path
+import threading
 
+import pytest
 from PIL import Image
 import pymupdf
 
 from cifereca_epub_optimizer.builtin_profiles import builtin_profile
-from cifereca_epub_optimizer.pdf_engine import inspect_pdf, optimize_pdf
+from cifereca_epub_optimizer.engine import CancelledError
+from cifereca_epub_optimizer.pdf_engine import _image_inventory, inspect_pdf, optimize_pdf
 
 
 def jpeg(size=(1800, 2400)) -> bytes:
@@ -104,3 +107,33 @@ def test_unsigned_pdf_sigflags_minus_one_is_accepted():
             doc.close()
         info = inspect_pdf(src, profile=builtin_profile("generic-eink"))
         assert info.pages == 1
+
+
+def test_pdf_inspection_honours_preexisting_cancellation():
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.pdf"
+        make_pdf(src, jpeg((200, 300)))
+        cancelled = threading.Event()
+        cancelled.set()
+        with pytest.raises(CancelledError):
+            inspect_pdf(
+                src,
+                profile=builtin_profile("generic-eink"),
+                cancel_event=cancelled,
+            )
+
+
+def test_pdf_inventory_exposes_bpc_and_colorspace_for_stencil_policy():
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.pdf"
+        make_pdf(src, jpeg((200, 300)))
+        doc = pymupdf.open(src)
+        try:
+            inventory = _image_inventory(doc)
+            assert inventory
+            item = next(iter(inventory.values()))
+            assert "bpc" in item and "colorspace" in item
+            assert item["bpc"] > 1
+            assert item["colorspace"] > 0
+        finally:
+            doc.close()
