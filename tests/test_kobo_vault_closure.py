@@ -211,7 +211,10 @@ def test_kobo_formats_are_normalized_to_epub_and_preserve_original_format(
         requests.append(request)
         destination = Path(request["destination"])
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(b"PK\x03\x04normalized")
+        with zipfile.ZipFile(destination, "w") as archive:
+            archive.writestr("mimetype", "application/epub+zip")
+            archive.writestr("META-INF/container.xml", "<container/>")
+            archive.writestr("content.xhtml", "<html><body>normalized</body></html>")
         return {
             "ok": True,
             "artifact": {
