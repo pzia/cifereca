@@ -56,3 +56,41 @@ def test_already_mapped_page_runs_immediately_once():
 
     widget.emit_map()
     assert calls == ["profiles"]
+
+
+
+class FakeRuntime:
+    def __init__(self):
+        self.calls = []
+
+    def profiles(self):
+        self.calls.append("profiles")
+        return {"profiles": [{"name": "alexandre"}]}
+
+
+def test_refresh_task_lists_profiles_once():
+    runtime = FakeRuntime()
+
+    value, payload = mod._run_profile_task(
+        runtime, runtime.profiles, reload_profiles=False
+    )
+
+    assert value == payload
+    assert payload["profiles"][0]["name"] == "alexandre"
+    assert runtime.calls == ["profiles"]
+
+
+def test_mutation_task_reloads_profiles_inside_worker():
+    runtime = FakeRuntime()
+
+    def mutate():
+        runtime.calls.append("mutate")
+        return {"ok": True}
+
+    value, payload = mod._run_profile_task(
+        runtime, mutate, reload_profiles=True
+    )
+
+    assert value == {"ok": True}
+    assert payload["profiles"][0]["name"] == "alexandre"
+    assert runtime.calls == ["mutate", "profiles"]
