@@ -240,6 +240,27 @@ class PluginPackagingTests(unittest.TestCase):
                 )
             validate_plugin_source(plugin)
 
+    def test_tests_and_simulation_are_excluded_from_production_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            for dirname in ("tests", "simulation"):
+                directory = plugin / dirname
+                directory.mkdir()
+                (directory / "fixture.txt").write_text(
+                    "development-only\n", encoding="utf-8"
+                )
+
+            output = build_plugin_zip(plugin, root / "dist")
+            with zipfile.ZipFile(output) as archive:
+                names = archive.namelist()
+
+            self.assertIn("plugin.py", names)
+            self.assertFalse(any(name.startswith("tests/") for name in names))
+            self.assertFalse(any(name.startswith("simulation/") for name in names))
+
     def test_packaging_refuses_private_core_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
