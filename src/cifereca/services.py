@@ -34,7 +34,7 @@ from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
-from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSession
+from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
 from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest
 from .storage import Storage
 
@@ -1328,6 +1328,26 @@ class LibraryService:
             out.append((session.provider_id, session.descriptor.display_name))
         return out
 
+    def provider_search_capabilities(self) -> dict[str, ProviderSearchCapabilities]:
+        """Return declared search limits for connected providers, keyed by provider id."""
+        result: dict[str, ProviderSearchCapabilities] = {}
+        for session in self._sessions.values():
+            if not session.connected or not session.capabilities.search:
+                continue
+            if not self._provider_enabled_for_identity(session.provider_id):
+                continue
+            result.setdefault(session.provider_id, session.search_capabilities)
+        return result
+
+    @staticmethod
+    def _search_contract_warning(session: ProviderSession, field: str, scope: str) -> str:
+        contract = session.search_capabilities
+        if not contract.supports_field(field):
+            return f"{session.descriptor.display_name}: champ de recherche non pris en charge ({field})"
+        if not contract.supports_scope(scope):
+            return f"{session.descriptor.display_name}: périmètre de recherche non pris en charge ({scope})"
+        return ""
+
     @classmethod
     def _field_match(cls, field: str, query: str, row: SearchResult) -> bool:
         field = str(field or "all").lower()
@@ -1380,6 +1400,10 @@ class LibraryService:
         for session in searchable:
             provider_rows: list[SearchResult] = []
             provider_seen: set[tuple[str, str, str]] = set()
+            contract_warning = self._search_contract_warning(session, field, scope)
+            if contract_warning:
+                warnings.append(contract_warning)
+                continue
             primary_ok = False
             for attempt, variant in enumerate(variants):
                 # Loose fallbacks are needed only when the exact query produced
@@ -1483,6 +1507,9 @@ class LibraryService:
         provider_rows: list[SearchResult] = []
         provider_seen: set[tuple[str, str, str]] = set()
         warnings: list[str] = []
+        contract_warning = self._search_contract_warning(session, field, scope)
+        if contract_warning:
+            return [], [contract_warning], "", ""
         variants = self._search_query_variants(query)
         primary_ok = False
         terminal_error_code = terminal_error_message = ""

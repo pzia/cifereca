@@ -49,6 +49,49 @@ class ProviderCapabilities:
 
 
 @dataclass(frozen=True)
+class ProviderSearchCapabilities:
+    fields: tuple[str, ...] = ()
+    scopes: tuple[str, ...] = ()
+    pagination: Literal["unspecified", "none", "page", "next-link", "cursor"] = "unspecified"
+    page_size: int | None = None
+    max_pages: int | None = None
+    notes: tuple[str, ...] = ()
+
+    @property
+    def declared(self) -> bool:
+        return bool(self.fields or self.scopes or self.pagination != "unspecified" or self.page_size or self.max_pages or self.notes)
+
+    def supports_field(self, field: str) -> bool:
+        requested = str(field or "all").strip().casefold() or "all"
+        return not self.fields or requested in {str(value).casefold() for value in self.fields}
+
+    def supports_scope(self, scope: str) -> bool:
+        requested = str(scope or "all").strip().casefold() or "all"
+        return not self.scopes or requested in {str(value).casefold() for value in self.scopes}
+
+    def summary(self) -> str:
+        if not self.declared:
+            return "Capacités de recherche non déclarées"
+        parts: list[str] = []
+        if self.fields:
+            parts.append("Champs : " + ", ".join(self.fields))
+        if self.scopes:
+            parts.append("Périmètres : " + ", ".join(self.scopes))
+        if self.pagination == "none":
+            paging = "Pagination : non"
+        elif self.pagination == "unspecified":
+            paging = "Pagination : non déclarée"
+        else:
+            paging = "Pagination : " + self.pagination
+        if self.page_size:
+            paging += f" · {self.page_size}/page"
+        if self.max_pages:
+            paging += f" · max {self.max_pages} pages"
+        parts.append(paging)
+        return " · ".join(parts)
+
+
+@dataclass(frozen=True)
 class CredentialField:
     key: str
     label: str
@@ -67,6 +110,7 @@ class ProviderDescriptor:
     credential_fields: tuple[CredentialField, ...] = ()
     homepage: str | None = None
     notes: tuple[str, ...] = ()
+    search_capabilities: ProviderSearchCapabilities = field(default_factory=ProviderSearchCapabilities)
 
 
 class ProviderSession(ABC):
@@ -99,6 +143,10 @@ class ProviderSession(ABC):
     @property
     def capabilities(self) -> ProviderCapabilities:
         return self.descriptor.capabilities
+
+    @property
+    def search_capabilities(self) -> ProviderSearchCapabilities:
+        return self.descriptor.search_capabilities
 
     @property
     def accounts(self) -> list[Account]:
