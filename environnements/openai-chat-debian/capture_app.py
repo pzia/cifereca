@@ -14,7 +14,7 @@ import sys
 import time
 import traceback
 
-from PIL import Image, ImageGrab
+from PIL import Image, ImageChops, ImageGrab
 from x11_input import X11Input
 
 
@@ -66,6 +66,7 @@ def main() -> int:
     }
     process: subprocess.Popen | None = None
     device: X11Input | None = None
+    before_actions: Image.Image | None = None
     return_code = 1
     try:
         process = subprocess.Popen(command, cwd=args.cwd.resolve(), env=os.environ.copy())
@@ -85,6 +86,7 @@ def main() -> int:
             time.sleep(args.wait)
 
         if args.click or args.type_text or args.key:
+            before_actions = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
             device = X11Input()
         for x, y in args.click:
             device.click(x, y)
@@ -111,6 +113,15 @@ def main() -> int:
         if process.poll() is not None:
             raise RuntimeError(f"GTK application closed before capture (exit {process.returncode}).")
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+        if before_actions is not None:
+            after_actions = image.convert("RGB")
+            if before_actions.size != after_actions.size:
+                report["visual_change_ratio"] = 1.0
+            else:
+                diff = ImageChops.difference(before_actions, after_actions).convert("L")
+                significant = diff.point(lambda value: 255 if value > 12 else 0)
+                changed_pixels = significant.histogram()[255]
+                report["visual_change_ratio"] = changed_pixels / (after_actions.width * after_actions.height)
         image.save(output, format="PNG")
         with Image.open(output) as image:
             image.load()
