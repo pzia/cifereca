@@ -22,6 +22,19 @@ SCENARIOS = {
         "fixture": "startup",
         "description": "Démarrage réel de CIFERECA et apparition d'une surface GTK non vide.",
         "args": ["--no-plugins"],
+        "capture_args": ["--wait", "1.0"],
+    },
+    "core-navigation": {
+        "plugin": "core",
+        "fixture": "startup",
+        "description": "Interaction X11 réelle depuis l'écran de démarrage vers le shell principal.",
+        "args": ["--no-plugins"],
+        "capture_args": [
+            "--wait", "0.75",
+            "--click", "458,501",
+            "--settle-after-actions", "2.0",
+        ],
+        "min_visual_change_ratio": 0.05,
     },
 }
 
@@ -115,6 +128,7 @@ def main() -> int:
             env.update({
                 "GDK_BACKEND": "x11",
                 "PYTHONPATH": str(ROOT / "src"),
+                "CODEX_HEADLESS_SCREEN": "1280x1024x24",
             })
             scenario_dir = args.out / name
             scenario_dir.mkdir(parents=True, exist_ok=True)
@@ -124,8 +138,9 @@ def main() -> int:
             trace_path = scenario_dir / "trace.jsonl"
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
             command = [
-                xvfb, "-a", args.python, str(CAPTURE),
+                xvfb, "-a", "-s", "-screen 0 1280x1024x24", args.python, str(CAPTURE),
                 "--startup-timeout", str(args.startup_timeout),
+                *scenario.get("capture_args", []),
                 "--out", str(png),
                 "--cwd", str(ROOT),
                 "--",
@@ -142,25 +157,49 @@ def main() -> int:
                     encoding="utf-8",
                 )
             report = png.with_suffix(".json")
+            returncode = completed.returncode
+            assertion_error = None
+            visual_change_ratio = None
+            if report.exists():
+                report_data = json.loads(report.read_text(encoding="utf-8"))
+                visual_change_ratio = report_data.get("visual_change_ratio")
+            minimum_change = scenario.get("min_visual_change_ratio")
+            if returncode == 0 and minimum_change is not None:
+                if visual_change_ratio is None:
+                    assertion_error = "Le rapport de capture ne contient pas visual_change_ratio."
+                elif visual_change_ratio < minimum_change:
+                    assertion_error = (
+                        f"Navigation non observée: visual_change_ratio={visual_change_ratio:.4f} "
+                        f"< {minimum_change:.4f}."
+                    )
+                if assertion_error:
+                    returncode = 1
+                    with stderr_path.open("a", encoding="utf-8") as stderr:
+                        stderr.write(assertion_error + "\n")
             _event(
                 trace_path, name, "scenario_end",
-                returncode=completed.returncode,
+                returncode=returncode,
                 screenshot=png.exists(),
                 report=report.exists(),
+                visual_change_ratio=visual_change_ratio,
+                assertion_error=assertion_error,
             )
             results.append({
                 "scenario": name,
                 "plugin": scenario["plugin"],
-                "returncode": completed.returncode,
+                "description": scenario["description"],
+                "returncode": returncode,
+                "visual_change_ratio": visual_change_ratio,
+                "assertion_error": assertion_error,
                 "report": str(report),
                 "screenshot": str(png) if png.exists() else None,
                 "stdout": str(stdout_path),
                 "stderr": str(stderr_path),
                 "trace": str(trace_path),
             })
-            if completed.returncode:
+            if returncode:
                 (args.out / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
-                return completed.returncode
+                return returncode
 
     (args.out / "summary.json").write_text(json.dumps(results, indent=2) + "\n")
     return 0

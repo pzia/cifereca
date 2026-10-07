@@ -1,0 +1,17 @@
+name = "e2e-empty-profile"
+description = "État E2E minimal : bibliothèque vide, aucun service externe."
+
+[runtime]
+startup_timeout_seconds = 10
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = []
+copy_installed_plugins = false
+width = 1000
+height = 700
+
+[library]
+epubs = 0
+seed = 20261007

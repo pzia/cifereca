@@ -14,7 +14,7 @@ import sys
 import time
 import traceback
 
-from PIL import Image, ImageGrab
+from PIL import Image, ImageChops, ImageGrab
 from x11_input import X11Input
 
 
@@ -29,6 +29,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wait", type=float, default=0.0, help="legacy extra delay after visibility detection")
     parser.add_argument("--startup-timeout", type=float, default=10.0, help="maximum seconds to wait for a non-blank application surface")
+    parser.add_argument("--settle-after-actions", type=float, default=0.0, help="seconds to wait after injected input before capture")
     parser.add_argument("--out", type=Path, default=Path("evidence/application.png"), help="PNG screenshot path")
     parser.add_argument("--click", action="append", default=[], type=coordinate, metavar="X,Y", help="inject a mouse click (repeatable)")
     parser.add_argument("--type-text", help="inject keyboard text after the clicks; omitted from the report")
@@ -43,6 +44,8 @@ def main() -> int:
         parser.error("--wait must be between 0 and 60 seconds")
     if args.startup_timeout <= 0 or args.startup_timeout > 60:
         parser.error("--startup-timeout must be in ]0,60] seconds")
+    if args.settle_after_actions < 0 or args.settle_after_actions > 60:
+        parser.error("--settle-after-actions must be between 0 and 60 seconds")
     if not os.environ.get("DISPLAY") or os.environ.get("GDK_BACKEND") != "x11":
         parser.error("run capture-app under the Xvfb launcher: ./headless -- ./capture-app ...")
 
@@ -57,11 +60,13 @@ def main() -> int:
         "screen": os.environ.get("CODEX_HEADLESS_SCREEN", "1060x700x24"),
         "application": Path(command[0]).name,
         "working_directory": str(args.cwd.resolve()),
+        "settle_after_actions_seconds": args.settle_after_actions,
         "actions": [],
         "screenshot": None,
     }
     process: subprocess.Popen | None = None
     device: X11Input | None = None
+    before_actions: Image.Image | None = None
     return_code = 1
     try:
         process = subprocess.Popen(command, cwd=args.cwd.resolve(), env=os.environ.copy())
@@ -81,6 +86,7 @@ def main() -> int:
             time.sleep(args.wait)
 
         if args.click or args.type_text or args.key:
+            before_actions = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
             device = X11Input()
         for x, y in args.click:
             device.click(x, y)
@@ -98,9 +104,24 @@ def main() -> int:
             report["actions"].append({"type": "key", "keysym": key})
             time.sleep(0.1)
 
+        if report["actions"] and args.settle_after_actions:
+            time.sleep(args.settle_after_actions)
+            report["settle_after_actions_applied"] = True
+        else:
+            report["settle_after_actions_applied"] = False
+
         if process.poll() is not None:
             raise RuntimeError(f"GTK application closed before capture (exit {process.returncode}).")
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+        if before_actions is not None:
+            after_actions = image.convert("RGB")
+            if before_actions.size != after_actions.size:
+                report["visual_change_ratio"] = 1.0
+            else:
+                diff = ImageChops.difference(before_actions, after_actions).convert("L")
+                significant = diff.point(lambda value: 255 if value > 12 else 0)
+                changed_pixels = significant.histogram()[255]
+                report["visual_change_ratio"] = changed_pixels / (after_actions.width * after_actions.height)
         image.save(output, format="PNG")
         with Image.open(output) as image:
             image.load()

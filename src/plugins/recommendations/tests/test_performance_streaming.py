@@ -1,8 +1,10 @@
+from collections import Counter
 from types import SimpleNamespace
 
+import recommendation_engine as engine
 import recommendation_engine_fast as fast
 from recommendation_engine import RankedCandidate
-from recommendation_service_v022 import compute_recommendations
+from recommendation_service_v022 import _provisional_head, compute_recommendations
 
 
 class Control:
@@ -116,3 +118,145 @@ def test_fast_mmr_extracts_candidate_features_once(monkeypatch):
     result = fast._mmr_fast(rows, exploration=25, limit=20)
     assert len(result) == 20
     assert calls == 40
+
+
+class GuardedCounter(Counter):
+    def values(self):
+        raise AssertionError("profile counter rescan during candidate scoring")
+
+    def __add__(self, other):
+        raise AssertionError("profile counter rebuilt during candidate scoring")
+
+
+def test_candidate_scoring_reuses_precomputed_profile_aggregates():
+    profile = engine.build_profile([
+        {
+            "title": "Histoire de Paris",
+            "author": "Alice",
+            "description": "mémoire urbaine architecture",
+            "metadata": {"subjects": ["histoire", "ville"], "series": ["Paris"]},
+        },
+        {
+            "title": "Mémoire des rues",
+            "author": "Alice",
+            "description": "archives et patrimoine",
+            "metadata": {"subjects": ["histoire", "patrimoine"], "series": ["Paris"]},
+        },
+    ])
+
+    # Candidate scoring must use only the aggregates prepared once by build_profile().
+    # Re-scanning values() or rebuilding title_terms + description_terms would fail here.
+    for name in (
+        "authors",
+        "subjects",
+        "series",
+        "title_terms",
+        "description_terms",
+        "lexical_terms",
+    ):
+        object.__setattr__(profile, name, GuardedCounter(getattr(profile, name)))
+
+    score, reasons = engine.content_score(
+        profile,
+        {
+            "title": "Paris, mémoire d'une ville",
+            "author": "Alice",
+            "description": "histoire architecture patrimoine",
+            "metadata": {"subjects": ["histoire", "patrimoine"], "series": ["Paris"]},
+        },
+    )
+
+    assert score > 0
+    assert reasons
+
+
+def test_provisional_head_matches_full_sort_without_returning_the_tail():
+    provisional = {
+        f"k-{i}": (
+            {"title": f"Book {i:03d}", "author": f"Author {i % 7}"},
+            float((i * 37) % 101),
+            ("test",),
+            ["p"],
+        )
+        for i in range(250)
+    }
+    expected = sorted(
+        (
+            RankedCandidate(
+                item=item,
+                score=max(1, min(100, int(round(score)))),
+                reasons=reasons,
+                sources=tuple(sources),
+                query_hits=0,
+            )
+            for item, score, reasons, sources in provisional.values()
+            if score > 0.0
+        ),
+        key=lambda row: (
+            -row.score,
+            engine.normalize(engine.get_field(row.item, "title", "")),
+            engine.normalize(engine.get_field(row.item, "author", "")),
+        ),
+    )[:40]
+
+    actual = _provisional_head(provisional, 40)
+
+    assert len(actual) == 40
+    assert [(row.score, row.item["title"]) for row in actual] == [
+        (row.score, row.item["title"]) for row in expected
+    ]
+
+
+
+def test_repeated_candidates_are_scored_once_across_streaming_and_final_rank(monkeypatch):
+    calls = 0
+    original = fast.content_score
+
+    def counted(profile, item):
+        nonlocal calls
+        calls += 1
+        return original(profile, item)
+
+    monkeypatch.setattr(fast, "content_score", counted)
+
+    repeated = {
+        "isbn": "9781234567890",
+        "title": "Paris et mémoire",
+        "author": "Alice",
+        "description": "histoire patrimoine architecture",
+        "source_provider": "a",
+    }
+
+    class DuplicateCatalog:
+        def searchable_providers(self):
+            return [("a", "Catalogue A"), ("b", "Catalogue B")]
+
+        def search_progressive(self, query, *, on_batch, control=None, **kwargs):
+            on_batch(SimpleNamespace(
+                provider_id="a",
+                results=(dict(repeated),),
+                warnings=(),
+                error_message="",
+                cached=True,
+            ))
+            duplicate = dict(repeated)
+            duplicate["source_provider"] = "b"
+            on_batch(SimpleNamespace(
+                provider_id="b",
+                results=(duplicate,),
+                warnings=(),
+                error_message="",
+                cached=True,
+            ))
+            return SimpleNamespace(warnings=(), cancelled=False)
+
+    result = compute_recommendations(
+        Metadata(),
+        DuplicateCatalog(),
+        "id-1",
+        max_queries=2,
+        partial=lambda _snapshot: None,
+    )
+
+    assert result.ranked
+    assert calls == 1

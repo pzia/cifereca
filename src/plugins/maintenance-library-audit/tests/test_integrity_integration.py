@@ -5,9 +5,15 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from cifereca.artifact_runtime import LibraryReadBrokerImpl
-from cifereca.brokers import MetadataBrokerImpl
-from cifereca.plugin_api import MaintenanceContext, PluginContext, PluginDirectories
+from cifereca.plugin_api import (
+    ArtifactFormat,
+    ArtifactRef,
+    LibraryReadBroker,
+    MaintenanceContext,
+    MetadataBroker,
+    PluginContext,
+    PluginDirectories,
+)
 
 from cifereca_library_audits import IntegrityAuditTool
 
@@ -26,34 +32,8 @@ def write_valid_epub(path: Path) -> None:
         archive.writestr("EPUB/content.xhtml", "<html><body>OK</body></html>")
 
 
-class Storage:
-    def __init__(self, artifacts, placements):
-        self._artifacts = {row["artifact_id"]: dict(row) for row in artifacts}
-        self._placements = [dict(row) for row in placements]
-        self.write_calls = []
-
-    def artifact_get(self, artifact_id):
-        row = self._artifacts.get(str(artifact_id))
-        return dict(row) if row is not None else None
-
-    def placements(self, state=None):
-        rows = self._placements
-        if state is not None:
-            rows = [row for row in rows if row.get("state") == state]
-        return [dict(row) for row in rows]
-
-    def __getattr__(self, name):
-        if name.startswith(("artifact_", "placement_", "metadata_", "book_")):
-            def forbidden(*args, **kwargs):
-                self.write_calls.append((name, args, kwargs))
-                raise AssertionError(f"unexpected storage mutation: {name}")
-            return forbidden
-        raise AttributeError(name)
-
-
-class Service:
-    def __init__(self, storage, entries):
-        self.storage = storage
+class FakeMetadataBroker:
+    def __init__(self, entries):
         self._entries = [dict(row) for row in entries]
 
     def library_entries(self, **options):
@@ -63,6 +43,14 @@ class Service:
             for row in self._entries
             if identity_id is None or row.get("identity_id") == identity_id
         ]
+
+
+class FakeLibraryReadBroker:
+    def __init__(self, artifacts):
+        self._artifacts = dict(artifacts)
+
+    def artifact(self, artifact_id):
+        return self._artifacts.get(str(artifact_id))
 
 
 class Control:
@@ -95,27 +83,22 @@ def test_integrity_audit_through_public_brokers_is_read_only():
         formats = ["epub", "epub", "pdf", "epub"]
         ids = ["a-good", "a-bad-epub", "a-bad-pdf", "a-missing"]
 
-        artifacts = []
-        placements = []
+        artifacts = {}
         entries = []
         for artifact_id, path, media_format in zip(ids, paths, formats):
             exists = path.exists()
-            artifacts.append({
-                "artifact_id": artifact_id,
-                "media_format": media_format,
-                "mime_type": "application/epub+zip" if media_format == "epub" else "application/pdf",
-                "size": path.stat().st_size if exists else 321,
-                "sha256": sha256(path) if exists else "f" * 64,
-                "metadata": {},
-            })
-            placements.append({
-                "placement_id": "p-" + artifact_id,
-                "artifact_id": artifact_id,
-                "identity_id": "id1",
-                "path": str(path),
-                "state": "present",
-                "metadata": {"placement_kind": "library"},
-            })
+            size = path.stat().st_size if exists else 321
+            digest = sha256(path) if exists else "f" * 64
+            artifacts[artifact_id] = ArtifactRef(
+                artifact_id=artifact_id,
+                book_id=None,
+                format=ArtifactFormat(
+                    media_type="application/epub+zip" if media_format == "epub" else "application/pdf",
+                    format=media_format,
+                ),
+                size_bytes=size,
+                sha256=digest,
+            )
             entries.append({
                 "artifact_id": artifact_id,
                 "identity_id": "id1",
@@ -126,13 +109,16 @@ def test_integrity_audit_through_public_brokers_is_read_only():
             })
 
         # Force independent size/hash findings on the malformed PDF.
-        artifacts[2]["size"] += 5
-        artifacts[2]["sha256"] = "0" * 64
+        artifacts["a-bad-pdf"] = ArtifactRef(
+            artifact_id="a-bad-pdf",
+            book_id=None,
+            format=ArtifactFormat(media_type="application/pdf", format="pdf"),
+            size_bytes=bad_pdf.stat().st_size + 5,
+            sha256="0" * 64,
+        )
 
-        storage = Storage(artifacts, placements)
-        service = Service(storage, entries)
-        metadata = MetadataBrokerImpl(service)
-        library_read = LibraryReadBrokerImpl(service)
+        metadata: MetadataBroker = FakeMetadataBroker(entries)
+        library_read: LibraryReadBroker = FakeLibraryReadBroker(artifacts)
 
         context = PluginContext(
             plugin_id="maintenance.audit.integrity",
@@ -163,5 +149,8 @@ def test_integrity_audit_through_public_brokers_is_read_only():
         assert result.facts["issues"]["missing"] == 1
         assert control.events[-1]["message"] == "Audit d’intégrité terminé"
 
-        # The audit must remain observational even when inconsistencies exist.
-        assert storage.write_calls == []
+        # The read fakes expose no mutation method: any attempted write fails immediately.
+        assert not any(
+            name.startswith(("put", "update", "delete", "write", "mutate"))
+            for name in dir(metadata) + dir(library_read)
+        )

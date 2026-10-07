@@ -122,6 +122,11 @@ class ProfileVector:
     series: Counter[str]
     title_terms: Counter[str]
     description_terms: Counter[str]
+    lexical_terms: Counter[str]
+    max_author_count: int
+    max_subject_count: int
+    max_series_count: int
+    max_lexical_count: int
     identifiers: frozenset[str]
     existing_pairs: frozenset[str]
     total_books: int
@@ -158,12 +163,18 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
         if title:
             existing_pairs.add(f"{title}|{auth}")
 
+    lexical_terms = title_terms + description_terms
     return ProfileVector(
         authors=authors,
         subjects=subjects,
         series=series,
         title_terms=title_terms,
         description_terms=description_terms,
+        lexical_terms=lexical_terms,
+        max_author_count=max(authors.values(), default=1),
+        max_subject_count=max(subjects.values(), default=1),
+        max_series_count=max(series.values(), default=1),
+        max_lexical_count=max(lexical_terms.values(), default=1),
         identifiers=frozenset(identifiers),
         existing_pairs=frozenset(existing_pairs),
         total_books=len(books),
@@ -179,10 +190,16 @@ def is_already_present(profile: ProfileVector, item: Any) -> bool:
     return bool(title and f"{title}|{auth}" in profile.existing_pairs)
 
 
-def _weighted_exact(counter: Counter[str], values: Iterable[str], cap: float) -> tuple[float, list[str]]:
+def _weighted_exact(
+    counter: Counter[str],
+    values: Iterable[str],
+    cap: float,
+    *,
+    max_count: int | None = None,
+) -> tuple[float, list[str]]:
     if not counter:
         return 0.0, []
-    max_count = max(counter.values()) or 1
+    max_count = max(1, int(max_count if max_count is not None else max(counter.values(), default=1)))
     raw = 0.0
     matched: list[str] = []
     seen: set[str] = set()
@@ -195,13 +212,19 @@ def _weighted_exact(counter: Counter[str], values: Iterable[str], cap: float) ->
     return min(cap, cap * (1.0 - math.exp(-raw))), matched
 
 
-def _weighted_tokens(counter: Counter[str], values: set[str], cap: float) -> tuple[float, list[str]]:
+def _weighted_tokens(
+    counter: Counter[str],
+    values: set[str],
+    cap: float,
+    *,
+    max_count: int | None = None,
+) -> tuple[float, list[str]]:
     if not counter or not values:
         return 0.0, []
     common = sorted(values.intersection(counter.keys()), key=lambda x: (-counter[x], x))
     if not common:
         return 0.0, []
-    max_count = max(counter.values()) or 1
+    max_count = max(1, int(max_count if max_count is not None else max(counter.values(), default=1)))
     strength = sum(0.5 + 0.5 * counter[x] / max_count for x in common[:8])
     return min(cap, cap * (1.0 - math.exp(-strength / 2.0))), common
 
@@ -212,7 +235,12 @@ def content_score(profile: ProfileVector, item: Any) -> tuple[float, tuple[str, 
     score = 0.0
     reasons: list[str] = []
 
-    author_score, authors = _weighted_exact(profile.authors, author_values(item), 42.0)
+    author_score, authors = _weighted_exact(
+        profile.authors,
+        author_values(item),
+        42.0,
+        max_count=profile.max_author_count,
+    )
     score += author_score
     if authors:
         count = max(profile.authors[normalize(a)] for a in authors)
@@ -221,20 +249,34 @@ def content_score(profile: ProfileVector, item: Any) -> tuple[float, tuple[str, 
     subject_tokens: set[str] = set()
     for value in subject_values(item):
         subject_tokens.update(tokens(value))
-    subject_score, subjects = _weighted_tokens(profile.subjects, subject_tokens, 27.0)
+    subject_score, subjects = _weighted_tokens(
+        profile.subjects,
+        subject_tokens,
+        27.0,
+        max_count=profile.max_subject_count,
+    )
     score += subject_score
     if subjects:
         reasons.append("thèmes proches : " + ", ".join(subjects[:3]))
 
-    series_score, series = _weighted_exact(profile.series, series_values(item), 16.0)
+    series_score, series = _weighted_exact(
+        profile.series,
+        series_values(item),
+        16.0,
+        max_count=profile.max_series_count,
+    )
     score += series_score
     if series:
         reasons.append("série / collection proche")
 
     candidate_text = tokens(get_field(item, "title", ""))
     candidate_text.update(tokens(get_field(item, "description", "") or metadata(item).get("description")))
-    lexical_profile = profile.title_terms + profile.description_terms
-    lexical_score, lexical = _weighted_tokens(lexical_profile, candidate_text, 10.0)
+    lexical_score, lexical = _weighted_tokens(
+        profile.lexical_terms,
+        candidate_text,
+        10.0,
+        max_count=profile.max_lexical_count,
+    )
     score += lexical_score
     if lexical and len(reasons) < 3:
         reasons.append("vocabulaire proche : " + ", ".join(lexical[:3]))

@@ -699,6 +699,14 @@ class MasterDetailPage(Gtk.Box):
         self.paned.set_shrink_start_child(True)
         self.paned.set_shrink_end_child(True)
         self.paned.set_vexpand(True)
+
+        def adapt_paned_position(paned, _pspec=None) -> None:
+            max_position = int(paned.get_property("max-position"))
+            if max_position <= 0:
+                return
+            paned.set_position(min(440, max(0, max_position - 240)))
+
+        self.paned.connect("notify::max-position", adapt_paned_position)
         self.append(self.paned)
 
         self.list_stack = Gtk.Stack()
@@ -1214,7 +1222,7 @@ class MainWindow(Adw.ApplicationWindow):
         subtitle = Gtk.Label(label="Connexion automatique aux providers configurés. Les identifiants sont gérés dans les préférences locales.", xalign=0)
         subtitle.set_wrap(True); add_css(subtitle, "dim-label"); card.append(subtitle)
         self.startup_status = Gtk.Label(label="Initialisation…", xalign=0); self.startup_status.set_wrap(True); card.append(self.startup_status)
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        actions = AdaptiveActionBar(source=heading)
         self.startup_connect_button = Gtk.Button(label="Connecter les sources"); self.startup_connect_button.add_css_class("suggested-action")
         self.startup_connect_button.connect("clicked", lambda _b: self.connect_configured_sources()); actions.append(self.startup_connect_button)
         settings = Gtk.Button(label="Configurer les sources"); settings.connect("clicked", lambda _b: self._open_prelogin_diagnostics()); actions.append(settings)
@@ -1335,6 +1343,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._nav_group_expanded = {}
         self.view_stack = Gtk.Stack()
         self.view_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.view_stack.set_hhomogeneous(False)
         self.view_stack.set_hexpand(True); self.view_stack.set_vexpand(True)
         body.append(self.view_stack)
         self._rebuild_plugin_pages()
@@ -1970,7 +1979,7 @@ class MainWindow(Adw.ApplicationWindow):
         heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.append(heading)
         title = Gtk.Label(label="Bibliothèque familiale", xalign=0); title.set_hexpand(True); title.set_wrap(True); add_css(title, "page-title"); heading.append(title)
         subtitle = Gtk.Label(label="État des identités et de la synchronisation automatique", xalign=0); add_css(subtitle, "dim-label"); outer.append(subtitle)
-        actions = AdaptiveActionBar(source=heading)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         refresh = self.action_button("Synchronisation rapide", "view-refresh-symbolic", suggested=True)
         refresh.connect("clicked", lambda _b: self.run_opening_sync(refresh, deep=False)); actions.append(refresh)
         deep = self.action_button("Vérifier toute la bibliothèque", "system-search-symbolic")

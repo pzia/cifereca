@@ -19,7 +19,7 @@ def _module():
 def test_reference_scenario_is_targetable_by_name_and_domain():
     runner = _module()
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
-    assert [name for name, _ in runner.select(None, "core")] == ["startup"]
+    assert [name for name, _ in runner.select(None, "core")] == ["startup", "core-navigation"]
 
 
 def test_reference_scenario_runs_real_cifereca_without_plugins():

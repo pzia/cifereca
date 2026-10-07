@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import heapq
 from typing import Any, Callable
 
 from recommendation_engine import (
@@ -8,12 +9,11 @@ from recommendation_engine import (
     build_profile,
     build_queries,
     candidate_key,
-    content_score,
     get_field,
     is_already_present,
     normalize,
 )
-from recommendation_engine_fast import rank_candidates_prepared
+from recommendation_engine_fast import rank_candidates_prepared, score_candidate_cached
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,34 @@ def _cancelled(control: Any) -> bool:
         return True
 
 
+def _provisional_head(
+    provisional: dict[str, tuple[Any, float, tuple[str, ...], list[str]]],
+    limit: int,
+) -> list[RankedCandidate]:
+    """Return only the useful provisional head without sorting the full candidate set."""
+    maximum = max(1, int(limit))
+    rows = (
+        RankedCandidate(
+            item=item,
+            score=max(1, min(100, int(round(score)))),
+            reasons=reasons,
+            sources=tuple(sources),
+            query_hits=0,
+        )
+        for item, score, reasons, sources in provisional.values()
+        if score > 0.0
+    )
+    return heapq.nsmallest(
+        maximum,
+        rows,
+        key=lambda row: (
+            -row.score,
+            normalize(get_field(row.item, "title", "")),
+            normalize(get_field(row.item, "author", "")),
+        ),
+    )
+
+
 def compute_recommendations(
     metadata_broker: Any,
     catalog_broker: Any,
@@ -99,13 +127,14 @@ def compute_recommendations(
     # Provisional ranking is intentionally lightweight: content score once per
     # candidate, no RRF/MMR. Full ranking runs once after all catalog queries.
     provisional: dict[str, tuple[Any, float, tuple[str, ...], list[str]]] = {}
+    score_cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]] = {}
 
     def ingest_provisional(rows: list[Any]) -> None:
         for item in rows:
             key = candidate_key(item)
             if is_already_present(profile, item):
                 continue
-            score, reasons = content_score(profile, item)
+            score, reasons = score_candidate_cached(profile, item, score_cache)
             source = str(get_field(item, "source_provider", "") or "")
             previous = provisional.get(key)
             if previous is None:
@@ -123,27 +152,13 @@ def compute_recommendations(
     def emit_partial(query_index: int, provider_done: int) -> None:
         if partial is None or _cancelled(control):
             return
-        ranked = [
-            RankedCandidate(
-                item=item,
-                score=max(1, min(100, int(round(score)))),
-                reasons=reasons,
-                sources=tuple(sources),
-                query_hits=0,
-            )
-            for item, score, reasons, sources in provisional.values()
-            if score > 0.0
-        ]
-        ranked.sort(
-            key=lambda row: (
-                -row.score,
-                normalize(get_field(row.item, "title", "")),
-                normalize(get_field(row.item, "author", "")),
-            )
+        ranked = _provisional_head(
+            provisional,
+            min(40, max(1, int(max_results))),
         )
         partial(
             RecommendationPartial(
-                ranked=tuple(ranked[: min(40, max(1, int(max_results)))]),
+                ranked=tuple(ranked),
                 query_index=query_index,
                 query_total=len(queries),
                 provider_done=provider_done,
@@ -242,20 +257,7 @@ def compute_recommendations(
             break
 
     if was_cancelled:
-        provisional_rows = sorted(
-            (
-                RankedCandidate(
-                    item,
-                    max(1, min(100, int(round(score)))),
-                    reasons,
-                    tuple(sources),
-                    0,
-                )
-                for item, score, reasons, sources in provisional.values()
-                if score > 0.0
-            ),
-            key=lambda row: (-row.score, normalize(get_field(row.item, "title", ""))),
-        )
+        provisional_rows = _provisional_head(provisional, max_results)
         return RecommendationResult(
             len(books),
             queries,
@@ -275,6 +277,7 @@ def compute_recommendations(
         batches,
         limit=max_results,
         exploration=exploration,
+        score_cache=score_cache,
     )
     return RecommendationResult(
         len(books),

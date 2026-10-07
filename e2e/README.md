@@ -14,6 +14,7 @@ les scénarios ne doivent pas utiliser de `sleep` arbitraire pour synchroniser l
 
 ```bash
 python e2e/run.py --scenario startup
+python e2e/run.py --scenario core-navigation
 python e2e/run.py --plugin core
 ```
 
@@ -38,6 +39,11 @@ inline usuelles `token=...`, `password:...`, etc.
 
 `startup` valide un parcours minimal mais réel : lancement de CIFERECA avec le
 Core seul, maintien du processus et apparition effective d'une surface GTK rendue.
+
+`core-navigation` part du même état isolé, injecte un clic X11 réel sur
+`Connecter les sources`, attend explicitement la stabilisation puis exige un
+changement visuel significatif avant d'accepter la capture. L'écran Xvfb est
+fixé à `1280x1024x24` afin que les coordonnées du scénario restent déterministes.
 
 ## Dépendances Linux
 
