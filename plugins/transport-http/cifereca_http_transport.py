@@ -5,8 +5,10 @@ import logging
 import os
 from pathlib import Path
 import tempfile
+import zipfile
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
+from xml.etree import ElementTree
 
 import httpx
 
@@ -60,6 +62,23 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_epub_package(path: Path) -> bool:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = set(archive.namelist())
+            if archive.read("mimetype").strip() != b"application/epub+zip":
+                return False
+            container = ElementTree.fromstring(archive.read("META-INF/container.xml"))
+            roots = [
+                node.attrib.get("full-path")
+                for node in container.iter()
+                if str(node.tag or "").rsplit("}", 1)[-1].casefold() == "rootfile"
+            ]
+            return bool(roots) and all(root and root in names for root in roots) and archive.testzip() is None
+    except (OSError, KeyError, zipfile.BadZipFile, ElementTree.ParseError):
+        return False
+
+
 class HttpTransport:
     def __init__(self, context) -> None:
         self.context = context
@@ -85,7 +104,7 @@ class HttpTransport:
         requested_timeout = float(source.get("timeout_seconds") or self.timeout_seconds)
         timeout = max(1.0, min(self.timeout_seconds, requested_timeout))
         requested_bytes = int(source.get("max_bytes") or self.max_download_bytes)
-        maximum = max(1024, min(self.max_download_bytes, requested_bytes))
+        maximum = max(1, min(self.max_download_bytes, requested_bytes))
         requested_redirects = int(source.get("max_redirects") if source.get("max_redirects") is not None else self.max_redirects)
         redirects = max(0, min(self.max_redirects, requested_redirects))
         return timeout, maximum, redirects
@@ -185,6 +204,8 @@ class HttpTransport:
                     raise UnsupportedOperation(
                         f"transport.http: artefact invalide ({inspected.reason or 'format inconnu'})"
                     )
+                if expected_format == "epub" and not _validate_epub_package(temporary):
+                    raise UnsupportedOperation("transport.http: artefact EPUB incomplet ou invalide")
                 if inspected.protected is True and not bool(source.get("allow_protected", False)):
                     raise UnsupportedOperation("transport.http: artefact protégé refusé")
 
