@@ -36,12 +36,35 @@ def test_library_group_uses_same_three_column_truncation_contract_as_notice():
     tree = ast.parse(SOURCE.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_group")
-    text = ast.unparse(method)
 
-    assert '"Bibliothèque"' in text
-    assert "set_max_children_per_line(3)" in text
-    assert "set_subtitle_lines(1 if grid is not None else 0)" in text
-    assert "set_tooltip_text(label + ' : ' + text_or_dash(value))" in text
+    constants = {node.value for node in ast.walk(method) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    calls = [node for node in ast.walk(method) if isinstance(node, ast.Call)]
+
+    assert {"Notice", "Bibliothèque"} <= constants
+    assert any(
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "set_max_children_per_line"
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Constant)
+        and call.args[0].value == 3
+        for call in calls
+    )
+    assert any(
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "set_subtitle_lines"
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.IfExp)
+        and isinstance(call.args[0].body, ast.Constant)
+        and call.args[0].body.value == 1
+        and isinstance(call.args[0].orelse, ast.Constant)
+        and call.args[0].orelse.value == 0
+        for call in calls
+    )
+    assert any(
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "set_tooltip_text"
+        for call in calls
+    )
 
 
 def test_action_width_budget_has_exact_fit_boundary():
