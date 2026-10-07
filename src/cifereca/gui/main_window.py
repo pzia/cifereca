@@ -3885,8 +3885,6 @@ class MainWindow(Adw.ApplicationWindow):
         detail = self.library_page.detail
         provider = str(item.get("provider_id") or "local")
         availability = self._library_availability_label(item)
-        if not availability and str(item.get("state") or "") == "local":
-            availability = "Disponible hors ligne"
         identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
         sync_label = self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
         if sync_label == "À jour":
