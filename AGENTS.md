@@ -74,3 +74,32 @@ Pour les tâches spécialisées, utiliser les skills repo-locaux sous `.agents/s
 - `cifereca-tests` : placement et stratégie de tests ;
 - `cifereca-simulation` : faux services et profils fonctionnels ;
 - `cifereca-release` : version, packaging et validation de livraison.
+
+## Rôles de travail des agents
+
+Chaque fil/agent doit choisir **un rôle principal** avant de modifier le dépôt. Le rôle détermine son périmètre, ses fichiers privilégiés et les sujets qu'il doit transmettre à un autre fil plutôt que traiter opportunément.
+
+Rôles disponibles :
+
+- `core-core` : modèle métier, orchestration, services Core, API publique, stockage, configuration et framework de plugins ; voir `.agents/roles/core-core.md`.
+- `core-ui` : IHM GTK/libadwaita, navigation, composants UI partagés, contrats UI publics et ergonomie Core ; voir `.agents/roles/core-ui.md`.
+- `plugins` : architecture transversale des plugins, contrats, packaging, compatibilité et évolutions touchant plusieurs plugins ; voir `.agents/roles/plugins.md`.
+- `plugin-cible` : travail sur un seul plugin fonctionnel, ses tests et sa documentation ; voir `.agents/roles/plugin-cible.md`.
+- `backlog` : analyse du dépôt et création/priorisation d'issues, sans implémentation fonctionnelle par défaut ; voir `.agents/roles/backlog.md`.
+- `e2e` : parcours utilisateur de bout en bout, simulation, environnement GTK, fixtures, captures et diagnostic CI ; voir `.agents/roles/e2e.md`.
+
+### Règles communes de rôle
+
+1. Annoncer ou consigner le rôle choisi dans le handoff, la branche ou l'issue de travail.
+2. Ne pas modifier hors périmètre sauf changement minimal nécessaire à la tâche.
+3. Lorsqu'un besoin appartient clairement à un autre rôle, créer ou enrichir une issue puis faire un handoff explicite.
+4. Ne pas dupliquer un travail déjà pris par un autre fil : vérifier issues/PR/branches actives avant un chantier significatif.
+5. Préférer des branches et PR petites, spécialisées par rôle.
+6. Les changements de contrat public entre Core et plugins exigent coordination entre `core-core` et `plugins`.
+7. Les changements visuels ou de parcours imposent une validation adaptée par `core-ui` ou `e2e`.
+8. Le rôle `backlog` ne fusionne pas implémentation et triage dans la même tâche sauf demande explicite.
+9. Le rôle `e2e` ne corrige pas silencieusement le produit pour faire passer un test : il ouvre/transmet le défaut au rôle propriétaire.
+10. En cas d'ambiguïté, choisir le rôle correspondant au **composant propriétaire de la modification**, pas au symptôme observé.
+
+Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique des règles communes.
+
