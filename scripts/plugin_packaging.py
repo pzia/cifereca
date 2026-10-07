@@ -35,6 +35,8 @@ EXCLUDED_DIRS = {
     ".tox",
     ".venv",
     "dist",
+    "tests",
+    "simulation",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 
