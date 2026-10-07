@@ -807,6 +807,27 @@ class PluginPackagingTests(unittest.TestCase):
             ):
                 build_plugin_zip(plugin, root / "dist")
 
+    def test_packaging_refuses_invalid_embedded_contract_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plugin = make_plugin(
+                root, "alpha", "org.cifereca.provider.alpha", "1.0"
+            )
+            manifest_path = plugin / "cifereca-plugin.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["plugins"][0]["requires_contracts"] = [
+                {
+                    "category": "provider.library",
+                    "contract": "provider.library/not-a-version",
+                }
+            ]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackagingError, r"requires_contracts\[0\]\.version invalide"
+            ):
+                build_plugin_zip(plugin, root / "dist")
+
     def test_packaging_refuses_invalid_package_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
