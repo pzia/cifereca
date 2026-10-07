@@ -27,7 +27,7 @@ from .models import (
     StorageResult,
     StorageTarget,
     SystemRequirement,
-    UiActionContribution, UiPageContribution, UiPageHost, UiIdentityHost, UiIdentityViewHost, UiMasterDetailHost, UiBookMasterDetailView, UiBookListEntry, UiBookDetailAction, UiBookDetailPresentation, UiPageActionHost, UiPageProvider, UiTitlebarProvider, WidgetCatalog,
+    UiActionContribution, UiPageContribution, UiPageHost, UiIdentityHost, UiIdentityViewHost, UiMasterDetailHost, UiBookMasterDetailView, UiBookListEntry, UiBookDetailAction, DocumentLink, UiBookDetailPresentation, UiPageActionHost, UiPageProvider, UiTitlebarProvider, WidgetCatalog,
     ResolvedPluginService, Provenance, BookRef, DetailField, DetailSection, FacetTag, ArtifactFormat, ArtifactRef, ArtifactVariant,
     ArtifactPlacementRef, ArtifactPossessionRef, LogicalBookArtifacts, LibraryMutationOperation, LibraryMutationRequest, LibraryMutationPlan, LibraryMutationResult,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncSourceRef, AdeptProfileRef, RuntimeAcquisitionCapabilities,
@@ -59,6 +59,7 @@ from .acquisition_recipes import (
     BundleRecipeError, BundleTrack, BundleAcquisitionRecipe,
     normalize_audio_format, validate_audio_bundle_manifest,
 )
+from .document_links import document_links
 
 __all__ = [
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
@@ -79,10 +80,10 @@ __all__ = [
     "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text",
     "normalize_acquisition_offers", "attested_offer_formats", "rank_acquisition_offers", "acquisition_format_projection", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
     "ContractStatus", "ContractDefinition", "ContractCheck", "CONTRACT_REGISTRY", "contract_definition", "split_contract", "capability_name_valid", "contract_version_matches", "check_service_contract",
-    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
-    "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest",
+    "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest", "document_links",
     "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "Medium", "SearchResult",
     "CredentialField", "ProviderCapabilities", "ProviderSearchCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",
