@@ -2541,7 +2541,7 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _build_search_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Recherche", "", "Lancez une recherche", "Recherche dans le connu, puis En ligne sur demande.")
+        page = MasterDetailPage(self, "Recherche", "", "Lancez une recherche", "Recherche dans le connu, puis extension aux catalogues en ligne sur demande.")
         self.search_controls = self._query_controls(self._search_controls_changed, self._search_enter)
         page.toolbar.append(self.search_controls)
         self.search_entry = self.search_controls.entry
@@ -2562,7 +2562,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._search_interaction_controllers = (keys, clicks, scroll)
         self.search_button = Gtk.Button(label="Recherche"); self.search_button.add_css_class("suggested-action")
         self.search_button.connect("clicked", lambda _b: self.run_search(False)); self.search_controls.primary.append(self.search_button)
-        self.search_global_button = Gtk.Button(label="En ligne")
+        self.search_global_button = Gtk.Button(label="Étendre en ligne")
+        self.search_global_button.set_tooltip_text("Interroger les catalogues distants avec la requête et les filtres actuels")
         self.search_global_button.connect("clicked", lambda _b: self.run_search(True)); self.search_controls.primary.append(self.search_global_button)
         page.connect_selected(self._search_selected)
         self._search_generation = getattr(self, "_search_generation", 0) + 1
