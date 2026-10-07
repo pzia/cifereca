@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from cifereca.plugin_api import inspect_artifact_content
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from cifereca.plugin_api import inspect_artifact_content, publish_artifact_content
 
 
 def test_public_artifact_content_inspection_accepts_acsm():
@@ -13,3 +16,13 @@ def test_public_artifact_content_inspection_accepts_acsm():
 def test_public_artifact_content_inspection_rejects_html_as_acsm():
     result = inspect_artifact_content(b"<html>login</html>", "acsm", strict_structure=True)
     assert not result.valid
+
+
+def test_public_artifact_content_publication_is_atomic_and_replaces_destination():
+    with TemporaryDirectory() as tmp:
+        destination = Path(tmp) / "book.acsm"
+        destination.write_bytes(b"old")
+        returned = publish_artifact_content(destination, b"new")
+        assert returned == destination
+        assert destination.read_bytes() == b"new"
+        assert not list(destination.parent.glob(f".{destination.name}.*.part"))
