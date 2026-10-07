@@ -109,13 +109,18 @@ jobs:
         run: python -m pip wheel --no-deps --no-build-isolation . -w dist
 
       - name: Smoke installed Core wheel
+        env:
+          CIFERECA_SMOKE_VENV: /tmp/cifereca-release-installed
         run: bash scripts/ci-smoke-installed-wheel.sh dist/cifereca-*.whl
 
       - name: Build plugin bundle
         run: python scripts/package-all-in-one.py
 
-      - name: Build development snapshot
-        run: python scripts/package-dev-snapshot.py
+      - name: Build and validate development snapshot
+        run: |
+          python scripts/package-dev-snapshot.py \
+            --validate-with-update-dev \
+            --update-dev /tmp/cifereca-release-installed/bin/cifereca-update-dev
 
       - name: Generate SHA-256 checksums
         shell: bash
