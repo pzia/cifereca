@@ -31,7 +31,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install Core test dependencies
-        run: python -m pip install --disable-pip-version-check -e ".[dev]" "Pillow>=10"
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade pip
+          python -m pip install --disable-pip-version-check -e ".[dev]" "Pillow>=10"
 
       - name: Run Core tests
         run: python -m pytest -q tests
