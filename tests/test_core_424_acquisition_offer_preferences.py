@@ -168,6 +168,7 @@ def test_provider_base_keeps_legacy_empty_offer_contract():
         descriptor=ProviderDescriptor(
             id="minimal",
             display_name="Minimal",
+            description="Minimal provider",
             state="ready",
             capabilities=ProviderCapabilities(search=True),
         ),
