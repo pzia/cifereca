@@ -1,18 +1,13 @@
 name: Package plugins
 
 on:
-  pull_request:
-    paths:
-      - "src/plugins/**"
-      - "scripts/**"
-      - ".github/workflows/package-plugins.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -1,20 +1,13 @@
 name: GTK headless smoke
 
 on:
-  pull_request:
-    paths:
-      - "src/cifereca/app.py"
-      - "src/cifereca/gui/**"
-      - "src/cifereca/builtin_ui/**"
-      - "environnements/chatgpt-work/**"
-      - ".github/workflows/gtk-smoke.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: gtk-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: gtk-smoke-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

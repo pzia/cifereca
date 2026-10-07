@@ -1,20 +1,14 @@
 name: E2E Smoke
 
 on:
-  pull_request:
-    paths:
-      - "e2e/**"
-      - "src/cifereca/**"
-      - "environnements/openai-chat-debian/capture_app.py"
-      - ".github/workflows/e2e-smoke.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: e2e-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   startup:
