@@ -25,6 +25,29 @@ def _release_metadata() -> dict[str, Any]:
     return {}
 
 
+def _runtime_state() -> dict[str, Any]:
+    try:
+        from . import updater
+        root = updater.install_root()
+        current = updater._symlink_target(root / "current")
+        previous = updater._symlink_target(root / "previous")
+        executing = None
+        for parent in Path(__file__).resolve().parents:
+            if (parent / ".cifereca-install.json").is_file():
+                executing = parent.resolve()
+                break
+        backups = Path(updater.state_dir() / "update-backups") if hasattr(updater, "state_dir") else None
+        return {
+            "status": "ok" if current is not None and executing is not None and current.resolve() == executing else "warning",
+            "managed": current is not None,
+            "current_matches_process": bool(current is not None and executing is not None and current.resolve() == executing),
+            "previous_present": bool(previous is not None and previous.is_dir()),
+            "backup_count": len([p for p in backups.iterdir() if p.is_dir()]) if backups is not None and backups.is_dir() else 0,
+        }
+    except Exception as exc:
+        return {"status": "error", "error_type": type(exc).__name__}
+
+
 def _database_state() -> dict[str, Any]:
     path = database_file()
     result: dict[str, Any] = {
@@ -118,6 +141,7 @@ def _plugin_state(manager: Any, *, verbose: bool) -> dict[str, Any]:
 def build_support_report(service: Any, *, verbose: bool = False) -> dict[str, Any]:
     install = _release_metadata()
     manager = getattr(service, "plugin_manager", None) or getattr(service, "_plugin_manager", None)
+    runtime = _runtime_state()
     db = _database_state()
     cfg = _config_state()
     plugins = _plugin_state(manager, verbose=verbose)
@@ -138,6 +162,7 @@ def build_support_report(service: Any, *, verbose: bool = False) -> dict[str, An
         checks.append({"check_id": "core.active_checks", "status": "error", "error_type": type(exc).__name__})
 
     statuses = [
+        str(runtime.get("status") or "unknown"),
         str(db.get("status") or "unknown"),
         str(cfg.get("status") or "unknown"),
         str(plugins.get("status") or "unknown"),
@@ -160,6 +185,7 @@ def build_support_report(service: Any, *, verbose: bool = False) -> dict[str, An
             "commit": provenance.get("commit") or "",
             "installed_at": install.get("installed_at") or "",
         },
+        "runtime": runtime,
         "database": db,
         "config": cfg,
         "plugins": plugins,
@@ -171,6 +197,7 @@ def build_support_report(service: Any, *, verbose: bool = False) -> dict[str, An
 def support_report_text(service: Any, *, verbose: bool = False) -> str:
     report = build_support_report(service, verbose=verbose)
     core = report["core"]
+    runtime = report["runtime"]
     db = report["database"]
     cfg = report["config"]
     plugins = report["plugins"]
@@ -187,6 +214,13 @@ def support_report_text(service: Any, *, verbose: bool = False) -> str:
         f"ref: {core.get('ref') or '-'}",
         f"commit: {core.get('commit') or '-'}",
         f"installed_at: {core.get('installed_at') or '-'}",
+        "",
+        "[RUNTIME]",
+        f"status: {runtime.get('status')}",
+        f"managed: {runtime.get('managed')}",
+        f"current_matches_process: {runtime.get('current_matches_process')}",
+        f"previous_present: {runtime.get('previous_present')}",
+        f"backup_count: {runtime.get('backup_count', 0)}",
         "",
         "[DATABASE]",
         f"status: {db.get('status')}",
