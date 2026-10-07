@@ -61,16 +61,64 @@ class ScopedCacheBroker:
     def _plugin_root(self) -> Path:
         return cache_dir() / "plugins" / self.plugin_id
 
+    @property
+    def _db_namespace(self) -> str:
+        return "plugin:" + self.plugin_id
+
+    @staticmethod
+    def _key(value: str) -> str:
+        key = str(value)
+        if not key:
+            raise ValueError("cache key must not be empty")
+        return key
+
+    def get(self, key: str, default: Any = None) -> Any:
+        value = self.service.storage.cache_get(self._db_namespace, self._key(key))
+        return default if value is None else value
+
+    def put(self, key: str, value: Any, *, ttl_seconds: int = 300) -> None:
+        ttl = int(ttl_seconds)
+        if ttl < 1:
+            raise ValueError("ttl_seconds must be >= 1")
+        self.service.storage.cache_put(self._db_namespace, self._key(key), value, ttl)
+
+    def delete(self, key: str) -> bool:
+        return bool(self.service.storage.cache_delete(self._db_namespace, self._key(key)))
+
     def _core_db_namespaces(self) -> list[CacheNamespaceInfo]:
-        return [
-            CacheNamespaceInfo(
-                namespace_id="db:" + str(row["namespace"]), owner="core", scope="core",
-                entries=int(row["entries"]), size_bytes=int(row["size_bytes"]),
-                expired_entries=int(row["expired_entries"]), purgeable=True,
-                description="Cache SQLite géré par le Core",
-            )
-            for row in self.service.storage.cache_namespace_stats()
-        ]
+        rows: list[CacheNamespaceInfo] = []
+        for row in self.service.storage.cache_namespace_stats():
+            raw = str(row["namespace"])
+            plugin_owned = raw.startswith("plugin:") and bool(raw.split(":", 1)[1])
+            owner = raw.split(":", 1)[1] if plugin_owned else "core"
+            rows.append(CacheNamespaceInfo(
+                namespace_id="db:" + raw,
+                owner=owner,
+                scope="plugin" if plugin_owned else "core",
+                entries=int(row["entries"]),
+                size_bytes=int(row["size_bytes"]),
+                expired_entries=int(row["expired_entries"]),
+                purgeable=True,
+                description="Cache clé/valeur TTL du plugin" if plugin_owned else "Cache SQLite géré par le Core",
+            ))
+        return rows
+
+    def _plugin_db_namespace(self, plugin_id: str) -> CacheNamespaceInfo:
+        raw = "plugin:" + plugin_id
+        row = next(
+            (item for item in self.service.storage.cache_namespace_stats() if str(item["namespace"]) == raw),
+            None,
+        )
+        return CacheNamespaceInfo(
+            namespace_id="db:" + raw,
+            owner=plugin_id,
+            scope="plugin",
+            entries=int((row or {}).get("entries", 0)),
+            size_bytes=int((row or {}).get("size_bytes", 0)),
+            expired_entries=int((row or {}).get("expired_entries", 0)),
+            purgeable=True,
+            description="Cache clé/valeur TTL du plugin",
+        )
 
     def _plugin_namespace(self, plugin_id: str) -> CacheNamespaceInfo:
         root = cache_dir() / "plugins" / plugin_id
@@ -83,7 +131,9 @@ class ScopedCacheBroker:
 
     def namespaces(self) -> tuple[CacheNamespaceInfo, ...]:
         if not self.allow_global:
-            return (self._plugin_namespace(self.plugin_id),)
+            rows = [self._plugin_db_namespace(self.plugin_id), self._plugin_namespace(self.plugin_id)]
+            rows.sort(key=lambda item: item.namespace_id)
+            return tuple(rows)
         rows = self._core_db_namespaces()
         cover_root = cache_dir() / "epub-covers-v1"
         count, size = _tree_stats(cover_root)
@@ -102,7 +152,10 @@ class ScopedCacheBroker:
     def _allowed(self, namespace_id: str) -> bool:
         if self.allow_global:
             return True
-        return namespace_id == "plugin:" + self.plugin_id
+        return namespace_id in {
+            "plugin:" + self.plugin_id,
+            "db:plugin:" + self.plugin_id,
+        }
 
     def purge(self, namespace_id: str = "", *, expired_only: bool = False) -> CachePurgeResult:
         requested = [namespace_id] if namespace_id else [row.namespace_id for row in self.namespaces()]
@@ -114,9 +167,6 @@ class ScopedCacheBroker:
                 warnings.append(f"namespace interdit: {ns}")
                 continue
             if ns.startswith("db:"):
-                if not self.allow_global:
-                    warnings.append(f"namespace interdit: {ns}")
-                    continue
                 count, size = self.service.storage.cache_delete_namespace_counted(ns[3:], expired_only=expired_only)
                 removed += count; freed += size; done.append(ns)
                 continue
@@ -148,6 +198,15 @@ class CacheBrokerImpl:
 
     def for_plugin(self, plugin_id: str, *, trusted: bool = False) -> ScopedCacheBroker:
         return ScopedCacheBroker(self.service, str(plugin_id), allow_global=bool(trusted))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return ScopedCacheBroker(self.service, "core", allow_global=True).get(key, default)
+
+    def put(self, key: str, value: Any, *, ttl_seconds: int = 300) -> None:
+        ScopedCacheBroker(self.service, "core", allow_global=True).put(key, value, ttl_seconds=ttl_seconds)
+
+    def delete(self, key: str) -> bool:
+        return ScopedCacheBroker(self.service, "core", allow_global=True).delete(key)
 
     def namespaces(self) -> tuple[CacheNamespaceInfo, ...]:
         return ScopedCacheBroker(self.service, "core", allow_global=True).namespaces()

@@ -975,6 +975,14 @@ class Storage:
                 (namespace, key, json.dumps(value, ensure_ascii=False), now, now + max(1, ttl_seconds)),
             )
 
+    def cache_delete(self, namespace: str, key: str) -> bool:
+        with self._lock, self._connect() as db:
+            cur = db.execute(
+                "DELETE FROM cache WHERE namespace=? AND cache_key=?",
+                (str(namespace), str(key)),
+            )
+            return bool(cur.rowcount)
+
     def cache_delete_namespace(self, namespace: str) -> None:
         with self._lock, self._connect() as db:
             db.execute("DELETE FROM cache WHERE namespace=?", (namespace,))
