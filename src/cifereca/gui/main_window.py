@@ -1576,9 +1576,6 @@ class MainWindow(Adw.ApplicationWindow):
             return self.window._build_standard_page(route)
         def import_acsm(self):
             self.window.choose_acsm()
-        def system_status(self):
-            from ..system_status import system_status
-            return system_status(self.window.plugin_manager)
         def identity_overview(self) -> list[dict[str, Any]]:
             from copy import deepcopy
             return deepcopy(self.window.service.dashboard_state())

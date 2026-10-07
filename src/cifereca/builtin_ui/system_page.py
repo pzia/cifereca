@@ -2,14 +2,20 @@ from cifereca.plugin_api import UiPageContribution
 
 
 class SystemPages:
+    def __init__(self):
+        self.diagnostics = None
+
     def activate(self, context):
+        self.diagnostics = context.broker("diagnostics")
+        if self.diagnostics is None:
+            raise RuntimeError("broker diagnostics indisponible")
         return self
 
     def pages(self):
         return [
             UiPageContribution(
-                "system-status",
-                "État du système",
+                "diagnostics",
+                "Diagnostic système (secours)",
                 "dialog-information-symbolic",
                 900,
                 self.build,
@@ -17,8 +23,7 @@ class SystemPages:
             )
         ]
 
-    @staticmethod
-    def build(host):
+    def build(self, host):
         from gi.repository import Adw, Gtk
 
         from cifereca.gui.action_widgets import AdaptiveActionBar, action_button, mirror_sensitivity
@@ -50,7 +55,10 @@ class SystemPages:
 
         def render(*_):
             clear_box(content)
-            data = host.system_status()
+            broker = self.diagnostics
+            if broker is None:
+                raise RuntimeError("broker diagnostics indisponible")
+            data = broker.system_status()
             summary = Gtk.Label(
                 label=f"● {data['ready']} prêts · {data['attention']} à examiner",
                 xalign=0,
