@@ -535,6 +535,19 @@ class SyncSourceRef:
 
 
 @dataclass(frozen=True, slots=True)
+class AdeptProfileRef:
+    """Stable public ADEPT profile reference.
+
+    profile_id is the durable Core identity; name is the current CLI name.
+    """
+    profile_id: str
+    name: str
+    complete: bool = False
+    fetch_capable: bool = False
+    acsm_fetch_ready: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceToolInfo:
     id: str
     title: str
@@ -655,6 +668,12 @@ class TaskHandle(Protocol):
 class TransportService(Protocol):
     def matches(self, source: Mapping[str, Any]) -> bool: ...
     def fetch(self, source: Mapping[str, Any], destination: Path) -> Path: ...
+
+
+@runtime_checkable
+class CatalogServiceFactory(Protocol):
+    """Technical catalogue dependency, not a user-configurable library provider."""
+    def create(self, **options: Any) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
