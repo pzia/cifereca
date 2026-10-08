@@ -39,9 +39,13 @@ def patch_window_size(width: int, height: int) -> Path:
     return path
 
 
-def capture(path: Path) -> None:
+def capture(path: Path) -> list[int] | None:
     image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
     image.save(path)
+    # Xvfb uses black outside an unmanaged toplevel. This bbox therefore lets
+    # the recipe distinguish screen size from the actual GTK window extent.
+    bbox = image.getbbox()
+    return list(bbox) if bbox else None
 
 
 def shortcut(control: X11Input, modifier: str, key: str) -> None:
@@ -71,6 +75,7 @@ def main() -> int:
     parser.add_argument("--window-height", type=int, default=720)
     parser.add_argument("--startup-wait", type=float, default=4.0)
     parser.add_argument("--search-wait", type=float, default=3.0)
+    parser.add_argument("--ui-ready-wait", type=float, default=2.0)
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -108,6 +113,9 @@ def main() -> int:
         if proc.poll() is not None:
             raise RuntimeError(f"Cifereca arrêté avant interaction (rc={proc.returncode})")
 
+        # The first cold GTK startup can present the window before deferred
+        # page contributions are activated. Keep the interaction deterministic.
+        time.sleep(args.ui_ready_wait)
         control = X11Input()
 
         # Raccourci canonique : ouvre Recherche si nécessaire et focalise le champ.
@@ -120,12 +128,12 @@ def main() -> int:
         time.sleep(args.search_wait)
 
         first = out / "01-search-list.png"
-        capture(first)
+        first_bbox = capture(first)
 
         scroll_down(control, args.window_width, args.window_height, steps=12)
         time.sleep(1.0)
         second = out / "02-search-list-scrolled.png"
-        capture(second)
+        second_bbox = capture(second)
 
         report = {
             "query": args.query,
@@ -134,6 +142,10 @@ def main() -> int:
             "screen": os.environ.get("CODEX_HEADLESS_SCREEN"),
             "config": str(config_path),
             "captures": [str(first), str(second)],
+            "capture_non_black_bbox": {
+                "initial": first_bbox,
+                "scrolled": second_bbox,
+            },
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "process_alive_after_capture": proc.poll() is None,
         }
