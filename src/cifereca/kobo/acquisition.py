@@ -186,7 +186,7 @@ class KoboOfferAdapter:
             c for c in candidates
             if c.handling == "adobe_adept"
             and (c.kind == "acsm" or c.media_format.lower() == "acsm")
-            and c.transport == "https" and c.method == "GET" and str(c.url or "").startswith("https://")
+            and cls.secure_http_candidate(c)
         ]
         if not usable:
             return None
