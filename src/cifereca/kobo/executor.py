@@ -195,6 +195,15 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
         return request, destination
 
     def acsm_request_for(candidate_value: dict[str, Any], profile: str | None) -> tuple[dict[str, Any], Path]:
+        normalized = KoboOfferAdapter.normalize_candidate(candidate_value)
+        if (
+            normalized.handling != "adobe_adept"
+            or not (normalized.kind == "acsm" or normalized.media_format == "acsm")
+            or not KoboOfferAdapter.secure_http_candidate(normalized)
+        ):
+            raise ProviderConfigurationError(
+                "Kobo : candidat ACSM invalide (URL HTTPS et méthode GET requises)"
+            )
         if not adept_profile:
             raise ProviderConfigurationError(
                 "Kobo : un lien ACSM est disponible mais aucun profil ADEPT n'est configuré dans cifereca"
