@@ -2582,6 +2582,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.service.select_identity(identity.identity_id)
         self._identity_context_generation += 1
         self._account_context_generation += 1
+        # Pending Library navigation belongs to the previous identity context.
+        # Cancel it before rendering the new identity's (initially empty) list.
+        self._pending_library_selection_key = None
+        self._pending_library_selection_identity_id = None
+        self._pending_library_selection_generation = None
         identity_generation = self._identity_context_generation
         self._populate_accounts()
         self._render_dashboard()
@@ -4217,17 +4222,44 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def _open_library_item(self, key: str) -> None:
-        """Navigate to Library while retaining the current book identity."""
+        """Navigate to Library while retaining the book *and identity* context."""
+        current = getattr(getattr(self, "service", None), "current_identity", None)
         self._pending_library_selection_key = str(key)
+        self._pending_library_selection_identity_id = str(
+            getattr(current, "identity_id", "") or ""
+        )
+        self._pending_library_selection_generation = getattr(
+            self, "_identity_context_generation", None
+        )
         self.navigate("library")
         self._select_pending_library_item()
 
     def _select_pending_library_item(self) -> bool:
         key = getattr(self, "_pending_library_selection_key", None)
-        if not key or not hasattr(self, "library_page"):
+        if not key:
+            return False
+        pending_identity = getattr(self, "_pending_library_selection_identity_id", None)
+        pending_generation = getattr(self, "_pending_library_selection_generation", None)
+        current = getattr(getattr(self, "service", None), "current_identity", None)
+        current_identity = str(getattr(current, "identity_id", "") or "")
+        generation = getattr(self, "_identity_context_generation", None)
+
+        def clear() -> None:
+            self._pending_library_selection_key = None
+            self._pending_library_selection_identity_id = None
+            self._pending_library_selection_generation = None
+
+        # A key (including a shared content SHA) is not permission to carry a
+        # pending selection across identities, nor across an A -> B -> A cycle.
+        if (pending_identity and current_identity != pending_identity) or (
+            pending_generation is not None and generation != pending_generation
+        ):
+            clear()
+            return False
+        if not hasattr(self, "library_page"):
             return False
         if self.library_page.select_key(key):
-            self._pending_library_selection_key = None
+            clear()
             return True
         entries = list(getattr(self, "_library_entries_cache", ()))
         if not entries:
@@ -4238,7 +4270,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.toast("Ce livre est masqué par les filtres actifs de la Bibliothèque.", 5)
         else:
             self.toast("Ce livre n’est plus présent dans la Bibliothèque.", 5)
-        self._pending_library_selection_key = None
+        clear()
         return False
 
     def _render_library(self, entries: list[dict[str, Any]] | None = None) -> None:
