@@ -128,13 +128,13 @@ jobs:
               shots.append(capture("03-resultats-camille.png"))
 
               # Open Source filter in the filter row.
-              control.click(386, 188); time.sleep(1)
+              control.click(365, 162); time.sleep(1)
               shots.append(capture("04-filtre-source.png"))
               control.key("Escape",True); control.key("Escape",False); time.sleep(.5)
 
               # Switch identity using the header dropdown. Keyboard selection keeps
               # this independent from row text rendering.
-              control.click(337, 41); time.sleep(.5)
+              control.click(900, 28); time.sleep(.5)
               control.key("Down",True); control.key("Down",False)
               control.key("Return",True); control.key("Return",False)
               time.sleep(3)
