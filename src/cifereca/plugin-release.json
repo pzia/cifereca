@@ -19,7 +19,7 @@
       "name": "Cifereca EPUB/PDF Optimizer"
     },
     "org.cifereca.ui.page.home": {
-      "version": "1.0.11",
+      "version": "1.0.13",
       "name": "Accueil"
     },
     "org.cifereca.maintenance.library-audit": {
@@ -51,7 +51,7 @@
       "name": "Bibliothèques de Paris"
     },
     "org.cifereca.recommendations": {
-      "version": "0.2.15",
+      "version": "0.2.17",
       "name": "Recommandations CIFERECA"
     },
     "org.cifereca.runtime.kobo-adept": {
