@@ -67,12 +67,15 @@ sortie exploitable par les scripts de recette.
 | --- | --- |
 | `ux-small` | recette rapide de tous les services |
 | `ux-search` | recherche multi-source à gros volume |
+| `ux-search-list` | recette UX locale ciblée sur la géométrie de la liste Recherche |
 | `ux-library` | bibliothèque dense : EPUB locaux + Kobo + Numilog |
 | `ux-paris` | parcours Paris / PNB |
 | `ux-errors` | états atypiques, assets OPDS/Kobo cassés de façon déterministe et erreurs visibles |
 | `ux-all` | environnement complet |
 
 Les profils sont dans `simulation/profiles/*.toml`.
+
+Pour la liste de Recherche, voir la recette dédiée `simulation/recipes/search-list.md`.
 
 ## Lancer une commande dans l'environnement isolé
 
