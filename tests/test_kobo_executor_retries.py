@@ -8,6 +8,7 @@ import pytest
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
+from cifereca.kobo.acquisition import KoboOfferAdapter
 from cifereca.kobo.errors import KoboAdeptError
 from cifereca.models import Account, SearchResult
 from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
@@ -250,5 +251,60 @@ def test_unusable_android_candidate_falls_back_to_desktop_profile(tmp_path: Path
         assert session.acquisition_profiles == ["Android", "Desktop"]
         assert len(calls) == 1
         assert calls[0]["metadata"]["vault_display_profile"] == "Desktop"
+    finally:
+        service.close()
+
+
+class RotatingURLSession(FakeKoboSession):
+    refreshed_candidate: dict | None = None
+
+    def resolve_acquisition(
+        self,
+        product_id,
+        *,
+        revision_id=None,
+        mode="descriptor",
+        display_profile=None,
+    ):
+        payload = super().resolve_acquisition(
+            product_id, revision_id=revision_id, mode=mode, display_profile=display_profile,
+        )
+        if mode == "delegated":
+            candidate = payload["acquisition"]["candidates"][0]
+            candidate["url"] = "https://cdn.example/renewed-book.epub"
+            self.refreshed_candidate = dict(candidate)
+        return payload
+
+
+def test_kobo_expired_url_retry_persists_new_candidate_and_attempt(tmp_path: Path, monkeypatch):
+    service, session = _service(tmp_path, RotatingURLSession)
+    calls: list[dict] = []
+
+    def execute(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise KoboAdeptError("expired", code="source_auth_expired", exit_code=4)
+        return _success_result(request)
+
+    monkeypatch.setattr(service, "execute_acquisition_request", execute)
+    try:
+        result = service.acquire_direct_item(_item())
+        assert result.path and result.path.is_file()
+        assert session.acquisition_modes == ["descriptor", "delegated"]
+        assert len(calls) == 2
+        assert calls[1]["source"]["url"] == "https://cdn.example/renewed-book.epub"
+
+        assert session.refreshed_candidate is not None
+        expected = KoboOfferAdapter.normalize_candidate(session.refreshed_candidate)
+        rows = service.storage.acquisitions(provider_id="kobo")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["status"] == "complete"
+        assert row["attempt_count"] == 2
+        assert row["candidate_id"] == expected.candidate_id
+        assert row["strategy"] == "http_plain"
+        assert row["executor"] == "kobo-adept"
+        assert row["metadata"]["candidate_shape"] == expected.safe_shape()
+        assert row["metadata"]["acquisition_mode"] == "delegated-http"
     finally:
         service.close()

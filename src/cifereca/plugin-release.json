@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "0.9.44+dev.10",
+  "release": "0.9.44+dev.11",
   "packages": {
     "org.cifereca.provider.baen": {
       "version": "0.1.9",
@@ -51,7 +51,7 @@
       "name": "Bibliothèques de Paris"
     },
     "org.cifereca.recommendations": {
-      "version": "0.2.23",
+      "version": "0.2.25",
       "name": "Recommandations CIFERECA"
     },
     "org.cifereca.runtime.kobo-adept": {

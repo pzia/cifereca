@@ -4,8 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/plugin-tests.yml'
 
 permissions:
   contents: read

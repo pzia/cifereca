@@ -1730,24 +1730,31 @@ class Storage:
             )
             return cur.rowcount
 
-    def acquisition_put(self, item: dict[str, Any]) -> str:
+    def acquisition_put(self, item: dict[str, Any], *, insert_only: bool = False) -> str:
         row = dict(item)
         now = int(row.get("updated_at") or time.time())
         acquisition_id = str(row.get("acquisition_id") or self._stable_id(
             "acquisition", row.get("entitlement_id"), row.get("provider_id"), row.get("credential_id"), row.get("item_id")
         ))
+        # Discovery must be insert-only: a repeated observation must not
+        # erase a completed artifact or an in-flight/error state. Existing
+        # callers retain the historical upsert behaviour by default.
+        conflict_sql = (
+            "ON CONFLICT(acquisition_id) DO NOTHING" if insert_only else
+            "ON CONFLICT(acquisition_id) DO UPDATE SET entitlement_id=COALESCE(excluded.entitlement_id,acquisition_ledger.entitlement_id),"
+            "title=COALESCE(excluded.title,acquisition_ledger.title),status=excluded.status,strategy=COALESCE(excluded.strategy,acquisition_ledger.strategy),"
+            "executor=COALESCE(excluded.executor,acquisition_ledger.executor),candidate_id=COALESCE(excluded.candidate_id,acquisition_ledger.candidate_id),"
+            "artifact_id=COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id),attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),"
+            "last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),error_code=excluded.error_code,"
+            "error_message=excluded.error_message,attention_code=excluded.attention_code,metadata_json=excluded.metadata_json,"
+            "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at"
+        )
         with self._lock, self._connect() as db:
             db.execute(
                 "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
                 "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
                 "metadata_json,created_at,updated_at,identity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(acquisition_id) DO UPDATE SET entitlement_id=COALESCE(excluded.entitlement_id,acquisition_ledger.entitlement_id),"
-                "title=COALESCE(excluded.title,acquisition_ledger.title),status=excluded.status,strategy=COALESCE(excluded.strategy,acquisition_ledger.strategy),"
-                "executor=COALESCE(excluded.executor,acquisition_ledger.executor),candidate_id=COALESCE(excluded.candidate_id,acquisition_ledger.candidate_id),"
-                "artifact_id=COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id),attempt_count=MAX(acquisition_ledger.attempt_count,excluded.attempt_count),"
-                "last_attempt_at=COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at),error_code=excluded.error_code,"
-                "error_message=excluded.error_message,attention_code=excluded.attention_code,metadata_json=excluded.metadata_json,"
-                "identity_id=COALESCE(excluded.identity_id,acquisition_ledger.identity_id),updated_at=excluded.updated_at",
+                + conflict_sql,
                 (
                     acquisition_id, row.get("entitlement_id"), str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
                     row.get("account_id"), str(row.get("item_id") or ""), row.get("title"), str(row.get("status") or "discovered"),
