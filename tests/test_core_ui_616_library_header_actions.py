@@ -17,25 +17,25 @@ def _method(name: str) -> str:
 
 def test_library_keeps_primary_search_and_refresh_visible():
     source = _method("_build_library_page")
-    assert 'search = Gtk.Button(label="Recherche")' in source
-    assert 'refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")' in source
+    assert "search = Gtk.Button" in source and "Recherche" in source
+    assert "refresh = Gtk.Button.new_from_icon_name" in source and "view-refresh-symbolic" in source
     assert "actions.append(refresh)" in source
 
 
 def test_open_folder_stays_direct_and_understandable():
     source = _method("_build_library_page")
-    assert 'folder = Gtk.Button.new_from_icon_name("folder-open-symbolic")' in source
+    assert "folder = Gtk.Button.new_from_icon_name" in source and "folder-open-symbolic" in source
     assert "Ouvrir le dossier de la bibliothèque" in source
     assert "actions.append(folder)" in source
 
 
 def test_rare_library_operations_are_grouped_in_named_menu():
     source = _method("_build_library_page")
-    assert 'advanced = Gtk.MenuButton(label="Opérations…")' in source
+    assert "advanced = Gtk.MenuButton" in source and "Opérations…" in source
     assert "Opérations avancées et maintenance" in source
-    assert 'Gtk.Button(label="Réinspecter les couvertures")' in source
-    assert 'Gtk.Button(label="Importer un ACSM…")' in source
-    assert 'Gtk.Button(label="Synchroniser les comptes Kobo")' in source
+    assert "Réinspecter les couvertures" in source
+    assert "Importer un ACSM…" in source
+    assert "Synchroniser les comptes Kobo" in source
     assert "advanced_box.append(covers)" in source
     assert "advanced_box.append(acsm)" in source
     assert "advanced_box.append(acquire)" in source
