@@ -2914,7 +2914,7 @@ class MainWindow(Adw.ApplicationWindow):
                 box.append(Gtk.Label(label=f"{resolved.plugin_id}: description indisponible ({exc})", xalign=0)); continue
             group = Adw.PreferencesGroup(); box.append(group)
             row = Adw.ActionRow(); row.set_title(info.title); row.set_subtitle(info.description or resolved.plugin_id)
-            run = self.action_button("Planifier…" if info.supports_dry_run else "Exécuter…", info.icon_name)
+            run = self.action_button("Prévisualiser…" if info.supports_dry_run else "Exécuter…", info.icon_name)
             row.add_suffix(run); group.add(row)
             def prepare(_button, service=tool, meta=info):
                 identity = self.service.current_identity
@@ -2922,10 +2922,29 @@ class MainWindow(Adw.ApplicationWindow):
                 try: plan = service.plan(context)
                 except Exception as exc:
                     self.show_error(str(exc), meta.title); return
-                detail = plan.summary
-                if plan.changes: detail += "\n\n" + "\n".join("• " + x for x in plan.changes[:20])
-                if plan.warnings: detail += "\n\nAvertissements :\n" + "\n".join("• " + x for x in plan.warnings[:10])
-                dialog = Adw.MessageDialog.new(self, meta.title, detail)
+                scope_labels = {
+                    "global": "Application entière",
+                    "identity": "Identité active",
+                    "library": "Bibliothèque",
+                    "artifact": "Document ciblé",
+                    "storage.target": "Cible de stockage",
+                }
+                scope = scope_labels.get(str(meta.scope), str(meta.scope or "Non précisée"))
+                if meta.scope == "identity" and identity is not None:
+                    scope += f" · {identity.label}"
+                sections = [
+                    "Résumé :\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
+                    "Changements prévus :\n" + (
+                        "\n".join("• " + str(value) for value in plan.changes[:20])
+                        if plan.changes else "• Aucun changement prévu"
+                    ),
+                    "Avertissements :\n" + (
+                        "\n".join("• " + str(value) for value in plan.warnings[:10])
+                        if plan.warnings else "• Aucun"
+                    ),
+                    "Portée :\n" + scope,
+                ]
+                dialog = Adw.MessageDialog.new(self, meta.title, "\n\n".join(sections))
                 dialog.add_response("cancel", "Annuler"); dialog.add_response("run", "Exécuter")
                 if meta.danger_level == "destructive": dialog.set_response_appearance("run", Adw.ResponseAppearance.DESTRUCTIVE)
                 else: dialog.set_response_appearance("run", Adw.ResponseAppearance.SUGGESTED)
