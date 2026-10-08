@@ -87,6 +87,12 @@ class BnfCatalogueSession(ProviderSession):
         self.client.close()
         self.connected = False
 
+    def _diagnostic(self, operation: str, status: str, *, detail: dict[str, Any] | None = None) -> None:
+        try:
+            self.diagnostics.add("BNF", operation, status, detail=detail or {})
+        except Exception:
+            pass
+
     def search(self, query: str, scope="all", page=0, field="all"):
         query = str(query or "").strip()
         if len(query) < 2:
@@ -110,7 +116,7 @@ class BnfCatalogueSession(ProviderSession):
             response.raise_for_status()
             rows = self.parse_records(response.content)
         except httpx.HTTPError as exc:
-            self.diagnostics.add("BNF", "SRU search", "error", detail={"error": type(exc).__name__})
+            self._diagnostic("SRU search", "error", detail={"error": type(exc).__name__})
             raise ProviderError("BnF : catalogue temporairement indisponible") from exc
         # Unknown support is omitted from scoped searches. API v1 only allows
         # physical/digital; all-scope uses a documented physical fallback.
@@ -120,7 +126,7 @@ class BnfCatalogueSession(ProviderSession):
             key="series" if field=="series" else "collections"
             needle=query.casefold()
             rows=[r for r in rows if any(needle in str(value).casefold() for value in r.metadata.get(key,[]))]
-        self.diagnostics.add("BNF", "SRU search", "ok", detail={"results": len(rows), "page": page, "field": field})
+        self._diagnostic("SRU search", "ok", detail={"results": len(rows), "page": page, "field": field})
         return rows
 
     def parse_records(self, content: bytes):
