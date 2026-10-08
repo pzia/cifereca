@@ -17,6 +17,12 @@ from .plugin_view import (
     filter_package_plugins,
     package_matches_query,
 )
+from .plugin_status_labels import (
+    activation_label,
+    freshness_label,
+    runtime_state_label,
+    status_needs_attention,
+)
 
 
 _STATE_LABELS = {
@@ -67,9 +73,16 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self.outer.append(head)
 
         statuses = self.manager.statuses()
-        ready = sum(1 for s in statuses if s.state == "ready" and s.enabled)
-        blocked = sum(1 for s in statuses if s.state in {"blocked", "error", "incompatible"})
-        summary = Gtk.Label(label=f"{len(statuses)} plugin(s) · {ready} actif(s) · {blocked} à examiner", xalign=0)
+        activated = sum(1 for status in statuses if status.enabled)
+        ready = sum(1 for status in statuses if status.enabled and status.state == "ready")
+        attention = sum(1 for status in statuses if status_needs_attention(status))
+        summary = Gtk.Label(
+            label=(
+                f"{len(statuses)} plugin(s) · {activated} activé(s) · "
+                f"{ready} prêt(s) · {attention} à examiner"
+            ),
+            xalign=0,
+        )
         summary.add_css_class("dim-label"); self.outer.append(summary)
 
         inventory = self.manager.package_inventory(include_expected=True)
@@ -276,21 +289,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         box.append(meta)
 
         freshness_status = str(package.get("freshness") or "unknown")
-        freshness_reason = str(package.get("freshness_reason") or "")
-        freshness_text = ""
-        if not package.get("builtin"):
-            if freshness_status == "up_to_date":
-                freshness_text = f"Version : à jour · v{active}"
-            elif freshness_status == "outdated":
-                freshness_text = f"Version : ancienne v{active} · attendue v{expected}"
-            elif freshness_status == "newer_nonstandard":
-                freshness_text = f"Version : plus récente / non standard v{active} · attendue v{expected}"
-            elif freshness_reason == "inactive" and expected:
-                freshness_text = f"Version : inactive · attendue v{expected}"
-            elif expected:
-                freshness_text = f"Version : état inconnu · attendue v{expected}"
-            else:
-                freshness_text = "Version : attendue inconnue (package non géré par cette release)"
+        freshness_text = freshness_label(package)
         if freshness_text:
             freshness = Gtk.Label(label=freshness_text, xalign=0)
             freshness.set_wrap(True)
@@ -335,17 +334,27 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         popover.set_child(help_label); help_button.set_popover(popover)
         header.append(help_button); box.append(header)
 
-        state = _STATE_LABELS.get(status.state, status.state)
-        reason = f" · {status.reason}" if status.reason else ""
-        text = f"{d.id} · {d.type} · {state}{reason}"
+        axes = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        activation = Gtk.Label(label=f"Activation · {activation_label(status)}", xalign=0)
+        activation.add_css_class("caption")
+        axes.append(activation)
+        runtime = Gtk.Label(label=f"État · {runtime_state_label(status)}", xalign=0)
+        runtime.add_css_class("caption")
+        if status_needs_attention(status):
+            runtime.add_css_class("warning")
+        axes.append(runtime)
+        box.append(axes)
+
         if d.description:
-            text += f" — {d.description}"
-        summary = Gtk.Label(label=text, xalign=0)
-        summary.set_wrap(True); summary.set_hexpand(True)
-        summary.add_css_class("caption"); summary.add_css_class("dim-label")
-        box.append(summary)
-        if status.state in {"blocked", "error", "incompatible", "degraded"}:
-            warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
+            summary = Gtk.Label(label=d.description, xalign=0)
+            summary.set_wrap(True); summary.set_hexpand(True)
+            summary.add_css_class("caption"); summary.add_css_class("dim-label")
+            box.append(summary)
+        if status_needs_attention(status):
+            warning = Gtk.Label(
+                label=f"Action requise · {self._friendly_problem(status)}",
+                xalign=0,
+            )
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
 
         primary_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
