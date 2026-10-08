@@ -105,3 +105,19 @@ Les traces ne contiennent ni identifiant de profil, ni titre de livre, ni requê
 Depuis 0.2.20, Recommendations conserve un snapshot de projection par identité pendant la session. Les recalculs manuels, changements de filtres nécessitant un recalcul et retours sur une identité déjà visitée ne relisent plus systématiquement `metadata.library_entries(..., scan=False)`. Une notification `identity_overview` invalide le cache avant le recalcul coalescé suivant.
 
 La recette `tests/test_snapshot_burst_measurement.py` compare trois recalculs synthétiques de 562 livres : le chemin sans cache effectue 3 lectures complètes, le chemin avec cache 1 seule. Les traces `TRACE recommendations performance` exposent désormais aussi `snapshot_cached=true|false`, sans identifiant ni contenu de livre.
+
+
+## Rapport de traces installé
+
+Depuis 0.2.22, `trace_report.py` transforme les traces expurgées de plusieurs relances en un résumé directement exploitable pour #519.
+
+Recette sur une installation réelle :
+
+```bash
+grep "TRACE recommendations" <fichier.log> | \
+  python3 src/plugins/recommendations/trace_report.py -
+```
+
+Le rapport donne le nombre de refresh, les snapshots cachés/non cachés et les médianes/min/max de `snapshot_ms`, profil, recherche catalogue, classement, calcul total, application UI et temps UI total. Avec au moins trois relances, il signale explicitement si plusieurs snapshots complets non cachés persistent après l’amorçage.
+
+Pour une recette déterministe volumineuse, le dépôt fournit aussi `simulation/profiles/ux-library.toml` (1 000 EPUB locaux + Kobo Vault + Numilog). Le rapport n’enregistre ni identité, ni titre, ni requête catalogue.

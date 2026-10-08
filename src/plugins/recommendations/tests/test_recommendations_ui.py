@@ -7,6 +7,7 @@ from recommendations import (
     _candidate_languages,
     _external_book_url,
     _language_label,
+    _library_overview_signature,
     _reference_label,
     _reference_selection_key,
     _refresh_on_first_map,
@@ -190,6 +191,14 @@ class _NoisyIdentityModel:
         self.dropdown._notify()
 
 
+class _TrackingSnapshotCache:
+    def __init__(self):
+        self.invalidations = []
+
+    def invalidate(self, identity_id=None):
+        self.invalidations.append(identity_id)
+
+
 class _CoalescingGLib:
     def __init__(self):
         self.next_id = 1
@@ -219,6 +228,12 @@ def _identity_reload_view(rows, *, active_identity, busy=False):
     view._identity_model = model
     view._identity_ids = ["default"]
     view._reloading_identities = False
+    view._identity_library_signatures = {
+        str(row.get("identity_id") or ""): _library_overview_signature(row)
+        for row in rows
+        if str(row.get("identity_id") or "")
+    }
+    view._library_snapshot_cache = _TrackingSnapshotCache()
     view._active_identity_id = active_identity
     view._busy = busy
     view._overview_refresh_source_id = 0
@@ -306,6 +321,55 @@ def test_identity_overview_before_first_map_does_not_duplicate_initial_refresh()
 
     assert view.GLib.sources == {}
     assert refreshes == []
+
+
+def test_overview_selection_change_keeps_library_snapshot_cached():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "completed"}},
+        {"identity_id": "other", "label": "Other", "selected": False, "statistics": {"local_books": 15}, "sync": {"sync_run_id": "run-2", "status": "completed"}},
+    ]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    rows[0]["selected"] = False
+    rows[1]["selected"] = True
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == []
+
+
+def test_overview_library_change_invalidates_only_affected_identity():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "completed"}},
+        {"identity_id": "other", "label": "Other", "selected": False, "statistics": {"local_books": 15}, "sync": {"sync_run_id": "run-2", "status": "completed"}},
+    ]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    rows[1]["statistics"]["local_books"] = 16
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == ["other"]
+
+
+def test_overview_sync_change_invalidates_active_identity():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "running"}},
+    ]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    rows[0]["sync"]["status"] = "completed"
+    rows[0]["sync"]["finished_at"] = "2026-10-08T09:30:00Z"
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == ["default"]
+
+
+def test_legacy_overview_without_freshness_projection_stays_conservative():
+    rows = [{"identity_id": "default", "label": "Default", "selected": True}]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == ["default"]
 
 
 class _FakeDropDown:

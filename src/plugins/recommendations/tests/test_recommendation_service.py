@@ -170,3 +170,27 @@ def test_snapshot_cache_reuses_library_projection_until_invalidated():
         metadata, Catalog(), "id-1", max_queries=2, snapshot_cache=cache
     )
     assert len(metadata.calls) == 2
+
+
+def test_snapshot_cache_can_invalidate_one_identity_without_dropping_others():
+    class MultiMetadata:
+        def __init__(self):
+            self.calls = []
+
+        def library_entries(self, **kwargs):
+            identity_id = kwargs["identity_id"]
+            self.calls.append(identity_id)
+            return [{"title": f"Seed {identity_id}", "author": "Alice", "metadata": {"subjects": ["histoire"]}}]
+
+    metadata = MultiMetadata()
+    cache = LibrarySnapshotCache()
+    cache.load(metadata, "id-1")
+    cache.load(metadata, "id-2")
+    cache.load(metadata, "id-1")
+    cache.load(metadata, "id-2")
+    assert metadata.calls == ["id-1", "id-2"]
+
+    cache.invalidate("id-1")
+    cache.load(metadata, "id-1")
+    cache.load(metadata, "id-2")
+    assert metadata.calls == ["id-1", "id-2", "id-1"]
