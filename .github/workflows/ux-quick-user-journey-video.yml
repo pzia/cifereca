@@ -1,0 +1,324 @@
+name: UX quick user journey video
+
+on:
+  push:
+    branches:
+      - ux/quick-user-journey-video-20261008
+    paths:
+      - ".github/workflows/ux-quick-user-journey-video.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  video:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-video-quick
+      PYTHONPATH: ${{ github.workspace }}/src
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 58439e03ca8110a599017cefe6121621dba8073f
+
+      - name: Install GTK, X11 and video runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxtst6 ffmpeg \
+            python3-gi python3-gi-cairo python3-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Prepare deterministic local dataset
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cat > simulation/profiles/ux-video-quick.toml <<'EOF'
+          name = "ux-video-quick"
+          description = "Première vidéo rapide de parcours utilisateur"
+
+          [runtime]
+          startup_timeout_seconds = 20
+
+          [cifereca]
+          binary = "cifereca"
+          no_plugins = true
+          width = 1366
+          height = 768
+
+          [library]
+          epubs = 60
+          seed = 20261008
+          identity_dir = "ux"
+          provider_dir = "local"
+          EOF
+
+          python3 simulation/datasetctl.py rebuild ux-video-quick
+
+          store="$CIFERECA_DATASET_RUNTIME/ux-video-quick/xdg/data/cifereca/plugins/packages"
+          mkdir -p "$store"
+
+          python3 - "$store" <<'PY'
+          from pathlib import Path
+          import json, shutil, sys
+
+          store = Path(sys.argv[1])
+          for source_name in ("home-page",):
+              src = Path("src/plugins") / source_name
+              manifest = json.loads((src / "cifereca-plugin.json").read_text())
+              package = manifest["package"]
+              root = store / package["id"]
+              target = root / package["version"]
+              shutil.copytree(src, target, dirs_exist_ok=True)
+              (root / "current.json").write_text(
+                  json.dumps({"active": package["version"], "previous": None}, indent=2) + "\n",
+                  encoding="utf-8",
+              )
+          PY
+
+          python3 simulation/datasetctl.py exec ux-video-quick -- \
+            env PYTHONPATH="$GITHUB_WORKSPACE/src" \
+            /usr/bin/python3 -m cifereca.cli catalog-scan \
+            > /tmp/catalog-scan.log
+
+      - name: Write real GTK journey driver
+        shell: bash
+        run: |
+          cat > /tmp/quick_video.py <<'PY'
+          from __future__ import annotations
+
+          import ctypes as C
+          import json
+          import os
+          from pathlib import Path
+          import signal
+          import subprocess
+          import sys
+          import time
+
+          from PIL import ImageGrab
+
+          ROOT = Path.cwd()
+          sys.path.insert(0, str(ROOT / "environnements" / "openai-chat-debian"))
+          from x11_input import X11Input
+
+          OUT = ROOT / "video-evidence"
+          OUT.mkdir(parents=True, exist_ok=True)
+          WIDTH, HEIGHT = 1366, 768
+
+          def shortcut(control, modifier, key):
+              control.key(modifier, True)
+              try:
+                  control.key(key, True)
+                  control.key(key, False)
+              finally:
+                  control.key(modifier, False)
+
+          def resize_largest_toplevel(control, width, height):
+              x11 = control.x11
+              display = control.display
+              x11.XDefaultRootWindow.argtypes = [C.c_void_p]
+              x11.XDefaultRootWindow.restype = C.c_ulong
+              x11.XQueryTree.argtypes = [
+                  C.c_void_p, C.c_ulong,
+                  C.POINTER(C.c_ulong), C.POINTER(C.c_ulong),
+                  C.POINTER(C.POINTER(C.c_ulong)), C.POINTER(C.c_uint),
+              ]
+              x11.XQueryTree.restype = C.c_int
+              x11.XGetGeometry.argtypes = [
+                  C.c_void_p, C.c_ulong, C.POINTER(C.c_ulong),
+                  C.POINTER(C.c_int), C.POINTER(C.c_int),
+                  C.POINTER(C.c_uint), C.POINTER(C.c_uint),
+                  C.POINTER(C.c_uint), C.POINTER(C.c_uint),
+              ]
+              x11.XGetGeometry.restype = C.c_int
+              x11.XMoveResizeWindow.argtypes = [
+                  C.c_void_p, C.c_ulong, C.c_int, C.c_int, C.c_uint, C.c_uint,
+              ]
+              x11.XFree.argtypes = [C.c_void_p]
+
+              root = x11.XDefaultRootWindow(display)
+              rr=C.c_ulong(); pr=C.c_ulong()
+              children=C.POINTER(C.c_ulong)(); count=C.c_uint()
+              if not x11.XQueryTree(display, root, C.byref(rr), C.byref(pr), C.byref(children), C.byref(count)):
+                  return None
+              best = None
+              try:
+                  for idx in range(count.value):
+                      xid = children[idx]
+                      gr=C.c_ulong(); x=C.c_int(); y=C.c_int()
+                      w=C.c_uint(); h=C.c_uint(); border=C.c_uint(); depth=C.c_uint()
+                      if not x11.XGetGeometry(
+                          display, xid, C.byref(gr), C.byref(x), C.byref(y),
+                          C.byref(w), C.byref(h), C.byref(border), C.byref(depth)
+                      ):
+                          continue
+                      area = int(w.value) * int(h.value)
+                      if w.value >= 500 and h.value >= 400 and (best is None or area > best[0]):
+                          best = (area, int(xid), int(w.value), int(h.value))
+                  if best is None:
+                      return None
+                  _, xid, bw, bh = best
+                  x11.XMoveResizeWindow(display, xid, 0, 0, width, height)
+                  x11.XSync(display, False)
+                  return {"xid": xid, "before": [bw, bh], "requested": [width, height]}
+              finally:
+                  if children:
+                      x11.XFree(children)
+
+          def click(control, x, y, wait=0.8):
+              control.click(x, y)
+              time.sleep(wait)
+
+          def shot(name):
+              image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+              image.save(OUT / name)
+
+          ffmpeg_log = (OUT / "ffmpeg.log").open("w", encoding="utf-8")
+          app_out = (OUT / "cifereca.stdout.log").open("w", encoding="utf-8")
+          app_err = (OUT / "cifereca.stderr.log").open("w", encoding="utf-8")
+
+          ffmpeg = subprocess.Popen([
+              "ffmpeg", "-y",
+              "-f", "x11grab",
+              "-framerate", "24",
+              "-video_size", f"{WIDTH}x{HEIGHT}",
+              "-i", os.environ["DISPLAY"],
+              "-c:v", "libx264",
+              "-preset", "veryfast",
+              "-crf", "23",
+              "-pix_fmt", "yuv420p",
+              str(OUT / "cifereca-parcours-rapide.mp4"),
+          ], stdout=ffmpeg_log, stderr=subprocess.STDOUT, text=True)
+
+          app = subprocess.Popen([
+              "/usr/bin/python3", "-m", "cifereca",
+              "--no-plugins",
+              "--force-plugin", "core.ui.pages",
+              "--force-plugin", "core.ui.widgets",
+              "--force-plugin", "core.ui.titlebar",
+              "--force-plugin", "core.ui.system",
+              "--force-plugin", "ui.page.home",
+              "--verbose",
+          ], cwd=ROOT, env=os.environ.copy(), stdout=app_out, stderr=app_err, text=True)
+
+          control = None
+          report = {
+              "main_sha": "58439e03ca8110a599017cefe6121621dba8073f",
+              "display": os.environ.get("DISPLAY"),
+              "video_size": [WIDTH, HEIGHT],
+              "steps": [],
+          }
+
+          try:
+              # Startup / Accueil.
+              time.sleep(6)
+              if app.poll() is not None:
+                  raise RuntimeError(f"Cifereca stopped during startup rc={app.returncode}")
+              control = X11Input()
+              report["native_resize"] = resize_largest_toplevel(control, WIDTH, HEIGHT)
+              time.sleep(2)
+              shot("01-accueil.png")
+              report["steps"].append("Accueil")
+              time.sleep(2)
+
+              # Recherche locale via raccourci canonique.
+              shortcut(control, "Control_L", "f")
+              time.sleep(0.8)
+              control.select_all_delete()
+              control.type_text("secret")
+              control.key("Return", True); control.key("Return", False)
+              time.sleep(4)
+              shot("02-recherche.png")
+              report["steps"].append("Recherche locale: secret")
+
+              # Sélection du premier résultat via sa couverture.
+              click(control, 285, 245, wait=3.0)
+              shot("03-detail-recherche.png")
+              report["steps"].append("Détail d'un résultat")
+
+              # Bibliothèque depuis la navigation latérale.
+              click(control, 105, 248, wait=4.0)
+              shot("04-bibliotheque.png")
+              report["steps"].append("Bibliothèque")
+
+              # Sélection d'un livre local.
+              click(control, 285, 245, wait=3.0)
+              shot("05-detail-bibliotheque.png")
+              report["steps"].append("Détail bibliothèque")
+
+              # Récents.
+              click(control, 105, 292, wait=4.0)
+              shot("06-recents.png")
+              report["steps"].append("Récents")
+              time.sleep(2)
+
+          finally:
+              if control is not None:
+                  try:
+                      shortcut(control, "Control_L", "q")
+                  except Exception:
+                      pass
+                  control.close()
+
+              try:
+                  app.wait(timeout=4)
+              except subprocess.TimeoutExpired:
+                  app.terminate()
+                  try:
+                      app.wait(timeout=3)
+                  except subprocess.TimeoutExpired:
+                      app.kill(); app.wait(timeout=3)
+
+              if ffmpeg.poll() is None:
+                  ffmpeg.send_signal(signal.SIGINT)
+                  try:
+                      ffmpeg.wait(timeout=8)
+                  except subprocess.TimeoutExpired:
+                      ffmpeg.terminate()
+                      ffmpeg.wait(timeout=4)
+
+              report["app_returncode"] = app.returncode
+              report["ffmpeg_returncode"] = ffmpeg.returncode
+              (OUT / "report.json").write_text(
+                  json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+                  encoding="utf-8",
+              )
+              app_out.close(); app_err.close(); ffmpeg_log.close()
+          PY
+
+      - name: Record journey
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 simulation/datasetctl.py exec ux-video-quick -- \
+            env \
+              PYTHONPATH="$GITHUB_WORKSPACE/src" \
+              GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none NO_AT_BRIDGE=1 \
+            xvfb-run -a -s "-screen 0 1366x768x24" \
+              /usr/bin/python3 /tmp/quick_video.py
+
+      - name: Validate video
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s video-evidence/cifereca-parcours-rapide.mp4
+          ffprobe -v error \
+            -show_entries format=duration,size:stream=codec_name,width,height,r_frame_rate \
+            -of json video-evidence/cifereca-parcours-rapide.mp4 \
+            > video-evidence/ffprobe.json
+          cat video-evidence/ffprobe.json
+
+      - name: Upload video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cifereca-parcours-rapide-main-58439e03
+          path: video-evidence/
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
