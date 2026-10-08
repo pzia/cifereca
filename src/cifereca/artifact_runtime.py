@@ -399,11 +399,24 @@ class _NullTaskControl:
 class LibraryReadBrokerImpl:
     service: Any
 
-    def artifact(self, artifact_id: str) -> ArtifactRef | None:
-        return _artifact_ref(self.service.storage, str(artifact_id))
+    def _default_identity(self) -> str | None:
+        identities = getattr(self.service, "identities", ()) or ()
+        return str(getattr(identities[0], "identity_id", "") or "") or None if identities else None
 
-    def preferred_artifact(self, book_id: str, *, purpose: str = "read") -> ArtifactRef | None:
-        view = self.book(book_id)
+    def _visible(self, row: dict[str, Any], identity_id: str | None) -> bool:
+        return identity_id is None or str(
+            row.get("identity_id") or self._default_identity() or ""
+        ) == identity_id
+
+    def artifact(self, artifact_id: str, *, identity_id: str | None = None) -> ArtifactRef | None:
+        return _artifact_ref(
+            self.service.storage, str(artifact_id), identity_id=identity_id,
+            default_identity_id=self._default_identity(),
+        )
+
+    def preferred_artifact(self, book_id: str, *, purpose: str = "read",
+                           identity_id: str | None = None) -> ArtifactRef | None:
+        view = self.book(book_id, identity_id=identity_id)
         if view is None or not view.artifacts:
             return None
         source_ids = {v.source_artifact_id for v in view.variants}
@@ -416,7 +429,8 @@ class LibraryReadBrokerImpl:
                 return candidate
         return source
 
-    def _view(self, entries: list[dict[str, Any]], book_id: str) -> LogicalBookArtifacts | None:
+    def _view(self, entries: list[dict[str, Any]], book_id: str,
+              *, identity_id: str | None = None) -> LogicalBookArtifacts | None:
         if not entries: return None
         title = str(next((e.get("title") for e in entries if e.get("title")), ""))
         author = str(next((e.get("author") for e in entries if e.get("author")), ""))
@@ -431,19 +445,39 @@ class LibraryReadBrokerImpl:
         for aid in tuple(artifact_ids):
             for v in self.service.storage.artifact_variants(source_artifact_id=aid):
                 vid=str(v.get("artifact_id") or "")
-                if vid and vid not in artifact_ids: artifact_ids.append(vid)
-        artifacts=tuple(x for x in (_artifact_ref(self.service.storage, aid, book_id=logical_id) for aid in artifact_ids) if x is not None)
+                if (vid and vid not in artifact_ids and (
+                    identity_id is None or _identity_placements(
+                        self.service.storage, vid, identity_id=identity_id,
+                        default_identity_id=self._default_identity(),
+                    )
+                )):
+                    artifact_ids.append(vid)
+        artifacts=tuple(
+            x for x in (
+                _artifact_ref(
+                    self.service.storage, aid, book_id=logical_id, identity_id=identity_id,
+                    default_identity_id=self._default_identity(),
+                ) for aid in artifact_ids
+            ) if x is not None
+        )
         variants=[]
         for aid in artifact_ids:
             for row in self.service.storage.artifact_variants(source_artifact_id=aid):
-                v=_variant_ref(self.service.storage,row,book_id=logical_id)
+                v=_variant_ref(
+                    self.service.storage, row, book_id=logical_id, identity_id=identity_id,
+                    default_identity_id=self._default_identity(),
+                )
                 if v is not None: variants.append(v)
         placements=[]
         for row in self.service.storage.placements():
-            if str(row.get("artifact_id") or "") in artifact_ids: placements.append(_placement_ref(row))
+            if (str(row.get("artifact_id") or "") in artifact_ids
+                    and row.get("state") == "present"
+                    and self._visible(row, identity_id)):
+                placements.append(_placement_ref(row))
         possessions=[]
         provider_items={(str(e.get("provider_id") or ""),str(e.get("item_id") or "")) for e in entries}
         for entitlement in self.service.storage.entitlements():
+            if not self._visible(entitlement, identity_id): continue
             if (str(entitlement.get("provider_id") or ""),str(entitlement.get("item_id") or "")) not in provider_items: continue
             kind=str(entitlement.get("entitlement_type") or "owned")
             if kind not in {"owned","loan","license"}: kind="owned"
@@ -459,24 +493,31 @@ class LibraryReadBrokerImpl:
             possessions.append(ArtifactPossessionRef(p.identity_id, p.provider_id, p.source_item_id, "storage" if p.kind == "storage" else "local", state=p.state, facts={"placement_id": p.placement_id, "storage_target_id": p.storage_target_id or ""}))
         return LogicalBookArtifacts(book, artifacts, tuple(variants), tuple(placements), tuple(possessions))
 
-    def book(self, book_id: str) -> LogicalBookArtifacts | None:
+    def book(self, book_id: str, *, identity_id: str | None = None) -> LogicalBookArtifacts | None:
         value=str(book_id)
-        entries=[e for e in self.service.storage.catalog_entries() if value in {str(e.get("item_id") or ""),str(e.get("catalog_entry_id") or ""),str(e.get("artifact_id") or "")}]
+        entries=[
+            e for e in self.service.storage.catalog_entries()
+            if self._visible(e, identity_id)
+            and value in {str(e.get("item_id") or ""),str(e.get("catalog_entry_id") or ""),str(e.get("artifact_id") or "")}
+        ]
         if not entries:
             # Resolve a transformed artifact back to its source and logical book.
             variant=next((v for v in self.service.storage.artifact_variants(artifact_id=value)),None)
             if variant:
-                return self.for_artifact(str(variant.get("source_artifact_id") or ""))
-        return self._view(entries,value)
+                return self.for_artifact(str(variant.get("source_artifact_id") or ""), identity_id=identity_id)
+        return self._view(entries, value, identity_id=identity_id)
 
-    def for_artifact(self, artifact_id: str) -> LogicalBookArtifacts | None:
+    def for_artifact(self, artifact_id: str, *, identity_id: str | None = None) -> LogicalBookArtifacts | None:
         value=str(artifact_id)
         source=value
         variant=next((v for v in self.service.storage.artifact_variants(artifact_id=value)),None)
         if variant: source=str(variant.get("source_artifact_id") or value)
-        entries=[e for e in self.service.storage.catalog_entries() if str(e.get("artifact_id") or "") == source]
+        entries=[
+            e for e in self.service.storage.catalog_entries()
+            if str(e.get("artifact_id") or "") == source and self._visible(e, identity_id)
+        ]
         logical=next((str(e.get("item_id") or "") for e in entries if e.get("item_id")), source)
-        return self._view(entries,logical)
+        return self._view(entries, logical, identity_id=identity_id)
 
 
 @dataclass(slots=True)
