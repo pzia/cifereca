@@ -13,16 +13,32 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CIFERECA_DATASET_RUNTIME: /tmp/cifereca-search-list
       CIFERECA_GTK_TEST_HARNESS: ${{ github.workspace }}/environnements/openai-chat-debian
       PYTHONPATH: ${{ github.workspace }}/src
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout current product
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Checkout UX recipe
+        uses: actions/checkout@v4
         with:
           ref: ux/search-list-recipe
+          path: _ux_recipe
+
+      - name: Overlay UX-only simulator recipe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp _ux_recipe/simulation/datasetctl.py simulation/datasetctl.py
+          cp _ux_recipe/simulation/profiles/ux-search-list.toml simulation/profiles/ux-search-list.toml
+          cp _ux_recipe/simulation/recipes/search_list_fixture.py simulation/recipes/search_list_fixture.py
+          cp _ux_recipe/simulation/recipes/search_list_capture.py simulation/recipes/search_list_capture.py
 
       - name: Install GTK/X11 runtime
         run: |
@@ -33,7 +49,7 @@ jobs:
             gir1.2-gtk-4.0 gir1.2-adw-1 \
             python3-httpx python3-packaging
 
-      - name: Prepare focused dataset
+      - name: Prepare pathological dataset on current main
         shell: bash
         run: |
           set -euxo pipefail
@@ -57,33 +73,39 @@ jobs:
 
           cp "$CIFERECA_DATASET_RUNTIME/ux-search-list/search-list-fixture.json" \
             search-list-evidence/search-list-fixture.json
+          git rev-parse HEAD > search-list-evidence/main-sha.txt
+          git -C _ux_recipe rev-parse HEAD > search-list-evidence/recipe-sha.txt
 
-      - name: Capture Search list at three widths
+      - name: Capture Recherche and Bibliothèque at three widths
         shell: bash
         run: |
           set -euxo pipefail
           export PATH="/tmp/cifereca-bin:$PATH"
 
-          for width in 760 1024 1300; do
-            out="$GITHUB_WORKSPACE/search-list-evidence/$width"
-            mkdir -p "$out"
-            /usr/bin/python3 simulation/datasetctl.py exec ux-search-list -- \
-              env \
-                PYTHONPATH="$GITHUB_WORKSPACE/src" \
-                CIFERECA_GTK_TEST_HARNESS="$CIFERECA_GTK_TEST_HARNESS" \
-                GDK_BACKEND=x11 \
-                GSK_RENDERER=cairo \
-                GTK_A11Y=none \
-                NO_AT_BRIDGE=1 \
-              xvfb-run -a -s "-screen 0 ${width}x720x24" \
-                /usr/bin/python3 simulation/recipes/search_list_capture.py \
-                  --window-width "$width" \
-                  --window-height 720 \
-                  --startup-wait 5 \
-                  --search-wait 4 \
-                  --out-dir "$out" \
-                  --cwd "$GITHUB_WORKSPACE" -- \
-                /usr/bin/python3 simulation/datasetctl.py cifereca ux-search-list --verbose
+          for page in search library; do
+            for width in 760 1024 1300; do
+              out="$GITHUB_WORKSPACE/search-list-evidence/$page/$width"
+              mkdir -p "$out"
+              /usr/bin/python3 simulation/datasetctl.py exec ux-search-list -- \
+                env \
+                  PYTHONPATH="$GITHUB_WORKSPACE/src" \
+                  CIFERECA_GTK_TEST_HARNESS="$CIFERECA_GTK_TEST_HARNESS" \
+                  GDK_BACKEND=x11 \
+                  GSK_RENDERER=cairo \
+                  GTK_A11Y=none \
+                  NO_AT_BRIDGE=1 \
+                xvfb-run -a -s "-screen 0 ${width}x720x24" \
+                  /usr/bin/python3 simulation/recipes/search_list_capture.py \
+                    --page "$page" \
+                    --list-only \
+                    --window-width "$width" \
+                    --window-height 720 \
+                    --startup-wait 5 \
+                    --search-wait 4 \
+                    --out-dir "$out" \
+                    --cwd "$GITHUB_WORKSPACE" -- \
+                  /usr/bin/python3 simulation/datasetctl.py cifereca ux-search-list --verbose
+            done
           done
 
       - name: Collect simulator logs
@@ -99,7 +121,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ux-search-list-evidence
+          name: ux-search-list-main-evidence
           path: search-list-evidence/
           if-no-files-found: error
           retention-days: 2
