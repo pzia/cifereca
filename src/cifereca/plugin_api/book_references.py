@@ -139,7 +139,32 @@ def book_access_facts(
             facts.append(fact)
 
     if row.get("local") is True:
-        add("local", "library.local")
+        if not identity_id:
+            add("local", "library.local")
+        else:
+            placements = row.get("placements")
+            if isinstance(placements, (list, tuple)) and placements:
+                # A merged book may have one local copy and several remote
+                # rights belonging to other identities. Only a present
+                # placement proves local access for the requested identity.
+                if any(
+                    isinstance(p, Mapping)
+                    and p.get("identity_id") == identity_id
+                    and p.get("state") == "present"
+                    for p in placements
+                ):
+                    add("local", "placement.present")
+            elif row.get("identity_id"):
+                # Legacy single-placement rows predate the public placement
+                # list but still attest one specific identity.
+                if row.get("identity_id") == identity_id:
+                    add("local", "library.local")
+            elif isinstance(identities, (list, tuple)):
+                # Single-identity legacy rows may have identity_ids without
+                # identity_id. Multiple identities are ambiguous: fail closed.
+                scoped_ids = {value for value in identities if isinstance(value, str) and value}
+                if scoped_ids == {identity_id}:
+                    add("local", "library.local")
 
     possessions = row.get("possessions")
     if isinstance(possessions, (tuple, list)):
