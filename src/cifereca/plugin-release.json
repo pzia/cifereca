@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "release": "0.9.44+dev.8",
+  "release": "0.9.44+dev.9",
   "packages": {
     "org.cifereca.provider.baen": {
       "version": "0.1.9",
