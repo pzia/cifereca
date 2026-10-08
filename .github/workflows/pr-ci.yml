@@ -235,10 +235,10 @@ jobs:
         run: |
           python -m compileall -q simulation
           python -m unittest discover -s simulation/tests -v
-          python simulation/datasetctl.py up ux-small
-          trap 'python simulation/datasetctl.py down ux-small' EXIT
-          python simulation/datasetctl.py status ux-small
-          python simulation/datasetctl.py config ux-small
+          python simulation/datasetctl.py up ci-smoke
+          trap 'python simulation/datasetctl.py down ci-smoke' EXIT
+          python simulation/datasetctl.py status ci-smoke
+          python simulation/datasetctl.py config ci-smoke
 
       - name: Install GTK E2E runtime
         if: steps.scope.outputs.gui == 'true'
