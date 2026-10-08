@@ -14,9 +14,9 @@ def _method_source(class_name: str, method_name: str) -> str:
     return ast.unparse(method)
 
 
-def test_query_filter_flowbox_children_are_not_tab_stops():
+def test_query_filters_have_no_intermediate_flowbox_tab_stops():
     source = _method_source("QueryControls", "__init__")
-    assert "child = widget.get_parent()" in source
-    assert "isinstance(child, Gtk.FlowBoxChild)" in source
-    assert "child.set_focusable(False)" in source
+    assert "Gtk.FlowBox" not in source
+    assert "Gtk.FlowBoxChild" not in source
+    assert "filter_row.append(widget)" in source
     assert source.count("insert_filter(") >= 6
