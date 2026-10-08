@@ -33,6 +33,7 @@ from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .recent_time import format_recent_timestamp
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
+from .activity_feedback import ActivityFeedback
 from .plugin_manager_page import PluginManagerPage
 from .query_controls import QueryControls, MultiSelect
 from .action_widgets import AdaptiveActionBar
@@ -1364,6 +1365,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._active_tasks: dict[int, tuple[int, str, str]] = {}
         self._finished_task_ids: set[int] = set()
         self._activity_hide_source: int | None = None
+        self._last_finished_task_id: int | None = None
+        self.activity_feedback = ActivityFeedback(limit=20)
         self.ui_perf = UiPerfMonitor()
         self.covers = CoverLoader(diagnostics=diagnostics, max_workers=6)
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
@@ -1533,11 +1536,98 @@ class MainWindow(Adw.ApplicationWindow):
                 pass
             self._activity_hide_source = None
 
+    def _refresh_activity_history(self) -> None:
+        if not hasattr(self, "activity_history_box"):
+            return
+        clear_box(self.activity_history_box)
+        rows = self.activity_feedback.rows()
+        for entry in rows:
+            label = Gtk.Label(label=entry.display_text, xalign=0)
+            label.set_wrap(True)
+            label.add_css_class("caption")
+            if entry.state == "error":
+                label.add_css_class("warning")
+            self.activity_history_box.append(label)
+        self.activity_history_button.set_visible(bool(rows))
+
+    def _show_pending_activity_error(self) -> bool:
+        entry = self.activity_feedback.latest_unacknowledged_error()
+        if entry is None or not hasattr(self, "busy_revealer"):
+            return False
+        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
+        self.activity_status_icon.set_visible(True)
+        self.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
+        self.activity_status_icon.add_css_class("activity-error")
+        self.activity_status_icon.remove_css_class("activity-success")
+        self.busy_label.set_visible(True)
+        self.busy_label.set_label(entry.display_text)
+        self.activity_dismiss.set_visible(True)
+        self.busy_revealer.set_reveal_child(True)
+        return True
+
     def _hide_activity_feedback(self) -> bool:
         self._activity_hide_source = None
-        if hasattr(self, "busy_revealer") and not self._active_tasks:
-            self.busy_revealer.set_reveal_child(False)
+        if self._active_tasks:
+            return False
+        if self._show_pending_activity_error():
+            return False
+        if not hasattr(self, "busy_revealer"):
+            return False
+        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
+        self.activity_status_icon.set_visible(False)
+        self.activity_dismiss.set_visible(False)
+        rows = self.activity_feedback.rows()
+        self.busy_label.set_visible(False)
+        self.activity_history_button.set_visible(bool(rows))
+        self.busy_revealer.set_reveal_child(bool(rows))
         return False
+
+    def _dismiss_activity_feedback(self) -> None:
+        self._cancel_activity_hide()
+        self.activity_feedback.acknowledge_errors()
+        self._refresh_activity_history()
+        self._hide_activity_feedback()
+
+    def _schedule_activity_reduce(self, delay: int = 4) -> None:
+        self._cancel_activity_hide()
+        self._activity_hide_source = GLib.timeout_add_seconds(
+            max(1, int(delay)),
+            self._hide_activity_feedback,
+        )
+
+    def _activity_result(
+        self,
+        message: str,
+        *,
+        success: bool = True,
+        persistent: bool = False,
+        task_id: int | None = None,
+    ) -> None:
+        resolved_id = int(task_id) if task_id is not None else self._last_finished_task_id
+        if resolved_id is None:
+            return
+        self.activity_feedback.result(resolved_id, str(message), success=bool(success))
+        self._refresh_activity_history()
+        if self._active_tasks or not hasattr(self, "busy_revealer"):
+            return
+        if not success:
+            self._show_pending_activity_error()
+            return
+        # A later success must never mask an earlier error that the user has
+        # not acknowledged yet.
+        if self._show_pending_activity_error():
+            return
+        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
+        self.activity_status_icon.set_visible(True)
+        self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
+        self.activity_status_icon.add_css_class("activity-success")
+        self.activity_status_icon.remove_css_class("activity-error")
+        self.busy_label.set_visible(True)
+        self.busy_label.set_label(f"Terminé · {message}")
+        self.activity_dismiss.set_visible(bool(persistent))
+        self.busy_revealer.set_reveal_child(True)
+        if not persistent:
+            self._schedule_activity_reduce()
 
     def _task_started(self, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
         if getattr(self, '_closed', False):return False
@@ -1546,12 +1636,16 @@ class MainWindow(Adw.ApplicationWindow):
             return False
         self._cancel_activity_hide()
         self._active_tasks[int(task_id)] = (int(priority), str(label), str(kind))
+        self.activity_feedback.started(int(task_id), str(label), str(kind))
+        self._refresh_activity_history()
         if hasattr(self, "busy_revealer"):
             self.activity_status_icon.set_visible(False)
             self.activity_status_icon.remove_css_class("activity-success")
             self.activity_status_icon.remove_css_class("activity-error")
+            self.activity_dismiss.set_visible(False)
+            self.busy_label.set_visible(True)
             prefix = f"{count} opérations · " if count > 1 else ""
-            self.busy_label.set_label(prefix + label)
+            self.busy_label.set_label("En cours · " + prefix + str(label))
             self.busy_revealer.set_reveal_child(True)
             self.busy_spinner.set_visible(True)
             self.busy_spinner.start()
@@ -1561,44 +1655,53 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(self, "busy_revealer") and self._active_tasks:
             count = len(self._active_tasks)
             prefix = f"{count} opérations · " if count > 1 else ""
-            self.busy_label.set_label(prefix + str(label))
+            self.busy_label.set_visible(True)
+            self.busy_label.set_label("En cours · " + prefix + str(label))
         return False
 
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
         if getattr(self, '_closed', False):return False
+        current = self._active_tasks.get(int(task_id))
+        kind = current[2] if current is not None else "task"
         if int(task_id) not in self._active_tasks:
             self._finished_task_ids.add(int(task_id))
             if len(self._finished_task_ids) > 100:
                 self._finished_task_ids = set(sorted(self._finished_task_ids)[-50:])
         self._active_tasks.pop(int(task_id), None)
+        self._last_finished_task_id = int(task_id)
+        functional = self._functional_error_message(error or "") if not success else ""
+        self.activity_feedback.finished(
+            int(task_id),
+            str(label),
+            str(kind),
+            success=bool(success),
+            error=functional,
+        )
+        self._refresh_activity_history()
         if not hasattr(self, "busy_revealer"):
             return False
         if remaining and self._active_tasks:
-            priority, next_label, _kind = sorted(self._active_tasks.values(), key=lambda row: row[0])[0]
+            _priority, next_label, _kind = sorted(self._active_tasks.values(), key=lambda row: row[0])[0]
             prefix = f"{remaining} opérations · " if remaining > 1 else ""
-            self.busy_label.set_label(prefix + next_label)
+            self.busy_label.set_visible(True)
+            self.busy_label.set_label("En cours · " + prefix + next_label)
+            self.activity_dismiss.set_visible(False)
             self.busy_spinner.set_visible(True)
             self.busy_spinner.start()
+            return False
+        if self._show_pending_activity_error():
             return False
         self.busy_spinner.stop()
         self.busy_spinner.set_visible(False)
         self.activity_status_icon.set_visible(True)
-        if success:
-            self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
-            self.activity_status_icon.add_css_class("activity-success")
-            self.activity_status_icon.remove_css_class("activity-error")
-            self.busy_label.set_label(f"Terminé · {label}")
-            delay = 4
-        else:
-            self.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
-            self.activity_status_icon.add_css_class("activity-error")
-            self.activity_status_icon.remove_css_class("activity-success")
-            functional = self._functional_error_message(error or "")
-            self.busy_label.set_label(f"Échec · {functional}")
-            delay = 8
+        self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
+        self.activity_status_icon.add_css_class("activity-success")
+        self.activity_status_icon.remove_css_class("activity-error")
+        self.busy_label.set_visible(True)
+        self.busy_label.set_label(f"Terminé · {label}")
+        self.activity_dismiss.set_visible(False)
         self.busy_revealer.set_reveal_child(True)
-        self._cancel_activity_hide()
-        self._activity_hide_source = GLib.timeout_add_seconds(delay, self._hide_activity_feedback)
+        self._schedule_activity_reduce()
         return False
 
     @staticmethod
@@ -1697,10 +1800,11 @@ class MainWindow(Adw.ApplicationWindow):
             _TRACE_LOG.info("TRACE gui populate-loans end")
             connected = len(result.get("connected", []))
             errors = result.get("errors", {}) or {}
-            if errors:
-                self.toast(f"{connected} source(s) connectée(s), {len(errors)} en erreur", 6)
-            else:
-                self.toast(f"{connected} source(s) connectée(s)")
+            self._activity_result(
+                f"{connected} source(s) connectée(s)" + (f", {len(errors)} en erreur" if errors else ""),
+                success=not bool(errors),
+                persistent=bool(errors),
+            )
             self._render_dashboard()
             GLib.idle_add(lambda: (self.run_opening_sync(), False)[1])
 
@@ -1827,7 +1931,26 @@ class MainWindow(Adw.ApplicationWindow):
         self.busy_spinner = Gtk.Spinner(); self.busy_spinner.set_visible(False); busy.append(self.busy_spinner)
         self.activity_status_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
         self.activity_status_icon.set_visible(False); busy.append(self.activity_status_icon)
-        self.busy_label = Gtk.Label(label="", xalign=0); self.busy_label.set_hexpand(True); busy.append(self.busy_label)
+        self.busy_label = Gtk.Label(label="", xalign=0)
+        self.busy_label.set_hexpand(True); self.busy_label.set_wrap(True); busy.append(self.busy_label)
+
+        self.activity_history_button = Gtk.MenuButton(label="Historique")
+        self.activity_history_button.set_icon_name("view-list-symbolic")
+        self.activity_history_button.set_tooltip_text("Historique des opérations")
+        self.activity_history_button.set_visible(False)
+        history_popover = Gtk.Popover()
+        self.activity_history_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.activity_history_box.set_margin_top(8); self.activity_history_box.set_margin_bottom(8)
+        self.activity_history_box.set_margin_start(10); self.activity_history_box.set_margin_end(10)
+        history_popover.set_child(self.activity_history_box)
+        self.activity_history_button.set_popover(history_popover)
+        busy.append(self.activity_history_button)
+
+        self.activity_dismiss = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        self.activity_dismiss.set_tooltip_text("Acquitter le résultat courant")
+        self.activity_dismiss.set_visible(False)
+        self.activity_dismiss.connect("clicked", lambda _button: self._dismiss_activity_feedback())
+        busy.append(self.activity_dismiss)
         root.append(self.busy_revealer); self.busy_revealer.set_child(busy)
 
         self.navigate("dashboard")
@@ -2443,7 +2566,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._populate_loans(rows)
             self.refresh_library(False)
             self.refresh_recent()
-            self.toast(f"Identité : {identity.label}")
+            self._activity_result(f"Identité chargée : {identity.label}")
         self.runner.submit(
             f"Chargement de {identity.label}…",
             lambda: self.service.refresh_identity_loans(force=False, identity_id=identity.identity_id),
@@ -2681,9 +2804,14 @@ class MainWindow(Adw.ApplicationWindow):
             identity = self.service.current_identity
             if broker is None: return
             request = SyncRequest(identity_id=identity.identity_id if identity else None)
-            self.runner.submit("Synchronisation des sources…", lambda: broker.synchronize(request),
-                lambda _r: (self._refresh_sync_page(), self.refresh_library(False), self.toast("Synchronisation terminée")),
-                control=button, priority=TaskPriority.USER_ACTION, kind="source-sync")
+            self.runner.submit(
+                "Synchronisation des sources…",
+                lambda: broker.synchronize(request),
+                lambda _r: (self._refresh_sync_page(), self.refresh_library(False)),
+                control=button,
+                priority=TaskPriority.USER_ACTION,
+                kind="source-sync",
+            )
         all_now.connect("clicked", sync_all)
         scroll.set_child(outer); return scroll
 
@@ -2767,9 +2895,18 @@ class MainWindow(Adw.ApplicationWindow):
                         def cancelled(self): return False
                         def check_cancelled(self): return None
                         def report(self, **_kwargs): return None
-                    self.runner.submit(meta.title, lambda: service.run(plan, Control()),
-                        lambda result: self.toast(result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"), 6),
-                        control=_button, priority=TaskPriority.MAINTENANCE, kind="maintenance-tool")
+                    self.runner.submit(
+                        meta.title,
+                        lambda: service.run(plan, Control()),
+                        lambda result: self._activity_result(
+                            result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
+                            success=bool(result.ok),
+                            persistent=not bool(result.ok),
+                        ),
+                        control=_button,
+                        priority=TaskPriority.MAINTENANCE,
+                        kind="maintenance-tool",
+                    )
                 dialog.connect("response", response); dialog.present()
             run.connect("clicked", prepare)
 
@@ -2785,7 +2922,11 @@ class MainWindow(Adw.ApplicationWindow):
             attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
             errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
             if acquisitions or attention or errors:
-                self.toast(f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)", 6)
+                self._activity_result(
+                    f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)",
+                    success=not bool(attention or errors),
+                    persistent=bool(attention or errors),
+                )
         def err(exc: BaseException) -> None:
             self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
             self._render_dashboard()
@@ -3517,7 +3658,9 @@ class MainWindow(Adw.ApplicationWindow):
                 if result.get("status") == "attention_required":
                     self.show_attention("Import en attente : " + str(result.get("code") or "runtime DRM à configurer") + "\nLe staging est conservé pour une nouvelle tentative.", code=result.get("code") or "attention_required")
                 else:
-                    self.toast("ACSM importé" if result.get("status") != "unchanged" else "ACSM déjà importé")
+                    self._activity_result(
+                        "ACSM importé" if result.get("status") != "unchanged" else "ACSM déjà importé"
+                    )
                     self.refresh_library(False)
             self.runner.submit("Import ACSM…", lambda: self.service.import_acsm(Path(path), identity_id=identity_id), done,
                 priority=TaskPriority.USER_ACTION, kind="acsm-import")
@@ -3622,7 +3765,7 @@ class MainWindow(Adw.ApplicationWindow):
             button.set_tooltip_text("Restituer avec le profil d’origine ; conserver le fichier local. Le retour fournisseur reste une action distincte.")
             def return_loan(_button):
                 self.runner.submit("Restitution du prêt ADEPT…", lambda: self.service.return_adept_acquisition(binding["acquisition_id"]),
-                    lambda _result: (button.set_sensitive(False), self.toast("Retour enregistré, jeton absent · fichier conservé" + (" · état local vérifié" if _result.get("verification") == "confirmed" else " · vérification locale non confirmée"))),
+                    lambda _result: (button.set_sensitive(False), self._activity_result("Retour enregistré, jeton absent · fichier conservé" + (" · état local vérifié" if _result.get("verification") == "confirmed" else " · vérification locale non confirmée"))),
                     lambda exc: self.show_error(str(exc), "Restitution ADEPT impossible"), control=button,
                     priority=TaskPriority.USER_ACTION)
             button.connect("clicked", return_loan)
@@ -3940,7 +4083,7 @@ class MainWindow(Adw.ApplicationWindow):
                     self.service.local_book_path(placement_id,identity_id=identity_id)
                     return self.service.materialize_to_identity(placement_id,target_id)
                 self.runner.submit('Envoi du fichier local…',work,
-                    lambda _result:(self.toast('Livre envoyé'),self.refresh_recent(),self.refresh_library(False)),
+                    lambda _result:(self._activity_result('Livre envoyé'),self.refresh_recent(),self.refresh_library(False)),
                     control=_button,priority=TaskPriority.USER_ACTION,kind='materialize')
             button.connect('clicked',send);buttons.append(button)
         routing = manager.broker('artifact.routing') if manager else None
@@ -3968,7 +4111,7 @@ class MainWindow(Adw.ApplicationWindow):
                             plan = routing.plan(request)
                             return routing.transfer(plan)
                         self.runner.submit('Envoi vers le stockage…', work,
-                            lambda _result:(self.toast('Livre envoyé'), self.refresh_library(False), self.refresh_recent()),
+                            lambda _result:(self._activity_result('Livre envoyé'), self.refresh_library(False), self.refresh_recent()),
                             lambda exc:self.show_error(str(exc),'Envoi impossible'), control=_button,
                             priority=TaskPriority.USER_ACTION, kind='artifact-route')
                     target_button.connect('clicked', route); box.append(target_button)
@@ -4175,18 +4318,22 @@ class MainWindow(Adw.ApplicationWindow):
         def ok(summary: dict[str, Any]) -> None:
             restore_label()
             self._render_kobo_loans()
+            attention = int(summary.get("attention_required", 0) or 0)
+            errors = int(summary.get("errors", 0) or 0)
             if manual:
-                self.toast(
+                self._activity_result(
                     f"Synchronisation Kobo : {summary.get('downloaded', 0)} téléchargé(s), "
                     f"{summary.get('pending', 0)} en attente, {summary.get('unchanged', 0)} à jour, "
-                    f"{summary.get('skipped', 0)} ignoré(s), {summary.get('attention_required', 0)} action(s), "
-                    f"{summary.get('errors', 0)} erreur(s)",
-                    7,
+                    f"{summary.get('skipped', 0)} ignoré(s), {attention} action(s), {errors} erreur(s)",
+                    success=not bool(attention or errors),
+                    persistent=bool(attention or errors),
                 )
-            elif summary.get("downloaded") or summary.get("pending"):
-                self.toast(
+            elif summary.get("downloaded") or summary.get("pending") or attention or errors:
+                self._activity_result(
                     f"Synchronisation Kobo automatique : {summary.get('downloaded', 0)} téléchargé(s), "
-                    f"{summary.get('pending', 0)} en attente, {summary.get('attention_required', 0)} action(s)", 5
+                    f"{summary.get('pending', 0)} en attente, {attention} action(s), {errors} erreur(s)",
+                    success=not bool(attention or errors),
+                    persistent=bool(attention or errors),
                 )
         def err(exc: BaseException) -> None:
             restore_label()
@@ -4234,7 +4381,7 @@ class MainWindow(Adw.ApplicationWindow):
             option = options[index]
             def ok(_result):
                 self.loan_page.detail.show_loan(loan); self.refresh_library(False)
-                self.toast("Prêt ADEPT rattaché · fichier conservé", 6)
+                self._activity_result("Prêt ADEPT rattaché · fichier conservé")
             self.runner.submit("Rattachement du prêt ADEPT…", lambda: self.service.attach_adept_loan(acquisition_id, option["profile_id"], option["loan_id"]), ok,
                 lambda exc: self.show_error(str(exc), "Rattachement impossible"), priority=TaskPriority.USER_ACTION, kind="adept-binding")
         dialog.connect("response", response); dialog.present()
@@ -4243,7 +4390,7 @@ class MainWindow(Adw.ApplicationWindow):
         def ok(result):
             self.loan_page.detail.show_loan(loan)
             labels = {"resolved": "Liaison ADEPT vérifiée", "ambiguous": "Plusieurs prêts correspondent : liaison non résolue", "unresolved": "Aucun prêt ne correspond au chemin du fichier", "inventory_error": "Inventaire partiel : liaison non résolue", "profile_missing": "Associez un profil ADEPT à cette identité", "artifact_missing": "Fichier local absent", "binding_conflict": "L’inventaire contredit la liaison enregistrée"}
-            self.toast(labels.get(result["status"], "Liaison ADEPT non résolue"), 6)
+            self._activity_result(labels.get(result["status"], "Liaison ADEPT non résolue"))
         self.runner.submit("Vérification du prêt ADEPT…", lambda: self.service.reconcile_adept_acquisition(acquisition_id), ok,
             lambda exc: self.show_error(str(exc), "Vérification ADEPT impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="adept-inventory")
@@ -4253,7 +4400,12 @@ class MainWindow(Adw.ApplicationWindow):
             verification = _result.get("verification")
             suffix = " · état local vérifié" if verification == "confirmed" else (" · vérification locale non confirmée" if verification else "")
             message="Retour enregistré, jeton absent" if verification=="confirmed" else "Commande exécutée, retour non confirmé"
-            self.toast(message+" · fichiers conservés" + suffix, 7)
+            result_message = message+" · fichiers conservés" + suffix
+            reporter = getattr(self, "_activity_result", None)
+            if callable(reporter):
+                reporter(result_message)
+            else:
+                self.toast(result_message, 7)
             if getattr(self, "_displayed_loan", None):
                 self.loan_page.detail.show_loan(self._displayed_loan)
             self.refresh_library(False)
@@ -4272,7 +4424,12 @@ class MainWindow(Adw.ApplicationWindow):
             self.refresh_library(False); self.refresh_recent(); self._render_dashboard()
             self.loan_page.detail.show_loan(loan)
             suffix = " · restitution ADEPT disponible" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
-            self.toast("Livre récupéré" + suffix, 6)
+            result_message = "Livre récupéré" + suffix
+            reporter = getattr(self, "_activity_result", None)
+            if callable(reporter):
+                reporter(result_message)
+            else:
+                self.toast(result_message, 6)
         self.runner.submit("Acquisition du livre numérique…", work, ok,
             lambda exc: self.show_error(str(exc), "Acquisition impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="loan-acquisition")
@@ -4327,7 +4484,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         def ok(value) -> None:
             loan, _loans = value
-            self.toast(f"Emprunt confirmé : {loan.title}", 5)
+            self._activity_result(f"Emprunt confirmé : {loan.title}")
             self.refresh_library(False)
             self.refresh_recent()
 
@@ -4341,13 +4498,13 @@ class MainWindow(Adw.ApplicationWindow):
         def ok(result) -> None:
             acquisition = result.acquisition
             if result.path is not None:
-                self.toast(f"Disponible dans la Bibliothèque : {result.path.name}", 5)
+                self._activity_result(f"Disponible dans la Bibliothèque : {result.path.name}")
                 self.refresh_library(False)
                 self.refresh_recent()
             elif acquisition.action == "command":
-                self.toast("Commande d’obtention terminée", 5)
+                self._activity_result("Commande d’obtention terminée")
             else:
-                self.toast("Action d’obtention terminée", 5)
+                self._activity_result("Action d’obtention terminée")
 
         self.runner.submit(
             f"Obtention depuis {item.source_provider}…",
@@ -4823,7 +4980,11 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(self, "identity_dropdown"):
                     self._populate_accounts()
                     self._render_dashboard()
-                self.toast(message, 5)
+                reporter = getattr(self, "_activity_result", None)
+                if callable(reporter):
+                    reporter(message)
+                else:
+                    self.toast(message, 5)
                 self._configure_kobo_backup_timer(run_now=False)
                 refresh_text()
                 if reconnect_after:
