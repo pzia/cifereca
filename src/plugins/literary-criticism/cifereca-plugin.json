@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -14,17 +14,23 @@
       "contract": "cifereca.criticism-source/1",
       "resolution": "all",
       "description": "Sources indépendantes de critiques, collectées et rapprochées des livres par preuves bibliographiques explicites."
+    },
+    {
+      "id": "criticism.index",
+      "display_name": "Index de critiques",
+      "contract": "cifereca.criticism-index/1",
+      "resolution": "single"
     }
   ],
   "plugins": [
     {
       "id": "literary.criticism",
       "type": "criticism.index",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "entrypoint": "literary_criticism:PLUGIN",
       "display_name": "Critique littéraire",
       "description": "Agrège des critiques publiques, les déduplique et les rattache aux livres par preuves explicables.",
-      "help_text": "Socle prospectif sans chargement distant implicite : découverte RSS/Atom via métarecherche fournie par l'hôte, collecte de sources structurelles isolées, cache de fraîcheur, déduplication canonique et rapprochement ISBN > URL de notice > titre+auteur. Les ambiguïtés restent des suggestions. L'intégration à la fiche livre dépend du contrat Core dédié.",
+      "help_text": "Index de critiques avec preuves ISBN, URL ou titre/auteur ; les éditions contradictoires restent des suggestions. Aucune collecte implicite.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
@@ -32,7 +38,85 @@
         "criticism.index",
         "criticism.discover",
         "criticism.match"
-      ]
+      ],
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [],
+      "requires_contracts": [],
+      "system_requires": []
+    },
+    {
+      "id": "ui.page.literary-criticism",
+      "type": "ui.page",
+      "version": "0.2.0",
+      "entrypoint": "criticism_page:PLUGIN",
+      "display_name": "Critiques littéraires",
+      "description": "Sources et critiques associées depuis la fiche d’un livre.",
+      "help_text": "Lecture du cache local à l’ouverture. Ajouter un flux le laisse désactivé ; activez-le puis lancez Actualiser. Filtres source, langue, date. Navigation locale optionnelle Core #737.",
+      "enabled_by_default": false,
+      "priority": -100,
+      "instantiation": "singleton_public",
+      "requires_brokers": [
+        "tasks"
+      ],
+      "requires_contracts": [
+        {
+          "category": "criticism.source",
+          "contract": "cifereca.criticism-source",
+          "version": ">=1,<2",
+          "mode": "optional"
+        }
+      ],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "httpx",
+          "version": ">=0.28.1,<0.29",
+          "import": "httpx"
+        }
+      ],
+      "requires": [],
+      "recommends": [],
+      "capabilities": []
+    },
+    {
+      "id": "criticism.source.rss",
+      "type": "criticism.source",
+      "version": "0.2.0",
+      "entrypoint": "criticism_feeds:PLUGIN",
+      "display_name": "Source RSS/Atom",
+      "description": "Source de critiques publique RSS 2, Atom ou JSON Feed.",
+      "help_text": "Configurez explicitement un flux public. Seuls les résumés sont conservés. Les métadonnées du livre sont distinctes de celles de la critique.",
+      "enabled_by_default": false,
+      "priority": -100,
+      "instantiation": "singleton_public",
+      "capabilities": [
+        "criticism.collect",
+        "criticism.discover"
+      ],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "httpx",
+          "version": ">=0.28.1,<0.29",
+          "import": "httpx"
+        }
+      ],
+      "config_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "feed_url": {
+            "type": "string",
+            "default": "",
+            "description": "URL HTTP(S) du flux public"
+          }
+        }
+      },
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [],
+      "requires_contracts": []
     }
   ]
 }

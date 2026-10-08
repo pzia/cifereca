@@ -34,3 +34,37 @@ Ordre de preuve : ISBN-10/13 valide commun (100), URL de notice canonique commun
 ## Périmètre
 
 Ce groupe traite #710, #711, #712 et #713. La vue depuis la fiche livre (#714) n'est pas implémentée ici : elle dépend du point d'extension public demandé au Core par #715.
+
+
+## Suite de la PR #736 : utilisation de la page (0.2.0)
+
+Activer **Critiques littéraires** dans le gestionnaire. Depuis une fiche livre,
+« Consulter les critiques » ouvre la page et son cache local, sans requête distante.
+Filtres : source, langue exacte et date minimale ISO. La preuve, le statut
+confirmé/suggestion, l'auteur de critique, la date, l'extrait et le lien navigateur
+restent visibles. Le retour à la fiche existante utilise facultativement #737.
+
+Coller l'URL d'une page ou d'un flux, **Prévisualiser**, puis **Ajouter**. L'abonnement
+reste désactivé jusqu'à la coche explicite. **Actualiser les sources actives** lance
+la collecte dans le broker de tâches. Les plugins tiers `criticism.source` sont
+résolus par contrat/version ; une panne n'interrompt pas les autres sources.
+
+La source fournie lit RSS 2, Atom et JSON Feed (2 Mio maximum, délais et redirections
+bornés). Pas de téléchargement d'article intégral. Les résumés sont convertis en
+texte et limités à 600 caractères. Le cache et les abonnements persistent dans le
+répertoire de données du plugin ; aucune identité ni livre sélectionné n'y est stocké.
+
+Le flux doit attester les métadonnées du livre : RSS/Atom reconnaît `dc:identifier`
+`urn:isbn:…` et `https://cifereca.org/ns/book/1` (`title`, `author`, `notice`). JSON Feed
+accepte `_cifereca_book`. Le titre de l'article et son auteur ne deviennent jamais
+implicitement ceux du livre. Les flux ordinaires sans ces preuves sont collectés
+mais peuvent ne correspondre à aucun livre.
+
+L'équivalence ISBN-10/13 est normalisée. Des ISBN explicitement contradictoires ne
+sont plus confirmés par un simple titre/auteur commun. La découverte par
+métarecherche reste l'interface injectable décrite ci-dessus ; aucun moteur distant
+n'est présélectionné. La page fournit la découverte par URL explicite.
+
+La section « Périmètre » ci-dessus décrit le socle #736 ; la présente suite implémente
+#714 via les contributions publiques `book.detail` déjà disponibles. La validation
+locale reste sans GTK ; la recette visuelle est suivie dans #716.

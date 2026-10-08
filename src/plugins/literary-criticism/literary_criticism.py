@@ -59,6 +59,7 @@ def canonical_url(value: object, *, base_url: str = "") -> str:
     except ValueError:
         return ""
     default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    host = f"[{host}]" if ":" in host else host
     netloc = host if port is None or default_port else f"{host}:{port}"
     path = parts.path or "/"
     return urlunsplit((scheme, netloc, path, parts.query, ""))
@@ -80,8 +81,11 @@ def _valid_isbn13(value: str) -> bool:
 
 
 def normalize_isbn(value: object) -> str:
-    isbn = _ISBN_CLEAN_RE.sub("", _text(value)).upper()
-    if _valid_isbn10(isbn) or _valid_isbn13(isbn):
+    isbn = re.sub(r"[\s-]+", "", _text(value)).upper()
+    if _valid_isbn10(isbn):
+        prefix = "978" + isbn[:9]
+        return prefix + str((-sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(prefix))) % 10)
+    if _valid_isbn13(isbn):
         return isbn
     return ""
 
@@ -300,6 +304,30 @@ def discover_feeds(
     return tuple(candidates[:bounded])
 
 
+class _ExcerptParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.hidden = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self.hidden += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self.hidden = max(0, self.hidden - 1)
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
+
+
+def plain_excerpt(value):
+    parser = _ExcerptParser()
+    parser.feed(str(value or "")[:20000])
+    return _text(" ".join(parser.parts))[:600]
+
+
 def normalize_article(raw: object, *, source_id: str) -> CriticismArticle:
     book = _field(raw, "book", {})
     article_url = canonical_url(_field(raw, "url") or _field(raw, "canonical_url"))
@@ -344,7 +372,7 @@ def normalize_article(raw: object, *, source_id: str) -> CriticismArticle:
         url=article_url,
         critic_author=_text(_field(raw, "critic_author") or _field(raw, "author")),
         published_at=_text(_field(raw, "published_at") or _field(raw, "date")),
-        excerpt=_text(_field(raw, "excerpt") or _field(raw, "summary")),
+        excerpt=plain_excerpt(_field(raw, "excerpt") or _field(raw, "summary")),
         language=language,
         book_title=book_title,
         book_authors=book_authors,
@@ -419,6 +447,10 @@ def _book_notice_urls(book: object) -> tuple[str, ...]:
             values.append(link.get("url") or link.get("uri") or "")
         else:
             values.append(getattr(link, "url", "") or getattr(link, "uri", ""))
+    metadata = _field(book, "metadata", {})
+    if isinstance(metadata, Mapping):
+        for name in ("notice_urls", "notice_url", "friendly_url"):
+            values.extend(_iter_values(metadata.get(name)))
     return _normalized_urls(values)
 
 
@@ -439,6 +471,9 @@ def match_article(article: CriticismArticle, book: object) -> CriticismMatch:
     book_authors = {_fold(value) for value in _normalized_authors(_book_value(book, "authors", "author"))}
     common_authors = article_authors & book_authors
 
+    conflicting_edition = bool(article.isbns and book_isbns and not common_isbns)
+    if conflicting_edition and article_title == book_title and common_authors:
+        return CriticismMatch(article, "suggested", 45, ("title-exact", "author-exact", "different-edition"))
     if article_title and book_title and article_title == book_title and common_authors:
         return CriticismMatch(article, "confirmed", 75, ("title-exact", "author-exact"))
     if article_title and book_title and article_title == book_title:
@@ -592,3 +627,4 @@ class LiteraryCriticismPlugin:
 
 
 PLUGIN = LiteraryCriticismPlugin()
+
