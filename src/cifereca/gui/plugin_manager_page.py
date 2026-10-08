@@ -110,28 +110,6 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             frame.set_child(self._plugin_row(status, package))
             self.outer.append(frame)
 
-    @staticmethod
-    def _freshness_text(package: dict[str, Any]) -> str:
-        if package.get("builtin"):
-            return ""
-        status = str(package.get("freshness") or "unknown")
-        reason = str(package.get("freshness_reason") or "")
-        active = package.get("active")
-        expected = package.get("expected_version")
-        if status == "up_to_date":
-            return f"Version : à jour · v{active}"
-        if status == "outdated":
-            return f"Version : ancienne v{active} · attendue v{expected}"
-        if status == "newer_nonstandard":
-            return f"Version : plus récente / non standard v{active} · attendue v{expected}"
-        if reason == "not_installed" and expected:
-            return f"Version : non installée · attendue v{expected}"
-        if reason == "inactive" and expected:
-            return f"Version : inactive · attendue v{expected}"
-        if expected:
-            return f"Version : état inconnu · attendue v{expected}"
-        return "Version : attendue inconnue (package non géré par cette release)"
-
     def _plugin_row(self, status: Any, package=None) -> Gtk.Widget:
         from cifereca.plugin_help import plugin_help
         d = status.descriptor
@@ -168,7 +146,26 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         summary.set_wrap(True); summary.set_hexpand(True)
         summary.add_css_class("caption"); summary.add_css_class("dim-label")
         box.append(summary)
-        freshness_text = self._freshness_text(package)
+        freshness_text = ""
+        if not package.get("builtin") and ("freshness" in package or "expected_version" in package):
+            freshness_status = str(package.get("freshness") or "unknown")
+            freshness_reason = str(package.get("freshness_reason") or "")
+            active = package.get("active")
+            expected = package.get("expected_version")
+            if freshness_status == "up_to_date":
+                freshness_text = f"Version : à jour · v{active}"
+            elif freshness_status == "outdated":
+                freshness_text = f"Version : ancienne v{active} · attendue v{expected}"
+            elif freshness_status == "newer_nonstandard":
+                freshness_text = f"Version : plus récente / non standard v{active} · attendue v{expected}"
+            elif freshness_reason == "not_installed" and expected:
+                freshness_text = f"Version : non installée · attendue v{expected}"
+            elif freshness_reason == "inactive" and expected:
+                freshness_text = f"Version : inactive · attendue v{expected}"
+            elif expected:
+                freshness_text = f"Version : état inconnu · attendue v{expected}"
+            else:
+                freshness_text = "Version : attendue inconnue (package non géré par cette release)"
         if freshness_text:
             freshness = Gtk.Label(label=freshness_text, xalign=0)
             freshness.set_wrap(True)
