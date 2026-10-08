@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-catalog",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "name": "Jeunesse",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -20,28 +20,29 @@
     {
       "id": "catalog.youth",
       "type": "catalog.youth",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "entrypoint": "youth_catalog:PLUGIN",
       "display_name": "Jeunesse",
       "description": "Catalogue jeunesse multi-source filtrable par âge et type d’âge.",
-      "help_text": "Moteur du catalogue Jeunesse : conserve les libellés d’âge source, distingue intérêt/lecture/recommandé/éditeur/inféré, agrège uniquement sur preuve bibliographique forte et recherche dans le cache local. Aucune collecte distante implicite.",
+      "help_text": "Moteur du catalogue Jeunesse : conserve les libellés d’âge source, agrège uniquement sur preuve bibliographique forte et accepte des enrichissements bibliographiques explicites sur ISBN sans modifier la provenance d’âge. Aucune collecte distante implicite.",
       "enabled_by_default": false,
       "priority": -50,
       "instantiation": "singleton_public",
       "capabilities": [
         "youth.catalog",
         "youth.filter.age",
-        "youth.source.aggregate"
+        "youth.source.aggregate",
+        "youth.bibliography.merge"
       ]
     },
     {
       "id": "ui.page.youth",
       "type": "ui.page",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "entrypoint": "youth_page:PLUGIN",
       "display_name": "Jeunesse — recherche",
       "description": "Recherche spécialisée par âge sur le cache Jeunesse et collecte explicite des sources activées.",
-      "help_text": "Page proche de Recherche avec filtres âge/type d’âge/source/langue/format/type/thèmes. Les changements de filtres ne lisent que le cache. Une source distante n’est interrogée qu’avec « Collecter cette source » ou « Plus de résultats ».",
+      "help_text": "Page proche de Recherche avec filtres âge/type/source/langue/format/type/thèmes. Les changements de filtres ne lisent que le cache. Collecte jeunesse et enrichissement bibliographique sont deux actions distantes séparées et toujours explicites.",
       "enabled_by_default": false,
       "priority": -50,
       "instantiation": "singleton_public",
@@ -55,6 +56,15 @@
           "contract": "cifereca.youth-source",
           "version": ">=1,<2",
           "mode": "optional"
+        },
+        {
+          "category": "youth.bibliography",
+          "contract": "cifereca.youth-bibliography",
+          "version": ">=1,<2",
+          "mode": "optional",
+          "capabilities": [
+            "youth.bibliography.lookup"
+          ]
         }
       ],
       "capabilities": [
