@@ -46,10 +46,13 @@ class FakeMetadataBroker:
 
 
 class FakeLibraryReadBroker:
-    def __init__(self, artifacts):
+    def __init__(self, artifacts, failing_ids=()):
         self._artifacts = dict(artifacts)
+        self._failing_ids = {str(value) for value in failing_ids}
 
     def artifact(self, artifact_id):
+        if str(artifact_id) in self._failing_ids:
+            raise RuntimeError("library.read unavailable")
         return self._artifacts.get(str(artifact_id))
 
 
@@ -154,3 +157,50 @@ def test_integrity_audit_through_public_brokers_is_read_only():
             name.startswith(("put", "update", "delete", "write", "mutate"))
             for name in dir(metadata) + dir(library_read)
         )
+
+
+def test_integrity_audit_reports_incomplete_reference_reads():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        epub = root / "good.epub"
+        write_valid_epub(epub)
+        artifact_id = "a-good"
+        artifact = ArtifactRef(
+            artifact_id=artifact_id,
+            book_id=None,
+            format=ArtifactFormat(media_type="application/epub+zip", format="epub"),
+            size_bytes=epub.stat().st_size,
+            sha256=sha256(epub),
+        )
+        metadata: MetadataBroker = FakeMetadataBroker([{
+            "artifact_id": artifact_id,
+            "identity_id": "id1",
+            "title": "Good",
+            "local": True,
+            "local_path": str(epub),
+            "media_format": "epub",
+        }])
+        library_read: LibraryReadBroker = FakeLibraryReadBroker(
+            {artifact_id: artifact},
+            failing_ids={artifact_id},
+        )
+        context = PluginContext(
+            plugin_id="maintenance.audit.integrity",
+            package_id="org.cifereca.maintenance.library-audit",
+            directories=PluginDirectories(data=root / "data", cache=root / "cache"),
+            _broker_resolver=lambda broker_id: {
+                "metadata": metadata,
+                "library.read": library_read,
+            }.get(broker_id),
+        )
+
+        tool = IntegrityAuditTool().activate(context)
+        plan = tool.plan(MaintenanceContext(scope="library", identity_id="id1"))
+        assert plan.facts["read_failures"] == 1
+        assert any("library.read en erreur" in warning for warning in plan.warnings)
+
+        result = tool.run(plan, Control())
+
+        assert result.ok is False
+        assert result.facts["invalid"] == 0
+        assert result.facts["read_failures"] == 1
