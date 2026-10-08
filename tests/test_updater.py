@@ -235,3 +235,101 @@ def test_backup_persistent_state_copies_db_config_and_plugins(tmp_path, monkeypa
         assert conn.execute("select value from sample").fetchone()[0] == "kept"
     metadata = (backup / "backup.json").read_text(encoding="utf-8")
     assert "abc123" in metadata
+
+
+
+def _release_with_plugin_manifest(root: Path, version: str = "9.9.9") -> Path:
+    source = _mini_project(root, version)
+    manifest_dir = source / "src" / "cifereca"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "plugin-release.json").write_text(
+        '{"schema":1,"release":"' + version + '","packages":{"org.test":{"version":"2.0.0"}}}\n',
+        encoding="utf-8",
+    )
+    plugins = source / "src" / "plugins" / "test"
+    plugins.mkdir(parents=True)
+    (plugins / "cifereca-plugin.json").write_text("{}\n", encoding="utf-8")
+    scripts = source / "scripts"
+    scripts.mkdir()
+    (scripts / "package-dev-snapshot.py").write_text("# fixture\n", encoding="utf-8")
+    return source
+
+
+def test_standard_update_applies_release_plugins_after_core_switch(tmp_path, monkeypatch):
+    source = _release_with_plugin_manifest(tmp_path / "source")
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
+    monkeypatch.setenv("CIFERECA_BIN_DIR", str(tmp_path / "bin"))
+    monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
+
+    def fake_venv(release, python):
+        bindir = release / ".venv" / "bin"
+        bindir.mkdir(parents=True)
+        for name in (*updater.PUBLIC_COMMANDS, updater.DEV_COMMAND):
+            path = bindir / name
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(0o755)
+        (bindir / "python").write_text("", encoding="utf-8")
+        return release / ".venv"
+
+    monkeypatch.setattr(updater, "_create_venv", fake_venv)
+    monkeypatch.setattr(updater, "_smoke", lambda release: {})
+    snapshot = tmp_path / "snapshot.zip"
+
+    def fake_build(release, destination):
+        snapshot.write_bytes(b"snapshot")
+        return snapshot
+
+    applied = []
+    monkeypatch.setattr(updater, "_build_release_plugin_snapshot", fake_build)
+    monkeypatch.setattr(
+        updater,
+        "_apply_release_plugin_snapshot",
+        lambda release, snap: applied.append((release, snap)) or {"ok": True, "plugins": ["org.test"]},
+    )
+
+    result = updater.install_source(source)
+    assert applied
+    assert applied[0][0].resolve() == Path(result["current"]).resolve()
+    assert applied[0][1] == snapshot
+    assert result["plugins"]["plugins"] == ["org.test"]
+
+
+def test_plugin_upgrade_failure_restores_previous_core(tmp_path, monkeypatch):
+    old = tmp_path / "runtime" / "releases" / "1.0.0-old"
+    (old / ".venv" / "bin").mkdir(parents=True)
+    root = tmp_path / "runtime"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "current").symlink_to(os.path.relpath(old, root))
+    source = _release_with_plugin_manifest(tmp_path / "source", "2.0.0")
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
+    monkeypatch.setenv("CIFERECA_BIN_DIR", str(tmp_path / "bin"))
+    monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
+
+    def fake_venv(release, python):
+        bindir = release / ".venv" / "bin"
+        bindir.mkdir(parents=True)
+        for name in (*updater.PUBLIC_COMMANDS, updater.DEV_COMMAND):
+            path = bindir / name
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(0o755)
+        (bindir / "python").write_text("", encoding="utf-8")
+        return release / ".venv"
+
+    monkeypatch.setattr(updater, "_create_venv", fake_venv)
+    monkeypatch.setattr(updater, "_smoke", lambda release: {})
+    monkeypatch.setattr(updater, "_build_release_plugin_snapshot", lambda release, dest: tmp_path / "snapshot.zip")
+    monkeypatch.setattr(
+        updater,
+        "_apply_release_plugin_snapshot",
+        lambda *_: (_ for _ in ()).throw(updater.UpdateError("plugin failed")),
+    )
+
+    with pytest.raises(updater.UpdateError, match="plugin failed"):
+        updater.install_source(source)
+    assert updater._symlink_target(root / "current").resolve() == old.resolve()
+
+
+def test_release_without_plugin_manifest_keeps_core_only_update_contract(tmp_path):
+    source = _mini_project(tmp_path / "source")
+    assert updater._release_plugin_manifest(source) == {}
