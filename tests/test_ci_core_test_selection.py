@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SELECTOR = ROOT / "scripts/ci-select-core-tests.py"
+
+
+def _module():
+    spec = importlib.util.spec_from_file_location("ci_select_core_tests", SELECTOR)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_test_only_change_runs_only_changed_test_file():
+    selector = _module()
+    mode, targets = selector.select(["tests/test_storage.py"], ROOT)
+    assert mode == "changed"
+    assert targets == ["tests/test_storage.py"]
+
+
+def test_gui_change_uses_focused_ui_suite():
+    selector = _module()
+    mode, targets = selector.select(["src/cifereca/gui/query_controls.py"], ROOT)
+    assert mode == "ui"
+    assert "tests/test_query_controls_batching.py" in targets
+    assert "tests/test_core_ui_interactive_startup.py" in targets
+    assert "tests/test_storage.py" not in targets
+
+
+def test_gui_change_always_includes_changed_regression_test():
+    selector = _module()
+    mode, targets = selector.select(
+        ["src/cifereca/gui/main_window.py", "tests/test_storage.py"],
+        ROOT,
+    )
+    assert mode == "ui"
+    assert "tests/test_storage.py" in targets
+
+
+def test_non_gui_core_change_keeps_full_suite():
+    selector = _module()
+    mode, targets = selector.select(["src/cifereca/services.py"], ROOT)
+    assert (mode, targets) == ("full", ["tests"])
+
+
+def test_pyproject_or_selector_change_keeps_full_suite():
+    selector = _module()
+    assert selector.select(["pyproject.toml"], ROOT) == ("full", ["tests"])
+    assert selector.select(["scripts/ci-select-core-tests.py"], ROOT) == ("full", ["tests"])
+
+
+def test_e2e_change_uses_ui_suite():
+    selector = _module()
+    mode, targets = selector.select(["e2e/run.py"], ROOT)
+    assert mode == "ui"
+    assert "tests/test_e2e_runner_contract.py" in targets
