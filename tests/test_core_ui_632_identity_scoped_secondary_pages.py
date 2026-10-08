@@ -55,9 +55,9 @@ def test_booking_refresh_only_applies_to_current_identity_context():
 
 def test_active_secondary_page_reloads_after_identity_loans_finish():
     source = _method("_activate_identity")
-    assert 'route == "history"' in source
+    assert "route == 'history'" in source
     assert "self.refresh_history(False)" in source
-    assert 'route == "bookings"' in source
+    assert "route == 'bookings'" in source
     assert "self.refresh_bookings(False)" in source
 
 
