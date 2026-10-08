@@ -297,22 +297,66 @@ def stop_service(profile: dict, state: dict, name: str) -> None:
     state["services"].pop(name, None)
 
 
+def profile_identities(profile: dict) -> list[dict]:
+    raw = profile.get("identities")
+    if isinstance(raw, list) and raw:
+        out = []
+        for index, row in enumerate(raw):
+            if not isinstance(row, dict):
+                continue
+            identity_id = str(row.get("id") or f"ux-{index + 1}").strip()
+            if not identity_id:
+                continue
+            directory_name = str(row.get("directory_name") or identity_id).strip() or identity_id
+            out.append({
+                "id": identity_id,
+                "label": str(row.get("label") or identity_id),
+                "directory_name": directory_name,
+                "preferences": {
+                    "prefer_original_language": bool(row.get("prefer_original_language", False)),
+                    "reading_languages": list(row.get("reading_languages") or ["fr"]),
+                },
+                "epubs": int(row.get("epubs") or 0),
+                "seed": int(row.get("seed") or 20261006),
+            })
+        if out:
+            return out
+
+    library = profile.get("library") or {}
+    identity_id = str(library.get("identity_dir") or "ux").strip() or "ux"
+    return [{
+        "id": identity_id,
+        "label": f"UX — {profile['name']}",
+        "directory_name": identity_id,
+        "preferences": {
+            "prefer_original_language": False,
+            "reading_languages": ["fr"],
+        },
+        "epubs": int(library.get("epubs") or 0),
+        "seed": int(library.get("seed") or 20261006),
+    }]
+
+
 def generate_local_library(profile: dict, *, rebuild: bool = False) -> Path:
     runtime = profile_runtime(profile)
     library = runtime / "library"
     config = profile.get("library") or {}
-    count = int(config.get("epubs") or 0)
-    seed = int(config.get("seed") or 20261006)
-    identity_dir = str(config.get("identity_dir") or "ux").strip() or "ux"
     provider_dir = str(config.get("provider_dir") or "local").strip() or "local"
-    content_dir = library / identity_dir / provider_dir
+    identities = profile_identities(profile)
+    layouts = [
+        {
+            "id": row["id"],
+            "directory_name": row["directory_name"],
+            "epubs": int(row["epubs"]),
+            "seed": int(row["seed"]),
+        }
+        for row in identities
+    ]
     marker = library / ".dataset.json"
     wanted = {
-        "version": 2,
-        "epubs": count,
-        "seed": seed,
-        "identity_dir": identity_dir,
+        "version": 3,
         "provider_dir": provider_dir,
+        "identities": layouts,
     }
 
     current = None
@@ -325,26 +369,36 @@ def generate_local_library(profile: dict, *, rebuild: bool = False) -> Path:
     if rebuild or current != wanted:
         if library.exists():
             shutil.rmtree(library)
-        content_dir.mkdir(parents=True, exist_ok=True)
-        if count:
-            generator = ROOT / "Epub" / "gen_fake_epubs.py"
-            log_dir = runtime / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            with (log_dir / "library-generator.log").open("w", encoding="utf-8") as log:
+        generator = ROOT / "Epub" / "gen_fake_epubs.py"
+        log_dir = runtime / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        for row in layouts:
+            content_dir = library / row["directory_name"] / provider_dir
+            content_dir.mkdir(parents=True, exist_ok=True)
+            if not row["epubs"]:
+                continue
+            log_path = log_dir / f"library-generator-{row['id']}.log"
+            with log_path.open("w", encoding="utf-8") as log:
                 result = subprocess.run(
-                    [sys.executable, str(generator), "-n", str(count), "-o", str(content_dir), "--seed", str(seed)],
+                    [
+                        sys.executable, str(generator),
+                        "-n", str(row["epubs"]),
+                        "-o", str(content_dir),
+                        "--seed", str(row["seed"]),
+                    ],
                     cwd=str(ROOT.parent),
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     text=True,
                 )
             if result.returncode:
-                raise DatasetError(f"génération EPUB échouée (voir {log_dir / 'library-generator.log'})")
+                raise DatasetError(f"génération EPUB échouée (voir {log_path})")
+        library.mkdir(parents=True, exist_ok=True)
         marker.write_text(json.dumps(wanted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     else:
-        content_dir.mkdir(parents=True, exist_ok=True)
+        for row in layouts:
+            (library / row["directory_name"] / provider_dir).mkdir(parents=True, exist_ok=True)
     return library
-
 
 def default_host_data_home() -> Path:
     if sys.platform == "win32":
@@ -454,12 +508,14 @@ def write_cifereca_config(profile: dict, catalog: dict[str, dict], library: Path
     config_dir = Path(env["XDG_CONFIG_HOME"]) / "cifereca"
     config_dir.mkdir(parents=True, exist_ok=True)
     urls = service_urls(profile, catalog)
+    identities = profile_identities(profile)
+    primary_identity_id = identities[0]["id"]
     accounts = []
 
     if "kobo" in urls:
         accounts.append({
             "id": "ux-kobo",
-            "identity_id": "ux",
+            "identity_id": primary_identity_id,
             "provider": "kobo",
             "label": "Kobo UX",
             "enabled": True,
@@ -469,7 +525,7 @@ def write_cifereca_config(profile: dict, catalog: dict[str, dict], library: Path
     if "paris" in urls:
         accounts.append({
             "id": "ux-paris",
-            "identity_id": "ux",
+            "identity_id": primary_identity_id,
             "provider": "paris",
             "label": "Paris UX",
             "enabled": True,
@@ -479,7 +535,7 @@ def write_cifereca_config(profile: dict, catalog: dict[str, dict], library: Path
     if "numilog" in urls:
         accounts.append({
             "id": "ux-numilog",
-            "identity_id": "ux",
+            "identity_id": primary_identity_id,
             "provider": "numilog",
             "label": "Numilog UX",
             "enabled": True,
@@ -489,12 +545,15 @@ def write_cifereca_config(profile: dict, catalog: dict[str, dict], library: Path
 
     ui = profile.get("cifereca") or {}
     config = {
-        "identities": [{
-            "id": "ux",
-            "label": f"UX — {profile['name']}",
-            "directory_name": "ux",
-            "preferences": {"prefer_original_language": False, "reading_languages": ["fr"]},
-        }],
+        "identities": [
+            {
+                "id": row["id"],
+                "label": row["label"],
+                "directory_name": row["directory_name"],
+                "preferences": row["preferences"],
+            }
+            for row in identities
+        ],
         "providers": {
             "accounts": accounts,
             "settings": {},
@@ -804,8 +863,7 @@ def command_status(args, catalog) -> int:
 def summary_payload(profile: dict, catalog: dict[str, dict]) -> dict:
     runtime = profile_runtime(profile)
     library = runtime / "library"
-    library_cfg = profile.get("library") or {}
-    configured_epubs = int(library_cfg.get("epubs") or 0)
+    configured_epubs = sum(int(row["epubs"]) for row in profile_identities(profile))
     generated_epubs = sum(1 for path in library.rglob("*.epub") if path.is_file()) if library.is_dir() else 0
     state = load_state(profile)
     services = []
