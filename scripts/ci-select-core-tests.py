@@ -53,6 +53,114 @@ UI_TEST_GLOBS = (
     "tests/test_regressions_099.py",
 )
 
+UI_COMPONENT_SMOKE_TESTS = (
+    "tests/test_gui_compat.py",
+    "tests/test_regressions_099.py",
+    "tests/test_e2e_instrumentation.py",
+    "tests/test_e2e_runner_contract.py",
+    "tests/test_core_ui_interactive_startup.py",
+)
+
+UI_COMPONENT_TEST_GLOBS = {
+    "src/cifereca/gui/action_layout.py": (
+        "tests/test_core0933_details_actions.py",
+        "tests/test_core_ui_375_detail_action_order.py",
+        "tests/test_core_ui_376_compact_actions.py",
+    ),
+    "src/cifereca/gui/action_widgets.py": (
+        "tests/test_core_ui_376_compact_actions.py",
+        "tests/test_core0933_responsive_widgets.py",
+        "tests/test_core0927_detail_layout.py",
+        "tests/test_core0933_details_actions.py",
+    ),
+    "src/cifereca/gui/book_facets.py": (
+        "tests/test_core042_library_ui.py",
+        "tests/test_core_458_unknown_medium.py",
+        "tests/test_core_ui_*facet*.py",
+        "tests/test_core_ui_332_filter_value_summary.py",
+    ),
+    "src/cifereca/gui/book_widgets.py": (
+        "tests/test_core0931_cover_preview.py",
+        "tests/test_core_ui_362_dense_detail.py",
+        "tests/test_core_ui_355_selection_filter.py",
+        "tests/test_095_consolidation.py",
+        "tests/test_core_ui_detail_badge_layout.py",
+        "tests/test_core_ui_376_compact_actions.py",
+        "tests/test_core_ui_377_compact_local_path.py",
+        "tests/test_core_ui_*facet*.py",
+    ),
+    "src/cifereca/gui/cover_loader.py": (
+        "tests/test_cover_loader.py",
+        "tests/test_history_covers.py",
+        "tests/test_core0931_cover_preview.py",
+        "tests/test_core0929_cover_c03.py",
+    ),
+    "src/cifereca/gui/cover_preview.py": (
+        "tests/test_core0931_cover_preview.py",
+    ),
+    "src/cifereca/gui/facet_text.py": (
+        "tests/test_core_0911.py",
+        "tests/test_core_ui_332_filter_value_summary.py",
+    ),
+    "src/cifereca/gui/navigation_history.py": (
+        "tests/test_core039_iteration1.py",
+        "tests/test_core0933_refresh_navigation.py",
+    ),
+    "src/cifereca/gui/plugin_manager_page.py": (
+        "tests/test_plugin_cards_097_dev4.py",
+        "tests/test_core_415_titlebar_action_registry.py",
+        "tests/test_core_ui_startup_actions.py",
+    ),
+    "src/cifereca/gui/query_controls.py": (
+        "tests/test_query_controls_batching.py",
+        "tests/test_core_ui_338_filter_tab_order.py",
+        "tests/test_core_ui_316_compact_query_filters.py",
+        "tests/test_core_ui_332_filter_value_summary.py",
+        "tests/test_core_458_unknown_medium.py",
+        "tests/test_core_470_provider_search_capabilities.py",
+        "tests/test_core_ui_313_progressive_search_feedback.py",
+    ),
+    "src/cifereca/gui/query_model.py": (
+        "tests/test_core0927_list_filter_contract.py",
+        "tests/test_ui_iteration_097.py",
+        "tests/test_core_0917.py",
+        "tests/test_core_ui_095.py",
+        "tests/test_core_458_unknown_medium.py",
+        "tests/test_core_ui_346_local_dedupe.py",
+        "tests/test_core_ui_313_progressive_search_feedback.py",
+    ),
+    "src/cifereca/gui/search_intent.py": (
+        "tests/test_core_0917.py",
+        "tests/test_core_ui_online_search_action.py",
+        "tests/test_core_ui_313_progressive_search_feedback.py",
+    ),
+    "src/cifereca/gui/shell_model.py": (
+        "tests/test_core_412_system_diagnostics_fallback.py",
+        "tests/test_ui_iteration_097.py",
+        "tests/test_095_consolidation.py",
+        "tests/test_core_ui_095.py",
+        "tests/test_core039_contract_surface.py",
+        "tests/test_core_415_titlebar_action_registry.py",
+        "tests/test_shell_controls_097_dev5.py",
+    ),
+    "src/cifereca/gui/shortcuts.py": (
+        "tests/test_shell_controls_097_dev5.py",
+    ),
+    "src/cifereca/gui/sync_issues.py": (
+        "tests/test_core_0913.py",
+        "tests/test_core_ui_sync_actions.py",
+    ),
+    "src/cifereca/gui/task_runner.py": (
+        "tests/test_core0927_task_delivery.py",
+        "tests/test_core0927_gtk_lifecycle.py",
+        "tests/test_task_queue_09001.py",
+    ),
+    "src/cifereca/gui/ui_perf.py": (
+        "tests/test_task_queue_09001.py",
+        "tests/test_core044_performance.py",
+    ),
+}
+
 E2E_ALL_PREFIXES = ("e2e/",)
 E2E_ALL_FILES = {
     "environnements/openai-chat-debian/capture_app.py",
@@ -90,10 +198,23 @@ def _changed_tests(paths: list[str], root: Path) -> list[str]:
     )
 
 
-def _ui_tests(root: Path) -> list[str]:
+def _glob_tests(root: Path, patterns: tuple[str, ...]) -> set[str]:
     selected: set[str] = set()
-    for pattern in UI_TEST_GLOBS:
+    for pattern in patterns:
         selected.update(str(path.relative_to(root)) for path in root.glob(pattern) if path.is_file())
+    return selected
+
+
+def _ui_tests(root: Path) -> list[str]:
+    return sorted(_glob_tests(root, UI_TEST_GLOBS))
+
+
+def _ui_component_tests(core_sources: list[str], root: Path) -> list[str] | None:
+    if not core_sources or any(path not in UI_COMPONENT_TEST_GLOBS for path in core_sources):
+        return None
+    selected = _glob_tests(root, UI_COMPONENT_SMOKE_TESTS)
+    for source in core_sources:
+        selected.update(_glob_tests(root, UI_COMPONENT_TEST_GLOBS[source]))
     return sorted(selected)
 
 
@@ -110,6 +231,10 @@ def select(paths: list[str], root: Path = ROOT) -> tuple[str, list[str]]:
 
     has_ui_change = bool(core_sources) or any(_is_ui_aux(path) for path in changed)
     if has_ui_change:
+        component_targets = _ui_component_tests(core_sources, root)
+        if component_targets is not None:
+            targets = sorted(set(component_targets) | set(changed_tests))
+            return ("ui-component", targets) if targets else ("full", ["tests"])
         targets = sorted(set(_ui_tests(root)) | set(changed_tests))
         return ("ui", targets) if targets else ("full", ["tests"])
 
