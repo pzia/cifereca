@@ -186,7 +186,16 @@ class ParisProviderSession(ProviderSession):
         ))
         try:
             linked = [self._decorate_account(x) for x in self.client.pairings()]
-            self.pairing_status = {"complete": True, "error": None}
+            pairing_errors = list(getattr(self.client, "last_pairing_errors", ()) or ())
+            error_types = sorted({
+                str(row.get("type") or "Error")
+                for row in pairing_errors
+                if isinstance(row, dict)
+            })
+            self.pairing_status = {
+                "complete": not bool(pairing_errors),
+                "error": ",".join(error_types) if error_types else None,
+            }
         except Exception as exc:
             linked = []
             self.pairing_status = {
