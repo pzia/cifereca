@@ -124,3 +124,33 @@ def test_duplicate_cleanup_reports_mutation_failure_as_failed_result():
     assert result.changed==0
     assert result.facts['failures']==1
     assert any('RuntimeError' in warning for warning in result.warnings)
+
+
+def test_naming_repair_reports_unsuccessful_mutation_result():
+    ctx=Context(); tool=NamingRepairTool().activate(ctx)
+    plan=tool.plan(MaintenanceContext(scope='library',identity_id='id1'))
+    ctx.maintenance.run=lambda _plan, _control=None: LibraryMutationResult(
+        False,changed=0,summary='failed',warnings=('mutation refused',)
+    )
+
+    result=tool.run(plan,Control())
+
+    assert result.ok is False
+    assert result.changed==0
+    assert result.facts['failures']==1
+    assert 'mutation refused' in result.warnings
+
+
+def test_duplicate_cleanup_reports_unsuccessful_mutation_result():
+    ctx=Context(duplicates=True); tool=DuplicateCleanupTool().activate(ctx)
+    plan=tool.plan(MaintenanceContext(scope='library',identity_id='id1'))
+    ctx.maintenance.run=lambda _plan, _control=None: LibraryMutationResult(
+        False,changed=0,summary='failed',warnings=('mutation refused',)
+    )
+
+    result=tool.run(plan,Control())
+
+    assert result.ok is False
+    assert result.changed==0
+    assert result.facts['failures']==1
+    assert 'mutation refused' in result.warnings
