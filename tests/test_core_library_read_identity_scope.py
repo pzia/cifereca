@@ -109,5 +109,8 @@ def test_scoped_variants_do_not_expose_files_in_another_identity(tmp_path):
     assert [variant.filename for variant in bob.variants] == ["Bob optimized.epub"]
     assert broker.artifact(variant_id, identity_id="id1") is None
     assert broker.artifact(variant_id, identity_id="id2").filename == "Bob optimized.epub"
-    assert broker.book(variant_id, identity_id="id1") is not None  # source still owned by id1
-    assert broker.book(variant_id, identity_id="id1").variants == ()
+    # The source hash is shared, but Bob's derived variant is not Alice's.
+    assert broker.book(variant_id, identity_id="id1") is None
+    assert broker.for_artifact(variant_id, identity_id="id1") is None
+    assert broker.book(variant_id, identity_id="id2") is not None
+    assert broker.for_artifact(variant_id, identity_id="id2").variants[0].artifact_id == variant_id
