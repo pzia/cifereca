@@ -33,6 +33,7 @@ from .identities import Identity, IdentityPreferences, AdeptProfileResolver, Ade
 from .locking import InterProcessLock, LockBusyError
 from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
+from .core.acquisition_decision import decide_artifact_reuse
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
@@ -3703,13 +3704,45 @@ class LibraryService:
                 loan.id, previous_path, repaired_index.get("status"),
             )
             existing = [repaired_index] if repaired_index.get("status") == "indexed" else existing
-        if (existing or previous_complete_local) and not legacy_acsm_artifact and not force_refresh:
-            _TRACE_LOG.info("TRACE download loan_auto skip-local loan_id=%s identity=%s source=%s dt=%.3fs", loan.id, identity.identity_id, "ledger" if previous_complete_local else "catalog", time.monotonic()-started)
-            return {"status": "unchanged", "loan_id": loan.id}
-        if legacy_acsm_artifact:
+        legacy_reason = (
+            "artifact_validation"
+            if legacy_acsm_artifact and previous_meta.get("post_processed")
+            else "missing_post_process_marker"
+            if legacy_acsm_artifact
+            else ""
+        )
+        decision = decide_artifact_reuse(
+            force_refresh=force_refresh,
+            catalog_valid=bool(existing),
+            ledger_complete_valid=previous_complete_local,
+            legacy_repair=legacy_acsm_artifact,
+            legacy_reason=legacy_reason,
+            previous_exists=previous is not None,
+            previous_path_exists=bool(previous_path is not None and previous_path.is_file()),
+            previous_valid=(previous_inspection.valid if previous_inspection is not None else None),
+            previous_protected=(previous_inspection.protected if previous_inspection is not None else None),
+        )
+        _TRACE_LOG.info(
+            "TRACE download loan_auto decision loan_id=%s identity=%s action=%s reason=%s source=%s catalog_valid=%s ledger_valid=%s force_refresh=%s dt=%.3fs",
+            loan.id, identity.identity_id, decision.action, decision.reason, decision.source,
+            bool(existing), previous_complete_local, force_refresh, time.monotonic()-started,
+        )
+        if decision.action == "reuse":
             _TRACE_LOG.info(
-                "TRACE download loan_auto repair-legacy loan_id=%s reason=%s", loan.id,
-                "artifact_validation" if previous_meta.get("post_processed") else "missing_post_process_marker"
+                "TRACE download loan_auto skip-local loan_id=%s identity=%s source=%s reason=%s dt=%.3fs",
+                loan.id, identity.identity_id, decision.source, decision.reason, time.monotonic()-started,
+            )
+            return {
+                "status": "unchanged",
+                "loan_id": loan.id,
+                "decision": decision.action,
+                "reason": decision.reason,
+                "source": decision.source,
+            }
+        if decision.action == "repair_legacy":
+            _TRACE_LOG.info(
+                "TRACE download loan_auto repair-legacy loan_id=%s reason=%s",
+                loan.id, decision.reason,
             )
 
         ledger_base = {
@@ -3908,6 +3941,7 @@ class LibraryService:
                 "metadata": {
                     "path": str(final_path), "catalog_index": scan, "provider_loan_id": loan.id,
                     "reacquisition": force_refresh,
+                    "acquisition_decision": decision.as_dict(),
                     "preserved_artifact_path": str(previous_path) if force_refresh and previous_path and previous_path.is_file() else None,
                     "adept_binding": adept_binding if acquisition.kind == "acsm" else None,
                     "post_processed": True if acquisition.kind == "acsm" else None,
@@ -3923,8 +3957,15 @@ class LibraryService:
             if acquisition.kind == "acsm":
                 self._diagnose_adept_binding(adept_binding, provider_loan_id=loan.id)
             _TRACE_LOG.info("TRACE download loan_auto complete provider_loan_id=%s path=%s dt=%.3fs", loan.id, final_path, time.monotonic()-started)
-            return {"status": "complete", "loan_id": loan.id, "path": str(final_path),
-                    "adept_return_available": bool(acquisition.kind == "acsm" and adept_binding.get("return_available"))}
+            return {
+                "status": "complete",
+                "loan_id": loan.id,
+                "path": str(final_path),
+                "adept_return_available": bool(acquisition.kind == "acsm" and adept_binding.get("return_available")),
+                "decision": decision.action,
+                "reason": decision.reason,
+                "source": decision.source,
+            }
         except (KoboAdeptError, UserFacingError) as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_id=%s action=keep reason=adept_error file=%s", loan.id, retained_acsm)
