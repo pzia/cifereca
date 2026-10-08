@@ -62,3 +62,11 @@ def test_main_shell_exposes_sidebar_for_contextual_narrow_detail():
     source = _method_source("MainWindow", "_build_main_shell")
 
     assert "self.sidebar = sidebar" in source
+
+def test_narrow_detail_restores_shell_navigation_when_page_unmaps():
+    source = _method_source("MasterDetailPage", "__init__")
+
+    assert "self.connect('unmap'" in source
+    assert "self._set_narrow_detail_context(False)" in source
+    assert "self.connect('map'" in source
+    assert "self._set_narrow_detail_context(self._narrow_detail_visible)" in source
