@@ -19,7 +19,7 @@ from cifereca.plugin_api import (
 )
 
 from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, normalize
-from recommendation_service import RecommendationPartial, RecommendationResult, compute_recommendations
+from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
 from reference_recommendation import compute_reference_recommendations
 
 
@@ -157,6 +157,7 @@ class UxRecommendationsView:
         self._reference_books: list[Any] = []
         self._reference_book: Any = None
         self._reloading_references = False
+        self._library_snapshot_cache = LibrarySnapshotCache()
         self._active_identity_id: str | None = None
         self._reloading_identities = False
         self._overview_refresh_source_id = 0
@@ -348,8 +349,11 @@ class UxRecommendationsView:
 
     def _identity_overview_changed(self) -> None:
         # The Core overview can emit several times during one synchronization.
-        # Keep the selector current, but collapse those freshness notifications
-        # into one recommendation recomputation.
+        # Invalidate the session snapshot once freshness changed, then collapse
+        # those notifications into one recommendation recomputation.
+        snapshot_cache = getattr(self, "_library_snapshot_cache", None)
+        if snapshot_cache is not None:
+            snapshot_cache.invalidate()
         self._reload_identities()
         if self._active_identity_id is None or not self._identity_ids:
             return
@@ -657,6 +661,10 @@ class UxRecommendationsView:
                 self.GLib.idle_add(self._accept_partial, generation, snapshot)
 
             if reference is not None:
+                owned_snapshot = self._library_snapshot_cache.load(
+                    metadata_broker,
+                    identity_id,
+                )
                 return compute_reference_recommendations(
                     catalog_broker,
                     reference,
@@ -665,7 +673,7 @@ class UxRecommendationsView:
                     per_query=self._config_int("per_query", 50),
                     max_results=self._config_int("max_results", 120),
                     exploration=exploration,
-                    owned_books=self._reference_books,
+                    owned_books=owned_snapshot.books,
                     exclude_owned=exclude_owned,
                     progress=progress,
                     partial=partial,
@@ -681,6 +689,7 @@ class UxRecommendationsView:
                 max_results=self._config_int("max_results", 120),
                 exploration=exploration,
                 exclude_owned=exclude_owned,
+                snapshot_cache=self._library_snapshot_cache,
                 progress=progress,
                 partial=partial,
                 control=control,
