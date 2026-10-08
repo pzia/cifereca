@@ -251,6 +251,8 @@ class BookListCell(Gtk.Box):
 
     def __init__(self, window: Any):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.set_hexpand(True)
+        self.set_halign(Gtk.Align.FILL)
         self.window = window
         self.cover_loader = window.covers
         self._meta_request = None
@@ -266,6 +268,7 @@ class BookListCell(Gtk.Box):
 
         labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         labels.set_hexpand(True)
+        labels.set_halign(Gtk.Align.FILL)
         labels.set_valign(Gtk.Align.CENTER)
         self.append(labels)
 
@@ -296,6 +299,8 @@ class BookListCell(Gtk.Box):
         labels.append(self.meta_label)
 
         self.badge_label = Gtk.Label()
+        self.badge_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.badge_label.set_max_width_chars(18)
         self._source_callback = None
         def source_link(_label, _uri):
             if self._source_callback: self._source_callback(None)
@@ -343,6 +348,7 @@ class BookListCell(Gtk.Box):
             link = Gtk.Label(xalign=0)
             link.set_markup('<a href="author">' + GLib.markup_escape_text(name) + '</a>')
             link.set_ellipsize(Pango.EllipsizeMode.END)
+            link.set_max_width_chars(LIST_FACET_MAX_CHARS)
             link.set_tooltip_text(name)
             def activate(_label, _uri, cb=callback):
                 cb(None); return True
