@@ -82,3 +82,18 @@ def test_e2e_selector_runs_all_when_runner_or_selector_changes():
     selector = _module()
     assert selector.select_e2e(["e2e/run.py"]) == "all"
     assert selector.select_e2e(["scripts/ci-select-core-tests.py"]) == "all"
+
+
+def test_ci_test_dependencies_exclude_unused_pyinstaller():
+    pr_ci = (ROOT / ".github/workflows/pr-ci.yml").read_text()
+    core_ci = (ROOT / ".github/workflows/core-tests.yml").read_text()
+    assert '-e ".[dev]"' not in pr_ci
+    assert '-e ".[dev]"' not in core_ci
+    assert '"pytest>=8,<9"' in pr_ci
+    assert '"pytest>=8,<9"' in core_ci
+
+
+def test_ci_installs_pymupdf_only_for_epub_optimizer_or_full_plugin_scope():
+    pr_ci = (ROOT / ".github/workflows/pr-ci.yml").read_text()
+    assert '" $PLUGIN_TARGETS " == *" src/plugins/epub_optimizer "*' in pr_ci
+    assert 'if [[ -z "$PLUGIN_TARGETS"' in pr_ci
