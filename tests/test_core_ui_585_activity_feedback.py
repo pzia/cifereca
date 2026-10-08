@@ -84,10 +84,11 @@ def test_later_success_cannot_mask_unacknowledged_error():
     )
 
 
-def test_runner_success_toast_uses_activity_result():
+def test_runner_success_toast_uses_activity_result_with_legacy_fallback():
     source = _method(RUNNER, "TaskRunner", "submit")
-    assert "self.window._activity_result(" in source
-    assert "self.window.toast(success_toast)" not in source
+    assert "getattr(self.window, '_activity_result', None)" in source
+    assert "reporter(success_toast, success=True, task_id=task_id)" in source
+    assert "self.window.toast(success_toast)" in source
 
 
 def test_sync_and_kobo_results_do_not_create_second_notification_row():
