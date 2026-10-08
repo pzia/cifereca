@@ -114,3 +114,62 @@ def test_legacy_local_rows_are_scoped_without_guessing_shared_ownership():
     assert _kinds({"local": True}, identity_id="alice") == set()
     # Unscoped listing remains compatible: it makes no claim about an identity.
     assert _kinds({"local": True}) == {"local"}
+
+
+
+def test_merged_metadata_owned_cannot_be_attributed_to_wrong_identity():
+    # The library projection merges local metadata for Alice with remote
+    # entitlement metadata for Bob. Only the entitlement records its owner.
+    row = {
+        "identity_id": "alice",
+        "identity_ids": ["alice", "bob"],
+        "local": True,
+        "placements": [{"identity_id": "alice", "state": "present"}],
+        "metadata": {"owned": True, "search_result": {"owned": True}},
+        "possessions": [{"identity_id": "bob", "kind": "owned", "state": "active"}],
+    }
+    assert _kinds(row, identity_id="alice") == {"local"}
+    assert _kinds(row, identity_id="bob") == {"owned"}
+    assert _kinds(row, identity_id="carol") == set()
+
+
+def test_multi_identity_unscoped_owned_flags_do_not_invent_a_possession():
+    row = {
+        "identity_id": "alice",
+        "identity_ids": ["alice", "bob"],
+        "owned": True,
+        "metadata": {"owned": True, "search_result": {"owned": True}},
+    }
+    assert book_access_facts(row, identity_id="alice") == ()
+    assert book_access_facts(row, identity_id="bob") == ()
+    assert book_access_facts(row) == ()
+
+
+def test_single_identity_explicit_owned_flags_remain_supported():
+    row = {
+        "identity_id": "alice",
+        "identity_ids": ["alice"],
+        "owned": True,
+        "metadata": {"owned": True},
+    }
+    assert BookAccessFact("owned", "provider.owned") in book_access_facts(
+        row, identity_id="alice",
+    )
+    assert BookAccessFact("owned", "metadata.owned") in book_access_facts(
+        row, identity_id="alice",
+    )
+    assert book_access_facts(row, identity_id="bob") == ()
+
+
+def test_explicit_entitlement_ownership_remains_visible_for_both_merged_identities():
+    row = {
+        "identity_id": "alice",
+        "identity_ids": ["alice", "bob"],
+        "owned": True,
+        "possessions": [
+            {"identity_id": "alice", "kind": "loan", "state": "active"},
+            {"identity_id": "bob", "kind": "owned", "state": "active"},
+        ],
+    }
+    assert _kinds(row, identity_id="alice") == {"borrowed"}
+    assert _kinds(row, identity_id="bob") == {"owned"}
