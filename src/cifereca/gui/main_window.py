@@ -1078,6 +1078,10 @@ class MasterDetailPage(Gtk.Box):
             return False
         keys.connect("key-pressed", key_pressed); self.add_controller(keys)
         self.list_stack.set_visible_child_name("empty")
+        # A narrow detail may hide shell navigation. Restore it while this page
+        # is unmapped, then re-apply the detail context if the user comes back.
+        self.connect("unmap", lambda _widget: self._set_narrow_detail_context(False))
+        self.connect("map", lambda _widget: self._set_narrow_detail_context(self._narrow_detail_visible))
 
     def _factory_setup(self, _factory: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
         list_item.set_child(BookListCell(self.window))
