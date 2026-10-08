@@ -11,6 +11,7 @@ from cifereca.diagnostics import Diagnostics
 from cifereca.kobo.acquisition import KoboOfferAdapter
 from cifereca.kobo.errors import KoboAdeptError
 from cifereca.models import Account, SearchResult
+from cifereca.providers import ProviderConfigurationError
 from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
@@ -306,5 +307,81 @@ def test_kobo_expired_url_retry_persists_new_candidate_and_attempt(tmp_path: Pat
         assert row["executor"] == "kobo-adept"
         assert row["metadata"]["candidate_shape"] == expected.safe_shape()
         assert row["metadata"]["acquisition_mode"] == "delegated-http"
+    finally:
+        service.close()
+
+
+def test_kobo_runtime_failure_is_retryable_in_ledger(tmp_path: Path, monkeypatch):
+    service, _session = _service(tmp_path)
+
+    def broken(_request):
+        raise KoboAdeptError("download failed", code="source_unavailable", retryable=True)
+
+    monkeypatch.setattr(service, "execute_acquisition_request", broken)
+    try:
+        with pytest.raises(KoboAdeptError, match="download failed"):
+            service.acquire_direct_item(_item())
+
+        rows = service.storage.acquisitions(provider_id="kobo")
+        assert len(rows) == 1
+        assert rows[0]["status"] == "retryable_error"
+        assert rows[0]["error_code"] == "source_unavailable"
+        assert rows[0]["attempt_count"] == 1
+        assert "Bearer" not in (rows[0]["error_message"] or "")
+    finally:
+        service.close()
+
+
+def test_kobo_second_attempt_failure_never_leaves_acquiring(tmp_path: Path, monkeypatch):
+    service, session = _service(tmp_path)
+    calls = []
+
+    def execute(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise KoboAdeptError("expired", code="source_auth_expired", exit_code=4)
+        raise KoboAdeptError("runtime rejected", code="not_authorized", retryable=False)
+
+    monkeypatch.setattr(service, "execute_acquisition_request", execute)
+    try:
+        with pytest.raises(KoboAdeptError, match="runtime rejected"):
+            service.acquire_direct_item(_item())
+
+        rows = service.storage.acquisitions(provider_id="kobo")
+        assert len(rows) == 1
+        assert rows[0]["status"] == "attention_required"
+        assert rows[0]["error_code"] == "not_authorized"
+        assert rows[0]["attempt_count"] == 2
+        assert rows[0]["metadata"]["acquisition_mode"] == "delegated-http"
+        assert session.acquisition_modes == ["descriptor", "delegated"]
+    finally:
+        service.close()
+
+
+def test_kobo_configuration_failure_is_attention_required(tmp_path: Path, monkeypatch):
+    service, _session = _service(tmp_path)
+
+    def misconfigured(_request):
+        raise ProviderConfigurationError("bad config")
+
+    monkeypatch.setattr(service, "execute_acquisition_request", misconfigured)
+    try:
+        with pytest.raises(ProviderConfigurationError, match="bad config"):
+            service.acquire_direct_item(_item())
+        row = service.storage.acquisitions(provider_id="kobo")[0]
+        assert row["status"] == "attention_required"
+        assert row["error_code"] == "kobo_acquisition_failed"
+        assert row["attempt_count"] == 1
+    finally:
+        service.close()
+
+
+def test_kobo_preflight_failure_does_not_create_false_ledger_entry(tmp_path: Path):
+    service, _session = _service(tmp_path)
+    service.kobo_adept_state = lambda **_kwargs: {"available": False}
+    try:
+        with pytest.raises(ProviderConfigurationError, match="n'est pas prêt"):
+            service.acquire_direct_item(_item())
+        assert service.storage.acquisitions(provider_id="kobo") == []
     finally:
         service.close()
