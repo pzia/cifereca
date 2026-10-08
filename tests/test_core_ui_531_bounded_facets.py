@@ -41,3 +41,14 @@ def test_list_cell_bounds_legacy_author_and_source_labels():
     assert "self.badge_label.set_max_width_chars(18)" in source
     assert "self.set_hexpand(True)" in source
     assert "self.set_halign(Gtk.Align.FILL)" in source
+
+
+def test_many_author_actions_wrap_in_bounded_flowbox():
+    source = open("src/cifereca/gui/book_widgets.py", encoding="utf-8").read()
+    assert "self.author_box = Gtk.FlowBox()" in source
+    assert "self.author_box.set_halign(Gtk.Align.FILL)" in source
+    assert "self.author_box.set_hexpand(True)" in source
+    assert "self.author_box.set_min_children_per_line(1)" in source
+    assert "self.author_box.set_max_children_per_line(4)" in source
+    assert "self.author_box.insert(link, -1)" in source
+    assert "self.author_box.append(link)" not in source
