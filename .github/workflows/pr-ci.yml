@@ -53,6 +53,7 @@ jobs:
             {
               echo "core=true"
               echo "plugins=true"
+              echo "plugin_targets="
               echo "packaging=true"
               echo "install=true"
               echo "gui=true"
@@ -71,6 +72,8 @@ jobs:
 
           core=false
           plugins=false
+          plugin_targets=""
+          plugin_scope_all=false
           packaging=false
           install=false
           gui=false
@@ -80,11 +83,16 @@ jobs:
             core=true
           fi
 
-          if matches '^(src/plugins/|scripts/ci-run-plugin-tests\.sh$|pyproject\.toml$)'; then
+          if matches '^src/plugins/'; then
             plugins=true
+          fi
+          if matches '^(scripts/ci-run-plugin-tests\.sh$|pyproject\.toml$)'; then
+            plugins=true
+            plugin_scope_all=true
           fi
           if grep -E '^src/cifereca/' "$changed_file" | grep -Ev '^src/cifereca/(gui/|builtin_ui/|app\.py$)' >/dev/null 2>&1; then
             plugins=true
+            plugin_scope_all=true
           fi
 
           if matches '^(src/plugins/|scripts/(plugin_packaging\.py|test_plugin_packaging\.py|verify-packaging\.py|package-all-in-one\.py|package-dev-snapshot\.py)$)'; then
@@ -105,6 +113,14 @@ jobs:
             dataset=true
           fi
 
+          if [[ "$plugins" == true && "$plugin_scope_all" != true ]]; then
+            plugin_targets="$(
+              awk -F/ '/^src\/plugins\/[^/]+\// {print $1 "/" $2 "/" $3}' "$changed_file" |
+                sort -u |
+                paste -sd' ' -
+            )"
+          fi
+
           python=false
           if [[ "$core" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true ]]; then
             python=true
@@ -113,6 +129,7 @@ jobs:
           {
             echo "core=$core"
             echo "plugins=$plugins"
+            echo "plugin_targets=$plugin_targets"
             echo "packaging=$packaging"
             echo "install=$install"
             echo "gui=$gui"
@@ -147,7 +164,14 @@ jobs:
         if: steps.scope.outputs.plugins == 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
-        run: bash scripts/ci-run-plugin-tests.sh
+          PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}
+        run: |
+          if [[ -n "$PLUGIN_TARGETS" ]]; then
+            read -r -a targets <<< "$PLUGIN_TARGETS"
+            bash scripts/ci-run-plugin-tests.sh "${targets[@]}"
+          else
+            bash scripts/ci-run-plugin-tests.sh
+          fi
 
       - name: Validate plugin packaging
         if: steps.scope.outputs.packaging == 'true'
