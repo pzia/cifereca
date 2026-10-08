@@ -2571,6 +2571,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._render_library([])
             self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
         def identity_loaded(rows: list[Loan]) -> None:
+            if not self.service.current_identity or self.service.current_identity.identity_id != identity.identity_id:
+                return
             if not self._identity_request_current(identity.identity_id, identity_generation):
                 return
             self._populate_loans(rows)
