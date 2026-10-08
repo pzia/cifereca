@@ -66,6 +66,7 @@ class UxRecommendationsView:
     """Recommendations UI using only public Core brokers and master/detail contracts."""
 
     PARTIAL_COALESCE_MS = 180
+    OVERVIEW_REFRESH_COALESCE_MS = 350
 
     def __init__(self, plugin, host, Gtk, GLib):
         # These fields are deliberately ready before the parent reloads identities:
@@ -76,6 +77,8 @@ class UxRecommendationsView:
         self._profile_books_count = 0
         self._active_identity_id: str | None = None
         self._reloading_identities = False
+        self._overview_refresh_source_id = 0
+        self._overview_refresh_pending = False
         self._diagnostic_cache = 0
         self._diagnostic_network = 0
         self._init_master_detail(plugin, host, Gtk, GLib)
@@ -221,12 +224,49 @@ class UxRecommendationsView:
         return str(value or fallback)
 
     def _identity_overview_changed(self) -> None:
-        # The public overview subscription is also a freshness signal for the
-        # local library projection. Rebuild the selector transactionally and
-        # trigger at most one recommendation refresh afterwards.
-        self._reload_identities(refresh_after=True)
+        # The Core overview can emit several times during one synchronization.
+        # Keep the selector current, but collapse those freshness notifications
+        # into one recommendation recomputation.
+        self._reload_identities()
+        if self._active_identity_id is None or not self._identity_ids:
+            return
+        self._overview_refresh_pending = True
+        if not self._busy:
+            self._schedule_overview_refresh()
 
-    def _reload_identities(self, *, refresh_after: bool = False) -> None:
+    def _schedule_overview_refresh(self) -> None:
+        if not self._overview_refresh_pending or self._active_identity_id is None:
+            return
+        if self._overview_refresh_source_id:
+            try:
+                self.GLib.source_remove(self._overview_refresh_source_id)
+            except Exception:
+                pass
+        self._overview_refresh_source_id = self.GLib.timeout_add(
+            self.OVERVIEW_REFRESH_COALESCE_MS,
+            self._flush_overview_refresh,
+        )
+
+    def _flush_overview_refresh(self) -> bool:
+        self._overview_refresh_source_id = 0
+        if not self._overview_refresh_pending:
+            return False
+        if self._busy:
+            return False
+        self._overview_refresh_pending = False
+        self.refresh()
+        return False
+
+    def _clear_overview_refresh(self) -> None:
+        if self._overview_refresh_source_id:
+            try:
+                self.GLib.source_remove(self._overview_refresh_source_id)
+            except Exception:
+                pass
+            self._overview_refresh_source_id = 0
+        self._overview_refresh_pending = False
+
+    def _reload_identities(self) -> None:
         current = self.selected_identity_id()
         rows = []
         getter = getattr(self.host, "identity_overview", None)
@@ -262,12 +302,6 @@ class UxRecommendationsView:
                 self._identity.set_selected(selected)
         finally:
             self._reloading_identities = False
-
-        # Initial construction still relies on the first-map refresh. Once a
-        # profile has been computed, an overview event represents fresh local
-        # state and deserves exactly one recomputation, after the model is stable.
-        if refresh_after and self._active_identity_id is not None and self._identity_ids:
-            self.refresh()
 
     def selected_identity_id(self) -> str | None:
         if not self._identity_ids:
@@ -449,6 +483,9 @@ class UxRecommendationsView:
         return False
 
     def refresh(self):
+        # A manual/profile refresh consumes any queued overview refresh because
+        # this computation will already read the latest local projection.
+        self._clear_overview_refresh()
         identity_id = self.selected_identity_id()
         profile_changed = (
             self._active_identity_id is not None
@@ -867,6 +904,8 @@ class UxRecommendationsView:
 
         self._set_provisional(False)
         if error or result is None:
+            if self._overview_refresh_pending:
+                self._schedule_overview_refresh()
             return value
 
         self._diagnostic_cache = result.cache_batches
@@ -879,6 +918,8 @@ class UxRecommendationsView:
             self._progress.set_fraction(1.0)
             self._progress.set_text("100 % · Terminé")
             self._update_view_summary(provisional=False)
+        if self._overview_refresh_pending:
+            self._schedule_overview_refresh()
         return value
 
     def _base_dispose(self) -> None:
@@ -891,6 +932,7 @@ class UxRecommendationsView:
         self._unsubscribe = None
 
     def dispose(self) -> None:
+        self._clear_overview_refresh()
         if self._task_handle is not None:
             self._task_handle.cancel()
         self._task_handle = None

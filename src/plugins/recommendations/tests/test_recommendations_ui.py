@@ -130,7 +130,28 @@ class _NoisyIdentityModel:
         self.dropdown._notify()
 
 
-def _identity_reload_view(rows, *, active_identity):
+class _CoalescingGLib:
+    def __init__(self):
+        self.next_id = 1
+        self.sources = {}
+
+    def timeout_add(self, _delay, callback):
+        source_id = self.next_id
+        self.next_id += 1
+        self.sources[source_id] = callback
+        return source_id
+
+    def source_remove(self, source_id):
+        self.sources.pop(source_id, None)
+
+    def run_pending(self):
+        callbacks = list(self.sources.items())
+        self.sources.clear()
+        for _source_id, callback in callbacks:
+            callback()
+
+
+def _identity_reload_view(rows, *, active_identity, busy=False):
     view = object.__new__(UxRecommendationsView)
     dropdown = _NoisyIdentityDropDown()
     model = _NoisyIdentityModel(dropdown, ("Default",))
@@ -139,28 +160,79 @@ def _identity_reload_view(rows, *, active_identity):
     view._identity_ids = ["default"]
     view._reloading_identities = False
     view._active_identity_id = active_identity
+    view._busy = busy
+    view._overview_refresh_source_id = 0
+    view._overview_refresh_pending = False
+    view.GLib = _CoalescingGLib()
     view.host = SimpleNamespace(identity_overview=lambda: list(rows))
     view.plugin = SimpleNamespace(context=None)
     refreshes = []
-    view.refresh = lambda: refreshes.append(view.selected_identity_id())
+
+    def refreshed():
+        view._clear_overview_refresh()
+        refreshes.append(view.selected_identity_id())
+
+    view.refresh = refreshed
     dropdown.callback = view._identity_changed
     return view, dropdown, refreshes
 
 
-def test_identity_overview_reload_suppresses_transient_selection_refreshes():
+def test_identity_reload_suppresses_transient_selection_refreshes():
     rows = [
         {"identity_id": "default", "label": "Default", "selected": True},
         {"identity_id": "other", "label": "Other", "selected": False},
     ]
     view, dropdown, refreshes = _identity_reload_view(rows, active_identity="default")
 
-    view._reload_identities(refresh_after=True)
+    view._reload_identities()
 
-    # The fake GTK model emits several transient selection notifications while
-    # being rebuilt, but Recommendations must start only one fresh computation.
     assert dropdown.notifications >= 3
-    assert refreshes == ["default"]
+    assert refreshes == []
     assert view._identity_ids == ["default", "other"]
+
+
+def test_overview_burst_is_coalesced_to_one_recommendation_refresh():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True},
+        {"identity_id": "other", "label": "Other", "selected": False},
+    ]
+    view, _dropdown, refreshes = _identity_reload_view(rows, active_identity="default")
+
+    view._identity_overview_changed()
+    view._identity_overview_changed()
+    view._identity_overview_changed()
+
+    assert refreshes == []
+    assert len(view.GLib.sources) == 1
+
+    view.GLib.run_pending()
+
+    assert refreshes == ["default"]
+
+
+def test_overview_burst_while_busy_waits_for_current_calculation():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True},
+        {"identity_id": "other", "label": "Other", "selected": False},
+    ]
+    view, _dropdown, refreshes = _identity_reload_view(
+        rows,
+        active_identity="default",
+        busy=True,
+    )
+
+    view._identity_overview_changed()
+    view._identity_overview_changed()
+
+    assert view._overview_refresh_pending is True
+    assert view.GLib.sources == {}
+    assert refreshes == []
+
+    view._busy = False
+    view._schedule_overview_refresh()
+    view.GLib.run_pending()
+
+    assert refreshes == ["default"]
 
 
 def test_identity_overview_before_first_map_does_not_duplicate_initial_refresh():
@@ -170,6 +242,7 @@ def test_identity_overview_before_first_map_does_not_duplicate_initial_refresh()
     ]
     view, _dropdown, refreshes = _identity_reload_view(rows, active_identity=None)
 
-    view._reload_identities(refresh_after=True)
+    view._identity_overview_changed()
 
+    assert view.GLib.sources == {}
     assert refreshes == []
