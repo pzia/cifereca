@@ -100,8 +100,8 @@ def test_unknown_source_uses_generic_fallback_without_fabricating_notice():
     "https://catalogue.example/book?X-Amz-Signature=secret",
     "https://user:secret@catalogue.example/book",
     "https://catalogue.example:444/book",
-    "https://catalogue.example/book\\n",
-    "/book\\n",
+    "https://catalogue.example/book\n",
+    "/book\n",
 ])
 def test_delivery_signed_and_unsafe_links_are_not_presented_as_notices(url):
     host = _service_host()
