@@ -32,7 +32,7 @@ jobs:
           /usr/bin/python3 -m venv --system-site-packages /tmp/ux-venv
           /tmp/ux-venv/bin/pip install -q --disable-pip-version-check "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=11,<13" "PyMuPDF>=1.26,<2"
           mkdir -p /tmp/ux-plugin-zips "$CIFERECA_HOST_XDG"/{config,data,cache,state} /tmp/ux-plugin-bin ux-plugin-evidence
-          for plugin in transport-http provider-bnf-catalogue provider-gallica provider-gutenberg home-page epub_optimizer recommendations literary-criticism constellations youth-catalog youth-source-booktrust; do
+          for plugin in transport-http provider-bnf-catalogue provider-gallica provider-gutenberg provider-kobo provider-paris provider-numilog home-page epub_optimizer recommendations literary-criticism constellations youth-catalog youth-source-booktrust; do
             /usr/bin/python3 scripts/package-plugin.py "src/plugins/$plugin" --out /tmp/ux-plugin-zips
           done
           cat >/tmp/ux-plugin-bin/cifereca <<'EOF'
