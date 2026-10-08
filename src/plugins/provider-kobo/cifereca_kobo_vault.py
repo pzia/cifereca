@@ -49,6 +49,7 @@ class KoboVaultClient:
         self.base_url = base_url
         self.token = str(token or "").strip()
         self.last_manifest_rejections: list[dict[str, str]] = []
+        self.last_search_merge_rejections: list[dict[str, str]] = []
         self.client = httpx.Client(
             headers={
                 "Accept": "application/json",
@@ -188,6 +189,7 @@ class KoboVaultClient:
         projection win when both endpoints return the same title.
         """
         scope = str(scope or "all").lower()
+        self.last_search_merge_rejections = []
         if scope == "catalog":
             return self.search_catalog(query, field=field, limit=limit, page=page)
         if scope == "library":
@@ -197,15 +199,30 @@ class KoboVaultClient:
         library = self.search_library(query, field=field, limit=limit, cursor=cursor)
         merged: dict[str, dict[str, Any]] = {}
         order: list[str] = []
-        for payload in (catalog, library):
+        for source, payload in (("catalog", catalog), ("library", library)):
             items = payload.get("items")
             if not isinstance(items, list):
+                self.last_search_merge_rejections.append({
+                    "source": source,
+                    "type": "invalid_shape",
+                    "reason": "items_not_list",
+                })
                 continue
             for raw in items:
                 if not isinstance(raw, dict):
+                    self.last_search_merge_rejections.append({
+                        "source": source,
+                        "type": "invalid_shape",
+                        "reason": "item_not_object",
+                    })
                     continue
                 key = str(raw.get("product_id") or raw.get("id") or "").strip()
                 if not key:
+                    self.last_search_merge_rejections.append({
+                        "source": source,
+                        "type": "invalid_shape",
+                        "reason": "missing_product_id",
+                    })
                     continue
                 if key not in merged:
                     order.append(key)
