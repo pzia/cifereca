@@ -46,7 +46,9 @@ class SystemPages:
         filter_drop.set_tooltip_text("Afficher uniquement les anomalies ou l’inventaire complet")
         actions.append(filter_drop)
         copy = action_button("Copier", "edit-copy-symbolic", tooltip="Copier le rapport de support")
+        export = action_button("Exporter", "document-save-symbolic", tooltip="Enregistrer le rapport de support dans un fichier texte")
         actions.append(copy)
+        actions.append(export)
         actions.append(refresh)
         header.append(title)
         header.append(actions)
@@ -55,10 +57,13 @@ class SystemPages:
         footer = AdaptiveActionBar(source=outer)
         footer.set_halign(Gtk.Align.END)
         copy_bottom = action_button("Copier", "edit-copy-symbolic", tooltip="Copier le rapport de support")
+        export_bottom = action_button("Exporter", "document-save-symbolic", tooltip="Enregistrer le rapport de support dans un fichier texte")
         footer.append(copy_bottom)
+        footer.append(export_bottom)
         refresh_bottom = action_button("Actualiser", "view-refresh-symbolic")
         footer.append(refresh_bottom)
         mirror_sensitivity(copy, copy_bottom)
+        mirror_sensitivity(export, export_bottom)
         mirror_sensitivity(refresh, refresh_bottom)
         outer.append(footer)
 
@@ -85,6 +90,40 @@ class SystemPages:
                 host.toast("Diagnostic copié")
             else:
                 host.toast("Copie du diagnostic impossible")
+
+        def export_report(*_args) -> None:
+            broker = self.diagnostics
+            if broker is None:
+                return
+            exporter = getattr(broker, "export_support_text", None)
+            text = str((exporter() if callable(exporter) else broker.export_text()) or "")
+            chooser = Gtk.FileChooserNative.new(
+                "Exporter le diagnostic",
+                None,
+                Gtk.FileChooserAction.SAVE,
+                "Exporter",
+                "Annuler",
+            )
+            chooser.set_current_name("cifereca-diagnostic.txt")
+
+            def chosen(dialog, response) -> None:
+                try:
+                    if response != Gtk.ResponseType.ACCEPT:
+                        return
+                    selected = dialog.get_file()
+                    path = selected.get_path() if selected is not None else None
+                    if not path:
+                        raise RuntimeError("destination locale indisponible")
+                    from pathlib import Path
+                    Path(path).write_text(text, encoding="utf-8")
+                    host.toast("Diagnostic exporté")
+                except Exception as exc:
+                    host.toast(f"Export impossible : {type(exc).__name__}")
+                finally:
+                    dialog.destroy()
+
+            chooser.connect("response", chosen)
+            chooser.show()
 
         def render(*_):
             clear_box(content)
@@ -147,6 +186,8 @@ class SystemPages:
         filter_drop.connect("notify::selected", render)
         copy.connect("clicked", copy_report)
         copy_bottom.connect("clicked", copy_report)
+        export.connect("clicked", export_report)
+        export_bottom.connect("clicked", export_report)
         refresh.connect("clicked", render)
         refresh_bottom.connect("clicked", render)
         render()
