@@ -85,7 +85,34 @@ Rôles autorisés :
 - `cicd` : CI/CD **et merge**. À chaque itération, traiter d'abord les défauts/gates CI/CD, puis les PR à merger.
 - `core` : Core métier et Core UI. À chaque itération, traiter d'abord les sujets Core non-UI, puis les sujets Core UI.
 - `plugins` : tous les plugins fonctionnels, leurs tests, leur packaging et leurs évolutions, qu'elles concernent un ou plusieurs plugins.
-- `ux` : tickets UX, campagnes E2E exploratoires avec simulation/screenshots et maintenance du simulateur fonctionnel nécessaire à ces parcours ; transforme les constats en issues sans modifier le produit.
+- `ux` : tickets UX, campagnes E2E exploratoires avec simulation/screenshots/vidéos, maintenance du simulateur fonctionnel et du harnais d'environnement GTK nécessaire à ces parcours ; transforme les constats en issues sans modifier le produit.
+
+### Procédure obligatoire du rôle `ux` pour une preuve GTK
+
+Quand une demande UX implique « lancer Cifereca », « faire une démo », « capturer
+l'écran » ou « faire une vidéo », le rôle `ux` doit commencer par
+`environnements/README.md` puis suivre la recette correspondant à l'hôte.
+
+Ordre attendu :
+
+1. identifier distribution, version Python et architecture ;
+2. choisir `environnements/openai-chat-debian/` pour Debian 13/Python 3.13 ou
+   `environnements/chatgpt-work/` pour Ubuntu 24.04/Python 3.12 ;
+3. bootstrapper et valider GTK/libadwaita avec le `check_import` de la recette ;
+4. si le réseau Debian local est bloqué, utiliser **GitHub Actions comme relais**
+   pour produire le cache `.deb`, récupérer l'artefact via les outils GitHub de
+   l'agent, puis bootstrapper offline ;
+5. régénérer le profil demandé avec `simulation/datasetctl.py rebuild <profil>`,
+   puis vérifier `status` et `summary` ;
+6. lancer la **vraie application Cifereca** dans les XDG du profil sous le Xvfb
+   du harnais GTK ;
+7. pour une vidéo, enregistrer ce même `$DISPLAY` avec FFmpeg `x11grab` pendant
+   le parcours et conserver les logs/captures comme preuves.
+
+Une image ou vidéo reconstruite graphiquement, une maquette, un terminal filmé
+ou le seul self-test GTK **ne constitue pas** une démonstration fonctionnelle
+de Cifereca. Les faux services/données doivent venir de `simulation/`, pas
+d'une réimplémentation ad hoc.
 
 ### Règles communes de rôle
 
@@ -94,7 +121,7 @@ Rôles autorisés :
 3. `cicd` traite d'abord la chaîne CI/CD ; seulement ensuite il traite les merges prêts.
 4. `core` traite d'abord le Core métier/services/API/stockage/framework ; seulement ensuite le Core UI.
 5. `plugins` peut travailler sur un plugin unique ou plusieurs plugins, mais ne modifie pas le Core pour satisfaire un besoin plugin : il ouvre une issue `core`.
-6. `ux` et `backlog` sont non implémentants côté produit. `ux` peut exécuter des E2E exploratoires, maintenir le simulateur fonctionnel requis par ces parcours et produire des screenshots ; sa sortie produit reste une issue/backlog.
+6. `ux` et `backlog` sont non implémentants côté produit. `ux` peut exécuter des E2E exploratoires, maintenir le simulateur fonctionnel et les recettes `environnements/` nécessaires à ces parcours, et produire screenshots/vidéos ; sa sortie produit reste une issue/backlog.
 7. Avant tout chantier significatif, vérifier les issues, PR et branches actives afin d'éviter les collisions et doublons.
 8. Une PR ne peut être mergée que par le rôle `cicd`.
 9. En cas d'ambiguïté, choisir le rôle propriétaire du composant à modifier ; si cela implique de changer de rôle, créer une issue au lieu de franchir la frontière.

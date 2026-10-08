@@ -48,8 +48,8 @@ class Widget:
         raise AttributeError(name)
 
 Gtk=NS(MenuButton=Widget,Popover=Widget,Box=Widget,Button=Widget,CheckButton=Widget,Label=Widget,
-       SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,FlowBoxChild=Widget,Align=NS(START=0),
-       Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
+       SearchEntry=Widget,ScrolledWindow=Widget,DropDown=Widget,Align=NS(START=0),
+       Orientation=NS(VERTICAL=1,HORIZONTAL=2),PolicyType=NS(AUTOMATIC=0,NEVER=1))
 
 source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/query_controls.py'
 tree=ast.parse(source.read_text())

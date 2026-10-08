@@ -77,16 +77,17 @@ class QueryControls(Gtk.Box):
         self.entry.connect('search-changed', lambda _e: self._changed())
         self.entry.connect('activate', lambda _e: activate())
         self.primary.append(self.entry)
-        flow = Gtk.FlowBox(); flow.set_selection_mode(Gtk.SelectionMode.NONE)
-        flow.set_min_children_per_line(1); flow.set_max_children_per_line(4)
-        flow.set_row_spacing(6); flow.set_column_spacing(6); self.append(flow)
+        filter_scroller = Gtk.ScrolledWindow()
+        filter_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        filter_scroller.set_propagate_natural_height(True)
+        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        filter_row.set_hexpand(False)
+        filter_scroller.set_child(filter_row)
+        self.append(filter_scroller)
         def insert_filter(widget):
             widget.set_hexpand(False)
             widget.set_halign(Gtk.Align.START)
-            flow.insert(widget, -1)
-            child = widget.get_parent()
-            if isinstance(child, Gtk.FlowBoxChild):
-                child.set_focusable(False)
+            filter_row.append(widget)
             return widget
 
         self.provider = insert_filter(MultiSelect('Forme · Sources', providers, self._changed))
