@@ -63,11 +63,11 @@ class SystemPages:
         outer.append(footer)
 
         def open_plugin(plugin_id: str) -> None:
-            host.navigate("plugins")
-            page = getattr(host, "plugins_page", None)
-            focus = getattr(page, "focus_plugin", None)
-            if callable(focus):
-                focus(plugin_id)
+            opener = getattr(host, "open_plugin_settings", None)
+            if callable(opener):
+                opener(plugin_id)
+            else:
+                host.navigate("plugins")
 
         def copy_report(*_args) -> None:
             broker = self.diagnostics
