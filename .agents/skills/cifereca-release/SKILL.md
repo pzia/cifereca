@@ -75,3 +75,14 @@ python scripts/package-dev-snapshot.py --validate-with-update-dev
 - Vérifier les SHA-256 et la structure via les scripts du dépôt.
 - Ne pas versionner `dist/`, caches, venv ou archives générées sauf demande explicite.
 - Dans le compte rendu, donner la version produite, les tests réellement exécutés et le chemin/lien des artefacts demandés.
+
+## Procédure GitHub Actions obligatoire (release explicite)
+
+1. Vérifier que la demande utilisateur autorise **explicitement** une release. « next » ou un merge ne l'autorise pas. Vérifier la version réelle de `main` après intégration des PR.
+2. **Avant tout déclenchement**, vérifier la cohérence de `VERSION`, `pyproject.toml`, `src/cifereca/plugin-release.json`, du snapshot des plugins et des manifestes de `src/plugins/`. Exécuter notamment `python -m pytest -q tests/test_core_532_plugin_freshness.py` et les validations packaging ; un plugin modifié entre la préparation et la release impose une nouvelle synchronisation.
+3. Vérifier le fonctionnement de `.github/workflows/release.yml` : un push sur `main` déclenche la release uniquement si le **contenu** de `.github/release-trigger` change. Un commit qui réécrit le même contenu ne déclenche rien, même s'il porte un nouveau SHA.
+4. Préférer `workflow_dispatch` avec `release_tag=v<VERSION>` lorsqu'un outil autorisé le permet. Sinon, provoquer une **vraie différence de contenu** de `.github/release-trigger` (par exemple une ligne blanche additionnelle), tout en conservant le tag sur la première ligne. Ne pas modifier `VERSION` uniquement pour réessayer.
+5. Vérifier qu'un **nouveau run Release** existe pour le SHA attendu, puis consulter son état et ses jobs/logs jusqu'au succès. Un commit créé, un trigger écrit ou un run simplement queued ne prouvent pas que le packaging a réussi.
+6. Contrôler que la release GitHub n'est plus draft, que le tag `v<VERSION>` existe et que wheel, bundle/snapshot attendus et `SHA256SUMS` sont publiés. Fournir les **liens directs de téléchargement**. En cas d'échec, diagnostiquer les logs, corriger la cause et relancer avec un déclenchement effectif ; ne jamais annoncer « publiée » avant vérification.
+
+Attention : le workflow actuel peut créer le tag via `gh release create --target ...` lors de la publication ; la responsabilité du Merger couvre **tag + packaging + publication**, pas seulement la PR de préparation.
