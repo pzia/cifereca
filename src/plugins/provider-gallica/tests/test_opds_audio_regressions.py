@@ -335,3 +335,35 @@ def test_audio_xml_failure_exposes_short_user_message_not_parser_details(tmp_pat
         assert "XML invalide" not in message
     finally:
         session.close()
+
+
+def test_audio_download_success_is_not_failed_by_diagnostics_sink(tmp_path):
+    audio1 = b"ID3" + b"a" * 64
+    audio2 = b"ID3" + b"b" * 64
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if request.url.path.endswith("/services/OAIRecord"):
+            return httpx.Response(200, content=OAI_AUDIO, headers={"content-type": "application/xml"})
+        if url.endswith("/f1.audio"):
+            return httpx.Response(200, content=audio1, headers={"content-type": "audio/mpeg"})
+        if url.endswith("/f2.audio"):
+            return httpx.Response(200, content=audio2, headers={"content-type": "audio/mpeg"})
+        raise AssertionError(url)
+
+    session = _session(
+        tmp_path,
+        handler,
+        include_audio=True,
+        diagnostics=FailingDiagnostics(),
+    )
+    try:
+        item = session._parse_sru_audio(SRU_AUDIO)[0]
+        playlist, source_url = session.download_direct(item, tmp_path / "audio")
+
+        assert playlist.is_file()
+        assert playlist.suffix == ".m3u8"
+        assert source_url.endswith("bpt6k1279113")
+        assert len(list(playlist.parent.glob("*.mp3"))) == 2
+    finally:
+        session.close()
