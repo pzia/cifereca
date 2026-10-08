@@ -283,3 +283,96 @@ def test_kobo_diagnostic_state_exposes_catalog_search_rejections():
         ]
     finally:
         session.close()
+
+
+def test_kobo_library_keeps_valid_rows_and_resets_rejections():
+    class FakeVault:
+        base_url = "https://vault.example"
+
+        def __init__(self):
+            self.calls = 0
+            self.last_manifest_rejections = []
+
+        def library_manifest(self):
+            self.calls += 1
+            if self.calls == 1:
+                self.last_manifest_rejections = [
+                    {"type": "invalid_shape", "reason": "item_not_object"},
+                ]
+                return [
+                    {"product_id": "owned-1", "title": "Owned", "owned": True},
+                    {"title": "Sans identifiant", "owned": True},
+                ]
+            self.last_manifest_rejections = []
+            return [
+                {"product_id": "owned-2", "title": "Owned 2", "owned": True},
+            ]
+
+        def close(self):
+            return None
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="vault-1",
+        label="Kobo",
+        credentials={"api_token": "x"},
+        options={"base_url": "https://vault.example"},
+        config={},
+        storage={},
+        diagnostics=Diagnostics(),
+        runtime_capabilities=SimpleNamespace(acquisition=lambda _provider: None),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    session.catalog = KoboCatalogService(
+        session.client,
+        credential_id=session.credential_id,
+        provider_id=session.provider_id,
+    )
+    try:
+        first = session.library()
+
+        assert [row.record_id for row in first] == ["owned-1"]
+        assert session.last_library_rejections == [
+            {"type": "invalid_shape", "reason": "item_not_object"},
+            {"type": "ProviderError", "reason": "missing_product_id"},
+        ]
+        assert session.diagnostic_state()["library_rejections"] == session.last_library_rejections
+
+        second = session.library()
+
+        assert [row.record_id for row in second] == ["owned-2"]
+        assert session.last_library_rejections == []
+        assert session.diagnostic_state()["library_rejections"] == []
+    finally:
+        session.close()
+
+
+def test_vault_manifest_reports_non_object_rows():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v2/library/manifest"
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {"product_id": "ok-1", "title": "Valid"},
+                    "invalid-shape",
+                ],
+                "next_cursor": None,
+            },
+        )
+
+    client = KoboVaultClient(
+        "https://vault.example",
+        "secret",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        rows = client.library_manifest()
+
+        assert [row["product_id"] for row in rows] == ["ok-1"]
+        assert client.last_manifest_rejections == [
+            {"type": "invalid_shape", "reason": "item_not_object"},
+        ]
+    finally:
+        client.close()
