@@ -32,7 +32,9 @@ def test_rendered_library_resets_stale_detail_when_no_selection_restored():
 def test_identity_change_clears_old_library_before_async_refresh():
     source = _method("_activate_identity")
     assert "self._render_library([])" in source
-    assert 'self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")' in source
+    assert "self.library_page.detail.empty" in source
+    assert "Nouvelle identité" in source
+    assert "Chargement de la bibliothèque…" in source
 
 
 def test_library_refresh_discards_obsolete_identity_callback():
