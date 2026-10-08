@@ -16,8 +16,9 @@ def test_main_window_builds_and_shows_shell_before_provider_connection():
     method = _class_method(MAIN_WINDOW, "MainWindow", "__init__")
     source = ast.unparse(method)
     build = source.index("self.main_shell = self._build_main_shell()")
+    populate = source.index("self._populate_accounts()")
     visible = source.index("self.root_stack.set_visible_child_name('main')")
-    assert build < visible
+    assert build < populate < visible
     assert "GLib.idle_add(self.connect_configured_sources)" not in source
     assert "startup.shell_interactive" in source
 
@@ -69,9 +70,11 @@ def test_titlebar_falls_back_before_plugin_categories_are_ready():
     assert "except Exception:" in source
     assert "self._titlebar_service = None" in source
 
-def test_provider_connection_is_scheduled_after_plugin_activation():
+def test_provider_connection_survives_plugin_ui_refresh_failure():
     source = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "activate_startup_plugins"))
     activate = source.index("self.plugin_manager.activate()")
     attach = source.index("self.service.attach_plugin_manager(self.plugin_manager)")
+    refresh = source.index("self._plugins_changed()")
+    finalizer = source.index("finally:")
     connect = source.index("GLib.idle_add(self.connect_configured_sources)")
-    assert activate < attach < connect
+    assert activate < attach < refresh < finalizer < connect
