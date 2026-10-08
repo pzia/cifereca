@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scénario X11 ciblé sur la liste de la page Recherche."""
+"""Scénario X11 ciblé sur les listes Recherche/Bibliothèque."""
 from __future__ import annotations
 
 import argparse
@@ -139,6 +139,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--query", default="UXSTRESS")
+    parser.add_argument("--page", choices=("search", "library"), default="search")
+    parser.add_argument("--list-only", action="store_true")
     parser.add_argument("--window-width", type=int, required=True)
     parser.add_argument("--window-height", type=int, default=720)
     parser.add_argument("--startup-wait", type=float, default=4.0)
@@ -187,48 +189,58 @@ def main() -> int:
         control = X11Input()
         native_resize = resize_largest_toplevel(control, args.window_width, args.window_height)
 
-        # Raccourci canonique : ouvre Recherche si nécessaire et focalise le champ.
+        # Ctrl+F is canonical and brings us to Recherche from the startup page.
         shortcut(control, "Control_L", "f")
         time.sleep(0.5)
+        if args.page == "library":
+            # Recherche and Bibliothèque are adjacent in the canonical page order.
+            shortcut(control, "Control_L", "Page_Down")
+            time.sleep(0.8)
+            shortcut(control, "Control_L", "f")
+            time.sleep(0.3)
         control.select_all_delete()
         control.type_text(args.query)
         control.key("Return", True)
         control.key("Return", False)
         time.sleep(args.search_wait)
 
-        first = out / "01-search-list.png"
+        first = out / "01-list.png"
         first_bbox = capture(first)
 
-        # Select the first visible result. The master-detail contract is part of
-        # this recipe: pathological row content must never make the detail pane
-        # unreachable after selection.
-        # Click the cover area, not title/facets: facets are themselves active
-        # search controls and would change the query instead of selecting a row.
-        select_x = max(235, min(280, int(args.window_width * 0.33)))
-        select_y = 240
-        control.click(select_x, select_y)
-        time.sleep(1.5)
-        selected = out / "02-selected-detail.png"
-        selected_bbox = capture(selected)
-
+        # Scroll while the master list is still visible. This is required for
+        # recycled-cell/facet validation at narrow widths.
         scroll_down(control, args.window_width, args.window_height, steps=12)
         time.sleep(1.0)
-        second = out / "03-search-list-scrolled.png"
+        second = out / "02-list-scrolled.png"
         second_bbox = capture(second)
 
+        selected_bbox = None
+        selected = None
+        select_x = max(235, min(280, int(args.window_width * 0.33)))
+        select_y = 240
+        if not args.list_only:
+            # Return to the top before selecting a deterministic visible row.
+            shortcut(control, "Control_L", "Home")
+            time.sleep(0.5)
+            control.click(select_x, select_y)
+            time.sleep(1.5)
+            selected = out / "03-selected-detail.png"
+            selected_bbox = capture(selected)
+
         report = {
+            "page": args.page,
             "query": args.query,
             "window_requested": [args.window_width, args.window_height],
             "native_resize": native_resize,
             "display": os.environ.get("DISPLAY"),
             "screen": os.environ.get("CODEX_HEADLESS_SCREEN"),
             "config": str(config_path),
-            "captures": [str(first), str(selected), str(second)],
-            "selection_click": [select_x, select_y],
+            "captures": [str(first), str(second)] + ([str(selected)] if selected else []),
+            "selection_click": None if args.list_only else [select_x, select_y],
             "capture_non_black_bbox": {
                 "initial": first_bbox,
-                "selected": selected_bbox,
                 "scrolled": second_bbox,
+                "selected": selected_bbox,
             },
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "process_alive_after_capture": proc.poll() is None,
