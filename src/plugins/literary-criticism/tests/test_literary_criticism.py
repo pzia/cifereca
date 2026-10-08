@@ -227,3 +227,4 @@ def test_cross_source_duplicate_keeps_provenance():
     report = index.ingest("source.b", [{"title": "Critique", "url": "https://reviews.test/same#x"}])
     assert report.duplicates == 1
     assert index.articles()[0].provenance == ("source.a", "source.b")
+

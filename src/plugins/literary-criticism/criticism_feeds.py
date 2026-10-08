@@ -1,0 +1,141 @@
+"""Bounded public RSS/Atom source; no article body fetch or implicit discovery."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from hashlib import sha256
+from urllib.parse import urljoin
+from xml.etree import ElementTree as ET
+import json
+
+from literary_criticism import canonical_url, discover_feed_links
+
+MAX_BYTES = 2 * 1024 * 1024
+
+
+def fetch_public(url, *, client=None):
+    """Explicit public HTTP(S) GET, bounded redirects/bytes/time, no credentials."""
+    import httpx
+    own = client is None
+    client = client or httpx.Client(timeout=15, follow_redirects=False)
+    try:
+        for _ in range(5):
+            url = canonical_url(url)
+            if not url:
+                raise ValueError('URL HTTP(S) publique requise')
+            with client.stream('GET', url, headers={'Accept': 'application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html'}) as response:
+                if response.is_redirect:
+                    url = urljoin(url, response.headers.get('location', ''))
+                    continue
+                response.raise_for_status()
+                chunks, size = [], 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > MAX_BYTES:
+                        raise ValueError('Réponse trop volumineuse')
+                    chunks.append(chunk)
+                return url, b''.join(chunks)
+        raise ValueError('Trop de redirections')
+    finally:
+        if own:
+            client.close()
+
+
+def date_text(raw):
+    raw = str(raw or '').strip()
+    if not raw:
+        return ''
+    try:
+        value = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    except ValueError:
+        try:
+            value = parsedate_to_datetime(raw)
+        except (ValueError, TypeError):
+            return ''
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def parse_feed(payload, url, *, limit=100):
+    if len(payload) > MAX_BYTES:
+        raise ValueError('Flux trop volumineux')
+    if payload.lstrip().startswith(b'{'):
+        raw = json.loads(payload)
+        if not str(raw.get('version', '')).startswith('https://jsonfeed.org/version/'):
+            raise ValueError('JSON Feed attendu')
+        return [{'title': r.get('title'), 'url': canonical_url(r.get('url') or r.get('external_url'), base_url=url),
+                 'critic_author': ', '.join(a.get('name', '') for a in r.get('authors', []) if isinstance(a, dict)),
+                 'published_at': date_text(r.get('date_published')), 'excerpt': r.get('summary', ''),
+                 'language': r.get('language') or raw.get('language', ''), 'book': r.get('_cifereca_book', {})}
+                for r in raw.get('items', [])[:limit] if isinstance(r, dict)]
+    # Refuse DTDs/entities before ElementTree; no external or expansive XML.
+    if b'<!DOCTYPE' in payload.upper() or b'<!ENTITY' in payload.upper():
+        raise ValueError('DTD et entités non autorisées')
+    root = ET.fromstring(payload)
+    atom = '{http://www.w3.org/2005/Atom}'
+    dc = '{http://purl.org/dc/elements/1.1/}'
+    bookns = '{https://cifereca.org/ns/book/1}'
+    if root.tag not in ('rss', atom + 'feed'):
+        raise ValueError('Flux RSS 2 ou Atom attendu')
+    channel = root.find('channel') if root.tag == 'rss' else root
+    if channel is None:
+        raise ValueError('Canal RSS absent')
+    language = channel.findtext('language') or channel.get('{http://www.w3.org/XML/1998/namespace}lang', '')
+    entries = channel.findall('item') if root.tag == 'rss' else root.findall(atom + 'entry')
+    rows = []
+    for item in entries[:limit]:
+        def text(tag):
+            el = item.find(tag)
+            return ''.join(el.itertext()).strip() if el is not None else ''
+        link = text('link')
+        if root.tag != 'rss':
+            link = next((el.get('href', '') for el in item.findall(atom+'link') if el.get('rel', 'alternate') == 'alternate'), '')
+        isbn = [el.text or '' for el in item.findall(dc+'identifier') if (el.text or '').lower().startswith('urn:isbn:')]
+        rows.append({'title': text('title') or text(atom+'title'),
+            'url': canonical_url(link, base_url=url),
+            'critic_author': text('author') or text(dc+'creator') or text(atom+'author/'+atom+'name'),
+            'published_at': date_text(text('pubDate') or text(atom+'published') or text(atom+'updated') or text(dc+'date')),
+            'excerpt': text('description') or text(atom+'summary'),
+            'language': text(dc+'language') or language,
+            # Never treat the critic as the author of the reviewed book.
+            'book': {'title': text(bookns+'title'), 'authors': [el.text or '' for el in item.findall(bookns+'author')],
+                     'isbns': [s[9:] for s in isbn], 'notice_url': text(bookns+'notice')}})
+    return rows
+
+
+def discover_url(url, *, fetch=fetch_public):
+    final, body = fetch(url)
+    try:
+        parse_feed(body, final, limit=1)
+    except (ValueError, ET.ParseError, TypeError):
+        return discover_feed_links(final, body.decode('utf-8', errors='replace'))
+    from literary_criticism import FeedCandidate
+    return (FeedCandidate(final, final, final, evidence='explicit-feed'),)
+
+
+class FeedSource:
+    def __init__(self, url='', *, fetch=fetch_public):
+        self.url, self.fetch = canonical_url(url), fetch
+
+    def activate(self, context):
+        self.url = canonical_url(context.config.get('feed_url'))
+        return self
+
+    def source_info(self):
+        if not self.url:
+            raise ValueError('Configurez une URL de flux RSS/Atom')
+        return {'source_id': 'feed.' + sha256(self.url.encode()).hexdigest()[:24],
+                'display_name': self.url, 'homepage_url': self.url}
+
+    def discover(self, query, limit=20):
+        return discover_url(query, fetch=self.fetch)[:limit]
+
+    def collect(self, cursor=None, limit=50):
+        if cursor:
+            return {'items': []}
+        final, body = self.fetch(self.url)
+        return {'items': parse_feed(body, final, limit=min(500, max(1, limit))), 'fresh_for_seconds': 900}
+
+
+PLUGIN = FeedSource()
