@@ -45,3 +45,9 @@ enabled = true
 books = 1000
 page_size = 50
 seed = 20261006
+
+# Service déjà implémenté mais auparavant absent de ce profil « tous services ».
+[services.ebooksgratuits]
+enabled = true
+books = 2000
+seed = 20261006
