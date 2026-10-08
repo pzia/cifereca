@@ -90,7 +90,11 @@ def normalize_isbn(value: object) -> str:
     if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
         total = sum((10 - i) * int(d) for i, d in enumerate(raw[:9]))
         total += 10 if raw[-1] == "X" else int(raw[-1])
-        return raw if total % 11 == 0 else ""
+        if total % 11:
+            return ""
+        prefix = "978" + raw[:9]
+        check = (10 - sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(prefix)) % 10) % 10
+        return prefix + str(check)
     if len(raw) == 13 and raw.isdigit():
         total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(raw))
         return raw if total % 10 == 0 else ""
@@ -258,6 +262,34 @@ class YouthBook:
     book_type: str = ""
     themes: tuple[str, ...] = ()
     provenance: tuple[str, ...] = ()
+    publishers: tuple[str, ...] = ()
+    published_year: int | None = None
+    cover_url: str = ""
+    bibliography_sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographyEnrichment:
+    source_id: str
+    isbn: str
+    record_id: str = ""
+    authors: tuple[str, ...] = ()
+    languages: tuple[str, ...] = ()
+    subjects: tuple[str, ...] = ()
+    publishers: tuple[str, ...] = ()
+    published_year: int | None = None
+    notice_url: str = ""
+    cover_url: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class BibliographyReport:
+    identity_id: str
+    source_id: str
+    isbn: str
+    accepted: int = 0
+    rejected: int = 0
+    errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,6 +378,69 @@ def normalize_record(raw: object, *, source_id: str) -> YouthBook:
     )
 
 
+def normalize_bibliography_record(raw: object, *, source_id: str, expected_isbn: str) -> BibliographyEnrichment:
+    metadata = _field(raw, "metadata", {})
+    if not isinstance(metadata, Mapping) or metadata.get("bibliographic_only") is not True or _fold(metadata.get("age_evidence")) != "none":
+        raise ValueError("bibliographic record must explicitly declare age_evidence=none")
+    if tuple(_iter_values(_field(raw, "age_ranges", ()))) != ():
+        raise ValueError("bibliographic record must not contain age ranges")
+    expected = normalize_isbn(expected_isbn)
+    if not expected:
+        raise ValueError("valid ISBN is required")
+    isbns = []
+    for value in _iter_values(_field(raw, "isbns", ())):
+        isbn = normalize_isbn(value)
+        if isbn and isbn not in isbns:
+            isbns.append(isbn)
+    for name in ("isbn", "isbn10", "isbn13"):
+        value = _field(raw, name, "")
+        isbn = normalize_isbn(value) if value else ""
+        if isbn and isbn not in isbns:
+            isbns.append(isbn)
+    if expected not in isbns:
+        raise ValueError("bibliographic ISBN does not match the selected youth edition")
+    try:
+        year_raw = _field(raw, "first_publish_year", None)
+        year = int(year_raw) if year_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        year = None
+    return BibliographyEnrichment(
+        source_id=_fold(source_id),
+        isbn=expected,
+        record_id=_text(_field(raw, "record_id")),
+        authors=_names(_field(raw, "authors") or _field(raw, "author")),
+        languages=_tokens(_field(raw, "languages") or _field(raw, "language")),
+        subjects=_tokens(_field(raw, "subjects") or _field(raw, "subject")),
+        publishers=_names(_field(raw, "publishers") or _field(raw, "publisher")),
+        published_year=year,
+        notice_url=canonical_url(_field(raw, "notice_url")),
+        cover_url=canonical_url(_field(raw, "cover_url")),
+    )
+
+
+def _apply_bibliography(book: YouthBook, enrichment: BibliographyEnrichment) -> YouthBook:
+    isbn = normalize_isbn(book.identifiers.get("isbn", ""))
+    if not isbn or isbn != enrichment.isbn:
+        return book
+    identifiers = dict(book.identifiers)
+    if enrichment.record_id:
+        identifiers.setdefault(f"{enrichment.source_id}_record_id", enrichment.record_id)
+    language = book.language
+    if not language and len(enrichment.languages) == 1:
+        language = enrichment.languages[0]
+    return replace(
+        book,
+        authors=tuple(dict.fromkeys(book.authors + enrichment.authors)),
+        identifiers=identifiers,
+        language=language,
+        themes=tuple(dict.fromkeys(book.themes + enrichment.subjects)),
+        publishers=tuple(dict.fromkeys(book.publishers + enrichment.publishers)),
+        published_year=book.published_year or enrichment.published_year,
+        cover_url=book.cover_url or enrichment.cover_url,
+        bibliography_sources=tuple(dict.fromkeys(book.bibliography_sources + (enrichment.source_id,))),
+    )
+
+
 def bibliographic_match(left: YouthBook, right: YouthBook) -> YouthMatch:
     left_isbn = normalize_isbn(left.identifiers.get("isbn", ""))
     right_isbn = normalize_isbn(right.identifiers.get("isbn", ""))
@@ -411,6 +506,7 @@ def _extract_page(value: object) -> tuple[Iterable[object], str, int]:
 class YouthCatalogIndex:
     def __init__(self) -> None:
         self._sources: dict[str, dict[str, tuple[YouthBook, ...]]] = {}
+        self._bibliography: dict[str, dict[str, dict[str, BibliographyEnrichment]]] = {}
         self._merged: dict[str, tuple[YouthBook, ...]] = {}
         self._fresh_until: dict[tuple[str, str], str] = {}
 
@@ -448,6 +544,33 @@ class YouthCatalogIndex:
             self._fresh_until[(identity, sid)] = fresh_until
         return IngestReport(identity, sid, len(accepted), len(errors), tuple(errors), fresh_until=fresh_until)
 
+    def ingest_bibliography(
+        self,
+        identity_id: str,
+        source_id: str,
+        isbn: object,
+        rows: Iterable[object],
+    ) -> BibliographyReport:
+        identity = self.identity_key(identity_id)
+        sid = _fold(source_id)
+        expected = normalize_isbn(isbn)
+        if not sid or not expected:
+            return BibliographyReport(identity, sid, expected, rejected=1, errors=("source_id and valid ISBN are required",))
+        accepted: list[BibliographyEnrichment] = []
+        errors: list[str] = []
+        for index, raw in enumerate(rows or ()):
+            try:
+                accepted.append(normalize_bibliography_record(raw, source_id=sid, expected_isbn=expected))
+            except Exception as exc:
+                errors.append(f"item[{index}]: {exc}")
+        unique = {item.record_id or item.notice_url or repr(item): item for item in accepted}
+        if len(unique) > 1:
+            return BibliographyReport(identity, sid, expected, rejected=len(accepted), errors=("ambiguous bibliography result",))
+        if unique:
+            self._bibliography.setdefault(identity, {}).setdefault(expected, {})[sid] = next(iter(unique.values()))
+            self._merged.pop(identity, None)
+        return BibliographyReport(identity, sid, expected, accepted=1 if unique else 0, rejected=len(errors), errors=tuple(errors))
+
     def fresh_until(self, identity_id: str, source_id: str) -> str:
         return self._fresh_until.get((self.identity_key(identity_id), _fold(source_id)), "")
 
@@ -455,7 +578,16 @@ class YouthCatalogIndex:
         identity = self.identity_key(identity_id)
         if identity not in self._merged:
             rows = [record for records in self._sources.get(identity, {}).values() for record in records]
-            self._merged[identity] = merge_confirmed(rows)
+            merged = list(merge_confirmed(rows))
+            overlays = self._bibliography.get(identity, {})
+            for index, book in enumerate(merged):
+                isbn = normalize_isbn(book.identifiers.get("isbn", ""))
+                if not isbn:
+                    continue
+                for enrichment in overlays.get(isbn, {}).values():
+                    book = _apply_bibliography(book, enrichment)
+                merged[index] = book
+            self._merged[identity] = tuple(merged)
         return self._merged[identity]
 
     def search(
@@ -505,6 +637,7 @@ class YouthCatalogIndex:
     def clear_identity(self, identity_id: str) -> None:
         identity = self.identity_key(identity_id)
         self._sources.pop(identity, None)
+        self._bibliography.pop(identity, None)
         self._merged.pop(identity, None)
         for key in [key for key in self._fresh_until if key[0] == identity]:
             self._fresh_until.pop(key, None)
@@ -527,6 +660,12 @@ class YouthCatalogPlugin:
     def search_cached(self, identity_id: str, query: str = "", **filters: object) -> tuple[YouthBook, ...]:
         """Search cached rows only. Never calls a remote source."""
         return self.index.search(identity_id, query, **filters)
+
+    def ingest_bibliography(
+        self, identity_id: str, source_id: str, isbn: object, rows: Iterable[object],
+    ) -> BibliographyReport:
+        """Merge already-fetched bibliographic metadata; never performs network I/O."""
+        return self.index.ingest_bibliography(identity_id, source_id, isbn, rows)
 
     def collect_source(
         self,

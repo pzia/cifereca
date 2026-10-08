@@ -16,6 +16,7 @@ from cifereca.plugin_api import (
     UiBookListEntry,
     UiPageContribution,
 )
+from youth_catalog import normalize_isbn
 
 
 KIND_LABELS = {
@@ -124,6 +125,7 @@ def list_entry(book: object) -> UiBookListEntry:
         subtitle=", ".join(tuple(getattr(book, "authors", ()) or ())),
         meta=meta,
         badge=badge,
+        thumbnail_url=public_url(getattr(book, "cover_url", "")) or None,
     )
 
 
@@ -151,6 +153,17 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     themes = tuple(getattr(book, "themes", ()) or ())
     if themes:
         metadata_fields.append(DetailField("themes", "Thèmes", ", ".join(themes[:12])))
+    publishers = tuple(getattr(book, "publishers", ()) or ())
+    if publishers:
+        metadata_fields.append(DetailField("publishers", "Éditeurs", ", ".join(publishers[:6])))
+    published_year = getattr(book, "published_year", None)
+    if published_year:
+        metadata_fields.append(DetailField("published-year", "Première publication", str(published_year)))
+    bibliography_sources = tuple(getattr(book, "bibliography_sources", ()) or ())
+    if bibliography_sources:
+        metadata_fields.append(DetailField(
+            "bibliography-sources", "Enrichissement bibliographique", ", ".join(bibliography_sources)
+        ))
     link = public_url(getattr(book, "friendly_url", "") or getattr(book, "notice_url", ""))
     links = (DocumentLink("notice", "Voir la notice publique", link),) if link else ()
     sections = [DetailSection("ages", "Âges attestés", age_fields)]
@@ -159,6 +172,7 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     return UiBookDetailPresentation(
         title=_text(getattr(book, "title", "")),
         subtitle=", ".join(tuple(getattr(book, "authors", ()) or ())),
+        thumbnail_url=public_url(getattr(book, "cover_url", "")) or None,
         badges=tuple(age_text(row) for row in ranges[:3]),
         sections=tuple(sections),
         links=links,
@@ -225,6 +239,22 @@ def fetch_source_page(
     if not callable(search):
         raise TypeError("source jeunesse incompatible : search() absent")
     return search(_text(query), cursor=cursor, limit=max(1, min(int(limit), 200)))
+
+
+def fetch_bibliography(service: object, isbn: object) -> tuple[object, ...]:
+    normalized = normalize_isbn(isbn)
+    if not normalized:
+        raise ValueError("ISBN valide requis")
+    lookup = getattr(service, "lookup_isbn", None)
+    if not callable(lookup):
+        raise TypeError("service bibliographique incompatible : lookup_isbn() absent")
+    rows = lookup(normalized)
+    if rows is None or isinstance(rows, (str, bytes, Mapping)):
+        return ()
+    try:
+        return tuple(rows)
+    except TypeError:
+        return ()
 
 
 def parse_themes(value: object) -> tuple[str, ...]:
@@ -333,6 +363,7 @@ class YouthView:
         self.widget.append(actions)
         actions.append(self.button("Collecter cette source", self.collect))
         actions.append(self.button("Plus de résultats", self.more))
+        actions.append(self.button("Enrichir la bibliographie", self.enrich_bibliography))
         actions.append(self.button("Ouvrir la fiche Bibliothèque", self.open_selected))
 
         self.master = host.build_book_master_detail(
@@ -498,6 +529,96 @@ class YouthView:
         if callable(method) and method(book_ref(self.selected_book), identity_id=self.identity_id()):
             return
         self.host.toast("Ce livre n’est pas présent de façon non ambiguë dans la bibliothèque de ce profil.")
+
+    def enrich_bibliography(self):
+        if not self.selected_book:
+            self.status.set_label("Sélectionnez un livre Jeunesse à enrichir.")
+            return
+        isbn = normalize_isbn(dict(getattr(self.selected_book, "identifiers", {}) or {}).get("isbn", ""))
+        if not isbn:
+            self.status.set_label("Enrichissement impossible sans ISBN valide : aucun rapprochement titre/auteur automatique.")
+            return
+        identity = self.identity_id()
+        if not identity:
+            self.status.set_label("Aucun profil actif.")
+            return
+        services = tuple(self.plugin.context.services(
+            "youth.bibliography",
+            contract="cifereca.youth-bibliography",
+            version=">=1,<2",
+            capabilities=("youth.bibliography.lookup",),
+        ))[:4]
+        if not services:
+            self.status.set_label("Aucun service d’enrichissement bibliographique actif.")
+            return
+        selected_key = book_key(self.selected_book)
+
+        def operation(control):
+            out = []
+            for row in services:
+                if control.cancelled():
+                    break
+                source_id, label = source_info(row)
+                try:
+                    rows = fetch_bibliography(row.service, isbn)
+                    out.append((source_id, label, rows, ""))
+                except Exception as exc:
+                    out.append((source_id, label, (), str(exc)))
+            return tuple(out)
+
+        self.run_bibliography(
+            operation,
+            lambda result: self.bibliography_collected(result, isbn=isbn),
+            token=(identity, selected_key),
+        )
+
+    def run_bibliography(self, operation, complete, token):
+        broker = self.plugin.context.broker("tasks")
+        if broker is None:
+            self.status.set_label("Broker de tâches indisponible.")
+            return
+        self.generation += 1
+        generation = self.generation
+        if self.task:
+            self.task.cancel()
+        self.status.set_label("Enrichissement bibliographique explicite en cours…")
+        self.task = broker.submit(operation, label="Bibliographie Jeunesse", kind="youth")
+        def done(handle):
+            try:
+                result, error = handle.result(), False
+            except Exception:
+                result, error = None, True
+            def apply():
+                current_key = book_key(self.selected_book) if self.selected_book is not None else ""
+                current_token = (self.identity_id(), current_key)
+                if self.disposed or generation != self.generation or current_token != token:
+                    return False
+                if error or result is None:
+                    self.status.set_label("Échec de l’enrichissement. Le cache Jeunesse précédent est conservé.")
+                else:
+                    complete(result)
+                return False
+            self.GLib.idle_add(apply)
+        self.task.add_done_callback(done)
+
+    def bibliography_collected(self, result, *, isbn):
+        accepted = 0
+        failures = []
+        for source_id, label, rows, error in result:
+            if error:
+                failures.append(label or source_id)
+                continue
+            report = self.catalog.ingest_bibliography(
+                self.identity_id(), source_id, isbn, rows,
+            )
+            accepted += report.accepted
+            if report.errors:
+                failures.append(label or source_id)
+        message = f"{accepted} enrichissement(s) bibliographique(s) appliqué(s)"
+        if failures:
+            message += f" · {len(failures)} source(s) sans résultat exploitable"
+        self.status.set_label(message)
+        self.render_cached()
 
     def _remote_request(self, cursor):
         row = self.selected_source()

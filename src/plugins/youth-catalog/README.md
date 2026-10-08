@@ -59,6 +59,19 @@ Une collecte distante exige de sélectionner une source puis de cliquer **Collec
 
 La liste/détail standard affiche la tranche d’âge, son type, le libellé d’origine, la source et la confiance. Une notice publique attestée reste ouvrable dans le navigateur et la navigation vers la fiche Bibliothèque utilise uniquement le contrat public du Core.
 
+## Enrichissement bibliographique explicite
+
+Une notice Jeunesse sélectionnée peut être enrichie via les services `youth.bibliography` activés.
+
+- l’action **Enrichir la bibliographie** exige un ISBN valide ;
+- aucun rapprochement automatique titre+auteur n’est effectué ;
+- l’ISBN-10 est canonicalisé en ISBN-13 avant comparaison ;
+- seuls des résultats déclarés `bibliographic_only=true`, `age_evidence=none` et sans tranche d’âge sont acceptés ;
+- une réponse ambiguë n’est pas appliquée ;
+- auteurs, langue, sujets, éditeurs, année et couverture peuvent compléter la notice ;
+- la provenance des âges reste inchangée : une source bibliographique ne devient jamais une source d’âge ;
+- le rendu et les filtres restent cache-only ; l’appel distant n’a lieu que sur le bouton explicite.
+
 ## Suite
 
-Le moteur, BookTrust, la découverte de sources et l’UI spécialisée sont séparés en plugins/incréments. Restent notamment d’autres sources jeunesse qualifiées et la recette UX complète.
+Le moteur, BookTrust, la découverte de sources, Open Library et l’UI spécialisée sont séparés en plugins/incréments. Restent notamment d’autres sources jeunesse qualifiées et la recette UX complète.

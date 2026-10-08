@@ -10,6 +10,7 @@ from youth_page import (
     age_text,
     book_ref,
     detail_presentation,
+    fetch_bibliography,
     fetch_source_page,
     list_entry,
     page_parts,
@@ -205,3 +206,56 @@ def test_broken_source_info_is_isolated():
             raise RuntimeError("broken")
     row = NS(plugin_id="youth.source.broken", service=Broken())
     assert source_info(row) == ("youth.source.broken", "youth.source.broken")
+
+
+class BibliographySource:
+    def __init__(self):
+        self.calls = []
+
+    def source_info(self):
+        return {"source_id": "openlibrary", "display_name": "Open Library"}
+
+    def lookup_isbn(self, isbn):
+        self.calls.append(isbn)
+        return ({"record_id": "OL1W"},)
+
+
+def test_explicit_bibliography_fetch_requires_isbn_and_never_uses_title_search():
+    source = BibliographySource()
+    rows = fetch_bibliography(source, "0-306-40615-2")
+    assert rows == ({"record_id": "OL1W"},)
+    assert source.calls == ["9780306406157"]
+
+
+def test_bibliographic_metadata_is_visible_without_changing_age_source():
+    book = youth_book(
+        publishers=("Open Publisher",),
+        published_year=1999,
+        cover_url="https://covers.openlibrary.org/b/id/42-M.jpg",
+        bibliography_sources=("openlibrary",),
+    )
+    row = list_entry(book)
+    assert row.thumbnail_url == "https://covers.openlibrary.org/b/id/42-M.jpg"
+    detail = detail_presentation(book)
+    assert detail.thumbnail_url == "https://covers.openlibrary.org/b/id/42-M.jpg"
+    fields = {field.id: field.value for section in detail.sections for field in section.fields}
+    assert fields["publishers"] == "Open Publisher"
+    assert fields["published-year"] == "1999"
+    assert fields["bibliography-sources"] == "openlibrary"
+    assert fields["sources"] == "booktrust"
+
+
+def test_stale_bibliography_completion_is_dropped_after_selection_change():
+    view = object.__new__(YouthView)
+    tasks, dispatch, completed = Tasks(), [], []
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda callback: dispatch.append(callback))
+    view.status = NS(set_label=lambda value: None)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_book = youth_book(record_id="one")
+    view.run_bibliography(lambda control: ("ok",), completed.append, ("alice", "booktrust:one"))
+    tasks.handles[0].finish()
+    view.selected_book = youth_book(record_id="two")
+    dispatch.pop()()
+    assert completed == []
