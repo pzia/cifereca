@@ -65,31 +65,47 @@ class CardLayout(unittest.TestCase):
 
     def card(self):return self.builder(self.host,self.status,self.package)
 
-    def test_plugin_row_keeps_only_plugin_scoped_actions(self):
-        card=self.card();header=card.children[0];footer=card.children[-1]
-        self.assertEqual(header.children[0].properties['label'],'Test')
-        self.assertEqual(type(header.children[-1]).__name__,'MenuButton')
-        labels=[w.properties['label'] for w in footer.children if type(w).__name__=='Button']
-        self.assertEqual(labels,['Configurer…','Diagnostic'])
-        self.assertNotIn('Désinstaller',labels)
-        self.assertFalse(any(str(label).startswith('Revenir à') for label in labels))
-        self.assertEqual(type(footer.children[-1]).__name__,'Switch')
+    def test_plugin_row_keeps_primary_and_secondary_actions_distinct(self):
+        card=self.card()
+        primary=card.children[-2]
+        settings=card.children[-1]
+        labels=[w.properties['label'] for w in primary.children if type(w).__name__=='Button']
+        self.assertEqual(labels,['Configurer…'])
+        secondary=next(
+            w for w in primary.children
+            if type(w).__name__=='MenuButton' and w.properties.get('icon_name')=='open-menu-symbolic'
+        )
+        diag=secondary.popover.children[0].children[0]
+        self.assertEqual(diag.properties['label'],'Diagnostic')
+        diag.handlers['clicked'](None)
+        self.assertEqual(self.calls,[('diag','plugin.test')])
+        self.assertEqual(settings.children[0].children[0].properties['label'],'Priorité')
+        self.assertEqual(settings.children[1].children[0].properties['label'],'Activé')
+        self.assertEqual(type(settings.children[1].children[-1]).__name__,'Switch')
 
-    def test_public_identity_controls_are_in_plugin_footer(self):
+    def test_public_identity_controls_are_in_primary_actions(self):
         self.status.descriptor.instantiation='singleton_public'
-        footer=self.card().children[-1]
-        menu=next(w for w in footer.children if type(w).__name__=='MenuButton')
-        self.assertEqual(menu.properties['label'],'Identités…')
+        primary=self.card().children[-2]
+        menu=next(
+            w for w in primary.children
+            if type(w).__name__=='MenuButton' and w.properties.get('label')=='Identités…'
+        )
         self.assertEqual(menu.popover.children[0].children[0].properties['label'],'Hugues')
 
-    def test_package_is_one_card_with_one_set_of_package_actions(self):
+    def test_package_is_one_card_with_one_hamburger_for_package_actions(self):
         self.packager(self.host,self.package,[self.status,self.status])
         self.assertEqual(len(self.host.outer.children),1)
-        frame=self.host.outer.children[0]
-        package_box=frame.children[0]
-        bars=[child for child in package_box.children if type(child).__name__=='AdaptiveActionBar']
-        self.assertEqual(len(bars),1)
-        labels=[w.properties['label'] for w in bars[0].children if type(w).__name__=='Button']
+        package_box=self.host.outer.children[0].children[0]
+        header=package_box.children[0]
+        package_menu=next(
+            w for w in header.children
+            if type(w).__name__=='MenuButton' and w.properties.get('icon_name')=='open-menu-symbolic'
+        )
+        labels=[
+            w.properties['label']
+            for w in package_menu.popover.children[0].children
+            if type(w).__name__=='Button'
+        ]
         self.assertEqual(labels,['Revenir à 1.1.0','Désinstaller le package'])
         plugin_frames=[child for child in package_box.children if type(child).__name__=='Frame']
         self.assertEqual(len(plugin_frames),2)
@@ -97,11 +113,18 @@ class CardLayout(unittest.TestCase):
     def test_package_remove_names_scope_and_affected_plugins(self):
         self.packager(self.host,self.package,[self.status])
         package_box=self.host.outer.children[0].children[0]
-        bar=next(child for child in package_box.children if type(child).__name__=='AdaptiveActionBar')
-        remove=next(w for w in bar.children if w.properties.get('label')=='Désinstaller le package')
+        package_menu=next(
+            w for w in package_box.children[0].children
+            if type(w).__name__=='MenuButton' and w.properties.get('icon_name')=='open-menu-symbolic'
+        )
+        remove=next(
+            w for w in package_menu.popover.children[0].children
+            if w.properties.get('label')=='Désinstaller le package'
+        )
         remove.handlers['clicked'](None)
         call=self.calls[-1]
         self.assertEqual(call[0],'remove')
         self.assertEqual(call[1][0],'package.test')
         self.assertEqual(call[1][1],'Package Test')
         self.assertEqual(call[1][2],('Test',))
+
