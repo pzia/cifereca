@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import heapq
 import logging
+from threading import Event, Lock
 import time
 from typing import Any, Callable
 
@@ -19,6 +20,86 @@ from recommendation_engine_fast import rank_candidates_prepared, score_candidate
 
 
 _LOG = logging.getLogger("cifereca.plugin.recommendations")
+
+
+@dataclass(frozen=True)
+class LibrarySnapshotLoad:
+    books: tuple[Any, ...]
+    elapsed_ms: float
+    cached: bool
+
+
+class LibrarySnapshotCache:
+    """Session cache for persisted library projections, keyed by identity."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._generation = 0
+        self._books: dict[str, tuple[Any, ...]] = {}
+        self._inflight: dict[tuple[str, int], Event] = {}
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._books.clear()
+
+    def load(self, metadata_broker: Any, identity_id: str) -> LibrarySnapshotLoad:
+        identity_key = str(identity_id or "")
+        while True:
+            with self._lock:
+                if identity_key in self._books:
+                    books = self._books[identity_key]
+                    _LOG.info(
+                        "TRACE recommendations library-snapshot books=%s snapshot_ms=%.3f cached=true",
+                        len(books),
+                        0.0,
+                    )
+                    return LibrarySnapshotLoad(books, 0.0, True)
+
+                generation = self._generation
+                inflight_key = (identity_key, generation)
+                waiter = self._inflight.get(inflight_key)
+                leader = waiter is None
+                if leader:
+                    waiter = Event()
+                    self._inflight[inflight_key] = waiter
+
+            if not leader:
+                waiter.wait()
+                continue
+
+            started = time.perf_counter()
+            try:
+                books = tuple(
+                    metadata_broker.library_entries(
+                        identity_id=identity_id,
+                        scan=False,
+                    )
+                    or ()
+                )
+            except Exception:
+                with self._lock:
+                    current = self._inflight.get(inflight_key)
+                    if current is waiter:
+                        self._inflight.pop(inflight_key, None)
+                        waiter.set()
+                raise
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+            with self._lock:
+                if generation == self._generation:
+                    self._books[identity_key] = books
+                current = self._inflight.get(inflight_key)
+                if current is waiter:
+                    self._inflight.pop(inflight_key, None)
+                    waiter.set()
+
+            _LOG.info(
+                "TRACE recommendations library-snapshot books=%s snapshot_ms=%.3f cached=false",
+                len(books),
+                elapsed_ms,
+            )
+            return LibrarySnapshotLoad(books, elapsed_ms, False)
 
 
 @dataclass(frozen=True)
@@ -104,6 +185,7 @@ def compute_recommendations(
     max_results: int = 120,
     exploration: int = 25,
     exclude_owned: bool = True,
+    snapshot_cache: LibrarySnapshotCache | None = None,
     progress: Callable[[int, int, str], None] | None = None,
     partial: Callable[[RecommendationPartial], None] | None = None,
     control: Any = None,
@@ -111,9 +193,18 @@ def compute_recommendations(
     total_started = time.perf_counter()
 
     # Persisted projection only: never trigger a filesystem scan here.
-    snapshot_started = time.perf_counter()
-    books = list(metadata_broker.library_entries(identity_id=identity_id, scan=False) or [])
-    snapshot_ms = (time.perf_counter() - snapshot_started) * 1000.0
+    if snapshot_cache is None:
+        snapshot_started = time.perf_counter()
+        books = list(
+            metadata_broker.library_entries(identity_id=identity_id, scan=False) or []
+        )
+        snapshot_ms = (time.perf_counter() - snapshot_started) * 1000.0
+        snapshot_cached = False
+    else:
+        snapshot = snapshot_cache.load(metadata_broker, identity_id)
+        books = list(snapshot.books)
+        snapshot_ms = snapshot.elapsed_ms
+        snapshot_cached = snapshot.cached
 
     profile_started = time.perf_counter()
     profile = build_profile(books)
@@ -127,12 +218,13 @@ def compute_recommendations(
     def trace_performance(*, catalog_ms: float = 0.0, rank_ms: float = 0.0, cancelled: bool = False) -> None:
         _LOG.info(
             "TRACE recommendations performance books=%s queries=%s providers=%s "
-            "snapshot_ms=%.3f profile_ms=%.3f providers_ms=%.3f "
+            "snapshot_ms=%.3f snapshot_cached=%s profile_ms=%.3f providers_ms=%.3f "
             "catalog_ms=%.3f rank_ms=%.3f total_ms=%.3f cancelled=%s",
             len(books),
             len(queries),
             len(providers),
             snapshot_ms,
+            str(bool(snapshot_cached)).lower(),
             profile_ms,
             providers_ms,
             catalog_ms,
