@@ -1204,7 +1204,7 @@ class MasterDetailPage(Gtk.Box):
         self._total_count = max(total, displayed)
         if not displayed:
             self.count_label.set_label("")
-        elif self._count_total_only:
+        elif hasattr(self, "_count_total_only") and self._count_total_only:
             self.count_label.set_label(self._item_count_label(self._total_count))
         elif self._total_count > displayed:
             self.count_label.set_label(f"{displayed} / {self._total_count} élément(s)")
