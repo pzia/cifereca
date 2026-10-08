@@ -358,7 +358,7 @@ def _artifact_id(row: Mapping[str, Any]) -> str:
     return str(row.get("artifact_id") or row.get("artifact") or "").strip()
 
 
-def _iter_views(metadata, library_read, identity_id: str | None):
+def _iter_views(metadata, library_read, identity_id: str | None, failures: list[str] | None = None):
     seen: set[str] = set()
     for row in _rows(metadata.library_entries(identity_id=identity_id)):
         artifact_id = _artifact_id(row)
@@ -367,8 +367,10 @@ def _iter_views(metadata, library_read, identity_id: str | None):
         seen.add(artifact_id)
         try:
             view = library_read.for_artifact(artifact_id)
-        except Exception:
-            view = None
+        except Exception as exc:
+            if failures is not None:
+                failures.append(type(exc).__name__)
+            continue
         if view is not None:
             yield row, view
 
@@ -392,9 +394,10 @@ class NamingRepairTool(_ReadOnlyTool):
         placement_ids: list[str] = []
         changes: list[str] = []
         skipped = 0
+        read_failures: list[str] = []
         seen: set[str] = set()
 
-        for row, view in _iter_views(metadata, library_read, context.identity_id):
+        for row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
             title = str(row.get("title") or getattr(view.book, "title", "") or "").strip()
             authors = getattr(view.book, "authors", ()) or ()
             author = str(row.get("author") or (authors[0] if authors else "") or "").strip()
@@ -430,13 +433,23 @@ class NamingRepairTool(_ReadOnlyTool):
                     changes.append(f"{PurePath(current).name} → {PurePath(expected).name}")
 
         summary = f"{len(placement_ids)} placement(s) à renormaliser selon la politique Core."
-        warnings = (f"{skipped} entrée(s) non vérifiable(s) ignorée(s).",) if skipped else ()
+        warnings: list[str] = []
+        if skipped:
+            warnings.append(f"{skipped} entrée(s) non vérifiable(s) ignorée(s).")
+        if read_failures:
+            warnings.append(
+                f"{len(read_failures)} artefact(s) non inspecté(s) : broker library.read en erreur."
+            )
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=summary,
             changes=tuple(changes),
-            warnings=warnings,
-            facts={"placement_ids": tuple(placement_ids), "skipped": skipped},
+            warnings=tuple(warnings),
+            facts={
+                "placement_ids": tuple(placement_ids),
+                "skipped": skipped,
+                "read_failures": len(read_failures),
+            },
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
@@ -483,9 +496,10 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         library_read = self._broker("library.read")
         pairs: list[tuple[str, str]] = []
         changes: list[str] = []
+        read_failures: list[str] = []
         seen_views: set[str] = set()
 
-        for _row, view in _iter_views(metadata, library_read, context.identity_id):
+        for _row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
             key = str(getattr(view.book, "book_id", "") or "") + ":" + ",".join(
                 sorted(str(a.artifact_id) for a in getattr(view, "artifacts", ()))
             )
@@ -512,12 +526,21 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                             f"(même artefact {artifact_id[:24]}…)"
                         )
 
+        warnings: list[str] = []
+        if pairs:
+            warnings.append(
+                "Chaque suppression est revérifiée par Core comme doublon du même artefact."
+            )
+        if read_failures:
+            warnings.append(
+                f"{len(read_failures)} artefact(s) non inspecté(s) : broker library.read en erreur."
+            )
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=f"{len(pairs)} placement(s) physique(s) redondant(s) vérifié(s).",
             changes=tuple(changes),
-            warnings=("Chaque suppression est revérifiée par Core comme doublon du même artefact.",) if pairs else (),
-            facts={"pairs": tuple(pairs)},
+            warnings=tuple(warnings),
+            facts={"pairs": tuple(pairs), "read_failures": len(read_failures)},
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
