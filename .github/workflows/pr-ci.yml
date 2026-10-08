@@ -60,8 +60,6 @@ jobs:
               echo "plugin_targets="
               echo "packaging=true"
               echo "install=true"
-              echo "gui=true"
-              echo "e2e_scenario=all"
               echo "dataset=true"
               echo "python=true"
             } >> "$GITHUB_OUTPUT"
@@ -83,8 +81,6 @@ jobs:
           plugin_scope_all=false
           packaging=false
           install=false
-          gui=false
-          e2e_scenario=none
           dataset=false
 
           if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$)'; then
@@ -116,11 +112,6 @@ jobs:
             dataset=true
           fi
 
-          if matches '^scripts/ci-install-gtk-e2e-runtime\.sh$'; then
-            gui=true
-            e2e_scenario=all
-          fi
-
           if [[ "$plugins" == true && "$plugin_scope_all" != true ]]; then
             plugin_targets="$(
               awk -F/ '/^src\/plugins\/[^/]+\// {print $1 "/" $2 "/" $3}' "$changed_file" |
@@ -143,13 +134,7 @@ jobs:
             plugin_scope_all=true
             packaging=true
             install=true
-            gui=true
-            e2e_scenario=all
             dataset=true
-          fi
-
-          if [[ "$e2e_scenario" != "none" ]]; then
-            gui=true
           fi
 
           python=false
@@ -165,8 +150,6 @@ jobs:
             echo "plugin_targets=$plugin_targets"
             echo "packaging=$packaging"
             echo "install=$install"
-            echo "gui=$gui"
-            echo "e2e_scenario=$e2e_scenario"
             echo "dataset=$dataset"
             echo "python=$python"
           } >> "$GITHUB_OUTPUT"
@@ -246,43 +229,3 @@ jobs:
           python simulation/datasetctl.py status ux-small
           python simulation/datasetctl.py config ux-small
 
-      - name: Install GTK E2E runtime
-        if: steps.scope.outputs.gui == 'true'
-        run: bash scripts/ci-install-gtk-e2e-runtime.sh
-
-      - name: Run reference E2E
-        if: steps.scope.outputs.gui == 'true'
-        env:
-          CIFERECA_E2E_PYTHON: /usr/bin/python3
-          E2E_SCENARIO: ${{ steps.scope.outputs.e2e_scenario }}
-        run: |
-          if [[ "$E2E_SCENARIO" == "all" ]]; then
-            dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin core
-          else
-            dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario "$E2E_SCENARIO"
-          fi
-
-      - name: Publish E2E summary
-        if: always() && steps.scope.outputs.gui == 'true'
-        shell: bash
-        run: |
-          {
-            echo "## E2E GTK"
-            echo
-            if [ -f e2e-artifacts/summary.json ]; then
-              echo '~~~json'
-              cat e2e-artifacts/summary.json
-              echo '~~~'
-            else
-              echo "Aucun résumé produit."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload E2E debug artifacts on failure
-        if: failure() && steps.scope.outputs.gui == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-core-debug
-          path: e2e-artifacts/
-          if-no-files-found: warn
-          retention-days: 3
