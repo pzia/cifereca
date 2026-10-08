@@ -50,6 +50,14 @@ class PluginManagerPage(Gtk.ScrolledWindow):
     def _toast(self, message: str, timeout: int = 4) -> None:
         self.window.toast(message, timeout)
 
+    def focus_plugin(self, plugin_id: str) -> None:
+        """Open the manager on one plugin without changing its activation."""
+        self._view_query = str(plugin_id or "").strip()
+        self._view_filter = "all"
+        self.refresh()
+        if hasattr(self, "plugin_search"):
+            self.plugin_search.grab_focus()
+
     def refresh(self) -> None:
         child = self.outer.get_first_child()
         while child is not None:

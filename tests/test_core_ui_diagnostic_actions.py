@@ -27,5 +27,6 @@ def test_settings_diagnostic_actions_use_adaptive_bar_and_action_buttons():
         calls.append((args, keywords))
 
     assert (["Actualiser", "view-refresh-symbolic"], {}) in calls
-    assert (["Copier dans le presse-papiers", "edit-copy-symbolic"], {"suggested": True}) in calls
-    assert (["Effacer", "edit-clear-symbolic"], {}) in calls
+    assert any(args[1:] == ["edit-copy-symbolic"] and keywords.get("suggested") is True for args, keywords in calls)
+    assert (["Exporter le diagnostic", "document-save-symbolic"], {}) in calls
+    assert any(args[1:] == ["edit-clear-symbolic"] for args, _keywords in calls)

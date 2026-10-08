@@ -32,6 +32,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .settings_context import settings_action_state
+from .diagnostic_presentation import diagnostic_plugin_rows
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -5243,17 +5244,76 @@ class MainWindow(Adw.ApplicationWindow):
         update_settings_actions()
 
         box = sections["diagnostic"]
-        diag_group = Adw.PreferencesGroup(); diag_group.set_title("Diagnostic copiable"); box.append(diag_group)
+        diag_group = Adw.PreferencesGroup(); diag_group.set_title("Diagnostic système"); box.append(diag_group)
+        diag_summary = Gtk.Label(xalign=0)
+        diag_summary.set_wrap(True); diag_group.add(diag_summary)
+        diag_filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        diag_filter_label = Gtk.Label(label="Afficher", xalign=0); diag_filter_label.set_hexpand(True)
+        diag_filter_row.append(diag_filter_label)
+        diag_filter = Gtk.DropDown.new_from_strings(["À examiner", "Tous"])
+        diag_filter.set_tooltip_text("Afficher uniquement les anomalies ou l’inventaire complet")
+        diag_filter_row.append(diag_filter); diag_group.add(diag_filter_row)
+        diag_issues_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        diag_group.add(diag_issues_box)
+
+        details_toggle = Gtk.ToggleButton(label="Afficher les détails techniques")
+        details_toggle.set_halign(Gtk.Align.START); diag_group.add(details_toggle)
         diag_text = Gtk.TextView(); diag_text.set_editable(False); diag_text.set_monospace(True); diag_text.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         diag_text.set_top_margin(10); diag_text.set_bottom_margin(10); diag_text.set_left_margin(10); diag_text.set_right_margin(10)
-        diag_scroll = Gtk.ScrolledWindow(); diag_scroll.set_min_content_height(330); diag_scroll.set_child(diag_text); diag_group.add(diag_scroll)
+        diag_scroll = Gtk.ScrolledWindow(); diag_scroll.set_min_content_height(330); diag_scroll.set_child(diag_text)
+        diag_scroll.set_visible(False); diag_group.add(diag_scroll)
+        def toggle_diagnostic_details(button):
+            visible = bool(button.get_active())
+            diag_scroll.set_visible(visible)
+            button.set_label("Masquer les détails techniques" if visible else "Afficher les détails techniques")
+        details_toggle.connect("toggled", toggle_diagnostic_details)
+
         buttons = AdaptiveActionBar(source=box); box.append(buttons)
         refresh = self.action_button("Actualiser", "view-refresh-symbolic")
         copy = self.action_button("Copier dans le presse-papiers", "edit-copy-symbolic", suggested=True)
+        export = self.action_button("Exporter le diagnostic", "document-save-symbolic")
+        export.set_tooltip_text("Enregistrer le rapport de diagnostic expurgé dans un fichier texte")
         clear = self.action_button("Effacer", "edit-clear-symbolic")
-        buttons.append(refresh); buttons.append(copy); buttons.append(clear)
+        buttons.append(refresh); buttons.append(copy); buttons.append(export); buttons.append(clear)
+
+        def open_diagnostic_plugin(_button, plugin_id: str) -> None:
+            self.navigate("plugins")
+            page = getattr(self, "plugins_page", None)
+            focus = getattr(page, "focus_plugin", None)
+            if callable(focus):
+                focus(plugin_id)
 
         def refresh_text() -> None:
+            from ..system_status import system_status
+            data = system_status(self.plugin_manager)
+            attention = int(data.get("attention") or 0)
+            diag_summary.set_label(
+                f"{data.get('ready', 0)} prêt(s) · {attention} à examiner. "
+                + ("Les anomalies sont affichées en premier." if attention else "Aucune anomalie bloquante détectée.")
+            )
+            clear_box(diag_issues_box)
+            attention_only = int(diag_filter.get_selected()) == 0
+            rows = diagnostic_plugin_rows(data, attention_only=attention_only)
+            if not rows:
+                empty = Gtk.Label(label="Aucune anomalie à examiner.", xalign=0)
+                empty.add_css_class("success"); diag_issues_box.append(empty)
+            for plugin in rows:
+                item = Adw.ExpanderRow()
+                item.set_title(f"{plugin['display_name']} · {plugin['state_label']}")
+                item.set_subtitle(plugin["summary"])
+                if plugin["attention"]:
+                    item.add_css_class("warning")
+                action = Adw.ActionRow(); action.set_title("Action")
+                action.set_subtitle("Ouvrir le gestionnaire sur ce plugin")
+                open_button = Gtk.Button(label="Ouvrir Plugins")
+                open_button.set_valign(Gtk.Align.CENTER)
+                open_button.connect("clicked", lambda b, pid=plugin["plugin_id"]: open_diagnostic_plugin(b, pid))
+                action.add_suffix(open_button); item.add_row(action)
+                detail = Adw.ActionRow(); detail.set_title("Détails techniques")
+                detail.set_subtitle(plugin["technical"] or "Aucun détail technique")
+                detail.set_subtitle_lines(0); item.add_row(detail)
+                diag_issues_box.append(item)
+
             content = self.diagnostics.text(__version__, {
                 "transport": "httpx local direct",
                 "base_url": (self.config.paris_base_url() if hasattr(self.config, "paris_base_url") else self.config.get("base_url")),
@@ -5525,12 +5585,57 @@ class MainWindow(Adw.ApplicationWindow):
                 )
                 self.toast("Diagnostic copié dans le presse-papiers")
 
+        def export_text(_button=None) -> None:
+            """Enregistrer le rapport expurgé visible dans Diagnostic."""
+            refresh_text()
+            buffer = diag_text.get_buffer()
+            start, end = buffer.get_bounds()
+            content = buffer.get_text(start, end, True)
+            chooser = Gtk.FileChooserNative.new(
+                "Exporter le diagnostic",
+                self,
+                Gtk.FileChooserAction.SAVE,
+                "Exporter",
+                "Annuler",
+            )
+            chooser.set_current_name("cifereca-diagnostic.txt")
+
+            def chosen(dialog, response) -> None:
+                try:
+                    if response != Gtk.ResponseType.ACCEPT:
+                        return
+                    selected = dialog.get_file()
+                    path = selected.get_path() if selected is not None else None
+                    if not path:
+                        raise RuntimeError("destination locale indisponible")
+                    Path(path).write_text(content, encoding="utf-8")
+                    self.diagnostics.add(
+                        "UI", "diagnostic export", "ok",
+                        detail={"file": Path(path).name},
+                        level="detailed",
+                    )
+                    self.toast("Diagnostic exporté")
+                except Exception as exc:
+                    self.diagnostics.add(
+                        "UI", "diagnostic export", "error",
+                        detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                        level="detailed",
+                    )
+                    self.show_error(f"Impossible d’exporter le diagnostic : {exc}", "Export impossible")
+                finally:
+                    dialog.destroy()
+
+            chooser.connect("response", chosen)
+            chooser.show()
+
         save.connect("clicked", save_settings)
         reconnect.connect("clicked", save_and_reconnect)
         save_bottom.connect("clicked", save_settings)
         reconnect_bottom.connect("clicked", save_and_reconnect)
+        diag_filter.connect("notify::selected", lambda *_args: refresh_text())
         refresh.connect("clicked", lambda _b: refresh_text())
         copy.connect("clicked", copy_text)
+        export.connect("clicked", export_text)
         def persist_diagnostics(*_args):
             selected = int(level_drop.get_selected())
             if not 0 <= selected < len(levels):
