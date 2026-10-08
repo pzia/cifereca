@@ -101,6 +101,36 @@ def _language_label(language: str) -> str:
     return _LANGUAGE_LABELS.get(language, language)
 
 
+def _freeze_overview_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return tuple(
+            sorted(
+                (str(key), _freeze_overview_value(item))
+                for key, item in value.items()
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_overview_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted((_freeze_overview_value(item) for item in value), key=repr))
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return repr(value)
+
+
+def _library_overview_signature(row: Mapping[str, Any]) -> Any | None:
+    # selected/source connectivity/capabilities can change without changing
+    # metadata.library_entries(). Only persisted library/sync projections
+    # participate in snapshot freshness.
+    if not any(key in row for key in ("statistics", "sync", "deep_last_at")):
+        return None
+    return (
+        _freeze_overview_value(row.get("statistics")),
+        _freeze_overview_value(row.get("sync")),
+        _freeze_overview_value(row.get("deep_last_at")),
+    )
+
+
 class RecommendationsPlugin:
     def __init__(self) -> None:
         self.context = None
@@ -186,6 +216,7 @@ class UxRecommendationsView:
         self._reference_book: Any = None
         self._reloading_references = False
         self._library_snapshot_cache = LibrarySnapshotCache()
+        self._identity_library_signatures: dict[str, Any | None] = {}
         self._active_identity_id: str | None = None
         self._reloading_identities = False
         self._overview_refresh_source_id = 0
@@ -376,13 +407,22 @@ class UxRecommendationsView:
         return str(value or fallback)
 
     def _identity_overview_changed(self) -> None:
-        # The Core overview can emit several times during one synchronization.
-        # Invalidate the session snapshot once freshness changed, then collapse
-        # those notifications into one recommendation recomputation.
+        # Overview notifications also cover selection, connection and capability
+        # changes. Refresh recommendations for those events, but invalidate a
+        # library snapshot only when the persisted library/sync projection for
+        # that identity changed.
+        changed_identities = self._reload_identities()
         snapshot_cache = getattr(self, "_library_snapshot_cache", None)
         if snapshot_cache is not None:
-            snapshot_cache.invalidate()
-        self._reload_identities()
+            signatures = getattr(self, "_identity_library_signatures", {})
+            active = self._active_identity_id or self.selected_identity_id()
+            if active and signatures.get(active) is None:
+                # Older/fallback identity hosts do not expose a freshness
+                # projection. Preserve the conservative historical behaviour.
+                snapshot_cache.invalidate(active)
+            else:
+                for identity_id in changed_identities:
+                    snapshot_cache.invalidate(identity_id)
         if self._active_identity_id is None or not self._identity_ids:
             return
         self._overview_refresh_pending = True
@@ -421,8 +461,11 @@ class UxRecommendationsView:
             self._overview_refresh_source_id = 0
         self._overview_refresh_pending = False
 
-    def _reload_identities(self) -> None:
+    def _reload_identities(self) -> set[str]:
         current = self.selected_identity_id()
+        previous_signatures = dict(
+            getattr(self, "_identity_library_signatures", {})
+        )
         rows = []
         getter = getattr(self.host, "identity_overview", None)
         if callable(getter):
@@ -438,6 +481,7 @@ class UxRecommendationsView:
                 except Exception:
                     rows = []
 
+        current_signatures: dict[str, Any | None] = {}
         self._reloading_identities = True
         try:
             self._identity_ids = []
@@ -449,6 +493,7 @@ class UxRecommendationsView:
                 if not identity_id:
                     continue
                 self._identity_ids.append(identity_id)
+                current_signatures[identity_id] = _library_overview_signature(row)
                 self._identity_model.append(str(row.get("label") or row.get("name") or identity_id))
                 if row.get("selected") or identity_id == current:
                     selected = len(self._identity_ids) - 1
@@ -457,6 +502,14 @@ class UxRecommendationsView:
                 self._identity.set_selected(selected)
         finally:
             self._reloading_identities = False
+        self._identity_library_signatures = current_signatures
+        all_ids = set(previous_signatures) | set(current_signatures)
+        return {
+            identity_id
+            for identity_id in all_ids
+            if previous_signatures.get(identity_id)
+            != current_signatures.get(identity_id)
+        }
 
     def selected_identity_id(self) -> str | None:
         if not self._identity_ids:
