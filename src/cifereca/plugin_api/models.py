@@ -291,6 +291,52 @@ class Provenance:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
+YouthAgeKind = Literal["interest", "reading", "recommended", "publisher", "inferred"]
+
+
+@dataclass(frozen=True, slots=True)
+class YouthAgeRange:
+    """Source-attested age range, without inventing a missing bound.
+
+    `age_min=None` means no lower bound was asserted (e.g. "jusqu'à 6 ans").
+    `age_max=None` means no upper bound was asserted (e.g. "8 ans et plus").
+    Both bounds absent means unknown: never a positive age-filter match.
+    """
+
+    age_min: int | None = None
+    age_max: int | None = None
+    age_kind: YouthAgeKind = "recommended"
+    source_label: str = ""
+    provenance: Provenance | None = None
+    confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.age_kind not in ("interest", "reading", "recommended", "publisher", "inferred"):
+            raise ValueError("unknown youth age kind")
+        for name, value in (("age_min", self.age_min), ("age_max", self.age_max)):
+            if value is not None and (type(value) is not int or not 0 <= value <= 120):
+                raise ValueError(f"{name} must be an integer between 0 and 120")
+        if self.age_min is not None and self.age_max is not None and self.age_min > self.age_max:
+            raise ValueError("age_min exceeds age_max")
+        if self.confidence is not None:
+            from math import isfinite
+            if (not isinstance(self.confidence, (int, float))
+                    or isinstance(self.confidence, bool)
+                    or not isfinite(self.confidence)
+                    or not 0 <= self.confidence <= 1):
+                raise ValueError("confidence must be a finite number between 0 and 1")
+
+    def contains(self, age: int) -> bool:
+        """Match an age under 18; unknown ranges never imply permission."""
+        if type(age) is not int or age < 0 or age >= 18:
+            return False
+        if self.age_min is None and self.age_max is None:
+            return False
+        return (self.age_min is None or age >= self.age_min) and (
+            self.age_max is None or age <= self.age_max
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class BookRef:
     book_id: str
@@ -894,6 +940,16 @@ class UiActionHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiBookNavigationHost(UiPageHost, Protocol):
+    """Optional public navigation to a book in the active identity's Library.
+
+    Returns False when the book is absent, ambiguous or not in the currently
+    selected identity; it never searches another user's library implicitly.
+    """
+    def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool: ...
+
+
+@runtime_checkable
 class UiPluginManagementHost(UiPageHost, Protocol):
     def open_plugin_settings(self, plugin_id: str) -> None: ...
 
@@ -989,7 +1045,7 @@ __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
     "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
-    "ResolvedPluginService", "Provenance", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation",
+    "ResolvedPluginService", "Provenance", "YouthAgeKind", "YouthAgeRange", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
@@ -997,7 +1053,7 @@ __all__ = [
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
     "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
-    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
 
