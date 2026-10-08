@@ -14,6 +14,7 @@ from cifereca.plugin_api import (
     UiBookDetailPresentation,
     UiBookListEntry,
     UiPageContribution,
+    normalize_language_tag,
 )
 
 from recommendation_engine import RankedCandidate, candidate_key, get_field, normalize
@@ -21,6 +22,43 @@ from recommendation_service import RecommendationPartial, RecommendationResult, 
 
 
 _LOG = logging.getLogger("cifereca.plugin.recommendations")
+
+_LANGUAGE_LABELS = {
+    "fr": "Français",
+    "en": "Anglais",
+    "de": "Allemand",
+    "es": "Espagnol",
+    "it": "Italien",
+    "pt": "Portugais",
+    "nl": "Néerlandais",
+}
+
+
+def _candidate_languages(item: Any) -> tuple[str, ...]:
+    metadata = get_field(item, "metadata", {}) or {}
+    values = []
+    for raw in (
+        get_field(item, "language", None),
+        get_field(item, "languages", None),
+        metadata.get("language") if isinstance(metadata, Mapping) else None,
+        metadata.get("languages") if isinstance(metadata, Mapping) else None,
+    ):
+        if isinstance(raw, (list, tuple, set)):
+            values.extend(raw)
+        elif raw not in {None, ""}:
+            values.append(raw)
+
+    normalized = []
+    for raw in values:
+        canonical = normalize_language_tag(str(raw))
+        if canonical and canonical not in normalized:
+            normalized.append(canonical)
+    return tuple(normalized)
+
+
+def _language_label(language: str) -> str:
+    language = str(language or "")
+    return _LANGUAGE_LABELS.get(language, language)
 
 
 class RecommendationsPlugin:
@@ -77,6 +115,8 @@ class UxRecommendationsView:
         # These fields are deliberately ready before the parent reloads identities:
         # Gtk.DropDown::notify::selected may call refresh() during construction.
         self._provider_labels: dict[str, str] = {"": "Tous les catalogues"}
+        self._language_ids: list[str] = [""]
+        self._reloading_languages = False
         self._provisional_order: dict[str, int] = {}
         self._provisional_active = False
         self._profile_books_count = 0
@@ -153,6 +193,15 @@ class UxRecommendationsView:
         self._provider.set_tooltip_text("Filtre les recommandations déjà calculées")
         self._provider.connect("notify::selected", lambda *_: self._render())
         controls.insert(self._labeled("Catalogue", self._provider), -1)
+
+        self._language_model = Gtk.StringList.new(["Toutes"])
+        self._language = Gtk.DropDown(model=self._language_model)
+        self._language.set_tooltip_text(
+            "Filtre sur les langues explicitement fournies par les catalogues ; "
+            "« Toutes » conserve aussi les ouvrages sans langue connue"
+        )
+        self._language.connect("notify::selected", self._language_changed)
+        controls.insert(self._labeled("Langue", self._language), -1)
 
         self._text = Gtk.SearchEntry(placeholder_text="Titre ou auteur")
         self._text.connect("search-changed", lambda *_: self._render())
@@ -325,11 +374,22 @@ class UxRecommendationsView:
         index = int(self._provider.get_selected())
         return self._provider_ids[index] if 0 <= index < len(self._provider_ids) else ""
 
+    def selected_language_id(self) -> str:
+        index = int(self._language.get_selected())
+        return self._language_ids[index] if 0 <= index < len(self._language_ids) else ""
+
+    def _language_changed(self, *_args) -> None:
+        if not self._reloading_languages:
+            self._render()
+
     def _matches(self, ranked: RankedCandidate) -> bool:
         if ranked.score < int(self._score.get_value()):
             return False
         provider = self.selected_provider_id()
         if provider and provider not in ranked.sources:
+            return False
+        language = self.selected_language_id()
+        if language and language not in _candidate_languages(ranked.item):
             return False
         needle = normalize(self._text.get_text())
         if needle:
@@ -354,6 +414,32 @@ class UxRecommendationsView:
             if pid == selected_id:
                 selected = len(self._provider_ids) - 1
         self._provider.set_selected(selected)
+
+    def _reload_languages(self, ranked_rows) -> None:
+        selected_id = self.selected_language_id()
+        available = {
+            language
+            for ranked in ranked_rows
+            for language in _candidate_languages(ranked.item)
+        }
+        if selected_id:
+            available.add(selected_id)
+        ordered = sorted(available, key=lambda language: (_language_label(language).casefold(), language))
+
+        self._reloading_languages = True
+        try:
+            self._language_ids = [""]
+            while self._language_model.get_n_items() > 1:
+                self._language_model.remove(1)
+            selected = 0
+            for language in ordered:
+                self._language_ids.append(language)
+                self._language_model.append(_language_label(language))
+                if language == selected_id:
+                    selected = len(self._language_ids) - 1
+            self._language.set_selected(selected)
+        finally:
+            self._reloading_languages = False
 
     @staticmethod
     def _candidate_key(ranked: Any) -> str:
@@ -624,6 +710,7 @@ class UxRecommendationsView:
             self._reload_providers(snapshot.providers)
 
         self._ranked = self._stable_partial(list(snapshot.ranked))
+        self._reload_languages(self._ranked)
         self._set_provisional(True)
 
         units = (
@@ -653,12 +740,15 @@ class UxRecommendationsView:
             return
 
         provider = self._provider_label()
+        language = self.selected_language_id()
         text_filter = str(self._text.get_text() or "").strip()
         filters = []
         if text_filter:
             filters.append(f"« {text_filter} »")
         if provider:
             filters.append(provider)
+        if language:
+            filters.append(_language_label(language))
 
         if filters or visible != total:
             parts = [f"{visible} sur {total}"]
@@ -851,6 +941,7 @@ class UxRecommendationsView:
 
         self._ranked = list(result.ranked)
         self._reload_providers(result.providers)
+        self._reload_languages(self._ranked)
         if not result.books_count:
             self._summary.set_label("Le profil ne contient aucun livre exploitable.")
         elif not result.providers:

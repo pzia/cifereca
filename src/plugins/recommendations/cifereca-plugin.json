@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.recommendations",
-    "version": "0.2.14",
+    "version": "0.2.15",
     "name": "Recommandations CIFERECA",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "ui.page.recommendations",
       "type": "ui.page",
-      "version": "0.2.14",
+      "version": "0.2.15",
       "entrypoint": "recommendations:PLUGIN",
       "display_name": "Recommandations",
       "description": "Recommande des livres à partir de la bibliothèque du profil et des catalogues connectés.",
-      "help_text": "Ajoute une page Recommandations basée sur la présentation maître/détail standard de Cifereca. La liste reste à gauche ; la sélection affiche à droite la notice, l’affinité, les raisons et les sources. Les résultats provisoires sont signalés et restent interactifs pendant la recherche. Aucun emprunt ni téléchargement n'est déclenché. Les logs TRACE de performance exposent uniquement des compteurs et durées (snapshot bibliothèque, profil, découverte catalogues, recherche, classement et application UI), sans identité, titre ni requête.",
+      "help_text": "Ajoute une page Recommandations basée sur la présentation maître/détail standard de Cifereca. La liste reste à gauche ; la sélection affiche à droite la notice, l’affinité, les raisons et les sources. Les résultats provisoires sont signalés et restent interactifs pendant la recherche. Aucun emprunt ni téléchargement n'est déclenché. Les logs TRACE de performance exposent uniquement des compteurs et durées (snapshot bibliothèque, profil, découverte catalogues, recherche, classement et application UI), sans identité, titre ni requête. Le filtre Langue est post-calcul : « Toutes » inclut les ouvrages sans langue connue ; une langue précise ne conserve que les notices qui l’attestent explicitement, y compris les notices multilingues.",
       "enabled_by_default": true,
       "priority": 0,
       "instantiation": "singleton_public",

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from recommendations import UxRecommendationsView, _refresh_on_first_map
+from recommendations import UxRecommendationsView, _candidate_languages, _language_label, _refresh_on_first_map
 
 
 def ranked(title, score=50, provider="a"):
@@ -21,6 +21,21 @@ def test_partial_order_keeps_existing_rows_stable():
     # A later batch may score B before A; provisional UX must not jump.
     second = view._stable_partial([ranked("B", 90), ranked("A", 40), ranked("C", 80)])
     assert [row.item["title"] for row in second] == ["A", "B", "C"]
+
+
+def test_candidate_languages_use_only_explicit_metadata_and_normalize_tags():
+    item = {
+        "title": "Multilingue",
+        "metadata": {"language": "fre", "languages": ["en", "fr", "invalid language"]},
+    }
+    assert _candidate_languages(item) == ("fr", "en")
+    assert _candidate_languages({"title": "Sans langue"}) == ()
+
+
+def test_language_labels_are_human_readable_when_known():
+    assert _language_label("fr") == "Français"
+    assert _language_label("en") == "Anglais"
+    assert _language_label("sv") == "sv"
 
 
 def test_provider_ids_are_never_user_facing_when_label_is_known():
@@ -246,3 +261,78 @@ def test_identity_overview_before_first_map_does_not_duplicate_initial_refresh()
 
     assert view.GLib.sources == {}
     assert refreshes == []
+
+
+class _FakeDropDown:
+    def __init__(self, selected=0):
+        self.selected = selected
+
+    def get_selected(self):
+        return self.selected
+
+    def set_selected(self, value):
+        self.selected = int(value)
+
+
+class _FakeStringList:
+    def __init__(self, values):
+        self.values = list(values)
+
+    def get_n_items(self):
+        return len(self.values)
+
+    def remove(self, index):
+        self.values.pop(index)
+
+    def append(self, value):
+        self.values.append(value)
+
+
+def _language_filter_view(selected_language=""):
+    view = object.__new__(UxRecommendationsView)
+    view._language_ids = [""] + ([selected_language] if selected_language else [])
+    view._language = _FakeDropDown(1 if selected_language else 0)
+    view._language_model = _FakeStringList(["Toutes"] + ([_language_label(selected_language)] if selected_language else []))
+    view._reloading_languages = False
+    return view
+
+
+def test_language_reload_preserves_selected_language_even_when_temporarily_absent():
+    view = _language_filter_view("fr")
+    rows = [
+        SimpleNamespace(item={"metadata": {"language": "en"}}),
+        SimpleNamespace(item={"metadata": {"languages": ["de", "en"]}}),
+    ]
+
+    view._reload_languages(rows)
+
+    assert view.selected_language_id() == "fr"
+    assert set(view._language_ids) == {"", "de", "en", "fr"}
+
+
+def test_precise_language_filter_excludes_unknown_and_accepts_multilingual_candidate():
+    view = _language_filter_view("fr")
+    view._score = SimpleNamespace(get_value=lambda: 0)
+    view._provider_ids = [""]
+    view._provider = _FakeDropDown(0)
+    view._text = SimpleNamespace(get_text=lambda: "")
+
+    french = ranked("FR")
+    french.item["metadata"] = {"language": "fr"}
+    multilingual = ranked("FR+EN")
+    multilingual.item["metadata"] = {"languages": ["en", "fr"]}
+    unknown = ranked("Unknown")
+
+    assert view._matches(french)
+    assert view._matches(multilingual)
+    assert not view._matches(unknown)
+
+
+def test_all_languages_mode_keeps_unknown_language_candidate():
+    view = _language_filter_view("")
+    view._score = SimpleNamespace(get_value=lambda: 0)
+    view._provider_ids = [""]
+    view._provider = _FakeDropDown(0)
+    view._text = SimpleNamespace(get_text=lambda: "")
+
+    assert view._matches(ranked("Unknown"))
