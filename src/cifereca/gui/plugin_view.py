@@ -13,6 +13,23 @@ PLUGIN_VIEW_FILTERS = (
 _ATTENTION_STATES = frozenset({"blocked", "error", "incompatible", "degraded"})
 
 
+def plugin_summary_counts(statuses: Iterable[object]) -> dict[str, int]:
+    rows = list(statuses)
+    return {
+        "total": len(rows),
+        "activated": sum(bool(getattr(row, "enabled", False)) for row in rows),
+        "ready": sum(
+            bool(getattr(row, "enabled", False))
+            and str(getattr(row, "state", "") or "") == "ready"
+            for row in rows
+        ),
+        "attention": sum(
+            str(getattr(row, "state", "") or "") in _ATTENTION_STATES
+            for row in rows
+        ),
+    }
+
+
 def _text(value: object) -> str:
     return str(value or "").casefold()
 

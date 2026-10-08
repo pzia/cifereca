@@ -16,6 +16,7 @@ from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     filter_package_plugins,
     package_matches_query,
+    plugin_summary_counts,
 )
 
 
@@ -67,9 +68,16 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self.outer.append(head)
 
         statuses = self.manager.statuses()
-        ready = sum(1 for s in statuses if s.state == "ready" and s.enabled)
-        blocked = sum(1 for s in statuses if s.state in {"blocked", "error", "incompatible"})
-        summary = Gtk.Label(label=f"{len(statuses)} plugin(s) · {ready} actif(s) · {blocked} à examiner", xalign=0)
+        counts = plugin_summary_counts(statuses)
+        summary = Gtk.Label(
+            label=(
+                f"{counts['total']} plugin(s) · "
+                f"{counts['activated']} activé(s) · "
+                f"{counts['ready']} prêt(s) · "
+                f"{counts['attention']} à examiner"
+            ),
+            xalign=0,
+        )
         summary.add_css_class("dim-label"); self.outer.append(summary)
 
         inventory = self.manager.package_inventory(include_expected=True)
@@ -336,14 +344,31 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         header.append(help_button); box.append(header)
 
         state = _STATE_LABELS.get(status.state, status.state)
-        reason = f" · {status.reason}" if status.reason else ""
-        text = f"{d.id} · {d.type} · {state}{reason}"
-        if d.description:
-            text += f" — {d.description}"
-        summary = Gtk.Label(label=text, xalign=0)
-        summary.set_wrap(True); summary.set_hexpand(True)
-        summary.add_css_class("caption"); summary.add_css_class("dim-label")
-        box.append(summary)
+        state_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        activation_state = Gtk.Label(
+            label=f"Activation · {'Activé' if status.enabled else 'Désactivé'}",
+            xalign=0,
+        )
+        activation_state.add_css_class("caption")
+        state_strip.append(activation_state)
+        execution_state = Gtk.Label(label=f"État · {state}", xalign=0)
+        execution_state.add_css_class("caption")
+        if status.state in {"blocked", "error", "incompatible", "degraded"}:
+            execution_state.add_css_class("warning")
+        state_strip.append(execution_state)
+        if status.state in {"blocked", "error", "incompatible", "degraded"}:
+            action_required = Gtk.Label(label="Action requise", xalign=0)
+            action_required.add_css_class("warning")
+            action_required.add_css_class("caption")
+            state_strip.append(action_required)
+        box.append(state_strip)
+
+        description = str(d.description or "").strip()
+        if description:
+            summary = Gtk.Label(label=description, xalign=0)
+            summary.set_wrap(True); summary.set_hexpand(True)
+            summary.add_css_class("caption"); summary.add_css_class("dim-label")
+            box.append(summary)
         if status.state in {"blocked", "error", "incompatible", "degraded"}:
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
@@ -411,8 +436,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
     @staticmethod
     def _friendly_problem(status: Any) -> str:
-        if status.reason in {"dependency_missing", "dependency_disabled", "dependency_version"}:
-            return "Ce plugin attend un autre composant. Activez ou installez la dépendance indiquée dans Diagnostic."
+        if status.reason in {"dependency_missing", "dependency_disabled", "dependency_version", "dependency_unavailable"}:
+            return "Ce plugin attend un autre composant qui n’est pas disponible. Activez ou installez la dépendance indiquée dans Diagnostic."
         if status.reason == "dependency_cycle":
             return "Les dépendances de ce plugin forment une boucle. Désactivez l’un des composants concernés."
         if status.reason in {"system_requirement", "system_requirement_missing"}:
@@ -423,6 +448,10 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             return "Ce plugin doit être configuré avant de pouvoir démarrer. Utilisez Configurer…"
         if status.state == "incompatible":
             return "Cette version du plugin n’est pas compatible avec cette version de cifereca."
+        if status.state == "degraded":
+            return "Ce plugin fonctionne partiellement. Consultez Diagnostic pour identifier la fonction indisponible."
+        if status.state == "error":
+            return "Ce plugin a rencontré une erreur et ne peut pas fonctionner normalement. Consultez Diagnostic."
         return "Ce plugin ne peut pas démarrer actuellement. Consultez Diagnostic pour le détail technique."
 
     def _identity_toggle(self, plugin_id, identity_id, enabled):
