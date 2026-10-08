@@ -96,7 +96,7 @@ def _meta_value(book: object, *names: str) -> object:
 
 
 def _isbn(value: object) -> str:
-    raw = _ISBN_CLEAN.sub("", _text(value)).upper()
+    raw = re.sub(r"[\s-]+", "", _text(value)).upper()
     if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
         total = sum((10 - i) * int(d) for i, d in enumerate(raw[:9]))
         total += 10 if raw[-1] == "X" else int(raw[-1])

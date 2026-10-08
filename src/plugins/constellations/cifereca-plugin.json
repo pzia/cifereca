@@ -25,5 +25,13 @@
         "constellation.walk"
       ]
     }
+  ],
+  "categories": [
+    {
+      "id": "navigation.constellation",
+      "display_name": "Navigation relationnelle",
+      "contract": "cifereca.constellation/1",
+      "resolution": "single"
+    }
   ]
 }
