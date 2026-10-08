@@ -1,4 +1,6 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from types import SimpleNamespace
 
 from recommendation_service import LibrarySnapshotCache, compute_recommendations
@@ -170,6 +172,44 @@ def test_snapshot_cache_reuses_library_projection_until_invalidated():
         metadata, Catalog(), "id-1", max_queries=2, snapshot_cache=cache
     )
     assert len(metadata.calls) == 2
+
+
+def test_snapshot_cache_reloads_if_invalidated_during_inflight_read():
+    class BlockingMetadata:
+        def __init__(self):
+            self.calls = 0
+            self.first_read_started = Event()
+            self.release_first_read = Event()
+
+        def library_entries(self, **kwargs):
+            assert kwargs == {"identity_id": "id-1", "scan": False}
+            self.calls += 1
+            if self.calls == 1:
+                self.first_read_started.set()
+                assert self.release_first_read.wait(timeout=2)
+                return [{"title": "Stale", "author": "Alice"}]
+            return [{"title": "Fresh", "author": "Alice"}]
+
+    metadata = BlockingMetadata()
+    cache = LibrarySnapshotCache()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(cache.load, metadata, "id-1")
+        assert metadata.first_read_started.wait(timeout=2)
+
+        cache.invalidate("id-1")
+        metadata.release_first_read.set()
+        snapshot = future.result(timeout=2)
+
+    assert metadata.calls == 2
+    assert snapshot.books[0]["title"] == "Fresh"
+    assert snapshot.cached is False
+    assert cache._inflight == {}
+
+    cached = cache.load(metadata, "id-1")
+    assert cached.cached is True
+    assert cached.books == snapshot.books
+    assert metadata.calls == 2
 
 
 def test_snapshot_cache_can_invalidate_one_identity_without_dropping_others():

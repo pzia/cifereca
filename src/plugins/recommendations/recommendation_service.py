@@ -96,16 +96,25 @@ class LibrarySnapshotCache:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
 
             with self._lock:
-                if (
+                fresh = (
                     generation == self._generation
                     and identity_generation
                     == self._identity_generations.get(identity_key, 0)
-                ):
+                )
+                if fresh:
                     self._books[identity_key] = books
                 current = self._inflight.get(inflight_key)
                 if current is waiter:
                     self._inflight.pop(inflight_key, None)
                     waiter.set()
+
+            if not fresh:
+                _LOG.info(
+                    "TRACE recommendations library-snapshot books=%s snapshot_ms=%.3f cached=false stale=true",
+                    len(books),
+                    elapsed_ms,
+                )
+                continue
 
             _LOG.info(
                 "TRACE recommendations library-snapshot books=%s snapshot_ms=%.3f cached=false",
