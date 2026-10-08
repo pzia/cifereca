@@ -52,6 +52,8 @@ def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
     assert 'label="Ouvrir Plugins"' in source
     assert 'focus(plugin_id)' in source
     assert 'Copier le diagnostic' in source
+    assert 'Exporter le diagnostic' in source
+    assert 'Gtk.FileChooserAction.SAVE' in source
 
 
 def test_fallback_system_page_uses_same_attention_projection_and_copy_action():
@@ -59,6 +61,8 @@ def test_fallback_system_page_uses_same_attention_projection_and_copy_action():
     assert "diagnostic_plugin_rows" in source
     assert 'Gtk.DropDown.new_from_strings(["À examiner", "Tous"])' in source
     assert 'action_button("Copier"' in source
+    assert 'action_button("Exporter"' in source
+    assert 'Gtk.FileChooserAction.SAVE' in source
     assert 'open_plugin(pid)' in source
 
 
