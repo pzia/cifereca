@@ -7,6 +7,8 @@ Les fixtures sont isolées sous --out ; aucun fichier du profil réel n'est touc
 from __future__ import annotations
 
 import argparse
+import io
+import zipfile
 from hashlib import sha256
 import html
 import json
@@ -163,6 +165,25 @@ def constellations_records():
             "records": rows}
 
 
+def reproducible_epub(payload: bytes) -> bytes:
+    """Neutraliser les timestamps ZIP volatils sans changer le contenu EPUB.
+
+    Les fichiers EPUB sont des ZIP : ZipFile.writestr peut utiliser l'heure
+    courante lors de l'insertion. Une seed fixe ne suffit donc pas.
+    """
+    fixed = (1980, 1, 1, 0, 0, 0)
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(payload), "r") as original:
+        with zipfile.ZipFile(output, "w") as target:
+            for member in original.infolist():
+                entry = zipfile.ZipInfo(member.filename, date_time=fixed)
+                entry.compress_type = member.compress_type
+                entry.external_attr = member.external_attr
+                entry.create_system = member.create_system
+                target.writestr(entry, original.read(member.filename))
+    return output.getvalue()
+
+
 def create(out: Path, *, seed: int = SEED) -> dict:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -177,7 +198,7 @@ def create(out: Path, *, seed: int = SEED) -> dict:
     for name, payload in contents.items():
         (out / name).write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     (out / "criticism.rss.xml").write_text(criticism_rss(), encoding="utf-8")
-    (out / "optimizer-valid.epub").write_bytes(epub_bytes(fake))
+    (out / "optimizer-valid.epub").write_bytes(reproducible_epub(epub_bytes(fake)))
     (out / "optimizer-corrupt.epub").write_bytes(b"this is not a valid EPUB file\n")
     paths = sorted(p for p in out.iterdir() if p.is_file() and p.name != "manifest.json")
     manifest = {"version": 1, "synthetic": True, "seed": seed,
