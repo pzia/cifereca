@@ -117,8 +117,14 @@ def measure_snapshot_burst():
     }
 
 
-def test_562_book_overview_burst_reduces_complete_library_snapshots_from_three_to_one():
+def test_562_book_overview_burst_reduces_complete_library_snapshots_from_three_to_one(request):
     measurement = measure_snapshot_burst()
+    terminal = request.config.pluginmanager.get_plugin("terminalreporter")
+    if terminal is not None:
+        terminal.write_line(
+            "recommendations-benchmark "
+            + json.dumps(measurement, ensure_ascii=False, sort_keys=True)
+        )
 
     assert measurement["books"] == 562
     assert measurement["baseline_snapshots"] == 3
