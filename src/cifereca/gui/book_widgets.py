@@ -284,7 +284,14 @@ class BookListCell(Gtk.Box):
         self.subtitle_label.set_ellipsize(Pango.EllipsizeMode.END)
         _add_css(self.subtitle_label, "dim-label")
         labels.append(self.subtitle_label)
-        self.author_box = Gtk.Box(spacing=4)
+        self.author_box = Gtk.FlowBox()
+        self.author_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.author_box.set_halign(Gtk.Align.FILL)
+        self.author_box.set_hexpand(True)
+        self.author_box.set_min_children_per_line(1)
+        self.author_box.set_max_children_per_line(4)
+        self.author_box.set_column_spacing(4)
+        self.author_box.set_row_spacing(4)
         labels.append(self.author_box)
 
         self.facet_box = Gtk.FlowBox()
@@ -353,7 +360,7 @@ class BookListCell(Gtk.Box):
             def activate(_label, _uri, cb=callback):
                 cb(None); return True
             link.connect("activate-link", activate)
-            self.author_box.append(link)
+            self.author_box.insert(link, -1)
         self.author_box.set_visible(bool(authors))
         self.meta_label.set_label(item.meta)
         self.meta_label.set_visible(bool(item.meta))
