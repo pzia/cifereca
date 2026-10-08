@@ -1,0 +1,224 @@
+name: UX config system review step 6
+
+on:
+  push:
+    branches:
+      - ux/config-system-review-step6
+    paths:
+      - ".github/workflows/ux-config-system-review-step6.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-step6
+      PYTHONPATH: ${{ github.workspace }}/src
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 43df60b1e93ba25e933307728d8ac01264c0118b
+
+      - name: Install GTK/X11 runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxtst6 \
+            python3-gi python3-gi-cairo python3-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Prepare representative configuration
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # UX-only simulator repair: current main still has the Paris fixture
+          # name collision already isolated in PR #629.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("simulation/paris/pseudo_paris_service.py")
+          text = path.read_text()
+          text = text.replace("        self.active_loans = active_loans\n", "        self.active_loans_count = active_loans\n")
+          text = text.replace('meta.get("active_loans") == str(self.active_loans)', 'meta.get("active_loans") == str(self.active_loans_count)')
+          text = text.replace('counts["active"] == self.active_loans', 'counts["active"] == self.active_loans_count')
+          text = text.replace('while len(active_rows) < self.active_loans:', 'while len(active_rows) < self.active_loans_count:')
+          text = text.replace('str(self.active_loans)', 'str(self.active_loans_count)')
+          path.write_text(text)
+          PY
+
+          /usr/bin/python3 simulation/datasetctl.py rebuild ux-small
+
+          store="$CIFERECA_DATASET_RUNTIME/ux-small/xdg/data/cifereca/plugins/packages"
+          mkdir -p "$store"
+
+          /usr/bin/python3 - "$store" <<'PY'
+          from pathlib import Path
+          import json, shutil, sys
+
+          store = Path(sys.argv[1])
+          sources = [
+              "provider-paris",
+              "provider-kobo",
+              "provider-gallica",
+              "provider-gutenberg",
+              "provider-numilog",
+              "transport-http",
+              "maintenance-library-audit",
+          ]
+          for name in sources:
+              src = Path("src/plugins") / name
+              manifest = json.loads((src / "cifereca-plugin.json").read_text())
+              package = manifest["package"]
+              root = store / package["id"]
+              target = root / package["version"]
+              shutil.copytree(src, target, dirs_exist_ok=True)
+              root.mkdir(parents=True, exist_ok=True)
+              (root / "current.json").write_text(
+                  json.dumps({"active": package["version"], "previous": None}, indent=2) + "\n"
+              )
+          PY
+
+      - name: Write review driver
+        shell: bash
+        run: |
+          cat > /tmp/step6_review.py <<'PY'
+          from __future__ import annotations
+          import ctypes as C
+          import json, os, subprocess, sys, time
+          from pathlib import Path
+          from PIL import ImageGrab
+
+          ROOT=Path.cwd()
+          sys.path.insert(0, str(ROOT/"environnements"/"openai-chat-debian"))
+          from x11_input import X11Input
+
+          OUT=ROOT/"step6-evidence"
+          OUT.mkdir(parents=True, exist_ok=True)
+          WIDTH,HEIGHT=1366,768
+
+          def shot(name):
+              p=OUT/name
+              ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save(p)
+              return str(p)
+
+          def shortcut(c,mod,key):
+              c.key(mod,True)
+              try:
+                  c.key(key,True); c.key(key,False)
+              finally:
+                  c.key(mod,False)
+
+          def resize(c):
+              x11=c.x11; display=c.display
+              x11.XDefaultRootWindow.argtypes=[C.c_void_p]; x11.XDefaultRootWindow.restype=C.c_ulong
+              x11.XQueryTree.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_ulong),C.POINTER(C.POINTER(C.c_ulong)),C.POINTER(C.c_uint)]
+              x11.XQueryTree.restype=C.c_int
+              x11.XGetGeometry.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_int),C.POINTER(C.c_int),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint)]
+              x11.XGetGeometry.restype=C.c_int
+              x11.XMoveResizeWindow.argtypes=[C.c_void_p,C.c_ulong,C.c_int,C.c_int,C.c_uint,C.c_uint]
+              x11.XFree.argtypes=[C.c_void_p]
+              root=x11.XDefaultRootWindow(display); rr=C.c_ulong(); pr=C.c_ulong(); children=C.POINTER(C.c_ulong)(); n=C.c_uint()
+              if not x11.XQueryTree(display,root,C.byref(rr),C.byref(pr),C.byref(children),C.byref(n)): return None
+              best=None
+              try:
+                  for i in range(n.value):
+                      xid=children[i]; gr=C.c_ulong(); x=C.c_int(); y=C.c_int(); w=C.c_uint(); h=C.c_uint(); b=C.c_uint(); d=C.c_uint()
+                      if x11.XGetGeometry(display,xid,C.byref(gr),C.byref(x),C.byref(y),C.byref(w),C.byref(h),C.byref(b),C.byref(d)):
+                          area=int(w.value)*int(h.value)
+                          if w.value>500 and h.value>400 and (best is None or area>best[0]):
+                              best=(area,int(xid),int(w.value),int(h.value))
+                  if not best: return None
+                  _,xid,bw,bh=best
+                  x11.XMoveResizeWindow(display,xid,0,0,WIDTH,HEIGHT)
+                  x11.XSync(display,False); time.sleep(.8)
+                  return {"before":[bw,bh],"requested":[WIDTH,HEIGHT]}
+              finally:
+                  if children: x11.XFree(children)
+
+          def click(c,x,y,wait=1.0):
+              c.click(x,y); time.sleep(wait)
+
+          stdout=(OUT/"cifereca.stdout.log").open("w")
+          stderr=(OUT/"cifereca.stderr.log").open("w")
+          app=subprocess.Popen([
+              "/usr/bin/python3","-m","cifereca","--verbose"
+          ],cwd=ROOT,env=os.environ.copy(),stdout=stdout,stderr=stderr,text=True)
+
+          control=None
+          report={"main_sha":"43df60b1e93ba25e933307728d8ac01264c0118b","shots":[]}
+          try:
+              time.sleep(8)
+              if app.poll() is not None: raise RuntimeError(f"app rc={app.returncode}")
+              control=X11Input(); report["resize"]=resize(control); time.sleep(1)
+
+              # Expand Configuration / Technique.
+              click(control,110,470,1.0)
+              report["shots"].append(shot("00-config-navigation-expanded.png"))
+
+              # Synchronisation.
+              click(control,105,515,3.0)
+              report["shots"].append(shot("01-sync.png"))
+
+              # Outils.
+              click(control,105,558,2.0)
+              report["shots"].append(shot("02-tools.png"))
+              # Open first maintenance plan without executing it.
+              click(control,1175,141,1.5)
+              report["shots"].append(shot("03-tools-plan-dialog.png"))
+              control.key("Escape",True); control.key("Escape",False); time.sleep(.6)
+
+              # Plugins.
+              click(control,105,602,2.5)
+              report["shots"].append(shot("04-plugins-top.png"))
+              # Scroll the Plugins page to inspect card density and lower states.
+              control.xtst.XTestFakeMotionEvent(control.display,-1,1050,650,0)
+              for _ in range(14):
+                  control.xtst.XTestFakeButtonEvent(control.display,5,True,0)
+                  control.xtst.XTestFakeButtonEvent(control.display,5,False,0)
+              control.x11.XSync(control.display,False); time.sleep(1)
+              report["shots"].append(shot("05-plugins-middle.png"))
+
+              # Paramètres.
+              click(control,105,646,3.0)
+              report["shots"].append(shot("06-settings-identities.png"))
+
+              # Diagnostic tab. Stack switcher around y=160; Diagnostic is rightmost.
+              click(control,1050,160,2.0)
+              report["shots"].append(shot("07-settings-diagnostic.png"))
+
+              # Interface tab for contrast.
+              click(control,875,160,1.5)
+              report["shots"].append(shot("08-settings-interface.png"))
+
+              (OUT/"report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
+          finally:
+              if control:
+                  try: shortcut(control,"Control_L","q")
+                  except Exception: pass
+                  control.close()
+              try: app.wait(timeout=4)
+              except subprocess.TimeoutExpired:
+                  app.terminate()
+                  try: app.wait(timeout=3)
+                  except subprocess.TimeoutExpired: app.kill(); app.wait()
+              stdout.close(); stderr.close()
+          PY
+
+          /usr/bin/python3 simulation/datasetctl.py exec ux-small -- \
+            env PYTHONPATH="$GITHUB_WORKSPACE/src" GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none NO_AT_BRIDGE=1 \
+            xvfb-run -a -s "-screen 0 1366x768x24" \
+              /usr/bin/python3 /tmp/step6_review.py
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-config-system-review-step6
+          path: step6-evidence/
+          if-no-files-found: error
+          retention-days: 2
