@@ -1344,6 +1344,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._closed = False
         self._account_changing = False
         self._identity_changing = False
+        self._identity_context_generation = 0
         self._selected_search_id: str | None = None
         self._last_search_query = ""
         self._search_mode = "local"
@@ -2538,6 +2539,8 @@ class MainWindow(Adw.ApplicationWindow):
             _TRACE_LOG.debug("Identity selection notification ignored: already current identity=%s", identity.identity_id)
             return
         self.service.select_identity(identity.identity_id)
+        self._identity_context_generation += 1
+        identity_generation = self._identity_context_generation
         self._populate_accounts()
         self._render_dashboard()
         self._search_generation = getattr(self, "_search_generation", 0) + 1
@@ -2552,20 +2555,32 @@ class MainWindow(Adw.ApplicationWindow):
         self._populate_account_dropdown(identity.identity_id)
         self.service.last_history = []
         self.service.last_bookings = []
+        self.history_objects = {}
+        self.booking_objects = {}
+        self._history_all_rows = []
         self._history_rows = []
         self._history_loaded_count = 0
         self._history_append_scheduled = False
+        if hasattr(self, "history_page"):
+            self.history_page.clear_rows()
+        if hasattr(self, "booking_page"):
+            self.booking_page.clear_rows()
         self._library_entries_cache = []
         self._recent_entries_cache = []
         if hasattr(self, "library_page"):
             self._render_library([])
             self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
         def identity_loaded(rows: list[Loan]) -> None:
-            if not self.service.current_identity or self.service.current_identity.identity_id != identity.identity_id:
+            if not self._identity_request_current(identity.identity_id, identity_generation):
                 return
             self._populate_loans(rows)
             self.refresh_library(False)
             self.refresh_recent()
+            route = self.view_stack.get_visible_child_name() if hasattr(self, "view_stack") else None
+            if route == "history":
+                self.refresh_history(False)
+            elif route == "bookings":
+                self.refresh_bookings(False)
             self._activity_result(f"Identité chargée : {identity.label}")
         self.runner.submit(
             f"Chargement de {identity.label}…",
@@ -3426,9 +3441,25 @@ class MainWindow(Adw.ApplicationWindow):
         page.scroll.get_vadjustment().connect("value-changed", self._history_scroll_changed)
         return page
 
+    def _identity_request_current(self, identity_id: str | None, generation: int) -> bool:
+        current = self.service.current_identity
+        current_identity_id = current.identity_id if current is not None else None
+        return (
+            generation == self._identity_context_generation
+            and identity_id == current_identity_id
+        )
+
     def refresh_history(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
+        current = self.service.current_identity
+        identity_id = current.identity_id if current is not None else None
+        generation = self._identity_context_generation
+
+        def done(rows: list[HistoryItem]) -> None:
+            if self._identity_request_current(identity_id, generation):
+                self._populate_history(rows)
+
         self.runner.submit(
-            "Chargement de l'historique…", lambda: self.service.refresh_history(force=force), self._populate_history, control=control,
+            "Chargement de l'historique…", lambda: self.service.refresh_history(force=force), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="history",
         )
 
@@ -3533,8 +3564,16 @@ class MainWindow(Adw.ApplicationWindow):
         return page
 
     def refresh_bookings(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
+        current = self.service.current_identity
+        identity_id = current.identity_id if current is not None else None
+        generation = self._identity_context_generation
+
+        def done(rows: list[Booking]) -> None:
+            if self._identity_request_current(identity_id, generation):
+                self._populate_bookings(rows)
+
         self.runner.submit(
-            "Chargement des réservations…", lambda: self.service.refresh_bookings(force=force), self._populate_bookings, control=control,
+            "Chargement des réservations…", lambda: self.service.refresh_bookings(force=force), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="bookings",
         )
 
