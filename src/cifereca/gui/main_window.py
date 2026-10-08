@@ -3446,6 +3446,7 @@ class MainWindow(Adw.ApplicationWindow):
             sync_label = self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
             if sync_label == "À jour":
                 sync_label = ""
+            description = self._book_description(item)
             self.search_page.detail.show_presentation(book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
                 subtitle=str(item.get("author") or ""),
@@ -3464,7 +3465,7 @@ class MainWindow(Adw.ApplicationWindow):
                         ("État acquisition", sync_label),
                     ]),
                 ],
-            ))
+            ), description=description)
             actions = []
             open_library = Gtk.Button(label="Voir dans Bibliothèque")
             open_library.connect("clicked", lambda _b, key=row.key: self._open_library_item(key))
@@ -3480,7 +3481,7 @@ class MainWindow(Adw.ApplicationWindow):
             extend.add_css_class("suggested-action")
             extend.connect("clicked", lambda _b: self.run_search(True)); actions.append(extend)
             self.search_page.detail.add_actions(actions)
-            self._add_book_notice(self.search_page.detail,item)
+            self._add_book_notice(self.search_page.detail,item, include_description=False)
             self._add_local_book_actions(self.search_page.detail,item)
             self._add_facets(self.search_page.detail, item, self.search_controls)
             return
@@ -4399,10 +4400,15 @@ class MainWindow(Adw.ApplicationWindow):
         button.connect('clicked', open_catalogue); detail.add_actions([button])
 
 
-    def _add_book_notice(self, detail, item):
+    @staticmethod
+    def _book_description(item):
+        metadata = item.get('metadata') or {}
+        return (metadata.get('epub_metadata') or {}).get('description') or metadata.get('description')
+
+    def _add_book_notice(self, detail, item, *, include_description=True):
         metadata=item.get('metadata') or {}
-        description=(metadata.get('epub_metadata') or {}).get('description') or metadata.get('description')
-        detail._show_description(description)
+        if include_description:
+            detail._show_description(self._book_description(item))
         essential_labels={'Source','Provenance','Format','Langue','Langues','Disponibilité'}
         rows=[row for row in notice_rows(metadata) if row[0] not in essential_labels]
         if rows:detail.add_group('Notice EPUB' if metadata.get('epub_metadata') else 'Notice',rows)
@@ -4535,6 +4541,7 @@ class MainWindow(Adw.ApplicationWindow):
         sync_label = self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
         if sync_label == "À jour":
             sync_label = ""
+        description = self._book_description(item)
         detail.show_presentation(book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
@@ -4554,7 +4561,7 @@ class MainWindow(Adw.ApplicationWindow):
                 ]),
             ],
             links=document_links(item),
-        ))
+        ), description=description)
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])
         presence_rows = []
@@ -4573,7 +4580,7 @@ class MainWindow(Adw.ApplicationWindow):
         unique_presence = list(dict.fromkeys(presence_rows))
         if len(unique_presence) > 1:
             detail.add_group('Présence / Bibliothèques / Sources', unique_presence)
-        self._add_book_notice(detail,item)
+        self._add_book_notice(detail,item, include_description=False)
         self._add_local_book_actions(detail,item)
         self._add_book_recommendation_action(detail, item)
         self._add_facets(self.library_page.detail, item, self.library_controls)
