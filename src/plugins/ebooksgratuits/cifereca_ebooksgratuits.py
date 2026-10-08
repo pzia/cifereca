@@ -87,9 +87,18 @@ def _filter_choice(text,names,query):
             if best is None or candidate<best: best=candidate
     return None if best is None else best[2:]
 
+def _attested_filter_metadata(selected,label):
+    label=str(label or '').strip()
+    if not label:return {}
+    if selected=='id_genre':
+        return {'genres':[label],'genre_evidence':'ebooksgratuits.search_filter'}
+    if selected=='id_categorie':
+        return {'categories':[label],'category_evidence':'ebooksgratuits.search_filter'}
+    return {}
+
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.9','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.11','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close(); self.connected=False; self._accounts=[]
@@ -102,14 +111,15 @@ class EbooksSession(ProviderSession):
     def search(self,query,scope='all',page=0,field='all'):
         if not self.connected: raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
         if scope == 'physical': return []
-        page=max(0,int(page)); field=str(field or 'all').casefold()
+        page=max(0,int(page)); field=str(field or 'all').casefold(); attested_metadata={}
         if field in {'author','subject','category','genre'} and str(query or '').strip():
             try:
                 form=self._fetch(self.base_url+'ebooks.php')
                 names=('id_auteur',) if field=='author' else (('id_categorie',) if field=='category' else (('id_genre',) if field=='genre' else ('id_categorie','id_genre')))
                 choice=_filter_choice(form.text,names,query)
                 if choice is None: return []
-                selected,value,_label=choice
+                selected,value,label=choice
+                attested_metadata=_attested_filter_metadata(selected,label)
                 params={'begin':str(page*self.page_size),'offset':str(self.page_size),'option':'search',
                         'id_auteur':'0','id_categorie':'1','id_genre':'1'}
                 params[selected]=value
@@ -127,7 +137,7 @@ class EbooksSession(ProviderSession):
         out=[]
         for card in Parser(self.base_url).rows(r.text):
             detail=card['detail']; epub=card['epub']; rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
-            out.append(SearchResult(id='ebooksgratuits:'+rid,record_id=rid,docbase='EBOOKSGRATUITS',medium='digital',title=card['title'],author=card['author'] or None,type='Livre numérique',format='EPUB',publisher='Ebooks libres et gratuits',published_at=None,description=card['description'] or None,thumbnail_url=card['image'] or None,friendly_url=detail,scenario='EBOOKSGRATUITS_CATALOG',source_provider='ebooksgratuits',source_credential=self.credential_id,download_url=epub,content_type='ebook',source_collection='public',owned=False,downloadable=True,metadata={'license_note':'Vérifier les droits selon le pays'}))
+            out.append(SearchResult(id='ebooksgratuits:'+rid,record_id=rid,docbase='EBOOKSGRATUITS',medium='digital',title=card['title'],author=card['author'] or None,type='Livre numérique',format='EPUB',publisher='Ebooks libres et gratuits',published_at=None,description=card['description'] or None,thumbnail_url=card['image'] or None,friendly_url=detail,scenario='EBOOKSGRATUITS_CATALOG',source_provider='ebooksgratuits',source_credential=self.credential_id,download_url=epub,content_type='ebook',source_collection='public',owned=False,downloadable=True,metadata={'license_note':'Vérifier les droits selon le pays',**attested_metadata}))
         return out[:self.page_size]
     def holdings(self,item,search_terms=''): return ItemDetail(record_id=item.record_id,docbase='EBOOKSGRATUITS',title=item.title,author=item.author,type=item.type,year=None,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Téléchargement public EPUB',holdings=[],source_provider=self.provider_id,source_credential=self.credential_id)
     def download_direct(self,item,target_dir):
