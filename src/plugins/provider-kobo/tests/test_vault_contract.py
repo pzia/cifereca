@@ -508,3 +508,47 @@ def test_kobo_connect_does_not_keep_stale_vault_capabilities():
         assert session.supports_acquisition_display_profile is False
     finally:
         session.close()
+
+
+def test_kobo_connect_succeeds_when_diagnostics_sink_fails():
+    class FailingDiagnostics:
+        def add(self, *_args, **_kwargs):
+            raise RuntimeError("diagnostics unavailable")
+
+    class FakeVault:
+        def status(self, authenticated=False):
+            assert authenticated is False
+            return {
+                "ok": True,
+                "api_version": "2.3",
+                "capabilities": [],
+                "capability_details": [],
+                "acquisition_access": "unknown",
+            }
+
+        def account(self):
+            return {"id": "acct", "display_name": "Kobo"}
+
+        def close(self):
+            return None
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="vault-1",
+        label="Kobo",
+        credentials={"api_token": "x"},
+        options={"base_url": "https://vault.example"},
+        config={},
+        storage={},
+        diagnostics=FailingDiagnostics(),
+        runtime_capabilities=SimpleNamespace(acquisition=lambda _provider: None),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    try:
+        accounts = session.connect()
+
+        assert session.connected is True
+        assert [account.unique_id for account in accounts] == ["acct"]
+    finally:
+        session.close()
