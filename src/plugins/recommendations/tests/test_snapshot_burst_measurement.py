@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from time import perf_counter
 
-from recommendation_service import compute_recommendations
+from recommendation_service import LibrarySnapshotCache, compute_recommendations
 from recommendations import UxRecommendationsView
 
 
@@ -65,13 +65,14 @@ class _GLib:
             callback()
 
 
-def _compute(metadata):
+def _compute(metadata, snapshot_cache=None):
     return compute_recommendations(
         metadata,
         _Catalog(),
         "default",
         max_queries=8,
         max_results=120,
+        snapshot_cache=snapshot_cache,
     )
 
 
@@ -81,6 +82,13 @@ def measure_snapshot_burst():
     for _ in range(BURST_SIZE):
         _compute(baseline)
     baseline_ms = (perf_counter() - started) * 1000.0
+
+    cached = _Metadata()
+    snapshot_cache = LibrarySnapshotCache()
+    started = perf_counter()
+    for _ in range(BURST_SIZE):
+        _compute(cached, snapshot_cache)
+    cached_ms = (perf_counter() - started) * 1000.0
 
     current = _Metadata()
     view = object.__new__(UxRecommendationsView)
@@ -109,9 +117,11 @@ def measure_snapshot_burst():
         "books": BOOK_COUNT,
         "events": BURST_SIZE,
         "baseline_snapshots": baseline.calls,
+        "cached_snapshots": cached.calls,
         "coalesced_snapshots": current.calls,
         "scheduled_refreshes_after_burst": scheduled_after_burst,
         "baseline_elapsed_ms": round(baseline_ms, 3),
+        "cached_elapsed_ms": round(cached_ms, 3),
         "coalesced_elapsed_ms": round(coalesced_ms, 3),
         "scope": "synthetic in-memory snapshot + real Recommendations profile/query preparation; no catalogue/network/UI rendering",
     }
@@ -122,6 +132,7 @@ def test_562_book_overview_burst_reduces_complete_library_snapshots_from_three_t
 
     assert measurement["books"] == 562
     assert measurement["baseline_snapshots"] == 3
+    assert measurement["cached_snapshots"] == 1
     assert measurement["scheduled_refreshes_after_burst"] == 1
     assert measurement["coalesced_snapshots"] == 1
 
