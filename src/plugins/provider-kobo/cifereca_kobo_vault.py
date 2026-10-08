@@ -48,6 +48,7 @@ class KoboVaultClient:
             raise ProviderError("Kobo-Vault : URL API invalide")
         self.base_url = base_url
         self.token = str(token or "").strip()
+        self.last_manifest_rejections: list[dict[str, str]] = []
         self.client = httpx.Client(
             headers={
                 "Accept": "application/json",
@@ -223,13 +224,26 @@ class KoboVaultClient:
 
     def library_manifest(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        self.last_manifest_rejections = []
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(100):
             payload = self.library_manifest_page(cursor=cursor)
             items = payload.get("items")
             if isinstance(items, list):
-                rows.extend(dict(x) for x in items if isinstance(x, dict))
+                for raw in items:
+                    if isinstance(raw, dict):
+                        rows.append(dict(raw))
+                    else:
+                        self.last_manifest_rejections.append({
+                            "type": "invalid_shape",
+                            "reason": "item_not_object",
+                        })
+            elif items is not None:
+                self.last_manifest_rejections.append({
+                    "type": "invalid_shape",
+                    "reason": "items_not_list",
+                })
             next_cursor = payload.get("next_cursor")
             if not next_cursor:
                 break
