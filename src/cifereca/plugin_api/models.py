@@ -298,6 +298,14 @@ class BookRef:
     authors: tuple[str, ...] = ()
     identifiers: Mapping[str, str] = field(default_factory=dict)
     provenance: Provenance | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@runtime_checkable
+class BookReferenceRecommendationService(Protocol):
+    """Optional recommendation capability using a concrete book as seed."""
+
+    def recommend_from_book(self, book: BookRef) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -981,7 +989,7 @@ __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
     "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
-    "ResolvedPluginService", "Provenance", "BookRef", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation",
+    "ResolvedPluginService", "Provenance", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",

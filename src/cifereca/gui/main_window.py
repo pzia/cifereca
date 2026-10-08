@@ -41,7 +41,7 @@ from .action_widgets import AdaptiveActionBar
 from .query_model import result_row, online_search, progressive_online_search, merge_results
 from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions, validate_action_selection
 from ..plugin_api import (
-    ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, DetailField, DetailSection, DocumentLink,
+    ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, BookReferenceRecommendationService, DetailField, DetailSection, DocumentLink,
     MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution, document_links,
 )
 
@@ -3839,6 +3839,7 @@ class MainWindow(Adw.ApplicationWindow):
             title=str(item.get("title") or ""),
             authors=tuple(x.strip() for x in str(item.get("author") or "").split(";") if x.strip()),
             identifiers={"provider": str(item.get("provider_id") or item.get("source_provider") or "")},
+            metadata=metadata,
         )
         artifact = None
         path_value = item.get("local_path") or metadata.get("path")
@@ -4248,6 +4249,58 @@ class MainWindow(Adw.ApplicationWindow):
         self._render_library()
 
 
+    def _book_recommendation_target(self, item):
+        manager = getattr(self, "plugin_manager", None)
+        if manager is None:
+            return None
+        context = self._book_action_context(item)
+        book = context.book
+        if book is None:
+            return None
+        try:
+            services = manager.services("recommendation")
+        except Exception:
+            return None
+        for resolved in services:
+            if "recommendation.book-reference" not in set(resolved.capabilities):
+                continue
+            service = resolved.service
+            if isinstance(service, BookReferenceRecommendationService):
+                return service, book
+        return None
+
+    def _add_book_recommendation_action(self, detail, item) -> None:
+        if self._book_recommendation_target(item) is None:
+            return
+        button = self.action_button(
+            "Recommander à partir de ce livre",
+            "starred-symbolic",
+        )
+        button._cifereca_action_id = "recommend-from-book"
+        button._cifereca_action_priority = 25
+
+        def recommend(_button):
+            target = self._book_recommendation_target(item)
+            if target is None:
+                self.toast("Le service de recommandation n’est plus disponible.")
+                return
+            service, book = target
+            try:
+                route = str(service.recommend_from_book(book) or "").strip()
+            except Exception as exc:
+                self.show_error(str(exc), "Recommandation impossible")
+                return
+            if not route:
+                self.show_error(
+                    "Le service n’a fourni aucune page à ouvrir.",
+                    "Recommandation impossible",
+                )
+                return
+            self.navigate(route)
+
+        button.connect("clicked", recommend)
+        detail.add_actions([button])
+
     def _library_selected(self, row: BookListItem | None) -> None:
         if not row:
             self.library_page.detail.empty(
@@ -4270,6 +4323,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self.library_page.detail.add_actions(actions)
                 self._add_facets(self.library_page.detail, item, self.library_controls)
                 self._add_local_book_actions(self.library_page.detail, item)
+                self._add_book_recommendation_action(self.library_page.detail, item)
                 return
 
         detail = self.library_page.detail
@@ -4319,6 +4373,7 @@ class MainWindow(Adw.ApplicationWindow):
             detail.add_group('Présence / Bibliothèques / Sources', unique_presence)
         self._add_book_notice(detail,item)
         self._add_local_book_actions(detail,item)
+        self._add_book_recommendation_action(detail, item)
         self._add_facets(self.library_page.detail, item, self.library_controls)
 
     def _kobo_selected(self, row: BookListItem | None) -> None:
