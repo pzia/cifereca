@@ -1,0 +1,131 @@
+name: UX real Cifereca capture
+on:
+  push:
+    branches: [ux/video-real-acquisition-20261008]
+    paths: [.github/workflows/ux-real-journey-capture.yml]
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare actual GTK Cifereca and simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$GITHUB_WORKSPACE/src"
+          export CIFERECA_DATASET_RUNTIME=/tmp/cifereca-ux-journey
+          export CIFERECA_HOST_XDG=/tmp/cifereca-ux-host
+          echo "CIFERECA_DATASET_RUNTIME=$CIFERECA_DATASET_RUNTIME" >> "$GITHUB_ENV"
+          echo "CIFERECA_HOST_XDG=$CIFERECA_HOST_XDG" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 libxtst6 xdotool openbox wmctrl ffmpeg python3-venv python3-gi python3-gi-cairo python3-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 python3-httpx python3-packaging
+          /usr/bin/python3 -m venv --system-site-packages /tmp/ux-venv
+          /tmp/ux-venv/bin/python -m pip install --disable-pip-version-check "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=11,<13" "PyMuPDF>=1.26,<2"
+          mkdir -p /tmp/ux-zips "$CIFERECA_HOST_XDG"/{config,data,cache,state} ux-real-journey /tmp/ux-bin
+          for plugin in transport-http provider-bnf-catalogue provider-gallica provider-gutenberg provider-kobo provider-numilog provider-paris home-page epub_optimizer recommendations; do
+            /usr/bin/python3 scripts/package-plugin.py "src/plugins/$plugin" --out /tmp/ux-zips
+          done
+          export XDG_CONFIG_HOME="$CIFERECA_HOST_XDG/config" XDG_DATA_HOME="$CIFERECA_HOST_XDG/data" XDG_CACHE_HOME="$CIFERECA_HOST_XDG/cache" XDG_STATE_HOME="$CIFERECA_HOST_XDG/state"
+          transport="$(find /tmp/ux-zips -name '*transport-http*.zip' -print -quit)"
+          /tmp/ux-venv/bin/python -m cifereca.cli plugin install "$transport" --replace
+          for archive in /tmp/ux-zips/*.zip; do
+            case "$archive" in *transport-http*) continue ;; esac
+            /tmp/ux-venv/bin/python -m cifereca.cli plugin install "$archive" --replace
+          done
+          cat >/tmp/ux-bin/cifereca <<'EOF'
+          #!/usr/bin/env bash
+          exec /tmp/ux-venv/bin/python -m cifereca "$@"
+          EOF
+          chmod +x /tmp/ux-bin/cifereca
+          export PATH="/tmp/ux-bin:$PATH"
+          export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
+          /tmp/ux-venv/bin/python simulation/datasetctl.py rebuild ux-small
+          /tmp/ux-venv/bin/python simulation/datasetctl.py summary ux-small --json >ux-real-journey/dataset.json
+          /tmp/ux-venv/bin/python simulation/datasetctl.py env ux-small >/tmp/ux-env.sh
+          source /tmp/ux-env.sh
+          /tmp/ux-venv/bin/python -m cifereca.cli catalog-scan >ux-real-journey/catalog-scan.json
+      - name: Record same Xvfb display and actual GTK app
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$GITHUB_WORKSPACE/src"
+          export PATH="/tmp/ux-bin:$PATH"
+          export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
+          source /tmp/ux-env.sh
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1366x900x24" bash <<'INNER'
+          set -euo pipefail
+          export GDK_BACKEND=x11 GSK_RENDERER=cairo GDK_SCALE=1 GTK_A11Y=none NO_AT_BRIDGE=1
+          ev="$GITHUB_WORKSPACE/ux-real-journey"
+          openbox >"$ev/openbox.log" 2>&1 &
+          wmpid=$!
+          ffmpeg -y -hide_banner -loglevel warning -f x11grab -draw_mouse 1 -framerate 24 -video_size 1366x900 -i "$DISPLAY.0" -c:v libx264 -preset ultrafast -crf 22 -pix_fmt yuv420p -movflags +faststart "$ev/real-gtk-journey.mp4" >"$ev/ffmpeg.log" 2>&1 &
+          fpid=$!
+          /tmp/ux-venv/bin/python "$GITHUB_WORKSPACE/simulation/datasetctl.py" cifereca ux-small --verbose -- --force-plugin transport.http --force-plugin core.ui.pages --force-plugin core.ui.widgets --force-plugin core.ui.titlebar --force-plugin core.ui.system --force-plugin ui.page.recommendations --force-plugin ui.page.epub-optimizer --force-plugin document.transformer.epub-optimizer --force-plugin document.transformer.pdf-eink-optimizer --force-plugin device.profile.xteink-x3 --force-plugin recommendation.book-reference.recommendations >"$ev/app.stdout.log" 2>"$ev/app.stderr.log" &
+          apppid=$!
+          cleanup() {
+            kill -TERM "$apppid" 2>/dev/null || true
+            sleep .6
+            kill -INT "$fpid" 2>/dev/null || true
+            wait "$fpid" 2>/dev/null || true
+            kill -TERM "$wmpid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          window=""
+          for _ in $(seq 1 100); do
+            if ! kill -0 "$apppid" 2>/dev/null; then echo "APP DIED" >&2; exit 1; fi
+            window="$(xdotool search --onlyvisible --name 'Cifereca' 2>/dev/null | head -1 || true)"
+            [ -n "$window" ] && break
+            sleep .25
+          done
+          [ -n "$window" ] || { echo 'WINDOW NOT FOUND' >&2; exit 1; }
+          wmctrl -ir "$window" -b add,maximized_vert,maximized_horz || true
+          xdotool windowactivate --sync "$window" || true
+          screenshot() {
+            OUT="$ev/$1.png" /tmp/ux-venv/bin/python - <<'PY'
+          import os
+          from PIL import ImageGrab
+          ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(os.environ['OUT'])
+          PY
+          }
+          tap() {
+            xdotool mousemove --sync "$1" "$2"
+            sleep .4
+            xdotool click 1
+          }
+          sleep 2
+          screenshot 01-home
+          tap 90 205; sleep 1.5; screenshot 02-search
+          tap 480 120; xdotool key ctrl+a; xdotool type --delay 90 --clearmodifiers 'tour'; xdotool key Return; sleep 2
+          screenshot 03-known
+          tap 1230 120; sleep 4; screenshot 04-online
+          tap 470 660; sleep 1.8; screenshot 05-select-online-book
+          tap 1275 230; sleep 3; screenshot 06-acquire-action
+          tap 655 665; sleep 2.5; screenshot 07-download-action
+          tap 90 250; sleep 1.8; screenshot 08-library
+          tap 470 362; sleep 1; screenshot 09-detail
+          tap 1290 232; sleep 2; screenshot 10-local-book-action
+          tap 90 470; sleep 2; screenshot 11-plugin-page
+          tap 90 250; sleep 1.5; screenshot 12-library-end
+          kill -TERM "$apppid" 2>/dev/null || true
+          sleep .8
+          kill -INT "$fpid" 2>/dev/null || true
+          wait "$fpid" 2>/dev/null || true
+          trap - EXIT
+          kill -TERM "$wmpid" 2>/dev/null || true
+          ffprobe -v error -show_entries format=duration:stream=width,height,r_frame_rate -of json "$ev/real-gtk-journey.mp4" >"$ev/ffprobe.json"
+          INNER
+      - name: Shut down simulator
+        if: always()
+        run: |
+          /tmp/ux-venv/bin/python simulation/datasetctl.py down ux-small || true
+      - name: Save UX evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cifereca-ux-real-gtk-path
+          path: ux-real-journey/
+          retention-days: 7
+          if-no-files-found: warn
