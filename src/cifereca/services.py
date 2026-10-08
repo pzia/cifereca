@@ -22,6 +22,7 @@ from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
 from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
 from .catalog import LocalCatalog
 from .epub_metadata import cached_cover_url
+from .core.covers import candidate as cover_candidate, resolve_cover
 from .config import Config
 from .diagnostics import Diagnostics, redact
 from .kobo import KoboAdeptError
@@ -1889,36 +1890,71 @@ class LibraryService:
             provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
             row_identity = placement.get("identity_id") or identity_id
             item_id = str(entry.get("item_id") or placement.get("source_item_id") or "")
-            thumbnail_url = cached_cover_url(metadata) or metadata.get("cover_url") or metadata.get("thumbnail_url")
-            if not thumbnail_url and item_id:
+            cover_candidates = []
+            embedded = cover_candidate(
+                cached_cover_url(metadata), tier="embedded", source="epub",
+                evidence_id=str(placement.get("artifact_id") or ""), evidence_strength=100,
+            )
+            if embedded:
+                cover_candidates.append(embedded)
+            legacy = cover_candidate(
+                metadata.get("cover_url") or metadata.get("thumbnail_url"),
+                tier="origin", source="catalog-entry",
+                evidence_id=f"{provider_id}:{item_id}" if item_id else provider_id, evidence_strength=60,
+            )
+            if legacy:
+                cover_candidates.append(legacy)
+            catalog_cover = metadata.get("catalog_cover")
+            if isinstance(catalog_cover, dict):
+                public = cover_candidate(
+                    catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
+                    evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
+                )
+                if public:
+                    cover_candidates.append(public)
+            if item_id:
                 if provider_id == "kobo":
                     for record, record_identity in backup_by_item.get(item_id, []):
                         if row_identity and record_identity and record_identity != row_identity:
                             continue
-                        thumbnail_url = record.get("cover_url") or thumbnail_url
-                        if thumbnail_url:
-                            break
-                if not thumbnail_url:
-                    candidates = [
-                        loan_by_key.get((provider_id, item_id, row_identity)),
-                        loan_by_key.get((provider_id, item_id, None)),
-                    ]
-                    loan = next((candidate for candidate in candidates if candidate is not None), None)
-                    if loan is None:
-                        loan = next((
-                            candidate for (p, i, _identity), candidate in loan_by_key.items()
-                            if p == provider_id and i == item_id and (not row_identity or _identity == row_identity)
-                        ), None)
-                    if loan is not None:
-                        thumbnail_url = loan.thumbnail_url or thumbnail_url
-                if not thumbnail_url:
-                    for entitlement in entitlements_by_key.get((provider_id, item_id), []):
-                        if row_identity and entitlement.get("identity_id") not in {row_identity, None, ""}:
-                            continue
-                        emeta = dict(entitlement.get("metadata") or {})
-                        thumbnail_url = emeta.get("cover_url") or emeta.get("thumbnail_url") or thumbnail_url
-                        if thumbnail_url:
-                            break
+                        value = cover_candidate(
+                            record.get("cover_url"), tier="origin", source="kobo-backup",
+                            evidence_id=f"{provider_id}:{item_id}", evidence_strength=100,
+                        )
+                        if value:
+                            cover_candidates.append(value)
+                loan_candidates = [
+                    loan_by_key.get((provider_id, item_id, row_identity)),
+                    loan_by_key.get((provider_id, item_id, None)),
+                ]
+                loan = next((value for value in loan_candidates if value is not None), None)
+                if loan is None:
+                    loan = next((
+                        value for (p, i, _identity), value in loan_by_key.items()
+                        if p == provider_id and i == item_id and (not row_identity or _identity == row_identity)
+                    ), None)
+                if loan is not None:
+                    value = cover_candidate(
+                        loan.thumbnail_url, tier="origin", source="loan",
+                        evidence_id=f"{provider_id}:{item_id}", evidence_strength=90,
+                    )
+                    if value:
+                        cover_candidates.append(value)
+                for entitlement in entitlements_by_key.get((provider_id, item_id), []):
+                    if row_identity and entitlement.get("identity_id") not in {row_identity, None, ""}:
+                        continue
+                    emeta = dict(entitlement.get("metadata") or {})
+                    value = cover_candidate(
+                        emeta.get("cover_url") or emeta.get("thumbnail_url"),
+                        tier="origin", source="entitlement",
+                        evidence_id=str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}"),
+                        evidence_strength=80,
+                    )
+                    if value:
+                        cover_candidates.append(value)
+            cover = resolve_cover(cover_candidates)
+            thumbnail_url = cover.url or None
+            metadata["cover_resolution"] = cover.metadata()
             rows.append({
                 "placement_id": placement.get("placement_id"), "artifact_id": placement.get("artifact_id"),
                 "title": entry.get("title") or Path(str(placement.get("path") or "")).stem, "author": entry.get("author"),
@@ -3318,6 +3354,30 @@ class LibraryService:
             current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
             existing = merged.get(key)
             source_ref = {"provider_id": provider_id, "item_id": item_id, "identity_id": row_identity or default_identity_id}
+            base_cover_candidates = []
+            embedded_cover = cover_candidate(
+                cached_cover_url(metadata), tier="embedded", source="epub",
+                evidence_id=artifact_id or sha256, evidence_strength=100,
+            )
+            if embedded_cover:
+                base_cover_candidates.append(embedded_cover)
+            legacy_cover = cover_candidate(
+                metadata.get("cover_url") or metadata.get("thumbnail_url"),
+                tier="origin", source="catalog-entry",
+                evidence_id=f"{provider_id}:{item_id}" if item_id else provider_id, evidence_strength=60,
+            )
+            if legacy_cover:
+                base_cover_candidates.append(legacy_cover)
+            catalog_cover = metadata.get("catalog_cover")
+            if isinstance(catalog_cover, dict):
+                public_cover = cover_candidate(
+                    catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
+                    evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
+                )
+                if public_cover:
+                    base_cover_candidates.append(public_cover)
+            base_cover = resolve_cover(base_cover_candidates)
+            metadata["cover_resolution"] = base_cover.metadata()
             if existing is None:
                 existing = {
                     "key": key, "book_id": item_id, "title": str(row.get("title") or "Sans titre"),
@@ -3329,7 +3389,7 @@ class LibraryService:
                     "artifact_kind": metadata.get("artifact_kind") or artifact.get("kind") or "file",
                     "bundle_members": metadata.get("bundle_members") or [], "playlist": metadata.get("playlist"),
                     "entitlement_type": None, "due_at": None, "source": "catalog",
-                    "thumbnail_url": cached_cover_url(metadata) or metadata.get("cover_url") or metadata.get("thumbnail_url"),
+                    "thumbnail_url": base_cover.url or None,
                     "artifact_id": artifact_id or None, "sha256": sha256 or None,
                     "placement_id": row.get("placement_id"), "placements": all_placements, "possessions": [],
                     "metadata": metadata,
@@ -3343,8 +3403,8 @@ class LibraryService:
                 existing["placements"].extend(p for p in all_placements if p.get("placement_id") not in known_ids)
                 if not existing.get("author") and row.get("author"): existing["author"] = row.get("author")
                 if existing.get("title") in {None, "", "Sans titre"} and row.get("title"): existing["title"] = row.get("title")
-                if not existing.get("thumbnail_url"):
-                    existing["thumbnail_url"] = cached_cover_url(metadata) or metadata.get("cover_url") or metadata.get("thumbnail_url")
+                if not existing.get("thumbnail_url") and base_cover.url:
+                    existing["thumbnail_url"] = base_cover.url
                 existing["metadata"] = {**metadata, **dict(existing.get("metadata") or {})}
 
         backup_by_key = {(str(row.get("credential_id") or ""), str(row.get("item_id") or "")): row for row in self.storage.backup_list("kobo")}
@@ -3372,7 +3432,36 @@ class LibraryService:
             local_format = file_format(existing.get("media_format")) if existing.get("local") else ""
             media_format = local_format or file_format(source_media_format) or file_format(existing.get("media_format"))
             meta["source_media_format"] = source_media_format
-            thumbnail = cached_cover_url(existing.get("metadata") or {}) or meta.get("cover_url") or backup.get("cover_url") or (loan.thumbnail_url if loan else None) or existing.get("thumbnail_url")
+            cover_candidates = []
+            existing_meta = dict(existing.get("metadata") or {})
+            embedded_cover = cover_candidate(
+                cached_cover_url(existing_meta), tier="embedded", source="epub",
+                evidence_id=str(existing.get("artifact_id") or existing.get("sha256") or ""), evidence_strength=100,
+            )
+            if embedded_cover:
+                cover_candidates.append(embedded_cover)
+            for url, source, strength, evidence in (
+                (existing_meta.get("cover_url") or existing_meta.get("thumbnail_url"), "catalog-entry", 60, f"{provider_id}:{item_id}"),
+                (meta.get("cover_url") or meta.get("thumbnail_url"), "entitlement", 80, str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}")),
+                (backup.get("cover_url"), "kobo-backup", 100, f"{provider_id}:{item_id}"),
+                ((loan.thumbnail_url if loan else None), "loan", 90, f"{provider_id}:{item_id}"),
+            ):
+                value = cover_candidate(url, tier="origin", source=source, evidence_id=evidence, evidence_strength=strength)
+                if value:
+                    cover_candidates.append(value)
+            for metadata_source in (existing_meta, meta):
+                public_meta = metadata_source.get("catalog_cover")
+                if isinstance(public_meta, dict):
+                    value = cover_candidate(
+                        public_meta.get("url"), tier="catalog", source=str(public_meta.get("source") or "catalog"),
+                        evidence_id=str(public_meta.get("evidence_id") or ""), evidence_strength=int(public_meta.get("evidence_strength") or 0),
+                    )
+                    if value:
+                        cover_candidates.append(value)
+            cover = resolve_cover(cover_candidates)
+            thumbnail = cover.url or None
+            combined_meta = {**existing_meta, **meta}
+            combined_meta["cover_resolution"] = cover.metadata()
             remote_state = "remote_owned" if entitlement_type == "owned" else "remote_loan_active" if entitlement_type == "loan" else "remote_entitled"
             possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
             if existing:
@@ -3381,9 +3470,9 @@ class LibraryService:
                 if possession not in existing.setdefault("possessions", []): existing["possessions"].append(possession)
                 source_ref={"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}
                 if source_ref not in existing.setdefault("source_refs", []): existing["source_refs"].append(source_ref)
-                existing.update({"title":title,"author":author,"state":"local" if existing.get("local") else remote_state,"media_format":str(media_format or "").lower() or None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"metadata":{**dict(existing.get("metadata") or {}),**meta}})
+                existing.update({"title":title,"author":author,"state":"local" if existing.get("local") else remote_state,"media_format":str(media_format or "").lower() or None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"metadata":combined_meta})
             else:
-                merged[canonical_key]={"key":canonical_key,"book_id":item_id,"title":title,"author":author,"provider_id":provider_id,"providers":[provider_id],"identity_id":entitlement_identity,"identity_ids":[entitlement_identity] if entitlement_identity else [],"item_id":item_id,"source_refs":[{"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}],"state":remote_state,"local":False,"local_path":None,"media_format":str(media_format or "").lower() or None,"artifact_kind":None,"bundle_members":[],"playlist":None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"source":"entitlement","loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"artifact_id":None,"sha256":None,"placement_id":None,"placements":[],"possessions":[possession],"metadata":meta}
+                merged[canonical_key]={"key":canonical_key,"book_id":item_id,"title":title,"author":author,"provider_id":provider_id,"providers":[provider_id],"identity_id":entitlement_identity,"identity_ids":[entitlement_identity] if entitlement_identity else [],"item_id":item_id,"source_refs":[{"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}],"state":remote_state,"local":False,"local_path":None,"media_format":str(media_format or "").lower() or None,"artifact_kind":None,"bundle_members":[],"playlist":None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"source":"entitlement","loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"artifact_id":None,"sha256":None,"placement_id":None,"placements":[],"possessions":[possession],"metadata":combined_meta}
 
         result=[]
         for row in merged.values():
