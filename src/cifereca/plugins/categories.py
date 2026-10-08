@@ -27,6 +27,7 @@ CORE_CATEGORIES: tuple[CategoryDefinition, ...] = (
     CategoryDefinition("document.transformer", "Transformation de document", "cifereca.document.transformer/1", "all"),
     CategoryDefinition("recommendation", "Recommandation", "cifereca.recommendation/1", "all"),
     CategoryDefinition("catalog.enrichment", "Enrichissement de catalogue", "cifereca.catalog.enrichment/1", "all"),
+    CategoryDefinition("book.detail.enrichment", "Enrichissement de fiche livre (cache local)", "cifereca.book.detail.enrichment/1", "all"),
     CategoryDefinition("device.profile", "Profil de liseuse", "cifereca.device.profile/1", "all"),
     CategoryDefinition("artifact.transform.preset", "Preset de transformation", "cifereca.artifact.transform.preset/1", "all"),
     CategoryDefinition("maintenance.tool", "Outil de maintenance", "cifereca.maintenance.tool/1", "all"),

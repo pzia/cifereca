@@ -7,7 +7,7 @@ from typing import Literal, Mapping
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-from .models import CatalogServiceFactory, DiagnosticsCheckProvider, DocumentTransformer, MaintenanceTool, TransportService, UiPageProvider, UiTitlebarProvider, WidgetCatalog
+from .models import CatalogServiceFactory, DiagnosticsCheckProvider, DocumentTransformer, MaintenanceTool, TransportService, BookDetailCacheEnricher, UiPageProvider, UiTitlebarProvider, WidgetCatalog
 
 ContractStatus = Literal["experimental", "stable", "deprecated"]
 _CAPABILITY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$")
@@ -46,6 +46,7 @@ CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
     ContractDefinition("document.transformer", "cifereca.document.transformer", "1", capabilities=("artifact.plan", "artifact.transform"), protocol_name="DocumentTransformer"),
     ContractDefinition("recommendation", "cifereca.recommendation", "1", capabilities=("recommendation.book-reference",)),
     ContractDefinition("catalog.enrichment", "cifereca.catalog.enrichment", "1"),
+    ContractDefinition("book.detail.enrichment", "cifereca.book.detail.enrichment", "1", protocol_name="BookDetailCacheEnricher"),
     ContractDefinition("device.profile", "cifereca.device.profile", "1"),
     ContractDefinition("artifact.transform.preset", "cifereca.artifact.transform.preset", "1"),
     ContractDefinition("maintenance.tool", "cifereca.maintenance.tool", "1", protocol_name="MaintenanceTool"),
@@ -61,6 +62,7 @@ _PROTOCOLS = {
     "ui.titlebar": UiTitlebarProvider,
     "ui.widgets": WidgetCatalog,
     "document.transformer": DocumentTransformer,
+    "book.detail.enrichment": BookDetailCacheEnricher,
     "maintenance.tool": MaintenanceTool,
     "diagnostics.check": DiagnosticsCheckProvider,
 }
