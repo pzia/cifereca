@@ -197,3 +197,11 @@ def test_stale_remote_completion_cannot_mutate_current_view():
     tasks.handles[0].finish()
     dispatch.pop()()
     assert completed == []
+
+
+def test_broken_source_info_is_isolated():
+    class Broken:
+        def source_info(self):
+            raise RuntimeError("broken")
+    row = NS(plugin_id="youth.source.broken", service=Broken())
+    assert source_info(row) == ("youth.source.broken", "youth.source.broken")
