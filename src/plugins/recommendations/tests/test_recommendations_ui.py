@@ -323,6 +323,55 @@ def test_identity_overview_before_first_map_does_not_duplicate_initial_refresh()
     assert refreshes == []
 
 
+def test_overview_selection_change_keeps_library_snapshot_cached():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "completed"}},
+        {"identity_id": "other", "label": "Other", "selected": False, "statistics": {"local_books": 15}, "sync": {"sync_run_id": "run-2", "status": "completed"}},
+    ]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    rows[0]["selected"] = False
+    rows[1]["selected"] = True
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == []
+
+
+def test_overview_library_change_invalidates_only_affected_identity():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "completed"}},
+        {"identity_id": "other", "label": "Other", "selected": False, "statistics": {"local_books": 15}, "sync": {"sync_run_id": "run-2", "status": "completed"}},
+    ]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    rows[1]["statistics"]["local_books"] = 16
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == ["other"]
+
+
+def test_overview_sync_change_invalidates_active_identity():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "running"}},
+    ]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    rows[0]["sync"]["status"] = "completed"
+    rows[0]["sync"]["finished_at"] = "2026-10-08T09:30:00Z"
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == ["default"]
+
+
+def test_legacy_overview_without_freshness_projection_stays_conservative():
+    rows = [{"identity_id": "default", "label": "Default", "selected": True}]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+
+    view._identity_overview_changed()
+
+    assert view._library_snapshot_cache.invalidations == ["default"]
+
+
 class _FakeDropDown:
     def __init__(self, selected=0):
         self.selected = selected
