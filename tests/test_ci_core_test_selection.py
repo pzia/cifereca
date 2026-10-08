@@ -22,13 +22,15 @@ def test_test_only_change_runs_only_changed_test_file():
     assert targets == ["tests/test_storage.py"]
 
 
-def test_gui_change_uses_focused_ui_suite():
+def test_gui_component_change_uses_component_suite():
     selector = _module()
     mode, targets = selector.select(["src/cifereca/gui/query_controls.py"], ROOT)
-    assert mode == "ui"
+    assert mode == "ui-component"
     assert "tests/test_query_controls_batching.py" in targets
     assert "tests/test_core_ui_interactive_startup.py" in targets
+    assert "tests/test_core_ui_338_filter_tab_order.py" in targets
     assert "tests/test_storage.py" not in targets
+    assert len(targets) < 20
 
 
 def test_gui_change_always_includes_changed_regression_test():
@@ -108,3 +110,40 @@ def test_gui_change_keeps_legacy_and_cross_cutting_ui_regressions():
     assert "tests/test_095_consolidation.py" in targets
     assert "tests/test_core_415_titlebar_action_registry.py" in targets
     assert "tests/test_core_book_detail_projection.py" in targets
+
+
+def test_book_facets_and_widgets_use_small_regression_bundle():
+    selector = _module()
+    mode, targets = selector.select(
+        [
+            "src/cifereca/gui/book_facets.py",
+            "src/cifereca/gui/book_widgets.py",
+        ],
+        ROOT,
+    )
+    assert mode == "ui-component"
+    assert "tests/test_core_ui_531_bounded_facets.py" in targets
+    assert "tests/test_core_ui_362_dense_detail.py" in targets
+    assert "tests/test_core_ui_355_selection_filter.py" in targets
+    assert "tests/test_core_ui_interactive_startup.py" in targets
+    assert "tests/test_storage.py" not in targets
+    assert len(targets) < 25
+
+
+def test_main_window_keeps_conservative_ui_suite():
+    selector = _module()
+    mode, targets = selector.select(["src/cifereca/gui/main_window.py"], ROOT)
+    assert mode == "ui"
+    assert "tests/test_core_0911.py" in targets
+    assert "tests/test_core0923_gtk_focus.py" in targets
+    assert len(targets) > 30
+
+
+def test_component_change_always_keeps_explicit_changed_regression():
+    selector = _module()
+    mode, targets = selector.select(
+        ["src/cifereca/gui/cover_loader.py", "tests/test_storage.py"],
+        ROOT,
+    )
+    assert mode == "ui-component"
+    assert "tests/test_storage.py" in targets
