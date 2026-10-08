@@ -128,11 +128,11 @@ def test_no_plugin_or_no_identifier_skips_any_expensive_task():
 
 
 def test_selection_and_remote_holdings_both_request_cached_detail():
-    assert '_request_cached_book_details("library", row.key, item)' in _source("_library_selected")
-    assert '_request_cached_book_details("search", row.key, item)' in _source("_search_selected")
-    assert '_request_cached_book_details("search", item.id, result_row(item))' in _source("_search_selected")
-    assert '_request_cached_book_details("search", item.id, result_row(item))' in _source("_apply_search_detail")
-    assert '_request_cached_book_details("search", item.id, result_row(item))' in _source("_search_detail_error")
+    assert "_request_cached_book_details('library', row.key, item)" in _source("_library_selected")
+    assert "_request_cached_book_details('search', row.key, item)" in _source("_search_selected")
+    assert "_request_cached_book_details('search', item.id, result_row(item))" in _source("_search_selected")
+    assert "_request_cached_book_details('search', item.id, result_row(item))" in _source("_apply_search_detail")
+    assert "_request_cached_book_details('search', item.id, result_row(item))" in _source("_search_detail_error")
 
 
 def test_new_selection_cancels_pending_and_identity_switch_invalidates_context():
