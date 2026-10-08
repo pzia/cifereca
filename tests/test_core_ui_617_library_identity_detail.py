@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MAIN = ROOT / "src/cifereca/gui/main_window.py"
+
+
+def _method(name: str) -> str:
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
+    return ast.unparse(method)
+
+
+def test_library_none_selection_has_neutral_detail_state():
+    source = _method("_library_selected")
+    assert "if not row:" in source
+    assert "self.library_page.detail.empty(" in source
+    assert "Sélectionnez un livre" in source
+
+
+def test_rendered_library_resets_stale_detail_when_no_selection_restored():
+    source = _method("_render_library")
+    assert "restored_pending = self._select_pending_library_item()" in source
+    assert "self.library_page.selection.get_selected_item() is None" in source
+    assert "self._library_selected(None)" in source
+
+
+def test_identity_change_clears_old_library_before_async_refresh():
+    source = _method("_activate_identity")
+    assert "self._render_library([])" in source
+    assert 'self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")' in source
+
+
+def test_library_refresh_discards_obsolete_identity_callback():
+    source = _method("refresh_library")
+    assert "active != identity_id" in source
+    assert "self.refresh_library(False)" in source
+    assert "self._show_library_entries(entries)" in source
