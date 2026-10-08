@@ -4381,7 +4381,12 @@ class MainWindow(Adw.ApplicationWindow):
             verification = _result.get("verification")
             suffix = " · état local vérifié" if verification == "confirmed" else (" · vérification locale non confirmée" if verification else "")
             message="Retour enregistré, jeton absent" if verification=="confirmed" else "Commande exécutée, retour non confirmé"
-            self._activity_result(message+" · fichiers conservés" + suffix)
+            result_message = message+" · fichiers conservés" + suffix
+            reporter = getattr(self, "_activity_result", None)
+            if callable(reporter):
+                reporter(result_message)
+            else:
+                self.toast(result_message, 7)
             if getattr(self, "_displayed_loan", None):
                 self.loan_page.detail.show_loan(self._displayed_loan)
             self.refresh_library(False)
@@ -4400,7 +4405,12 @@ class MainWindow(Adw.ApplicationWindow):
             self.refresh_library(False); self.refresh_recent(); self._render_dashboard()
             self.loan_page.detail.show_loan(loan)
             suffix = " · restitution ADEPT disponible" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
-            self._activity_result("Livre récupéré" + suffix)
+            result_message = "Livre récupéré" + suffix
+            reporter = getattr(self, "_activity_result", None)
+            if callable(reporter):
+                reporter(result_message)
+            else:
+                self.toast(result_message, 6)
         self.runner.submit("Acquisition du livre numérique…", work, ok,
             lambda exc: self.show_error(str(exc), "Acquisition impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="loan-acquisition")
@@ -4951,7 +4961,11 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(self, "identity_dropdown"):
                     self._populate_accounts()
                     self._render_dashboard()
-                self._activity_result(message)
+                reporter = getattr(self, "_activity_result", None)
+                if callable(reporter):
+                    reporter(message)
+                else:
+                    self.toast(message, 5)
                 self._configure_kobo_backup_timer(run_now=False)
                 refresh_text()
                 if reconnect_after:
