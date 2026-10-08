@@ -41,6 +41,12 @@ def _reference_label(book: Any) -> str:
     return f"{title} — {author}" if author else title
 
 
+def _reference_selection_key(book: Any) -> str:
+    title = normalize(get_field(book, "title", ""))
+    authors = sorted(normalize(author) for author in author_values(book) if normalize(author))
+    return f"{title}|{'/'.join(authors)}"
+
+
 def _external_book_url(value: Any) -> str | None:
     url = str(value or "").strip()
     if not url or any(char.isspace() for char in url):
@@ -494,10 +500,10 @@ class UxRecommendationsView:
             self.refresh()
 
     def _reload_reference_books(self, books) -> None:
-        current_key = candidate_key(self._reference_book) if self._reference_book is not None else ""
+        current_key = _reference_selection_key(self._reference_book) if self._reference_book is not None else ""
         ordered = list(books or ())
         if self._reference_book is not None and current_key:
-            if not any(candidate_key(book) == current_key for book in ordered):
+            if not any(_reference_selection_key(book) == current_key for book in ordered):
                 ordered.append(self._reference_book)
         ordered = sorted(
             ordered,
@@ -511,7 +517,7 @@ class UxRecommendationsView:
             selected = 0
             for index, book in enumerate(ordered, 1):
                 self._reference_model.append(_reference_label(book))
-                if current_key and candidate_key(book) == current_key:
+                if current_key and _reference_selection_key(book) == current_key:
                     selected = index
                     self._reference_book = book
             self._reference.set_selected(selected)
