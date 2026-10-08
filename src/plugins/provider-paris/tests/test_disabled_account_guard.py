@@ -86,6 +86,7 @@ def test_connect_keeps_account_when_no_explicit_disabled_signal(monkeypatch):
         assert session.connected is True
         assert session.account_status == {"usable": True, "reason": None}
         assert session.diagnostic_state()["account_status"]["usable"] is True
+        assert session.diagnostic_state()["pairings"] == {"complete": True, "error": None}
     finally:
         session.close()
 
@@ -95,5 +96,69 @@ def test_unknown_status_does_not_false_positive():
     try:
         assert session._account_unusable_reason({"Status": "renewal_pending"}) is None
         assert session._account_unusable_reason({}) is None
+    finally:
+        session.close()
+
+
+def test_connect_reports_pairings_failure_without_losing_primary_account(monkeypatch):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    monkeypatch.setattr(session.client, "login", lambda username, password: {"success": True})
+    monkeypatch.setattr(
+        session.client,
+        "summary",
+        lambda provider, uid: {"DisplayName": "Lecteur", "Barcode": "123", "Status": "active"},
+    )
+
+    def fail_pairings():
+        raise RuntimeError("pairings unavailable")
+
+    monkeypatch.setattr(session.client, "pairings", fail_pairings)
+
+    try:
+        accounts = session.connect()
+
+        assert len(accounts) == 1
+        assert accounts[0].display_name == "Lecteur"
+        assert session.connected is True
+        assert session.pairing_status == {"complete": False, "error": "RuntimeError"}
+        assert session.diagnostic_state()["pairings"] == {
+            "complete": False,
+            "error": "RuntimeError",
+        }
+        assert any(
+            args[:3] == ("API", "pairings", "error")
+            and kwargs.get("detail", {}).get("error") == "RuntimeError"
+            and "message" not in kwargs.get("detail", {})
+            for args, kwargs in diagnostics.rows
+        )
+    finally:
+        session.close()
+
+
+def test_pairings_status_recovers_after_next_successful_connect(monkeypatch):
+    session = _session()
+    monkeypatch.setattr(session.client, "login", lambda username, password: {"success": True})
+    monkeypatch.setattr(
+        session.client,
+        "summary",
+        lambda provider, uid: {"DisplayName": "Lecteur", "Barcode": "123", "Status": "active"},
+    )
+    attempts = iter((RuntimeError("temporary"), []))
+
+    def pairings():
+        value = next(attempts)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(session.client, "pairings", pairings)
+
+    try:
+        session.connect()
+        assert session.pairing_status["complete"] is False
+
+        session.connect()
+        assert session.pairing_status == {"complete": True, "error": None}
     finally:
         session.close()
