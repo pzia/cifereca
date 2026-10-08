@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.12, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.13, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -19,7 +19,7 @@ from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderC
 from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.12'
+VERSION = '0.1.13'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -222,7 +222,7 @@ class NumilogSession(ProviderSession):
         key = self._id(row)
         return SearchResult(id=key,record_id=key,docbase='NUMILOG',medium='digital',title=row['title'],
             author=None,type='Livre numérique',format=None,publisher=None,published_at=None,description=None,
-            thumbnail_url=row['cover'],friendly_url=self.library_url,scenario='NUMILOG_LIBRARY',source_provider='numilog',
+            thumbnail_url=row['cover'],friendly_url=row.get('public_url'),scenario='NUMILOG_LIBRARY',source_provider='numilog',
             source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='library',
             owned=True,downloadable=True,metadata={'format_unverified':True})
 

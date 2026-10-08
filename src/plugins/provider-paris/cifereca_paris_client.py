@@ -61,6 +61,7 @@ class ParisClient:
         self.authenticated = False
         self.username: str | None = None
         self.last_search_warnings: list[str] = []
+        self.last_pairing_errors: list[dict[str, str]] = []
         self.last_pnb_borrow: dict[str, Any] = {"phase": "idle"}
 
     def _create_http_client(self, profile: str = "browser") -> httpx.Client:
@@ -301,24 +302,47 @@ class ParisClient:
     def pairings(self) -> list[Account]:
         def work():
             seen: dict[str, Account] = {}
+            errors: list[dict[str, str]] = []
             for provider in ("SYRACUSE", "DILICOM"):
-                now = str(int(time.time() * 1000))
-                r = self.client.get(f"{self.base_url}{ACCOUNT_SERVICE}/ListUserPairings", params={"serviceCode": provider, "timestamp": now}, headers=self._api_headers())
-                data = self._json(r, f"pairings {provider}")
-                d = data.get("d") if isinstance(data.get("d"), dict) else {}
-                for bucket in ("UserPairings", "UserReversePairings"):
-                    for raw in d.get(bucket) or []:
-                        if not isinstance(raw, dict) or int(raw.get("State") or 0) != 2:
-                            continue
-                        uid = str(raw.get("UserUniqueIdentifier") or "")
-                        if uid and uid not in seen:
-                            seen[uid] = Account(
-                                display_name=str(raw.get("UserDisplayName") or "Compte lié"),
-                                barcode=str(raw.get("UserBarcode") or ""),
-                                unique_id=uid,
-                                is_primary=False,
-                            )
+                try:
+                    now = str(int(time.time() * 1000))
+                    r = self.client.get(
+                        f"{self.base_url}{ACCOUNT_SERVICE}/ListUserPairings",
+                        params={"serviceCode": provider, "timestamp": now},
+                        headers=self._api_headers(),
+                    )
+                    data = self._json(r, f"pairings {provider}")
+                    d = data.get("d") if isinstance(data.get("d"), dict) else {}
+                    for bucket in ("UserPairings", "UserReversePairings"):
+                        for raw in d.get(bucket) or []:
+                            if not isinstance(raw, dict) or int(raw.get("State") or 0) != 2:
+                                continue
+                            uid = str(raw.get("UserUniqueIdentifier") or "")
+                            if uid and uid not in seen:
+                                seen[uid] = Account(
+                                    display_name=str(raw.get("UserDisplayName") or "Compte lié"),
+                                    barcode=str(raw.get("UserBarcode") or ""),
+                                    unique_id=uid,
+                                    is_primary=False,
+                                )
+                except Exception as exc:
+                    error = {"upstream": provider, "type": type(exc).__name__}
+                    errors.append(error)
+                    try:
+                        self.diagnostics.add(
+                            "API",
+                            f"pairings {provider}",
+                            "error",
+                            detail=error,
+                        )
+                    except Exception:
+                        pass
+            self.last_pairing_errors = errors
+            if len(errors) == 2 and not seen:
+                kinds = ",".join(sorted({row["type"] for row in errors}))
+                raise ParisError(f"pairings indisponibles: {kinds}")
             return list(seen.values())
+        self.last_pairing_errors = []
         return self._timed("API", "pairings", work)
 
     def _search_query(self, query: str, scenario: str, page: int, result_size: int = 50) -> dict[str, Any]:

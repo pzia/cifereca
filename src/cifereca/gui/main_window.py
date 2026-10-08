@@ -513,6 +513,8 @@ class DetailPanel(Gtk.Box):
             if callable(getter):
                 label = str(getter() or '')
         folded = label.casefold()
+        if identifier in {'open-catalogue', 'open-notice'}:
+            return 30
         if identifier == 'open-local' or folded.startswith('ouvrir'):
             return 10
         if folded.startswith('emprunter'):
@@ -4435,18 +4437,37 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as exc: self.show_error(str(exc), 'Ouverture du livre impossible')
 
     def _add_catalogue_action(self, detail, item):
-        url = self.service.public_catalogue_url(item)
-        if not url or url in getattr(detail, "_rendered_document_urls", set()): return
-        button = self.action_button('Catalogue en ligne', 'web-browser-symbolic')
-        button._cifereca_action_id = 'open-catalogue'
-        button.set_tooltip_text('Ouvrir la notice connue, sinon le site de la source ou un catalogue public pour rechercher le titre')
+        target = self.service.public_catalogue_target(item)
+        if not target:
+            return
+        kind, url = target
+        if url in getattr(detail, "_rendered_document_urls", set()):
+            return
+        is_notice = kind == 'notice'
+        button = self.action_button(
+            'Ouvrir la notice' if is_notice else 'Ouvrir le catalogue',
+            'web-browser-symbolic',
+        )
+        button._cifereca_action_id = 'open-notice' if is_notice else 'open-catalogue'
+        button.set_tooltip_text(
+            'Ouvrir la page publique de ce livre'
+            if is_notice else 'Ouvrir le catalogue général pour y rechercher ce livre'
+        )
+
         def open_catalogue(_button):
             try:
-                # Revalidate public metadata at activation; never use a delivery URL.
-                current = self.service.public_catalogue_url(item)
-                if current: Gio.AppInfo.launch_default_for_uri(current, None)
-            except Exception as exc: self.show_error(str(exc), 'Ouverture du catalogue impossible')
-        button.connect('clicked', open_catalogue); detail.add_actions([button])
+                # The classification may have changed since rendering. Never
+                # turn a button promising a book notice into a generic homepage.
+                current = self.service.public_catalogue_target(item)
+                if current and current[0] == kind:
+                    Gio.AppInfo.launch_default_for_uri(current[1], None)
+                elif current:
+                    self.toast('La destination du lien a changé ; actualisez la fiche.')
+            except Exception as exc:
+                self.show_error(str(exc), 'Ouverture de la page publique impossible')
+
+        button.connect('clicked', open_catalogue)
+        detail.add_actions([button])
 
 
     @staticmethod

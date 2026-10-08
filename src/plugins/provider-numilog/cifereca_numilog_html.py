@@ -97,8 +97,25 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
         links = [n for n in nodes if n.tag == 'a' and 'LnkDownloadBook' in classes(n)]
         if not links:
             continue
-        titles = [n.text() for n in nodes if 'pTitle' in classes(n) and n.text()]
+        title_nodes = [n for n in nodes if 'pTitle' in classes(n) and n.text()]
+        titles = [n.text() for n in title_nodes]
         images = [n.attrs.get('src') for n in nodes if n.tag == 'img' and 'imgCouv' in classes(n)]
+        public_candidates=[]
+        for anchor in (n for n in nodes if n.tag == 'a'):
+            if not any('pTitle' in classes(nested) for nested in anchor.walk()):
+                continue
+            raw_href=str(anchor.attrs.get('href') or '').strip()
+            if not raw_href:
+                continue
+            resolved=urljoin(base_url,raw_href)
+            parsed_public=urlsplit(resolved)
+            if origin(resolved)!=site_origin or parsed_public.username or parsed_public.password or parsed_public.fragment:
+                continue
+            if parsed_public.path.casefold().startswith('/pages/compte/'):
+                continue
+            public_candidates.append(resolved)
+        public_candidates=list(dict.fromkeys(public_candidates))
+        public_url=public_candidates[0] if len(public_candidates)==1 else None
         for link in links:
             href = urljoin(base_url, link.attrs.get('href') or '')
             url = urlsplit(href)
@@ -118,7 +135,7 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
                 parsed_cover=urlsplit(cover)
                 if origin(cover) not in allowed_covers or parsed_cover.username or parsed_cover.password or parsed_cover.fragment or parsed_cover.query:
                     cover = None
-            items.append({'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href})
+            items.append({'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url})
 
     next_links=[]
     for node in root.walk():
