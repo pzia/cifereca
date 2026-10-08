@@ -3759,7 +3759,7 @@ class MainWindow(Adw.ApplicationWindow):
             button.set_tooltip_text("Restituer avec le profil d’origine ; conserver le fichier local. Le retour fournisseur reste une action distincte.")
             def return_loan(_button):
                 self.runner.submit("Restitution du prêt ADEPT…", lambda: self.service.return_adept_acquisition(binding["acquisition_id"]),
-                    lambda _result: (button.set_sensitive(False), self.toast("Retour enregistré, jeton absent · fichier conservé" + (" · état local vérifié" if _result.get("verification") == "confirmed" else " · vérification locale non confirmée"))),
+                    lambda _result: (button.set_sensitive(False), self._activity_result("Retour enregistré, jeton absent · fichier conservé" + (" · état local vérifié" if _result.get("verification") == "confirmed" else " · vérification locale non confirmée"))),
                     lambda exc: self.show_error(str(exc), "Restitution ADEPT impossible"), control=button,
                     priority=TaskPriority.USER_ACTION)
             button.connect("clicked", return_loan)
@@ -4072,7 +4072,7 @@ class MainWindow(Adw.ApplicationWindow):
                     self.service.local_book_path(placement_id,identity_id=identity_id)
                     return self.service.materialize_to_identity(placement_id,target_id)
                 self.runner.submit('Envoi du fichier local…',work,
-                    lambda _result:(self.toast('Livre envoyé'),self.refresh_recent(),self.refresh_library(False)),
+                    lambda _result:(self._activity_result('Livre envoyé'),self.refresh_recent(),self.refresh_library(False)),
                     control=_button,priority=TaskPriority.USER_ACTION,kind='materialize')
             button.connect('clicked',send);buttons.append(button)
         routing = manager.broker('artifact.routing') if manager else None
@@ -4100,7 +4100,7 @@ class MainWindow(Adw.ApplicationWindow):
                             plan = routing.plan(request)
                             return routing.transfer(plan)
                         self.runner.submit('Envoi vers le stockage…', work,
-                            lambda _result:(self.toast('Livre envoyé'), self.refresh_library(False), self.refresh_recent()),
+                            lambda _result:(self._activity_result('Livre envoyé'), self.refresh_library(False), self.refresh_recent()),
                             lambda exc:self.show_error(str(exc),'Envoi impossible'), control=_button,
                             priority=TaskPriority.USER_ACTION, kind='artifact-route')
                     target_button.connect('clicked', route); box.append(target_button)
@@ -4362,7 +4362,7 @@ class MainWindow(Adw.ApplicationWindow):
             option = options[index]
             def ok(_result):
                 self.loan_page.detail.show_loan(loan); self.refresh_library(False)
-                self.toast("Prêt ADEPT rattaché · fichier conservé", 6)
+                self._activity_result("Prêt ADEPT rattaché · fichier conservé")
             self.runner.submit("Rattachement du prêt ADEPT…", lambda: self.service.attach_adept_loan(acquisition_id, option["profile_id"], option["loan_id"]), ok,
                 lambda exc: self.show_error(str(exc), "Rattachement impossible"), priority=TaskPriority.USER_ACTION, kind="adept-binding")
         dialog.connect("response", response); dialog.present()
@@ -4371,7 +4371,7 @@ class MainWindow(Adw.ApplicationWindow):
         def ok(result):
             self.loan_page.detail.show_loan(loan)
             labels = {"resolved": "Liaison ADEPT vérifiée", "ambiguous": "Plusieurs prêts correspondent : liaison non résolue", "unresolved": "Aucun prêt ne correspond au chemin du fichier", "inventory_error": "Inventaire partiel : liaison non résolue", "profile_missing": "Associez un profil ADEPT à cette identité", "artifact_missing": "Fichier local absent", "binding_conflict": "L’inventaire contredit la liaison enregistrée"}
-            self.toast(labels.get(result["status"], "Liaison ADEPT non résolue"), 6)
+            self._activity_result(labels.get(result["status"], "Liaison ADEPT non résolue"))
         self.runner.submit("Vérification du prêt ADEPT…", lambda: self.service.reconcile_adept_acquisition(acquisition_id), ok,
             lambda exc: self.show_error(str(exc), "Vérification ADEPT impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="adept-inventory")
@@ -4381,7 +4381,7 @@ class MainWindow(Adw.ApplicationWindow):
             verification = _result.get("verification")
             suffix = " · état local vérifié" if verification == "confirmed" else (" · vérification locale non confirmée" if verification else "")
             message="Retour enregistré, jeton absent" if verification=="confirmed" else "Commande exécutée, retour non confirmé"
-            self.toast(message+" · fichiers conservés" + suffix, 7)
+            self._activity_result(message+" · fichiers conservés" + suffix)
             if getattr(self, "_displayed_loan", None):
                 self.loan_page.detail.show_loan(self._displayed_loan)
             self.refresh_library(False)
@@ -4400,7 +4400,7 @@ class MainWindow(Adw.ApplicationWindow):
             self.refresh_library(False); self.refresh_recent(); self._render_dashboard()
             self.loan_page.detail.show_loan(loan)
             suffix = " · restitution ADEPT disponible" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
-            self.toast("Livre récupéré" + suffix, 6)
+            self._activity_result("Livre récupéré" + suffix)
         self.runner.submit("Acquisition du livre numérique…", work, ok,
             lambda exc: self.show_error(str(exc), "Acquisition impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="loan-acquisition")
@@ -4455,7 +4455,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         def ok(value) -> None:
             loan, _loans = value
-            self.toast(f"Emprunt confirmé : {loan.title}", 5)
+            self._activity_result(f"Emprunt confirmé : {loan.title}")
             self.refresh_library(False)
             self.refresh_recent()
 
@@ -4469,13 +4469,13 @@ class MainWindow(Adw.ApplicationWindow):
         def ok(result) -> None:
             acquisition = result.acquisition
             if result.path is not None:
-                self.toast(f"Disponible dans la Bibliothèque : {result.path.name}", 5)
+                self._activity_result(f"Disponible dans la Bibliothèque : {result.path.name}")
                 self.refresh_library(False)
                 self.refresh_recent()
             elif acquisition.action == "command":
-                self.toast("Commande d’obtention terminée", 5)
+                self._activity_result("Commande d’obtention terminée")
             else:
-                self.toast("Action d’obtention terminée", 5)
+                self._activity_result("Action d’obtention terminée")
 
         self.runner.submit(
             f"Obtention depuis {item.source_provider}…",
@@ -4951,7 +4951,7 @@ class MainWindow(Adw.ApplicationWindow):
                 if hasattr(self, "identity_dropdown"):
                     self._populate_accounts()
                     self._render_dashboard()
-                self.toast(message, 5)
+                self._activity_result(message)
                 self._configure_kobo_backup_timer(run_now=False)
                 refresh_text()
                 if reconnect_after:
