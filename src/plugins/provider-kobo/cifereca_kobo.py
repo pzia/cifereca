@@ -61,6 +61,12 @@ class KoboSession(ProviderSession):
         self.supports_acquisition_display_profile = False
         self.supports_acquisition_acsm = False
 
+    def _diagnostic(self, *args: Any, **kwargs: Any) -> None:
+        try:
+            self.diagnostics.add(*args, **kwargs)
+        except Exception:
+            pass
+
     def connect(self) -> list[Account]:
         self.capability_names = set()
         self.capability_details = {}
@@ -116,7 +122,7 @@ class KoboSession(ProviderSession):
             credential_id=self.credential_id,
             provider_label=self.label or DESCRIPTOR.display_name,
         )]
-        self.diagnostics.add(
+        self._diagnostic(
             "KOBO", "vault connected", "ok",
             detail={
                 "credential_id": self.credential_id,
