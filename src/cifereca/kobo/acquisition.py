@@ -94,16 +94,18 @@ class KoboOfferAdapter:
     def candidate_profile(row: dict[str, Any]) -> str | None:
         kobo = row.get("kobo")
         value = kobo.get("display_profile") if isinstance(kobo, dict) else None
-        if value is None:
-            value = row.get("display_profile")
         raw = str(value or "").strip()
+        if not raw:
+            raw = str(row.get("display_profile") or "").strip()
         return raw or None
 
     @staticmethod
     def candidate_source(row: dict[str, Any]) -> str | None:
         kobo = row.get("kobo")
-        value = kobo.get("source") if isinstance(kobo, dict) else row.get("source")
+        value = kobo.get("source") if isinstance(kobo, dict) else None
         raw = str(value or "").strip()
+        if not raw:
+            raw = str(row.get("source") or "").strip()
         return raw or None
 
     @staticmethod
