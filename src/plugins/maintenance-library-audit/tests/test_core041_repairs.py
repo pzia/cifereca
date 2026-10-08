@@ -18,8 +18,12 @@ class Naming:
 
 
 class Read:
-    def __init__(self, duplicates=False): self.duplicates=duplicates
+    def __init__(self, duplicates=False, fail=False):
+        self.duplicates=duplicates
+        self.fail=fail
     def for_artifact(self, artifact_id):
+        if self.fail:
+            raise RuntimeError("library.read unavailable")
         placements=[ArtifactPlacementRef('p1',artifact_id,'id1',filename='bad.epub')]
         if self.duplicates:
             placements.append(ArtifactPlacementRef('p2',artifact_id,'id1',filename='copy.epub'))
@@ -40,9 +44,9 @@ class Maintenance:
 
 
 class Context:
-    def __init__(self, duplicates=False):
+    def __init__(self, duplicates=False, read_fail=False):
         self.maintenance=Maintenance()
-        self.brokers={'metadata':Metadata(),'library.naming':Naming(),'library.read':Read(duplicates),'library.maintenance':self.maintenance}
+        self.brokers={'metadata':Metadata(),'library.naming':Naming(),'library.read':Read(duplicates,read_fail),'library.maintenance':self.maintenance}
     def broker(self,name): return self.brokers[name]
 
 
@@ -72,3 +76,19 @@ def test_duplicate_cleanup_never_deletes_directly_and_uses_verified_core_operati
     request=ctx.maintenance.requests[0]
     assert request.operation=='delete_duplicate'
     assert request.placement_id=='p2' and request.keep_placement_id=='p1'
+
+
+def test_naming_repair_reports_library_read_failure_in_plan():
+    ctx=Context(read_fail=True); tool=NamingRepairTool().activate(ctx)
+    plan=tool.plan(MaintenanceContext(scope='library',identity_id='id1'))
+    assert plan.facts['placement_ids']==()
+    assert plan.facts['read_failures']==1
+    assert any('library.read en erreur' in warning for warning in plan.warnings)
+
+
+def test_duplicate_cleanup_reports_library_read_failure_in_plan():
+    ctx=Context(duplicates=True,read_fail=True); tool=DuplicateCleanupTool().activate(ctx)
+    plan=tool.plan(MaintenanceContext(scope='library',identity_id='id1'))
+    assert plan.facts['pairs']==()
+    assert plan.facts['read_failures']==1
+    assert any('library.read en erreur' in warning for warning in plan.warnings)
