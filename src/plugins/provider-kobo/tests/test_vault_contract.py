@@ -376,3 +376,65 @@ def test_vault_manifest_reports_non_object_rows():
         ]
     finally:
         client.close()
+
+
+def test_vault_search_reports_merge_rejections_and_resets(monkeypatch):
+    client = KoboVaultClient("https://vault.example", "secret")
+    calls = {"round": 0}
+
+    def catalog_search(_query, **_kwargs):
+        if calls["round"] == 0:
+            return {
+                "items": [
+                    {"product_id": "c1", "title": "Catalog"},
+                    {"title": "Missing id"},
+                    "invalid-shape",
+                ]
+            }
+        return {"items": [{"product_id": "c2", "title": "Catalog 2"}]}
+
+    def library_search(_query, **_kwargs):
+        if calls["round"] == 0:
+            return {"items": None}
+        return {"items": [{"product_id": "l2", "title": "Library 2"}]}
+
+    monkeypatch.setattr(client, "search_catalog", catalog_search)
+    monkeypatch.setattr(client, "search_library", library_search)
+
+    try:
+        first = client.search("test", scope="all")
+
+        assert [row["product_id"] for row in first["items"]] == ["c1"]
+        assert client.last_search_merge_rejections == [
+            {"source": "catalog", "type": "invalid_shape", "reason": "missing_product_id"},
+            {"source": "catalog", "type": "invalid_shape", "reason": "item_not_object"},
+            {"source": "library", "type": "invalid_shape", "reason": "items_not_list"},
+        ]
+
+        calls["round"] = 1
+        second = client.search("test 2", scope="all")
+
+        assert [row["product_id"] for row in second["items"]] == ["c2", "l2"]
+        assert client.last_search_merge_rejections == []
+    finally:
+        client.close()
+
+
+def test_kobo_catalog_aggregates_vault_merge_rejections():
+    class Client:
+        base_url = "https://vault.example"
+        last_search_merge_rejections = []
+
+        def search(self, _query, **_kwargs):
+            self.last_search_merge_rejections = [
+                {"source": "library", "type": "invalid_shape", "reason": "missing_product_id"}
+            ]
+            return {"items": [{"product_id": "ok-1", "title": "Valid"}]}
+
+    catalog = KoboCatalogService(Client(), credential_id="vault")
+    rows = catalog.search("test")
+
+    assert [row.record_id for row in rows] == ["ok-1"]
+    assert catalog.last_search_rejections == [
+        {"source": "library", "type": "invalid_shape", "reason": "missing_product_id"}
+    ]
