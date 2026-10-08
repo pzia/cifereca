@@ -143,3 +143,18 @@ Cette recette ne valide pas :
 
 Ces sujets doivent avoir leurs propres recettes afin que cette preuve reste
 lisible et attribuable.
+
+
+## Validation #531 — Recherche et Bibliothèque
+
+Pour valider les facettes sur une liste uniquement, sans basculer dans le détail :
+
+```bash
+python3 simulation/recipes/search_list_capture.py \
+  --page search --list-only --window-width 1024 --out-dir /tmp/search-1024 -- <commande cifereca>
+
+python3 simulation/recipes/search_list_capture.py \
+  --page library --list-only --window-width 1024 --out-dir /tmp/library-1024 -- <commande cifereca>
+```
+
+Répéter au minimum à 760, 1024 et 1300 px. La recette capture la liste avant et après scroll afin de vérifier le confinement horizontal, la hauteur des facettes et le recyclage des cellules.
