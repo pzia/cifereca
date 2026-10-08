@@ -44,7 +44,7 @@ CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
     ContractDefinition("ui.widgets", "cifereca.ui.widgets", "1", protocol_name="WidgetCatalog"),
     ContractDefinition("sync", "cifereca.sync", "1", capabilities=("sync.loans", "sync.library")),
     ContractDefinition("document.transformer", "cifereca.document.transformer", "1", capabilities=("artifact.plan", "artifact.transform"), protocol_name="DocumentTransformer"),
-    ContractDefinition("recommendation", "cifereca.recommendation", "1"),
+    ContractDefinition("recommendation", "cifereca.recommendation", "1", capabilities=("recommendation.book-reference",)),
     ContractDefinition("catalog.enrichment", "cifereca.catalog.enrichment", "1"),
     ContractDefinition("device.profile", "cifereca.device.profile", "1"),
     ContractDefinition("artifact.transform.preset", "cifereca.artifact.transform.preset", "1"),
