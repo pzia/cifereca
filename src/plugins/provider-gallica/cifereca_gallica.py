@@ -114,6 +114,13 @@ class GallicaSession(ProviderSession):
         self._search_template: str | None = None
         self.last_search_warnings: list[str] = []
 
+    def _diagnostic(self, *args: Any, **kwargs: Any) -> None:
+        """Emit diagnostics without allowing the sink to alter provider behavior."""
+        try:
+            self.diagnostics.add(*args, **kwargs)
+        except Exception:
+            pass
+
     def connect(self) -> list[Account]:
         self.connected = True
         self._accounts = [
@@ -454,7 +461,7 @@ class GallicaSession(ProviderSession):
         except ET.ParseError as exc:
             rows, fragments, broken = self._recover_sru_audio_records(content)
             if rows:
-                self.diagnostics.add(
+                self._diagnostic(
                     "GALLICA", "SRU audio XML recovery", "ok",
                     detail={
                         "records_found": fragments,
@@ -465,7 +472,7 @@ class GallicaSession(ProviderSession):
                     level="detailed",
                 )
                 return rows
-            self.diagnostics.add(
+            self._diagnostic(
                 "GALLICA", "SRU audio XML parse", "error",
                 detail={"parse_error": str(exc)[:240], "records_found": fragments, "records_skipped": broken},
             )
@@ -489,7 +496,7 @@ class GallicaSession(ProviderSession):
         try:
             return self._parse_sru_audio(response.content)
         except ProviderError:
-            self.diagnostics.add("GALLICA", "audio response metadata", "error", detail={
+            self._diagnostic("GALLICA", "audio response metadata", "error", detail={
                 "http_status": response.status_code,
                 "content_type": response.headers.get("content-type", ""),
                 "bytes": len(response.content),
@@ -525,7 +532,7 @@ class GallicaSession(ProviderSession):
                 except Exception as exc:
                     errors.append(message)
                     causes.append(exc)
-                    self.diagnostics.add("GALLICA", label + " search branch", "error",
+                    self._diagnostic("GALLICA", label + " search branch", "error",
                         detail={"error": type(exc).__name__, "message": str(exc)[:240]})
         self.last_search_warnings = ["Gallica : " + message for message in errors]
         rows = list({item.id: item for item in rows}.values())
@@ -534,7 +541,7 @@ class GallicaSession(ProviderSession):
             error.code = "search_temporarily_unavailable"
             error.retryable = True
             raise error from causes[0]
-        self.diagnostics.add("GALLICA", "federated public search", "ok", detail={
+        self._diagnostic("GALLICA", "federated public search", "ok", detail={
             "results": len(rows), "ebooks": sum(x.content_type == "ebook" for x in rows),
             "audiobooks": sum(x.content_type == "audiobook" for x in rows),
             "partial_errors": len(errors), "q_len": len(query), "page": page,
@@ -595,7 +602,7 @@ class GallicaSession(ProviderSession):
             if isinstance(exc, ProviderError):
                 raise
             raise ProviderError(f"Gallica : téléchargement numérique indisponible ({exc})") from exc
-        self.diagnostics.add(
+        self._diagnostic(
             "GALLICA", "ebook download", "ok",
             detail={"bytes": path.stat().st_size, "format": fmt, "transport": "transport.http"},
             level="detailed",
