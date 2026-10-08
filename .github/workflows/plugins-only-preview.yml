@@ -1,0 +1,69 @@
+name: Preview plugins-only package
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_ids:
+        description: "Comma-separated package IDs to package (e.g. org.cifereca.recommendations)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugins-only-preview-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PACKAGE_IDS: ${{ inputs.package_ids }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install packaging and Core dry-run dependencies
+        run: |
+          python -m pip install --disable-pip-version-check "setuptools>=69" wheel "packaging>=24,<26" "httpx>=0.28.1,<0.29"
+
+      - name: Validate plugin sources and packaging regressions
+        run: |
+          python scripts/verify-packaging.py
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
+
+      - name: Build selected plugins-only snapshot
+        run: |
+          python -m scripts.package_partial_plugins \
+            --packages "$PACKAGE_IDS" \
+            --id "cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --out dist
+
+      - name: Verify snapshot and its SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="dist/cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}.zip"
+          python -m scripts.package_partial_plugins --verify "$archive"
+          (cd dist && sha256sum -c "$(basename "$archive").sha256")
+
+      - name: Verify updater dry-run without touching installed plugins
+        shell: bash
+        run: |
+          python -m pip install --no-deps --no-build-isolation .
+          cifereca-update-dev "dist/cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}.zip" --dry-run --json
+
+      - name: Upload preview only (not a GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/cifereca-plugins-only-preview-*.zip
+            dist/cifereca-plugins-only-preview-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
