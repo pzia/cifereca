@@ -84,6 +84,7 @@ class KoboCatalogService:
         downloadable = item.get("downloadable")
         collection = str(item.get("collection") or ("library" if owned else default_collection)).lower()
         price, currency = self._price(item)
+        cover = self.cover_url(item)
         metadata = {k: v for k, v in item.items() if k not in {"description"}}
         if isinstance(metadata.get("language"), str):
             metadata["language"] = normalize_language_tag(metadata["language"])
@@ -92,6 +93,13 @@ class KoboCatalogService:
                 canonical for raw in metadata["languages"]
                 if (canonical := normalize_language_tag(str(raw))) is not None
             ))
+        if cover and collection == "catalog":
+            metadata["catalog_cover"] = {
+                "url": cover,
+                "source": "kobo.catalog",
+                "evidence_id": f"kobo:{product_id}",
+                "evidence_strength": 100,
+            }
         return SearchResult(
             id=f"kobo:{self.credential_id}:{product_id}", record_id=product_id, docbase="KOBO",
             medium="digital", title=str(item.get("title") or "Sans titre"), author=author,
@@ -99,7 +107,7 @@ class KoboCatalogService:
             publisher=str(item.get("publisher") or "").strip() or None,
             published_at=str(item.get("publication_date") or item.get("published_at") or "").strip() or None,
             description=description_text(item.get("description")),
-            thumbnail_url=self.cover_url(item), friendly_url=str(item.get("product_url") or "").strip() or None,
+            thumbnail_url=cover, friendly_url=str(item.get("product_url") or "").strip() or None,
             scenario="KOBO", source_provider=self.provider_id, source_credential=self.credential_id,
             download_url=None, content_type=content_type, source_collection=collection,
             owned=bool(owned) if owned is not None else (collection == "library"),
