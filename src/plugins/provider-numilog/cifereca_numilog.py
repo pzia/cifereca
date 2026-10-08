@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.13, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.14, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -19,7 +19,7 @@ from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderC
 from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.13'
+VERSION = '0.1.14'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -102,8 +102,14 @@ class NumilogSession(ProviderSession):
         self.lock = threading.RLock()
 
     def _diag(self,operation,**detail):
-        if self.diagnostics is not None:
+        if self.diagnostics is None:
+            return
+        try:
             self.diagnostics.add('NUMILOG',operation,'ok',detail=detail,level='detailed')
+        except Exception:
+            # Diagnostics are auxiliary: a broken sink must never alter
+            # provider/network/download semantics.
+            return
 
     @staticmethod
     def _status(response):
