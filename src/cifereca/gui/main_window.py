@@ -3495,8 +3495,6 @@ class MainWindow(Adw.ApplicationWindow):
     # ---------- history ----------
     def _build_history_page(self) -> MasterDetailPage:
         page = MasterDetailPage(self, "Historique", "Documents précédemment empruntés", "Historique non chargé", "Ouvrez cet écran ou actualisez pour récupérer l'historique.")
-        # The business total is known independently from progressive GTK row
-        # materialisation; do not expose the internal batch size to users.
         page.set_total_only_count(True)
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser l'historique")
         refresh.connect("clicked", lambda _b: self.refresh_history(True, refresh)); page.header_actions.append(refresh)
