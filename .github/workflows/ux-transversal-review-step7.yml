@@ -1,0 +1,259 @@
+name: UX transversal review step 7
+
+on:
+  push:
+    branches:
+      - ux/transversal-review-step7
+    paths:
+      - ".github/workflows/ux-transversal-review-step7.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-step7
+      PYTHONPATH: ${{ github.workspace }}/src
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 54e0f71ffc9d9b71bbf1d3aaded0374b9a2c3376
+
+      - name: Install GTK/X11 runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxtst6 \
+            python3-gi python3-gi-cairo python3-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Prepare deterministic local-only dataset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > simulation/profiles/ux-transversal-review.toml <<'EOF'
+          name = "ux-transversal-review"
+          description = "Revue UX transversale multi-résolution"
+
+          [runtime]
+          startup_timeout_seconds = 20
+
+          [cifereca]
+          binary = "cifereca"
+          no_plugins = true
+          width = 1300
+          height = 768
+
+          [library]
+          epubs = 24
+          seed = 20261008
+          identity_dir = "ux"
+          provider_dir = "local"
+          EOF
+
+          /usr/bin/python3 simulation/datasetctl.py rebuild ux-transversal-review
+          /usr/bin/python3 simulation/datasetctl.py exec ux-transversal-review -- \
+            env PYTHONPATH="$GITHUB_WORKSPACE/src" \
+            /usr/bin/python3 -m cifereca.cli catalog-scan \
+            > /tmp/catalog-scan.json
+
+      - name: Write instrumented real-GTK driver
+        shell: bash
+        run: |
+          cat > /tmp/step7_review.py <<'PY'
+          from __future__ import annotations
+          import argparse
+          import ctypes as C
+          import json, os, subprocess, sys, time
+          from pathlib import Path
+          from PIL import ImageGrab
+
+          ROOT=Path.cwd()
+          sys.path.insert(0, str(ROOT/"environnements"/"openai-chat-debian"))
+          from x11_input import X11Input
+
+          ap=argparse.ArgumentParser()
+          ap.add_argument("--width",type=int,required=True)
+          ap.add_argument("--height",type=int,default=768)
+          ap.add_argument("--out",type=Path,required=True)
+          args=ap.parse_args()
+          args.out.mkdir(parents=True,exist_ok=True)
+
+          def shot(name):
+              p=args.out/name
+              ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save(p)
+              return str(p)
+
+          def shortcut(c,mod,key):
+              c.key(mod,True)
+              try:
+                  c.key(key,True); c.key(key,False)
+              finally:
+                  c.key(mod,False)
+
+          def native_geometry(c, xid):
+              x11=c.x11; display=c.display
+              root=C.c_ulong(); x=C.c_int(); y=C.c_int()
+              w=C.c_uint(); h=C.c_uint(); border=C.c_uint(); depth=C.c_uint()
+              ok=x11.XGetGeometry(display,xid,C.byref(root),C.byref(x),C.byref(y),C.byref(w),C.byref(h),C.byref(border),C.byref(depth))
+              return {"x":int(x.value),"y":int(y.value),"width":int(w.value),"height":int(h.value)} if ok else None
+
+          def resize_largest(c):
+              x11=c.x11; display=c.display
+              x11.XDefaultRootWindow.argtypes=[C.c_void_p]; x11.XDefaultRootWindow.restype=C.c_ulong
+              x11.XQueryTree.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_ulong),C.POINTER(C.POINTER(C.c_ulong)),C.POINTER(C.c_uint)]
+              x11.XQueryTree.restype=C.c_int
+              x11.XGetGeometry.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_int),C.POINTER(C.c_int),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint)]
+              x11.XGetGeometry.restype=C.c_int
+              x11.XMoveResizeWindow.argtypes=[C.c_void_p,C.c_ulong,C.c_int,C.c_int,C.c_uint,C.c_uint]
+              x11.XFree.argtypes=[C.c_void_p]
+              root=x11.XDefaultRootWindow(display); rr=C.c_ulong(); pr=C.c_ulong(); children=C.POINTER(C.c_ulong)(); n=C.c_uint()
+              if not x11.XQueryTree(display,root,C.byref(rr),C.byref(pr),C.byref(children),C.byref(n)): return None
+              best=None
+              try:
+                  for i in range(n.value):
+                      xid=children[i]; gr=C.c_ulong(); x=C.c_int(); y=C.c_int(); w=C.c_uint(); h=C.c_uint(); b=C.c_uint(); d=C.c_uint()
+                      if x11.XGetGeometry(display,xid,C.byref(gr),C.byref(x),C.byref(y),C.byref(w),C.byref(h),C.byref(b),C.byref(d)):
+                          area=int(w.value)*int(h.value)
+                          if w.value>=400 and h.value>=400 and (best is None or area>best[0]):
+                              best=(area,int(xid),int(w.value),int(h.value))
+                  if not best: return None
+                  _,xid,bw,bh=best
+                  before={"width":bw,"height":bh}
+                  x11.XMoveResizeWindow(display,xid,0,0,args.width,args.height)
+                  x11.XSync(display,False); time.sleep(.8)
+                  return {
+                      "xid":xid,
+                      "before":before,
+                      "requested":{"width":args.width,"height":args.height},
+                      "actual":native_geometry(c,xid),
+                  }
+              finally:
+                  if children: x11.XFree(children)
+
+          stdout=(args.out/"cifereca.stdout.log").open("w")
+          stderr=(args.out/"cifereca.stderr.log").open("w")
+          app=subprocess.Popen([
+              "/usr/bin/python3","-m","cifereca",
+              "--no-plugins",
+              "--force-plugin","core.ui.pages",
+              "--force-plugin","core.ui.widgets",
+              "--force-plugin","core.ui.titlebar",
+              "--force-plugin","core.ui.system",
+              "--verbose",
+          ],cwd=ROOT,env=os.environ.copy(),stdout=stdout,stderr=stderr,text=True)
+
+          control=None
+          report={
+              "main_sha":"54e0f71ffc9d9b71bbf1d3aaded0374b9a2c3376",
+              "requested":[args.width,args.height],
+              "shots":[],
+          }
+          try:
+              time.sleep(6)
+              if app.poll() is not None: raise RuntimeError(f"app rc={app.returncode}")
+              control=X11Input()
+              report["native_resize"]=resize_largest(control)
+              time.sleep(1)
+
+              # Ctrl+F must navigate/focus Search from any initial route.
+              shortcut(control,"Control_L","f"); time.sleep(.5)
+              control.select_all_delete(); control.type_text("secret")
+              control.key("Return",True); control.key("Return",False)
+              time.sleep(.45)
+              report["shots"].append(shot("01-search-feedback.png"))
+
+              # Select while the transient search feedback is still expected onscreen.
+              time.sleep(.55)
+              select_x=265 if args.width <= 1024 else 285
+              control.click(select_x,245); time.sleep(.6)
+              report["shots"].append(shot("02-detail-with-feedback.png"))
+
+              # Escape: leave selection/narrow detail and restore list context.
+              control.key("Escape",True); control.key("Escape",False); time.sleep(.8)
+              report["shots"].append(shot("03-after-escape.png"))
+
+              # Keyboard page navigation Search -> Bibliothèque.
+              shortcut(control,"Control_L","Page_Down"); time.sleep(1.2)
+              report["shots"].append(shot("04-library-keyboard.png"))
+
+              # Browser-like history must return to Search state.
+              shortcut(control,"Alt_L","Left"); time.sleep(1.0)
+              report["shots"].append(shot("05-alt-left-search.png"))
+              shortcut(control,"Alt_L","Right"); time.sleep(.8)
+
+              # F10 page menu and F1 shortcuts are keyboard-discoverability surfaces.
+              control.key("F10",True); control.key("F10",False); time.sleep(.7)
+              report["shots"].append(shot("06-pages-menu-f10.png"))
+              control.key("Escape",True); control.key("Escape",False); time.sleep(.4)
+
+              control.key("F1",True); control.key("F1",False); time.sleep(.7)
+              report["shots"].append(shot("07-shortcuts-f1.png"))
+              control.key("Escape",True); control.key("Escape",False); time.sleep(.4)
+
+              # Settings shortcut provides a non-master-detail responsive surface.
+              shortcut(control,"Control_L","comma"); time.sleep(1.0)
+              report["shots"].append(shot("08-settings-shortcut.png"))
+
+              # Re-read native geometry at the end to prove it stayed stable.
+              xid=(report.get("native_resize") or {}).get("xid")
+              if xid:
+                  report["actual_end"]=native_geometry(control,int(xid))
+
+              (args.out/"report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
+          finally:
+              if control:
+                  try: shortcut(control,"Control_L","q")
+                  except Exception: pass
+                  control.close()
+              try: app.wait(timeout=4)
+              except subprocess.TimeoutExpired:
+                  app.terminate()
+                  try: app.wait(timeout=3)
+                  except subprocess.TimeoutExpired: app.kill(); app.wait()
+              stdout.close(); stderr.close()
+          PY
+
+      - name: Capture 760 1024 1300
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p step7-evidence
+          for width in 760 1024 1300; do
+            /usr/bin/python3 simulation/datasetctl.py exec ux-transversal-review -- \
+              env PYTHONPATH="$GITHUB_WORKSPACE/src" GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none NO_AT_BRIDGE=1 \
+              xvfb-run -a -s "-screen 0 ${width}x768x24" \
+                /usr/bin/python3 /tmp/step7_review.py \
+                  --width "$width" --height 768 \
+                  --out "$GITHUB_WORKSPACE/step7-evidence/$width"
+          done
+          cp /tmp/catalog-scan.json step7-evidence/catalog-scan.json
+
+      - name: Validate exact native geometries
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for width in (760,1024,1300):
+              report=json.loads((Path("step7-evidence")/str(width)/"report.json").read_text())
+              actual=report["native_resize"]["actual"]
+              end=report["actual_end"]
+              assert [actual["width"],actual["height"]] == [width,768], (width,actual)
+              assert [end["width"],end["height"]] == [width,768], (width,end)
+              print(width, actual, end)
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-transversal-review-step7
+          path: step7-evidence/
+          if-no-files-found: error
+          retention-days: 2
