@@ -16,6 +16,11 @@ Reproduire de façon déterministe les défauts de géométrie de la liste :
 
 La requête commune est `UXSTRESS`.
 
+Pour isoler le **master-detail avec un livre normal**, utiliser la sous-recette
+`--query "UXSTRESS normal"`. Elle ne retourne que la notice témoin
+`UXSTRESS contrôle normal` / `Zoé Martin` et permet de distinguer les défauts
+de layout de ceux provoqués par les facettes pathologiques.
+
 ## Données
 
 Le profil `ux-search-list` contient seulement **12 EPUB locaux**. Après le
