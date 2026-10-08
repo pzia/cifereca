@@ -12,7 +12,6 @@ class MultiSelect(Gtk.MenuButton):
         self.buttons = {}
         self._changed_callback = changed
         self._programmatic_update = False
-        self._provider_search_capabilities = {}
         self._last_notified_values = ()
         self.set_label(label + ' : Tous')
         pop = Gtk.Popover()
@@ -70,6 +69,7 @@ class QueryControls(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self._changed_callback = changed
         self._programmatic_update = False
+        self._provider_search_capabilities = {}
         self.set_hexpand(True)
         self.primary = Gtk.Box(spacing=8); self.append(self.primary)
         self.entry = Gtk.SearchEntry(); self.entry.set_hexpand(True)
