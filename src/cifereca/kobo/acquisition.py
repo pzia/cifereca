@@ -199,7 +199,14 @@ class KoboOfferAdapter:
         if candidate.transport != "https" or candidate.method != "GET":
             return False
         url = candidate.url or ""
-        if not url or any(ord(char) < 32 or ord(char) == 127 for char in url):
+        # from_mapping() strips whitespace from the normalized URL, while
+        # request builders forward the original provider payload. Check both
+        # representations to avoid passing a different URL than the validated
+        # one (for instance with a trailing newline or a leading space).
+        raw = candidate.provider_data.get("url", candidate.url)
+        if not isinstance(raw, str) or not url or raw != url or "\\" in raw:
+            return False
+        if any(ord(char) < 32 or ord(char) == 127 for char in raw):
             return False
         try:
             parsed = urlsplit(url)
@@ -207,8 +214,8 @@ class KoboOfferAdapter:
             return bool(
                 parsed.scheme == "https"
                 and parsed.hostname
-                and not parsed.username
-                and not parsed.password
+                and parsed.username is None
+                and parsed.password is None
                 and (parsed.port is None or 1 <= parsed.port <= 65535)
             )
         except ValueError:
