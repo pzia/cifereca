@@ -30,7 +30,12 @@ from .cover_loader import CoverLoader
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
-from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_medium_counts
+from .loan_view import (
+    LOAN_FILTER_LABELS,
+    loan_context_label,
+    loan_due_presentation,
+    loan_medium_counts,
+)
 from .recent_time import format_recent_timestamp
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
@@ -1473,6 +1478,9 @@ class MainWindow(Adw.ApplicationWindow):
         .settings-tabs button { padding-left: 8px; padding-right: 8px; min-width: 0; }
         .activity-success { color: @success_color; }
         .activity-error { color: @error_color; }
+        .loan-overdue { background: alpha(@error_color, 0.14); color: @error_color; font-weight: 650; }
+        .loan-imminent { background: alpha(@warning_color, 0.14); color: @warning_color; font-weight: 650; }
+        .loan-normal { opacity: 0.85; }
         .metric { font-size: 1.35em; font-weight: 700; }
         .login-brand { font-size: 2.1em; font-weight: 800; }
         """
@@ -3030,7 +3038,7 @@ class MainWindow(Adw.ApplicationWindow):
             for key, button in self.loan_filter_buttons.items():
                 label = LOAN_FILTER_LABELS.get(key, key)
                 button.set_label(f"{label} · {counts.get(key, 0)}")
-        rows: list[BookListItem] = []
+        ranked_rows: list[tuple[tuple[int, int], BookListItem]] = []
         wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
         for loan in all_loans:
             if self.loan_filter != "all" and loan.medium != self.loan_filter:
@@ -3040,10 +3048,23 @@ class MainWindow(Adw.ApplicationWindow):
             loan_languages = self._known_item_languages(loan.source_provider, loan.record_id or loan.id, meta)
             if wanted_languages and not loan_languages.intersection(wanted_languages):
                 continue
-            state = "En retard" if loan.is_late else (loan.state or "En cours")
+            due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
             subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
             meta = f"Retour {fr_date(loan.due_at)} · {loan.document_type or loan.provider}"
-            rows.append(BookListItem(loan.id, loan.title, subtitle, meta, state, loan.thumbnail_url))
+            ranked_rows.append((
+                due.sort_key,
+                BookListItem(
+                    loan.id,
+                    loan.title,
+                    subtitle,
+                    meta,
+                    due.label,
+                    loan.thumbnail_url,
+                    badge_style=due.style,
+                ),
+            ))
+        ranked_rows.sort(key=lambda item: item[0])
+        rows = [row for _rank, row in ranked_rows]
         if hasattr(self, "loan_scope_count"):
             self.loan_scope_count.set_label(
                 loan_context_label(
