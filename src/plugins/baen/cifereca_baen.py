@@ -8,7 +8,7 @@ BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
 DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Fonds public qualifié ; achats et bibliothèque privée à qualifier.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.7','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.9','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
@@ -18,6 +18,35 @@ class BaenSession(ProviderSession):
         query=' '.join(str(query or '').split())
         if query: params['q']=query
         return params
+    @staticmethod
+    def _detail_metadata(text):
+        title_match=re.search(r'<title[^>]*>\s*(.*?)\s+by\s+(.*?)\s+-\s+WebScription Ebook\s*</title>',str(text or ''),re.I|re.S)
+        author=None
+        if title_match:
+            author=' '.join(re.sub('<[^>]+>',' ',html.unescape(title_match.group(2))).split()) or None
+        plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(str(text or ''))).split())
+        published=None
+        match=re.search(r'\bPublished:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})\b',plain,re.I)
+        if match: published=match.group(1)
+        isbns=[]
+        for value in re.findall(r'\bISBN:\s*([0-9Xx-]{10,17})\b',plain,re.I):
+            if value not in isbns: isbns.append(value)
+        return {'author':author,'published_at':published,'isbns':isbns}
+
+    @classmethod
+    def _enrich_item_from_detail(cls,item,text):
+        detail=cls._detail_metadata(text)
+        if detail['author'] and not getattr(item,'author',None): item.author=detail['author']
+        if detail['published_at'] and not getattr(item,'published_at',None): item.published_at=detail['published_at']
+        metadata=getattr(item,'metadata',None)
+        if not isinstance(metadata,dict):
+            metadata={}
+            item.metadata=metadata
+        if detail['isbns'] and not metadata.get('isbns'): metadata['isbns']=list(detail['isbns'])
+        if detail['author'] or detail['published_at'] or detail['isbns']:
+            metadata.setdefault('metadata_evidence','baen.public_product_page')
+        return item
+
     def search(self,query,scope='all',page=0,field='all'):
         if not self.connected: raise ProviderError('Baen : connecter le catalogue')
         if scope == 'physical': return []
@@ -32,11 +61,19 @@ class BaenSession(ProviderSession):
             seen.add(detail); rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
             out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
         return out[:self.page_size]
-    def holdings(self,item,search_terms=''): return ItemDetail(record_id=item.record_id,docbase='BAEN',title=item.title,author=item.author,type=item.type,year=None,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Baen Free Library — ouvrir la fiche pour vérifier le format',holdings=[],source_provider='baen',source_credential=self.credential_id)
+    def holdings(self,item,search_terms=''):
+        if item.source_provider==self.provider_id and item.friendly_url:
+            try:
+                response=self.client.get(item.friendly_url);response.raise_for_status()
+                self._enrich_item_from_detail(item,response.text)
+            except httpx.HTTPError:
+                pass
+        return ItemDetail(record_id=item.record_id,docbase='BAEN',title=item.title,author=item.author,type=item.type,year=item.published_at,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Baen Free Library — ouvrir la fiche pour vérifier le format',holdings=[],source_provider='baen',source_credential=self.credential_id)
     def download_direct(self,item,target_dir):
         if item.source_provider!=self.provider_id or not item.friendly_url: raise ProviderError('Baen : fiche inconnue')
         try:r=self.client.get(item.friendly_url);r.raise_for_status()
         except httpx.HTTPError as e: raise ProviderError('Baen : fiche inaccessible') from e
+        self._enrich_item_from_detail(item,r.text)
         # Baen exposes a public free-download action on some Free Library fiches.
         links=re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',r.text,re.I|re.S)
         candidate=None
