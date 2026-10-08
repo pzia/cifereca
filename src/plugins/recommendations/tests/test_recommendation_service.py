@@ -114,3 +114,30 @@ def test_performance_trace_is_sanitized_and_has_phase_timings(caplog):
     assert "id-1" not in trace
     assert "Seed 1" not in trace
     assert "Candidate" not in trace
+
+
+class OwnedCatalog:
+    def searchable_providers(self):
+        return [("opds", "OPDS test")]
+
+    def search(self, query, **kwargs):
+        return [{
+            "title": "Seed 1",
+            "author": "Alice",
+            "metadata": {"subjects": ["histoire"]},
+            "source_provider": "opds",
+        }]
+
+
+def test_service_can_include_owned_books_when_filter_is_disabled():
+    hidden = compute_recommendations(Metadata(), OwnedCatalog(), "id-1", max_queries=2)
+    shown = compute_recommendations(
+        Metadata(),
+        OwnedCatalog(),
+        "id-1",
+        max_queries=2,
+        exclude_owned=False,
+    )
+    assert hidden.ranked == ()
+    assert shown.ranked
+    assert shown.ranked[0].item["title"] == "Seed 1"

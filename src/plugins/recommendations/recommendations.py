@@ -233,6 +233,15 @@ class UxRecommendationsView:
         self._text.connect("search-changed", lambda *_: self._render())
         controls.insert(self._labeled("Filtrer", self._text), -1)
 
+        self._exclude_owned = Gtk.CheckButton(label="Exclure les possédés")
+        self._exclude_owned.set_active(self._config_bool("exclude_owned", True))
+        self._exclude_owned.set_tooltip_text(
+            "Masque par défaut les livres déjà présents dans la bibliothèque de ce profil. "
+            "Décochez pour les réafficher volontairement."
+        )
+        self._exclude_owned.connect("toggled", lambda *_: self.refresh())
+        controls.insert(self._exclude_owned, -1)
+
         score_adjustment = Gtk.Adjustment(
             lower=0, upper=100, step_increment=5, page_increment=10,
             value=self._config_int("minimum_score", 15),
@@ -308,6 +317,10 @@ class UxRecommendationsView:
             return int(self._config().get(key, fallback))
         except (TypeError, ValueError):
             return fallback
+
+    def _config_bool(self, key: str, fallback: bool) -> bool:
+        value = self._config().get(key, fallback)
+        return value if isinstance(value, bool) else bool(fallback)
 
     def _config_str(self, key: str, fallback: str) -> str:
         value = self._config().get(key, fallback)
@@ -557,6 +570,7 @@ class UxRecommendationsView:
         self._progress.set_text("0 % · Lecture de la bibliothèque")
         self._summary.set_label("Lecture de la projection locale de la bibliothèque…")
         exploration = int(self._exploration.get_value())
+        exclude_owned = bool(self._exclude_owned.get_active())
 
         def operation(control):
             def progress(done: int, total: int, detail: str) -> None:
@@ -583,6 +597,7 @@ class UxRecommendationsView:
                 per_query=self._config_int("per_query", 50),
                 max_results=self._config_int("max_results", 120),
                 exploration=exploration,
+                exclude_owned=exclude_owned,
                 progress=progress,
                 partial=partial,
                 control=control,

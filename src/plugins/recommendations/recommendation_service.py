@@ -102,6 +102,7 @@ def compute_recommendations(
     per_query: int = 50,
     max_results: int = 120,
     exploration: int = 25,
+    exclude_owned: bool = True,
     progress: Callable[[int, int, str], None] | None = None,
     partial: Callable[[RecommendationPartial], None] | None = None,
     control: Any = None,
@@ -166,7 +167,7 @@ def compute_recommendations(
     def ingest_provisional(rows: list[Any]) -> None:
         for item in rows:
             key = candidate_key(item)
-            if is_already_present(profile, item):
+            if exclude_owned and is_already_present(profile, item):
                 continue
             score, reasons = score_candidate_cached(
                 profile, item, score_cache, known_absent=True
@@ -319,6 +320,7 @@ def compute_recommendations(
         limit=max_results,
         exploration=exploration,
         score_cache=score_cache,
+        exclude_owned=exclude_owned,
     )
     rank_ms = (time.perf_counter() - rank_started) * 1000.0
     trace_performance(catalog_ms=catalog_ms, rank_ms=rank_ms)
