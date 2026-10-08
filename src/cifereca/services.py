@@ -799,27 +799,36 @@ class LibraryService:
             self.refresh_adept_inventory(identity_id)
         return rows
 
-    def public_catalogue_url(self, row):
-        from .catalogue_link import catalogue_url
-        from urllib.parse import urljoin
+    def public_catalogue_target(self, row):
+        """Return ('notice'|'catalogue', URL) without mislabeling a generic page."""
+        from .catalogue_link import catalogue_notice_url, catalogue_url
+
         provider = str(row.get('provider_id') or row.get('source_provider') or '')
         descriptor = next((d for d in self.provider_descriptors() if d.id == provider), None)
         base = descriptor.homepage if descriptor else None
         if provider == 'paris':
             base = self.config.paris_base_url(row.get('source_credential'))
         elif provider == 'kobo' and not base:
-            base = self.config.provider_option('kobo', 'catalogue_url', 'https://www.kobo.com', credential_id=row.get('source_credential'))
-        metadata = row.get('metadata') or {}
-        search = metadata.get('search_result') or {}
-        friendly = row.get('friendly_url') or metadata.get('friendly_url') or (search.get('friendly_url') if isinstance(search, dict) else None)
-        candidate = dict(row)
-        if isinstance(friendly, str) and base:
-            candidate['friendly_url'] = urljoin(base, friendly)
-        url = catalogue_url(candidate) or catalogue_url({'friendly_url': base})
-        if url: return url
-        # A local book with unknown origin can still be sought in a public catalogue.
-        fallback = self.config.get('library.public_catalogue_fallback', 'https://catalogue.bnf.fr')
-        return catalogue_url({'friendly_url': fallback})
+            base = self.config.provider_option(
+                'kobo', 'catalogue_url', 'https://www.kobo.com',
+                credential_id=row.get('source_credential'),
+            )
+
+        notice = catalogue_notice_url(row, base=base, provider=provider)
+        if notice:
+            return ('notice', notice)
+
+        catalogue = catalogue_url({'friendly_url': base})
+        if not catalogue:
+            # This is a generic catalogue homepage, not a fabricated book notice.
+            fallback = self.config.get('library.public_catalogue_fallback', 'https://catalogue.bnf.fr')
+            catalogue = catalogue_url({'friendly_url': fallback})
+        return ('catalogue', catalogue) if catalogue else None
+
+    def public_catalogue_url(self, row):
+        """Compatibility URL broker; use public_catalogue_target for UI labels."""
+        target = LibraryService.public_catalogue_target(self, row)
+        return target[1] if target else None
 
     def _provider_loan_active_for_acquisition(self, row):
         """Only the observed provider loan of this exact account/item can conflict."""
