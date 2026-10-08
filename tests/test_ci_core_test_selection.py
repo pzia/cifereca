@@ -97,3 +97,14 @@ def test_ci_installs_pymupdf_only_for_epub_optimizer_or_full_plugin_scope():
     pr_ci = (ROOT / ".github/workflows/pr-ci.yml").read_text()
     assert '" $PLUGIN_TARGETS " == *" src/plugins/epub_optimizer "*' in pr_ci
     assert 'if [[ -z "$PLUGIN_TARGETS"' in pr_ci
+
+
+def test_gui_change_keeps_legacy_and_cross_cutting_ui_regressions():
+    selector = _module()
+    mode, targets = selector.select(["src/cifereca/gui/main_window.py"], ROOT)
+    assert mode == "ui"
+    assert "tests/test_core_0911.py" in targets
+    assert "tests/test_core0923_gtk_focus.py" in targets
+    assert "tests/test_095_consolidation.py" in targets
+    assert "tests/test_core_415_titlebar_action_registry.py" in targets
+    assert "tests/test_core_book_detail_projection.py" in targets
