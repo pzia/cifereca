@@ -340,6 +340,86 @@ def _backup_persistent_state(label: str) -> Path:
         raise UpdateError(f"Sauvegarde pré-activation impossible: {exc}") from exc
 
 
+def _release_plugin_manifest(source: Path) -> dict[str, str]:
+    path = source / "src" / "cifereca" / "plugin-release.json"
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise UpdateError("Manifest des plugins de release invalide") from exc
+    packages = raw.get("packages") if isinstance(raw, dict) else None
+    if not isinstance(packages, dict):
+        raise UpdateError("Manifest des plugins de release invalide")
+    out: dict[str, str] = {}
+    for package_id, row in packages.items():
+        if not isinstance(row, dict):
+            raise UpdateError(f"Entrée plugin de release invalide: {package_id}")
+        version = str(row.get("version") or "").strip()
+        if not version:
+            raise UpdateError(f"Version plugin de release absente: {package_id}")
+        out[str(package_id)] = version
+    return out
+
+
+def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | None:
+    expected = _release_plugin_manifest(release)
+    if not expected:
+        return None
+    plugins = release / "src" / "plugins"
+    script = release / "scripts" / "package-dev-snapshot.py"
+    if not plugins.is_dir() or not script.is_file():
+        raise UpdateError("Sources plugins absentes de la release alors que des versions sont attendues")
+    py = _command_path(release, "cifereca-cli").parent / ("python.exe" if os.name == "nt" else "python")
+    destination.mkdir(parents=True, exist_ok=True)
+    snapshot = destination / "release-plugins.zip"
+    command = [
+        str(py), str(script),
+        "--plugins", str(plugins),
+        "--out", str(destination),
+        "--id", "cifereca-release-plugins",
+        "--name", snapshot.name,
+    ]
+    proc = subprocess.run(command, text=True, capture_output=True, timeout=180, check=False)
+    if proc.returncode != 0 or not snapshot.is_file():
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise UpdateError(f"Construction du snapshot plugins impossible: {detail[-1200:]}")
+    return snapshot
+
+
+def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, Any]:
+    command = _command_path(release, DEV_COMMAND)
+    if not command.is_file():
+        raise UpdateError("cifereca-update-dev absent du nouveau runtime")
+    proc = subprocess.run(
+        [str(command), str(snapshot), "--json"],
+        text=True, capture_output=True, timeout=300, check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise UpdateError(f"Upgrade des plugins de release échoué: {detail[-1600:]}")
+    try:
+        value = json.loads(proc.stdout)
+    except Exception as exc:
+        raise UpdateError("Upgrade des plugins de release: sortie JSON invalide") from exc
+    if not isinstance(value, dict) or not value.get("ok"):
+        raise UpdateError("Upgrade des plugins de release non confirmé")
+    return value
+
+
+def _restore_release_links(root: Path, old_current: Path | None, old_previous: Path | None) -> None:
+    current_link = root / "current"
+    previous_link = root / "previous"
+    if old_current is not None and old_current.is_dir():
+        _replace_symlink(current_link, old_current)
+    else:
+        current_link.unlink(missing_ok=True)
+    if old_previous is not None and old_previous.is_dir():
+        _replace_symlink(previous_link, old_previous)
+    else:
+        previous_link.unlink(missing_ok=True)
+
+
 def install_source(
     source: Path,
     *,
@@ -369,6 +449,10 @@ def install_source(
     releases.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     release = releases / f"{version}-{stamp}-{os.getpid()}"
+    old_current = _symlink_target(root / "current")
+    old_previous = _symlink_target(root / "previous")
+    plugins_result: dict[str, Any] | None = None
+    switched = False
     try:
         _copy_source(source, release)
         _create_venv(release, py)
@@ -376,24 +460,35 @@ def install_source(
         backup = _backup_persistent_state(
             (provenance or {}).get("commit", version)
         ) if backup_persistent else None
-        from datetime import datetime, timezone
-        install_metadata: dict[str, Any] = {
-            "version": version,
-            "installed_at": datetime.now(timezone.utc).isoformat(),
-        }
-        if provenance:
-            install_metadata["provenance"] = dict(provenance)
-        (release / ".cifereca-install.json").write_text(
-            json.dumps(install_metadata, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        old = _symlink_target(root / "current")
-        if old and old.is_dir():
-            _replace_symlink(root / "previous", old)
-        _replace_symlink(root / "current", release)
-        launchers = _write_launchers(root)
-        _gc(root, keep)
+        with tempfile.TemporaryDirectory(prefix="cifereca-release-plugins-") as plugin_tmp:
+            plugin_snapshot = _build_release_plugin_snapshot(release, Path(plugin_tmp))
+            from datetime import datetime, timezone
+            install_metadata: dict[str, Any] = {
+                "version": version,
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if provenance:
+                install_metadata["provenance"] = dict(provenance)
+            (release / ".cifereca-install.json").write_text(
+                json.dumps(install_metadata, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            if old_current and old_current.is_dir():
+                _replace_symlink(root / "previous", old_current)
+            _replace_symlink(root / "current", release)
+            switched = True
+            launchers = _write_launchers(root)
+            _gc(root, keep)
+            if plugin_snapshot is not None:
+                plugins_result = _apply_release_plugin_snapshot(release, plugin_snapshot)
     except Exception:
+        if switched:
+            try:
+                _restore_release_links(root, old_current, old_previous)
+            except Exception as rollback_exc:
+                raise UpdateError(
+                    f"Mise à jour échouée et rollback Core impossible: {rollback_exc}"
+                ) from rollback_exc
         current = _symlink_target(root / "current")
         if current is None or current.resolve() != release.resolve():
             shutil.rmtree(release, ignore_errors=True)
@@ -407,6 +502,7 @@ def install_source(
         "desktop_ready": smoke.get("desktop_ready", False),
         "desktop_error": smoke.get("desktop_error", ""),
         "backup": str(backup) if backup else None,
+        "plugins": plugins_result,
     })
     return result
 
