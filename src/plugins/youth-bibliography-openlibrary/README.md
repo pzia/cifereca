@@ -2,7 +2,7 @@
 
 Résolveur bibliographique complémentaire pour #741.
 
-Open Library fournit des APIs publiques de recherche et de lookup adaptées aux requêtes humaines à faible volume. Ce plugin utilise uniquement `https://openlibrary.org/search.json` et ne scrape aucune page HTML.
+Open Library fournit des APIs publiques de recherche et de lookup adaptées aux requêtes humaines à faible volume. Ce plugin utilise `https://openlibrary.org/search.json` pour les recherches/ISBN et les endpoints JSON documentés `/works/<OLID>.json` ou `/books/<OLID>.json` pour les identifiants Open Library. Il ne scrape aucune page HTML.
 
 ## Frontière d'âge
 
