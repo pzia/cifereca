@@ -130,9 +130,19 @@ def main() -> int:
         first = out / "01-search-list.png"
         first_bbox = capture(first)
 
+        # Select the first visible result. The master-detail contract is part of
+        # this recipe: pathological row content must never make the detail pane
+        # unreachable after selection.
+        select_x = max(330, min(args.window_width - 120, int(args.window_width * 0.48)))
+        select_y = 240
+        control.click(select_x, select_y)
+        time.sleep(1.5)
+        selected = out / "02-selected-detail.png"
+        selected_bbox = capture(selected)
+
         scroll_down(control, args.window_width, args.window_height, steps=12)
         time.sleep(1.0)
-        second = out / "02-search-list-scrolled.png"
+        second = out / "03-search-list-scrolled.png"
         second_bbox = capture(second)
 
         report = {
@@ -141,9 +151,11 @@ def main() -> int:
             "display": os.environ.get("DISPLAY"),
             "screen": os.environ.get("CODEX_HEADLESS_SCREEN"),
             "config": str(config_path),
-            "captures": [str(first), str(second)],
+            "captures": [str(first), str(selected), str(second)],
+            "selection_click": [select_x, select_y],
             "capture_non_black_bbox": {
                 "initial": first_bbox,
+                "selected": selected_bbox,
                 "scrolled": second_bbox,
             },
             "elapsed_seconds": round(time.monotonic() - started, 3),
