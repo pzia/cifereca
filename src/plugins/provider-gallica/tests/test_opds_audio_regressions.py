@@ -48,7 +48,7 @@ SRU_AUDIO = b'''<?xml version="1.0" encoding="UTF-8"?>
     <dc:title>Archives de la parole</dc:title>
     <dc:creator>Ferdinand Brunot</dc:creator>
     <dc:date>1911</dc:date>
-    <dc:publisher>Université de Paris</dc:publisher>
+    <dc:publisher>Universit&#233; de Paris</dc:publisher>
     <dc:subject>Linguistique</dc:subject>
     <dc:subject>Archives sonores</dc:subject>
     <dc:language>fre</dc:language>
