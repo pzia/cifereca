@@ -1,0 +1,193 @@
+name: UX Library Recent review step 4
+
+on:
+  push:
+    branches:
+      - ux/library-recent-review-step4
+    paths:
+      - ".github/workflows/ux-library-recent-review-step4.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-library-recent-review
+      PYTHONPATH: ${{ github.workspace }}/src
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 6f2e6d296822efaea920357719bcd37dba12c5ad
+
+      - name: Install runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxtst6 \
+            python3-gi python3-gi-cairo python3-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Prepare two-identity dataset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          /usr/bin/python3 simulation/datasetctl.py rebuild ux-small
+          /usr/bin/python3 simulation/datasetctl.py summary ux-small --json > /tmp/summary.json
+          /usr/bin/python3 simulation/datasetctl.py exec ux-small -- \
+            env PYTHONPATH="$GITHUB_WORKSPACE/src" \
+            /usr/bin/python3 -m cifereca.cli catalog-scan \
+            > /tmp/catalog-scan.json
+
+      - name: Write review driver
+        shell: bash
+        run: |
+          cat > /tmp/library_recent_review.py <<'PY'
+          from __future__ import annotations
+          import ctypes as C
+          import json, os, subprocess, sys, time
+          from pathlib import Path
+          from PIL import ImageGrab
+
+          ROOT=Path.cwd()
+          sys.path.insert(0, str(ROOT/"environnements"/"openai-chat-debian"))
+          from x11_input import X11Input
+
+          OUT=ROOT/"library-recent-evidence"
+          OUT.mkdir(parents=True, exist_ok=True)
+          WIDTH,HEIGHT=1366,768
+
+          def capture(name):
+              p=OUT/name
+              ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save(p)
+              return str(p)
+
+          def shortcut(c, mod, key):
+              c.key(mod,True)
+              try:
+                  c.key(key,True); c.key(key,False)
+              finally:
+                  c.key(mod,False)
+
+          def resize(c):
+              x11=c.x11; display=c.display
+              x11.XDefaultRootWindow.argtypes=[C.c_void_p]; x11.XDefaultRootWindow.restype=C.c_ulong
+              x11.XQueryTree.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_ulong),C.POINTER(C.POINTER(C.c_ulong)),C.POINTER(C.c_uint)]
+              x11.XQueryTree.restype=C.c_int
+              x11.XGetGeometry.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_int),C.POINTER(C.c_int),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint)]
+              x11.XGetGeometry.restype=C.c_int
+              x11.XMoveResizeWindow.argtypes=[C.c_void_p,C.c_ulong,C.c_int,C.c_int,C.c_uint,C.c_uint]
+              x11.XFree.argtypes=[C.c_void_p]
+              root=x11.XDefaultRootWindow(display); rr=C.c_ulong(); pr=C.c_ulong(); children=C.POINTER(C.c_ulong)(); n=C.c_uint()
+              if not x11.XQueryTree(display,root,C.byref(rr),C.byref(pr),C.byref(children),C.byref(n)): return None
+              best=None
+              try:
+                  for i in range(n.value):
+                      xid=children[i]; gr=C.c_ulong(); x=C.c_int(); y=C.c_int(); w=C.c_uint(); h=C.c_uint(); b=C.c_uint(); d=C.c_uint()
+                      if x11.XGetGeometry(display,xid,C.byref(gr),C.byref(x),C.byref(y),C.byref(w),C.byref(h),C.byref(b),C.byref(d)):
+                          area=int(w.value)*int(h.value)
+                          if w.value>500 and h.value>400 and (best is None or area>best[0]):
+                              best=(area,int(xid),int(w.value),int(h.value))
+                  if not best: return None
+                  _,xid,bw,bh=best
+                  x11.XMoveResizeWindow(display,xid,0,0,WIDTH,HEIGHT)
+                  x11.XSync(display,False); time.sleep(.8)
+                  return {"before":[bw,bh],"requested":[WIDTH,HEIGHT]}
+              finally:
+                  if children: x11.XFree(children)
+
+          def click(c,x,y,wait=1.0):
+              c.click(x,y); time.sleep(wait)
+
+          def select_first_book(c):
+              click(c,285,245,2.0)
+
+          def switch_identity(c):
+              # Header identity dropdown.
+              click(c,900,28,.5)
+              c.key("Down",True); c.key("Down",False)
+              c.key("Return",True); c.key("Return",False)
+              time.sleep(3)
+
+          stdout=(OUT/"cifereca.stdout.log").open("w")
+          stderr=(OUT/"cifereca.stderr.log").open("w")
+          app=subprocess.Popen([
+              "/usr/bin/python3","-m","cifereca",
+              "--no-plugins",
+              "--force-plugin","core.ui.pages",
+              "--force-plugin","core.ui.widgets",
+              "--force-plugin","core.ui.titlebar",
+              "--force-plugin","core.ui.system",
+              "--verbose"
+          ],cwd=ROOT,env=os.environ.copy(),stdout=stdout,stderr=stderr,text=True)
+
+          control=None
+          report={"main_sha":"6f2e6d296822efaea920357719bcd37dba12c5ad","shots":[]}
+          try:
+              time.sleep(6)
+              if app.poll() is not None: raise RuntimeError(f"app rc={app.returncode}")
+              control=X11Input(); report["resize"]=resize(control); time.sleep(1)
+
+              # Camille — Bibliothèque.
+              click(control,105,248,3.0)
+              report["shots"].append(capture("01-library-camille.png"))
+              select_first_book(control)
+              report["shots"].append(capture("02-library-camille-detail.png"))
+
+              # Filtrage local textuel sans lancer de recherche distante.
+              shortcut(control,"Control_L","f"); time.sleep(.5)
+              control.select_all_delete(); control.type_text("secret"); time.sleep(2)
+              report["shots"].append(capture("03-library-camille-filtered.png"))
+
+              # Camille — Récents.
+              click(control,105,292,3.0)
+              report["shots"].append(capture("04-recent-camille.png"))
+              select_first_book(control)
+              report["shots"].append(capture("05-recent-camille-detail.png"))
+
+              # Alexandre.
+              switch_identity(control)
+              click(control,105,248,3.0)
+              report["shots"].append(capture("06-library-alexandre.png"))
+              select_first_book(control)
+              report["shots"].append(capture("07-library-alexandre-detail.png"))
+
+              click(control,105,292,3.0)
+              report["shots"].append(capture("08-recent-alexandre.png"))
+              select_first_book(control)
+              report["shots"].append(capture("09-recent-alexandre-detail.png"))
+
+              (OUT/"report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
+          finally:
+              if control:
+                  try: shortcut(control,"Control_L","q")
+                  except Exception: pass
+                  control.close()
+              try: app.wait(timeout=4)
+              except subprocess.TimeoutExpired:
+                  app.terminate()
+                  try: app.wait(timeout=3)
+                  except subprocess.TimeoutExpired: app.kill(); app.wait()
+              stdout.close(); stderr.close()
+          PY
+
+          /usr/bin/python3 simulation/datasetctl.py exec ux-small -- \
+            env PYTHONPATH="$GITHUB_WORKSPACE/src" GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none NO_AT_BRIDGE=1 \
+            xvfb-run -a -s "-screen 0 1366x768x24" \
+              /usr/bin/python3 /tmp/library_recent_review.py
+
+          cp /tmp/summary.json library-recent-evidence/dataset-summary.json
+          cp /tmp/catalog-scan.json library-recent-evidence/catalog-scan.json
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-library-recent-review-step4
+          path: library-recent-evidence/
+          if-no-files-found: error
+          retention-days: 2
