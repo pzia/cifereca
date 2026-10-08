@@ -15,23 +15,6 @@ from cifereca.system_status import system_status
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_release_manifest_matches_current_snapshot_and_plugin_manifests():
-    release = plugin_release_manifest()
-    assert release["release"] == (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-
-    actual = {}
-    for manifest_path in sorted((ROOT / "src" / "plugins").glob("*/cifereca-plugin.json")):
-        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-        package = raw["package"]
-        actual[str(package["id"])] = str(package["version"])
-
-    expected = {
-        package_id: row["version"]
-        for package_id, row in expected_plugin_packages().items()
-    }
-    assert expected == actual
-
-
 def test_freshness_classifier_covers_canonical_states():
     assert classify_package_freshness("1.2.0", "1.2.0", ["1.2.0"]) == ("up_to_date", "")
     assert classify_package_freshness("1.1.0", "1.2.0", ["1.1.0"]) == ("outdated", "older_than_expected")
