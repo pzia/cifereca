@@ -428,6 +428,12 @@ class ParisProviderSession(ProviderSession):
         state["pnb_borrow"] = dict(getattr(self.client, "last_pnb_borrow", {"phase": "unknown"}))
         state["account_status"] = dict(self.account_status)
         state["pairings"] = dict(self.pairing_status)
+        state["history_errors"] = [
+            dict(row) for row in getattr(self.client, "last_history_errors", ()) if isinstance(row, dict)
+        ]
+        state["booking_errors"] = [
+            dict(row) for row in getattr(self.client, "last_booking_errors", ()) if isinstance(row, dict)
+        ]
         return state
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path) -> tuple[Path, str]:
