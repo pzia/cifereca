@@ -55,3 +55,29 @@ def test_fixture_materialization_isolated_and_deterministic(tmp_path):
     env2 = runner.materialize_fixture("startup", tmp_path)
     assert env2 == env
     assert config.read_text(encoding="utf-8") == first
+
+
+def test_navigation_scenario_stops_settling_on_visual_change():
+    runner = _module()
+    args = runner.SCENARIOS["core-navigation"]["capture_args"]
+    assert "--settle-after-actions" in args
+    assert "--wait-change-ratio" in args
+    assert args[args.index("--wait-change-ratio") + 1] == "0.05"
+
+
+def test_capture_teardown_has_short_grace_before_kill():
+    source = (
+        ROOT / "environnements/openai-chat-debian/capture_app.py"
+    ).read_text(encoding="utf-8")
+    assert "process.wait(timeout=0.5)" in source
+    assert "process.kill()" in source
+    assert "process.wait(timeout=2)" not in source
+
+
+def test_capture_adaptive_settle_reuses_visual_change_metric():
+    source = (
+        ROOT / "environnements/openai-chat-debian/capture_app.py"
+    ).read_text(encoding="utf-8")
+    assert "def visual_change_ratio(" in source
+    assert 'ratio >= args.wait_change_ratio' in source
+    assert '"settle_after_actions_elapsed_seconds"' in source
