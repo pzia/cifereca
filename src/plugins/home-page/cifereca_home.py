@@ -25,14 +25,49 @@ def issues_text(sync):
     if detail.get('error'):lines.append(safe_issue(detail['error']))
     return '\n\n'.join(lines) or 'Ancienne synchronisation sans détail. Relancez-la ou consultez Récents.'
 
-PUBLIC_PROVIDERS = {'gallica', 'gutenberg', 'bnf-catalogue'}
+PUBLIC_PROVIDERS = {'gallica', 'gutenberg', 'bnf-catalogue', 'baen', 'ebooksgratuits'}
+LOCAL_PROVIDERS = {'local'}
+SOURCE_NAMES = {
+    'local':'Local',
+    'paris':'Bibliothèques de Paris',
+    'kobo':'Kobo',
+    'gallica':'Gallica',
+    'gutenberg':'Gutenberg',
+    'bnf-catalogue':'BnF',
+    'baen':'Baen',
+    'ebooksgratuits':'Ebooks libres et gratuits',
+}
+
+def source_groups(row, public_providers=PUBLIC_PROVIDERS, local_providers=LOCAL_PROVIDERS):
+    linked=set(row.get('providers') or ())
+    observed={s.get('provider_id'):dict(s) for s in row.get('sources',[]) if isinstance(s,dict) and s.get('provider_id')}
+    stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else {}
+    counts=stats.get('sources') if isinstance(stats.get('sources'),dict) else {}
+    candidates=set(linked)|set(observed)|set(counts)
+    if int(stats.get('local_books') or 0)>0:
+        candidates.add('local')
+
+    def build(pid,kind):
+        item=dict(observed.get(pid) or {})
+        item.setdefault('provider_id',pid)
+        item.setdefault('label',SOURCE_NAMES.get(pid,pid))
+        count=counts.get(pid)
+        if count is None and pid=='local' and stats.get('local_books') is not None:
+            count=stats.get('local_books')
+        if count is not None:
+            item['count']=count
+        item['kind']=kind
+        if kind=='authenticated':
+            item.setdefault('connected',False)
+        return item
+
+    local=[build(pid,'local') for pid in sorted(candidates & set(local_providers))]
+    public=[build(pid,'public') for pid in sorted(candidates & set(public_providers))]
+    authenticated=[build(pid,'authenticated') for pid in sorted(linked-set(public_providers)-set(local_providers))]
+    return {'local':local,'public':public,'authenticated':authenticated}
 
 def linked_sources(row, public_providers=PUBLIC_PROVIDERS):
-    linked=set(row.get('providers') or ())
-    observed={s.get('provider_id'):s for s in row.get('sources',[]) if s.get('provider_id')}
-    names={'paris':'Bibliothèques de Paris','kobo':'Kobo'}
-    return [observed.get(pid, {'provider_id':pid,'label':names.get(pid,pid),'connected':False})
-            for pid in sorted(linked-public_providers)]
+    return source_groups(row,public_providers)['authenticated']
 
 def readers_text(row):
     readers=row.get('associated_readers')
@@ -244,20 +279,39 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             else:
                 unavailable=section(box,'En bref',3,'view-grid-symbolic');tile(unavailable,'Statistiques','Core029 requis','warning')
 
-            sources_grid=section(box,'Sources authentifiées',3,'network-server-symbolic')
-            linked_rows=linked_sources(row,public_providers)
+            groups=source_groups(row,public_providers)
             support=getattr(host,'supports_identity_view_filters',None)
             source_filters=bool(callable(support) and support() is True and callable(getattr(host,'open_identity_view',None)))
-            if linked_rows:
-                for linked in linked_rows:
+
+            if groups['local']:
+                local_grid=section(box,'Local',3,'folder-symbolic')
+                for source in groups['local']:
+                    pname=str(source.get('label') or source['provider_id'])
+                    count=source.get('count')
+                    value=count if count is not None else 'Disponible'
+                    callback=(lambda _b,iid=row['identity_id'],pid=source['provider_id']:controller.filter(iid,'library',pid)) if source_filters else None
+                    tile(local_grid,pname,value,'success',
+                         'Ouvrir la bibliothèque locale' if source_filters else None,callback)
+
+            if groups['public']:
+                public_grid=section(box,'Sources publiques',3,'system-search-symbolic')
+                for source in groups['public']:
+                    pname=str(source.get('label') or source['provider_id'])
+                    count=source.get('count')
+                    value=count if count is not None else 'Disponible'
+                    callback=(lambda _b,iid=row['identity_id'],pid=source['provider_id']:controller.filter(iid,'search',pid)) if source_filters else None
+                    tile(public_grid,pname,value,'accent',
+                         'Rechercher dans cette source publique' if source_filters else None,callback)
+
+            if groups['authenticated']:
+                sources_grid=section(box,'Sources authentifiées',3,'network-server-symbolic')
+                for linked in groups['authenticated']:
                     connected=bool(linked.get('connected'));pname=str(linked.get('label') or linked['provider_id'])
                     callback=(lambda _b,iid=row['identity_id'],pid=linked['provider_id']:controller.filter(iid,'search',pid)) if source_filters else None
                     settings_open=getattr(host,'open_plugin_settings',None)
                     settings_callback=(lambda _b,pid='provider.'+str(linked['provider_id']):settings_open(pid)) if callable(settings_open) else None
                     tile(sources_grid,pname,'Connectée' if connected else 'À connecter','success' if connected else 'warning',
                          'Rechercher dans cette source' if source_filters else None,callback,settings_callback)
-            else:
-                tile(sources_grid,'Sources','Aucune source liée','dim-label')
 
             sync=row.get('sync') or {}
             actions_grid=section(box,'Synchronisation',4,'view-refresh-symbolic')
