@@ -33,6 +33,28 @@ def system_status(manager):
             row['installed_at'] = date
 
     packages = {}
+    inventory = getattr(manager, 'package_inventory', None) if manager is not None else None
+    if callable(inventory):
+        try:
+            package_rows = inventory(include_expected=True)
+        except TypeError:
+            package_rows = inventory()
+        for row in package_rows:
+            package_id = str(row.get('package_id') or '')
+            if not package_id:
+                continue
+            packages[package_id] = {
+                'package_id': package_id,
+                'package_version': str(row.get('active') or ''),
+                'active': row.get('active'),
+                'versions': list(row.get('versions') or ()),
+                'expected_version': row.get('expected_version'),
+                'freshness': str(row.get('freshness') or 'unknown'),
+                'freshness_reason': str(row.get('freshness_reason') or ''),
+                'builtin': bool(row.get('builtin')),
+                'plugins': [],
+            }
+
     for row in rows:
         package_id = str(row.get('package_id') or '')
         if not package_id:

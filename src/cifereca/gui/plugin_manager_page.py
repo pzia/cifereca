@@ -65,7 +65,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         summary = Gtk.Label(label=f"{len(statuses)} plugin(s) · {ready} actif(s) · {blocked} à examiner", xalign=0)
         summary.add_css_class("dim-label"); self.outer.append(summary)
 
-        inventory = self.manager.package_inventory()
+        inventory = self.manager.package_inventory(include_expected=True)
         categories = sorted({status.descriptor.type for status in statuses})
         for category in categories:
             definition = self.manager.categories.maybe_get(category)
@@ -75,6 +75,21 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 package_plugins = [status for status in statuses if status.descriptor.type == category and status.descriptor.package_id == package["package_id"]]
                 if not package_plugins: continue
                 self._append_package(package, package_plugins)
+
+        missing_packages = [
+            package for package in inventory
+            if package.get("freshness_reason") == "not_installed"
+        ]
+        if missing_packages:
+            missing_heading = Gtk.Label(label="Packages attendus absents", xalign=0)
+            missing_heading.add_css_class("heading"); self.outer.append(missing_heading)
+            for package in missing_packages:
+                expected = package.get("expected_version") or "?"
+                missing = Gtk.Label(
+                    label=f"{package.get('name') or package['package_id']} · attendu v{expected}",
+                    xalign=0,
+                )
+                missing.set_wrap(True); missing.add_css_class("warning"); self.outer.append(missing)
 
         if not statuses:
             empty = Gtk.Label(label="Aucun plugin installé. Installez un ZIP pour commencer.", xalign=0)
@@ -131,6 +146,33 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         summary.set_wrap(True); summary.set_hexpand(True)
         summary.add_css_class("caption"); summary.add_css_class("dim-label")
         box.append(summary)
+        freshness_text = ""
+        if not package.get("builtin") and ("freshness" in package or "expected_version" in package):
+            freshness_status = str(package.get("freshness") or "unknown")
+            freshness_reason = str(package.get("freshness_reason") or "")
+            active = package.get("active")
+            expected = package.get("expected_version")
+            if freshness_status == "up_to_date":
+                freshness_text = f"Version : à jour · v{active}"
+            elif freshness_status == "outdated":
+                freshness_text = f"Version : ancienne v{active} · attendue v{expected}"
+            elif freshness_status == "newer_nonstandard":
+                freshness_text = f"Version : plus récente / non standard v{active} · attendue v{expected}"
+            elif freshness_reason == "not_installed" and expected:
+                freshness_text = f"Version : non installée · attendue v{expected}"
+            elif freshness_reason == "inactive" and expected:
+                freshness_text = f"Version : inactive · attendue v{expected}"
+            elif expected:
+                freshness_text = f"Version : état inconnu · attendue v{expected}"
+            else:
+                freshness_text = "Version : attendue inconnue (package non géré par cette release)"
+        if freshness_text:
+            freshness = Gtk.Label(label=freshness_text, xalign=0)
+            freshness.set_wrap(True)
+            freshness.add_css_class(
+                "dim-label" if package.get("freshness") == "up_to_date" else "warning"
+            )
+            box.append(freshness)
         if status.state in {"blocked", "error", "incompatible", "degraded"}:
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
