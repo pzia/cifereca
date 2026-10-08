@@ -33,6 +33,7 @@ SCENARIOS = {
             "--wait", "0.75",
             "--click", "90,204",
             "--settle-after-actions", "2.0",
+            "--wait-change-ratio", "0.05",
         ],
         "min_visual_change_ratio": 0.05,
     },
