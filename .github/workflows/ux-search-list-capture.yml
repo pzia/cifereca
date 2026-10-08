@@ -23,7 +23,7 @@ jobs:
       - name: Checkout current product
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: coreui/531-bounded-facet-lines
 
       - name: Checkout UX recipe
         uses: actions/checkout@v4
@@ -122,7 +122,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ux-search-list-main-evidence
+          name: ux-search-list-pr656-evidence
           path: search-list-evidence/
           if-no-files-found: error
           retention-days: 2
