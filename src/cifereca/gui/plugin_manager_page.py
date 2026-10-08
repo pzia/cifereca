@@ -66,15 +66,28 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         summary.add_css_class("dim-label"); self.outer.append(summary)
 
         inventory = self.manager.package_inventory(include_expected=True)
-        categories = sorted({status.descriptor.type for status in statuses})
-        for category in categories:
-            definition = self.manager.categories.maybe_get(category)
-            heading = Gtk.Label(label=(definition.display_name if definition else category) + " · " + category.replace(".", " / "), xalign=0)
-            heading.add_css_class("heading"); self.outer.append(heading)
-            for package in inventory:
-                package_plugins = [status for status in statuses if status.descriptor.type == category and status.descriptor.package_id == package["package_id"]]
-                if not package_plugins: continue
-                self._append_package(package, package_plugins)
+        installed_packages = [
+            package for package in inventory
+            if any(status.descriptor.package_id == package["package_id"] for status in statuses)
+        ]
+        installed_packages.sort(
+            key=lambda package: (
+                str(package.get("name") or package["package_id"]).casefold(),
+                str(package["package_id"]),
+            )
+        )
+        for package in installed_packages:
+            package_plugins = [
+                status for status in statuses
+                if status.descriptor.package_id == package["package_id"]
+            ]
+            package_plugins.sort(
+                key=lambda status: (
+                    str(status.descriptor.display_name or status.descriptor.id).casefold(),
+                    str(status.descriptor.id),
+                )
+            )
+            self._append_package(package, package_plugins)
 
         missing_packages = [
             package for package in inventory
@@ -104,26 +117,103 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self.outer.append(footer)
 
     def _append_package(self, package, package_plugins):
-        # One card per plugin keeps its controls and activation on one footer.
+        package_id = str(package["package_id"])
+        package_name = str(package.get("name") or package_id)
+        frame = Gtk.Frame()
+        frame.add_css_class("card")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(12); box.set_margin_bottom(12)
+        box.set_margin_start(14); box.set_margin_end(14)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        heading = Gtk.Label(label=package_name, xalign=0)
+        heading.set_hexpand(True); heading.set_wrap(True); heading.add_css_class("heading")
+        header.append(heading)
+        active = package.get("active")
+        expected = package.get("expected_version")
+        version_text = f"v{active}" if active else (f"attendu v{expected}" if expected else "version inconnue")
+        version = Gtk.Label(label=version_text, xalign=1)
+        version.add_css_class("dim-label"); header.append(version)
+        box.append(header)
+
+        publisher = str(package.get("publisher") or "")
+        package_meta = package_id + (f" · {publisher}" if publisher else "")
+        meta = Gtk.Label(label=package_meta, xalign=0)
+        meta.set_wrap(True); meta.add_css_class("caption"); meta.add_css_class("dim-label")
+        box.append(meta)
+
+        freshness_status = str(package.get("freshness") or "unknown")
+        freshness_reason = str(package.get("freshness_reason") or "")
+        freshness_text = ""
+        if not package.get("builtin"):
+            if freshness_status == "up_to_date":
+                freshness_text = f"Version : à jour · v{active}"
+            elif freshness_status == "outdated":
+                freshness_text = f"Version : ancienne v{active} · attendue v{expected}"
+            elif freshness_status == "newer_nonstandard":
+                freshness_text = f"Version : plus récente / non standard v{active} · attendue v{expected}"
+            elif freshness_reason == "inactive" and expected:
+                freshness_text = f"Version : inactive · attendue v{expected}"
+            elif expected:
+                freshness_text = f"Version : état inconnu · attendue v{expected}"
+            else:
+                freshness_text = "Version : attendue inconnue (package non géré par cette release)"
+        if freshness_text:
+            freshness = Gtk.Label(label=freshness_text, xalign=0)
+            freshness.set_wrap(True)
+            freshness.add_css_class("dim-label" if freshness_status == "up_to_date" else "warning")
+            box.append(freshness)
+
+        package_actions = AdaptiveActionBar(source=box)
+        previous = package.get("previous")
+        if previous:
+            rollback = action_button(f"Revenir à {previous}", "edit-undo-symbolic")
+            rollback.set_tooltip_text(f"Réactiver la version {previous} du package entier")
+            rollback.connect("clicked", lambda _b, pid=package_id: self._rollback(pid))
+            package_actions.append(rollback)
+        if not package.get("builtin"):
+            plugin_names = tuple(
+                str(status.descriptor.display_name or status.descriptor.id)
+                for status in package_plugins
+            )
+            remove = action_button(
+                "Désinstaller le package", "edit-delete-symbolic", destructive=True,
+                tooltip="Désinstaller ce package et toutes les contributions listées ci-dessous",
+            )
+            remove.connect(
+                "clicked",
+                lambda _b, pid=package_id, pname=package_name, names=plugin_names:
+                    self._confirm_remove(pid, pname, names),
+            )
+            package_actions.append(remove)
+        if previous or not package.get("builtin"):
+            box.append(package_actions)
+
+        contributions = Gtk.Label(
+            label=f"{len(package_plugins)} contribution(s) fournie(s) par ce package",
+            xalign=0,
+        )
+        contributions.add_css_class("caption"); contributions.add_css_class("dim-label")
+        box.append(contributions)
         for status in package_plugins:
-            frame = Gtk.Frame(); frame.add_css_class("card")
-            frame.set_child(self._plugin_row(status, package))
-            self.outer.append(frame)
+            plugin_frame = Gtk.Frame()
+            plugin_frame.set_child(self._plugin_row(status, package))
+            box.append(plugin_frame)
+
+        frame.set_child(box)
+        self.outer.append(frame)
 
     def _plugin_row(self, status: Any, package=None) -> Gtk.Widget:
         from cifereca.plugin_help import plugin_help
         d = status.descriptor
-        package = package or {"package_id": d.package_id, "builtin": True}
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        box.set_margin_top(10); box.set_margin_bottom(10)
-        box.set_margin_start(12); box.set_margin_end(12)
+        box.set_margin_top(9); box.set_margin_bottom(9)
+        box.set_margin_start(10); box.set_margin_end(10)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         name = Gtk.Label(label=d.display_name or d.id, xalign=0)
         name.set_hexpand(True); name.set_wrap(True); name.add_css_class("heading")
         header.append(name)
-        version = Gtk.Label(label=f"v{d.version}", xalign=1)
-        version.add_css_class("dim-label"); header.append(version)
         help_button = Gtk.MenuButton()
         help_button.set_icon_name("dialog-question-symbolic")
         help_button.set_tooltip_text(f"Aide : {d.display_name or d.id}")
@@ -138,41 +228,13 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
         state = _STATE_LABELS.get(status.state, status.state)
         reason = f" · {status.reason}" if status.reason else ""
-        publisher = f" · {package['publisher']}" if package.get('publisher') else ""
-        text = f"{d.package_id} · {d.type} · {state}{reason}{publisher}"
+        text = f"{d.id} · {d.type} · {state}{reason}"
         if d.description:
             text += f" — {d.description}"
         summary = Gtk.Label(label=text, xalign=0)
         summary.set_wrap(True); summary.set_hexpand(True)
         summary.add_css_class("caption"); summary.add_css_class("dim-label")
         box.append(summary)
-        freshness_text = ""
-        if not package.get("builtin") and ("freshness" in package or "expected_version" in package):
-            freshness_status = str(package.get("freshness") or "unknown")
-            freshness_reason = str(package.get("freshness_reason") or "")
-            active = package.get("active")
-            expected = package.get("expected_version")
-            if freshness_status == "up_to_date":
-                freshness_text = f"Version : à jour · v{active}"
-            elif freshness_status == "outdated":
-                freshness_text = f"Version : ancienne v{active} · attendue v{expected}"
-            elif freshness_status == "newer_nonstandard":
-                freshness_text = f"Version : plus récente / non standard v{active} · attendue v{expected}"
-            elif freshness_reason == "not_installed" and expected:
-                freshness_text = f"Version : non installée · attendue v{expected}"
-            elif freshness_reason == "inactive" and expected:
-                freshness_text = f"Version : inactive · attendue v{expected}"
-            elif expected:
-                freshness_text = f"Version : état inconnu · attendue v{expected}"
-            else:
-                freshness_text = "Version : attendue inconnue (package non géré par cette release)"
-        if freshness_text:
-            freshness = Gtk.Label(label=freshness_text, xalign=0)
-            freshness.set_wrap(True)
-            freshness.add_css_class(
-                "dim-label" if package.get("freshness") == "up_to_date" else "warning"
-            )
-            box.append(freshness)
         if status.state in {"blocked", "error", "incompatible", "degraded"}:
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
@@ -183,16 +245,6 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             cfg.connect("clicked", lambda _b, pid=d.id: self._configure(pid)); footer.append(cfg)
         diag = action_button("Diagnostic", "dialog-information-symbolic")
         diag.connect("clicked", lambda _b, pid=d.id: self._diagnostic(pid)); footer.append(diag)
-        previous = package.get("previous")
-        if previous:
-            rollback = action_button(f"Revenir à {previous}", "edit-undo-symbolic")
-            rollback.connect("clicked", lambda _b, pid=d.package_id: self._rollback(pid)); footer.append(rollback)
-        if not package.get("builtin"):
-            remove = action_button(
-                "Désinstaller", "edit-delete-symbolic", destructive=True,
-                tooltip="Désinstaller le package et tous ses plugins",
-            )
-            remove.connect("clicked", lambda _b, pid=d.package_id: self._confirm_remove(pid)); footer.append(remove)
         if d.instantiation == "singleton_public":
             identities = Gtk.MenuButton(label="Identités…")
             identities.set_tooltip_text("Activer ce catalogue pour chaque identité")
@@ -268,8 +320,24 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             self.window.show_error(str(exc), "Rollback impossible"); return
         self._toast(f"Version {version} réactivée"); self.refresh(); self.on_changed()
 
-    def _confirm_remove(self, package_id: str) -> None:
-        dialog = Adw.MessageDialog.new(self.window, "Désinstaller ce package ?", "Ses plugins ne seront plus disponibles. Les données de configuration sont conservées.")
+    def _confirm_remove(
+        self,
+        package_id: str,
+        package_name: str = "",
+        plugin_names: tuple[str, ...] = (),
+    ) -> None:
+        display_name = package_name or package_id
+        affected = ", ".join(plugin_names) if plugin_names else "toutes ses contributions"
+        body = (
+            f"Package : {package_id}\n"
+            f"Plugins affectés ({len(plugin_names)}): {affected}\n\n"
+            "Les données de configuration sont conservées."
+        )
+        dialog = Adw.MessageDialog.new(
+            self.window,
+            f"Désinstaller « {display_name} » ?",
+            body,
+        )
         dialog.add_response("cancel", "Annuler"); dialog.add_response("remove", "Désinstaller")
         dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
         dialog.connect("response", lambda _d, response: self._remove(package_id) if response == "remove" else None)
