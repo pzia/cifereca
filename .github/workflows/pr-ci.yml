@@ -60,6 +60,7 @@ jobs:
               echo "packaging=true"
               echo "install=true"
               echo "gui=true"
+              echo "e2e_scenario=all"
               echo "dataset=true"
               echo "python=true"
             } >> "$GITHUB_OUTPUT"
@@ -82,9 +83,10 @@ jobs:
           packaging=false
           install=false
           gui=false
+          e2e_scenario=none
           dataset=false
 
-          if matches '^(src/cifereca/|tests/|pyproject\.toml$|scripts/ci-select-core-tests\.py$)'; then
+          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$)'; then
             core=true
           fi
 
@@ -109,11 +111,6 @@ jobs:
             install=true
           fi
 
-          if matches '^(e2e/|src/cifereca/(app\.py|gui/|builtin_ui/)|environnements/openai-chat-debian/capture_app\.py$)'; then
-            gui=true
-            core=true
-          fi
-
           if matches '^simulation/'; then
             dataset=true
           fi
@@ -127,9 +124,12 @@ jobs:
           fi
 
           if [[ "$core" == true ]]; then
-            IFS=$'\t' read -r core_mode core_targets < <(
+            IFS=$'\t' read -r core_mode core_targets e2e_scenario < <(
               python3 scripts/ci-select-core-tests.py "$changed_file"
             )
+          fi
+          if [[ "$e2e_scenario" != "none" ]]; then
+            gui=true
           fi
 
           python=false
@@ -146,6 +146,7 @@ jobs:
             echo "packaging=$packaging"
             echo "install=$install"
             echo "gui=$gui"
+            echo "e2e_scenario=$e2e_scenario"
             echo "dataset=$dataset"
             echo "python=$python"
           } >> "$GITHUB_OUTPUT"
@@ -230,7 +231,13 @@ jobs:
         if: steps.scope.outputs.gui == 'true'
         env:
           CIFERECA_E2E_PYTHON: /usr/bin/python3
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin core
+          E2E_SCENARIO: ${{ steps.scope.outputs.e2e_scenario }}
+        run: |
+          if [[ "$E2E_SCENARIO" == "all" ]]; then
+            dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin core
+          else
+            dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario "$E2E_SCENARIO"
+          fi
 
       - name: Publish E2E summary
         if: always() && steps.scope.outputs.gui == 'true'
