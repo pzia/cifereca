@@ -24,7 +24,7 @@
       "entrypoint": "openlibrary_youth:PLUGIN",
       "display_name": "Open Library — bibliographie",
       "description": "Recherche et résolution ISBN/OLID Open Library pour enrichir les notices Jeunesse sans inventer d'âge.",
-      "help_text": "Utilise uniquement l'API JSON Search d'Open Library pour des recherches explicites à faible volume. Les résultats sont marqués bibliographic_only et age_evidence=none. Cache mémoire, limitation de débit et aucun scraping HTML.",
+      "help_text": "Enrichissement bibliographique uniquement : Search API pour les recherches/ISBN et endpoints JSON Work/Edition pour les OLID. Les résultats sont marqués bibliographic_only et age_evidence=none. Cache mémoire, faible volume, aucun scraping HTML ni âge inventé.",
       "enabled_by_default": false,
       "priority": -70,
       "instantiation": "singleton_public",
