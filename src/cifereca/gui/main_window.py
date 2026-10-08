@@ -3068,11 +3068,20 @@ class MainWindow(Adw.ApplicationWindow):
         self.runner.submit("Recherche en ligne…", lambda: progressive_online_search(self.service, state, on_batch), done, failed,
                            control=self.search_global_button, priority=TaskPriority.USER_ACTION, kind="search-online")
 
+    def _sync_search_detail_after_results(self) -> None:
+        if not hasattr(self, "search_page"):
+            return
+        selected = self.search_page.selection.get_selected_item()
+        if isinstance(selected, BookListItem):
+            return
+        self._search_selected(None)
+
     def _populate_local_search(self, rows: list[dict[str, Any]]) -> None:
         self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
         self._search_mode = "local"
         self.search_objects = {}
         shown = self._render_search_results()
+        self._sync_search_detail_after_results()
         self.search_global_button.set_sensitive(True)
         self.toast(f"{shown} résultat(s) dans le connu", 5)
 
@@ -3081,6 +3090,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.service.last_search = rows
         self.search_objects = {f"{x.source_provider}:{x.id}": x for x in rows}
         shown = self._render_search_results()
+        self._sync_search_detail_after_results()
         if not announce:
             return
         warnings = list(getattr(self.service, "last_search_warnings", []) or [])
