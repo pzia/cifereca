@@ -48,6 +48,10 @@ SRU_AUDIO = b'''<?xml version="1.0" encoding="UTF-8"?>
     <dc:title>Archives de la parole</dc:title>
     <dc:creator>Ferdinand Brunot</dc:creator>
     <dc:date>1911</dc:date>
+    <dc:publisher>Universit&#233; de Paris</dc:publisher>
+    <dc:subject>Linguistique</dc:subject>
+    <dc:subject>Archives sonores</dc:subject>
+    <dc:language>fre</dc:language>
     <dc:type>sound</dc:type><dc:type>document sonore</dc:type>
     <dc:format>audio</dc:format>
   </oai_dc:dc></srw:recordData></srw:record></srw:records>
@@ -167,6 +171,14 @@ def test_sru_audio_normalizes_and_downloads_all_tracks_with_playlist(tmp_path):
         assert item.content_type == "audiobook"
         assert item.format is None
         assert item.record_id == "ark:/12148/bpt6k1279113"
+        assert item.publisher == "Université de Paris"
+        assert item.published_at == "1911"
+        assert item.metadata["languages"] == ["fr"]
+        assert item.metadata["subjects"] == ["Linguistique", "Archives sonores"]
+        assert item.metadata["identifiers"] == ["https://gallica.bnf.fr/ark:/12148/bpt6k1279113"]
+        assert item.metadata["bibliographic_types"] == ["sound", "document sonore"]
+        assert item.metadata["bibliographic_formats"] == ["audio"]
+        assert item.metadata["metadata_evidence"] == "gallica.sru.dublin_core"
 
         playlist, source_url = session.download_direct(item, tmp_path / "audio")
         assert item.format == "MP3"

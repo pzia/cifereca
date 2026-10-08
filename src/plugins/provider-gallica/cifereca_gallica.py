@@ -407,7 +407,14 @@ class GallicaSession(ProviderSession):
                 # through OAIRecord.
                 download_url=f"https://gallica.bnf.fr/{ark}",
                 content_type="audiobook",
-                metadata={"languages": self._normalize_languages(values.get("language", []))},
+                metadata={
+                    "languages": self._normalize_languages(values.get("language", [])),
+                    "subjects": list(values.get("subject", [])),
+                    "identifiers": list(values.get("identifier", [])),
+                    "bibliographic_types": list(values.get("type", [])),
+                    "bibliographic_formats": list(values.get("format", [])),
+                    "metadata_evidence": "gallica.sru.dublin_core",
+                },
             ))
         return rows
 
