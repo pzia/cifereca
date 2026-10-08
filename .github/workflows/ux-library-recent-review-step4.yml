@@ -108,7 +108,7 @@ jobs:
 
           def switch_identity(c):
               # Header identity dropdown.
-              click(c,900,28,.5)
+              click(c,970,28,.5)
               c.key("Down",True); c.key("Down",False)
               c.key("Return",True); c.key("Return",False)
               time.sleep(3)
