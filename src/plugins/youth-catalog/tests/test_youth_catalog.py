@@ -2,6 +2,7 @@ from youth_catalog import (
     YouthCatalogIndex,
     YouthCatalogPlugin,
     bibliographic_match,
+    normalize_isbn,
     normalize_record,
     parse_age_label,
     validate_source_contract,
@@ -175,3 +176,102 @@ def test_source_failure_is_isolated():
     assert report.rejected == 1
     assert report.errors == ("search: offline",)
     assert plugin.search_cached("alice") == ()
+
+
+def bibliography_row(record_id="OL1W", **changes):
+    value = {
+        "record_id": record_id,
+        "title": "Livre",
+        "authors": ["Auteur enrichi"],
+        "isbns": ["9780306406157"],
+        "languages": ["eng"],
+        "subjects": ["Space", "Adventure"],
+        "publishers": ["Open Publisher"],
+        "first_publish_year": 1999,
+        "notice_url": "https://openlibrary.org/works/" + record_id,
+        "cover_url": "https://covers.openlibrary.org/b/id/42-M.jpg",
+        "age_ranges": (),
+        "metadata": {
+            "bibliographic_only": True,
+            "age_evidence": "none",
+        },
+    }
+    value.update(changes)
+    return value
+
+
+def test_isbn10_is_canonicalized_to_isbn13_for_cross_source_matching():
+    assert normalize_isbn("0-306-40615-2") == "9780306406157"
+    a = normalize_record(row("Livre", isbn10="0306406152"), source_id="one")
+    b = normalize_record(row("Autre édition", isbn13="9780306406157"), source_id="two")
+    assert a.identifiers["isbn"] == "9780306406157"
+    assert bibliographic_match(a, b).score == 100
+
+
+def test_bibliography_overlay_enriches_only_exact_isbn_without_age_provenance_pollution():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "booktrust", [
+        row("Livre", isbn10="0306406152", interest_age="8-10", language=""),
+    ])
+    report = index.ingest_bibliography(
+        "alice", "openlibrary", "9780306406157", [bibliography_row()]
+    )
+    assert report.accepted == 1
+    (book,) = index.entries("alice")
+    assert book.identifiers["isbn"] == "9780306406157"
+    assert book.identifiers["openlibrary_record_id"] == "OL1W"
+    assert book.language == "eng"
+    assert {"space", "adventure"} <= set(book.themes)
+    assert book.publishers == ("Open Publisher",)
+    assert book.published_year == 1999
+    assert book.cover_url.endswith("/42-M.jpg")
+    assert book.bibliography_sources == ("openlibrary",)
+    assert book.provenance == ("booktrust",)
+    assert [(r.age_kind, r.source_id) for r in book.age_ranges] == [("interest", "booktrust")]
+    assert [b.title for b in index.search("alice", source_id="booktrust")] == ["Livre"]
+    assert index.search("alice", source_id="openlibrary") == ()
+
+
+def test_bibliography_overlay_rejects_wrong_isbn_or_any_age_evidence():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "booktrust", [
+        row("Livre", isbn13="9780306406157", age_label="8+"),
+    ])
+    wrong = index.ingest_bibliography(
+        "alice", "openlibrary", "9780306406157",
+        [bibliography_row(isbns=["9783161484100"])],
+    )
+    assert wrong.accepted == 0 and wrong.rejected == 1
+
+    contaminated = index.ingest_bibliography(
+        "alice", "openlibrary", "9780306406157",
+        [bibliography_row(age_ranges=[{"age_min": 5}])],
+    )
+    assert contaminated.accepted == 0 and contaminated.rejected == 1
+    assert index.entries("alice")[0].bibliography_sources == ()
+
+
+def test_ambiguous_bibliography_results_are_not_applied():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "booktrust", [
+        row("Livre", isbn13="9780306406157", age_label="8+"),
+    ])
+    report = index.ingest_bibliography(
+        "alice", "openlibrary", "9780306406157",
+        [bibliography_row("OL1W"), bibliography_row("OL2W")],
+    )
+    assert report.accepted == 0
+    assert report.rejected == 2
+    assert report.errors == ("ambiguous bibliography result",)
+    assert index.entries("alice")[0].bibliography_sources == ()
+
+
+def test_clear_identity_clears_bibliography_overlay_too():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "booktrust", [
+        row("Livre", isbn13="9780306406157", age_label="8+"),
+    ])
+    index.ingest_bibliography("alice", "openlibrary", "9780306406157", [bibliography_row()])
+    assert index.entries("alice")[0].bibliography_sources == ("openlibrary",)
+    index.clear_identity("alice")
+    assert index.entries("alice") == ()
