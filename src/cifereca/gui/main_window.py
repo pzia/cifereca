@@ -3501,11 +3501,18 @@ class MainWindow(Adw.ApplicationWindow):
         from .query_model import apply_facet
         state = controls.state()
         updated = apply_facet(state, field, text)
-        if controls is getattr(self, 'library_controls', None):
-            self.library_controls.set_state(updated)
-            self.navigate('library'); self._render_library(); return
-        self.search_controls.set_state(updated)
-        self.navigate("search"); self.run_search(False)
+        # Detail facets are an explicit action: update controls silently, then
+        # refresh the owning context exactly once. This also re-runs the action
+        # when the selected facet already matches the current filter.
+        library_controls = getattr(self, 'library_controls', None)
+        target_controls = library_controls if controls is library_controls else self.search_controls
+        target_controls.set_state(updated, notify=False)
+        if target_controls is library_controls:
+            self.navigate('library')
+            self._render_library()
+            return
+        self.navigate("search")
+        self.run_search(False)
 
     def _facet_values(self, item):
         from .book_facets import facets_for_book

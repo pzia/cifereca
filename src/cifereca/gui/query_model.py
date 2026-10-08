@@ -52,12 +52,17 @@ def merge_results(existing, incoming):
 def apply_facet(state, field, value):
     from dataclasses import replace
     from cifereca.core.search import file_format, format_family
+    from cifereca.language import normalize_language_tag
     from .facet_text import author_search_text
     if field == 'format':
         fmt = format_family(value)
         return replace(state, types=(fmt,)) if fmt else state
     if field == 'source':
         return replace(state, providers=(str(value),)) if value else state
+    if field == 'language':
+        language = normalize_language_tag(value)
+        primary = language.split('-', 1)[0] if language else ''
+        return replace(state, languages=(primary,)) if primary else state
     if field == 'support' and str(value) in {'physical','digital','unknown'}:
         return replace(state, scope=str(value))
     text = author_search_text(value) if field == 'author' else str(value)
