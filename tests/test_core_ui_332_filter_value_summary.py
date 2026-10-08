@@ -107,7 +107,7 @@ def test_summary_and_tooltip_follow_atomic_programmatic_changes():
     assert control.label == 'Formats : EPUB +2'
     assert control.tooltip == 'EPUB, PDF, MP3'
     control.set_values(())
-    assert control.label == 'Formats : Tous'
+    assert control.label == 'Formats'
     assert control.tooltip is None
     control.set_values(())
     assert len(calls) == 4
