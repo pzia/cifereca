@@ -1377,6 +1377,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._account_changing = False
         self._identity_changing = False
         self._identity_context_generation = 0
+        self._account_context_generation = 0
         self._selected_search_id: str | None = None
         self._last_search_query = ""
         self._search_mode = "local"
@@ -2578,6 +2579,7 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self.service.select_identity(identity.identity_id)
         self._identity_context_generation += 1
+        self._account_context_generation += 1
         identity_generation = self._identity_context_generation
         self._populate_accounts()
         self._render_dashboard()
@@ -2647,8 +2649,12 @@ class MainWindow(Adw.ApplicationWindow):
             _TRACE_LOG.debug("Account selection notification ignored: already current account=%s", account.unique_id)
             return
         self.service.select_account(account.unique_id, account.provider_id, account.credential_id)
+        self._account_context_generation += 1
         self.service.last_history = []
         self.service.last_bookings = []
+        self.history_objects = {}
+        self.booking_objects = {}
+        self._history_all_rows = []
         self._history_rows = []
         self._history_loaded_count = 0
         self._history_append_scheduled = False
@@ -3578,9 +3584,13 @@ class MainWindow(Adw.ApplicationWindow):
         current = self.service.current_identity
         identity_id = current.identity_id if current is not None else None
         generation = self._identity_context_generation
+        account = self.service.current_account
+        account_generation = self._account_context_generation
 
         def done(rows: list[HistoryItem]) -> None:
-            if self._identity_request_current(identity_id, generation):
+            if (self._identity_request_current(identity_id, generation)
+                    and account_generation == self._account_context_generation
+                    and self.service.current_account is account):
                 self._populate_history(rows)
 
         self.runner.submit(
@@ -3692,9 +3702,13 @@ class MainWindow(Adw.ApplicationWindow):
         current = self.service.current_identity
         identity_id = current.identity_id if current is not None else None
         generation = self._identity_context_generation
+        account = self.service.current_account
+        account_generation = self._account_context_generation
 
         def done(rows: list[Booking]) -> None:
-            if self._identity_request_current(identity_id, generation):
+            if (self._identity_request_current(identity_id, generation)
+                    and account_generation == self._account_context_generation
+                    and self.service.current_account is account):
                 self._populate_bookings(rows)
 
         self.runner.submit(
