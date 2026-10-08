@@ -30,6 +30,7 @@ from .cover_loader import CoverLoader
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
+from .recent_time import format_recent_timestamp
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
 from .plugin_manager_page import PluginManagerPage
@@ -3840,9 +3841,14 @@ class MainWindow(Adw.ApplicationWindow):
             key = str(item.get("placement_id") or f"recent:{len(rows)}")
             self._recent_objects[key] = item
             provider = str(item.get("provider_id") or "local")
+            temporal = format_recent_timestamp(item.get("acquired_at"))
             rows.append(BookListItem(
-                key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
-                "", "Kobo" if provider == "kobo" else provider.capitalize(), item.get("thumbnail_url"),
+                key,
+                str(item.get("title") or "Sans titre"),
+                str(item.get("author") or ""),
+                temporal,
+                "Kobo" if provider == "kobo" else provider.capitalize(),
+                item.get("thumbnail_url"),
             ))
         self._attach_row_facets(rows,self._recent_objects,self.search_controls)
         self.recent_page.show_rows(rows)
@@ -4015,13 +4021,21 @@ class MainWindow(Adw.ApplicationWindow):
             return
         detail = self.recent_page.detail
         provider = str(item.get("provider_id") or "local")
+        full_path = str(item.get("path") or "")
+        file_name = Path(full_path).name if full_path else "—"
+        acquired = format_recent_timestamp(item.get("acquired_at"), detailed=True)
         detail.show_summary(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
             thumbnail=item.get("thumbnail_url"),
             badges=[provider.capitalize(), "Local"],
             group_title="Récupération",
-            rows=[("Fichier", str(item.get("path") or "—")), ("Provenance", provider.capitalize())],
+            rows=[
+                ("Fichier", file_name),
+                ("Récupéré", acquired),
+                ("Provenance", provider.capitalize()),
+                ("Chemin", full_path or "—"),
+            ],
         )
         self._add_book_notice(detail,item)
         self._add_local_book_actions(detail,item)

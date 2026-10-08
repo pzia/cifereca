@@ -1881,7 +1881,11 @@ class LibraryService:
                 (str(entitlement.get("provider_id") or ""), str(entitlement.get("item_id") or "")), []
             ).append(entitlement)
         rows: list[dict[str, Any]] = []
-        for placement in sorted(self.storage.placements(), key=lambda x: int(x.get("updated_at") or 0), reverse=True):
+        for placement in sorted(
+            self.storage.placements(),
+            key=lambda x: int(x.get("created_at") or x.get("updated_at") or 0),
+            reverse=True,
+        ):
             if placement.get("state") != "present":
                 continue
             if identity_id and placement.get("identity_id") not in {identity_id, None, ""}:
@@ -1961,7 +1965,9 @@ class LibraryService:
                 "title": entry.get("title") or Path(str(placement.get("path") or "")).stem, "author": entry.get("author"),
                 "identity_id": row_identity, "provider_id": provider_id, "item_id": item_id or None,
                 "path": placement.get("path"), "media_format": entry.get("media_format"), "thumbnail_url": thumbnail_url,
-                "metadata": metadata, "updated_at": placement.get("updated_at"),
+                "metadata": metadata,
+                "acquired_at": placement.get("created_at") or placement.get("updated_at"),
+                "updated_at": placement.get("updated_at"),
             })
             if len(rows) >= max(1, limit):
                 break
