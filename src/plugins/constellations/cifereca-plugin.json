@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.constellations",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "name": "Constellations",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "navigation.constellations",
       "type": "navigation.constellation",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "entrypoint": "constellations:PLUGIN",
       "display_name": "Constellations",
       "description": "Navigation relationnelle explicable entre livres et promenades culturelles.",
@@ -23,7 +23,37 @@
         "constellation.graph",
         "constellation.rank",
         "constellation.walk"
-      ]
+      ],
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [],
+      "requires_contracts": [],
+      "system_requires": []
+    },
+    {
+      "id": "ui.page.constellations",
+      "type": "ui.page",
+      "version": "0.2.0",
+      "entrypoint": "constellations_page:PLUGIN",
+      "display_name": "Constellations — navigation",
+      "description": "Explorer les voisins d’un livre et construire une promenade.",
+      "help_text": "Page adaptative et action depuis une fiche livre. Lecture locale par profil ; recherche en ligne uniquement sur demande. Modes et promenades du moteur Constellations. Aucun emprunt ni téléchargement automatique.",
+      "enabled_by_default": false,
+      "priority": -100,
+      "instantiation": "singleton_public",
+      "requires_brokers": [
+        "metadata",
+        "catalog",
+        "identities",
+        "tasks"
+      ],
+      "capabilities": [
+        "constellation.ui"
+      ],
+      "requires": [],
+      "recommends": [],
+      "requires_contracts": [],
+      "system_requires": []
     }
   ],
   "categories": [

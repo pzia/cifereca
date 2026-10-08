@@ -100,8 +100,11 @@ def _isbn(value: object) -> str:
     if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
         total = sum((10 - i) * int(d) for i, d in enumerate(raw[:9]))
         total += 10 if raw[-1] == "X" else int(raw[-1])
-        return raw if total % 11 == 0 else ""
-    if len(raw) == 13 and raw.isdigit():
+        if total % 11:
+            return ""
+        prefix = "978" + raw[:9]
+        return prefix + str((-sum(int(c) * (1 if i % 2 == 0 else 3) for i, c in enumerate(prefix))) % 10)
+    if len(raw) == 13 and raw.isascii() and raw.isdigit():
         total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(raw))
         return raw if total % 10 == 0 else ""
     return ""
@@ -158,6 +161,8 @@ def _length_bucket(book: object) -> str:
     try:
         pages = int(raw)
     except (TypeError, ValueError):
+        return ""
+    if pages <= 0:
         return ""
     if pages < 180:
         return "short"
@@ -276,8 +281,6 @@ def normalize_book(book: object) -> ConstellationBook:
         key = f"isbn:{isbn}"
     elif provider and source_item:
         key = f"source:{provider}:{source_item}"
-    elif title and authors:
-        key = f"work:{_fold(title)}|{_fold(authors[0])}"
     elif book_id:
         key = f"book:{book_id}"
     else:
@@ -499,7 +502,9 @@ class ConstellationGraph:
     def _all_paths(self, start: str, end: str, *, min_steps: int = 4, max_steps: int = 8, max_candidates: int = 2000) -> list[tuple[str, ...]]:
         found: list[tuple[str, ...]] = []
         stack: list[tuple[str, tuple[str, ...]]] = [(start, (start,))]
-        while stack:
+        expanded = 0
+        while stack and expanded < max_candidates * 4:
+            expanded += 1
             current, path = stack.pop()
             if len(path) > max_steps:
                 continue
@@ -511,7 +516,7 @@ class ConstellationGraph:
                 continue
             if len(path) == max_steps:
                 continue
-            neighbors = [edge.right for edge in self.neighbors(current) if edge.right not in path]
+            neighbors = [edge.right for edge in self.neighbors(current) if edge.right not in path][:40]
             for next_key in reversed(neighbors):
                 stack.append((next_key, path + (next_key,)))
         return found
