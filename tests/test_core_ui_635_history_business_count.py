@@ -22,7 +22,8 @@ def test_history_uses_business_total_count_mode():
 
 def test_total_only_mode_never_exposes_materialized_batch_size():
     source = _method("MasterDetailPage", "_update_count")
-    assert "getattr(self, '_count_total_only', False)" in source
+    assert "hasattr(self, '_count_total_only')" in source
+    assert "self._count_total_only" in source
     assert "self._item_count_label(self._total_count)" in source
 
 
