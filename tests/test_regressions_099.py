@@ -66,7 +66,7 @@ class Widget:
     @classmethod
     def new_from_strings(cls,*a):return cls()
     def __getattr__(self,name):
-        if name.startswith('set_'):return lambda v:self.props.__setitem__(name[4:],v)
+        if name.startswith('set_'):return lambda *values:self.props.__setitem__(name[4:],values[0] if len(values)==1 else values)
         if name=='start':return lambda:None
         raise AttributeError(name)
 
@@ -105,7 +105,7 @@ class SearchRegression(unittest.TestCase):
 
 class DigitalDefault(unittest.TestCase):
     def test_new_controls_default_digital_but_changes_stay_in_session(self):
-        gtk=NS(Box=Widget,SearchEntry=Widget,FlowBox=Widget,DropDown=Widget,Label=Widget,FlowBoxChild=Widget,Align=NS(START=0),Orientation=NS(VERTICAL=1),SelectionMode=NS(NONE=0))
+        gtk=NS(Box=Widget,SearchEntry=Widget,ScrolledWindow=Widget,DropDown=Widget,Label=Widget,Align=NS(START=0),Orientation=NS(VERTICAL=1,HORIZONTAL=2),PolicyType=NS(AUTOMATIC=0,NEVER=1))
         def multi(*a):return Widget()
         funcs=methods('query_controls.py','QueryControls',{'__init__','state','set_state'},{'Gtk':gtk,'MultiSelect':multi,'QueryState':QueryState,'FIELDS':FIELDS})
         cls=funcs

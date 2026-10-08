@@ -14,11 +14,13 @@ def _method_source(class_name: str, method_name: str) -> str:
     return ast.unparse(method)
 
 
-def test_query_filters_keep_natural_width_in_flowbox():
+def test_query_filters_keep_natural_width_in_single_row():
     source = _method_source("QueryControls", "__init__")
+    assert "filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)" in source
     assert "def insert_filter(widget):" in source
     assert "widget.set_hexpand(False)" in source
     assert "widget.set_halign(Gtk.Align.START)" in source
+    assert "filter_row.append(widget)" in source
     assert "self.provider = insert_filter(" in source
     assert "self.types = insert_filter(" in source
     assert "self.languages = insert_filter(" in source
