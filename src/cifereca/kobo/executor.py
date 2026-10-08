@@ -164,6 +164,10 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
                 "Kobo : le transport HTTP direct est réservé aux candidats http_plain "
                 f"(candidat reçu: {handling or 'unknown'})"
             )
+        if not KoboOfferAdapter.secure_http_candidate(KoboOfferAdapter.normalize_candidate(candidate_value)):
+            raise ProviderConfigurationError(
+                "Kobo : candidat http_plain invalide (URL HTTPS et méthode GET requises)"
+            )
         metadata, _original_format, fmt = base_metadata(candidate_value, profile)
         destination = service._kobo_destination(item, target_dir, fmt)
         headers = candidate_value.get("headers")

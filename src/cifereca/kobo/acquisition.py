@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 from ..acquisition_engine import (
     AcquisitionCandidate,
@@ -192,13 +193,41 @@ class KoboOfferAdapter:
         usable.sort(key=lambda c: (0 if c.source == "library_download_link" else 1, c.candidate_id))
         return cls._raw(usable[0])
 
+    @staticmethod
+    def secure_http_candidate(candidate: AcquisitionCandidate) -> bool:
+        """Accept executable HTTP downloads only over an explicit HTTPS GET URL."""
+        if candidate.transport != "https" or candidate.method != "GET":
+            return False
+        url = candidate.url or ""
+        # from_mapping() strips whitespace from the normalized URL, while
+        # request builders forward the original provider payload. Check both
+        # representations to avoid passing a different URL than the validated
+        # one (for instance with a trailing newline or a leading space).
+        raw = candidate.provider_data.get("url", candidate.url)
+        if not isinstance(raw, str) or not url or raw != url or "\\" in raw:
+            return False
+        if any(ord(char) < 32 or ord(char) == 127 for char in raw):
+            return False
+        try:
+            parsed = urlsplit(url)
+            # Accessing hostname/port validates malformed bracketed hosts/ports.
+            return bool(
+                parsed.scheme == "https"
+                and parsed.hostname
+                and parsed.username is None
+                and parsed.password is None
+                and (parsed.port is None or 1 <= parsed.port <= 65535)
+            )
+        except ValueError:
+            return False
+
     @classmethod
     def direct_candidate(cls, payload: dict[str, Any], preferred_format: str = "epub") -> dict[str, Any]:
         candidates = cls.candidates(payload)
         usable = [
             c for c in candidates
             if c.kind != "acsm"
-            and c.transport == "https" and c.method == "GET" and str(c.url or "").startswith("https://")
+            and cls.secure_http_candidate(c)
             and cls.adept_format(c.media_format) is not None
             and c.handling in {"http_plain", "kobo_kdrm"}
             and not (c.handling == "kobo_kdrm" and c.source == "library_sync")
@@ -222,6 +251,9 @@ class KoboOfferAdapter:
             if c.kind != "acsm"
             and cls.adept_format(c.media_format) is not None
             and c.handling in {"http_plain", "kobo_kdrm"}
+            # A delegated Kobo recipe may not expose a delivery URL yet.
+            # A plain HTTP candidate does: never select it without HTTPS GET.
+            and (c.handling == "kobo_kdrm" or cls.secure_http_candidate(c))
         ]
         policy = AcquisitionPolicy(priority={"http_plain": 10, "kobo_kdrm": 20})
         chosen = policy.choose(usable, preferred_format=preferred_format)
