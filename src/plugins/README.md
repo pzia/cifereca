@@ -1,6 +1,6 @@
 # Cifereca plugins
 
-Les sources des plugins fonctionnels sont **actuellement** versionnées sous `plugins/<plugin>/`.
+Les sources des plugins fonctionnels sont **actuellement** versionnées sous `src/plugins/<plugin>/`.
 
 Chaque répertoire contient son `cifereca-plugin.json`, son code Python, ses tests et, lorsqu'ils existent, ses documents propres.
 
@@ -46,7 +46,7 @@ Voir `docs/PLUGIN-BOUNDARIES.md`.
 Les suites portent toutes le package Python `tests`. Dans ce monorepo, exécuter les tests plugin par plugin :
 
 ```bash
-for p in plugins/*; do
+for p in src/plugins/*; do
   if [ -f "$p/cifereca-plugin.json" ] && [ -d "$p/tests" ]; then
     (cd "$p" && python -m pytest -q)
   fi
@@ -55,7 +55,7 @@ done
 
 Placement :
 
-- comportement propre à un plugin : `plugins/<plugin>/tests/` ;
+- comportement propre à un plugin : `src/plugins/<plugin>/tests/` ;
 - contrat transversal/Core/orchestration : `tests/`.
 
 Voir `docs/TEST-ORGANIZATION.md`.
