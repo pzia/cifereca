@@ -334,7 +334,12 @@ class DetailPanel(Gtk.Box):
         self._pending_action_focus_key = ""
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
-        self.action_scroll = AdaptiveActionBar(fraction=1.0, source=self)
+        self.action_scroll = AdaptiveActionBar(
+            fraction=1.0,
+            source=self,
+            overflow=True,
+            preserve_primary_label=True,
+        )
         self._action_bar = self.action_scroll.box
         self._action_bar.add_css_class('toolbar')
         self._action_bar.add_css_class('detail-actions')
