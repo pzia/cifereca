@@ -100,8 +100,8 @@ def relation(a,b):
     return Edge(b,edge.strength,tuple(REASONS.get(r.kind,r.kind)+' : '+r.value for r in edge.reasons)) if edge else Edge(b,0,())
 
 
-def promenade(nodes,start,end,*,variant='équilibré'):
-    walk = start.graph.promenade(start.key,end.key,variant={'court':'short','équilibré':'balanced','surprenant':'surprising'}[variant])
+def promenade(nodes,start,end,*,variant='équilibré',control=None):
+    walk = start.graph.promenade(start.key,end.key,variant={'court':'short','équilibré':'balanced','surprenant':'surprising'}[variant], control=control)
     return tuple(start.cards[step.book.key] for step in walk.steps) if walk else ()
 
 

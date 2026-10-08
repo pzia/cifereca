@@ -407,6 +407,14 @@ class ConstellationGraph:
                 edge = relation(self.books[left_key], self.books[right_key])
                 if edge is not None:
                     self._edges[(left_key, right_key)] = edge
+        adjacency = {key: [] for key in keys}
+        for edge in self._edges.values():
+            adjacency[edge.left].append(edge)
+            adjacency[edge.right].append(Relation(edge.right, edge.left, edge.strength, edge.reasons))
+        self._neighbors = {
+            key: tuple(sorted(edges, key=lambda item: (-item.strength, item.right)))
+            for key, edges in adjacency.items()
+        }
 
     def edge(self, left: str, right: str) -> Relation | None:
         if left == right:
@@ -420,13 +428,7 @@ class ConstellationGraph:
         return Relation(left, right, edge.strength, edge.reasons)
 
     def neighbors(self, key: str) -> tuple[Relation, ...]:
-        out: list[Relation] = []
-        for other in self.books:
-            edge = self.edge(key, other)
-            if edge is not None:
-                out.append(edge)
-        out.sort(key=lambda item: (-item.strength, item.right))
-        return tuple(out)
+        return self._neighbors.get(key, ())
 
     def _reason_labels(self, edge: Relation) -> tuple[str, ...]:
         return tuple(f"{reason.kind}:{reason.value}" for reason in edge.reasons)
@@ -499,11 +501,13 @@ class ConstellationGraph:
                 series.append(value)
         return penalty
 
-    def _all_paths(self, start: str, end: str, *, min_steps: int = 4, max_steps: int = 8, max_candidates: int = 2000) -> list[tuple[str, ...]]:
+    def _all_paths(self, start: str, end: str, *, min_steps: int = 4, max_steps: int = 8, max_candidates: int = 2000, control=None) -> list[tuple[str, ...]]:
         found: list[tuple[str, ...]] = []
         stack: list[tuple[str, tuple[str, ...]]] = [(start, (start,))]
         expanded = 0
         while stack and expanded < max_candidates * 4:
+            if control is not None and control.cancelled():
+                return []
             expanded += 1
             current, path = stack.pop()
             if len(path) > max_steps:
@@ -535,11 +539,11 @@ class ConstellationGraph:
             return (1.0 - avg) * 0.65 + variety * 0.55 - penalty
         return avg * 0.75 + variety * 0.35 - penalty
 
-    def promenade(self, start: str, end: str, *, variant: str = "balanced") -> Walk | None:
+    def promenade(self, start: str, end: str, *, variant: str = "balanced", control=None) -> Walk | None:
         variant = _fold(variant)
         if variant not in {"short", "balanced", "surprising"}:
             raise ValueError("variant must be short, balanced or surprising")
-        paths = self._all_paths(start, end)
+        paths = self._all_paths(start, end, control=control)
         if not paths:
             return None
         paths.sort(key=lambda path: (-self._walk_score(path, variant), len(path), path))

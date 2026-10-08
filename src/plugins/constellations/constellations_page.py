@@ -126,28 +126,49 @@ class View:
             self.render()
             self.status.set_label('Aucun profil disponible. Créez un profil dans Cifereca.')
             return
-        self.generation += 1; generation = self.generation
-        if self.task:
-            self.task.cancel()
         self.nodes, self.local, self.center, self.path = (), (), None, ()
         self.nav, self.start = Navigation(), None
         self.render()
         cached = None if refresh else self.cache.get(identity)
+        pending = self.plugin.pending
+        context = self.plugin.context
         self.status.set_label('Chargement…')
         def operation(control):
-            rows = cached if cached is not None else tuple(self.plugin.context.broker('metadata').library_entries(identity_id=identity, scan=False))
+            rows = cached if cached is not None else tuple(context.broker('metadata').library_entries(identity_id=identity, scan=False))
             local = tuple(node_from_row(r, origin='bibliothèque') for r in rows[:300])
             extra = ()
             if remote and not control.cancelled():
-                extra = tuple(node_from_row(r) for r in self.plugin.context.broker('catalog').search(remote, identity_id=identity, limit=100)[:100])
-            return rows, local, merge_nodes(local + extra)
-        self.task = self.plugin.context.broker('tasks').submit(operation, label='Constellations', kind='constellations')
+                extra = tuple(node_from_row(r) for r in context.broker('catalog').search(remote, identity_id=identity, limit=100)[:100])
+            if control.cancelled():
+                return None
+            seed = node_from_row(pending, origin='sélection') if pending else None
+            nodes = merge_nodes(local + extra + ((seed,) if seed else ()))
+            return rows, local, nodes, seed.key if seed else None
+        self.run_calculation(operation, lambda result: self.loaded(self.generation, identity, result, ''), 'Chargement Constellations')
+
+    def run_calculation(self, operation, complete, label):
+        """Run CPU/network work outside GTK; only current-context results apply."""
+        self.generation += 1
+        generation, identity = self.generation, self.identity_id()
+        if self.task:
+            self.task.cancel()
+        self.task = self.plugin.context.broker('tasks').submit(operation, label=label, kind='constellations')
         def done(handle):
+            if handle.control.cancelled():
+                return
             try:
-                result, error = handle.result(), ''
+                result, error = handle.result(), False
             except Exception:
-                result, error = None, 'Chargement impossible. Réessayez ou consultez les diagnostics.'
-            self.GLib.idle_add(self.loaded, generation, identity, result, error)
+                result, error = None, True
+            def apply():
+                if self.disposed or generation != self.generation or identity != self.identity_id():
+                    return False
+                if error:
+                    self.status.set_label('Calcul impossible. Les résultats précédents sont conservés.')
+                elif result is not None:
+                    complete(result)
+                return False
+            self.GLib.idle_add(apply)
         self.task.add_done_callback(done)
 
     def loaded(self, generation, identity, result, error):
@@ -155,11 +176,12 @@ class View:
             return False
         if error:
             self.status.set_label(error); return False
-        rows, self.local, self.nodes = result
+        rows, self.local, self.nodes, seed_key = result
         self.cache[identity] = rows
         self.status.set_label(f'{len(self.nodes)} notices · exploration bornée aux 300 premières notices locales et 100 résultats distants')
-        if self.plugin.pending:
-            self.seed(self.plugin.pending); self.plugin.pending = None
+        self.plugin.pending = None
+        if seed_key:
+            self.visit(next(n for n in self.nodes if n.key == seed_key))
         elif self.nodes:
             self.visit(self.nodes[0])
         else:
@@ -167,16 +189,37 @@ class View:
         return False
 
     def seed(self, book):
-        if book is not None:
-            self.start, self.path = None, ()
-            node = node_from_row(book, origin='sélection')
-            self.nodes = merge_nodes(self.nodes + (node,))
-            self.visit(next(n for n in self.nodes if n.key == node.key))
+        if book is None:
+            return
+        self.start, self.path = None, ()
+        if not self.nodes:
+            self.plugin.pending = book
+            self.load()
+            return
+        self.plugin.pending = None
+        node = node_from_row(book, origin='sélection')
+        current = next((n for n in self.nodes if n.key == node.key), None)
+        if current:
+            self.visit(current)
+            return
+        snapshot = self.nodes
+        def apply(nodes):
+            self.nodes = nodes
+            self.visit(next(n for n in nodes if n.key == node.key))
+        self.status.set_label('Ajout du livre central…')
+        self.run_calculation(lambda control: merge_nodes(snapshot + (node,)), apply, 'Calcul du voisinage')
+
+    def cancel_calculation(self):
+        self.generation += 1
+        if self.task:
+            self.task.cancel()
 
     def visit(self, node):
+        self.cancel_calculation()
         self.center = node; self.nav.visit(node.key); self.render()
 
     def move(self, offset):
+        self.cancel_calculation()
         key = self.nav.move(offset)
         self.center = next((n for n in self.nodes if n.key == key), self.center)
         self.render()
@@ -188,6 +231,7 @@ class View:
         self.host.toast('Fiche locale indisponible pour ce profil ; la notice reste affichée ici.')
 
     def start_walk(self):
+        self.cancel_calculation()
         self.start = self.center
         if self.start:
             self.status.set_label('Départ : ' + self.start.book.title + '. Choisissez maintenant un livre d’arrivée.')
@@ -196,13 +240,20 @@ class View:
         if not self.start or not self.center:
             self.status.set_label('Choisissez un départ et une arrivée distincts.'); return
         variant = ('court', 'équilibré', 'surprenant')[self.variant.get_selected()]
-        self.path = promenade(self.nodes, self.start, self.center, variant=variant)
-        self.status.set_label('Promenade : ' + ' → '.join(n.book.title for n in self.path) if self.path else 'Aucun chemin de 4 à 8 livres suffisamment documenté.')
-        self.render()
+        nodes, start, end = self.nodes, self.start, self.center
+        self.status.set_label('Recherche de promenade…')
+        def apply(path):
+            self.path = path
+            self.status.set_label('Promenade : ' + ' → '.join(n.book.title for n in path) if path else 'Aucun chemin de 4 à 8 livres suffisamment documenté.')
+            self.render()
+        self.run_calculation(lambda control: promenade(nodes, start, end, variant=variant, control=control), apply, 'Calcul de promenade')
 
     def replace(self, index):
-        self.path = replace_step(self.path, index, self.nodes)
-        self.render()
+        path, nodes = self.path, self.nodes
+        def apply(replacement):
+            self.path = replacement
+            self.render()
+        self.run_calculation(lambda control: replace_step(path, index, nodes), apply, 'Remplacement d’étape')
 
     def render(self):
         if not hasattr(self, 'flow'):

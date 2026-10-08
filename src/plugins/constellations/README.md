@@ -63,3 +63,14 @@ calculés de Recommandations. La page utilise les snapshots locaux et les catalo
 pas les objets privés de ce plugin. La recette visuelle GTK reste dans #706 ; les
 tests locaux couvrent le moteur, les projections et les callbacks sans prétendre
 constituer une recette GUI.
+
+### Réactivité des calculs
+
+Les nouveaux voisinages, promenades et remplacements d'étape sont calculés via le
+broker de tâches, hors du fil GTK. Les callbacks ne publient que le résultat du
+contexte courant : changement de profil, nouvelle sélection et désactivation
+invalident les résultats tardifs. L'exploration de promenade observe l'annulation
+entre les expansions. Les listes d'adjacence sont construites une fois par graphe
+et réutilisées ; chaque étape n'effectue plus un scan et un tri de tous les livres.
+Les tests utilisent une tâche à exécution différée et un dispatcher explicites,
+pour distinguer le calcul de l'application UI sans prétendre valider GTK.
