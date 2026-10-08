@@ -504,14 +504,23 @@ class LibraryReadBrokerImpl:
             # Resolve a transformed artifact back to its source and logical book.
             variant=next((v for v in self.service.storage.artifact_variants(artifact_id=value)),None)
             if variant:
-                return self.for_artifact(str(variant.get("source_artifact_id") or ""), identity_id=identity_id)
+                return self.for_artifact(value, identity_id=identity_id)
         return self._view(entries, value, identity_id=identity_id)
 
     def for_artifact(self, artifact_id: str, *, identity_id: str | None = None) -> LogicalBookArtifacts | None:
         value=str(artifact_id)
         source=value
         variant=next((v for v in self.service.storage.artifact_variants(artifact_id=value)),None)
-        if variant: source=str(variant.get("source_artifact_id") or value)
+        if variant:
+            # A transformed artifact can belong to another identity even
+            # while its source hash exists in both libraries. Do not disclose
+            # the other identity's variant by resolving it to a shared source.
+            if identity_id is not None and not _identity_placements(
+                self.service.storage, value, identity_id=identity_id,
+                default_identity_id=self._default_identity(),
+            ):
+                return None
+            source=str(variant.get("source_artifact_id") or value)
         entries=[
             e for e in self.service.storage.catalog_entries()
             if str(e.get("artifact_id") or "") == source and self._visible(e, identity_id)
