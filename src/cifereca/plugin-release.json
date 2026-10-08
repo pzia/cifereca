@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "release": "0.9.44+dev.7",
+  "packages": {
+    "org.cifereca.provider.baen": {
+      "version": "0.1.8",
+      "name": "Baen"
+    },
+    "org.cifereca.ui.page.diagnostics": {
+      "version": "0.1.7",
+      "name": "Cifereca Diagnostics"
+    },
+    "org.cifereca.provider.ebooksgratuits": {
+      "version": "0.1.10",
+      "name": "Ebooks libres et gratuits"
+    },
+    "org.cifereca.epub-optimizer": {
+      "version": "0.3.1",
+      "name": "Cifereca EPUB/PDF Optimizer"
+    },
+    "org.cifereca.ui.page.home": {
+      "version": "1.0.11",
+      "name": "Accueil"
+    },
+    "org.cifereca.maintenance.library-audit": {
+      "version": "0.2.2",
+      "name": "Cifereca Library Audits"
+    },
+    "org.cifereca.provider.bnf-catalogue": {
+      "version": "1.0.9",
+      "name": "BnF Catalogue général"
+    },
+    "org.cifereca.provider.gallica": {
+      "version": "1.2.15",
+      "name": "Gallica"
+    },
+    "org.cifereca.provider.gutenberg": {
+      "version": "1.2.16",
+      "name": "Project Gutenberg"
+    },
+    "org.cifereca.provider.kobo": {
+      "version": "1.2.11",
+      "name": "Kobo Suite Provider"
+    },
+    "org.cifereca.provider.numilog": {
+      "version": "0.1.12",
+      "name": "Numilog"
+    },
+    "org.cifereca.provider.paris": {
+      "version": "1.2.20",
+      "name": "Bibliothèques de Paris"
+    },
+    "org.cifereca.recommendations": {
+      "version": "0.2.13",
+      "name": "Recommandations CIFERECA"
+    },
+    "org.cifereca.runtime.kobo-adept": {
+      "version": "1.2.15",
+      "name": "Kobo-Adept Runtime"
+    },
+    "org.cifereca.transport.http": {
+      "version": "1.0.4",
+      "name": "Transport HTTP"
+    }
+  }
+}
