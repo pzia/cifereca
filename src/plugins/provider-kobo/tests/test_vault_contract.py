@@ -224,3 +224,62 @@ def test_kobo_cover_url_normalizes_relative_and_nested_shapes():
         "images": [{"thumbnail": "/covers/thumb.jpg"}],
     })
     assert item.thumbnail_url == "https://vault.example/covers/thumb.jpg"
+
+
+def test_kobo_catalog_reports_rejected_rows_and_resets_between_searches():
+    class Client:
+        base_url = "https://vault.example"
+
+        def __init__(self):
+            self.calls = 0
+
+        def search(self, query, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "items": [
+                        {"product_id": "ok-1", "title": "Valide"},
+                        {"title": "Sans identifiant"},
+                        "invalid-shape",
+                    ]
+                }
+            return {"items": [{"product_id": "ok-2", "title": "Valide 2"}]}
+
+    catalog = KoboCatalogService(Client(), credential_id="vault")
+
+    first = catalog.search("test")
+
+    assert [row.record_id for row in first] == ["ok-1"]
+    assert catalog.last_search_rejections == [
+        {"type": "ProviderError", "reason": "missing_product_id"},
+        {"type": "invalid_shape", "reason": "item_not_object"},
+    ]
+
+    second = catalog.search("test 2")
+
+    assert [row.record_id for row in second] == ["ok-2"]
+    assert catalog.last_search_rejections == []
+
+
+def test_kobo_diagnostic_state_exposes_catalog_search_rejections():
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="vault-1",
+        label="Kobo",
+        credentials={"api_token": "x"},
+        options={"base_url": "https://vault.example"},
+        config={},
+        storage={},
+        diagnostics=Diagnostics(),
+        runtime_capabilities=SimpleNamespace(acquisition=lambda _provider: None),
+    )
+    try:
+        session.catalog.last_search_rejections = [
+            {"type": "ProviderError", "reason": "missing_product_id"}
+        ]
+
+        assert session.diagnostic_state()["catalog_search_rejections"] == [
+            {"type": "ProviderError", "reason": "missing_product_id"}
+        ]
+    finally:
+        session.close()
