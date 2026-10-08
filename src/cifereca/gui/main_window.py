@@ -1345,11 +1345,29 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_size_request(760, 540)
         self.set_title(f"cifereca — v{__version__}")
 
-        self.toast_overlay = Adw.ToastOverlay()
-        self.set_content(self.toast_overlay)
+        self.window_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_content(self.window_root)
         self.root_stack = Gtk.Stack()
         self.root_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.toast_overlay.set_child(self.root_stack)
+        self.root_stack.set_vexpand(True)
+        self.window_root.append(self.root_stack)
+
+        self.notification_revealer = Gtk.Revealer()
+        self.notification_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        self.notification_revealer.set_reveal_child(False)
+        notification_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        add_css(notification_bar, "notification-bar")
+        self.notification_label = Gtk.Label(label="", xalign=0)
+        self.notification_label.set_hexpand(True)
+        self.notification_label.set_wrap(True)
+        notification_bar.append(self.notification_label)
+        self.notification_close = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        self.notification_close.set_tooltip_text("Fermer la notification")
+        self.notification_close.connect("clicked", lambda _button: self._dismiss_notification())
+        notification_bar.append(self.notification_close)
+        self.notification_revealer.set_child(notification_bar)
+        self.window_root.append(self.notification_revealer)
+        self._notification_hide_source: int | None = None
         startup_started = time.perf_counter()
         _TRACE_LOG.info("TRACE gui build-startup begin")
         self.root_stack.add_named(self._build_startup(), "startup")
@@ -1410,6 +1428,7 @@ class MainWindow(Adw.ApplicationWindow):
         .success-badge { background: alpha(@success_color, 0.20); color: @success_color; }
         .cover-frame { border-radius: 7px; background: alpha(currentColor, 0.06); }
         .busy-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 8px 14px; }
+        .notification-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 7px 12px; }
         .settings-tabs button { padding-left: 8px; padding-right: 8px; min-width: 0; }
         .activity-success { color: @success_color; }
         .activity-error { color: @error_color; }
@@ -1422,10 +1441,34 @@ class MainWindow(Adw.ApplicationWindow):
         if display:
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
+    def _cancel_notification_hide(self) -> None:
+        source = self._notification_hide_source
+        if source is None:
+            return
+        try:
+            GLib.source_remove(source)
+        except Exception:
+            pass
+        self._notification_hide_source = None
+
+    def _hide_notification(self) -> bool:
+        self._notification_hide_source = None
+        self.notification_revealer.set_reveal_child(False)
+        return False
+
+    def _dismiss_notification(self) -> None:
+        self._cancel_notification_hide()
+        self.notification_revealer.set_reveal_child(False)
+
     def toast(self, message: str, timeout: int = 3) -> None:
-        toast = Adw.Toast.new(message)
-        toast.set_timeout(timeout)
-        self.toast_overlay.add_toast(toast)
+        self._cancel_notification_hide()
+        self.notification_label.set_label(str(message))
+        self.notification_revealer.set_reveal_child(True)
+        bounded_timeout = max(1, min(int(timeout), 10))
+        self._notification_hide_source = GLib.timeout_add_seconds(
+            bounded_timeout,
+            self._hide_notification,
+        )
 
     def show_error(self, message: str, title: str = "Une erreur est survenue") -> None:
         display_message = self._functional_error_message(message)
