@@ -1,6 +1,6 @@
 """Consistent buttons and adaptive action bars for built-in pages."""
 from gi.repository import Adw, Gtk
-from .action_layout import action_budget, compact_actions
+from .action_layout import action_budget, compact_actions, visible_action_count
 
 
 def action_button(label, icon_name=None, *, suggested=False, destructive=False, tooltip=None):
@@ -28,10 +28,16 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
     The last fallback is horizontal scrolling when even icons do not fit.
     Buttons and their callbacks stay the same objects through every resize.
     """
-    def __init__(self, *, fraction=0.5, source=None):
+    def __init__(
+        self, *, fraction=0.5, source=None,
+        overflow=False, preserve_primary_label=False,
+    ):
         super().__init__()
         self.fraction = fraction; self.source = source
+        self.overflow = bool(overflow)
+        self.preserve_primary_label = bool(preserve_primary_label)
         self._buttons = []; self._widths = {}; self._compact = None; self._budget = None
+        self._overflow_visible_count = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.box.add_css_class('toolbar')
         self.box.set_halign(Gtk.Align.END)
@@ -40,6 +46,23 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         self.set_min_content_width(0)
         self.set_valign(Gtk.Align.START)
         self.set_child(self.box)
+        if self.overflow:
+            self.overflow_button = Gtk.MenuButton()
+            self.overflow_button.set_icon_name('view-more-symbolic')
+            self.overflow_button.set_tooltip_text('Plus d’actions')
+            try:
+                self.overflow_button.update_property(
+                    [Gtk.AccessibleProperty.LABEL], ['Plus d’actions']
+                )
+            except (AttributeError, TypeError):
+                pass
+            self.overflow_popover = Gtk.Popover()
+            self.overflow_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            self.overflow_box.set_margin_top(8); self.overflow_box.set_margin_bottom(8)
+            self.overflow_box.set_margin_start(8); self.overflow_box.set_margin_end(8)
+            self.overflow_popover.set_child(self.overflow_box)
+            self.overflow_button.set_popover(self.overflow_popover)
+            self.overflow_button.set_visible(False)
         self.add_tick_callback(self._resize)
 
     def append(self, button):
@@ -61,10 +84,58 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         button.set_valign(Gtk.Align.CENTER)
         self._widths[button] = max(button.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 32)
         self._compact = None
+        self._overflow_visible_count = None
 
     def clear(self):
-        for button in self._buttons: self.box.remove(button)
+        for button in self._buttons:
+            parent = button.get_parent()
+            if parent is self.box:
+                self.box.remove(button)
+            elif self.overflow and parent is self.overflow_box:
+                self.overflow_box.remove(button)
         self._buttons.clear(); self._widths.clear(); self._compact = None
+        self._overflow_visible_count = None
+        if self.overflow:
+            parent = self.overflow_button.get_parent()
+            if parent is self.box:
+                self.box.remove(self.overflow_button)
+            self.overflow_button.set_visible(False)
+
+    @staticmethod
+    def _move_button(button, target):
+        parent = button.get_parent()
+        if parent is target:
+            return
+        if parent is not None:
+            remover = getattr(parent, 'remove', None)
+            if callable(remover):
+                remover(button)
+        target.append(button)
+
+    def _layout_overflow(self, budget):
+        widths = [self._widths[button] for button in self._buttons]
+        visible_count = visible_action_count(widths, budget, minimum_visible=1)
+        if visible_count == self._overflow_visible_count:
+            return
+        hidden = self._buttons[visible_count:]
+        for button in self._buttons[:visible_count]:
+            self._move_button(button, self.box)
+        for button in hidden:
+            self._move_button(button, self.overflow_box)
+        parent = self.overflow_button.get_parent()
+        if parent is not None and parent is not self.box:
+            remover = getattr(parent, 'remove', None)
+            if callable(remover):
+                remover(self.overflow_button)
+        if hidden:
+            if self.overflow_button.get_parent() is not self.box:
+                self.box.append(self.overflow_button)
+            self.overflow_button.set_visible(True)
+        else:
+            if self.overflow_button.get_parent() is self.box:
+                self.box.remove(self.overflow_button)
+            self.overflow_button.set_visible(False)
+        self._overflow_visible_count = visible_count
 
     @staticmethod
     def _compact_label(label, icon, icon_count):
@@ -82,6 +153,21 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         budget = action_budget(source.get_width(), self.fraction)
         if budget != self._budget:
             self.set_size_request(budget, -1); self._budget = budget
+        if self.overflow:
+            self._layout_overflow(budget)
+            if self.preserve_primary_label and self._buttons:
+                primary = self._buttons[0]
+                label = getattr(primary, '_cifereca_action_label', None)
+                icon = getattr(primary, '_cifereca_action_icon', None)
+                if label and icon:
+                    try:
+                        content = Adw.ButtonContent()
+                        content.set_label(label); content.set_icon_name(icon)
+                        primary.set_child(content)
+                    except (AttributeError, TypeError):
+                        primary.set_label(label)
+                    primary.update_property([Gtk.AccessibleProperty.LABEL], [label])
+            return True
         compact = compact_actions(self._widths.values(), budget)
         if compact != self._compact:
             icon_counts = {}
