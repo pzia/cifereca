@@ -7,6 +7,8 @@ CONTENT_FIELDS=frozenset({'title','author','subject','series','collection'})
 FORM_FIELDS=frozenset({'source','format','support','publisher','isbn','language','date'})
 LABELS={'author':'Auteur','subject':'Sujet','series':'Série','collection':'Collection','publisher':'Éditeur','source':'Source','format':'Format','support':'Support','isbn':'ISBN','language':'Langue'}
 LIST_FACET_MAX_CHARS=24
+LIST_FACET_MAX_VISIBLE=6
+LIST_FACET_FIELD_LIMITS={'author':2,'format':2,'language':1,'collection':1,'source':1}
 
 def compact_facet_label(value, max_chars=LIST_FACET_MAX_CHARS):
     """Keep pathological facet metadata from dictating list-row width."""
@@ -23,7 +25,47 @@ class BookFacet:
     @property
     def group(self):return 'content' if self.field in CONTENT_FIELDS else 'form'
     @property
-    def tooltip(self):return ('Fond' if self.group=='content' else 'Forme')+' · '+LABELS.get(self.field,self.field)+' · rechercher '+self.label
+    def tooltip(self):
+        if self.field=='_overflow':return self.value
+        return ('Fond' if self.group=='content' else 'Forme')+' · '+LABELS.get(self.field,self.field)+' · rechercher '+self.label
+
+def project_list_facets(facets,max_visible=LIST_FACET_MAX_VISIBLE):
+    """Dense, stable list projection with explicit overflow."""
+    selected=[];hidden=[];seen=set();field_counts={}
+    for facet in facets:
+        label=str(facet.label or '').strip()
+        if not label:continue
+        key=label.casefold()
+        if key in seen:continue
+        limit=LIST_FACET_FIELD_LIMITS.get(facet.field)
+        if limit is not None and field_counts.get(facet.field,0)>=limit:
+            hidden.append(facet);continue
+        if len(selected)>=max_visible:
+            hidden.append(facet);continue
+        selected.append(facet);seen.add(key)
+        field_counts[facet.field]=field_counts.get(facet.field,0)+1
+    if hidden:
+        if len(selected)>=max_visible:
+            hidden.insert(0,selected.pop())
+        hidden_labels=[];hidden_seen=set()
+        for facet in hidden:
+            label=str(facet.label or '').strip()
+            key=label.casefold()
+            if label and key not in hidden_seen:
+                hidden_seen.add(key);hidden_labels.append(label)
+        selected.append(BookFacet('_overflow',f'+{len(hidden_labels)}','Autres attributs : '+', '.join(hidden_labels)))
+    return selected
+
+def compact_row_meta(meta,visible_labels):
+    """Remove metadata segments already represented by visible facets/badges."""
+    hidden={str(value or '').strip().casefold() for value in visible_labels if str(value or '').strip()}
+    out=[];seen=set()
+    for part in str(meta or '').split(' · '):
+        value=part.strip()
+        key=value.casefold()
+        if not value or key in hidden or key in seen:continue
+        seen.add(key);out.append(value)
+    return ' · '.join(out)
 
 def facets_for_book(row,provider_name=lambda value:value):
     metadata=row.get('metadata') or {};out=[];seen=set()
