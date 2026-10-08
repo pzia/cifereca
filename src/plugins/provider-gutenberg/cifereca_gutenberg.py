@@ -133,7 +133,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.15"
+        user_agent = "cifereca-gutenberg/1.2.16"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
@@ -387,6 +387,18 @@ class GutenbergSession(ProviderSession):
                     "bookshelves": list(row.get("bookshelves") or []),
                     "opds_detail_url": row.get("detail_url"),
                     "cover_source": row["cover_origin"],
+                    **({
+                        "catalog_cover": {
+                            "url": row["thumbnail"],
+                            "source": f"gutenberg.{row['cover_origin']}",
+                            "evidence_id": f"gutenberg:{ebook_no}",
+                            "evidence_strength": (
+                                100 if row["cover_origin"] == "opds_thumbnail"
+                                else 90 if row["cover_origin"] == "opds_image"
+                                else 80
+                            ),
+                        }
+                    } if row.get("thumbnail") else {}),
                 },
             ))
         duplicate_editions = max(0, stats["candidate_editions"] - len(candidates))
