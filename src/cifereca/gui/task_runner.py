@@ -99,11 +99,11 @@ class TaskRunner:
                     if ok:
                         ok(payload)
                     if success_toast:
-                        self.window._activity_result(
-                            success_toast,
-                            success=True,
-                            task_id=task_id,
-                        )
+                        reporter = getattr(self.window, "_activity_result", None)
+                        if callable(reporter):
+                            reporter(success_toast, success=True, task_id=task_id)
+                        else:
+                            self.window.toast(success_toast)
                 else:
                     if err:
                         err(payload)
