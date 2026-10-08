@@ -438,3 +438,73 @@ def test_kobo_catalog_aggregates_vault_merge_rejections():
     assert catalog.last_search_rejections == [
         {"source": "library", "type": "invalid_shape", "reason": "missing_product_id"}
     ]
+
+
+def test_kobo_connect_does_not_keep_stale_vault_capabilities():
+    class FakeVault:
+        def __init__(self):
+            self.calls = 0
+
+        def status(self, authenticated=False):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "ok": True,
+                    "api_version": "2.3",
+                    "capabilities": ["acquisition"],
+                    "capability_details": [{"id": "acquisition", "enabled": True}],
+                    "acquisition_access": "configured",
+                }
+            return {
+                "ok": True,
+                "api_version": "2.3",
+                "capabilities": "malformed",
+                "capability_details": None,
+                "acquisition_access": "unknown",
+            }
+
+        def account(self):
+            return {"id": "acct", "display_name": "Kobo"}
+
+        def close(self):
+            return None
+
+    class Broker:
+        def acquisition(self, provider):
+            assert provider == "kobo"
+            return RuntimeAcquisitionCapabilities(
+                provider_id="kobo",
+                available=True,
+                compatible=True,
+                operational=True,
+                modes=("adobe_adept", "kobo_delegated"),
+            )
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="vault-1",
+        label="Kobo",
+        credentials={"api_token": "x"},
+        options={"base_url": "https://vault.example"},
+        config={},
+        storage={},
+        diagnostics=Diagnostics(),
+        runtime_capabilities=Broker(),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    try:
+        session.connect()
+        assert session.capability_names == {"acquisition"}
+        assert "acquisition" in session.capability_details
+        assert session.supports_acquisition_acsm is True
+        assert session.supports_acquisition_display_profile is True
+
+        session.connect()
+
+        assert session.capability_names == set()
+        assert session.capability_details == {}
+        assert session.supports_acquisition_acsm is False
+        assert session.supports_acquisition_display_profile is False
+    finally:
+        session.close()
