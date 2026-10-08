@@ -91,39 +91,71 @@ def statistics_lines(row):
     return lines
 
 def attention_items(row, *, now=None):
-    """Return concise dashboard actions from already-known local state."""
+    """Return prioritized, deduplicated actions from already-known local state."""
     from time import time
     stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else {}
     sync=row.get('sync') if isinstance(row.get('sync'),dict) else {}
     items=[]
-    def add(kind,label,count=None):
-        if count is None or int(count or 0)>0:
-            items.append({'kind':kind,'label':label,'count':count})
+    def add(key,kind,label,*,count=None,priority=50,action='open',action_label='Voir',context='',provider_id=None):
+        if count is not None and int(count or 0)<=0:
+            return
+        items.append({
+            'key':key,'kind':kind,'label':label,'count':count,'priority':priority,
+            'action':action,'action_label':action_label,'context':context,
+            'provider_id':provider_id,
+        })
+
     due=int(stats.get('due_soon_loans') or 0)
-    if due:add('warning','Prêts proches de l’échéance',due)
+    if due:
+        add('loans-due','warning','Prêts proches de l’échéance',count=due,priority=80,
+            action='open',action_label='Voir',context='Bibliothèque · échéances')
     available=int(stats.get('available_bookings') or stats.get('available_reservations') or 0)
-    if available:add('success','Réservations disponibles',available)
+    if available:
+        add('bookings-available','success','Réservations disponibles',count=available,priority=90,
+            action='open',action_label='Voir',context='Bibliothèque · réservations')
+
     attention=int(sync.get('attention_required') or 0)
-    if attention:add('warning','Actions de synchronisation requises',attention)
     errors=int(sync.get('errors') or 0)
-    if errors:add('error','Erreurs de synchronisation',errors)
+    sync_problem=bool(attention or errors)
+    if sync_problem:
+        label='Synchronisation à reprendre' if errors else 'Synchronisation à actualiser'
+        action_label='Réessayer' if errors else 'Actualiser'
+        detail=[]
+        if errors:detail.append(f"{errors} erreur(s)")
+        if attention:detail.append(f"{attention} action(s) requise(s)")
+        add('sync','error' if errors else 'warning',label,count=max(errors,attention),priority=100 if errors else 70,
+            action='sync',action_label=action_label,context='Synchronisation · '+', '.join(detail))
+
+    loans_stale=False
     if stats and stats.get('known_loans') is None:
-        add('warning','Inventaire des prêts à actualiser')
+        loans_stale=True
     observed=stats.get('loans_observed_at')
     if stats.get('known_loans') and observed:
         try:
-            age=max(0,float((time() if now is None else now))-float(observed))
-            if age>24*3600:add('warning','Inventaire des prêts ancien')
+            loans_stale=max(0,float((time() if now is None else now))-float(observed))>24*3600
         except (TypeError,ValueError):
             pass
-    disconnected=[str(source.get('label') or source.get('provider_id') or 'Source')
-                  for source in linked_sources(row) if not source.get('connected')]
-    if disconnected:
-        add('warning','Sources à connecter : '+', '.join(disconnected[:3]))
+    # A failed/partial synchronization already owns the refresh action; avoid
+    # presenting the same underlying freshness problem twice.
+    if loans_stale and not sync_problem:
+        add('loans-stale','warning','Inventaire des prêts à actualiser',priority=60,
+            action='sync',action_label='Actualiser',context='Prêts · données non actualisées')
+
+    for source in linked_sources(row):
+        if source.get('connected'):
+            continue
+        provider_id=str(source.get('provider_id') or '')
+        label=str(source.get('label') or provider_id or 'Source')
+        add('source:'+provider_id,'warning',label+' · connexion requise',priority=85,
+            action='settings',action_label='Connecter',context='Source authentifiée · '+label,
+            provider_id=provider_id)
+
     providers=set(row.get('providers') or ())
     if 'paris' in providers and not row.get('adept_profile_id'):
-        add('warning','Profil ADE à associer pour les prêts protégés')
-    return items
+        add('ade-profile','warning','Profil ADE à associer',priority=55,
+            action='open',action_label='Voir le détail',
+            context='Bibliothèques de Paris · prêts protégés')
+    return sorted(items,key=lambda item:(-int(item.get('priority') or 0),str(item.get('label') or '')))
 
 
 class OverviewController:
@@ -170,6 +202,11 @@ class OverviewController:
         return False
     def synchronize(self,deep=False,control=None):
         if not self.closed:self.host.synchronize(deep=deep,control=control)
+    def settings(self,provider_id):
+        opener=getattr(self.host,'open_plugin_settings',None)
+        if self.closed or not callable(opener) or not provider_id:
+            return False
+        opener('provider.'+str(provider_id));return True
     def close(self):
         if not self.closed:
             self.closed=True;self.unsubscribe();self.unsubscribe=lambda:None;self.render=None;self.host=None
@@ -233,6 +270,32 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             index+=columns-column;column=0
         area.attach(main,column,index // columns,span,1);area._cifereca_next=index+span
         return main
+    def attention_entry(area,item,identity_id):
+        row_box=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=8);row_box.set_hexpand(True);row_box.add_css_class('card')
+        for margin in ('top','bottom','start','end'):getattr(row_box,'set_margin_'+margin)(4)
+        priority=Gtk.Label(label='Urgent' if item.get('kind')=='error' else 'À faire')
+        priority.add_css_class('pill');priority.add_css_class(item.get('kind') or 'warning');priority.set_valign(Gtk.Align.CENTER)
+        row_box.append(priority)
+        text_box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=1);text_box.set_hexpand(True)
+        title=Gtk.Label(label=str(item.get('label') or 'Action requise'),xalign=0);title.set_wrap(True);title.add_css_class('heading');text_box.append(title)
+        context=str(item.get('context') or '').strip()
+        if item.get('count') is not None:
+            context=(context+' · ' if context else '')+str(item.get('count'))+' élément(s)'
+        if context:
+            detail=Gtk.Label(label=context,xalign=0);detail.set_wrap(True);detail.add_css_class('caption');detail.add_css_class('dim-label');text_box.append(detail)
+        row_box.append(text_box)
+        action=str(item.get('action') or 'open')
+        callback=None
+        if action=='sync':
+            callback=lambda _b:controller.synchronize(False)
+        elif action=='settings':
+            callback=lambda _b,pid=item.get('provider_id'):controller.settings(pid)
+        else:
+            callback=lambda _b,iid=identity_id:controller.open(iid)
+        button=Gtk.Button(label=str(item.get('action_label') or 'Voir'));button.add_css_class('suggested-action')
+        button.set_valign(Gtk.Align.CENTER);button.connect('clicked',callback);row_box.append(button)
+        index=area._cifereca_next;area.attach(row_box,0,index,1,1);area._cifereca_next=index+1
+        return row_box
     def render(rows):
         child=grid.get_first_child()
         while child is not None:
@@ -253,6 +316,12 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             state=Gtk.Label(label='ACTIVE' if row.get('selected') else 'PROFIL');state.add_css_class('pill')
             state.add_css_class('success' if row.get('selected') else 'dim-label');state.set_valign(Gtk.Align.CENTER);head.append(state)
             box.append(head);box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
+            attention=attention_items(row)
+            if attention:
+                attention_grid=section(box,'À traiter',1,'dialog-warning-symbolic')
+                for action in attention:
+                    attention_entry(attention_grid,action,row['identity_id'])
 
             stats=row.get('statistics')
             if isinstance(stats,dict):
@@ -309,9 +378,10 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                     connected=bool(linked.get('connected'));pname=str(linked.get('label') or linked['provider_id'])
                     callback=(lambda _b,iid=row['identity_id'],pid=linked['provider_id']:controller.filter(iid,'search',pid)) if source_filters else None
                     settings_open=getattr(host,'open_plugin_settings',None)
-                    settings_callback=(lambda _b,pid='provider.'+str(linked['provider_id']):settings_open(pid)) if callable(settings_open) else None
-                    tile(sources_grid,pname,'Connectée' if connected else 'À connecter','success' if connected else 'warning',
-                         'Rechercher dans cette source' if source_filters else None,callback,settings_callback)
+                    settings_callback=(lambda _b,pid='provider.'+str(linked['provider_id']):settings_open(pid)) if connected and callable(settings_open) else None
+                    state='Connectée' if connected else 'Non connectée · voir À traiter'
+                    tile(sources_grid,pname,state,'success' if connected else 'warning',
+                         'Rechercher dans cette source' if connected and source_filters else None,callback if connected else None,settings_callback)
 
             sync=row.get('sync') or {}
             actions_grid=section(box,'Synchronisation',4,'view-refresh-symbolic')
@@ -321,21 +391,13 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             tile(actions_grid,'État',STATUS.get(sync.get('status'),'Jamais synchronisée'),
                  'success' if sync.get('status')=='success' else ('warning' if sync.get('status') in {'running','partial'} else ('error' if sync.get('status')=='failed' else 'dim-label')))
 
-            attention=attention_items(row)
-            if attention:
-                attention_grid=section(box,'À traiter',3,'dialog-warning-symbolic')
-                for action in attention:
-                    count=action.get('count')
-                    value=count if count is not None else 'Action requise'
-                    tile(attention_grid,action['label'],value,action.get('kind') or 'warning')
-
             info_grid=section(box,'Profil et appareils',6,'preferences-system-symbolic')
             loans_missing=isinstance(stats,dict) and stats.get('known_loans') is None
             primary_span=2 if loans_missing else 3
             if isinstance(stats,dict):
                 tile(info_grid,'Emplacements',stats.get('local_placements',0),'accent',span=primary_span)
-                if loans_missing:tile(info_grid,'Prêts','Non actualisés','warning',span=2)
-            tile(info_grid,'Compte ADE','Profil lié' if row.get('adept_profile_id') else 'À configurer','success' if row.get('adept_profile_id') else 'warning',span=primary_span)
+                if loans_missing:tile(info_grid,'Prêts','Non actualisés · voir À traiter','warning',span=2)
+            tile(info_grid,'Compte ADE','Profil lié' if row.get('adept_profile_id') else 'À traiter','success' if row.get('adept_profile_id') else 'warning',span=primary_span)
             tile(info_grid,'Liseuses',readers_text(row).removeprefix('Liseuses : '),'accent',span=3)
             if row.get('deep_last_at'):
                 from datetime import datetime

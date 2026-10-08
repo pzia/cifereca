@@ -35,7 +35,24 @@ class AttentionCoverageTests(unittest.TestCase):
             "sync":{},
         }
         labels=[item["label"] for item in mod.attention_items(row,now=100)]
-        self.assertFalse(any(label.startswith("Sources à connecter") for label in labels))
+        self.assertFalse(any("connexion requise" in label for label in labels))
+
+    def test_attention_deduplicates_sync_and_stale_loans_and_orders_priority(self):
+        row={
+            "providers":["paris"],
+            "sources":[{"provider_id":"paris","label":"Paris","connected":False}],
+            "statistics":{"known_loans":2,"loans_observed_at":100},
+            "sync":{"attention_required":2,"errors":1},
+        }
+        items=mod.attention_items(row,now=100+25*3600)
+        keys=[item["key"] for item in items]
+        self.assertIn("sync",keys)
+        self.assertNotIn("loans-stale",keys)
+        self.assertEqual(items[0]["key"],"sync")
+        self.assertEqual(items[0]["action_label"],"Réessayer")
+        source=next(item for item in items if item["key"]=="source:paris")
+        self.assertEqual(source["action"],"settings")
+        self.assertEqual(source["action_label"],"Connecter")
 
     def test_attention_aggregates_known_actions(self):
         row={
@@ -47,9 +64,10 @@ class AttentionCoverageTests(unittest.TestCase):
         labels=[item["label"] for item in mod.attention_items(row,now=100+25*3600)]
         self.assertIn("Prêts proches de l’échéance",labels)
         self.assertIn("Réservations disponibles",labels)
-        self.assertIn("Inventaire des prêts ancien",labels)
-        self.assertTrue(any(label.startswith("Sources à connecter") for label in labels))
-        self.assertTrue(any(label.startswith("Profil ADE") for label in labels))
+        self.assertNotIn("Inventaire des prêts à actualiser",labels)
+        self.assertIn("Synchronisation à reprendre",labels)
+        self.assertIn("Paris · connexion requise",labels)
+        self.assertIn("Profil ADE à associer",labels)
 
 if __name__=="__main__":
     unittest.main()

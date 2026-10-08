@@ -40,11 +40,10 @@ def test_attention_items_from_public_dashboard_projection():
     items = attention_items(row, now=100 + 25 * 3600)
     labels = [item["label"] for item in items]
 
-    assert "Actions de synchronisation requises" in labels
-    assert "Erreurs de synchronisation" in labels
-    assert "Inventaire des prêts ancien" in labels
-    assert any(label.startswith("Sources à connecter : Bibliothèques de Paris") for label in labels)
-    assert "Profil ADE à associer pour les prêts protégés" in labels
+    assert "Synchronisation à reprendre" in labels
+    assert "Inventaire des prêts à actualiser" not in labels
+    assert "Bibliothèques de Paris · connexion requise" in labels
+    assert "Profil ADE à associer" in labels
 
     # The public projection does not expose these optional counters here.
     # Home must not fabricate them; support remains forward-compatible.
