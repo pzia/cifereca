@@ -409,8 +409,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         priority_group.append(priority); settings.append(priority_group)
 
         activation_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        activation_label = Gtk.Label(label="Activé", xalign=0)
-        activation_group.append(activation_label)
+        activation_caption = Gtk.Label(label="Activé", xalign=0)
+        activation_group.append(activation_caption)
         toggle = Gtk.Switch(); toggle.set_active(bool(status.enabled)); toggle.set_valign(Gtk.Align.CENTER)
         toggle.set_tooltip_text(f"Activer ou désactiver {d.display_name or d.id}")
         toggle.connect("notify::active", lambda sw, _p, pid=d.id: self._toggle(pid, sw.get_active()))
