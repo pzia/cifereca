@@ -1,7 +1,7 @@
 import logging
 from types import SimpleNamespace
 
-from recommendation_service import compute_recommendations
+from recommendation_service import LibrarySnapshotCache, compute_recommendations
 
 
 class Metadata:
@@ -109,7 +109,7 @@ def test_performance_trace_is_sanitized_and_has_phase_timings(caplog):
     assert f"books={result.books_count}" in trace
     assert f"queries={len(result.queries)}" in trace
     assert f"providers={len(result.providers)}" in trace
-    for field in ("snapshot_ms=", "profile_ms=", "providers_ms=", "catalog_ms=", "rank_ms=", "total_ms="):
+    for field in ("snapshot_ms=", "snapshot_cached=", "profile_ms=", "providers_ms=", "catalog_ms=", "rank_ms=", "total_ms="):
         assert field in trace
     assert "id-1" not in trace
     assert "Seed 1" not in trace
@@ -149,3 +149,24 @@ def test_service_returns_already_loaded_profile_books_without_second_snapshot():
 
     assert metadata.calls == [{"identity_id": "id-1", "scan": False}]
     assert [book["title"] for book in result.profile_books] == ["Seed 1", "Seed 2"]
+
+
+def test_snapshot_cache_reuses_library_projection_until_invalidated():
+    metadata = Metadata()
+    cache = LibrarySnapshotCache()
+
+    first = compute_recommendations(
+        metadata, Catalog(), "id-1", max_queries=2, snapshot_cache=cache
+    )
+    second = compute_recommendations(
+        metadata, Catalog(), "id-1", max_queries=2, snapshot_cache=cache
+    )
+
+    assert len(metadata.calls) == 1
+    assert first.profile_books == second.profile_books
+
+    cache.invalidate()
+    compute_recommendations(
+        metadata, Catalog(), "id-1", max_queries=2, snapshot_cache=cache
+    )
+    assert len(metadata.calls) == 2
