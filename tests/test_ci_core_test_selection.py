@@ -82,3 +82,14 @@ def test_e2e_selector_runs_all_when_runner_or_selector_changes():
     selector = _module()
     assert selector.select_e2e(["e2e/run.py"]) == "all"
     assert selector.select_e2e(["scripts/ci-select-core-tests.py"]) == "all"
+
+
+def test_gui_change_keeps_legacy_and_cross_cutting_ui_regressions():
+    selector = _module()
+    mode, targets = selector.select(["src/cifereca/gui/main_window.py"], ROOT)
+    assert mode == "ui"
+    assert "tests/test_core_0911.py" in targets
+    assert "tests/test_core0923_gtk_focus.py" in targets
+    assert "tests/test_095_consolidation.py" in targets
+    assert "tests/test_core_415_titlebar_action_registry.py" in targets
+    assert "tests/test_core_book_detail_projection.py" in targets
