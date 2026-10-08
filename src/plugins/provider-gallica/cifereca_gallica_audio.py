@@ -122,7 +122,7 @@ def download_bundle(session,item,target_dir,*,recipe: BundleAcquisitionRecipe):
         item.metadata['audio_formats']=list(dict.fromkeys(formats))
         item.metadata['audio_tracks']=len(names)
         item.format=formats[0] if len(set(formats))==1 else None
-        session.diagnostics.add('GALLICA','audio download','ok',detail={'tracks':len(names),'bytes':total,'formats':item.metadata['audio_formats']},level='detailed')
+        session._diagnostic('GALLICA','audio download','ok',detail={'tracks':len(names),'bytes':total,'formats':item.metadata['audio_formats']},level='detailed')
         return candidate/playlist,str(item.friendly_url or f'https://gallica.bnf.fr/{ark}')
     finally:
         if staged.exists():shutil.rmtree(staged)
