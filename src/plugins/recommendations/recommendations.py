@@ -75,6 +75,7 @@ class UxRecommendationsView:
         self._provisional_active = False
         self._profile_books_count = 0
         self._active_identity_id: str | None = None
+        self._reloading_identities = False
         self._diagnostic_cache = 0
         self._diagnostic_network = 0
         self._init_master_detail(plugin, host, Gtk, GLib)
@@ -197,7 +198,7 @@ class UxRecommendationsView:
         self._reload_identities()
         subscribe = getattr(host, "subscribe_identity_overview", None)
         if callable(subscribe):
-            self._unsubscribe = subscribe(self._reload_identities)
+            self._unsubscribe = subscribe(self._identity_overview_changed)
 
     def _labeled(self, label: str, widget: Any):
         box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=5)
@@ -219,7 +220,13 @@ class UxRecommendationsView:
         value = self._config().get(key, fallback)
         return str(value or fallback)
 
-    def _reload_identities(self) -> None:
+    def _identity_overview_changed(self) -> None:
+        # The public overview subscription is also a freshness signal for the
+        # local library projection. Rebuild the selector transactionally and
+        # trigger at most one recommendation refresh afterwards.
+        self._reload_identities(refresh_after=True)
+
+    def _reload_identities(self, *, refresh_after: bool = False) -> None:
         current = self.selected_identity_id()
         rows = []
         getter = getattr(self.host, "identity_overview", None)
@@ -236,21 +243,31 @@ class UxRecommendationsView:
                 except Exception:
                     rows = []
 
-        self._identity_ids = []
-        while self._identity_model.get_n_items():
-            self._identity_model.remove(0)
-        selected = 0
-        for row in rows:
-            identity_id = str(row.get("identity_id") or "")
-            if not identity_id:
-                continue
-            self._identity_ids.append(identity_id)
-            self._identity_model.append(str(row.get("label") or row.get("name") or identity_id))
-            if row.get("selected") or identity_id == current:
-                selected = len(self._identity_ids) - 1
-        self._identity.set_sensitive(bool(self._identity_ids))
-        if self._identity_ids:
-            self._identity.set_selected(selected)
+        self._reloading_identities = True
+        try:
+            self._identity_ids = []
+            while self._identity_model.get_n_items():
+                self._identity_model.remove(0)
+            selected = 0
+            for row in rows:
+                identity_id = str(row.get("identity_id") or "")
+                if not identity_id:
+                    continue
+                self._identity_ids.append(identity_id)
+                self._identity_model.append(str(row.get("label") or row.get("name") or identity_id))
+                if row.get("selected") or identity_id == current:
+                    selected = len(self._identity_ids) - 1
+            self._identity.set_sensitive(bool(self._identity_ids))
+            if self._identity_ids:
+                self._identity.set_selected(selected)
+        finally:
+            self._reloading_identities = False
+
+        # Initial construction still relies on the first-map refresh. Once a
+        # profile has been computed, an overview event represents fresh local
+        # state and deserves exactly one recomputation, after the model is stable.
+        if refresh_after and self._active_identity_id is not None and self._identity_ids:
+            self.refresh()
 
     def selected_identity_id(self) -> str | None:
         if not self._identity_ids:
@@ -259,6 +276,8 @@ class UxRecommendationsView:
         return self._identity_ids[index] if 0 <= index < len(self._identity_ids) else self._identity_ids[0]
 
     def _identity_changed(self, *_args) -> None:
+        if self._reloading_identities:
+            return
         if self._identity_ids:
             self.refresh()
 
