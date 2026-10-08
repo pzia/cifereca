@@ -240,7 +240,10 @@ def _identity_reload_view(rows, *, active_identity, busy=False):
     view._overview_refresh_pending = False
     view.GLib = _CoalescingGLib()
     view.host = SimpleNamespace(identity_overview=lambda: list(rows))
-    view.plugin = SimpleNamespace(context=None)
+    view.plugin = SimpleNamespace(context=None, _pending_reference=None)
+    view._reference_book = None
+    view._reference_books = []
+    view._reload_reference_books = lambda books: None
     refreshes = []
 
     def refreshed():
@@ -321,6 +324,27 @@ def test_identity_overview_before_first_map_does_not_duplicate_initial_refresh()
 
     assert view.GLib.sources == {}
     assert refreshes == []
+
+
+def test_overview_selection_change_clears_reference_from_previous_identity():
+    rows = [
+        {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "completed"}},
+        {"identity_id": "other", "label": "Other", "selected": False, "statistics": {"local_books": 15}, "sync": {"sync_run_id": "run-2", "status": "completed"}},
+    ]
+    view, _dropdown, _refreshes = _identity_reload_view(rows, active_identity="default")
+    reference = object()
+    view._reference_book = reference
+    view._reference_books = [reference]
+    view.plugin._pending_reference = reference
+
+    rows[0]["selected"] = False
+    rows[1]["selected"] = True
+    view._identity_overview_changed()
+
+    assert view.selected_identity_id() == "other"
+    assert view._reference_book is None
+    assert view._reference_books == []
+    assert view.plugin._pending_reference is None
 
 
 def test_overview_selection_change_keeps_library_snapshot_cached():
