@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from cifereca.plugin_api import (
     Cancelled,
@@ -31,6 +32,22 @@ _DIVERSITY_TOOLTIP = (
     "Diversité : 0 privilégie les recommandations les plus proches ; "
     "une valeur élevée varie davantage auteurs, sujets et sources."
 )
+
+def _external_book_url(value: Any) -> str | None:
+    url = str(value or "").strip()
+    if not url or any(char.isspace() for char in url):
+        return None
+    try:
+        parsed = urlsplit(url)
+        _ = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    if parsed.username or parsed.password:
+        return None
+    return url
+
 
 _LANGUAGE_LABELS = {
     "fr": "Français",
@@ -909,12 +926,12 @@ class UxRecommendationsView:
             )
 
         actions = []
-        url = str(get_field(item, "friendly_url", "") or "").strip()
-        if url.startswith(("http://", "https://")):
+        url = _external_book_url(get_field(item, "friendly_url", ""))
+        if url:
             actions.append(
                 UiBookDetailAction(
-                    "recommendation.notice",
-                    "Ouvrir la notice",
+                    "recommendation.online",
+                    "Voir en ligne",
                     "external-link-symbolic",
                     uri=url,
                 )

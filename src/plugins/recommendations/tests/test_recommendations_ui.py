@@ -5,6 +5,7 @@ from recommendations import (
     _AFFINITY_MIN_TOOLTIP,
     _DIVERSITY_TOOLTIP,
     _candidate_languages,
+    _external_book_url,
     _language_label,
     _refresh_on_first_map,
 )
@@ -17,6 +18,16 @@ def ranked(title, score=50, provider="a"):
         reasons=("raison",),
         sources=(provider,),
     )
+
+
+def test_external_book_url_accepts_only_safe_http_sources():
+    assert _external_book_url("https://example.org/book/1") == "https://example.org/book/1"
+    assert _external_book_url("http://example.org/book/1") == "http://example.org/book/1"
+    assert _external_book_url("javascript:alert(1)") is None
+    assert _external_book_url("https://user:secret@example.org/book") is None
+    assert _external_book_url("https:///missing-host") is None
+    assert _external_book_url("https://example.org:bad/book") is None
+    assert _external_book_url("https://example.org/book 1") is None
 
 
 def test_affinity_tooltips_explain_low_high_effect_without_external_docs():
