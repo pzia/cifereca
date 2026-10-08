@@ -149,35 +149,67 @@ GTK fournit Xvfb/D-Bus/GTK. Pour vérifier l'intégration sans vidéo :
 ```bash
 export CIFERECA_GTK_TEST_HARNESS="$PWD/environnements/openai-chat-debian"
 
-python3 simulation/datasetctl.py snapshot ux-small   --harness "$CIFERECA_GTK_TEST_HARNESS"   --out /tmp/cifereca-ux-small.png   --width 1300 --height 850 --wait 4
+python3 simulation/datasetctl.py snapshot ux-small \
+  --harness "$CIFERECA_GTK_TEST_HARNESS" \
+  --out /tmp/cifereca-ux-small.png \
+  --width 1300 --height 850 --wait 4
 ```
 
-Pour une vidéo, lancer la commande dans l'environnement du profil via
-`datasetctl.py exec`, puis enregistrer le `$DISPLAY` fourni par
-`headless` avec FFmpeg `x11grab`. Exemple minimal :
+Pour une vidéo, vérifier d'abord que `ffmpeg` est disponible sur l'hôte. Le
+principe est de démarrer FFmpeg **dans le même `headless`** que Cifereca : il
+hérite ainsi du même `DISPLAY` et du même `XAUTHORITY`. `capture_app.py` lance
+ensuite Cifereca, attend la surface GTK, injecte les actions X11 du scénario et
+termine proprement l'application après la capture finale.
+
+Exemple minimal reproductible :
 
 ```bash
 mkdir -p evidence
+REPO_ROOT="$PWD"
 
-python3 simulation/datasetctl.py exec ux-small --   environnements/openai-chat-debian/headless   --screen 1300x850x24 --   bash -lc '
+python3 simulation/datasetctl.py exec ux-small -- \
+  environnements/openai-chat-debian/headless \
+  --screen 1300x850x24 -- \
+  env REPO_ROOT="$REPO_ROOT" bash -c '
     set -e
-    ffmpeg -y       -f x11grab -framerate 24 -video_size 1300x850       -i "$DISPLAY"       -c:v libx264 -pix_fmt yuv420p       "'"$PWD"'/evidence/ux-small.mp4" &
+    ffmpeg -y \
+      -f x11grab -framerate 24 -video_size 1300x850 \
+      -i "$DISPLAY" \
+      -c:v libx264 -pix_fmt yuv420p \
+      "$REPO_ROOT/evidence/ux-small.mp4" &
     recorder=$!
-    trap '"'"'kill -INT "$recorder" 2>/dev/null || true; wait "$recorder" 2>/dev/null || true'"'"' EXIT
-    exec "'"$PWD"'/environnements/openai-chat-debian/run-cifereca" --verbose
+    trap '\''kill -INT "$recorder" 2>/dev/null || true; wait "$recorder" 2>/dev/null || true'\'' EXIT
+
+    "$REPO_ROOT/environnements/openai-chat-debian/gtk-python" \
+      "$REPO_ROOT/environnements/openai-chat-debian/capture_app.py" \
+      --wait 3 \
+      --settle-after-actions 2 \
+      --out "$REPO_ROOT/evidence/ux-small-final.png" \
+      --cwd "$REPO_ROOT" \
+      -- \
+      python3 "$REPO_ROOT/simulation/datasetctl.py" cifereca ux-small --verbose
   '
 ```
 
-Le shell lancé sous `headless` hérite de `DISPLAY`, `XAUTHORITY`, D-Bus et
-du runtime GTK rootless ; `datasetctl.py exec` fournit les XDG du profil.
-Ainsi la vidéo, Cifereca et les faux services utilisent le même environnement
-isolé. Pour une démonstration interactive, injecter les actions X11 avec les
-outils `capture-app`/`x11_input.py` ou un script de scénario dédié pendant
-l'enregistrement.
+Ajouter au besoin `--click X,Y`, `--type-text TEXTE` et `--key TOUCHE` à
+`capture_app.py`. Les actions sont alors visibles dans le MP4 puisqu'elles sont
+injectées pendant que FFmpeg enregistre le même écran virtuel.
 
-Vérifier ensuite la vidéo avec `ffprobe` et conserver les logs Xvfb/D-Bus et
-du profil de simulation avec la preuve.
+Cette chaîne est importante :
 
+```text
+datasetctl exec (XDG + services du profil)
+  -> headless (Xvfb + D-Bus + DISPLAY)
+  -> ffmpeg x11grab (enregistrement de DISPLAY)
+  -> capture_app.py (actions X11 + fin du scénario)
+  -> datasetctl cifereca (vraie commande et vrais plugins du profil)
+```
+
+Ne pas remplacer `datasetctl cifereca` par un lancement manuel qui oublierait
+`--no-plugins` ou les `--force-plugin` dérivés du profil.
+
+Vérifier ensuite le MP4 avec `ffprobe` et conserver les logs Xvfb/D-Bus, le
+PNG final et les logs du profil de simulation avec la preuve.
 ## Validation de la recette
 
 ```bash
