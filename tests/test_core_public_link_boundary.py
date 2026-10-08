@@ -77,7 +77,7 @@ def test_detail_renderer_applies_validation_to_direct_plugin_links():
 def test_plugin_master_detail_uri_action_is_checked_and_invalid_actions_are_dropped():
     main = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
     module = ast.parse(main.read_text(encoding="utf-8"))
-    cls = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "_UiMasterDetailView")
+    cls = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "PublicBookMasterDetailView")
     renderer = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "show_detail")
     source = ast.unparse(renderer)
     assert "safe_document_link_url(raw_uri, relation='related')" in source
