@@ -458,6 +458,7 @@ class NamingRepairTool(_ReadOnlyTool):
         broker = self._broker("library.maintenance")
         ids = tuple(str(x) for x in plan.facts.get("placement_ids", ()) if str(x))
         changed = 0
+        failures = 0
         warnings: list[str] = list(plan.warnings)
         for index, placement_id in enumerate(ids, start=1):
             control.check_cancelled()
@@ -468,14 +469,15 @@ class NamingRepairTool(_ReadOnlyTool):
                 changed += int(getattr(result, "changed", 0) or 0)
                 warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
             except Exception as exc:
+                failures += 1
                 warnings.append(f"{placement_id}: {type(exc).__name__}: {exc}")
         control.report(current=len(ids), total=len(ids) or 1, message="Renormalisation terminée")
         return MaintenanceResult(
-            ok=not any(": " in w and "Error" in w for w in warnings),
+            ok=failures == 0,
             changed=changed,
             summary=f"{changed} placement(s) renormalisé(s).",
             warnings=tuple(warnings),
-            facts={"planned": len(ids)},
+            facts={"planned": len(ids), "failures": failures},
         )
 
 
@@ -549,6 +551,7 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         broker = self._broker("library.maintenance")
         pairs = tuple((str(a), str(b)) for a, b in plan.facts.get("pairs", ()) if str(a) and str(b))
         changed = 0
+        failures = 0
         warnings: list[str] = list(plan.warnings)
         for index, (duplicate_id, keep_id) in enumerate(pairs, start=1):
             control.check_cancelled()
@@ -563,14 +566,15 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 changed += int(getattr(result, "changed", 0) or 0)
                 warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
             except Exception as exc:
+                failures += 1
                 warnings.append(f"{duplicate_id}: {type(exc).__name__}: {exc}")
         control.report(current=len(pairs), total=len(pairs) or 1, message="Nettoyage terminé")
         return MaintenanceResult(
-            ok=True,
+            ok=failures == 0,
             changed=changed,
             summary=f"{changed} placement(s) redondant(s) supprimé(s).",
             warnings=tuple(warnings),
-            facts={"planned": len(pairs)},
+            facts={"planned": len(pairs), "failures": failures},
         )
 
 
