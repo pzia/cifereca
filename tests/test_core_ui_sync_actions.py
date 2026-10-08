@@ -21,7 +21,8 @@ def test_sync_header_actions_use_adaptive_bar():
     assert "actions = AdaptiveActionBar(source=heading)" in source
     assert "Actualiser" in source
     assert "view-refresh-symbolic" in source
-    assert "Synchroniser maintenant" in source
+    assert "Synchroniser les sources" in source
+    assert "self._sync_all_button = all_now" in source
     assert "emblem-synchronizing-symbolic" in source
     assert "actions.append(refresh)" in source
     assert "actions.append(all_now)" in source

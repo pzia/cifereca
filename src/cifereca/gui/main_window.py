@@ -38,6 +38,7 @@ from .loan_view import (
     loan_medium_counts,
 )
 from .recent_time import format_recent_timestamp
+from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
@@ -2836,7 +2837,8 @@ class MainWindow(Adw.ApplicationWindow):
         title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
         actions = AdaptiveActionBar(source=heading)
         refresh = self.action_button("Actualiser", "view-refresh-symbolic")
-        all_now = self.action_button("Synchroniser maintenant", "emblem-synchronizing-symbolic", suggested=True)
+        all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
+        self._sync_all_button = all_now
         actions.append(refresh); actions.append(all_now)
         heading.append(title); heading.append(actions); outer.append(heading)
         self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
@@ -2863,27 +2865,52 @@ class MainWindow(Adw.ApplicationWindow):
         clear_box(box)
         broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
         identity = self.service.current_identity
+        all_now = getattr(self, "_sync_all_button", None)
+        global_label = sync_identity_action_label(identity)
+        if all_now is not None:
+            all_now._cifereca_action_label = global_label
+            child = all_now.get_child()
+            if child is not None and callable(getattr(child, "set_label", None)):
+                child.set_label(global_label)
+            else:
+                all_now.set_label(global_label)
+            all_now.set_sensitive(False)
         if broker is None:
+            if all_now is not None:
+                all_now.set_tooltip_text("Synchronisation indisponible : broker absent")
             box.append(Gtk.Label(label="Broker de synchronisation indisponible", xalign=0)); return
         rows = broker.sources(identity.identity_id if identity else None)
+        presentations = [sync_source_presentation(source) for source in rows]
+        actionable = any(item.action_enabled for item in presentations)
+        if all_now is not None:
+            all_now.set_sensitive(actionable)
+            all_now.set_tooltip_text(
+                global_label if actionable
+                else "Aucune source activée, connectée et synchronisable pour cette identité"
+            )
         if not rows:
             box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
-        for source in rows:
+        for source, presentation in zip(rows, presentations):
             group = Adw.PreferencesGroup(); box.append(group)
             row = Adw.ActionRow(); row.set_title(source.label or source.provider_id)
-            status = "désactivée" if not source.enabled else ("connectée" if source.connected else "déconnectée")
-            if source.last_success: status += " · dernier succès " + fr_date(source.last_success, True)
-            if source.error: status += " · " + source.error
-            row.set_subtitle(f"{source.provider_id} · {status}")
+            row.set_subtitle(presentation.summary)
+            row.set_subtitle_lines(0)
             toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
+            toggle.set_tooltip_text("Activation : inclure cette source dans les synchronisations")
             def toggled(widget, _param, sid=source.source_id):
-                try: broker.set_enabled(sid, widget.get_active())
-                except Exception as exc: self.show_error(str(exc), "Synchronisation")
+                try:
+                    broker.set_enabled(sid, widget.get_active())
+                    self._refresh_sync_page()
+                except Exception as exc:
+                    self.show_error(str(exc), "Synchronisation")
             toggle.connect("notify::active", toggled); row.add_suffix(toggle)
-            now = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); now.set_tooltip_text("Synchroniser cette source")
-            now.set_sensitive(source.enabled and source.connected and source.sync_capable)
-            def one(_button, sid=source.source_id):
-                self.runner.submit("Synchronisation de la source…", lambda: broker.synchronize_source(sid),
+            now = self.action_button(presentation.action_label, "emblem-synchronizing-symbolic")
+            now.set_sensitive(presentation.action_enabled)
+            now.set_tooltip_text(
+                presentation.action_label if presentation.action_enabled else presentation.disabled_reason
+            )
+            def one(_button, sid=source.source_id, label=source.label or source.provider_id):
+                self.runner.submit(f"Synchronisation {label}…", lambda: broker.synchronize_source(sid),
                     lambda _r: (self._refresh_sync_page(), self.refresh_library(False)), control=_button,
                     priority=TaskPriority.USER_ACTION, kind="source-sync")
             now.connect("clicked", one); row.add_suffix(now); group.add(row)
