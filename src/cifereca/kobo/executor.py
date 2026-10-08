@@ -357,37 +357,39 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
     # used without exposing a Kobo bearer. If the ACSM itself needs Kobo auth,
     # resolve the same candidate in delegated mode and pass its headers on stdin.
     if prefer_acsm:
-        profile = profiles[0]
-        try:
+        # Display profiles can expose different delivery candidates. Before
+        # falling back to plain HTTP, try the other profile for a usable ACSM.
+        for profile in profiles:
             descriptor = resolve("descriptor", profile)
             acsm_candidate = service._kobo_acsm_candidate(descriptor)
-            if acsm_candidate is not None:
-                if service._kobo_candidate_requires_authorization(acsm_candidate):
-                    try:
-                        delegated_acsm = resolve("delegated", profile)
-                        delegated_candidate = service._kobo_acsm_candidate(delegated_acsm)
-                        if delegated_candidate is not None:
-                            request, destination = acsm_request_for(delegated_candidate, profile)
-                            payload = delegated_acsm
-                            candidate = delegated_candidate
-                            selected_profile = profile
-                            acquisition_mode = "acsm-delegated"
-                    except KoboVaultError as exc:
-                        if exc.status_code == 401:
-                            raise
-                        if exc.status_code == 403:
-                            delegation_forbidden = True
-                            delegated_error = exc
-                        else:
-                            raise
-                else:
-                    request, destination = acsm_request_for(acsm_candidate, profile)
-                    payload = descriptor
-                    candidate = acsm_candidate
-                    selected_profile = profile
-                    acquisition_mode = "acsm-descriptor"
-        except KoboVaultError:
-            raise
+            if acsm_candidate is None:
+                continue
+            if service._kobo_candidate_requires_authorization(acsm_candidate):
+                try:
+                    delegated_acsm = resolve("delegated", profile)
+                    delegated_candidate = service._kobo_acsm_candidate(delegated_acsm)
+                    if delegated_candidate is not None:
+                        request, destination = acsm_request_for(delegated_candidate, profile)
+                        payload = delegated_acsm
+                        candidate = delegated_candidate
+                        selected_profile = profile
+                        acquisition_mode = "acsm-delegated"
+                except KoboVaultError as exc:
+                    if exc.status_code == 401:
+                        raise
+                    if exc.status_code == 403:
+                        delegation_forbidden = True
+                        delegated_error = exc
+                    else:
+                        raise
+            else:
+                request, destination = acsm_request_for(acsm_candidate, profile)
+                payload = descriptor
+                candidate = acsm_candidate
+                selected_profile = profile
+                acquisition_mode = "acsm-descriptor"
+            if request is not None:
+                break
 
     # Before asking Vault for a delegated Kobo recipe, inspect descriptor
     # candidates for the normative v2.3.1 ``http_plain`` transport. This is
