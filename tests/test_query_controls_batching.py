@@ -75,7 +75,7 @@ class QueryControlBatching(unittest.TestCase):
     def test_set_state_is_atomic_and_duplicate_signal_is_ignored(self):
         calls=[]
         control=QueryControls([('paris','Paris'),('gallica','Gallica')],lambda:calls.append(control.state()),lambda:None)
-        control._provider_search_capabilities={}
+        self.assertEqual(control._provider_search_capabilities,{})
         target=QueryState('Dumas','author','physical',('paris','gallica'),('epub','pdf'),('fr','en'))
         control.set_state(target)
         self.assertEqual(calls,[target])
