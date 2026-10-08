@@ -170,7 +170,8 @@ class GutenbergSession(ProviderSession):
 
     def _diagnostic(self, *args: Any, **kwargs: Any) -> None:
         try:
-            self._diagnostic(*args, **kwargs)
+            if self.diagnostics is not None:
+                self.diagnostics.add(*args, **kwargs)
         except Exception:
             pass
 

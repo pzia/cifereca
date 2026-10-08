@@ -45,3 +45,24 @@ def test_gutenberg_parse_error_is_not_replaced_by_diagnostics_failure():
             session._parse_feed(b"<feed>", "https://www.gutenberg.org/ebooks/search.opds/")
     finally:
         session.close()
+
+
+class RecordingDiagnostics:
+    def __init__(self):
+        self.events = []
+
+    def add(self, *args, **kwargs):
+        self.events.append((args, kwargs))
+
+
+def test_diagnostic_helper_forwards_event_once_when_sink_is_healthy():
+    session = _session()
+    recording = RecordingDiagnostics()
+    session.diagnostics = recording
+    try:
+        session._diagnostic("GUTENBERG", "OPDS parse", "ok", detail={"count": 1})
+        assert recording.events == [
+            (("GUTENBERG", "OPDS parse", "ok"), {"detail": {"count": 1}}),
+        ]
+    finally:
+        session.close()
