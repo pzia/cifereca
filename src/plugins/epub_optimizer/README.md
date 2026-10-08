@@ -1,12 +1,12 @@
-# Cifereca EPUB Optimizer 0.3.0
+# Cifereca EPUB/PDF Optimizer 0.3.1
 
-Plugin pour **Cifereca Core 0.9.44+dev.1 / Plugin API 1.x**. Le moteur est publié comme `document.transformer` et les profils comme services publics `device.profile`.
+Compatible avec **Plugin API >=1.4,<2** (source de vérité : `cifereca-plugin.json`). Le moteur est publié comme `document.transformer` et les profils comme services publics `device.profile`.
 
 ## But
 
 Créer une variante EPUB e-ink sans modifier l'original ni dégrader silencieusement la sémantique du livre.
 
-La version 0.3.0 apporte :
+La version 0.3.1 apporte :
 
 - conservation byte-for-byte des images animées ;
 - conservation byte-for-byte des images transparentes, sans aplatissement arbitraire ;
@@ -41,6 +41,6 @@ Les capacités de zoom/paysage ne sont pas inventées par le transformer : un pr
 ## Tests
 
 ```bash
-cd plugins/epub_optimizer
+cd src/plugins/epub_optimizer
 python -m pytest -q
 ```
