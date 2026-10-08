@@ -61,7 +61,7 @@ def test_detail_facets_no_longer_use_distant_search_icon_or_blue_author_links():
 def test_author_subtitle_uses_same_filter_value_buttons():
     source = _method("_add_facets")
     assert "subtitle.set_visible(False)" in source
-    assert 'self._facet_value_group(authors, "author", controls)' in source
+    assert "self._facet_value_group(authors, 'author', controls)" in source
     assert "parent.append(author_box)" in source
 
 
