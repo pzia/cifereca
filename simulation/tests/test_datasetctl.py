@@ -96,6 +96,18 @@ class DatasetCtlTests(unittest.TestCase):
         self.assertIn("provider.bnf-catalogue", plugins)
         self.assertIn("ui.page.home", plugins)
 
+    def test_builtin_core_ui_plugins_satisfy_profile_requirements(self):
+        catalog = datasetctl.load_catalog()
+        _, profile = datasetctl.load_profile("ux-search-list")
+        builtin = datasetctl.builtin_plugin_ids()
+        self.assertTrue({
+            "core.ui.pages",
+            "core.ui.widgets",
+            "core.ui.titlebar",
+            "core.ui.system",
+        }.issubset(builtin))
+        datasetctl.ensure_required_plugins(profile, catalog, None)
+
     def test_plugin_packages_are_copied_into_isolated_data_home(self):
         old_runtime = os.environ.get(datasetctl.RUNTIME_ENV)
         old_source = os.environ.get("CIFERECA_DATASET_PLUGIN_SOURCE")
