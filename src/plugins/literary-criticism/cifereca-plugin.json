@@ -1,0 +1,38 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.literary-criticism",
+    "version": "0.1.0",
+    "name": "Critique littéraire",
+    "publisher": "CIFERECA",
+    "plugin_api": ">=1.4,<2"
+  },
+  "categories": [
+    {
+      "id": "criticism.source",
+      "display_name": "Source de critiques littéraires",
+      "contract": "cifereca.criticism-source/1",
+      "resolution": "all",
+      "description": "Sources indépendantes de critiques, collectées et rapprochées des livres par preuves bibliographiques explicites."
+    }
+  ],
+  "plugins": [
+    {
+      "id": "literary.criticism",
+      "type": "criticism.index",
+      "version": "0.1.0",
+      "entrypoint": "literary_criticism:PLUGIN",
+      "display_name": "Critique littéraire",
+      "description": "Agrège des critiques publiques, les déduplique et les rattache aux livres par preuves explicables.",
+      "help_text": "Socle prospectif sans chargement distant implicite : découverte RSS/Atom via métarecherche fournie par l'hôte, collecte de sources structurelles isolées, cache de fraîcheur, déduplication canonique et rapprochement ISBN > URL de notice > titre+auteur. Les ambiguïtés restent des suggestions. L'intégration à la fiche livre dépend du contrat Core dédié.",
+      "enabled_by_default": false,
+      "priority": -100,
+      "instantiation": "singleton_public",
+      "capabilities": [
+        "criticism.index",
+        "criticism.discover",
+        "criticism.match"
+      ]
+    }
+  ]
+}
