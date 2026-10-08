@@ -20,7 +20,10 @@ def test_master_detail_switches_to_single_pane_below_breakpoint():
 
     assert "notify::max-position" in source
     assert "adapt_paned_position" in source
-    assert "self._narrow_breakpoint = 860" in source
+    assert "self._narrow_breakpoint = MASTER_DETAIL_NARROW_WINDOW_WIDTH" in source
+    assert "window_width = int(self.window.get_width())" in source
+    assert "master_detail_is_narrow(" in source
+    assert "narrow = max_position < self._narrow_breakpoint" not in source
     assert "paned.set_position(0 if self._narrow_detail_visible else max_position)" in source
     assert "paned.set_position(min(440, max(0, max_position - 360)))" in source
     assert "Retour à la liste" in source
