@@ -412,7 +412,14 @@ class UxRecommendationsView:
         # changes. Refresh recommendations for those events, but invalidate a
         # library snapshot only when the persisted library/sync projection for
         # that identity changed.
+        previous_identity = self.selected_identity_id()
         changed_identities = self._reload_identities()
+        current_identity = self.selected_identity_id()
+        if previous_identity is not None and previous_identity != current_identity:
+            self._reference_book = None
+            self.plugin._pending_reference = None
+            self._reference_books = []
+            self._reload_reference_books(())
         snapshot_cache = getattr(self, "_library_snapshot_cache", None)
         if snapshot_cache is not None:
             signatures = getattr(self, "_identity_library_signatures", {})
