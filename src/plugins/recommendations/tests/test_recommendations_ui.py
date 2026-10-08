@@ -7,6 +7,7 @@ from recommendations import (
     _candidate_languages,
     _external_book_url,
     _language_label,
+    _library_overview_signature,
     _reference_label,
     _reference_selection_key,
     _refresh_on_first_map,
@@ -190,6 +191,14 @@ class _NoisyIdentityModel:
         self.dropdown._notify()
 
 
+class _TrackingSnapshotCache:
+    def __init__(self):
+        self.invalidations = []
+
+    def invalidate(self, identity_id=None):
+        self.invalidations.append(identity_id)
+
+
 class _CoalescingGLib:
     def __init__(self):
         self.next_id = 1
@@ -219,6 +228,12 @@ def _identity_reload_view(rows, *, active_identity, busy=False):
     view._identity_model = model
     view._identity_ids = ["default"]
     view._reloading_identities = False
+    view._identity_library_signatures = {
+        str(row.get("identity_id") or ""): _library_overview_signature(row)
+        for row in rows
+        if str(row.get("identity_id") or "")
+    }
+    view._library_snapshot_cache = _TrackingSnapshotCache()
     view._active_identity_id = active_identity
     view._busy = busy
     view._overview_refresh_source_id = 0
