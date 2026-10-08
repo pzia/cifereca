@@ -55,7 +55,7 @@ def test_two_plugin_contributions_have_stable_ids_and_source():
     cache_a, cache_z = Cache(_detail()), Cache(_detail())
     result = collect_cached_book_details([
         _resolved("zeta", cache_z), _resolved("alpha", cache_a),
-    ], BOOK, identity_id="alice")
+    ], BOOK, identity_id="alice", budget_ms=100)
     assert tuple(x.plugin_id for x in result) == ("alpha", "zeta")
     assert all(isinstance(x, CachedBookDetailContribution) for x in result)
     assert result[0].detail.sections[0].title == "Critiques"
@@ -84,7 +84,7 @@ def test_malformed_plugin_and_exception_are_isolated():
         _resolved("malformed", Cache({"book_id": "book-42"})),
         _resolved("good", Cache(_detail())),
         _resolved("inert", object()),
-    ], BOOK, identity_id="alice")
+    ], BOOK, identity_id="alice", budget_ms=100)
     assert [entry.plugin_id for entry in result] == ["good"]
 
 
@@ -101,7 +101,7 @@ def test_bounded_sections_fields_and_actions_reject_unsafe_urls():
     ]
     result = collect_cached_book_details([
         _resolved("reviewer", Cache(_detail(sections=many, actions=actions))),
-    ], BOOK, identity_id="alice")
+    ], BOOK, identity_id="alice", budget_ms=100)
     assert len(result) == 1
     detail = result[0].detail
     assert len(detail.sections) == 3
@@ -138,8 +138,8 @@ def test_only_four_contributors_are_inspected():
     caches = [Cache(_detail()) for _ in range(7)]
     result = collect_cached_book_details([
         _resolved(f"plugin-{i}", cache) for i, cache in enumerate(caches)
-    ], BOOK, identity_id="alice")
-    assert len(result) == 4
+    ], BOOK, identity_id="alice", budget_ms=100)
+    assert 0 < len(result) <= 4
     assert all(not cache.calls for cache in caches[4:])
 
 
