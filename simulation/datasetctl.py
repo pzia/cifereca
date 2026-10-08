@@ -694,16 +694,32 @@ def installed_plugin_ids(packages_root: Path | None) -> set[str]:
     return out
 
 
+def builtin_plugin_ids() -> set[str]:
+    """Return plugin ids shipped inside the Core source tree."""
+    manifest = ROOT.parent / "src" / "cifereca" / "builtin_ui" / "cifereca-plugin.json"
+    if not manifest.is_file():
+        return set()
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {
+        str(row["id"]).strip()
+        for row in data.get("plugins") or []
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    }
+
+
 def ensure_required_plugins(profile: dict, catalog: dict[str, dict], packages_root: Path | None) -> None:
     required = derived_plugins(profile, catalog)
     if not required:
         return
-    available = installed_plugin_ids(packages_root)
+    available = installed_plugin_ids(packages_root) | builtin_plugin_ids()
     missing = [plugin_id for plugin_id in required if plugin_id not in available]
     if missing:
         source = host_plugin_store(profile)
         raise DatasetError(
-            "plugins UX absents du store installé: "
+            "plugins UX absents du store installé ou du Core intégré: "
             + ", ".join(missing)
             + f" ; source inspectée: {source}"
         )
