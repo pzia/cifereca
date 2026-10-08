@@ -565,8 +565,17 @@ class DetailPanel(Gtk.Box):
                     self._pending_action_focus_key = ''
                     break
 
-    def show_presentation(self, presentation: UiBookDetailPresentation) -> None:
-        """Render the shared neutral book-detail projection."""
+    def show_presentation(
+        self,
+        presentation: UiBookDetailPresentation,
+        *,
+        description: object | None = None,
+    ) -> None:
+        """Render the shared neutral book-detail projection.
+
+        When present, the editorial summary is kept in the primary reading
+        flow: immediately after Essentiel and before bibliographic sections.
+        """
         self._cancel_meta_request()
         self._pending_action_focus_key = self._focused_action_key()
         clear_box(self.content)
@@ -577,10 +586,16 @@ class DetailPanel(Gtk.Box):
             presentation.thumbnail_url,
             presentation.badges,
         )
+        summary_rendered = False
         for section in sorted(presentation.sections, key=lambda item: item.order):
             rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
             if rows:
                 self._group(section.title, rows)
+            if section.title == "Essentiel":
+                self._show_description(description)
+                summary_rendered = True
+        if not summary_rendered:
+            self._show_description(description)
         link_buttons = []
         self._rendered_document_urls = set()
         for link in presentation.links:
@@ -780,8 +795,7 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
-        ))
-        self._show_description(item.description)
+        ), description=item.description)
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
         # list and a failed availability lookup must never hide the download.
@@ -866,8 +880,7 @@ class DetailPanel(Gtk.Box):
                 ]),
             ],
             links=document_links(result_row(item)),
-        ))
-        self._show_description(getattr(detail, "description", None) or item.description)
+        ), description=getattr(detail, "description", None) or item.description)
         direct_download = self.window.service.can_direct_download(item)
         if direct_download:
             self._direct_download_action(item)

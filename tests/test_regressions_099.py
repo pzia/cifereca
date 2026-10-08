@@ -126,7 +126,7 @@ class SummaryRegression(unittest.TestCase):
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
         host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,_focused_action_key=lambda:'',content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a:None,_direct_download_action=lambda *a:None)
         host._append_content=host.content.append
-        host.show_presentation=lambda presentation:funcs['show_presentation'](host,presentation)
+        host.show_presentation=lambda presentation,description=None:funcs['show_presentation'](host,presentation,description=description)
         host._show_description=lambda text:funcs['_show_description'](host,text)
         item=NS(title='Livre',author=None,thumbnail_url=None,source_provider='paris',medium='digital',type='Livre numérique',format='EPUB',publisher=None,published_at=None,description='Résumé durable.',owned=False,metadata={})
         detail=NS(title='Livre',author=None,thumbnail_url=None,type=None,year=None,holdings=[])
