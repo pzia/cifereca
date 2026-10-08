@@ -1,0 +1,91 @@
+# Revue UX sur main, 2026-10-08. "data" indique un support existant,
+# pas une validation E2E. Ajouter chaque nouveau package : audit --strict doit échouer sinon.
+version = 1
+
+[package.baen]
+data = []
+gap = "Faux catalogue/acquisition Baen et erreurs HTTP absents"
+
+[package.constellations]
+data = ["local-library", "specialized-seed"]
+gap = "Promenades, modes et graphe à vérifier sur la vraie UI"
+
+[package.diagnostics-page]
+data = ["local-library"]
+gap = "États diagnostics combinés manquants"
+
+[package.ebooksgratuits]
+data = ["ebooksgratuits"]
+gap = "ux-all n'active pas le service ; erreurs et pagination à enrichir"
+
+[package.epub_optimizer]
+data = ["local-library", "specialized-seed"]
+gap = "PDF e-ink, profils matériels, transformations en erreur non couverts"
+
+[package.home-page]
+data = ["local-library"]
+gap = "États vide/partiel/erreur identités à recetter"
+
+[package.literary-criticism]
+data = ["specialized-seed"]
+gap = "Flux de test non servis en HTTP, abonnements et page GTK non recettés"
+
+[package.maintenance-library-audit]
+data = ["local-library"]
+gap = "Fichiers manquants, couvertures, langues, doublons, chemins et actions négatives"
+
+[package.provider-bnf-catalogue]
+data = ["bnf"]
+gap = "Zéro résultat, indisponibilité et formats atypiques"
+
+[package.provider-gallica]
+data = ["opds"]
+gap = "Acquisition, audio, pagination et défaillances au-delà d'OPDS"
+
+[package.provider-gutenberg]
+data = ["opds"]
+gap = "Parcours téléchargement et cache/erreurs au-delà d'OPDS"
+
+[package.provider-kobo]
+data = ["kobo"]
+gap = "Profiles ADEPT et erreurs d'identité/DRM avec des valeurs fictives"
+
+[package.provider-numilog]
+data = ["numilog"]
+gap = "ACSM, pagination extrême, expiration et documents invalides"
+
+[package.provider-paris]
+data = ["paris"]
+gap = "PNB, disponibilité, comptes multiples et erreurs partielles"
+
+[package.recommendations]
+data = ["local-library"]
+gap = "Affinité, aucune recommandation, données partielles, performance"
+
+[package.runtime-kobo-adept]
+data = []
+gap = "Profils ADEPT absents/incomplets et échecs reproductibles"
+
+[package.transport-http]
+data = []
+gap = "Timeout, redirection, annulation, 429, cache HTTP"
+
+[package.youth-bibliography-openlibrary]
+data = []
+gap = "Réponses OpenLibrary structurées et contresens bibliographiques"
+
+[package.youth-catalog]
+data = ["specialized-seed"]
+gap = "Source intégrée et filtre âge UI non reliés à la simulation centrale"
+
+[package.youth-detail-enrichment]
+data = []
+gap = "Enrichissements concordants/contradictoires, latences, cache"
+
+[package.youth-source-booktrust]
+data = []
+gap = "Faux HTML Bookfinder/BookTrust et pagination HTTP absents"
+
+[package.youth-source-discovery]
+data = []
+gap = "Fixtures de métarecherche explicite, doublons et sources invalides"
