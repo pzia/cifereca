@@ -8,6 +8,7 @@ from recommendations import (
     _external_book_url,
     _language_label,
     _reference_label,
+    _reference_selection_key,
     _refresh_on_first_map,
 )
 
@@ -25,6 +26,16 @@ def test_reference_label_uses_title_and_first_author():
     assert _reference_label({"title": "Le livre", "author": "Alice"}) == "Le livre — Alice"
     assert _reference_label({"title": "Sans auteur"}) == "Sans auteur"
     assert _reference_label({"author": "Alice"}) == "Sans titre — Alice"
+
+
+def test_reference_selection_key_does_not_collapse_books_from_same_provider():
+    first = SimpleNamespace(
+        title="Livre A", authors=("Alice",), identifiers={"provider": "kobo"}
+    )
+    second = SimpleNamespace(
+        title="Livre B", authors=("Alice",), identifiers={"provider": "kobo"}
+    )
+    assert _reference_selection_key(first) != _reference_selection_key(second)
 
 
 def test_external_book_url_accepts_only_safe_http_sources():
