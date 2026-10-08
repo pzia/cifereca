@@ -31,6 +31,7 @@ from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
+from .settings_context import settings_action_state
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -4905,6 +4906,64 @@ class MainWindow(Adw.ApplicationWindow):
                            ("sync", "Synchronisation"), ("interface", "Interface"), ("diagnostic", "Diagnostic")):
             section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
             sections[key] = section; tabs.add_titled(section, key, label)
+
+        settings_revisions = {key: 0 for key in sections}
+        saved_settings_revisions = dict(settings_revisions)
+        tracked_settings_widgets: set[int] = set()
+        settings_action_widgets: dict[str, Any] = {}
+
+        def current_settings_tab() -> str:
+            return str(tabs.get_visible_child_name() or "accounts")
+
+        def update_settings_actions(*_args) -> None:
+            tab = current_settings_tab()
+            state = settings_action_state(
+                tab,
+                dirty=settings_revisions.get(tab, 0) != saved_settings_revisions.get(tab, 0),
+            )
+            save_widgets = tuple(settings_action_widgets.get("save", ()))
+            reconnect_widgets = tuple(settings_action_widgets.get("reconnect", ()))
+            for widget in save_widgets:
+                widget.set_visible(state.show_save)
+                widget.set_sensitive(state.save_sensitive)
+            for widget in reconnect_widgets:
+                widget.set_visible(state.show_reconnect)
+                widget.set_sensitive(state.reconnect_sensitive)
+            for widget in tuple(settings_action_widgets.get("containers", ())):
+                widget.set_visible(state.show_save or state.show_reconnect)
+
+        def mark_settings_dirty(tab: str) -> None:
+            if tab == "diagnostic":
+                return
+            settings_revisions[tab] = settings_revisions.get(tab, 0) + 1
+            update_settings_actions()
+
+        def track_settings_tree(tab: str, widget: Gtk.Widget) -> None:
+            marker = id(widget)
+            if marker not in tracked_settings_widgets:
+                signal = None
+                if isinstance(widget, Adw.EntryRow):
+                    signal = "notify::text"
+                elif isinstance(widget, Gtk.Switch):
+                    signal = "notify::active"
+                elif isinstance(widget, Gtk.DropDown):
+                    signal = "notify::selected"
+                if signal is not None:
+                    widget.connect(signal, lambda *_args, tab_name=tab: mark_settings_dirty(tab_name))
+                    tracked_settings_widgets.add(marker)
+            try:
+                child = widget.get_first_child()
+            except AttributeError:
+                child = None
+            while child is not None:
+                track_settings_tree(tab, child)
+                child = child.get_next_sibling()
+
+        def track_all_settings_widgets() -> None:
+            for tab, section in sections.items():
+                if tab != "diagnostic":
+                    track_settings_tree(tab, section)
+
         box = sections["accounts"]
 
         descriptors = {d.id: d for d in self.service.provider_descriptors()}
@@ -4964,11 +5023,19 @@ class MainWindow(Adw.ApplicationWindow):
             delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
             editor = {"group": group, "id": id_row, "label": label_row, "directory": directory_row, "languages": languages_row, "prefer_vo": vo_switch, "adept_profile": adept_row, "deleted": False}
             identity_editors.append(editor)
-            delete_button.connect("clicked", lambda _b, e=editor: (e.__setitem__("deleted", True), e["group"].set_visible(False)))
+            def delete_identity(_button, e=editor):
+                e["deleted"] = True
+                e["group"].set_visible(False)
+                mark_settings_dirty("accounts")
+            delete_button.connect("clicked", delete_identity)
 
         for configured_identity in configured_identities:
             add_identity_editor(configured_identity)
-        add_identity = Gtk.Button(label="Ajouter une identité"); add_identity.connect("clicked", lambda _b: add_identity_editor({})); box.append(add_identity)
+        add_identity = Gtk.Button(label="Ajouter une identité")
+        def add_identity_clicked(_button):
+            add_identity_editor({})
+            mark_settings_dirty("accounts")
+        add_identity.connect("clicked", add_identity_clicked); box.append(add_identity)
 
         public_info = Gtk.Button(label="Gérer les plugins et leurs capacités techniques…")
         public_info.set_tooltip_text("Ouvrir Plugins pour l’activation et les capacités détaillées ; Diagnostic conserve l’état technique.")
@@ -5040,7 +5107,11 @@ class MainWindow(Adw.ApplicationWindow):
                 "original_options": options, "deleted": False,
             }
             account_editors.append(editor)
-            delete_button.connect("clicked", lambda _b, e=editor: (e.__setitem__("deleted", True), e["group"].set_visible(False)))
+            def delete_account(_button, e=editor):
+                e["deleted"] = True
+                e["group"].set_visible(False)
+                mark_settings_dirty("accounts")
+            delete_button.connect("clicked", delete_account)
 
         for configured in configured_rows:
             add_account_editor(configured, str(configured.get("provider") or "paris"))
@@ -5051,7 +5122,10 @@ class MainWindow(Adw.ApplicationWindow):
                 continue
             add_label = f"Ajouter un compte {descriptor.display_name}" if descriptor.credential_fields else f"Ajouter la source {descriptor.display_name}"
             add = Gtk.Button(label=add_label)
-            add.connect("clicked", lambda _b, pid=descriptor.id: add_account_editor({}, pid)); add_buttons.append(add)
+            def add_account_clicked(_button, pid=descriptor.id):
+                add_account_editor({}, pid)
+                mark_settings_dirty("accounts")
+            add.connect("clicked", add_account_clicked); add_buttons.append(add)
         box.append(add_buttons)
 
         # ADE is bound only at Paris Identity scope. Provider sub-accounts
@@ -5139,14 +5213,34 @@ class MainWindow(Adw.ApplicationWindow):
         vault_profile_drop.set_valign(Gtk.Align.CENTER); vault_display_row.add_suffix(vault_profile_drop); backup_group.add(vault_display_row)
 
         settings_actions = AdaptiveActionBar(source=settings_heading); settings_actions.set_halign(Gtk.Align.END); settings_heading.append(settings_actions)
-        save = action_button("Enregistrer", "document-save-symbolic", suggested=True, tooltip="Enregistrer la configuration"); settings_actions.append(save)
-        reconnect = action_button("Reconnecter", "network-transmit-receive-symbolic", tooltip="Enregistrer et reconnecter les sources"); settings_actions.append(reconnect)
+        save = action_button(
+            "Enregistrer", "document-save-symbolic", suggested=True,
+            tooltip="Enregistrer les modifications de configuration en attente",
+        ); settings_actions.append(save)
+        reconnect = action_button(
+            "Reconnecter", "network-transmit-receive-symbolic",
+            tooltip="Enregistrer les modifications en attente puis reconnecter les sources",
+        ); settings_actions.append(reconnect)
         settings_footer = AdaptiveActionBar(source=settings_root); settings_footer.set_halign(Gtk.Align.END)
-        save_bottom = action_button("Enregistrer", "document-save-symbolic", suggested=True, tooltip="Enregistrer la configuration"); settings_footer.append(save_bottom)
-        reconnect_bottom = action_button("Reconnecter", "network-transmit-receive-symbolic", tooltip="Enregistrer et reconnecter les sources"); settings_footer.append(reconnect_bottom)
+        save_bottom = action_button(
+            "Enregistrer", "document-save-symbolic", suggested=True,
+            tooltip="Enregistrer les modifications de configuration en attente",
+        ); settings_footer.append(save_bottom)
+        reconnect_bottom = action_button(
+            "Reconnecter", "network-transmit-receive-symbolic",
+            tooltip="Enregistrer les modifications en attente puis reconnecter les sources",
+        ); settings_footer.append(reconnect_bottom)
         settings_root.append(settings_footer)
+        settings_action_widgets.update({
+            "save": (save, save_bottom),
+            "reconnect": (reconnect, reconnect_bottom),
+            "containers": (settings_actions, settings_footer),
+        })
         from .action_widgets import mirror_sensitivity
         mirror_sensitivity(save, save_bottom); mirror_sensitivity(reconnect, reconnect_bottom)
+        tabs.connect("notify::visible-child-name", update_settings_actions)
+        track_all_settings_widgets()
+        update_settings_actions()
 
         box = sections["diagnostic"]
         diag_group = Adw.PreferencesGroup(); diag_group.set_title("Diagnostic copiable"); box.append(diag_group)
@@ -5323,6 +5417,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self.show_error("Attendez la fin des opérations en cours avant de changer un répertoire d’identité.")
                 return False
             staged = deepcopy(draft.data)
+            staged_settings_revisions = dict(settings_revisions)
             def ok(result):
                 self.diagnostics.enabled = bool(staged["diagnostics"]["enabled"])
                 self.diagnostics.level = staged["diagnostics"]["level"]
@@ -5342,6 +5437,10 @@ class MainWindow(Adw.ApplicationWindow):
                     self.toast(message, 5)
                 self._configure_kobo_backup_timer(run_now=False)
                 refresh_text()
+                for tab, revision in staged_settings_revisions.items():
+                    saved_settings_revisions[tab] = revision
+                track_all_settings_widgets()
+                update_settings_actions()
                 if reconnect_after:
                     self.reconnect_sources()
             self.runner.submit("Enregistrement et migration des répertoires…" if directory_change else "Enregistrement de la configuration…",
