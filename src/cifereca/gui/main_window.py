@@ -3416,15 +3416,43 @@ class MainWindow(Adw.ApplicationWindow):
         page.toolbar.append(controls)
         search = Gtk.Button(label="Recherche"); search.connect("clicked", self._library_search_online); controls.primary.append(search)
         actions = page.header_actions
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Rescanner la bibliothèque")
-        refresh.connect("clicked", lambda _b: self.refresh_library(True, refresh)); actions.append(refresh)
-        covers = Gtk.Button.new_from_icon_name("image-x-generic-symbolic")
-        covers.set_tooltip_text("Réinspecter les couvertures EPUB, sans téléchargement")
-        covers.connect('clicked',lambda _b:self.refresh_library(True,covers,refresh_covers=True));actions.append(covers)
-        acsm = Gtk.Button.new_from_icon_name("document-open-symbolic"); acsm.set_tooltip_text("Importer un ACSM…"); acsm.connect("clicked", lambda _b: self.choose_acsm()); actions.append(acsm)
-        acquire = Gtk.Button.new_from_icon_name("emblem-synchronizing-symbolic"); acquire.set_tooltip_text("Télécharge les livres manquants de tous les comptes Kobo connectés compatibles."); acquire.connect("clicked", lambda _b: self.run_kobo_backup(True, acquire)); actions.append(acquire)
-        folder = Gtk.Button.new_from_icon_name("folder-open-symbolic"); folder.set_tooltip_text("Ouvrir la bibliothèque")
-        folder.connect("clicked", lambda _b: self.open_library_folder()); actions.append(folder)
+        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
+        refresh.set_tooltip_text("Rescanner la bibliothèque")
+        refresh.connect("clicked", lambda _b: self.refresh_library(True, refresh))
+        actions.append(refresh)
+
+        folder = Gtk.Button.new_from_icon_name("folder-open-symbolic")
+        folder.set_tooltip_text("Ouvrir le dossier de la bibliothèque")
+        folder.connect("clicked", lambda _b: self.open_library_folder())
+        actions.append(folder)
+
+        advanced = Gtk.MenuButton(label="Opérations…")
+        advanced.set_tooltip_text("Opérations avancées et maintenance de la bibliothèque")
+        advanced_popover = Gtk.Popover()
+        advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        advanced_box.set_margin_top(8); advanced_box.set_margin_bottom(8)
+        advanced_box.set_margin_start(8); advanced_box.set_margin_end(8)
+
+        covers = Gtk.Button(label="Réinspecter les couvertures")
+        covers.set_tooltip_text("Réinspecter toutes les couvertures EPUB locales, sans téléchargement")
+        covers.connect("clicked", lambda _b: self.refresh_library(True, covers, refresh_covers=True))
+        advanced_box.append(covers)
+
+        acsm = Gtk.Button(label="Importer un ACSM…")
+        acsm.set_tooltip_text("Importer manuellement un fichier ACSM dans la bibliothèque")
+        acsm.connect("clicked", lambda _b: self.choose_acsm())
+        advanced_box.append(acsm)
+
+        acquire = Gtk.Button(label="Synchroniser les comptes Kobo")
+        acquire.set_tooltip_text(
+            "Opération globale : télécharge les livres manquants de tous les comptes Kobo connectés compatibles."
+        )
+        acquire.connect("clicked", lambda _b: self.run_kobo_backup(True, acquire))
+        advanced_box.append(acquire)
+
+        advanced_popover.set_child(advanced_box)
+        advanced.set_popover(advanced_popover)
+        actions.append(advanced)
         page.connect_selected(self._library_selected)
         self._library_objects = {}
         return page
