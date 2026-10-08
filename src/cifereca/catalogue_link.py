@@ -2,25 +2,71 @@
 from urllib.parse import urlsplit, parse_qsl, unquote
 
 
+def _sensitive_parameters(text):
+    keys = {unquote(key).casefold() for key, _ in parse_qsl(
+        text.replace(';', '&'), keep_blank_values=True,
+    )}
+    if keys & {'token', 'signature', 'sig', 'access_token', 'auth', 'key', 'download', 'authorization'}:
+        return True
+    return any(
+        key.startswith(('x-amz-', 'x-goog-'))
+        or 'token' in key or 'signature' in key
+        for key in keys
+    )
+
+
 def catalogue_url(row):
-    metadata = row.get('metadata') or {}
-    search = metadata.get('search_result') or {}
-    candidates = [row.get('friendly_url'), row.get('product_url'), metadata.get('friendly_url'),
-                  metadata.get('product_url'), search.get('friendly_url') if isinstance(search, dict) else None]
+    metadata = row.get('metadata')
+    metadata = metadata if isinstance(metadata, dict) else {}
+    search = metadata.get('search_result')
+    search = search if isinstance(search, dict) else {}
+    candidates = (
+        row.get('friendly_url'), row.get('product_url'),
+        metadata.get('friendly_url'), metadata.get('product_url'),
+        search.get('friendly_url'),
+    )
     for value in candidates:
-        if not isinstance(value, str) or any(ord(c) < 32 for c in value): continue
+        if not isinstance(value, str) or not value or value != value.strip():
+            continue
+        # urlsplit can normalize away leading C0 and embedded tabs/newlines.
+        # The exact URL passed to the browser must be the one validated here.
+        if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value) or '\\' in value:
+            continue
         try:
-            parts = urlsplit(value); port = parts.port
-        except ValueError: continue
-        if parts.scheme not in {'https', 'http'} or not parts.hostname or parts.username or parts.password: continue
-        if port not in {None, 80, 443}: continue
+            parts = urlsplit(value)
+            port = parts.port
+            userinfo = parts.username is not None or parts.password is not None
+        except ValueError:
+            continue
+        if parts.scheme not in {'https', 'http'} or not parts.hostname or userinfo:
+            continue
+        if port not in {None, 80, 443}:
+            continue
         path = unquote(unquote(parts.path)).casefold()
-        keys = {key.casefold() for key, _ in parse_qsl(parts.query)}
-        if path.endswith(('.acsm', '.epub', '.pdf')) or any(s in path for s in ('/fulfillment/', '/assaredirect/', '/loan/')): continue
-        if keys & {'token', 'signature', 'sig', 'access_token', 'auth', 'key', 'download'}: continue
-        if any(key.startswith(('x-amz-', 'x-goog-')) or 'token' in key or 'signature' in key for key in keys): continue
+        if path.endswith(('.acsm', '.epub', '.pdf')):
+            continue
+        if any(marker in path for marker in (
+            '/fulfillment/', '/assaredirect/', '/loan/',
+            '/download/', '/downloads/', '/pages/compte/',
+        )) or path.endswith(('/download', '/downloads', '/readbook.ashx')):
+            continue
+        if _sensitive_parameters(parts.query) or _sensitive_parameters(parts.fragment):
+            continue
         return value
     return None
+
+
+def safe_document_link_url(value, *, relation='related'):
+    """Validate an externally supplied detail-panel link at the render boundary."""
+    url = catalogue_url({'friendly_url': value})
+    if not url:
+        return None
+    if str(relation or '').casefold() == 'notice':
+        parts = urlsplit(url)
+        # A bare domain/catalogue homepage cannot be presented as a notice.
+        if not parts.path.strip('/') and not parts.query:
+            return None
+    return url
 
 
 def catalogue_notice_url(row, *, base=None, provider=None):
