@@ -168,7 +168,7 @@ jobs:
               click(control,105,558,2.0)
               report["shots"].append(shot("02-tools.png"))
               # Open first maintenance plan without executing it.
-              click(control,1175,141,1.5)
+              click(control,1260,145,1.5)
               report["shots"].append(shot("03-tools-plan-dialog.png"))
               control.key("Escape",True); control.key("Escape",False); time.sleep(.6)
 
@@ -177,7 +177,7 @@ jobs:
               report["shots"].append(shot("04-plugins-top.png"))
               # Scroll the Plugins page to inspect card density and lower states.
               control.xtst.XTestFakeMotionEvent(control.display,-1,1050,650,0)
-              for _ in range(14):
+              for _ in range(28):
                   control.xtst.XTestFakeButtonEvent(control.display,5,True,0)
                   control.xtst.XTestFakeButtonEvent(control.display,5,False,0)
               control.x11.XSync(control.display,False); time.sleep(1)
@@ -188,12 +188,16 @@ jobs:
               report["shots"].append(shot("06-settings-identities.png"))
 
               # Diagnostic tab. Stack switcher around y=160; Diagnostic is rightmost.
-              click(control,1050,160,2.0)
+              click(control,1200,190,2.0)
               report["shots"].append(shot("07-settings-diagnostic.png"))
 
               # Interface tab for contrast.
-              click(control,875,160,1.5)
+              click(control,1040,190,1.5)
               report["shots"].append(shot("08-settings-interface.png"))
+
+              # Diagnostic système de secours via la navigation réelle.
+              click(control,120,690,2.0)
+              report["shots"].append(shot("09-system-diagnostics-fallback.png"))
 
               (OUT/"report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
           finally:
