@@ -326,6 +326,19 @@ def test_identity_overview_before_first_map_does_not_duplicate_initial_refresh()
     assert refreshes == []
 
 
+def test_identity_reload_prefers_core_selected_identity_regardless_of_row_order():
+    rows = [
+        {"identity_id": "other", "label": "Other", "selected": True},
+        {"identity_id": "default", "label": "Default", "selected": False},
+    ]
+    view, _dropdown, refreshes = _identity_reload_view(rows, active_identity="default")
+
+    view._reload_identities()
+
+    assert view.selected_identity_id() == "other"
+    assert refreshes == []
+
+
 def test_overview_selection_change_clears_reference_from_previous_identity():
     rows = [
         {"identity_id": "default", "label": "Default", "selected": True, "statistics": {"local_books": 562}, "sync": {"sync_run_id": "run-1", "status": "completed"}},
