@@ -40,6 +40,21 @@ def test_recommend_from_book_updates_open_view_immediately():
     assert calls == [selected]
 
 
+def test_deactivate_clears_pending_reference_from_previous_session():
+    disposed = []
+    plugin = RecommendationsPlugin()
+    plugin.context = SimpleNamespace(config={})
+    plugin._view = SimpleNamespace(dispose=lambda: disposed.append(True))
+
+    plugin.recommend_from_book(book())
+    plugin.deactivate()
+
+    assert disposed == [True]
+    assert plugin._pending_reference is None
+    assert plugin._view is None
+    assert plugin.context is None
+
+
 def test_recommend_from_book_rejects_reference_without_signal():
     plugin = RecommendationsPlugin()
     invalid = SimpleNamespace(
