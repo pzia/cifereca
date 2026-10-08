@@ -53,6 +53,7 @@ from .shell_model import resolve_pages, visible_actions, page_actions, delegated
 from ..plugin_api import (
     ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookReferenceRecommendationService, DetailField, DetailSection, DocumentLink, book_ref_from_row,
     MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution, document_links,
+    collect_cached_book_details, subscribe_cached_book_detail_changes,
 )
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -495,6 +496,9 @@ class DetailPanel(Gtk.Box):
         return ''
 
     def _clear_actions(self):
+        # show_presentation()/empty() clear the whole detail body before this.
+        self._cached_section_widgets = []
+        self._cached_action_ids = set()
         self._action_ids = set()
         self._action_buttons = []
         self._rendered_action_count = 0
@@ -654,6 +658,54 @@ class DetailPanel(Gtk.Box):
             group_title=group_title,
             rows=rows or (),
         ))
+
+    def update_cached_book_details(self, contributions) -> None:
+        """Replace only cached plugin groups/actions; preserve the base detail."""
+        for widget in getattr(self, "_cached_section_widgets", ()):
+            if widget.get_parent() is self.content:
+                self.content.remove(widget)
+        self._cached_section_widgets = []
+        old_ids = set(getattr(self, "_cached_action_ids", ()))
+        self._cached_action_ids = set()
+        if old_ids:
+            # Rebuild the action bar without discarding its ordinary actions.
+            kept = [
+                button for button in getattr(self, "_action_buttons", ())
+                if getattr(button, "_cifereca_action_id", "") not in old_ids
+            ]
+            self._clear_actions()
+            self._actions(kept)
+        buttons = []
+        for contribution in contributions:
+            plugin_id = str(contribution.plugin_id)[:100]
+            cached = contribution.detail
+            source = str(cached.source.source if cached.source else plugin_id)[:100]
+            freshness = "Cache ancien" if cached.stale else "Cache local"
+            updated = str(cached.updated_at or "Date inconnue")[:48]
+            for section in cached.sections:
+                rows = [(str(field.label), str(field.value)) for field in section.fields]
+                rows.append(("Provenance", f"{source} · {freshness} · {updated}"))
+                self._group(f"{section.title} · {plugin_id}", rows)
+                self._cached_section_widgets.append(self.content.get_last_child())
+            for action in cached.actions:
+                if action.uri:
+                    # Already validated by collect_cached_book_details; keep the
+                    # final GTK action sink explicit as defence in depth.
+                    uri = safe_document_link_url(action.uri, relation="related")
+                    if not uri:
+                        continue
+                    button = Gtk.LinkButton(uri=uri, label=str(action.title))
+                elif callable(action.callback):
+                    button = self.window.action_button(str(action.title), str(action.icon_name))
+                    button.connect("clicked", lambda _b, cb=action.callback: cb())
+                else:
+                    continue
+                identifier = f"book-cache:{plugin_id}:{action.id}"
+                button._cifereca_action_id = identifier
+                button._cifereca_action_priority = 35
+                self._cached_action_ids.add(identifier)
+                buttons.append(button)
+        self._actions(buttons)
 
     def add_group(self, title: str, rows: list[tuple[str, str]]) -> None:
         self._group(title, rows)
@@ -1378,6 +1430,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._identity_changing = False
         self._identity_context_generation = 0
         self._account_context_generation = 0
+        self._cached_book_request_generation = 0
+        self._cached_book_context = None
+        self._cached_book_services = ()
+        self._cached_book_unsubscribe = lambda: None
         self._selected_search_id: str | None = None
         self._last_search_query = ""
         self._search_mode = "local"
@@ -1780,6 +1836,10 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         try:
+            self._cached_book_unsubscribe()
+        except Exception:
+            pass
+        try:
             self.runner.close()
         except Exception:
             pass
@@ -2084,6 +2144,74 @@ class MainWindow(Adw.ApplicationWindow):
         self._ensure_pages_menu_rightmost()
         self._rebuild_plugin_pages()
         self._populate_accounts()
+        self._subscribe_cached_book_details()
+
+    def _subscribe_cached_book_details(self) -> None:
+        """Refresh the selected book on cache invalidation, not the full list."""
+        self._cached_book_unsubscribe()
+        try:
+            services = tuple(self.plugin_manager.services("book.detail.enrichment"))
+        except Exception:
+            services = ()
+        self._cached_book_services = services
+        # Plugin callbacks may run on any thread; GTK must only be touched in
+        # an idle callback. These subscriptions are replaced on plugin changes.
+        self._cached_book_unsubscribe = subscribe_cached_book_detail_changes(
+            services, lambda: GLib.idle_add(self._cached_book_cache_invalidated),
+        )
+        self._cached_book_cache_invalidated()
+
+    def _cached_book_cache_invalidated(self) -> bool:
+        if self._closed:
+            return False
+        context = self._cached_book_context
+        if context is not None:
+            route, key, item = context
+            self._request_cached_book_details(route, key, item)
+        return False
+
+    def _cancel_cached_book_details(self) -> None:
+        self._cached_book_request_generation += 1
+        self._cached_book_context = None
+
+    def _request_cached_book_details(self, route: str, key: str, item: dict) -> None:
+        """Schedule a bounded, cache-only plugin lookup outside GTK."""
+        self._cached_book_request_generation += 1
+        request = self._cached_book_request_generation
+        self._cached_book_context = (route, key, item)
+        detail = self.search_page.detail if route == "search" else self.library_page.detail
+        detail.update_cached_book_details(())
+        services = self._cached_book_services
+        identity = self.service.current_identity
+        if not services or identity is None:
+            return
+        identity_id = identity.identity_id
+        identity_generation = self._identity_context_generation
+        book = book_ref_from_row(item)
+        if not book.book_id:
+            return
+
+        def current() -> bool:
+            active = self.service.current_identity
+            return (
+                not self._closed
+                and request == self._cached_book_request_generation
+                and self._cached_book_context is not None
+                and self._cached_book_context[0:2] == (route, key)
+                and active is not None and active.identity_id == identity_id
+                and identity_generation == self._identity_context_generation
+            )
+
+        def done(contributions) -> None:
+            if current():
+                detail.update_cached_book_details(contributions)
+
+        self.runner.submit(
+            "Lecture des compléments en cache…",
+            lambda: collect_cached_book_details(services, book, identity_id=identity_id),
+            done, lambda _exc: None,
+            priority=TaskPriority.METADATA, kind="detail-cache",
+        )
 
     def _add_nav_row(self, route: str, label: str, icon_name: str) -> None:
         if route in self.nav_rows:
@@ -2582,6 +2710,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.service.select_identity(identity.identity_id)
         self._identity_context_generation += 1
         self._account_context_generation += 1
+        self._cached_book_request_generation += 1
+        self._cached_book_context = None
         # Pending Library navigation belongs to the previous identity context.
         # Cancel it before rendering the new identity's (initially empty) list.
         self._pending_library_selection_key = None
@@ -3487,6 +3617,7 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def _search_selected(self, row: BookListItem | None) -> None:
+        self._cancel_cached_book_details()
         if row is None:
             self._selected_search_id = None
             self.search_page.detail.empty("Aucun document sélectionné", "Sélectionnez un résultat pour afficher ses détails.")
@@ -3542,6 +3673,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._add_book_notice(self.search_page.detail,item, include_description=False)
             self._add_local_book_actions(self.search_page.detail,item)
             self._add_facets(self.search_page.detail, item, self.search_controls)
+            self._request_cached_book_details("search", row.key, item)
             return
         item = self.search_objects.get(row.key)
         if not item: return
@@ -3549,6 +3681,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.search_page.detail.show_search(item, loading=True)
         self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
         self._add_local_book_actions(self.search_page.detail,result_row(item))
+        self._request_cached_book_details("search", item.id, result_row(item))
         selected_id = item.id
         self.runner.submit(
             "Chargement des disponibilités…",
@@ -3563,11 +3696,13 @@ class MainWindow(Adw.ApplicationWindow):
             self.search_page.detail.show_item_detail(item, detail)
             self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
             self._add_local_book_actions(self.search_page.detail,result_row(item))
+            self._request_cached_book_details("search", item.id, result_row(item))
 
     def _search_detail_error(self, selected_id: str, item: SearchResult, exc: BaseException) -> None:
         if self._selected_search_id == selected_id:
             self.search_page.detail.show_search(item, loading=False)
             self._add_local_book_actions(self.search_page.detail,result_row(item))
+            self._request_cached_book_details("search", item.id, result_row(item))
         self.toast(f"Disponibilités indisponibles : {exc}", 5)
 
     # ---------- history ----------
@@ -4659,6 +4794,7 @@ class MainWindow(Adw.ApplicationWindow):
         detail.add_actions([button])
 
     def _library_selected(self, row: BookListItem | None) -> None:
+        self._cancel_cached_book_details()
         if not row:
             self.library_page.detail.empty(
                 "Sélectionnez un livre",
@@ -4681,6 +4817,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self._add_facets(self.library_page.detail, item, self.library_controls)
                 self._add_local_book_actions(self.library_page.detail, item)
                 self._add_book_recommendation_action(self.library_page.detail, item)
+                self._request_cached_book_details("library", row.key, item)
                 return
 
         detail = self.library_page.detail
@@ -4733,6 +4870,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_local_book_actions(detail,item)
         self._add_book_recommendation_action(detail, item)
         self._add_facets(self.library_page.detail, item, self.library_controls)
+        self._request_cached_book_details("library", row.key, item)
 
     def _kobo_selected(self, row: BookListItem | None) -> None:
         self._library_selected(row)
