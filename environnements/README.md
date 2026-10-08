@@ -42,7 +42,7 @@ simulateur versionné sous `simulation/`, sur un display virtuel Xvfb.
 4. contrôler `status` et `summary` du profil ;
 5. lancer la vraie commande Cifereca dans l'environnement XDG du profil ;
 6. faire tourner Cifereca sous le `headless`/Xvfb de la recette GTK ;
-7. pour une image, utiliser `datasetctl.py snapshot` ou `capture-app` ;
+7. pour une image, utiliser le mécanisme compatible avec le harnais choisi : `datasetctl.py snapshot` pour le harnais historique à `.venv`, ou `datasetctl exec` + `capture_app.py` pour `openai-chat-debian` ;
 8. pour une vidéo, enregistrer **le même `$DISPLAY` Xvfb** avec FFmpeg
    `x11grab` pendant que Cifereca tourne ;
 9. conserver logs, capture/vidéo et paramètres du profil comme preuves.
@@ -58,7 +58,7 @@ résoudre `deb.debian.org`/`security.debian.org`, **ne pas abandonner GTK et
 ne pas fabriquer une fausse vidéo**. Utiliser GitHub Actions comme relais
 réseau :
 
-1. créer une branche technique temporaire ;
+1. créer une branche technique temporaire ; le modèle `openai-chat-debian/github-cache-relay.yml.example` est fourni ;
 2. y ajouter un workflow déclenché uniquement sur cette branche ;
 3. sur un runner GitHub, lancer un conteneur `debian:trixie` et exécuter
    `environnements/openai-chat-debian/bootstrap.py --download-only --deb-cache <dir>` ;
