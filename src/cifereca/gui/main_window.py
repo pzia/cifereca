@@ -4868,17 +4868,9 @@ class MainWindow(Adw.ApplicationWindow):
             sections[key] = section; tabs.add_titled(section, key, label)
         box = sections["accounts"]
 
-        plugin_group = Adw.PreferencesGroup(); plugin_group.set_title("Plugins fournisseurs"); box.append(plugin_group)
         descriptors = {d.id: d for d in self.service.provider_descriptors()}
         public_ids = {provider_id for provider_id in descriptors
                       if getattr(getattr(self.service._provider_plugin_status(provider_id), "descriptor", None), "instantiation", "multiple") == "singleton_public"}
-        for descriptor in descriptors.values():
-            row = Adw.ActionRow(); row.set_title(descriptor.display_name)
-            state_label = "prêt" if descriptor.state == "ready" else "squelette"
-            caps = ", ".join(descriptor.capabilities.names()) or "aucune capacité active"
-            row.set_subtitle(f"Plugin fournisseur · {state_label} · {caps}")
-            badge = Gtk.Label(label=state_label); add_css(badge, "badge"); row.add_suffix(badge)
-            plugin_group.add(row)
 
         warning = Gtk.Label(
             label="Les credentials fournisseurs sont actuellement stockés en clair dans le fichier de configuration local (permissions 0600). Ils ne sont jamais inclus dans les diagnostics.",
@@ -4939,9 +4931,15 @@ class MainWindow(Adw.ApplicationWindow):
             add_identity_editor(configured_identity)
         add_identity = Gtk.Button(label="Ajouter une identité"); add_identity.connect("clicked", lambda _b: add_identity_editor({})); box.append(add_identity)
 
-        public_info = Gtk.Button(label="Configurer les plugins publics et leur activation par identité")
+        public_info = Gtk.Button(label="Gérer les plugins et leurs capacités techniques…")
+        public_info.set_tooltip_text("Ouvrir Plugins pour l’activation et les capacités détaillées ; Diagnostic conserve l’état technique.")
         public_info.connect("clicked", lambda _b: self.navigate("plugins")); box.append(public_info)
         accounts_title = Gtk.Label(label="Sources et comptes fournisseurs", xalign=0); add_css(accounts_title, "book-title"); box.append(accounts_title)
+        accounts_hint = Gtk.Label(
+            label="Ajoutez et configurez ici les comptes utilisés par vos identités. Les capacités internes des plugins restent dans Plugins et Diagnostic.",
+            xalign=0,
+        )
+        accounts_hint.set_wrap(True); add_css(accounts_hint, "caption", "dim-label"); box.append(accounts_hint)
         accounts_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14); box.append(accounts_container)
         account_editors: list[dict[str, Any]] = []
         configured_rows = self.config.provider_accounts()
