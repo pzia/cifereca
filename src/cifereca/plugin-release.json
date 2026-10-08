@@ -11,7 +11,7 @@
       "name": "Cifereca Diagnostics"
     },
     "org.cifereca.provider.ebooksgratuits": {
-      "version": "0.1.10",
+      "version": "0.1.11",
       "name": "Ebooks libres et gratuits"
     },
     "org.cifereca.epub-optimizer": {
@@ -31,7 +31,7 @@
       "name": "BnF Catalogue général"
     },
     "org.cifereca.provider.gallica": {
-      "version": "1.2.15",
+      "version": "1.2.16",
       "name": "Gallica"
     },
     "org.cifereca.provider.gutenberg": {
