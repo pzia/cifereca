@@ -35,13 +35,21 @@ class LibrarySnapshotCache:
     def __init__(self) -> None:
         self._lock = Lock()
         self._generation = 0
+        self._identity_generations: dict[str, int] = {}
         self._books: dict[str, tuple[Any, ...]] = {}
-        self._inflight: dict[tuple[str, int], Event] = {}
+        self._inflight: dict[tuple[str, int, int], Event] = {}
 
-    def invalidate(self) -> None:
+    def invalidate(self, identity_id: str | None = None) -> None:
         with self._lock:
-            self._generation += 1
-            self._books.clear()
+            if identity_id is None:
+                self._generation += 1
+                self._books.clear()
+                return
+            identity_key = str(identity_id or "")
+            self._identity_generations[identity_key] = (
+                self._identity_generations.get(identity_key, 0) + 1
+            )
+            self._books.pop(identity_key, None)
 
     def load(self, metadata_broker: Any, identity_id: str) -> LibrarySnapshotLoad:
         identity_key = str(identity_id or "")
@@ -57,7 +65,8 @@ class LibrarySnapshotCache:
                     return LibrarySnapshotLoad(books, 0.0, True)
 
                 generation = self._generation
-                inflight_key = (identity_key, generation)
+                identity_generation = self._identity_generations.get(identity_key, 0)
+                inflight_key = (identity_key, generation, identity_generation)
                 waiter = self._inflight.get(inflight_key)
                 leader = waiter is None
                 if leader:
@@ -87,7 +96,11 @@ class LibrarySnapshotCache:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
 
             with self._lock:
-                if generation == self._generation:
+                if (
+                    generation == self._generation
+                    and identity_generation
+                    == self._identity_generations.get(identity_key, 0)
+                ):
                     self._books[identity_key] = books
                 current = self._inflight.get(inflight_key)
                 if current is waiter:
