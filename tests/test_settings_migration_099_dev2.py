@@ -22,7 +22,10 @@ class SaveSettings(unittest.TestCase):
         editor={'id':Value('stable-id'),'label':Value('Hugues'),'directory':Value('hugues'),'adept_profile':Value(),'languages':Value('fr'),'prefer_vo':Value(active=False)}
         path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py';tree=ast.parse(path.read_text())
         nested={n.name:n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name in {'save_settings','save_and_reconnect'}}
-        ns={'__name__':'cifereca.gui.main_window','__package__':'cifereca.gui','self':self.window,'re':re,'shlex':shlex,'identity_editors':[editor],'account_editors':[],'descriptors':{},'public_ids':set(),'provider_download_editors':{},'levels':['normal'],'vault_profiles':['Android'],'TaskPriority':NS(USER_ACTION=0),'refresh_text':Mock(),'save':object(),'reconnect':object()}
+        ns={'__name__':'cifereca.gui.main_window','__package__':'cifereca.gui','self':self.window,'re':re,'shlex':shlex,'identity_editors':[editor],'account_editors':[],'descriptors':{},'public_ids':set(),'provider_download_editors':{},'levels':['normal'],'vault_profiles':['Android'],'TaskPriority':NS(USER_ACTION=0),'refresh_text':Mock(),'save':object(),'reconnect':object(),
+            'settings_revisions':{'accounts':1,'library':0,'sync':0,'interface':0,'diagnostic':0},
+            'saved_settings_revisions':{'accounts':0,'library':0,'sync':0,'interface':0,'diagnostic':0},
+            'track_all_settings_widgets':Mock(),'update_settings_actions':Mock()}
         for name in ['global_cmd_row','global_post_row','global_dir_row','global_ebook_row','global_audio_row','backup_dir_row']:ns[name]=Value()
         ns.update(diag_switch=Value(active=True),level_drop=Value(),exp_switch=Value(),backup_switch=Value(),unlinked_switch=Value(),backup_interval_row=Value('60'),vault_profile_drop=Value(),library_dir_row=Value(self.config.get('library.directory')))
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
