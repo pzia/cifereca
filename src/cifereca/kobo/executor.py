@@ -389,26 +389,28 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
         except KoboVaultError:
             raise
 
-    # Before asking Vault for a delegated Kobo recipe, inspect descriptor
-    # candidates for the normative v2.3.1 ``http_plain`` transport. This is
-    # the common SignedNoDrm case (for example getbook.kobo.com) and must be
-    # executed as source.type=http even when Adept supports Kobo delegation.
+    # Before asking Vault for a delegated Kobo recipe, inspect *all* display
+    # profiles for the normative http_plain transport. A later Desktop
+    # descriptor can expose a plain EPUB even when Android exposes only KDRM.
+    # The global ACSM > plain HTTP > KDRM policy must not depend on profile order.
     if request is None:
-        profile = profiles[0]
-        try:
-            current_payload = resolve("descriptor", profile)
-            current_candidate = service._kobo_candidate(current_payload, preferred)
-        except KoboVaultError:
-            raise
-        except ProviderConfigurationError as exc:
-            descriptor_error = exc
-        else:
-            if service._kobo_candidate_handling(current_candidate) == "http_plain":
-                payload = current_payload
-                candidate = current_candidate
-                selected_profile = profile
-                request, destination = http_request_for(current_candidate, profile)
-                acquisition_mode = "descriptor-http"
+        for profile in profiles:
+            try:
+                current_payload = resolve("descriptor", profile)
+                current_candidate = service._kobo_candidate(current_payload, preferred)
+            except KoboVaultError:
+                raise
+            except ProviderConfigurationError as exc:
+                descriptor_error = exc
+                continue
+            if service._kobo_candidate_handling(current_candidate) != "http_plain":
+                continue
+            payload = current_payload
+            candidate = current_candidate
+            selected_profile = profile
+            request, destination = http_request_for(current_candidate, profile)
+            acquisition_mode = "descriptor-http"
+            break
 
     # If no plain HTTP candidate was found, contract v8 may execute a true
     # Kobo KDRM content_access_book recipe locally. A delegated response can
@@ -671,6 +673,34 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
             request, destination = http_request_for(candidate, selected_profile)
             acquisition_mode = "delegated-http"
         payload = refreshed
+        # The selected candidate (and possibly handling/format) can change
+        # after an expired URL. Persist the actual retry plan before invoking
+        # the runtime, rather than leaving the original candidate in the ledger.
+        refreshed_offer = KoboOfferAdapter.offer(
+            refreshed,
+            credential_id=item.source_credential,
+            account_id=source_account_id,
+            item_id=item.record_id,
+            revision_id=item.revision_id,
+            identity_id=identity.identity_id,
+        )
+        selected_retry_offer = AcquisitionOffer(
+            entitlement=refreshed_offer.entitlement,
+            candidates=(KoboOfferAdapter.normalize_candidate(candidate),),
+            provider_contract=refreshed_offer.provider_contract,
+            expires_at=refreshed_offer.expires_at,
+            metadata={**refreshed_offer.metadata, "acquisition_mode": acquisition_mode},
+        )
+        retry_plan = AcquisitionPlanner().plan(
+            selected_retry_offer,
+            preferred_format=preferred,
+            executor_for=lambda _candidate: "kobo-adept",
+        )
+        if retry_plan is None:
+            raise ProviderConfigurationError("Kobo-Vault : aucun plan d'acquisition valide après rafraîchissement")
+        service.acquisition_ledger.begin(
+            ledger_id, plan=retry_plan, metadata={"acquisition_mode": acquisition_mode},
+        )
         result = execute_download()
 
     if str(result.get("operation") or "download") != "download":

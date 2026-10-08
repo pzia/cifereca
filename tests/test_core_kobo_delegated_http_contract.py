@@ -35,6 +35,10 @@ def _payload(*candidates):
         ("https", "GET", "https://user:secret@cdn.example/book.epub"),
         ("https", "GET", "https://cdn.example:broken/book.epub"),
         ("https", "GET", "https://cdn.example/line\nbreak"),
+        ("https", "GET", "https://cdn.example/book.epub\n"),
+        ("https", "GET", " https://cdn.example/book.epub"),
+        ("https", "GET", "https://@cdn.example/book.epub"),
+        ("https", "GET", "https://cdn.example\\@evil.example/book.epub"),
     ],
 )
 def test_delegated_selection_ignores_invalid_plain_http(transport, method, url):

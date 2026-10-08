@@ -69,6 +69,11 @@ class Diagnostics:
         return None
 
 
+class FailingDiagnostics:
+    def add(self, *_args, **_kwargs):
+        raise RuntimeError("diagnostics unavailable")
+
+
 class MemoryTransport:
     def __init__(self, payload: bytes):
         self.payload = payload
@@ -82,7 +87,7 @@ class MemoryTransport:
         return path
 
 
-def _session(tmp_path: Path, handler, *, transport=None, include_audio=False) -> GallicaSession:
+def _session(tmp_path: Path, handler, *, transport=None, include_audio=False, diagnostics=None) -> GallicaSession:
     session = GallicaSession(
         credential_id="gallica-public",
         label="Gallica",
@@ -92,7 +97,7 @@ def _session(tmp_path: Path, handler, *, transport=None, include_audio=False) ->
             "include_audio": include_audio,
         },
         config={"request_timeout_seconds": 25},
-        diagnostics=Diagnostics(),
+        diagnostics=diagnostics or Diagnostics(),
         transport=transport,
     )
     session.client.close()
@@ -125,6 +130,71 @@ def test_opds_search_discovers_opensearch_and_normalizes_results(tmp_path):
         assert item.medium == "digital"
         assert item.download_url and item.download_url.endswith(".epub")
         assert item.thumbnail_url == "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p.thumbnail"
+    finally:
+        session.close()
+
+
+def test_search_success_is_not_failed_by_diagnostics_sink(tmp_path, monkeypatch):
+    session = _session(
+        tmp_path,
+        lambda request: httpx.Response(404),
+        diagnostics=FailingDiagnostics(),
+    )
+    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    monkeypatch.setattr(session, "_search_ebooks", lambda query, page, field: [item])
+
+    try:
+        rows = session.search("bruyere", "digital")
+
+        assert [row.id for row in rows] == [item.id]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_partial_search_keeps_valid_branch_when_diagnostics_sink_fails(tmp_path, monkeypatch):
+    session = _session(
+        tmp_path,
+        lambda request: httpx.Response(404),
+        include_audio=True,
+        diagnostics=FailingDiagnostics(),
+    )
+    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    monkeypatch.setattr(session, "_search_ebooks", lambda query, page, field: [item])
+
+    def fail_audio(query, page, field):
+        raise RuntimeError("audio unavailable")
+
+    monkeypatch.setattr(session, "_search_audio", fail_audio)
+
+    try:
+        rows = session.search("bruyere", "digital")
+
+        assert [row.id for row in rows] == [item.id]
+        assert session.last_search_warnings == [
+            "Gallica : recherche audio temporairement indisponible"
+        ]
+    finally:
+        session.close()
+
+
+def test_successful_ebook_download_is_not_failed_by_diagnostics_sink(tmp_path):
+    transport = MemoryTransport(b"PK\x03\x04" + b"epub" * 32)
+    session = _session(
+        tmp_path,
+        lambda request: httpx.Response(404),
+        transport=transport,
+        diagnostics=FailingDiagnostics(),
+    )
+    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+
+    try:
+        path, url = session.download_direct(item, tmp_path / "downloads")
+
+        assert path.is_file()
+        assert path.suffix == ".epub"
+        assert url.endswith(".epub")
+        assert len(transport.sources) == 1
     finally:
         session.close()
 

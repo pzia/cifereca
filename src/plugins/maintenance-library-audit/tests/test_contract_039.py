@@ -53,5 +53,5 @@ def test_naming_audit_never_renames():
 def test_manifest_requires_plugin_api_14_for_maintenance_contracts():
     manifest = json.loads((Path(__file__).resolve().parents[1] / "cifereca-plugin.json").read_text(encoding="utf-8"))
     assert manifest["package"]["plugin_api"] == ">=1.4,<2"
-    assert manifest["package"]["version"] == "0.2.2"
-    assert {row["version"] for row in manifest["plugins"]} == {"0.2.2"}
+    assert manifest["package"]["version"] == "0.2.3"
+    assert {row["version"] for row in manifest["plugins"]} == {"0.2.3"}
