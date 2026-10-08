@@ -42,10 +42,13 @@ def _package_records(archive: zipfile.ZipFile, snapshot_root: str, dev: dict) ->
             "package_id": package["id"],
             "version": str(package["version"]),
             "plugin_api": str(package.get("plugin_api") or ">=1,<2"),
-            "plugins": sorted({
-                str(plugin["id"]): str(plugin.get("version") or package["version"])
-                for plugin in manifest["plugins"]
-            }.items()),
+            "plugins": [
+                {"id": plugin_id, "version": version}
+                for plugin_id, version in sorted({
+                    str(plugin["id"]): str(plugin.get("version") or package["version"])
+                    for plugin in manifest["plugins"]
+                }.items())
+            ],
             "path": path,
             "sha256": item["sha256"],
         })
