@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes as C
 import json
 import os
 from pathlib import Path
@@ -46,6 +47,73 @@ def capture(path: Path) -> list[int] | None:
     # the recipe distinguish screen size from the actual GTK window extent.
     bbox = image.getbbox()
     return list(bbox) if bbox else None
+
+
+
+def resize_largest_toplevel(control: X11Input, width: int, height: int) -> dict | None:
+    """Resize the largest root child so Xvfb screen size is also window size."""
+    x11 = control.x11
+    display = control.display
+    x11.XDefaultRootWindow.argtypes = [C.c_void_p]
+    x11.XDefaultRootWindow.restype = C.c_ulong
+    x11.XQueryTree.argtypes = [
+        C.c_void_p, C.c_ulong,
+        C.POINTER(C.c_ulong), C.POINTER(C.c_ulong),
+        C.POINTER(C.POINTER(C.c_ulong)), C.POINTER(C.c_uint),
+    ]
+    x11.XQueryTree.restype = C.c_int
+    x11.XGetGeometry.argtypes = [
+        C.c_void_p, C.c_ulong, C.POINTER(C.c_ulong),
+        C.POINTER(C.c_int), C.POINTER(C.c_int),
+        C.POINTER(C.c_uint), C.POINTER(C.c_uint),
+        C.POINTER(C.c_uint), C.POINTER(C.c_uint),
+    ]
+    x11.XGetGeometry.restype = C.c_int
+    x11.XMoveResizeWindow.argtypes = [
+        C.c_void_p, C.c_ulong, C.c_int, C.c_int, C.c_uint, C.c_uint,
+    ]
+    x11.XFree.argtypes = [C.c_void_p]
+
+    root = x11.XDefaultRootWindow(display)
+    root_return = C.c_ulong()
+    parent_return = C.c_ulong()
+    children = C.POINTER(C.c_ulong)()
+    nchildren = C.c_uint()
+    if not x11.XQueryTree(
+        display, root, C.byref(root_return), C.byref(parent_return),
+        C.byref(children), C.byref(nchildren),
+    ):
+        return None
+    try:
+        best = None
+        for index in range(nchildren.value):
+            xid = children[index]
+            geom_root = C.c_ulong()
+            x = C.c_int(); y = C.c_int()
+            w = C.c_uint(); h = C.c_uint()
+            border = C.c_uint(); depth = C.c_uint()
+            if not x11.XGetGeometry(
+                display, xid, C.byref(geom_root), C.byref(x), C.byref(y),
+                C.byref(w), C.byref(h), C.byref(border), C.byref(depth),
+            ):
+                continue
+            area = int(w.value) * int(h.value)
+            if w.value >= 300 and h.value >= 300 and (best is None or area > best[0]):
+                best = (area, int(xid), int(w.value), int(h.value))
+        if best is None:
+            return None
+        _area, xid, before_w, before_h = best
+        x11.XMoveResizeWindow(display, xid, 0, 0, int(width), int(height))
+        x11.XSync(display, False)
+        time.sleep(0.5)
+        return {
+            "xid": xid,
+            "before": [before_w, before_h],
+            "requested": [int(width), int(height)],
+        }
+    finally:
+        if children:
+            x11.XFree(children)
 
 
 def shortcut(control: X11Input, modifier: str, key: str) -> None:
@@ -117,6 +185,7 @@ def main() -> int:
         # page contributions are activated. Keep the interaction deterministic.
         time.sleep(args.ui_ready_wait)
         control = X11Input()
+        native_resize = resize_largest_toplevel(control, args.window_width, args.window_height)
 
         # Raccourci canonique : ouvre Recherche si nécessaire et focalise le champ.
         shortcut(control, "Control_L", "f")
@@ -150,6 +219,7 @@ def main() -> int:
         report = {
             "query": args.query,
             "window_requested": [args.window_width, args.window_height],
+            "native_resize": native_resize,
             "display": os.environ.get("DISPLAY"),
             "screen": os.environ.get("CODEX_HEADLESS_SCREEN"),
             "config": str(config_path),
