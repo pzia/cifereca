@@ -33,14 +33,19 @@ def test_default_filter_labels_do_not_repeat_tous():
     assert "Langues : Tous" not in source
     assert "'Champ', 'Champ · Titre'" in source
     assert "'Type', 'Type · Physique', 'Type · Numérique'" in source
+    assert "Type · Support indéterminé" in source
 
 
-def test_multiselect_uses_value_or_count_only_when_active():
-    source = _method("MultiSelect", "_changed")
-    assert "label = self.caption" in source
-    assert "label = f'{self.caption} · {titles[0]}'" in source
-    assert "label = f'{self.caption} · {len(titles)}'" in source
-    assert "Tous" not in source
+def test_multiselect_keeps_active_values_but_hides_neutral_tous():
+    init = _method("MultiSelect", "__init__")
+    changed = _method("MultiSelect", "_changed")
+    assert "self.set_label(label)" in init
+    assert "summary = 'Tous'" in changed
+    assert "summary = titles[0]" in changed
+    assert "len(titles) == 2" in changed
+    assert "summary = f'{titles[0]} +{len(titles) - 1}'" in changed
+    assert "self.caption if not titles" in changed
+    assert "f'{self.caption} : {summary}'" in changed
 
 
 def test_filter_tooltips_explain_semantics_without_lengthening_bar():
