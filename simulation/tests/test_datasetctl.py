@@ -64,6 +64,38 @@ class DatasetCtlTests(unittest.TestCase):
             else:
                 os.environ[datasetctl.RUNTIME_ENV] = old
 
+    def test_profile_can_generate_two_identity_libraries(self):
+        catalog = datasetctl.load_catalog()
+        _, profile = datasetctl.load_profile("ux-small")
+        old = os.environ.get(datasetctl.RUNTIME_ENV)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ[datasetctl.RUNTIME_ENV] = tmp
+                profile = dict(profile)
+                profile["identities"] = [
+                    {**profile["identities"][0], "epubs": 2},
+                    {**profile["identities"][1], "epubs": 1},
+                ]
+                prepared = datasetctl.prepare(profile, catalog, rebuild_library=True)
+                library = Path(prepared["library"])
+                self.assertEqual(len(list((library / "camille" / "local").glob("*.epub"))), 2)
+                self.assertEqual(len(list((library / "alexandre" / "local").glob("*.epub"))), 1)
+                config = json.loads(Path(prepared["config"]).read_text(encoding="utf-8"))
+                self.assertEqual(
+                    [(row["id"], row["directory_name"]) for row in config["identities"]],
+                    [("ux", "camille"), ("ux-secondary", "alexandre")],
+                )
+                self.assertTrue(all(row["identity_id"] == "ux" for row in config["providers"]["accounts"]))
+                summary = datasetctl.summary_payload(profile, catalog)
+                self.assertEqual(summary["library"]["configured_epubs"], 3)
+                self.assertEqual(summary["library"]["generated_epubs"], 3)
+                self.assertTrue(summary["library"]["complete"])
+        finally:
+            if old is None:
+                os.environ.pop(datasetctl.RUNTIME_ENV, None)
+            else:
+                os.environ[datasetctl.RUNTIME_ENV] = old
+
     def test_ux_all_library_uses_identity_provider_layout(self):
         catalog = datasetctl.load_catalog()
         _, profile = datasetctl.load_profile("ux-all")
