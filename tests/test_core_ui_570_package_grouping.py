@@ -14,8 +14,8 @@ def _method(name: str) -> str:
     return ast.unparse(method)
 
 
-def test_refresh_groups_installed_plugins_by_package_not_category():
-    source = _method("refresh")
+def test_inventory_renderer_groups_installed_plugins_by_package_not_category():
+    source = _method("_render_inventory")
     assert "installed_packages" in source
     assert "status.descriptor.package_id == package['package_id']" in source
     assert "for category in categories" not in source
