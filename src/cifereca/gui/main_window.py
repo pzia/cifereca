@@ -5273,7 +5273,7 @@ class MainWindow(Adw.ApplicationWindow):
         copy = self.action_button("Copier dans le presse-papiers", "edit-copy-symbolic", suggested=True)
         export = self.action_button("Exporter le diagnostic", "document-save-symbolic")
         export.set_tooltip_text("Enregistrer le rapport de diagnostic expurgé dans un fichier texte")
-        clear = self.action_button("Effacer le journal", "edit-clear-symbolic")
+        clear = self.action_button("Effacer", "edit-clear-symbolic")
         buttons.append(refresh); buttons.append(copy); buttons.append(export); buttons.append(clear)
 
         def open_diagnostic_plugin(_button, plugin_id: str) -> None:
