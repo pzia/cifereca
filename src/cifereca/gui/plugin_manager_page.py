@@ -134,6 +134,39 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         version_text = f"v{active}" if active else (f"attendu v{expected}" if expected else "version inconnue")
         version = Gtk.Label(label=version_text, xalign=1)
         version.add_css_class("dim-label"); header.append(version)
+
+        previous = package.get("previous")
+        if previous or not package.get("builtin"):
+            package_menu = Gtk.MenuButton()
+            package_menu.set_icon_name("open-menu-symbolic")
+            package_menu.set_tooltip_text("Actions du package")
+            package_popover = Gtk.Popover()
+            package_menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            package_menu_box.set_margin_top(8); package_menu_box.set_margin_bottom(8)
+            package_menu_box.set_margin_start(8); package_menu_box.set_margin_end(8)
+            if previous:
+                rollback = action_button(f"Revenir à {previous}", "edit-undo-symbolic")
+                rollback.set_tooltip_text(f"Réactiver la version {previous} du package entier")
+                rollback.connect("clicked", lambda _b, pid=package_id: self._rollback(pid))
+                package_menu_box.append(rollback)
+            if not package.get("builtin"):
+                plugin_names = tuple(
+                    str(status.descriptor.display_name or status.descriptor.id)
+                    for status in package_plugins
+                )
+                remove = action_button(
+                    "Désinstaller le package", "edit-delete-symbolic", destructive=True,
+                    tooltip="Désinstaller ce package et toutes les contributions listées ci-dessous",
+                )
+                remove.connect(
+                    "clicked",
+                    lambda _b, pid=package_id, pname=package_name, names=plugin_names:
+                        self._confirm_remove(pid, pname, names),
+                )
+                package_menu_box.append(remove)
+            package_popover.set_child(package_menu_box)
+            package_menu.set_popover(package_popover)
+            header.append(package_menu)
         box.append(header)
 
         publisher = str(package.get("publisher") or "")
@@ -163,31 +196,6 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             freshness.set_wrap(True)
             freshness.add_css_class("dim-label" if freshness_status == "up_to_date" else "warning")
             box.append(freshness)
-
-        package_actions = AdaptiveActionBar(source=box)
-        previous = package.get("previous")
-        if previous:
-            rollback = action_button(f"Revenir à {previous}", "edit-undo-symbolic")
-            rollback.set_tooltip_text(f"Réactiver la version {previous} du package entier")
-            rollback.connect("clicked", lambda _b, pid=package_id: self._rollback(pid))
-            package_actions.append(rollback)
-        if not package.get("builtin"):
-            plugin_names = tuple(
-                str(status.descriptor.display_name or status.descriptor.id)
-                for status in package_plugins
-            )
-            remove = action_button(
-                "Désinstaller le package", "edit-delete-symbolic", destructive=True,
-                tooltip="Désinstaller ce package et toutes les contributions listées ci-dessous",
-            )
-            remove.connect(
-                "clicked",
-                lambda _b, pid=package_id, pname=package_name, names=plugin_names:
-                    self._confirm_remove(pid, pname, names),
-            )
-            package_actions.append(remove)
-        if previous or not package.get("builtin"):
-            box.append(package_actions)
 
         contributions = Gtk.Label(
             label=f"{len(package_plugins)} contribution(s) fournie(s) par ce package",
@@ -239,12 +247,11 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
 
-        footer = AdaptiveActionBar(source=box)
+        primary_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         if d.config_schema:
             cfg = action_button("Configurer…", "preferences-system-symbolic")
-            cfg.connect("clicked", lambda _b, pid=d.id: self._configure(pid)); footer.append(cfg)
-        diag = action_button("Diagnostic", "dialog-information-symbolic")
-        diag.connect("clicked", lambda _b, pid=d.id: self._diagnostic(pid)); footer.append(diag)
+            cfg.connect("clicked", lambda _b, pid=d.id: self._configure(pid))
+            primary_actions.append(cfg)
         if d.instantiation == "singleton_public":
             identities = Gtk.MenuButton(label="Identités…")
             identities.set_tooltip_text("Activer ce catalogue pour chaque identité")
@@ -259,17 +266,46 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 activation.connect("toggled", lambda button, pid=d.id, iid=identity.identity_id:
                                    self._identity_toggle(pid, iid, button.get_active()))
                 choices.append(activation)
-            identity_popover.set_child(choices); identities.set_popover(identity_popover); footer.append(identities)
+            identity_popover.set_child(choices); identities.set_popover(identity_popover)
+            primary_actions.append(identities)
+
+        secondary = Gtk.MenuButton()
+        secondary.set_icon_name("open-menu-symbolic")
+        secondary.set_tooltip_text(f"Actions secondaires : {d.display_name or d.id}")
+        secondary_popover = Gtk.Popover()
+        secondary_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        secondary_box.set_margin_top(8); secondary_box.set_margin_bottom(8)
+        secondary_box.set_margin_start(8); secondary_box.set_margin_end(8)
+        diag = action_button("Diagnostic", "dialog-information-symbolic")
+        diag.connect("clicked", lambda _b, pid=d.id: self._diagnostic(pid))
+        secondary_box.append(diag)
+        secondary_popover.set_child(secondary_box); secondary.set_popover(secondary_popover)
+        primary_actions.append(secondary)
+        box.append(primary_actions)
+
+        settings = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        priority_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        priority_label = Gtk.Label(label="Priorité", xalign=0)
+        priority_label.set_tooltip_text(
+            "Ordre de préférence de ce plugin parmi les contributions de la même catégorie"
+        )
+        priority_group.append(priority_label)
         priority = Gtk.SpinButton.new_with_range(-1000, 1000, 1)
         priority.set_value(status.effective_priority)
-        priority.set_tooltip_text("Priorité effective dans sa catégorie")
+        priority.set_tooltip_text(
+            "Priorité effective : une valeur plus élevée est préférée dans la même catégorie"
+        )
         priority.connect("value-changed", lambda sp, pid=d.id: self._priority(pid, int(sp.get_value())))
-        footer.append(priority)
+        priority_group.append(priority); settings.append(priority_group)
+
+        activation_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        activation_label = Gtk.Label(label="Activé", xalign=0)
+        activation_group.append(activation_label)
         toggle = Gtk.Switch(); toggle.set_active(bool(status.enabled)); toggle.set_valign(Gtk.Align.CENTER)
-        toggle.set_tooltip_text(f"Activer {d.display_name or d.id}")
+        toggle.set_tooltip_text(f"Activer ou désactiver {d.display_name or d.id}")
         toggle.connect("notify::active", lambda sw, _p, pid=d.id: self._toggle(pid, sw.get_active()))
-        footer.append(toggle)
-        box.append(footer)
+        activation_group.append(toggle); settings.append(activation_group)
+        box.append(settings)
         return box
 
     @staticmethod
