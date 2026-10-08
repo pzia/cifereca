@@ -51,7 +51,7 @@ def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
     assert 'diag_scroll.set_visible(False)' in source
     assert 'label="Ouvrir Plugins"' in source
     assert 'focus(plugin_id)' in source
-    assert 'Copier le diagnostic' in source
+    assert 'Copier dans le presse-papiers' in source
     assert 'Exporter le diagnostic' in source
     assert 'Gtk.FileChooserAction.SAVE' in source
 
