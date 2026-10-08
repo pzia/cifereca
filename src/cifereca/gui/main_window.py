@@ -5271,8 +5271,10 @@ class MainWindow(Adw.ApplicationWindow):
         buttons = AdaptiveActionBar(source=box); box.append(buttons)
         refresh = self.action_button("Actualiser", "view-refresh-symbolic")
         copy = self.action_button("Copier le diagnostic", "edit-copy-symbolic", suggested=True)
+        export = self.action_button("Exporter le diagnostic", "document-save-symbolic")
+        export.set_tooltip_text("Enregistrer le rapport de diagnostic expurgé dans un fichier texte")
         clear = self.action_button("Effacer le journal", "edit-clear-symbolic")
-        buttons.append(refresh); buttons.append(copy); buttons.append(clear)
+        buttons.append(refresh); buttons.append(copy); buttons.append(export); buttons.append(clear)
 
         def open_diagnostic_plugin(_button, plugin_id: str) -> None:
             self.navigate("plugins")
@@ -5583,6 +5585,49 @@ class MainWindow(Adw.ApplicationWindow):
                 )
                 self.toast("Diagnostic copié dans le presse-papiers")
 
+        def export_text(_button=None) -> None:
+            """Enregistrer le rapport expurgé visible dans Diagnostic."""
+            refresh_text()
+            buffer = diag_text.get_buffer()
+            start, end = buffer.get_bounds()
+            content = buffer.get_text(start, end, True)
+            chooser = Gtk.FileChooserNative.new(
+                "Exporter le diagnostic",
+                self,
+                Gtk.FileChooserAction.SAVE,
+                "Exporter",
+                "Annuler",
+            )
+            chooser.set_current_name("cifereca-diagnostic.txt")
+
+            def chosen(dialog, response) -> None:
+                try:
+                    if response != Gtk.ResponseType.ACCEPT:
+                        return
+                    selected = dialog.get_file()
+                    path = selected.get_path() if selected is not None else None
+                    if not path:
+                        raise RuntimeError("destination locale indisponible")
+                    Path(path).write_text(content, encoding="utf-8")
+                    self.diagnostics.add(
+                        "UI", "diagnostic export", "ok",
+                        detail={"file": Path(path).name},
+                        level="detailed",
+                    )
+                    self.toast("Diagnostic exporté")
+                except Exception as exc:
+                    self.diagnostics.add(
+                        "UI", "diagnostic export", "error",
+                        detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                        level="detailed",
+                    )
+                    self.show_error(f"Impossible d’exporter le diagnostic : {exc}", "Export impossible")
+                finally:
+                    dialog.destroy()
+
+            chooser.connect("response", chosen)
+            chooser.show()
+
         save.connect("clicked", save_settings)
         reconnect.connect("clicked", save_and_reconnect)
         save_bottom.connect("clicked", save_settings)
@@ -5590,6 +5635,7 @@ class MainWindow(Adw.ApplicationWindow):
         diag_filter.connect("notify::selected", lambda *_args: refresh_text())
         refresh.connect("clicked", lambda _b: refresh_text())
         copy.connect("clicked", copy_text)
+        export.connect("clicked", export_text)
         def persist_diagnostics(*_args):
             selected = int(level_drop.get_selected())
             if not 0 <= selected < len(levels):
