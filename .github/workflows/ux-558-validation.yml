@@ -1,0 +1,111 @@
+name: UX 558 narrow detail validation
+
+on:
+  push:
+    branches:
+      - core/558-narrow-detail-context
+    paths:
+      - ".github/workflows/ux-558-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-search-list
+      CIFERECA_GTK_TEST_HARNESS: ${{ github.workspace }}/environnements/openai-chat-debian
+      PYTHONPATH: ${{ github.workspace }}/src
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Overlay UX recipe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin ux/search-list-recipe
+          git checkout origin/ux/search-list-recipe -- \
+            simulation/datasetctl.py \
+            simulation/profiles/ux-search-list.toml \
+            simulation/recipes/search_list_fixture.py \
+            simulation/recipes/search_list_capture.py
+
+      - name: Install GTK/X11 runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxtst6 \
+            python3-gi python3-gi-cairo python3-cairo python3-pil python3-pytest \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Run focused unit tests
+        run: |
+          /usr/bin/python3 -m pytest -q \
+            tests/test_core_ui_553_master_detail_window_width.py \
+            tests/test_core_ui_558_narrow_detail_context.py
+
+      - name: Prepare normal-book dataset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/cifereca-bin evidence
+          cat > /tmp/cifereca-bin/cifereca <<'EOF'
+          #!/usr/bin/env bash
+          exec /usr/bin/python3 -m cifereca "$@"
+          EOF
+          chmod +x /tmp/cifereca-bin/cifereca
+          export PATH="/tmp/cifereca-bin:$PATH"
+
+          /usr/bin/python3 simulation/datasetctl.py rebuild ux-search-list
+          /usr/bin/python3 simulation/recipes/search_list_fixture.py
+          /usr/bin/python3 simulation/datasetctl.py exec ux-search-list -- \
+            env PYTHONPATH="$GITHUB_WORKSPACE/src" \
+            /usr/bin/python3 -m cifereca.cli catalog-scan
+
+      - name: Capture normal-book master detail
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PATH="/tmp/cifereca-bin:$PATH"
+
+          for width in 760 1024 1300; do
+            out="$GITHUB_WORKSPACE/evidence/$width"
+            mkdir -p "$out"
+            /usr/bin/python3 simulation/datasetctl.py exec ux-search-list -- \
+              env \
+                PYTHONPATH="$GITHUB_WORKSPACE/src" \
+                CIFERECA_GTK_TEST_HARNESS="$CIFERECA_GTK_TEST_HARNESS" \
+                GDK_BACKEND=x11 \
+                GSK_RENDERER=cairo \
+                GTK_A11Y=none \
+                NO_AT_BRIDGE=1 \
+              xvfb-run -a -s "-screen 0 ${width}x720x24" \
+                /usr/bin/python3 simulation/recipes/search_list_capture.py \
+                  --query "UXSTRESS normal" \
+                  --window-width "$width" \
+                  --window-height 720 \
+                  --startup-wait 5 \
+                  --search-wait 4 \
+                  --out-dir "$out" \
+                  --cwd "$GITHUB_WORKSPACE" -- \
+                /usr/bin/python3 simulation/datasetctl.py cifereca ux-search-list --verbose
+          done
+
+      - name: Stop simulator
+        if: always()
+        run: /usr/bin/python3 simulation/datasetctl.py down ux-search-list || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-558-narrow-detail-evidence
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 2
