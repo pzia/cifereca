@@ -40,7 +40,25 @@ def test_narrow_selection_opens_full_width_detail_and_back_returns_to_list():
     back = _method_source("MasterDetailPage", "_show_narrow_list")
 
     assert "self._show_narrow_detail()" in selected
+    assert "self._set_narrow_detail_context(True)" in detail
     assert "self.paned.set_position(0)" in detail
     assert "self.detail_back.set_visible(True)" in detail
+    assert "self._set_narrow_detail_context(False)" in back
     assert "self.paned.set_position(max_position)" in back
     assert "self.detail_back.set_visible(False)" in back
+
+
+def test_narrow_detail_hides_list_context_without_destroying_state():
+    source = _method_source("MasterDetailPage", "_set_narrow_detail_context")
+
+    assert "self.page_header.set_visible(not active)" in source
+    assert "self.toolbar.set_visible(not active)" in source
+    assert "sidebar = getattr(self.window, 'sidebar', None)" in source
+    assert "sidebar.set_visible(False)" in source
+    assert "sidebar.set_visible(bool(restore))" in source
+
+
+def test_main_shell_exposes_sidebar_for_contextual_narrow_detail():
+    source = _method_source("MainWindow", "_build_main_shell")
+
+    assert "self.sidebar = sidebar" in source
