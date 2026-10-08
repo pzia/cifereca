@@ -272,6 +272,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         box.append(footer)
         return box
 
+    @staticmethod
     def _friendly_problem(status: Any) -> str:
         if status.reason in {"dependency_missing", "dependency_disabled", "dependency_version"}:
             return "Ce plugin attend un autre composant. Activez ou installez la dépendance indiquée dans Diagnostic."
