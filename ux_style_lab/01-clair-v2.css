@@ -1,0 +1,75 @@
+/* CIFERECA CSS-only UX prototype — GTK 4 user stylesheet.
+   Experimental overlay: no Core/plugin implementation modified. */
+@define-color accent_color #1d5fcb;
+@define-color accent_bg_color #1d5fcb;
+@define-color accent_fg_color #ffffff;
+@define-color window_bg_color #f7faff;
+@define-color window_fg_color #152641;
+@define-color view_bg_color #ffffff;
+@define-color view_fg_color #152641;
+@define-color headerbar_bg_color #f7faff;
+@define-color headerbar_fg_color #152641;
+@define-color sidebar_bg_color #e9f1fb;
+@define-color sidebar_fg_color #152641;
+@define-color card_bg_color #ffffff;
+@define-color card_fg_color #152641;
+@define-color borders #bfd0e8;
+@define-color popover_bg_color #ffffff;
+@define-color popover_fg_color #152641;
+
+window, window.background, .background {
+  background-color: #f7faff;
+  color: #152641;
+  font-family: "Cantarell", "DejaVu Sans", sans-serif;
+  font-size: 14px;
+}
+headerbar, .titlebar, .headerbar {
+  background-color: #f7faff;
+  color: #152641;
+  border-color: #bfd0e8;
+}
+.sidebar, .navigation-sidebar, stacksidebar, navigation-sidebar {
+  background-color: #e9f1fb;
+  color: #152641;
+}
+popover, popover contents, menu, dialog, .dialog {
+  background-color: #ffffff;
+  color: #152641;
+}
+entry, searchentry, spinbutton, textview, textview text,
+dropdown, combobox, .view, .card {
+  background-color: #ffffff;
+  color: #152641;
+  border-radius: 11px;
+  border-color: #bfd0e8;
+}
+button, .button {
+  background-color: #eef4fd;
+  color: #152641;
+  border: 1px solid #bfd0e8;
+  border-radius: 11px;
+  padding: 5px 9px;
+  box-shadow: none;
+}
+button:hover { background-color: #c7dcfd; }
+button:focus-visible, entry:focus-visible, row:focus-visible {
+  outline: 2px solid #1d5fcb;
+  outline-offset: 2px;
+}
+button.suggested-action, .suggested-action,
+button:checked, .toggle:checked {
+  background-color: #1d5fcb;
+  color: #ffffff;
+  border-color: #1d5fcb;
+  font-weight: 600;
+}
+row:selected, listview row:selected, .navigation-sidebar row:selected,
+.sidebar row:selected, selection {
+  background-color: #bdd6fa;
+  color: #152641;
+  border-radius: 11px;
+}
+row:hover { background-color: #c7dcfd; }
+separator { background-color: #bfd0e8; }
+progressbar progress, scale highlight { background-color: #1d5fcb; }
+label.dim-label, .dim-label { color: #4e6482; }
