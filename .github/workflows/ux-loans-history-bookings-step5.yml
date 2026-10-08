@@ -147,40 +147,36 @@ jobs:
                   raise RuntimeError(f"app rc={app.returncode}")
               control=X11Input(); report["resize"]=resize(control); time.sleep(1)
 
-              # Accueil -> Emprunts : 4 pages forward (Recherche, Bibliothèque, Récents, Emprunts)
-              next_page(control,4,1.0)
-              time.sleep(4)
+              # Navigate through the real sidebar coordinates measured on this shell.
+              control.click(105,337); time.sleep(4)
               report["shots"].append(shot("01-loans.png"))
               control.click(285,245); time.sleep(2)
               report["shots"].append(shot("02-loans-detail.png"))
 
               # Emprunts -> Historique
-              next_page(control,1,1.0)
-              time.sleep(4)
+              control.click(105,380); time.sleep(4)
               report["shots"].append(shot("03-history.png"))
               control.click(285,245); time.sleep(2)
               report["shots"].append(shot("04-history-detail.png"))
 
               # Historique -> Réservations
-              next_page(control,1,1.0)
-              time.sleep(4)
+              control.click(105,425); time.sleep(4)
               report["shots"].append(shot("05-bookings.png"))
               control.click(285,245); time.sleep(2)
               report["shots"].append(shot("06-bookings-detail.png"))
 
               # Switch identity and revisit same three pages to capture empty/different states.
-              control.click(970,28); time.sleep(.5)
+              control.click(535,28); time.sleep(.5)
               control.key("Down",True); control.key("Down",False)
               control.key("Return",True); control.key("Return",False)
               time.sleep(3)
 
-              # Back to Emprunts using previous page twice.
-              shortcut(control,"Control_L","Page_Up"); time.sleep(1)
-              shortcut(control,"Control_L","Page_Up"); time.sleep(3)
+              # Revisit the same three pages for the second identity.
+              control.click(105,337); time.sleep(3)
               report["shots"].append(shot("07-loans-alexandre.png"))
-              next_page(control,1,1.0); time.sleep(3)
+              control.click(105,380); time.sleep(3)
               report["shots"].append(shot("08-history-alexandre.png"))
-              next_page(control,1,1.0); time.sleep(3)
+              control.click(105,425); time.sleep(3)
               report["shots"].append(shot("09-bookings-alexandre.png"))
 
               (OUT/"report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
