@@ -68,6 +68,7 @@ class LibraryService:
         self._session_errors: dict[str, str] = {}
         self.identities: list[Identity] = []
         self.current_identity: Identity | None = None
+        self._account_context_epoch = 0
         recovered = self._recover_identity_directory_migration()
         self._sync_identity_configuration()
         if recovered:
@@ -282,6 +283,7 @@ class LibraryService:
         if identity is None:
             raise ProviderConfigurationError(f"Identité inconnue: {identity_id}")
         self.current_identity = identity
+        self._account_context_epoch += 1
         # History and bookings are identity-scoped snapshots. Invalidate them
         # at the service boundary so non-UI callers cannot observe data that
         # belonged to the previously selected identity.
@@ -707,6 +709,7 @@ class LibraryService:
             if credential_id and account.credential_id != credential_id:
                 continue
             self.current_account = account
+            self._account_context_epoch += 1
             self.current_identity = self.identity_by_id(account.identity_id) or self.current_identity
             key = self._session_key(account.provider_id, account.credential_id)
             if key in self._sessions:
@@ -855,34 +858,40 @@ class LibraryService:
         return summary
 
     def refresh_history(self, force: bool = False) -> list[HistoryItem]:
+        account = self.current_account
+        epoch = self._account_context_epoch
         key = self._key("history-v3")
         ttl = int(self.config.get("cache.history_seconds", 1800))
         if not force:
             cached = self.storage.cache_get("account", key)
             if isinstance(cached, list):
-                self.last_history = [HistoryItem(**x) for x in cached]
-                self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(self.last_history)})
-                return self.last_history
-        session = self._session_for_account()
+                rows = [HistoryItem(**x) for x in cached]
+                if self._account_context_epoch == epoch and self.current_account is account:
+                    self.last_history = rows
+                self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
+                return rows
+        session = self._session_for_account(account)
         if not session.capabilities.history:
-            self.last_history = []
+            if self._account_context_epoch == epoch and self.current_account is account:
+                self.last_history = []
             return []
-        rows = session.history(self.current_account)
+        rows = session.history(account)
         direct = sum(1 for x in rows if x.thumbnail_url)
         default_only = sum(1 for x in rows if not x.thumbnail_url and x.default_thumbnail_url)
         missing = sum(1 for x in rows if not x.thumbnail_url and not x.default_thumbnail_url)
         self.diagnostics.add(
             "API", "history thumbnails", "ok",
             detail={
-                "provider_plugin": self.current_account.provider_id,
-                "account": "primary" if self.current_account.is_primary else "linked",
+                "provider_plugin": account.provider_id,
+                "account": "primary" if account.is_primary else "linked",
                 "count": len(rows), "direct_thumbnail": direct,
                 "default_only": default_only, "missing": missing,
             },
             level="detailed",
         )
         self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
-        self.last_history = rows
+        if self._account_context_epoch == epoch and self.current_account is account:
+            self.last_history = rows
         return rows
 
     @staticmethod
@@ -1173,23 +1182,29 @@ class LibraryService:
         return url or default_url, status
 
     def refresh_bookings(self, force: bool = False) -> list[Booking]:
+        account = self.current_account
+        epoch = self._account_context_epoch
         key = self._key("bookings")
         if not force:
             cached = self.storage.cache_get("account", key)
             if isinstance(cached, list):
-                self.last_bookings = [Booking(**x) for x in cached]
-                return self.last_bookings
-        session = self._session_for_account()
+                rows = [Booking(**x) for x in cached]
+                if self._account_context_epoch == epoch and self.current_account is account:
+                    self.last_bookings = rows
+                return rows
+        session = self._session_for_account(account)
         if not session.capabilities.bookings:
-            self.last_bookings = []
+            if self._account_context_epoch == epoch and self.current_account is account:
+                self.last_bookings = []
             return []
-        rows = session.bookings(self.current_account)
+        rows = session.bookings(account)
         serial = []
         for row in rows:
             d = asdict(row); d["raw"] = {}
             serial.append(d)
         self.storage.cache_put("account", key, serial, 300)
-        self.last_bookings = rows
+        if self._account_context_epoch == epoch and self.current_account is account:
+            self.last_bookings = rows
         return rows
 
     def provider_display_name(self, provider_id: str) -> str:
