@@ -15,6 +15,7 @@ class MultiSelect(Gtk.MenuButton):
         self._last_notified_values = ()
         self.help_text = str(help_text or '')
         self.set_label(label)
+        self.set_tooltip_text(self.help_text or None)
         pop = Gtk.Popover()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_top(10); box.set_margin_bottom(10)
@@ -35,13 +36,15 @@ class MultiSelect(Gtk.MenuButton):
         values = self.values()
         titles = [self.choice_labels.get(value, str(value)) for value in values]
         if not titles:
-            label = self.caption
+            summary = 'Tous'
         elif len(titles) == 1:
-            label = f'{self.caption} · {titles[0]}'
+            summary = titles[0]
+        elif len(titles) == 2 and sum(len(title) for title in titles) <= 22:
+            summary = ' + '.join(titles)
         else:
-            label = f'{self.caption} · {len(titles)}'
+            summary = f'{titles[0]} +{len(titles) - 1}'
         tooltip = ', '.join(titles) if titles else (self.help_text or None)
-        self.set_label(label)
+        self.set_label(self.caption if not titles else f'{self.caption} : {summary}')
         self.set_tooltip_text(tooltip)
         if values == self._last_notified_values:
             return
@@ -112,7 +115,7 @@ class QueryControls(Gtk.Box):
         self.field.set_tooltip_text("Choisir le champ interrogé : titre, auteur, ISBN, sujet, série, collection ou langue.")
         self.field.connect('notify::selected', lambda *_: self._changed())
         self.scope = insert_filter(Gtk.DropDown.new_from_strings([
-            'Type', 'Type · Physique', 'Type · Numérique', 'Type · Indéterminé',
+            'Type', 'Type · Physique', 'Type · Numérique', 'Type · Support indéterminé',
         ]))
         self.scope.set_tooltip_text("Limiter aux documents physiques, numériques ou de type indéterminé.")
         self.scope.set_selected(2)
