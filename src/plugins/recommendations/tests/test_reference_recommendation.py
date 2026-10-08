@@ -105,3 +105,30 @@ def test_reference_without_recommendation_signal_is_rejected():
                 metadata={"language": "fr", "format": "epub"},
             )
         )
+
+
+def test_reference_mode_can_exclude_other_owned_books_from_existing_snapshot():
+    catalog = Catalog()
+    owned = [{
+        "title": "Livre voisin",
+        "author": "Alice Auteur",
+        "metadata": {"subjects": ["histoire spatiale"]},
+    }]
+
+    hidden = compute_reference_recommendations(
+        catalog,
+        reference_book(),
+        owned_books=owned,
+        exclude_owned=True,
+        max_queries=2,
+    )
+    shown = compute_reference_recommendations(
+        catalog,
+        reference_book(),
+        owned_books=owned,
+        exclude_owned=False,
+        max_queries=2,
+    )
+
+    assert all(row.item["title"] != "Livre voisin" for row in hidden.ranked)
+    assert any(row.item["title"] == "Livre voisin" for row in shown.ranked)

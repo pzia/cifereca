@@ -18,8 +18,9 @@ from cifereca.plugin_api import (
     normalize_language_tag,
 )
 
-from recommendation_engine import RankedCandidate, candidate_key, get_field, normalize
+from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, normalize
 from recommendation_service import RecommendationPartial, RecommendationResult, compute_recommendations
+from reference_recommendation import compute_reference_recommendations
 
 
 _LOG = logging.getLogger("cifereca.plugin.recommendations")
@@ -32,6 +33,13 @@ _DIVERSITY_TOOLTIP = (
     "Diversité : 0 privilégie les recommandations les plus proches ; "
     "une valeur élevée varie davantage auteurs, sujets et sources."
 )
+
+def _reference_label(book: Any) -> str:
+    title = str(get_field(book, "title", "") or "").strip() or "Sans titre"
+    authors = author_values(book)
+    author = authors[0] if authors else ""
+    return f"{title} — {author}" if author else title
+
 
 def _external_book_url(value: Any) -> str | None:
     url = str(value or "").strip()
@@ -146,6 +154,9 @@ class UxRecommendationsView:
         self._provisional_order: dict[str, int] = {}
         self._provisional_active = False
         self._profile_books_count = 0
+        self._reference_books: list[Any] = []
+        self._reference_book: Any = None
+        self._reloading_references = False
         self._active_identity_id: str | None = None
         self._reloading_identities = False
         self._overview_refresh_source_id = 0
@@ -206,13 +217,22 @@ class UxRecommendationsView:
         controls.set_selection_mode(Gtk.SelectionMode.NONE)
         controls.set_row_spacing(7)
         controls.set_column_spacing(7)
-        controls.set_max_children_per_line(7)
+        controls.set_max_children_per_line(8)
 
         self._identity_model = Gtk.StringList.new([])
         self._identity = Gtk.DropDown(model=self._identity_model)
         self._identity.set_tooltip_text("Profil utilisé comme point de départ")
         self._identity.connect("notify::selected", self._identity_changed)
         controls.insert(self._labeled("Profil", self._identity), -1)
+
+        self._reference_model = Gtk.StringList.new(["Bibliothèque entière"])
+        self._reference = Gtk.DropDown(model=self._reference_model)
+        self._reference.set_sensitive(False)
+        self._reference.set_tooltip_text(
+            "Point de départ : bibliothèque entière ou livre précis de ce profil"
+        )
+        self._reference.connect("notify::selected", self._reference_changed)
+        controls.insert(self._labeled("Référence", self._reference), -1)
 
         self._provider_model = Gtk.StringList.new(["Tous les catalogues"])
         self._provider = Gtk.DropDown(model=self._provider_model)
@@ -416,7 +436,48 @@ class UxRecommendationsView:
         if self._reloading_identities:
             return
         if self._identity_ids:
+            self._reference_book = None
+            self._reference_books = []
+            self._reload_reference_books(())
             self.refresh()
+
+    def _reference_changed(self, *_args) -> None:
+        if self._reloading_references:
+            return
+        index = int(self._reference.get_selected())
+        reference = (
+            self._reference_books[index - 1]
+            if 0 < index <= len(self._reference_books)
+            else None
+        )
+        if reference is self._reference_book:
+            return
+        self._reference_book = reference
+        self.refresh()
+
+    def _reload_reference_books(self, books) -> None:
+        current_key = candidate_key(self._reference_book) if self._reference_book is not None else ""
+        ordered = sorted(
+            list(books or ()),
+            key=lambda book: (_reference_label(book).casefold(), candidate_key(book)),
+        )
+        self._reloading_references = True
+        try:
+            self._reference_books = ordered
+            while self._reference_model.get_n_items() > 1:
+                self._reference_model.remove(1)
+            selected = 0
+            for index, book in enumerate(ordered, 1):
+                self._reference_model.append(_reference_label(book))
+                if current_key and candidate_key(book) == current_key:
+                    selected = index
+                    self._reference_book = book
+            if current_key and selected == 0:
+                self._reference_book = None
+            self._reference.set_selected(selected)
+            self._reference.set_sensitive(bool(ordered))
+        finally:
+            self._reloading_references = False
 
     def selected_provider_id(self) -> str:
         index = int(self._provider.get_selected())
@@ -567,8 +628,15 @@ class UxRecommendationsView:
         self._refresh_button.set_sensitive(False)
         self._spinner.start()
         self._progress.set_fraction(0.0)
-        self._progress.set_text("0 % · Lecture de la bibliothèque")
-        self._summary.set_label("Lecture de la projection locale de la bibliothèque…")
+        reference = self._reference_book
+        if reference is None:
+            self._progress.set_text("0 % · Lecture de la bibliothèque")
+            self._summary.set_label("Lecture de la projection locale de la bibliothèque…")
+        else:
+            self._progress.set_text("0 % · Préparation du livre de référence")
+            self._summary.set_label(
+                "Recommandations centrées sur « " + _reference_label(reference) + " »…"
+            )
         exploration = int(self._exploration.get_value())
         exclude_owned = bool(self._exclude_owned.get_active())
 
@@ -588,6 +656,21 @@ class UxRecommendationsView:
                     return
                 self.GLib.idle_add(self._accept_partial, generation, snapshot)
 
+            if reference is not None:
+                return compute_reference_recommendations(
+                    catalog_broker,
+                    reference,
+                    scope=self._config_str("scope", "digital"),
+                    max_queries=self._config_int("max_queries", 8),
+                    per_query=self._config_int("per_query", 50),
+                    max_results=self._config_int("max_results", 120),
+                    exploration=exploration,
+                    owned_books=self._reference_books,
+                    exclude_owned=exclude_owned,
+                    progress=progress,
+                    partial=partial,
+                    control=control,
+                )
             return compute_recommendations(
                 metadata_broker,
                 catalog_broker,
@@ -992,6 +1075,8 @@ class UxRecommendationsView:
         self._ranked = list(result.ranked)
         self._reload_providers(result.providers)
         self._reload_languages(self._ranked)
+        if self._reference_book is None and result.profile_books:
+            self._reload_reference_books(result.profile_books)
         if not result.books_count:
             self._summary.set_label("Le profil ne contient aucun livre exploitable.")
         elif not result.providers:
@@ -1002,7 +1087,13 @@ class UxRecommendationsView:
             self._summary.set_label("Aucune recommandation trouvée avec les catalogues actuellement connectés.")
         else:
             suffix = f" · {len(result.warnings)} recherche(s) partiellement en erreur" if result.warnings else ""
-            self._summary.set_label(f"{len(result.ranked)} recommandations à partir de {result.books_count} livres et {len(result.queries)} signaux{suffix}")
+            if self._reference_book is not None:
+                self._summary.set_label(
+                    f"{len(result.ranked)} recommandations proches de « {_reference_label(self._reference_book)} » "
+                    f"· {len(result.queries)} signaux{suffix}"
+                )
+            else:
+                self._summary.set_label(f"{len(result.ranked)} recommandations à partir de {result.books_count} livres et {len(result.queries)} signaux{suffix}")
         self._render(preserve_summary=True)
         return False
 

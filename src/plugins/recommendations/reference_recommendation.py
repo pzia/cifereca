@@ -12,6 +12,7 @@ from recommendation_engine import (
     candidate_key,
     get_field,
     identifier_values,
+    is_already_present,
     normalize,
 )
 from recommendation_service import (
@@ -59,9 +60,18 @@ def is_reference_candidate(reference: Any, candidate: Any) -> bool:
 
 
 class _ReferenceCatalog:
-    def __init__(self, catalog: Any, reference: Any) -> None:
+    def __init__(
+        self,
+        catalog: Any,
+        reference: Any,
+        *,
+        owned_profile: Any = None,
+        exclude_owned: bool = True,
+    ) -> None:
         self.catalog = catalog
         self.reference = reference
+        self.owned_profile = owned_profile
+        self.exclude_owned = bool(exclude_owned)
 
     def searchable_providers(self):
         return self.catalog.searchable_providers()
@@ -71,6 +81,11 @@ class _ReferenceCatalog:
             row
             for row in list(rows or [])
             if not is_reference_candidate(self.reference, row)
+            and not (
+                self.exclude_owned
+                and self.owned_profile is not None
+                and is_already_present(self.owned_profile, row)
+            )
         ]
 
     def search(self, query: str, **kwargs: Any):
@@ -134,6 +149,8 @@ def compute_reference_recommendations(
     per_query: int = 50,
     max_results: int = 120,
     exploration: int = 25,
+    owned_books: tuple[Any, ...] | list[Any] = (),
+    exclude_owned: bool = True,
     progress: Callable[[int, int, str], None] | None = None,
     partial: Callable[[RecommendationPartial], None] | None = None,
     control: Any = None,
@@ -141,9 +158,15 @@ def compute_reference_recommendations(
     """Compute recommendations using only the selected book as profile seed."""
 
     plan = prepare_reference(book, max_queries=max_queries)
+    owned_profile = build_profile(list(owned_books)) if owned_books else None
     return compute_recommendations(
         _ReferenceMetadata(plan.book),
-        _ReferenceCatalog(catalog_broker, plan.book),
+        _ReferenceCatalog(
+            catalog_broker,
+            plan.book,
+            owned_profile=owned_profile,
+            exclude_owned=exclude_owned,
+        ),
         "book-reference",
         scope=scope,
         max_queries=max_queries,

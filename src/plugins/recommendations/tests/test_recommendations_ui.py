@@ -7,6 +7,7 @@ from recommendations import (
     _candidate_languages,
     _external_book_url,
     _language_label,
+    _reference_label,
     _refresh_on_first_map,
 )
 
@@ -18,6 +19,12 @@ def ranked(title, score=50, provider="a"):
         reasons=("raison",),
         sources=(provider,),
     )
+
+
+def test_reference_label_uses_title_and_first_author():
+    assert _reference_label({"title": "Le livre", "author": "Alice"}) == "Le livre — Alice"
+    assert _reference_label({"title": "Sans auteur"}) == "Sans auteur"
+    assert _reference_label({"author": "Alice"}) == "Sans titre — Alice"
 
 
 def test_external_book_url_accepts_only_safe_http_sources():
