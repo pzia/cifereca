@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+import pytest
+
+from cifereca.catalogue_link import catalogue_notice_url
+from cifereca.plugin_api import document_links
+from cifereca.services import LibraryService
+
+
+def _service_host(provider="other", base="https://books.example/"):
+    return NS(
+        provider_descriptors=lambda: [NS(id=provider, homepage=base)],
+        config=NS(get=lambda key, default: "https://public.example/"),
+    )
+
+
+def _target(host, row):
+    return LibraryService.public_catalogue_target(host, row)
+
+
+def test_attested_public_book_notice_is_not_replaced_by_homepage():
+    host = _service_host()
+    target = _target(host, {
+        "provider_id": "other",
+        "title": "Livre",
+        "friendly_url": "https://books.example/notices/123",
+        "download_url": "https://cdn.example/fulfillment/book.acsm",
+    })
+    assert target == ("notice", "https://books.example/notices/123")
+    assert LibraryService.public_catalogue_url(host, {
+        "provider_id": "other",
+        "friendly_url": "https://books.example/notices/123",
+    }) == target[1]
+
+
+@pytest.mark.parametrize("friendly", [None, "", "https://books.example", "https://books.example/"])
+def test_provider_homepage_is_a_generic_catalogue_not_a_book_notice(friendly):
+    host = _service_host()
+    row = {"provider_id": "other", "title": "Livre", "friendly_url": friendly}
+    assert _target(host, row) == ("catalogue", "https://books.example/")
+    assert document_links(row) == ()
+
+
+def test_generic_url_precedes_explicit_book_product_url():
+    host = _service_host()
+    row = {
+        "provider_id": "other",
+        "friendly_url": "https://books.example/",
+        "metadata": {"product_url": "https://books.example/book/456"},
+    }
+    assert _target(host, row) == ("notice", "https://books.example/book/456")
+    assert document_links(row)[0].url == "https://books.example/book/456"
+
+
+def test_relative_notice_uses_provider_base_but_never_converts_homepage_to_notice():
+    host = NS(
+        provider_descriptors=lambda: [NS(id="paris", homepage="https://old.example/")],
+        config=NS(paris_base_url=lambda credential: "https://paris.example/",
+                  get=lambda key, default: "https://public.example/"),
+    )
+    row = {"source_provider": "paris", "source_credential": "one",
+           "friendly_url": "/notice/42"}
+    assert _target(host, row) == ("notice", "https://paris.example/notice/42")
+    assert _target(host, {**row, "friendly_url": "/"}) == ("catalogue", "https://paris.example/")
+
+
+def test_private_numilog_library_index_is_not_a_public_book_notice():
+    host = _service_host("numilog", "https://www.numilog.com/")
+    row = {
+        "provider_id": "numilog",
+        "friendly_url": "https://www.numilog.com/Pages/Compte/MesLivres.aspx",
+        "title": "Roman",
+    }
+    assert _target(host, row) == ("catalogue", "https://www.numilog.com/")
+    assert document_links(row) == ()
+
+
+def test_unknown_source_uses_generic_fallback_without_fabricating_notice():
+    host = NS(
+        provider_descriptors=lambda: [],
+        config=NS(get=lambda key, default: "https://catalogue.bnf.fr/"),
+    )
+    assert _target(host, {"provider_id": "local", "title": "Roman"}) == (
+        "catalogue", "https://catalogue.bnf.fr/"
+    )
+
+
+@pytest.mark.parametrize("url", [
+    "file:///tmp/book",
+    "javascript:alert(1)",
+    "https://cdn.example/book.epub",
+    "https://cdn.example/book.acsm",
+    "https://cdn.example/fulfillment/123",
+    "https://cdn.example/loan/123",
+    "https://catalogue.example/book?token=secret",
+    "https://catalogue.example/book?X-Amz-Signature=secret",
+    "https://user:secret@catalogue.example/book",
+    "https://catalogue.example:444/book",
+    "https://catalogue.example/book\\n",
+    "/book\\n",
+])
+def test_delivery_signed_and_unsafe_links_are_not_presented_as_notices(url):
+    host = _service_host()
+    row = {"provider_id": "other", "friendly_url": url}
+    assert catalogue_notice_url(row, base="https://books.example/") is None
+    assert _target(host, row) == ("catalogue", "https://books.example/")
+    assert document_links(row) == ()
+
+
+def test_document_link_explicit_metadata_never_relabels_generic_homepage():
+    row = {
+        "source_provider": "numilog",
+        "metadata": {"document_links": [
+            {"relation": "notice", "url": "https://www.numilog.com/Pages/Compte/MesLivres.aspx"},
+            {"relation": "notice", "url": "https://public.example/notice/999"},
+        ]},
+    }
+    links = document_links(row)
+    assert len(links) == 1
+    assert links[0].url == "https://public.example/notice/999"
+
+
+def test_ui_action_distinguishes_book_notice_from_generic_catalogue():
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_add_catalogue_action")
+    source = ast.unparse(method)
+    assert "public_catalogue_target(item)" in source
+    assert "'Ouvrir la notice'" in source
+    assert "'Ouvrir le catalogue'" in source
+    assert "current[0] == kind" in source
+    assert "_rendered_document_urls" in source
