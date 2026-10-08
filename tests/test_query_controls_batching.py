@@ -61,14 +61,19 @@ MultiSelect=ns['MultiSelect']; QueryControls=ns['QueryControls']
 class QueryControlBatching(unittest.TestCase):
     def test_multiselect_programmatic_changes_emit_once(self):
         calls=[]
-        control=MultiSelect('Formats',[('epub','EPUB'),('pdf','PDF'),('mp3','MP3')],lambda:calls.append(control.values()))
+        control=MultiSelect('Format',[('epub','EPUB'),('pdf','PDF'),('mp3','MP3')],lambda:calls.append(control.values()),'Choisir un format')
+        self.assertEqual(control.label,'Format')
         control.set_values(('epub','pdf','mp3'))
+        self.assertEqual(control.label,'Format · 3')
         self.assertEqual(calls,[('epub','pdf','mp3')])
         control.set_values(())
+        self.assertEqual(control.label,'Format')
+        self.assertEqual(control.tooltip,'Choisir un format')
         self.assertEqual(calls,[('epub','pdf','mp3'),()])
         control.set_values(())
         self.assertEqual(len(calls),2)
         control.buttons['epub'].set_active(True)
+        self.assertEqual(control.label,'Format · EPUB')
         self.assertEqual(calls[-1],('epub',))
         self.assertEqual(len(calls),3)
 
