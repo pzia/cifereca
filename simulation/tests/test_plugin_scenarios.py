@@ -29,6 +29,14 @@ class PluginCoverageTests(unittest.TestCase):
         self.assertFalse(any(row["e2e_gtk_verified"] for row in result["packages"]))
         self.assertIn("baen", [row["package"] for row in result["packages"] if not row["data"]])
 
+    def test_all_services_profiles_include_ebooksgratuits(self):
+        import datasetctl
+        catalog = datasetctl.load_catalog()
+        for profile_name in ("ux-small", "ux-all"):
+            _, profile = datasetctl.load_profile(profile_name)
+            self.assertIn("ebooksgratuits", datasetctl.enabled_service_configs(profile))
+            self.assertIn("provider.ebooksgratuits", datasetctl.derived_plugins(profile, catalog))
+
     def test_services_are_derived_from_manifests_not_invented(self):
         rows = {row["package"]: row for row in plugin_coverage.build_report()["packages"]}
         self.assertIn("kobo", rows["provider-kobo"]["services"])
