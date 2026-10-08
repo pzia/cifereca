@@ -102,13 +102,15 @@ jobs:
           screenshot 03-known
           tap 1230 120; sleep 4; screenshot 04-online
           tap 470 660; sleep 1.8; screenshot 05-select-online-book
-          tap 1275 230; sleep 3; screenshot 06-acquire-action
-          tap 655 665; sleep 2.5; screenshot 07-download-action
-          tap 90 250; sleep 1.8; screenshot 08-library
-          tap 470 362; sleep 1; screenshot 09-detail
-          tap 1290 232; sleep 2; screenshot 10-local-book-action
-          tap 90 470; sleep 2; screenshot 11-plugin-page
-          tap 90 250; sleep 1.5; screenshot 12-library-end
+          tap 1080 213; sleep 3; screenshot 06-emprunter-click
+          tap 690 512; sleep 3; screenshot 07-confirm-emprunt
+          xdotool key Escape; sleep .4
+          tap 90 513; sleep 2; screenshot 08-optimiseur-epub
+          tap 90 469; sleep 3; screenshot 09-recommandations
+          tap 90 250; sleep 1.5; screenshot 10-bibliotheque
+          tap 470 365; sleep 1; screenshot 11-detail-local
+          tap 90 513; sleep 1.5; screenshot 12-optimiseur-page
+          tap 90 469; sleep 3; screenshot 13-recommandations-final
           kill -TERM "$apppid" 2>/dev/null || true
           sleep .8
           kill -INT "$fpid" 2>/dev/null || true
