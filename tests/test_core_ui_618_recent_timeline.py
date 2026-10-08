@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+import ast
+from datetime import datetime, timezone
+from pathlib import Path
+
+from cifereca.gui.recent_time import format_recent_timestamp
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MAIN = ROOT / "src/cifereca/gui/main_window.py"
+SERVICES = ROOT / "src/cifereca/services.py"
+
+
+def _method(path: Path, class_name: str, method_name: str) -> str:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+    return ast.unparse(method)
+
+
+def test_recent_time_labels_today_yesterday_and_older():
+    now = datetime(2026, 10, 8, 10, 30, tzinfo=timezone.utc)
+    assert format_recent_timestamp(int(datetime(2026, 10, 8, 8, 15, tzinfo=timezone.utc).timestamp()), now=now) == "Aujourd’hui · 08:15"
+    assert format_recent_timestamp(int(datetime(2026, 10, 7, 18, 5, tzinfo=timezone.utc).timestamp()), now=now) == "Hier · 18:05"
+    assert format_recent_timestamp(int(datetime(2026, 10, 3, 9, 0, tzinfo=timezone.utc).timestamp()), now=now) == "03/10/2026 · 09:00"
+
+
+def test_recent_time_handles_unknown_timestamp():
+    assert format_recent_timestamp(None) == "Date inconnue"
+    assert format_recent_timestamp(0) == "Date inconnue"
+    assert format_recent_timestamp("not-a-date") == "Date inconnue"
+
+
+def test_recent_service_orders_by_materialization_created_at_not_updated_at():
+    source = _method(SERVICES, "LibraryService", "recent_acquisitions")
+    assert "created_at" in source
+    assert "updated_at" in source
+    assert "acquired_at" in source
+    assert source.index("created_at") < source.index("updated_at")
+
+
+def test_recent_list_exposes_compact_temporal_label():
+    source = _method(MAIN, "MainWindow", "_render_recent")
+    assert "format_recent_timestamp(item.get('acquired_at'))" in source
+    assert "temporal" in source
+
+
+def test_recent_detail_prioritizes_filename_date_and_provenance():
+    source = _method(MAIN, "MainWindow", "_recent_selected")
+    assert "Path(full_path).name" in source
+    assert "format_recent_timestamp(item.get('acquired_at'), detailed=True)" in source
+    assert "('Fichier', file_name)" in source
+    assert "('Récupéré', acquired)" in source
+    assert "('Provenance', provider.capitalize())" in source
+    assert "('Chemin', full_path or '—')" in source
