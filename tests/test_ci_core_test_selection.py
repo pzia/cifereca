@@ -58,3 +58,14 @@ def test_e2e_change_uses_ui_suite():
     mode, targets = selector.select(["e2e/run.py"], ROOT)
     assert mode == "ui"
     assert "tests/test_e2e_runner_contract.py" in targets
+
+
+def test_gui_change_keeps_legacy_and_cross_cutting_ui_regressions():
+    selector = _module()
+    mode, targets = selector.select(["src/cifereca/gui/main_window.py"], ROOT)
+    assert mode == "ui"
+    assert "tests/test_core_0911.py" in targets
+    assert "tests/test_core0923_gtk_focus.py" in targets
+    assert "tests/test_095_consolidation.py" in targets
+    assert "tests/test_core_415_titlebar_action_registry.py" in targets
+    assert "tests/test_core_book_detail_projection.py" in targets
