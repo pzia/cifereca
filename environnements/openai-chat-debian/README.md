@@ -32,6 +32,54 @@ x11-xkb-utils xkb-data dbus-daemon
 python3-packaging python3-httpx
 ```
 
+
+## Cas OpenAI Chat / conteneur Debian sans DNS sortant
+
+Ce cas est fréquent dans les sessions d'agent : l'hôte est bien Debian 13,
+Xvfb/FFmpeg peuvent déjà être présents, mais `apt-get` ne peut pas résoudre
+les miroirs Debian. Dans ce cas, la bonne stratégie reste cette recette GTK4.
+
+Diagnostic minimal :
+
+```bash
+cat /etc/os-release
+python3 -c 'import sys, platform; print(sys.version.split()[0], platform.machine())'
+command -v Xvfb || true
+command -v ffmpeg || true
+./gtk-python check_import.py || true
+```
+
+Si `bootstrap.py` échoue sur la résolution DNS, construire le cache sur un
+runner GitHub plutôt que d'installer autre chose localement. Le runner doit
+être Debian 13 pour respecter Python 3.13 et les paquets de cette recette.
+Le modèle prêt à copier est `github-cache-relay.yml.example` dans ce répertoire.
+
+Séquence de relais recommandée :
+
+```text
+branche temporaire GitHub
+  -> workflow GitHub Actions
+  -> docker run debian:trixie
+  -> python3 bootstrap.py --download-only --deb-cache /work/.gtk-deb-cache
+  -> actions/upload-artifact
+  -> téléchargement de l'artefact via le connecteur GitHub de l'agent
+  -> extraction locale
+  -> python3 bootstrap.py --offline --deb-cache <cache>
+  -> ./gtk-python check_import.py
+```
+
+Le sous-répertoire APT `partial/` peut appartenir à root lorsque le cache est
+construit dans Docker. Avant `tar`/`upload-artifact`, faire par exemple :
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" .gtk-deb-cache
+rm -rf .gtk-deb-cache/partial
+```
+
+Ne jamais considérer la seule présence de Xvfb ou FFmpeg comme une validation
+GTK : `./gtk-python check_import.py` doit réussir avant de lancer une recette
+Cifereca.
+
 ## Préparer un cache portable
 
 Sur une machine Debian 13 x86_64 connectée :
@@ -80,6 +128,100 @@ des scénarios X11 reproductibles. Lorsqu’un scénario injecte des actions,
 `--settle-after-actions SECONDES` attend explicitement leur stabilisation avant
 la capture (valeur entre 0 et 60 s) et enregistre ce délai dans le rapport JSON.
 
+
+## Démonstration vidéo réelle avec le simulateur
+
+Une vidéo UX doit filmer **la vraie fenêtre GTK Cifereca** sur le display
+virtuel. Elle ne doit pas être reconstruite à partir de screenshots, de PIL ou
+d'une imitation de l'interface.
+
+Depuis la racine du dépôt, préparer d'abord le profil fonctionnel :
+
+```bash
+python3 simulation/datasetctl.py doctor ux-small
+python3 simulation/datasetctl.py rebuild ux-small
+python3 simulation/datasetctl.py status ux-small
+python3 simulation/datasetctl.py summary ux-small
+```
+
+Le profil fournit les faux services, les EPUB et les variables XDG. La recette
+GTK fournit Xvfb/D-Bus/GTK.
+
+`datasetctl snapshot` cible encore le harnais historique à `.venv/bin/python` ;
+pour cette recette Debian 13, utiliser directement `datasetctl exec` avec
+`headless` et `capture_app.py`. Exemple de screenshot réel :
+
+```bash
+mkdir -p evidence
+REPO_ROOT="$PWD"
+
+python3 simulation/datasetctl.py exec ux-small -- \
+  env REPO_ROOT="$REPO_ROOT" \
+  environnements/openai-chat-debian/headless \
+  --screen 1300x850x24 -- \
+  "$REPO_ROOT/environnements/openai-chat-debian/gtk-python" \
+  "$REPO_ROOT/environnements/openai-chat-debian/capture_app.py" \
+  --wait 4 \
+  --out "$REPO_ROOT/evidence/ux-small.png" \
+  --cwd "$REPO_ROOT" \
+  -- \
+  python3 "$REPO_ROOT/simulation/datasetctl.py" cifereca ux-small --verbose
+```
+Pour une vidéo, vérifier d'abord que `ffmpeg` est disponible sur l'hôte. Le
+principe est de démarrer FFmpeg **dans le même `headless`** que Cifereca : il
+hérite ainsi du même `DISPLAY` et du même `XAUTHORITY`. `capture_app.py` lance
+ensuite Cifereca, attend la surface GTK, injecte les actions X11 du scénario et
+termine proprement l'application après la capture finale.
+
+Exemple minimal reproductible :
+
+```bash
+mkdir -p evidence
+REPO_ROOT="$PWD"
+
+python3 simulation/datasetctl.py exec ux-small -- \
+  environnements/openai-chat-debian/headless \
+  --screen 1300x850x24 -- \
+  env REPO_ROOT="$REPO_ROOT" bash -c '
+    set -e
+    ffmpeg -y \
+      -f x11grab -framerate 24 -video_size 1300x850 \
+      -i "$DISPLAY" \
+      -c:v libx264 -pix_fmt yuv420p \
+      "$REPO_ROOT/evidence/ux-small.mp4" &
+    recorder=$!
+    trap '\''kill -INT "$recorder" 2>/dev/null || true; wait "$recorder" 2>/dev/null || true'\'' EXIT
+
+    "$REPO_ROOT/environnements/openai-chat-debian/gtk-python" \
+      "$REPO_ROOT/environnements/openai-chat-debian/capture_app.py" \
+      --wait 3 \
+      --settle-after-actions 2 \
+      --out "$REPO_ROOT/evidence/ux-small-final.png" \
+      --cwd "$REPO_ROOT" \
+      -- \
+      python3 "$REPO_ROOT/simulation/datasetctl.py" cifereca ux-small --verbose
+  '
+```
+
+Ajouter au besoin `--click X,Y`, `--type-text TEXTE` et `--key TOUCHE` à
+`capture_app.py`. Les actions sont alors visibles dans le MP4 puisqu'elles sont
+injectées pendant que FFmpeg enregistre le même écran virtuel.
+
+Cette chaîne est importante :
+
+```text
+datasetctl exec (XDG + services du profil)
+  -> headless (Xvfb + D-Bus + DISPLAY)
+  -> ffmpeg x11grab (enregistrement de DISPLAY)
+  -> capture_app.py (actions X11 + fin du scénario)
+  -> datasetctl cifereca (vraie commande et vrais plugins du profil)
+```
+
+Ne pas remplacer `datasetctl cifereca` par un lancement manuel qui oublierait
+`--no-plugins` ou les `--force-plugin` dérivés du profil.
+
+Vérifier ensuite le MP4 avec `ffprobe` et conserver les logs Xvfb/D-Bus, le
+PNG final et les logs du profil de simulation avec la preuve.
 ## Validation de la recette
 
 ```bash
