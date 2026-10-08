@@ -975,6 +975,7 @@ class MasterDetailPage(Gtk.Box):
         if subtitle:
             desc = Gtk.Label(label=subtitle, xalign=0); desc.set_wrap(True); add_css(desc, "dim-label"); headings.append(desc)
         self.count_label = Gtk.Label(label="", xalign=1)
+        self._count_total_only = False
         add_css(self.count_label, "caption", "dim-label")
         header.append(self.count_label)
         self.header_actions = AdaptiveActionBar(source=header)
@@ -1189,12 +1190,22 @@ class MasterDetailPage(Gtk.Box):
         # to an anonymous catalogue account with no selected loan.
         self.detail.empty("Aucun document sélectionné", "Sélectionnez un document dans la liste.")
 
+    def set_total_only_count(self, enabled: bool = True) -> None:
+        self._count_total_only = bool(enabled)
+        self._update_count()
+
+    @staticmethod
+    def _item_count_label(count: int) -> str:
+        return f"{count} élément" if count == 1 else f"{count} éléments"
+
     def _update_count(self, total_count: int | None = None) -> None:
         displayed = self.store.get_n_items()
         total = int(total_count if total_count is not None else getattr(self, "_total_count", displayed))
         self._total_count = max(total, displayed)
         if not displayed:
             self.count_label.set_label("")
+        elif hasattr(self, "_count_total_only") and self._count_total_only:
+            self.count_label.set_label(self._item_count_label(self._total_count))
         elif self._total_count > displayed:
             self.count_label.set_label(f"{displayed} / {self._total_count} élément(s)")
         else:
@@ -3484,6 +3495,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---------- history ----------
     def _build_history_page(self) -> MasterDetailPage:
         page = MasterDetailPage(self, "Historique", "Documents précédemment empruntés", "Historique non chargé", "Ouvrez cet écran ou actualisez pour récupérer l'historique.")
+        page.set_total_only_count(True)
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser l'historique")
         refresh.connect("clicked", lambda _b: self.refresh_history(True, refresh)); page.header_actions.append(refresh)
         from cifereca.language import language_label
