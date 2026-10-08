@@ -214,3 +214,231 @@ jobs:
           path: e2e-artifacts/
           if-no-files-found: warn
           retention-days: 3
+
+
+  ux-video:
+    name: UX video · GTK + simulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request'
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-video-dataset
+      CIFERECA_HOST_XDG: /tmp/cifereca-video-host
+      PYTHONPATH: \${{ github.workspace }}/src
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GTK4 and recording runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth dbus-x11 libxtst6 xdotool openbox wmctrl ffmpeg \
+            python3-gi python3-gi-cairo python3-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Verify real GTK4 runtime
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import gi
+          gi.require_version("Gtk", "4.0")
+          gi.require_version("Adw", "1")
+          from gi.repository import Gtk, Adw
+          print("GTK", Gtk.get_major_version(), Gtk.get_minor_version(), Gtk.get_micro_version())
+          print("Adw", Adw.get_major_version(), Adw.get_minor_version(), Adw.get_micro_version())
+          PY
+
+      - name: Package and install simulator providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/plugin-zips "$CIFERECA_HOST_XDG"/{config,data,cache,state}
+          for plugin in \
+            transport-http \
+            provider-bnf-catalogue \
+            provider-gallica \
+            provider-gutenberg \
+            provider-kobo \
+            provider-numilog \
+            provider-paris \
+            home-page
+          do
+            /usr/bin/python3 scripts/package-plugin.py "src/plugins/$plugin" --out /tmp/plugin-zips
+          done
+
+          export XDG_CONFIG_HOME="$CIFERECA_HOST_XDG/config"
+          export XDG_DATA_HOME="$CIFERECA_HOST_XDG/data"
+          export XDG_CACHE_HOME="$CIFERECA_HOST_XDG/cache"
+          export XDG_STATE_HOME="$CIFERECA_HOST_XDG/state"
+
+          for archive in /tmp/plugin-zips/*.zip; do
+            /usr/bin/python3 -m cifereca.cli plugin install "$archive" --no-activate --replace
+          done
+          /usr/bin/python3 -m cifereca.cli plugin packages > /tmp/plugin-packages.json
+
+      - name: Rebuild ux-small simulator dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ux-video-evidence /tmp/cifereca-bin
+          cat > /tmp/cifereca-bin/cifereca <<'EOF'
+          #!/usr/bin/env bash
+          exec /usr/bin/python3 -m cifereca "$@"
+          EOF
+          chmod +x /tmp/cifereca-bin/cifereca
+          export PATH="/tmp/cifereca-bin:$PATH"
+          export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
+
+          /usr/bin/python3 simulation/datasetctl.py rebuild ux-small
+          /usr/bin/python3 simulation/datasetctl.py status ux-small --json > ux-video-evidence/dataset-status.json
+          /usr/bin/python3 simulation/datasetctl.py summary ux-small --json > ux-video-evidence/dataset-summary.json
+          cp /tmp/plugin-packages.json ux-video-evidence/plugin-packages.json
+          /usr/bin/python3 simulation/datasetctl.py env ux-small > /tmp/ux-small-env.sh
+
+      - name: Scan generated library into Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /tmp/ux-small-env.sh
+          export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
+          /usr/bin/python3 -m cifereca.cli catalog-scan > ux-video-evidence/catalog-scan.json
+          /usr/bin/python3 -m cifereca.cli statistics > ux-video-evidence/statistics.json
+
+      - name: Record real Cifereca virtual screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/cifereca-bin ux-video-evidence
+          export PATH="/tmp/cifereca-bin:$PATH"
+          export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
+          source /tmp/ux-small-env.sh
+
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1366x900x24" bash <<'INNER'
+          set -euo pipefail
+          export GDK_BACKEND=x11
+          export GSK_RENDERER=cairo
+          export GDK_SCALE=1
+          export GTK_A11Y=none
+          export NO_AT_BRIDGE=1
+          evidence="$GITHUB_WORKSPACE/ux-video-evidence"
+
+          openbox >"$evidence/openbox.log" 2>&1 &
+          wm_pid=$!
+          sleep 1
+
+          ffmpeg -y -hide_banner -loglevel warning \
+            -thread_queue_size 512 \
+            -f x11grab -draw_mouse 1 -framerate 24 \
+            -video_size 1366x900 -i "\${DISPLAY}.0" \
+            -c:v libx264 -preset veryfast -crf 20 \
+            -pix_fmt yuv420p -movflags +faststart \
+            "$evidence/cifereca-ux-small.mp4" \
+            >"$evidence/ffmpeg.log" 2>&1 &
+          ffmpeg_pid=$!
+
+          /usr/bin/python3 "$GITHUB_WORKSPACE/simulation/datasetctl.py" cifereca ux-small --verbose \
+            >"$evidence/cifereca.stdout.log" 2>"$evidence/cifereca.stderr.log" &
+          app_pid=$!
+
+          cleanup() {
+            kill -TERM "$app_pid" 2>/dev/null || true
+            sleep 1
+            kill -INT "$ffmpeg_pid" 2>/dev/null || true
+            wait "$ffmpeg_pid" 2>/dev/null || true
+            kill -TERM "$wm_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          # Wait for a real, visible GTK surface.
+          visible=""
+          for _ in \$(seq 1 80); do
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              echo "Cifereca exited before showing a window" >&2
+              exit 1
+            fi
+            visible="\$(xdotool search --onlyvisible --name 'Cifereca' 2>/dev/null | head -n1 || true)"
+            if [ -n "$visible" ]; then
+              break
+            fi
+            sleep 0.25
+          done
+          if [ -z "$visible" ]; then
+            echo "No visible Cifereca window" >&2
+            xdotool search --onlyvisible --name '.*' getwindowname %@ 2>/dev/null || true
+            exit 1
+          fi
+
+          xdotool windowactivate --sync "$visible" || true
+          wmctrl -ir "$visible" -b add,maximized_vert,maximized_horz || true
+          sleep 3
+
+          capture() {
+            local out="$1"
+            OUT="$out" /usr/bin/python3 - <<'PY'
+          import os
+          from PIL import ImageGrab
+          ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save(os.environ["OUT"])
+          PY
+          }
+
+          capture "$evidence/01-home.png"
+
+          # Canonical E2E navigation coordinate: opens the Search page.
+          xdotool mousemove --sync 90 204
+          sleep 0.5
+          xdotool click 1
+          sleep 3
+          capture "$evidence/02-search.png"
+
+          # Search against the simulator-backed/local known catalogue.
+          xdotool mousemove --sync 520 142
+          xdotool click 1
+          xdotool key ctrl+a
+          xdotool type --delay 110 --clearmodifiers "tour"
+          xdotool key Return
+          sleep 6
+          capture "$evidence/03-query-tour.png"
+
+          # Visit the library from the sidebar and keep it visible.
+          xdotool mousemove --sync 90 252
+          sleep 0.5
+          xdotool click 1
+          sleep 5
+          capture "$evidence/04-library.png"
+
+          # Open a likely first visible row/card to demonstrate detail interaction.
+          xdotool mousemove --sync 650 330
+          sleep 0.5
+          xdotool click 1
+          sleep 5
+          capture "$evidence/05-detail.png"
+
+          kill -TERM "$app_pid" 2>/dev/null || true
+          sleep 1
+          kill -INT "$ffmpeg_pid" 2>/dev/null || true
+          wait "$ffmpeg_pid" 2>/dev/null || true
+          trap - EXIT
+          kill -TERM "$wm_pid" 2>/dev/null || true
+
+          ffprobe -v error -select_streams v:0 \
+            -show_entries stream=width,height,r_frame_rate,duration,codec_name \
+            -of json "$evidence/cifereca-ux-small.mp4" > "$evidence/ffprobe.json"
+          INNER
+
+      - name: Collect simulator logs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ux-video-evidence/simulator-logs
+          cp -a "$CIFERECA_DATASET_RUNTIME/ux-small/logs/." ux-video-evidence/simulator-logs/ 2>/dev/null || true
+          /usr/bin/python3 simulation/datasetctl.py down ux-small || true
+
+      - name: Upload UX video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-video-cifereca-simulator
+          path: ux-video-evidence/
+          if-no-files-found: error
+          retention-days: 7
