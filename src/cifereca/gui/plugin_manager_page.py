@@ -12,6 +12,7 @@ from gi.repository import Adw, Gtk, Gio, GLib  # noqa: E402
 
 from cifereca.plugins.configuration import defaults_for_schema, schema_scope
 from .action_widgets import action_button, AdaptiveActionBar, mirror_sensitivity
+from .plugin_filters import filter_package_plugins, package_matches_query
 
 
 _STATE_LABELS = {
@@ -32,6 +33,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self.window = window
         self.manager = manager
         self.on_changed = on_changed or (lambda: None)
+        self._plugin_filter_text = ""
+        self._plugin_filter_mode = "all"
+        self._plugin_inventory = None
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -65,7 +69,71 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         summary = Gtk.Label(label=f"{len(statuses)} plugin(s) · {ready} actif(s) · {blocked} à examiner", xalign=0)
         summary.add_css_class("dim-label"); self.outer.append(summary)
 
+        filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        search = Gtk.SearchEntry()
+        search.set_hexpand(True)
+        search.set_placeholder_text("Rechercher un plugin ou un package…")
+        search.set_text(self._plugin_filter_text)
+        search.connect("search-changed", self._plugin_filter_text_changed)
+        filters.append(search)
+        self._plugin_filter_search = search
+
+        mode_labels = ("Tous", "Actifs", "Désactivés", "À examiner")
+        mode_keys = ("all", "active", "disabled", "attention")
+        mode = Gtk.DropDown.new_from_strings(mode_labels)
+        try:
+            mode.set_selected(mode_keys.index(self._plugin_filter_mode))
+        except ValueError:
+            mode.set_selected(0)
+            self._plugin_filter_mode = "all"
+        mode.connect("notify::selected", self._plugin_filter_mode_changed)
+        filters.append(mode)
+        self._plugin_filter_dropdown = mode
+        self.outer.append(filters)
+
         inventory = self.manager.package_inventory(include_expected=True)
+        self._plugin_inventory = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.outer.append(self._plugin_inventory)
+        self._render_inventory(statuses, inventory)
+
+        footer = AdaptiveActionBar(source=self.outer); footer.set_halign(Gtk.Align.END)
+        install_bottom = action_button("Installer un ZIP…", "document-open-symbolic", suggested=True)
+        install_bottom.connect("clicked", self._choose_archive); footer.append(install_bottom)
+        refresh_bottom = action_button("Actualiser", "view-refresh-symbolic")
+        refresh_bottom.connect("clicked", lambda _b: self._reload()); footer.append(refresh_bottom)
+        mirror_sensitivity(install, install_bottom); mirror_sensitivity(refresh, refresh_bottom)
+        self.outer.append(footer)
+
+    def _plugin_filter_text_changed(self, entry) -> None:
+        self._plugin_filter_text = str(entry.get_text() or "")
+        self._refilter_plugins()
+
+    def _plugin_filter_mode_changed(self, dropdown, _pspec=None) -> None:
+        modes = ("all", "active", "disabled", "attention")
+        selected = int(dropdown.get_selected())
+        self._plugin_filter_mode = modes[selected] if 0 <= selected < len(modes) else "all"
+        self._refilter_plugins()
+
+    def _refilter_plugins(self) -> None:
+        inventory_box = getattr(self, "_plugin_inventory", None)
+        if inventory_box is None:
+            return
+        self._render_inventory(
+            self.manager.statuses(),
+            self.manager.package_inventory(include_expected=True),
+        )
+
+    def _render_inventory(self, statuses, inventory) -> None:
+        container = getattr(self, "_plugin_inventory", None)
+        if container is None:
+            return
+        child = container.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            container.remove(child)
+            child = nxt
+
+        visible_packages = 0
         installed_packages = [
             package for package in inventory
             if any(status.descriptor.package_id == package["package_id"] for status in statuses)
@@ -77,10 +145,18 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             )
         )
         for package in installed_packages:
-            package_plugins = [
+            package_statuses = [
                 status for status in statuses
                 if status.descriptor.package_id == package["package_id"]
             ]
+            package_plugins = list(filter_package_plugins(
+                package,
+                package_statuses,
+                query=self._plugin_filter_text,
+                mode=self._plugin_filter_mode,
+            ))
+            if not package_plugins:
+                continue
             package_plugins.sort(
                 key=lambda status: (
                     str(status.descriptor.display_name or status.descriptor.id).casefold(),
@@ -88,33 +164,36 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 )
             )
             self._append_package(package, package_plugins)
+            visible_packages += 1
 
-        missing_packages = [
-            package for package in inventory
-            if package.get("freshness_reason") == "not_installed"
-        ]
-        if missing_packages:
+        visible_missing = []
+        if self._plugin_filter_mode == "all":
+            visible_missing = [
+                package for package in inventory
+                if package.get("freshness_reason") == "not_installed"
+                and package_matches_query(package, self._plugin_filter_text)
+            ]
+        if visible_missing:
             missing_heading = Gtk.Label(label="Packages attendus absents", xalign=0)
-            missing_heading.add_css_class("heading"); self.outer.append(missing_heading)
-            for package in missing_packages:
+            missing_heading.add_css_class("heading"); container.append(missing_heading)
+            for package in visible_missing:
                 expected = package.get("expected_version") or "?"
                 missing = Gtk.Label(
                     label=f"{package.get('name') or package['package_id']} · attendu v{expected}",
                     xalign=0,
                 )
-                missing.set_wrap(True); missing.add_css_class("warning"); self.outer.append(missing)
+                missing.set_wrap(True); missing.add_css_class("warning"); container.append(missing)
 
-        if not statuses:
-            empty = Gtk.Label(label="Aucun plugin installé. Installez un ZIP pour commencer.", xalign=0)
-            empty.add_css_class("dim-label"); self.outer.append(empty)
-
-        footer = AdaptiveActionBar(source=self.outer); footer.set_halign(Gtk.Align.END)
-        install_bottom = action_button("Installer un ZIP…", "document-open-symbolic", suggested=True)
-        install_bottom.connect("clicked", self._choose_archive); footer.append(install_bottom)
-        refresh_bottom = action_button("Actualiser", "view-refresh-symbolic")
-        refresh_bottom.connect("clicked", lambda _b: self._reload()); footer.append(refresh_bottom)
-        mirror_sensitivity(install, install_bottom); mirror_sensitivity(refresh, refresh_bottom)
-        self.outer.append(footer)
+        if visible_packages or visible_missing:
+            return
+        filtered = bool(self._plugin_filter_text.strip() or self._plugin_filter_mode != "all")
+        message = (
+            "Aucun plugin ne correspond à la recherche ou au filtre sélectionné."
+            if filtered
+            else "Aucun plugin installé. Installez un ZIP pour commencer."
+        )
+        empty = Gtk.Label(label=message, xalign=0)
+        empty.set_wrap(True); empty.add_css_class("dim-label"); container.append(empty)
 
     def _append_package(self, package, package_plugins):
         package_id = str(package["package_id"])
@@ -209,7 +288,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             box.append(plugin_frame)
 
         frame.set_child(box)
-        self.outer.append(frame)
+        target = getattr(self, "_plugin_inventory", None) or self.outer
+        target.append(frame)
 
     def _plugin_row(self, status: Any, package=None) -> Gtk.Widget:
         from cifereca.plugin_help import plugin_help
