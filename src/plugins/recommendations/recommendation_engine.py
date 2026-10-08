@@ -191,8 +191,11 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
 
 def is_already_present(profile: ProfileVector, item: Any) -> bool:
     ids = identifier_values(item)
-    if ids and profile.identifiers.intersection(ids):
-        return True
+    if ids:
+        # Explicit identifiers are authoritative for edition-level ownership.
+        # If the candidate carries identifiers and none match the library,
+        # do not collapse a different edition merely because title/author match.
+        return bool(profile.identifiers.intersection(ids))
     title = normalize(get_field(item, "title", ""))
     auth = "/".join(sorted(normalize(a) for a in author_values(item) if normalize(a)))
     return bool(title and f"{title}|{auth}" in profile.existing_pairs)
@@ -416,6 +419,7 @@ def rank_candidates(
     *,
     limit: int = 120,
     exploration: int = 25,
+    exclude_owned: bool = True,
 ) -> list[RankedCandidate]:
     profile = build_profile(books)
     rrf, query_hits = _rrf_scores(batches)
@@ -425,19 +429,21 @@ def rank_candidates(
     for batch in batches:
         for item in batch:
             key = candidate_key(item)
-            if is_already_present(profile, item):
+            if exclude_owned and is_already_present(profile, item):
                 continue
             source = _text(get_field(item, "source_provider", ""))
             if source and source not in sources_by_key[key]:
                 sources_by_key[key].append(source)
-            cscore, reasons = content_score(profile, item)
+            scorer = content_score if exclude_owned else _content_score_prevalidated
+            cscore, reasons = scorer(profile, item)
             previous = merged.get(key)
-            if previous is None or cscore > content_score(profile, previous[0])[0]:
+            if previous is None or cscore > scorer(profile, previous[0])[0]:
                 merged[key] = (item, reasons)
 
     ranked: list[RankedCandidate] = []
+    scorer = content_score if exclude_owned else _content_score_prevalidated
     for key, (item, reasons) in merged.items():
-        cscore, current_reasons = content_score(profile, item)
+        cscore, current_reasons = scorer(profile, item)
         rscore = rrf.get(key, 0.0)
         hits = query_hits.get(key, 0)
         # RRF can rescue sparse catalogue metadata, but not arbitrary zero-signal rows.

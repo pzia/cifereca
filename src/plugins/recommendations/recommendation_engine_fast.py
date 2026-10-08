@@ -120,6 +120,7 @@ def rank_candidates_prepared(
     limit: int = 120,
     exploration: int = 25,
     score_cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]] | None = None,
+    exclude_owned: bool = True,
 ) -> list[RankedCandidate]:
     """Rank against a profile built once, with cached content scores and fast MMR."""
     rrf, query_hits = _rrf_scores(batches)
@@ -130,7 +131,7 @@ def rank_candidates_prepared(
     for batch in batches:
         for item in batch:
             key = candidate_key(item)
-            if is_already_present(profile, item):
+            if exclude_owned and is_already_present(profile, item):
                 continue
             source = _text(get_field(item, "source_provider", ""))
             if source and source not in sources_by_key[key]:

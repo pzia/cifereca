@@ -63,3 +63,36 @@ def test_mmr_increases_author_diversity():
     ranked = rank_candidates(books, [batch], exploration=100, limit=3)
     assert ranked[0].item["author"] == "Alice"
     assert ranked[1].item["author"] == "Bob"
+
+
+def test_owned_filter_uses_explicit_identifier_before_title_author_fallback():
+    books = [
+        {"title": "Même titre", "author": "Alice", "isbn": "9781111111111"},
+    ]
+    other_edition = {
+        "title": "Même titre",
+        "author": "Alice",
+        "isbn": "9782222222222",
+        "metadata": {"subjects": ["histoire"]},
+        "source_provider": "p1",
+    }
+    ranked = rank_candidates(books, [[other_edition]], exclude_owned=True)
+    assert [row.item["isbn"] for row in ranked] == ["9782222222222"]
+
+
+def test_owned_filter_can_be_disabled_explicitly():
+    books = [
+        {"title": "Possédé", "author": "Alice", "isbn": "9781111111111", "metadata": {"subjects": ["histoire"]}},
+        {"title": "Autre", "author": "Alice", "metadata": {"subjects": ["histoire"]}},
+    ]
+    owned = {
+        "title": "Possédé",
+        "author": "Alice",
+        "isbn": "9781111111111",
+        "metadata": {"subjects": ["histoire"]},
+        "source_provider": "p1",
+    }
+    assert rank_candidates(books, [[owned]], exclude_owned=True) == []
+    shown = rank_candidates(books, [[owned]], exclude_owned=False)
+    assert len(shown) == 1
+    assert shown[0].item["title"] == "Possédé"
