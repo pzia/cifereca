@@ -282,6 +282,11 @@ class LibraryService:
         if identity is None:
             raise ProviderConfigurationError(f"Identité inconnue: {identity_id}")
         self.current_identity = identity
+        # History and bookings are identity-scoped snapshots. Invalidate them
+        # at the service boundary so non-UI callers cannot observe data that
+        # belonged to the previously selected identity.
+        self.last_history = []
+        self.last_bookings = []
         accounts = self.accounts_for_identity(identity.identity_id)
         if accounts:
             self.select_account(accounts[0].unique_id, accounts[0].provider_id, accounts[0].credential_id)
