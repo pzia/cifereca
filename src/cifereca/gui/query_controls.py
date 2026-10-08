@@ -4,7 +4,7 @@ from .book_facets import CONTENT_FIELDS
 from ..core.provider_search import provider_search_summary
 
 class MultiSelect(Gtk.MenuButton):
-    def __init__(self, label, choices, changed):
+    def __init__(self, label, choices, changed, help_text=''):
         super().__init__()
         self.caption = label
         choices = tuple(choices)
@@ -13,7 +13,9 @@ class MultiSelect(Gtk.MenuButton):
         self._changed_callback = changed
         self._programmatic_update = False
         self._last_notified_values = ()
-        self.set_label(label + ' : Tous')
+        self.help_text = str(help_text or '')
+        self.set_label(label)
+        self.set_tooltip_text(self.help_text or None)
         pop = Gtk.Popover()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_top(10); box.set_margin_bottom(10)
@@ -41,8 +43,8 @@ class MultiSelect(Gtk.MenuButton):
             summary = ' + '.join(titles)
         else:
             summary = f'{titles[0]} +{len(titles) - 1}'
-        tooltip = ', '.join(titles) if titles else None
-        self.set_label(f'{self.caption} : {summary}')
+        tooltip = ', '.join(titles) if titles else (self.help_text or None)
+        self.set_label(self.caption if not titles else f'{self.caption} : {summary}')
         self.set_tooltip_text(tooltip)
         if values == self._last_notified_values:
             return
@@ -90,13 +92,32 @@ class QueryControls(Gtk.Box):
             filter_row.append(widget)
             return widget
 
-        self.provider = insert_filter(MultiSelect('Forme · Sources', providers, self._changed))
-        self.types = insert_filter(MultiSelect('Forme · Formats', [('epub','EPUB'),('pdf','PDF'),('mp3','MP3'),('m4a','M4A'),('ogg','OGG'),('opus','OPUS'),('flac','FLAC'),('wav','WAV')], self._changed))
-        self.languages = insert_filter(MultiSelect('Langues', [('fr','Français'),('en','English'),('de','Deutsch'),('es','Español'),('it','Italiano'),('pt','Português'),('nl','Nederlands')], self._changed))
-        self.field = insert_filter(Gtk.DropDown.new_from_strings(['Fond / forme · Tous','Fond · Titre','Fond · Auteur','Forme · ISBN','Fond · Sujet','Fond · Série','Fond · Collection','Fond · Langue']))
-        self.field.set_tooltip_text("Fond : titre, auteur, sujet, série, collection. Forme : ISBN, source, format.")
+        self.provider = insert_filter(MultiSelect(
+            'Source', providers, self._changed,
+            'Limiter la vue à une ou plusieurs sources',
+        ))
+        self.types = insert_filter(MultiSelect(
+            'Format',
+            [('epub','EPUB'),('pdf','PDF'),('mp3','MP3'),('m4a','M4A'),('ogg','OGG'),('opus','OPUS'),('flac','FLAC'),('wav','WAV')],
+            self._changed,
+            'Limiter la vue à un ou plusieurs formats',
+        ))
+        self.languages = insert_filter(MultiSelect(
+            'Langue',
+            [('fr','Français'),('en','English'),('de','Deutsch'),('es','Español'),('it','Italiano'),('pt','Português'),('nl','Nederlands')],
+            self._changed,
+            'Limiter la vue à une ou plusieurs langues',
+        ))
+        self.field = insert_filter(Gtk.DropDown.new_from_strings([
+            'Champ', 'Champ · Titre', 'Champ · Auteur', 'Champ · ISBN',
+            'Champ · Sujet', 'Champ · Série', 'Champ · Collection', 'Champ · Langue',
+        ]))
+        self.field.set_tooltip_text("Choisir le champ interrogé : titre, auteur, ISBN, sujet, série, collection ou langue.")
         self.field.connect('notify::selected', lambda *_: self._changed())
-        self.scope = insert_filter(Gtk.DropDown.new_from_strings(['Tous','Physiques','Numériques','Support indéterminé']))
+        self.scope = insert_filter(Gtk.DropDown.new_from_strings([
+            'Type', 'Type · Physique', 'Type · Numérique', 'Type · Support indéterminé',
+        ]))
+        self.scope.set_tooltip_text("Limiter aux documents physiques, numériques ou de type indéterminé.")
         self.scope.set_selected(2)
         self.scope.connect('notify::selected', lambda *_: self._changed())
         self.capability_hint = Gtk.Label(xalign=0)
