@@ -658,6 +658,34 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
             request, destination = http_request_for(candidate, selected_profile)
             acquisition_mode = "delegated-http"
         payload = refreshed
+        # The selected candidate (and possibly handling/format) can change
+        # after an expired URL. Persist the actual retry plan before invoking
+        # the runtime, rather than leaving the original candidate in the ledger.
+        refreshed_offer = KoboOfferAdapter.offer(
+            refreshed,
+            credential_id=item.source_credential,
+            account_id=source_account_id,
+            item_id=item.record_id,
+            revision_id=item.revision_id,
+            identity_id=identity.identity_id,
+        )
+        selected_retry_offer = AcquisitionOffer(
+            entitlement=refreshed_offer.entitlement,
+            candidates=(KoboOfferAdapter.normalize_candidate(candidate),),
+            provider_contract=refreshed_offer.provider_contract,
+            expires_at=refreshed_offer.expires_at,
+            metadata={**refreshed_offer.metadata, "acquisition_mode": acquisition_mode},
+        )
+        retry_plan = AcquisitionPlanner().plan(
+            selected_retry_offer,
+            preferred_format=preferred,
+            executor_for=lambda _candidate: "kobo-adept",
+        )
+        if retry_plan is None:
+            raise ProviderConfigurationError("Kobo-Vault : aucun plan d'acquisition valide après rafraîchissement")
+        service.acquisition_ledger.begin(
+            ledger_id, plan=retry_plan, metadata={"acquisition_mode": acquisition_mode},
+        )
         result = execute_download()
 
     if str(result.get("operation") or "download") != "download":
