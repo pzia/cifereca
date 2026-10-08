@@ -16,6 +16,7 @@ class KoboCatalogService:
         self.client = client
         self.credential_id = credential_id
         self.provider_id = provider_id
+        self.last_search_rejections: list[dict[str, str]] = []
 
     def cover_url(self, item: dict[str, Any]) -> str | None:
         """Only URL fields in cover structures; never turn an image ID into a URL."""
@@ -118,6 +119,7 @@ class KoboCatalogService:
         )
 
     def search(self, query: str, *, field: str = "all", limit: int = 50, page: int = 0) -> list[SearchResult]:
+        self.last_search_rejections = []
         payload = self.client.search(query, field=field, scope="all", limit=limit, page=page)
         items = payload.get("items")
         if not isinstance(items, list):
@@ -125,11 +127,23 @@ class KoboCatalogService:
         rows: list[SearchResult] = []
         for raw in items:
             if not isinstance(raw, dict):
+                self.last_search_rejections.append({
+                    "type": "invalid_shape",
+                    "reason": "item_not_object",
+                })
                 continue
             try:
                 rows.append(self.normalize_item(raw))
             except ProviderError:
-                continue
+                reason = (
+                    "missing_product_id"
+                    if not str(raw.get("product_id") or raw.get("id") or "").strip()
+                    else "normalization_error"
+                )
+                self.last_search_rejections.append({
+                    "type": "ProviderError",
+                    "reason": reason,
+                })
         return rows
 
 

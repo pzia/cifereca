@@ -227,6 +227,11 @@ class KoboSession(ProviderSession):
             "vault_release": self.vault_release or None,
             "display_profile": self.display_profile if self.supports_acquisition_display_profile else None,
             "acsm_export": self.supports_acquisition_acsm,
+            "catalog_search_rejections": [
+                dict(row)
+                for row in getattr(self.catalog, "last_search_rejections", ())
+                if isinstance(row, dict)
+            ],
         })
         return data
 
