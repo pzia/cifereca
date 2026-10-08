@@ -27,22 +27,26 @@ def attribute_tag(label,callback=None,*,group='form',tooltip=None):
     full_label=str(label)
     display_label=compact_facet_label(full_label)
     button_cls = getattr(Gtk, 'Button', None)
+    text=Gtk.Label(label=display_label, xalign=0)
+    try:
+        text.set_single_line_mode(True)
+        text.set_ellipsize(Pango.EllipsizeMode.END)
+        text.set_max_width_chars(LIST_FACET_MAX_CHARS)
+        text.set_hexpand(True)
+    except Exception:
+        pass
     if callback and button_cls is not None:
-        tag=button_cls(label=display_label)
-        try: tag.add_css_class('flat')
-        except Exception: pass
+        tag=button_cls()
+        try:
+            tag.set_child(text)
+            tag.add_css_class('flat')
+        except Exception:
+            pass
         tag.connect('clicked', lambda _button: callback(None))
     else:
-        tag=Gtk.Label()
+        tag=text
         if callback:
-            # Escaped plain markup: intentionally no <a> hyperlink styling.
-            tag.set_markup(GLib.markup_escape_text(display_label))
             tag.connect('activate-link', lambda _label, _uri: (callback(None), True)[1])
-        else:
-            tag.set_label(display_label)
-        try:
-            tag.set_xalign(0.0); tag.set_ellipsize(Pango.EllipsizeMode.END); tag.set_max_width_chars(LIST_FACET_MAX_CHARS)
-        except Exception: pass
     try:
         tag.set_halign(Gtk.Align.START); tag.set_valign(Gtk.Align.CENTER)
     except Exception: pass
@@ -300,7 +304,14 @@ class BookListCell(Gtk.Box):
         self.facet_box.set_selection_mode(Gtk.SelectionMode.NONE)
         self.facet_box.set_halign(Gtk.Align.FILL)
         self.facet_box.set_hexpand(True)
-        self.facet_box.set_min_children_per_line(1); self.facet_box.set_max_children_per_line(4)
+        # The list projection contains at most six facets. Three shrinkable,
+        # homogeneous columns therefore bound the facet block to two rows even
+        # in the ~440 px desktop master pane.
+        self.facet_box.set_homogeneous(True)
+        self.facet_box.set_min_children_per_line(3)
+        self.facet_box.set_max_children_per_line(3)
+        self.facet_box.set_column_spacing(4)
+        self.facet_box.set_row_spacing(4)
         labels.append(self.facet_box)
         self.meta_label = Gtk.Label(xalign=0)
         self.meta_label.set_ellipsize(Pango.EllipsizeMode.END)
