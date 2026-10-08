@@ -2605,6 +2605,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.booking_page.clear_rows()
         self._library_entries_cache = []
         self._recent_entries_cache = []
+        self._recent_objects = {}
+        if hasattr(self, "recent_page"):
+            self.recent_page.clear_rows()
+            self.recent_page.detail.empty("Nouvelle identité", "Chargement des récupérations…")
         if hasattr(self, "library_page"):
             self._render_library([])
             self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
@@ -4151,18 +4155,22 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self._library_refresh_pending = True
         identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
+        generation = self._identity_context_generation
         def work() -> list[dict[str, Any]]:
             if refresh_covers:
                 self.service.catalog_scan(force_covers=True)
             return self.service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
         def ok(entries: list[dict[str, Any]]) -> None:
             self._library_refresh_pending = False
-            active = self.service.current_identity.identity_id if self.service.current_identity else None
-            if active != identity_id:
-                self.refresh_library(False); return
+            if not self._identity_request_current(identity_id, generation):
+                self.refresh_library(False)
+                return
             self._show_library_entries(entries)
         def err(exc: BaseException) -> None:
             self._library_refresh_pending = False
+            if not self._identity_request_current(identity_id, generation):
+                self.refresh_library(False)
+                return
             self.diagnostics.add("UI", "library refresh", "error", detail={"error": type(exc).__name__, "message": str(exc)})
             if control is not None:
                 self.show_error(str(exc), "Actualisation de la bibliothèque impossible")
@@ -4264,14 +4272,22 @@ class MainWindow(Adw.ApplicationWindow):
         if self._recent_refresh_pending and control is None:
             return
         self._recent_refresh_pending = True
+        identity = self.service.current_identity
+        identity_id = identity.identity_id if identity is not None else None
+        generation = self._identity_context_generation
         def work() -> list[dict[str, Any]]:
-            identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
             return self.service.recent_acquisitions(identity_id=identity_id)
         def ok(items: list[dict[str, Any]]) -> None:
             self._recent_refresh_pending = False
+            if not self._identity_request_current(identity_id, generation):
+                self.refresh_recent()
+                return
             self._show_recent_entries(items)
         def err(exc: BaseException) -> None:
             self._recent_refresh_pending = False
+            if not self._identity_request_current(identity_id, generation):
+                self.refresh_recent()
+                return
             self.diagnostics.add("UI", "recent refresh", "error", detail={"error": type(exc).__name__, "message": str(exc)})
             if control is not None:
                 self.show_error(str(exc), "Actualisation des récupérations impossible")

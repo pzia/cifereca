@@ -39,6 +39,7 @@ def test_identity_change_clears_old_library_before_async_refresh():
 
 def test_library_refresh_discards_obsolete_identity_callback():
     source = _method("refresh_library")
-    assert "active != identity_id" in source
+    assert "generation = self._identity_context_generation" in source
+    assert "not self._identity_request_current(identity_id, generation)" in source
     assert "self.refresh_library(False)" in source
     assert "self._show_library_entries(entries)" in source
