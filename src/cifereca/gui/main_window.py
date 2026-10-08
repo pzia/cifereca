@@ -5270,7 +5270,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         buttons = AdaptiveActionBar(source=box); box.append(buttons)
         refresh = self.action_button("Actualiser", "view-refresh-symbolic")
-        copy = self.action_button("Copier le diagnostic", "edit-copy-symbolic", suggested=True)
+        copy = self.action_button("Copier dans le presse-papiers", "edit-copy-symbolic", suggested=True)
         export = self.action_button("Exporter le diagnostic", "document-save-symbolic")
         export.set_tooltip_text("Enregistrer le rapport de diagnostic expurgé dans un fichier texte")
         clear = self.action_button("Effacer le journal", "edit-clear-symbolic")
