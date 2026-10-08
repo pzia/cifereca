@@ -30,6 +30,7 @@ from .cover_loader import CoverLoader
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
+from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_medium_counts
 from .recent_time import format_recent_timestamp
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
@@ -2963,13 +2964,22 @@ class MainWindow(Adw.ApplicationWindow):
         self.loan_filter = "digital"
         segment = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         buttons: list[Gtk.ToggleButton] = []
+        self.loan_filter_buttons: dict[str, Gtk.ToggleButton] = {}
         for value, label in [("all", "Tous"), ("physical", "Physiques"), ("digital", "Numériques")]:
             b = Gtk.ToggleButton(label=label); b.set_name(value)
             if buttons: b.set_group(buttons[0])
             if value == "digital": b.set_active(True)
             b.connect("toggled", self._loan_filter_toggled)
             segment.append(b); buttons.append(b)
+            self.loan_filter_buttons[value] = b
         page.toolbar.append(segment)
+        self.loan_scope_count = Gtk.Label(label="", xalign=0)
+        self.loan_scope_count.add_css_class("caption")
+        self.loan_scope_count.add_css_class("dim-label")
+        self.loan_scope_count.set_tooltip_text(
+            "Nombre affiché dans le filtre actif, comparé au volume total des prêts"
+        )
+        page.toolbar.append(self.loan_scope_count)
         from cifereca.language import language_label
         self.loan_languages = MultiSelect('Langues', [(code, language_label(code)) for code in ('fr','en','de','es','it','pt','nl')], self._render_loans)
         page.toolbar.append(self.loan_languages)
@@ -2994,9 +3004,15 @@ class MainWindow(Adw.ApplicationWindow):
     def _render_loans(self) -> None:
         if not hasattr(self, "loan_page"):
             return
+        all_loans = list(self.service.last_loans)
+        counts = loan_medium_counts(all_loans)
+        if hasattr(self, "loan_filter_buttons"):
+            for key, button in self.loan_filter_buttons.items():
+                label = LOAN_FILTER_LABELS.get(key, key)
+                button.set_label(f"{label} · {counts.get(key, 0)}")
         rows: list[BookListItem] = []
         wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
-        for loan in self.service.last_loans:
+        for loan in all_loans:
             if self.loan_filter != "all" and loan.medium != self.loan_filter:
                 continue
             raw = dict(loan.raw or {})
@@ -3008,9 +3024,19 @@ class MainWindow(Adw.ApplicationWindow):
             subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
             meta = f"Retour {fr_date(loan.due_at)} · {loan.document_type or loan.provider}"
             rows.append(BookListItem(loan.id, loan.title, subtitle, meta, state, loan.thumbnail_url))
+        if hasattr(self, "loan_scope_count"):
+            self.loan_scope_count.set_label(
+                loan_context_label(
+                    filter_key=self.loan_filter,
+                    visible_count=len(rows),
+                    medium_count=counts.get(self.loan_filter, counts["all"]),
+                    total_count=counts["all"],
+                    language_filtered=bool(wanted_languages),
+                )
+            )
         objects={key:{"source_provider":loan.source_provider,"media_format":loan.media_format,"author":loan.author,"metadata":(dict((loan.raw or {}).get('_cifereca') or {}) if isinstance((loan.raw or {}).get('_cifereca'),dict) else dict(loan.raw or {}))} for key,loan in self.loan_objects.items()}
         self._attach_row_facets(rows,objects,self.search_controls)
-        self.loan_page.show_rows(rows)
+        self.loan_page.show_rows(rows, total_count=len(rows))
 
     def _loan_selected(self, row: BookListItem | None) -> None:
         if row is None: return
