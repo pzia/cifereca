@@ -95,9 +95,27 @@ def _meta_value(book: object, *names: str) -> object:
     return ""
 
 
+def _isbn(value: object) -> str:
+    raw = _ISBN_CLEAN.sub("", _text(value)).upper()
+    if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
+        total = sum((10 - i) * int(d) for i, d in enumerate(raw[:9]))
+        total += 10 if raw[-1] == "X" else int(raw[-1])
+        return raw if total % 11 == 0 else ""
+    if len(raw) == 13 and raw.isdigit():
+        total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(raw))
+        return raw if total % 10 == 0 else ""
+    return ""
+
+
 def _identifier_map(book: object) -> dict[str, str]:
     identifiers = _mapping(_field(book, "identifiers", {}))
     out = {str(key).strip().casefold(): _text(value) for key, value in identifiers.items() if _text(value)}
+    if "isbn" in out:
+        valid = _isbn(out["isbn"])
+        if valid:
+            out["isbn"] = valid
+        else:
+            out.pop("isbn", None)
     provider = _first(out.get("provider"), _meta_value(book, "provider_id", "source_provider"))
     source_item = _first(out.get("source_item_id"), _meta_value(book, "item_id", "record_id"))
     if provider:
@@ -258,10 +276,10 @@ def normalize_book(book: object) -> ConstellationBook:
         key = f"isbn:{isbn}"
     elif provider and source_item:
         key = f"source:{provider}:{source_item}"
-    elif book_id:
-        key = f"book:{book_id}"
     elif title and authors:
         key = f"work:{_fold(title)}|{_fold(authors[0])}"
+    elif book_id:
+        key = f"book:{book_id}"
     else:
         key = f"opaque:{_fold(title)}|{id(book)}"
 
@@ -431,9 +449,12 @@ class ConstellationGraph:
                 score = edge.strength + 0.18 * len(shared_subjects)
                 if seed.difficulty is not None and book.difficulty is not None:
                     delta = book.difficulty - seed.difficulty
-                    if delta >= 0:
-                        score += max(0.0, 0.22 - min(delta, 40) / 200.0)
+                    if delta > 0:
+                        score += max(0.08, 0.28 - abs(delta - 25) / 200.0)
                         reasons.append(f"progression:+{delta}")
+                    elif delta == 0:
+                        score += 0.08
+                        reasons.append("progression:+0")
                     else:
                         score -= min(abs(delta) / 200.0, 0.20)
                 reasons.append("project:shared-subject")
@@ -475,7 +496,7 @@ class ConstellationGraph:
                 series.append(value)
         return penalty
 
-    def _all_paths(self, start: str, end: str, *, min_steps: int = 4, max_steps: int = 8) -> list[tuple[str, ...]]:
+    def _all_paths(self, start: str, end: str, *, min_steps: int = 4, max_steps: int = 8, max_candidates: int = 2000) -> list[tuple[str, ...]]:
         found: list[tuple[str, ...]] = []
         stack: list[tuple[str, tuple[str, ...]]] = [(start, (start,))]
         while stack:
@@ -485,6 +506,8 @@ class ConstellationGraph:
             if current == end:
                 if len(path) >= min_steps:
                     found.append(path)
+                    if len(found) >= max_candidates:
+                        break
                 continue
             if len(path) == max_steps:
                 continue
