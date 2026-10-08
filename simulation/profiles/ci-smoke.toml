@@ -1,0 +1,47 @@
+name = "ci-smoke"
+description = "CI rapide : volumes minimaux sur tous les faux services."
+
+[runtime]
+startup_timeout_seconds = 10
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+copy_installed_plugins = false
+width = 1024
+height = 768
+
+[library]
+epubs = 3
+seed = 20261006
+
+[services.opds]
+enabled = true
+books_per_source = 5
+seed = 20261006
+
+[services.bnf]
+enabled = true
+books = 5
+seed = 20261006
+
+[services.kobo]
+enabled = true
+catalog_books = 8
+vault_books = 2
+seed = 20261006
+
+[services.paris]
+enabled = true
+books = 8
+active_loans = 1
+history_items = 2
+bookings = 1
+digital_ratio = 0.70
+seed = 20261006
+
+[services.numilog]
+enabled = true
+books = 8
+page_size = 5
+seed = 20261006
