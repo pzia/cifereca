@@ -32,6 +32,53 @@ x11-xkb-utils xkb-data dbus-daemon
 python3-packaging python3-httpx
 ```
 
+
+## Cas OpenAI Chat / conteneur Debian sans DNS sortant
+
+Ce cas est fréquent dans les sessions d'agent : l'hôte est bien Debian 13,
+Xvfb/FFmpeg peuvent déjà être présents, mais `apt-get` ne peut pas résoudre
+les miroirs Debian. Dans ce cas, la bonne stratégie reste cette recette GTK4.
+
+Diagnostic minimal :
+
+```bash
+cat /etc/os-release
+python3 -c 'import sys, platform; print(sys.version.split()[0], platform.machine())'
+command -v Xvfb || true
+command -v ffmpeg || true
+./gtk-python check_import.py || true
+```
+
+Si `bootstrap.py` échoue sur la résolution DNS, construire le cache sur un
+runner GitHub plutôt que d'installer autre chose localement. Le runner doit
+être Debian 13 pour respecter Python 3.13 et les paquets de cette recette.
+
+Séquence de relais recommandée :
+
+```text
+branche temporaire GitHub
+  -> workflow GitHub Actions
+  -> docker run debian:trixie
+  -> python3 bootstrap.py --download-only --deb-cache /work/.gtk-deb-cache
+  -> actions/upload-artifact
+  -> téléchargement de l'artefact via le connecteur GitHub de l'agent
+  -> extraction locale
+  -> python3 bootstrap.py --offline --deb-cache <cache>
+  -> ./gtk-python check_import.py
+```
+
+Le sous-répertoire APT `partial/` peut appartenir à root lorsque le cache est
+construit dans Docker. Avant `tar`/`upload-artifact`, faire par exemple :
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" .gtk-deb-cache
+rm -rf .gtk-deb-cache/partial
+```
+
+Ne jamais considérer la seule présence de Xvfb ou FFmpeg comme une validation
+GTK : `./gtk-python check_import.py` doit réussir avant de lancer une recette
+Cifereca.
+
 ## Préparer un cache portable
 
 Sur une machine Debian 13 x86_64 connectée :
@@ -79,6 +126,57 @@ avec `CIFERECA_CMD`.
 des scénarios X11 reproductibles. Lorsqu’un scénario injecte des actions,
 `--settle-after-actions SECONDES` attend explicitement leur stabilisation avant
 la capture (valeur entre 0 et 60 s) et enregistre ce délai dans le rapport JSON.
+
+
+## Démonstration vidéo réelle avec le simulateur
+
+Une vidéo UX doit filmer **la vraie fenêtre GTK Cifereca** sur le display
+virtuel. Elle ne doit pas être reconstruite à partir de screenshots, de PIL ou
+d'une imitation de l'interface.
+
+Depuis la racine du dépôt, préparer d'abord le profil fonctionnel :
+
+```bash
+python3 simulation/datasetctl.py doctor ux-small
+python3 simulation/datasetctl.py rebuild ux-small
+python3 simulation/datasetctl.py status ux-small
+python3 simulation/datasetctl.py summary ux-small
+```
+
+Le profil fournit les faux services, les EPUB et les variables XDG. La recette
+GTK fournit Xvfb/D-Bus/GTK. Pour vérifier l'intégration sans vidéo :
+
+```bash
+export CIFERECA_GTK_TEST_HARNESS="$PWD/environnements/openai-chat-debian"
+
+python3 simulation/datasetctl.py snapshot ux-small   --harness "$CIFERECA_GTK_TEST_HARNESS"   --out /tmp/cifereca-ux-small.png   --width 1300 --height 850 --wait 4
+```
+
+Pour une vidéo, lancer la commande dans l'environnement du profil via
+`datasetctl.py exec`, puis enregistrer le `$DISPLAY` fourni par
+`headless` avec FFmpeg `x11grab`. Exemple minimal :
+
+```bash
+mkdir -p evidence
+
+python3 simulation/datasetctl.py exec ux-small --   environnements/openai-chat-debian/headless   --screen 1300x850x24 --   bash -lc '
+    set -e
+    ffmpeg -y       -f x11grab -framerate 24 -video_size 1300x850       -i "$DISPLAY"       -c:v libx264 -pix_fmt yuv420p       "'"$PWD"'/evidence/ux-small.mp4" &
+    recorder=$!
+    trap '"'"'kill -INT "$recorder" 2>/dev/null || true; wait "$recorder" 2>/dev/null || true'"'"' EXIT
+    exec "'"$PWD"'/environnements/openai-chat-debian/run-cifereca" --verbose
+  '
+```
+
+Le shell lancé sous `headless` hérite de `DISPLAY`, `XAUTHORITY`, D-Bus et
+du runtime GTK rootless ; `datasetctl.py exec` fournit les XDG du profil.
+Ainsi la vidéo, Cifereca et les faux services utilisent le même environnement
+isolé. Pour une démonstration interactive, injecter les actions X11 avec les
+outils `capture-app`/`x11_input.py` ou un script de scénario dédié pendant
+l'enregistrement.
+
+Vérifier ensuite la vidéo avec `ffprobe` et conserver les logs Xvfb/D-Bus et
+du profil de simulation avec la preuve.
 
 ## Validation de la recette
 
