@@ -173,3 +173,19 @@ def test_explicit_entitlement_ownership_remains_visible_for_both_merged_identiti
     }
     assert _kinds(row, identity_id="alice") == {"borrowed"}
     assert _kinds(row, identity_id="bob") == {"owned"}
+
+
+def test_explicit_empty_placement_inventory_is_not_local_evidence():
+    # A persisted catalogue entry can survive after its last local placement
+    # has disappeared. The explicit inventory takes precedence over legacy
+    # identity_id fallback, even for the default identity.
+    for placements in ([], (), [None, {"state": "removed", "identity_id": "alice"}]):
+        row = {
+            "local": True, "identity_id": "alice",
+            "identity_ids": ["alice"], "placements": placements,
+        }
+        assert book_access_facts(row, identity_id="alice") == ()
+    # Legacy documents without an inventory keep backward compatibility.
+    assert book_access_facts(
+        {"local": True, "identity_id": "alice"}, identity_id="alice",
+    ) == (BookAccessFact("local", "library.local"),)
