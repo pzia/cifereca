@@ -35,7 +35,19 @@ class CardLayout(unittest.TestCase):
         adaptive=type('AdaptiveActionBar',(Widget,),{})
         def action_button(label, icon_name=None, **properties):
             return gtk.Button(label=label, icon_name=icon_name, **properties)
-        ns={'Gtk':gtk,'_STATE_LABELS':{'ready':'Prêt'},'AdaptiveActionBar':adaptive,'action_button':action_button}
+        from cifereca.gui.plugin_status_labels import (
+            activation_label, freshness_label, runtime_state_label, status_needs_attention,
+        )
+        ns={
+            'Gtk':gtk,
+            '_STATE_LABELS':{'ready':'Prêt'},
+            'AdaptiveActionBar':adaptive,
+            'action_button':action_button,
+            'activation_label':activation_label,
+            'freshness_label':freshness_label,
+            'runtime_state_label':runtime_state_label,
+            'status_needs_attention':status_needs_attention,
+        }
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(path),'exec'),ns)
         cls.builder=staticmethod(ns['_plugin_row']);cls.packager=staticmethod(ns['_append_package'])
 

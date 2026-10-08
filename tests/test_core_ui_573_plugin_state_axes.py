@@ -4,11 +4,15 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 
-from cifereca.gui.plugin_view import plugin_summary_counts
+from cifereca.gui.plugin_status_labels import (
+    activation_label,
+    freshness_label,
+    runtime_state_label,
+    status_needs_attention,
+)
 
 
-ROOT = Path(__file__).resolve().parents[1]
-PAGE = ROOT / "src/cifereca/gui/plugin_manager_page.py"
+PAGE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/plugin_manager_page.py"
 
 
 def _method(name: str) -> str:
@@ -18,54 +22,54 @@ def _method(name: str) -> str:
     return ast.unparse(method)
 
 
-def test_summary_separates_activated_ready_and_attention():
-    rows = [
-        NS(enabled=True, state="ready"),
-        NS(enabled=True, state="blocked"),
-        NS(enabled=True, state="degraded"),
-        NS(enabled=False, state="disabled"),
-        NS(enabled=False, state="error"),
-    ]
-    assert plugin_summary_counts(rows) == {
-        "total": 5,
-        "activated": 3,
-        "ready": 1,
-        "attention": 3,
-    }
+def test_activation_is_distinct_from_runtime_state():
+    blocked = NS(enabled=True, state="blocked")
+    disabled = NS(enabled=False, state="disabled")
+    assert activation_label(blocked) == "Activé"
+    assert runtime_state_label(blocked) == "Bloqué"
+    assert status_needs_attention(blocked)
+    assert activation_label(disabled) == "Désactivé"
+    assert runtime_state_label(disabled) == "Disponible"
+    assert not status_needs_attention(disabled)
 
 
-def test_page_summary_names_all_three_axes():
+def test_freshness_is_separate_human_version_axis():
+    assert freshness_label({
+        "builtin": False,
+        "freshness": "up_to_date",
+        "active": "1.2.3",
+        "expected_version": "1.2.3",
+    }) == "Version · À jour · v1.2.3"
+    outdated = freshness_label({
+        "builtin": False,
+        "freshness": "outdated",
+        "active": "1.2.2",
+        "expected_version": "1.2.3",
+    })
+    assert "Version · Ancienne" in outdated
+    assert "attendue v1.2.3" in outdated
+
+
+def test_plugin_card_uses_human_axes_and_hides_raw_reason_codes():
+    source = _method("_plugin_row")
+    assert "Activation ·" in source
+    assert "État ·" in source
+    assert "Action requise ·" in source
+    assert "reason = f" not in source
+    assert " · {status.reason}" not in source
+    assert "text = f'{d.id} · {d.type}" not in source
+
+
+def test_summary_distinguishes_activated_ready_and_attention():
     source = _method("refresh")
+    assert "activated = sum(" in source
+    assert "status.enabled and status.state == 'ready'" in source
     assert "activé(s)" in source
     assert "prêt(s)" in source
     assert "à examiner" in source
-    assert "plugin_summary_counts(statuses)" in source
 
 
-def test_plugin_card_shows_activation_and_execution_state_separately():
+def test_blocking_explanation_stays_human_and_visible():
     source = _method("_plugin_row")
-    assert "Activation ·" in source
-    assert "Activé" in source
-    assert "Désactivé" in source
-    assert "État ·" in source
-    assert "Action requise" in source
-
-
-def test_plugin_card_does_not_expose_raw_reason_or_technical_identity_line():
-    source = _method("_plugin_row")
-    assert "status.reason" not in source
-    assert "f'{d.id} · {d.type}" not in source
-    assert "description = str(d.description or '').strip()" in source
-
-
-def test_friendly_problem_translates_dependency_unavailable():
-    source = _method("_friendly_problem")
-    assert "dependency_unavailable" in source
-    assert "n’est pas disponible" in source
-
-
-def test_package_card_keeps_version_as_separate_axis():
-    source = _method("_append_package")
-    assert "Version : à jour" in source
-    assert "Version : ancienne" in source
-    assert "Version : plus récente / non standard" in source
+    assert "self._friendly_problem(status)" in source
+    assert "status_needs_attention(status)" in source

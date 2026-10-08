@@ -16,7 +16,12 @@ from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     filter_package_plugins,
     package_matches_query,
-    plugin_summary_counts,
+)
+from .plugin_status_labels import (
+    activation_label,
+    freshness_label,
+    runtime_state_label,
+    status_needs_attention,
 )
 
 
@@ -68,13 +73,13 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self.outer.append(head)
 
         statuses = self.manager.statuses()
-        counts = plugin_summary_counts(statuses)
+        activated = sum(1 for status in statuses if status.enabled)
+        ready = sum(1 for status in statuses if status.enabled and status.state == "ready")
+        attention = sum(1 for status in statuses if status_needs_attention(status))
         summary = Gtk.Label(
             label=(
-                f"{counts['total']} plugin(s) · "
-                f"{counts['activated']} activé(s) · "
-                f"{counts['ready']} prêt(s) · "
-                f"{counts['attention']} à examiner"
+                f"{len(statuses)} plugin(s) · {activated} activé(s) · "
+                f"{ready} prêt(s) · {attention} à examiner"
             ),
             xalign=0,
         )
@@ -284,21 +289,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         box.append(meta)
 
         freshness_status = str(package.get("freshness") or "unknown")
-        freshness_reason = str(package.get("freshness_reason") or "")
-        freshness_text = ""
-        if not package.get("builtin"):
-            if freshness_status == "up_to_date":
-                freshness_text = f"Version : à jour · v{active}"
-            elif freshness_status == "outdated":
-                freshness_text = f"Version : ancienne v{active} · attendue v{expected}"
-            elif freshness_status == "newer_nonstandard":
-                freshness_text = f"Version : plus récente / non standard v{active} · attendue v{expected}"
-            elif freshness_reason == "inactive" and expected:
-                freshness_text = f"Version : inactive · attendue v{expected}"
-            elif expected:
-                freshness_text = f"Version : état inconnu · attendue v{expected}"
-            else:
-                freshness_text = "Version : attendue inconnue (package non géré par cette release)"
+        freshness_text = freshness_label(package)
         if freshness_text:
             freshness = Gtk.Label(label=freshness_text, xalign=0)
             freshness.set_wrap(True)
@@ -343,34 +334,27 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         popover.set_child(help_label); help_button.set_popover(popover)
         header.append(help_button); box.append(header)
 
-        state = _STATE_LABELS.get(status.state, status.state)
-        state_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        activation_state = Gtk.Label(
-            label=f"Activation · {'Activé' if status.enabled else 'Désactivé'}",
-            xalign=0,
-        )
-        activation_state.add_css_class("caption")
-        state_strip.append(activation_state)
-        execution_state = Gtk.Label(label=f"État · {state}", xalign=0)
-        execution_state.add_css_class("caption")
-        if status.state in {"blocked", "error", "incompatible", "degraded"}:
-            execution_state.add_css_class("warning")
-        state_strip.append(execution_state)
-        if status.state in {"blocked", "error", "incompatible", "degraded"}:
-            action_required = Gtk.Label(label="Action requise", xalign=0)
-            action_required.add_css_class("warning")
-            action_required.add_css_class("caption")
-            state_strip.append(action_required)
-        box.append(state_strip)
+        axes = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        activation = Gtk.Label(label=f"Activation · {activation_label(status)}", xalign=0)
+        activation.add_css_class("caption")
+        axes.append(activation)
+        runtime = Gtk.Label(label=f"État · {runtime_state_label(status)}", xalign=0)
+        runtime.add_css_class("caption")
+        if status_needs_attention(status):
+            runtime.add_css_class("warning")
+        axes.append(runtime)
+        box.append(axes)
 
-        description = str(d.description or "").strip()
-        if description:
-            summary = Gtk.Label(label=description, xalign=0)
+        if d.description:
+            summary = Gtk.Label(label=d.description, xalign=0)
             summary.set_wrap(True); summary.set_hexpand(True)
             summary.add_css_class("caption"); summary.add_css_class("dim-label")
             box.append(summary)
-        if status.state in {"blocked", "error", "incompatible", "degraded"}:
-            warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
+        if status_needs_attention(status):
+            warning = Gtk.Label(
+                label=f"Action requise · {self._friendly_problem(status)}",
+                xalign=0,
+            )
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
 
         primary_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -425,8 +409,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         priority_group.append(priority); settings.append(priority_group)
 
         activation_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        activation_label = Gtk.Label(label="Activé", xalign=0)
-        activation_group.append(activation_label)
+        activation_caption = Gtk.Label(label="Activé", xalign=0)
+        activation_group.append(activation_caption)
         toggle = Gtk.Switch(); toggle.set_active(bool(status.enabled)); toggle.set_valign(Gtk.Align.CENTER)
         toggle.set_tooltip_text(f"Activer ou désactiver {d.display_name or d.id}")
         toggle.connect("notify::active", lambda sw, _p, pid=d.id: self._toggle(pid, sw.get_active()))
@@ -436,8 +420,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
     @staticmethod
     def _friendly_problem(status: Any) -> str:
-        if status.reason in {"dependency_missing", "dependency_disabled", "dependency_version", "dependency_unavailable"}:
-            return "Ce plugin attend un autre composant qui n’est pas disponible. Activez ou installez la dépendance indiquée dans Diagnostic."
+        if status.reason in {"dependency_missing", "dependency_disabled", "dependency_version"}:
+            return "Ce plugin attend un autre composant. Activez ou installez la dépendance indiquée dans Diagnostic."
         if status.reason == "dependency_cycle":
             return "Les dépendances de ce plugin forment une boucle. Désactivez l’un des composants concernés."
         if status.reason in {"system_requirement", "system_requirement_missing"}:
@@ -448,10 +432,6 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             return "Ce plugin doit être configuré avant de pouvoir démarrer. Utilisez Configurer…"
         if status.state == "incompatible":
             return "Cette version du plugin n’est pas compatible avec cette version de cifereca."
-        if status.state == "degraded":
-            return "Ce plugin fonctionne partiellement. Consultez Diagnostic pour identifier la fonction indisponible."
-        if status.state == "error":
-            return "Ce plugin a rencontré une erreur et ne peut pas fonctionner normalement. Consultez Diagnostic."
         return "Ce plugin ne peut pas démarrer actuellement. Consultez Diagnostic pour le détail technique."
 
     def _identity_toggle(self, plugin_id, identity_id, enabled):
