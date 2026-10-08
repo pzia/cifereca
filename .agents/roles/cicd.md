@@ -16,6 +16,11 @@ Posséder la CI/CD, les quality gates, le packaging, les releases et les merges.
 - Merge des PR prêtes et déblocage coordonné des PR bloquées.
 - Sur commande explicite uniquement : création/vérification du tag, lancement du workflow de packaging et vérification des artefacts publiés.
 
+## Validation des versions de release
+- Les versions du snapshot `src/cifereca/plugin-release.json` ne constituent **pas** une quality gate des PR ni des tests Core courants : leur divergence ne doit pas rendre la CI des merges rouge.
+- Le rôle CI/CD est seul responsable de leur synchronisation et validation **au moment d'une release explicitement demandée**, avant tag et packaging.
+- Le workflow de release doit échouer si le snapshot est incohérent ; les workflows PR ne doivent pas exécuter ce contrôle.
+
 ## Interdits
 - Ne pas corriger un défaut métier Core ou plugin pour rendre un pipeline vert.
 - Ne pas modifier l'UX ou le produit hors nécessité strictement CI.
