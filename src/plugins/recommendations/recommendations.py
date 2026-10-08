@@ -99,6 +99,7 @@ class RecommendationsPlugin:
     def __init__(self) -> None:
         self.context = None
         self._view = None
+        self._pending_reference = None
 
     def activate(self, context):
         self.context = context
@@ -125,6 +126,25 @@ class RecommendationsPlugin:
         else:
             host.toast("Ouvrez la page Recommandations pour lancer le calcul.")
 
+    def recommend_from_book(self, book) -> str:
+        # Validate synchronously so Core can surface a useful error before
+        # navigating. The concrete BookRef protocol remains structural.
+        from reference_recommendation import prepare_reference
+
+        prepare_reference(book, max_queries=self._config_max_queries())
+        self._pending_reference = book
+        if self._view is not None:
+            self._view.set_reference_book(book)
+        return "recommendations"
+
+    def _config_max_queries(self) -> int:
+        if self.context is None or not isinstance(self.context.config, Mapping):
+            return 8
+        try:
+            return int(self.context.config.get("max_queries", 8))
+        except (TypeError, ValueError):
+            return 8
+
     def deactivate(self):
         if self._view is not None:
             self._view.dispose()
@@ -136,6 +156,8 @@ class RecommendationsPlugin:
 
         view = UxRecommendationsView(self, host, Gtk, GLib)
         self._view = view
+        if self._pending_reference is not None:
+            view.set_reference_book(self._pending_reference, refresh=False)
         _refresh_on_first_map(view, view.widget, GLib)
         return view.widget
 
@@ -441,6 +463,7 @@ class UxRecommendationsView:
             return
         if self._identity_ids:
             self._reference_book = None
+            self.plugin._pending_reference = None
             self._reference_books = []
             self._reload_reference_books(())
             self.refresh()
@@ -457,12 +480,27 @@ class UxRecommendationsView:
         if reference is self._reference_book:
             return
         self._reference_book = reference
+        self.plugin._pending_reference = reference
         self.refresh()
+
+    def set_reference_book(self, book, *, refresh: bool = True) -> None:
+        from reference_recommendation import prepare_reference
+
+        prepare_reference(book, max_queries=self._config_int("max_queries", 8))
+        self._reference_book = book
+        self.plugin._pending_reference = book
+        self._reload_reference_books(self._reference_books)
+        if refresh:
+            self.refresh()
 
     def _reload_reference_books(self, books) -> None:
         current_key = candidate_key(self._reference_book) if self._reference_book is not None else ""
+        ordered = list(books or ())
+        if self._reference_book is not None and current_key:
+            if not any(candidate_key(book) == current_key for book in ordered):
+                ordered.append(self._reference_book)
         ordered = sorted(
-            list(books or ()),
+            ordered,
             key=lambda book: (_reference_label(book).casefold(), candidate_key(book)),
         )
         self._reloading_references = True
@@ -476,8 +514,6 @@ class UxRecommendationsView:
                 if current_key and candidate_key(book) == current_key:
                     selected = index
                     self._reference_book = book
-            if current_key and selected == 0:
-                self._reference_book = None
             self._reference.set_selected(selected)
             self._reference.set_sensitive(bool(ordered))
         finally:
