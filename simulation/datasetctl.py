@@ -133,8 +133,30 @@ def save_state(profile: dict, state: dict) -> None:
     tmp.replace(path)
 
 
+def _linux_proc_state(pid: int) -> str | None:
+    """Return the Linux process state, when /proc exposes it.
+
+    kill(pid, 0) still succeeds for zombie children. Treating those as alive
+    makes dataset teardown wait for the full timeout even though the service
+    has already exited.
+    """
+    if not sys.platform.startswith("linux") or pid <= 0:
+        return None
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    end = raw.rfind(")")
+    if end < 0:
+        return None
+    fields = raw[end + 1 :].strip().split()
+    return fields[0] if fields else None
+
+
 def is_pid_alive(pid: int) -> bool:
     if pid <= 0:
+        return False
+    if _linux_proc_state(pid) == "Z":
         return False
     try:
         os.kill(pid, 0)
