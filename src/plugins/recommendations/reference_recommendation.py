@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
+from types import SimpleNamespace
 from typing import Any, Callable
 
-from recommendation_engine import build_profile, build_queries, candidate_key
+from recommendation_engine import (
+    author_values,
+    build_profile,
+    build_queries,
+    candidate_key,
+    get_field,
+    identifier_values,
+    normalize,
+)
 from recommendation_service import (
     RecommendationPartial,
     RecommendationResult,
@@ -18,6 +28,69 @@ class ReferencePlan:
     book: Any
     key: str
     queries: tuple[str, ...]
+
+
+def _normalized_authors(book: Any) -> set[str]:
+    out: set[str] = set()
+    for value in author_values(book):
+        for part in re.split(r"[;,/]+", str(value)):
+            key = normalize(part)
+            if key:
+                out.add(key)
+    return out
+
+
+def is_reference_candidate(reference: Any, candidate: Any) -> bool:
+    reference_ids = identifier_values(reference)
+    candidate_ids = identifier_values(candidate)
+    if reference_ids and candidate_ids:
+        return bool(reference_ids.intersection(candidate_ids))
+
+    reference_title = normalize(get_field(reference, "title", ""))
+    candidate_title = normalize(get_field(candidate, "title", ""))
+    if not reference_title or reference_title != candidate_title:
+        return False
+
+    reference_authors = _normalized_authors(reference)
+    candidate_authors = _normalized_authors(candidate)
+    if reference_authors and candidate_authors:
+        return reference_authors == candidate_authors
+    return not reference_authors and not candidate_authors
+
+
+class _ReferenceCatalog:
+    def __init__(self, catalog: Any, reference: Any) -> None:
+        self.catalog = catalog
+        self.reference = reference
+
+    def searchable_providers(self):
+        return self.catalog.searchable_providers()
+
+    def _filtered(self, rows: Any) -> list[Any]:
+        return [
+            row
+            for row in list(rows or [])
+            if not is_reference_candidate(self.reference, row)
+        ]
+
+    def search(self, query: str, **kwargs: Any):
+        return self._filtered(self.catalog.search(query, **kwargs))
+
+    def search_progressive(self, query: str, *, on_batch, **kwargs: Any):
+        progressive = getattr(self.catalog, "search_progressive")
+
+        def filtered_batch(batch: Any) -> None:
+            on_batch(
+                SimpleNamespace(
+                    provider_id=getattr(batch, "provider_id", ""),
+                    results=tuple(self._filtered(getattr(batch, "results", ()))),
+                    warnings=tuple(getattr(batch, "warnings", ()) or ()),
+                    error_message=str(getattr(batch, "error_message", "") or ""),
+                    cached=bool(getattr(batch, "cached", False)),
+                )
+            )
+
+        return progressive(query, on_batch=filtered_batch, **kwargs)
 
 
 class _ReferenceMetadata:
@@ -63,7 +136,7 @@ def compute_reference_recommendations(
     plan = prepare_reference(book, max_queries=max_queries)
     return compute_recommendations(
         _ReferenceMetadata(plan.book),
-        catalog_broker,
+        _ReferenceCatalog(catalog_broker, plan.book),
         "book-reference",
         scope=scope,
         max_queries=max_queries,
