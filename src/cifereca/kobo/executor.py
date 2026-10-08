@@ -199,6 +199,10 @@ def _execute_kobo_acquisition_impl(
                 "Kobo : le transport HTTP direct est réservé aux candidats http_plain "
                 f"(candidat reçu: {handling or 'unknown'})"
             )
+        if not KoboOfferAdapter.secure_http_candidate(KoboOfferAdapter.normalize_candidate(candidate_value)):
+            raise ProviderConfigurationError(
+                "Kobo : candidat http_plain invalide (URL HTTPS et méthode GET requises)"
+            )
         metadata, _original_format, fmt = base_metadata(candidate_value, profile)
         destination = service._kobo_destination(item, target_dir, fmt)
         headers = candidate_value.get("headers")
@@ -226,6 +230,15 @@ def _execute_kobo_acquisition_impl(
         return request, destination
 
     def acsm_request_for(candidate_value: dict[str, Any], profile: str | None) -> tuple[dict[str, Any], Path]:
+        normalized = KoboOfferAdapter.normalize_candidate(candidate_value)
+        if (
+            normalized.handling != "adobe_adept"
+            or not (normalized.kind == "acsm" or normalized.media_format == "acsm")
+            or not KoboOfferAdapter.secure_http_candidate(normalized)
+        ):
+            raise ProviderConfigurationError(
+                "Kobo : candidat ACSM invalide (URL HTTPS et méthode GET requises)"
+            )
         if not adept_profile:
             raise ProviderConfigurationError(
                 "Kobo : un lien ACSM est disponible mais aucun profil ADEPT n'est configuré dans cifereca"
@@ -411,26 +424,28 @@ def _execute_kobo_acquisition_impl(
         except KoboVaultError:
             raise
 
-    # Before asking Vault for a delegated Kobo recipe, inspect descriptor
-    # candidates for the normative v2.3.1 ``http_plain`` transport. This is
-    # the common SignedNoDrm case (for example getbook.kobo.com) and must be
-    # executed as source.type=http even when Adept supports Kobo delegation.
+    # Before asking Vault for a delegated Kobo recipe, inspect *all* display
+    # profiles for the normative http_plain transport. A later Desktop
+    # descriptor can expose a plain EPUB even when Android exposes only KDRM.
+    # The global ACSM > plain HTTP > KDRM policy must not depend on profile order.
     if request is None:
-        profile = profiles[0]
-        try:
-            current_payload = resolve("descriptor", profile)
-            current_candidate = service._kobo_candidate(current_payload, preferred)
-        except KoboVaultError:
-            raise
-        except ProviderConfigurationError as exc:
-            descriptor_error = exc
-        else:
-            if service._kobo_candidate_handling(current_candidate) == "http_plain":
-                payload = current_payload
-                candidate = current_candidate
-                selected_profile = profile
-                request, destination = http_request_for(current_candidate, profile)
-                acquisition_mode = "descriptor-http"
+        for profile in profiles:
+            try:
+                current_payload = resolve("descriptor", profile)
+                current_candidate = service._kobo_candidate(current_payload, preferred)
+            except KoboVaultError:
+                raise
+            except ProviderConfigurationError as exc:
+                descriptor_error = exc
+                continue
+            if service._kobo_candidate_handling(current_candidate) != "http_plain":
+                continue
+            payload = current_payload
+            candidate = current_candidate
+            selected_profile = profile
+            request, destination = http_request_for(current_candidate, profile)
+            acquisition_mode = "descriptor-http"
+            break
 
     # If no plain HTTP candidate was found, contract v8 may execute a true
     # Kobo KDRM content_access_book recipe locally. A delegated response can

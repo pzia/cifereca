@@ -124,6 +124,7 @@ class ParisProviderSession(ProviderSession):
         self.client = ParisClient(base_url=base_url, timeout=timeout, diagnostics=diagnostics)
         self.last_loan_errors: list[dict[str, str]] = []
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
+        self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
 
     @staticmethod
@@ -185,8 +186,24 @@ class ParisProviderSession(ProviderSession):
         ))
         try:
             linked = [self._decorate_account(x) for x in self.client.pairings()]
-        except Exception:
+            self.pairing_status = {"complete": True, "error": None}
+        except Exception as exc:
             linked = []
+            self.pairing_status = {
+                "complete": False,
+                "error": type(exc).__name__,
+            }
+            try:
+                self.diagnostics.add(
+                    "API", "pairings", "error",
+                    detail={
+                        "provider": self.provider_id,
+                        "credential_id": self.credential_id,
+                        "error": type(exc).__name__,
+                    },
+                )
+            except Exception:
+                pass
         self._accounts = [primary, *linked]
         self.connected = True
         return self.accounts
@@ -401,6 +418,7 @@ class ParisProviderSession(ProviderSession):
         state = super().diagnostic_state()
         state["pnb_borrow"] = dict(getattr(self.client, "last_pnb_borrow", {"phase": "unknown"}))
         state["account_status"] = dict(self.account_status)
+        state["pairings"] = dict(self.pairing_status)
         return state
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path) -> tuple[Path, str]:

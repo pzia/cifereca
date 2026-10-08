@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 from ..acquisition_engine import (
     AcquisitionCandidate,
@@ -111,9 +112,24 @@ class KoboOfferAdapter:
     @staticmethod
     def candidate_requires_authorization(row: dict[str, Any]) -> bool:
         kobo = row.get("kobo")
-        if isinstance(kobo, dict) and "requires_kobo_authorization" in kobo:
-            return bool(kobo.get("requires_kobo_authorization"))
-        return bool(row.get("requires_kobo_authorization"))
+        nested = kobo.get("requires_kobo_authorization") if isinstance(kobo, dict) else None
+        # A null/blank nested field must not mask a populated root flag.
+        value = nested if nested is not None and str(nested).strip() else row.get("requires_kobo_authorization")
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in {0, 1}:
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if not normalized:
+                return False
+        # An unrecognised, populated flag is treated as requiring
+        # authorization rather than silently sending a descriptor unauthenticated.
+        return value is not None
 
     @classmethod
     def normalize_candidate(cls, row: dict[str, Any]) -> AcquisitionCandidate:
@@ -185,12 +201,40 @@ class KoboOfferAdapter:
             c for c in candidates
             if c.handling == "adobe_adept"
             and (c.kind == "acsm" or c.media_format.lower() == "acsm")
-            and c.transport == "https" and c.method == "GET" and str(c.url or "").startswith("https://")
+            and cls.secure_http_candidate(c)
         ]
         if not usable:
             return None
         usable.sort(key=lambda c: (0 if c.source == "library_download_link" else 1, c.candidate_id))
         return cls._raw(usable[0])
+
+    @staticmethod
+    def secure_http_candidate(candidate: AcquisitionCandidate) -> bool:
+        """Accept executable HTTP downloads only over an explicit HTTPS GET URL."""
+        if candidate.transport != "https" or candidate.method != "GET":
+            return False
+        url = candidate.url or ""
+        # from_mapping() strips whitespace from the normalized URL, while
+        # request builders forward the original provider payload. Check both
+        # representations to avoid passing a different URL than the validated
+        # one (for instance with a trailing newline or a leading space).
+        raw = candidate.provider_data.get("url", candidate.url)
+        if not isinstance(raw, str) or not url or raw != url or "\\" in raw:
+            return False
+        if any(ord(char) < 32 or ord(char) == 127 for char in raw):
+            return False
+        try:
+            parsed = urlsplit(url)
+            # Accessing hostname/port validates malformed bracketed hosts/ports.
+            return bool(
+                parsed.scheme == "https"
+                and parsed.hostname
+                and parsed.username is None
+                and parsed.password is None
+                and (parsed.port is None or 1 <= parsed.port <= 65535)
+            )
+        except ValueError:
+            return False
 
     @classmethod
     def direct_candidate(cls, payload: dict[str, Any], preferred_format: str = "epub") -> dict[str, Any]:
@@ -198,7 +242,7 @@ class KoboOfferAdapter:
         usable = [
             c for c in candidates
             if c.kind != "acsm"
-            and c.transport == "https" and c.method == "GET" and str(c.url or "").startswith("https://")
+            and cls.secure_http_candidate(c)
             and cls.adept_format(c.media_format) is not None
             and c.handling in {"http_plain", "kobo_kdrm"}
             and not (c.handling == "kobo_kdrm" and c.source == "library_sync")
@@ -222,6 +266,9 @@ class KoboOfferAdapter:
             if c.kind != "acsm"
             and cls.adept_format(c.media_format) is not None
             and c.handling in {"http_plain", "kobo_kdrm"}
+            # A delegated Kobo recipe may not expose a delivery URL yet.
+            # A plain HTTP candidate does: never select it without HTTPS GET.
+            and (c.handling == "kobo_kdrm" or cls.secure_http_candidate(c))
         ]
         policy = AcquisitionPolicy(priority={"http_plain": 10, "kobo_kdrm": 20})
         chosen = policy.choose(usable, preferred_format=preferred_format)
