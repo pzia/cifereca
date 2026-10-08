@@ -106,6 +106,22 @@ jobs:
           tap 690 512; sleep 3; screenshot 07-confirm-emprunt
           xdotool key Escape; sleep .4
           tap 90 513; sleep 2; screenshot 08-optimiseur-epub
+          sourceoriginal="$(find "$CIFERECA_DATASET_RUNTIME" -type f -name '*.epub' -print -quit)"
+          test -n "$sourceoriginal"
+          cp "$sourceoriginal" /tmp/cifereca-demo-input.epub
+          printf 'SOURCE=%s\n' "$sourceoriginal" >"$ev/optimizer-run.log"
+          tap 640 169
+          xdotool key ctrl+a
+          xdotool type --clearmodifiers --delay 2 "/tmp/cifereca-demo-input.epub"
+          sleep .3
+          tap 630 300
+          xdotool key ctrl+a
+          xdotool type --clearmodifiers --delay 2 "/tmp/cifereca-demo-optimized.epub"
+          sleep .5
+          screenshot 08b-optimiseur-setup
+          tap 389 346; sleep 5
+          screenshot 08c-optimiseur-result
+          ls -lh /tmp/cifereca-demo-optimized.epub >>"$ev/optimizer-run.log" 2>&1 || true
           tap 90 469; sleep 3; screenshot 09-recommandations
           tap 90 250; sleep 1.5; screenshot 10-bibliotheque
           tap 470 365; sleep 1; screenshot 11-detail-local
