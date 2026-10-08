@@ -76,21 +76,28 @@ class _ReferenceCatalog:
     def search(self, query: str, **kwargs: Any):
         return self._filtered(self.catalog.search(query, **kwargs))
 
-    def search_progressive(self, query: str, *, on_batch, **kwargs: Any):
-        progressive = getattr(self.catalog, "search_progressive")
+    def __getattr__(self, name: str):
+        if name != "search_progressive":
+            return getattr(self.catalog, name)
+        progressive = getattr(self.catalog, "search_progressive", None)
+        if not callable(progressive):
+            raise AttributeError(name)
 
-        def filtered_batch(batch: Any) -> None:
-            on_batch(
-                SimpleNamespace(
-                    provider_id=getattr(batch, "provider_id", ""),
-                    results=tuple(self._filtered(getattr(batch, "results", ()))),
-                    warnings=tuple(getattr(batch, "warnings", ()) or ()),
-                    error_message=str(getattr(batch, "error_message", "") or ""),
-                    cached=bool(getattr(batch, "cached", False)),
+        def wrapped(query: str, *, on_batch, **kwargs: Any):
+            def filtered_batch(batch: Any) -> None:
+                on_batch(
+                    SimpleNamespace(
+                        provider_id=getattr(batch, "provider_id", ""),
+                        results=tuple(self._filtered(getattr(batch, "results", ()))),
+                        warnings=tuple(getattr(batch, "warnings", ()) or ()),
+                        error_message=str(getattr(batch, "error_message", "") or ""),
+                        cached=bool(getattr(batch, "cached", False)),
+                    )
                 )
-            )
 
-        return progressive(query, on_batch=filtered_batch, **kwargs)
+            return progressive(query, on_batch=filtered_batch, **kwargs)
+
+        return wrapped
 
 
 class _ReferenceMetadata:
