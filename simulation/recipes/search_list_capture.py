@@ -133,7 +133,9 @@ def main() -> int:
         # Select the first visible result. The master-detail contract is part of
         # this recipe: pathological row content must never make the detail pane
         # unreachable after selection.
-        select_x = max(330, min(args.window_width - 120, int(args.window_width * 0.48)))
+        # Click the cover area, not title/facets: facets are themselves active
+        # search controls and would change the query instead of selecting a row.
+        select_x = max(235, min(280, int(args.window_width * 0.33)))
         select_y = 240
         control.click(select_x, select_y)
         time.sleep(1.5)
