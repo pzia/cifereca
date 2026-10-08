@@ -191,7 +191,10 @@ def page_parts(value: object) -> tuple[tuple[object, ...], str, int]:
 def source_info(row: object) -> tuple[str, str]:
     service = getattr(row, "service", row)
     method = getattr(service, "source_info", None)
-    raw = method() if callable(method) else {}
+    try:
+        raw = method() if callable(method) else {}
+    except Exception:
+        raw = {}
     if not isinstance(raw, Mapping):
         raw = {}
     source_id = _fold(raw.get("source_id") or raw.get("id") or getattr(row, "plugin_id", ""))
@@ -312,7 +315,7 @@ class YouthView:
         self.query = Gtk.Entry(placeholder_text="Titre, auteur ou thème — cache local")
         self.age = Gtk.DropDown.new_from_strings(["Tous les âges"] + [f"{age} ans" for age in range(18)])
         self.age_kind = Gtk.DropDown.new_from_strings([KIND_LABELS[value] for value in KIND_VALUES])
-        self.source = Gtk.DropDown()
+        self.source = Gtk.DropDown.new_from_strings(["Toutes les sources"])
         self.language = Gtk.Entry(placeholder_text="Langue (fr, en…)")
         self.format = Gtk.Entry(placeholder_text="Format (epub, pdf…)")
         self.book_type = Gtk.Entry(placeholder_text="Type (fiction, documentaire…)")
