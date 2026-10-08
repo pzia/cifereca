@@ -1,6 +1,13 @@
 from types import SimpleNamespace
 
-from recommendations import UxRecommendationsView, _candidate_languages, _language_label, _refresh_on_first_map
+from recommendations import (
+    UxRecommendationsView,
+    _AFFINITY_MIN_TOOLTIP,
+    _DIVERSITY_TOOLTIP,
+    _candidate_languages,
+    _language_label,
+    _refresh_on_first_map,
+)
 
 
 def ranked(title, score=50, provider="a"):
@@ -10,6 +17,15 @@ def ranked(title, score=50, provider="a"):
         reasons=("raison",),
         sources=(provider,),
     )
+
+
+def test_affinity_tooltips_explain_low_high_effect_without_external_docs():
+    assert "valeur faible" in _AFFINITY_MIN_TOOLTIP
+    assert "valeur forte" in _AFFINITY_MIN_TOOLTIP
+    assert "plus de résultats" in _AFFINITY_MIN_TOOLTIP
+    assert "0 privilégie" in _DIVERSITY_TOOLTIP
+    assert "valeur élevée" in _DIVERSITY_TOOLTIP
+    assert "varie davantage" in _DIVERSITY_TOOLTIP
 
 
 def test_partial_order_keeps_existing_rows_stable():

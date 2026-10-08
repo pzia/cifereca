@@ -23,6 +23,15 @@ from recommendation_service import RecommendationPartial, RecommendationResult, 
 
 _LOG = logging.getLogger("cifereca.plugin.recommendations")
 
+_AFFINITY_MIN_TOOLTIP = (
+    "Seuil minimal d’affinité : une valeur faible affiche plus de résultats, "
+    "une valeur forte ne garde que les recommandations les plus proches de votre bibliothèque."
+)
+_DIVERSITY_TOOLTIP = (
+    "Diversité : 0 privilégie les recommandations les plus proches ; "
+    "une valeur élevée varie davantage auteurs, sujets et sources."
+)
+
 _LANGUAGE_LABELS = {
     "fr": "Français",
     "en": "Anglais",
@@ -212,6 +221,11 @@ class UxRecommendationsView:
             value=self._config_int("minimum_score", 15),
         )
         self._score = Gtk.SpinButton(adjustment=score_adjustment, climb_rate=1, digits=0)
+        self._score.set_tooltip_text(_AFFINITY_MIN_TOOLTIP)
+        self._score.update_property(
+            [Gtk.AccessibleProperty.LABEL],
+            ["Seuil minimal d’affinité des recommandations"],
+        )
         self._score.connect("value-changed", lambda *_: self._render())
         controls.insert(self._labeled("Affinité ≥", self._score), -1)
 
@@ -220,7 +234,11 @@ class UxRecommendationsView:
             value=self._config_int("exploration", 25),
         )
         self._exploration = Gtk.SpinButton(adjustment=exploration_adjustment, climb_rate=1, digits=0)
-        self._exploration.set_tooltip_text("0 = pertinence pure ; 100 = davantage de diversité")
+        self._exploration.set_tooltip_text(_DIVERSITY_TOOLTIP)
+        self._exploration.update_property(
+            [Gtk.AccessibleProperty.LABEL],
+            ["Diversité des recommandations"],
+        )
         controls.insert(self._labeled("Diversité", self._exploration), -1)
 
         self._refresh_button = Gtk.Button(label="Recalculer", icon_name="view-refresh-symbolic")
