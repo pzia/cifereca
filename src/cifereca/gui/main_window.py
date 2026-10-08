@@ -3768,7 +3768,9 @@ class MainWindow(Adw.ApplicationWindow):
             ))
         self._attach_row_facets(rows, self._library_objects, self.library_controls)
         self.library_page.show_rows(rows, total_count=len(entries))
-        self._select_pending_library_item()
+        restored_pending = self._select_pending_library_item()
+        if not restored_pending and self.library_page.selection.get_selected_item() is None:
+            self._library_selected(None)
         self.ui_perf.record("render_library", (time.perf_counter() - _perf_started) * 1000.0)
 
     # ---------- Récupérations récentes ----------
@@ -4018,6 +4020,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _library_selected(self, row: BookListItem | None) -> None:
         if not row:
+            self.library_page.detail.empty(
+                "Sélectionnez un livre",
+                "Sélectionnez un livre dans la liste pour afficher ses détails.",
+            )
             return
         item = self._library_objects.get(row.key)
         if not item:
