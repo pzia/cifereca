@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+import zipfile
+
+SIM = Path(__file__).resolve().parents[1]
+REPO = SIM.parent
+for path in (SIM, REPO / "src/plugins/youth-catalog",
+             REPO / "src/plugins/literary-criticism",
+             REPO / "src/plugins/constellations"):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import plugin_coverage
+import plugin_scenarios
+
+
+class PluginCoverageTests(unittest.TestCase):
+    def test_inventory_matches_all_current_manifests(self):
+        result = plugin_coverage.build_report()
+        self.assertEqual(result["unclassified"], [], "Tout nouveau plugin doit être audité")
+        self.assertEqual(result["stale"], [])
+        self.assertEqual(result["stats"]["packages"], len(list((REPO / "src/plugins").glob("*/cifereca-plugin.json"))))
+        self.assertEqual(len({row["manifest_id"] for row in result["packages"]}), result["stats"]["packages"])
+        self.assertFalse(any(row["e2e_gtk_verified"] for row in result["packages"]))
+        self.assertIn("baen", [row["package"] for row in result["packages"] if not row["data"]])
+
+    def test_services_are_derived_from_manifests_not_invented(self):
+        rows = {row["package"]: row for row in plugin_coverage.build_report()["packages"]}
+        self.assertIn("kobo", rows["provider-kobo"]["services"])
+        self.assertEqual(rows["constellations"]["services"], [])
+        self.assertEqual(rows["youth-catalog"]["ui_routes"], ["ui.page.youth"])
+
+
+class SpecializedFixturesTests(unittest.TestCase):
+    def test_generation_is_reproducible_and_isolated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a, b = root / "a", root / "b"
+            first = plugin_scenarios.create(a)
+            second = plugin_scenarios.create(b)
+            self.assertEqual(first, second)
+            self.assertTrue(first["synthetic"])
+            self.assertIn("optimizer-valid.epub", first["files"])
+            with zipfile.ZipFile(a / "optimizer-valid.epub") as archive:
+                self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+            with self.assertRaises(zipfile.BadZipFile):
+                with zipfile.ZipFile(a / "optimizer-corrupt.epub") as archive:
+                    archive.namelist()
+            youth = json.loads((a / "youth.json").read_text(encoding="utf-8"))
+            self.assertIn("age_boundary_18_no_match", youth["cases"])
+            self.assertTrue(any(not record["age_ranges"] for record in youth["records"]))
+            self.assertEqual(len(first["files"]), 7)
+
+    def test_youth_data_uses_real_normalizer_and_edition_proofs(self):
+        from youth_catalog import normalize_record, bibliographic_match
+        rows = plugin_scenarios.youth_records()["records"]
+        models = [normalize_record(row, source_id="ux-youth") for row in rows]
+        self.assertEqual(bibliographic_match(models[0], models[5]).status, "confirmed")
+        self.assertEqual(bibliographic_match(models[0], models[4]).status, "suggested")
+        self.assertEqual(len(models[2].age_ranges), 0)
+        self.assertEqual(models[3].age_ranges[0].age_kind, "inferred")
+        self.assertTrue(models[6].age_ranges[0].contains(17))
+        self.assertFalse(models[6].age_ranges[0].contains(18))
+
+    def test_criticism_feed_is_parseable_by_plugin(self):
+        from criticism_feeds import parse_feed
+        rss = parse_feed(plugin_scenarios.criticism_rss().encode("utf-8"),
+                         "https://ux-fixtures.invalid/reviews.rss")
+        self.assertEqual(len(rss), 2)
+        self.assertEqual(rss[0]["book"]["isbns"], [plugin_scenarios.ISBN_A])
+        self.assertEqual(rss[1]["book"]["isbns"], [])
+        feed = json.dumps(plugin_scenarios.criticism_jsonfeed()).encode("utf-8")
+        parsed = parse_feed(feed, "https://ux-fixtures.invalid/reviews.json")
+        self.assertEqual(parsed[0]["book"]["isbns"], [plugin_scenarios.ISBN_A])
+
+    def test_constellation_data_builds_connected_and_disconnected_nodes(self):
+        from constellations import ConstellationGraph
+        rows = plugin_scenarios.constellations_records()["records"]
+        graph = ConstellationGraph(rows)
+        self.assertEqual(len(graph.books), len(rows))
+        linked = [book for book in graph.books if graph.neighbors(book)]
+        self.assertGreaterEqual(len(linked), 6)
+
+
+if __name__ == "__main__":
+    unittest.main()
