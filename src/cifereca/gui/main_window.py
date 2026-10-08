@@ -3080,10 +3080,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
         self._search_mode = "local"
         self.search_objects = {}
-        shown = self._render_search_results()
+        self._render_search_results()
         self._sync_search_detail_after_results()
         self.search_global_button.set_sensitive(True)
-        self.toast(f"{shown} résultat(s) dans le connu", 5)
 
     def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -> None:
         self._search_mode = "global"
@@ -3095,9 +3094,7 @@ class MainWindow(Adw.ApplicationWindow):
             return
         warnings = list(getattr(self.service, "last_search_warnings", []) or [])
         if warnings:
-            self.toast(f"{shown} résultat(s) affiché(s) · résultats partiels : {warnings[0]}", 6)
-        else:
-            self.toast(f"{shown} résultat(s) affiché(s)")
+            self.toast(f"Résultats partiels · {warnings[0]}", 6)
 
     def _render_search_results(self) -> int:
         if not hasattr(self, "search_page"):
@@ -3119,7 +3116,9 @@ class MainWindow(Adw.ApplicationWindow):
                 ))
             self._attach_row_facets(local_rows, self._search_local_objects, self.search_controls)
             self.search_page.show_rows(local_rows)
-            return len(local_rows)
+            shown = len(local_rows)
+            self._update_search_count(shown)
+            return shown
         identity = self.service.current_identity
         linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
         remote_keys = {(item.source_provider, item.source_credential, item.record_id) for item in self._remote_search_results}
@@ -3172,7 +3171,17 @@ class MainWindow(Adw.ApplicationWindow):
         objects = {**self._search_local_objects, **{f"{item.source_provider}:{item.id}": result_row(item) for item in self._remote_search_results}}
         self._attach_row_facets(ui_rows, objects, self.search_controls)
         self.search_page.show_rows(ui_rows)
-        return len(ui_rows)
+        shown = len(ui_rows)
+        self._update_search_count(shown)
+        return shown
+
+    def _update_search_count(self, shown: int) -> None:
+        if not hasattr(self, "search_page"):
+            return
+        count = max(0, int(shown))
+        noun = "résultat" if count == 1 else "résultats"
+        scope = "Connu" if self._search_mode == "local" else "Étendu"
+        self.search_page.count_label.set_label(f"{count} {noun} · {scope}")
 
 
     def _search_selected(self, row: BookListItem | None) -> None:
