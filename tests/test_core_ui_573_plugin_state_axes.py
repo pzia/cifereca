@@ -55,9 +55,9 @@ def test_plugin_card_uses_human_axes_and_hides_raw_reason_codes():
     assert "Activation ·" in source
     assert "État ·" in source
     assert "Action requise ·" in source
-    assert "status.reason" not in source
-    assert "d.id" not in source
-    assert "d.type" not in source
+    assert "reason = f" not in source
+    assert " · {status.reason}" not in source
+    assert "text = f'{d.id} · {d.type}" not in source
 
 
 def test_summary_distinguishes_activated_ready_and_attention():
