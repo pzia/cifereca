@@ -3348,6 +3348,13 @@ class LibraryService:
         artifacts = {str(row.get("artifact_id") or ""): row for row in self.storage.artifacts()}
         placements_by_artifact: dict[str, list[dict[str, Any]]] = {}
         for placement in self.storage.placements(state="present"):
+            # The artifact itself is shared by content hash, but placements
+            # belong to identities. Do not project another identity's paths,
+            # storage targets or placement counts into this library snapshot.
+            # Legacy unscoped placements belong only to the default identity.
+            placement_identity = placement.get("identity_id") or default_identity_id
+            if identity_id and placement_identity != identity_id:
+                continue
             placements_by_artifact.setdefault(str(placement.get("artifact_id") or ""), []).append(placement)
 
         def placement_view(row: dict[str, Any]) -> dict[str, Any]:
