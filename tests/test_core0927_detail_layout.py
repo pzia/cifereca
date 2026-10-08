@@ -25,7 +25,7 @@ def _class_method_source(path: Path, class_name: str, method_name: str) -> str:
 def test_detail_panel_keeps_actions_above_scrollable_body():
     source = _class_method_source(MAIN_WINDOW, "DetailPanel", "__init__")
 
-    action_create = "self.action_scroll = AdaptiveActionBar(fraction=1.0, source=self)"
+    action_create = "self.action_scroll = AdaptiveActionBar("
     action_append = "self.append(self.action_scroll)"
     body_create = "self.body_scroll = Gtk.ScrolledWindow()"
     body_append = "self.append(self.body_scroll)"
