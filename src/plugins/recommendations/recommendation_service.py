@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import heapq
+import logging
+import time
 from typing import Any, Callable
 
 from recommendation_engine import (
@@ -14,6 +16,9 @@ from recommendation_engine import (
     normalize,
 )
 from recommendation_engine_fast import rank_candidates_prepared, score_candidate_cached
+
+
+_LOG = logging.getLogger("cifereca.plugin.recommendations")
 
 
 @dataclass(frozen=True)
@@ -101,12 +106,41 @@ def compute_recommendations(
     partial: Callable[[RecommendationPartial], None] | None = None,
     control: Any = None,
 ) -> RecommendationResult:
+    total_started = time.perf_counter()
+
     # Persisted projection only: never trigger a filesystem scan here.
+    snapshot_started = time.perf_counter()
     books = list(metadata_broker.library_entries(identity_id=identity_id, scan=False) or [])
+    snapshot_ms = (time.perf_counter() - snapshot_started) * 1000.0
+
+    profile_started = time.perf_counter()
     profile = build_profile(books)
     queries = build_queries(books, max_queries=max_queries, profile=profile)
+    profile_ms = (time.perf_counter() - profile_started) * 1000.0
+
+    providers_started = time.perf_counter()
     providers = tuple(catalog_broker.searchable_providers() or ())
+    providers_ms = (time.perf_counter() - providers_started) * 1000.0
+
+    def trace_performance(*, catalog_ms: float = 0.0, rank_ms: float = 0.0, cancelled: bool = False) -> None:
+        _LOG.info(
+            "TRACE recommendations performance books=%s queries=%s providers=%s "
+            "snapshot_ms=%.3f profile_ms=%.3f providers_ms=%.3f "
+            "catalog_ms=%.3f rank_ms=%.3f total_ms=%.3f cancelled=%s",
+            len(books),
+            len(queries),
+            len(providers),
+            snapshot_ms,
+            profile_ms,
+            providers_ms,
+            catalog_ms,
+            rank_ms,
+            (time.perf_counter() - total_started) * 1000.0,
+            str(bool(cancelled)).lower(),
+        )
+
     if not books or not queries or not providers:
+        trace_performance()
         return RecommendationResult(len(books), queries, (), providers)
 
     batches: list[list[Any]] = []
@@ -172,6 +206,7 @@ def compute_recommendations(
             )
         )
 
+    catalog_started = time.perf_counter()
     for query_index, query in enumerate(queries, 1):
         if _cancelled(control):
             was_cancelled = True
@@ -258,8 +293,11 @@ def compute_recommendations(
             was_cancelled = True
             break
 
+    catalog_ms = (time.perf_counter() - catalog_started) * 1000.0
+
     if was_cancelled:
         provisional_rows = _provisional_head(provisional, max_results)
+        trace_performance(catalog_ms=catalog_ms, cancelled=True)
         return RecommendationResult(
             len(books),
             queries,
@@ -274,6 +312,7 @@ def compute_recommendations(
 
     if progress:
         progress(total_units, total_units, "")
+    rank_started = time.perf_counter()
     ranked = rank_candidates_prepared(
         profile,
         batches,
@@ -281,6 +320,8 @@ def compute_recommendations(
         exploration=exploration,
         score_cache=score_cache,
     )
+    rank_ms = (time.perf_counter() - rank_started) * 1000.0
+    trace_performance(catalog_ms=catalog_ms, rank_ms=rank_ms)
     return RecommendationResult(
         len(books),
         queries,

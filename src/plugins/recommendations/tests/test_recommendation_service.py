@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 from recommendation_service import compute_recommendations
@@ -91,3 +92,25 @@ def test_progressive_provider_rows_are_fairly_interleaved_before_limit():
     titles = {row.item["title"] for row in result.ranked}
     assert any(title.startswith("A") for title in titles)
     assert any(title.startswith("B") for title in titles)
+
+
+def test_performance_trace_is_sanitized_and_has_phase_timings(caplog):
+    with caplog.at_level(logging.INFO, logger="cifereca.plugin.recommendations"):
+        result = compute_recommendations(Metadata(), Catalog(), "id-1", max_queries=2)
+
+    rows = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cifereca.plugin.recommendations"
+        and "TRACE recommendations performance" in record.getMessage()
+    ]
+    assert len(rows) == 1
+    trace = rows[0]
+    assert f"books={result.books_count}" in trace
+    assert f"queries={len(result.queries)}" in trace
+    assert f"providers={len(result.providers)}" in trace
+    for field in ("snapshot_ms=", "profile_ms=", "providers_ms=", "catalog_ms=", "rank_ms=", "total_ms="):
+        assert field in trace
+    assert "id-1" not in trace
+    assert "Seed 1" not in trace
+    assert "Candidate" not in trace

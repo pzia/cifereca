@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 from typing import Any, Mapping
 
 from cifereca.plugin_api import (
@@ -16,6 +18,9 @@ from cifereca.plugin_api import (
 
 from recommendation_engine import RankedCandidate, candidate_key, get_field, normalize
 from recommendation_service import RecommendationPartial, RecommendationResult, compute_recommendations
+
+
+_LOG = logging.getLogger("cifereca.plugin.recommendations")
 
 
 class RecommendationsPlugin:
@@ -81,6 +86,7 @@ class UxRecommendationsView:
         self._overview_refresh_pending = False
         self._diagnostic_cache = 0
         self._diagnostic_network = 0
+        self._refresh_started_at: float | None = None
         self._init_master_detail(plugin, host, Gtk, GLib)
 
         self._refresh_button.set_tooltip_text(
@@ -422,6 +428,7 @@ class UxRecommendationsView:
 
         self._generation += 1
         generation = self._generation
+        self._refresh_started_at = time.perf_counter()
         self._busy = True
         self._refresh_button.set_sensitive(False)
         self._spinner.start()
@@ -898,9 +905,26 @@ class UxRecommendationsView:
         result: RecommendationResult | None,
         error: str | None,
     ):
+        apply_started = time.perf_counter()
         value = self._streaming_complete(generation, result, error)
         if generation != self._generation:
             return value
+
+        apply_ms = (time.perf_counter() - apply_started) * 1000.0
+        if error is None and result is not None:
+            total_ui_ms = (
+                (time.perf_counter() - self._refresh_started_at) * 1000.0
+                if self._refresh_started_at is not None
+                else 0.0
+            )
+            _LOG.info(
+                "TRACE recommendations ui books=%s results=%s apply_ms=%.3f total_ui_ms=%.3f",
+                result.books_count,
+                len(result.ranked),
+                apply_ms,
+                total_ui_ms,
+            )
+        self._refresh_started_at = None
 
         self._set_provisional(False)
         if error or result is None:
