@@ -32,6 +32,7 @@ from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
+from .activity_feedback import ActivityFeedback
 from .plugin_manager_page import PluginManagerPage
 from .query_controls import QueryControls, MultiSelect
 from .action_widgets import AdaptiveActionBar
@@ -1358,6 +1359,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._active_tasks: dict[int, tuple[int, str, str]] = {}
         self._finished_task_ids: set[int] = set()
         self._activity_hide_source: int | None = None
+        self._last_finished_task_id: int | None = None
+        self.activity_feedback = ActivityFeedback(limit=20)
         self.ui_perf = UiPerfMonitor()
         self.covers = CoverLoader(diagnostics=diagnostics, max_workers=6)
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
@@ -1527,11 +1530,94 @@ class MainWindow(Adw.ApplicationWindow):
                 pass
             self._activity_hide_source = None
 
+    def _refresh_activity_history(self) -> None:
+        if not hasattr(self, "activity_history_box"):
+            return
+        clear_box(self.activity_history_box)
+        rows = self.activity_feedback.rows()
+        for entry in rows:
+            label = Gtk.Label(label=entry.display_text, xalign=0)
+            label.set_wrap(True)
+            label.add_css_class("caption")
+            if entry.state == "error":
+                label.add_css_class("warning")
+            self.activity_history_box.append(label)
+        self.activity_history_button.set_visible(bool(rows))
+
+    def _show_pending_activity_error(self) -> bool:
+        entry = self.activity_feedback.latest_unacknowledged_error()
+        if entry is None or not hasattr(self, "busy_revealer"):
+            return False
+        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
+        self.activity_status_icon.set_visible(True)
+        self.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
+        self.activity_status_icon.add_css_class("activity-error")
+        self.activity_status_icon.remove_css_class("activity-success")
+        self.busy_label.set_visible(True)
+        self.busy_label.set_label(entry.display_text)
+        self.activity_dismiss.set_visible(True)
+        self.busy_revealer.set_reveal_child(True)
+        return True
+
     def _hide_activity_feedback(self) -> bool:
         self._activity_hide_source = None
-        if hasattr(self, "busy_revealer") and not self._active_tasks:
-            self.busy_revealer.set_reveal_child(False)
+        if self._active_tasks:
+            return False
+        if self._show_pending_activity_error():
+            return False
+        if not hasattr(self, "busy_revealer"):
+            return False
+        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
+        self.activity_status_icon.set_visible(False)
+        self.activity_dismiss.set_visible(False)
+        rows = self.activity_feedback.rows()
+        self.busy_label.set_visible(False)
+        self.activity_history_button.set_visible(bool(rows))
+        self.busy_revealer.set_reveal_child(bool(rows))
         return False
+
+    def _dismiss_activity_feedback(self) -> None:
+        self._cancel_activity_hide()
+        self.activity_feedback.acknowledge_errors()
+        self._refresh_activity_history()
+        self._hide_activity_feedback()
+
+    def _schedule_activity_reduce(self, delay: int = 4) -> None:
+        self._cancel_activity_hide()
+        self._activity_hide_source = GLib.timeout_add_seconds(
+            max(1, int(delay)),
+            self._hide_activity_feedback,
+        )
+
+    def _activity_result(
+        self,
+        message: str,
+        *,
+        success: bool = True,
+        persistent: bool = False,
+        task_id: int | None = None,
+    ) -> None:
+        resolved_id = int(task_id) if task_id is not None else self._last_finished_task_id
+        if resolved_id is None:
+            return
+        self.activity_feedback.result(resolved_id, str(message), success=bool(success))
+        self._refresh_activity_history()
+        if self._active_tasks or not hasattr(self, "busy_revealer"):
+            return
+        if not success:
+            self._show_pending_activity_error()
+            return
+        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
+        self.activity_status_icon.set_visible(True)
+        self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
+        self.activity_status_icon.add_css_class("activity-success")
+        self.activity_status_icon.remove_css_class("activity-error")
+        self.busy_label.set_visible(True)
+        self.busy_label.set_label(f"Terminé · {message}")
+        self.activity_dismiss.set_visible(bool(persistent))
+        self.busy_revealer.set_reveal_child(True)
+        if not persistent:
+            self._schedule_activity_reduce()
 
     def _task_started(self, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
         if getattr(self, '_closed', False):return False
@@ -1540,12 +1626,16 @@ class MainWindow(Adw.ApplicationWindow):
             return False
         self._cancel_activity_hide()
         self._active_tasks[int(task_id)] = (int(priority), str(label), str(kind))
+        self.activity_feedback.started(int(task_id), str(label), str(kind))
+        self._refresh_activity_history()
         if hasattr(self, "busy_revealer"):
             self.activity_status_icon.set_visible(False)
             self.activity_status_icon.remove_css_class("activity-success")
             self.activity_status_icon.remove_css_class("activity-error")
+            self.activity_dismiss.set_visible(False)
+            self.busy_label.set_visible(True)
             prefix = f"{count} opérations · " if count > 1 else ""
-            self.busy_label.set_label(prefix + label)
+            self.busy_label.set_label("En cours · " + prefix + str(label))
             self.busy_revealer.set_reveal_child(True)
             self.busy_spinner.set_visible(True)
             self.busy_spinner.start()
@@ -1555,44 +1645,53 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(self, "busy_revealer") and self._active_tasks:
             count = len(self._active_tasks)
             prefix = f"{count} opérations · " if count > 1 else ""
-            self.busy_label.set_label(prefix + str(label))
+            self.busy_label.set_visible(True)
+            self.busy_label.set_label("En cours · " + prefix + str(label))
         return False
 
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
         if getattr(self, '_closed', False):return False
+        current = self._active_tasks.get(int(task_id))
+        kind = current[2] if current is not None else "task"
         if int(task_id) not in self._active_tasks:
             self._finished_task_ids.add(int(task_id))
             if len(self._finished_task_ids) > 100:
                 self._finished_task_ids = set(sorted(self._finished_task_ids)[-50:])
         self._active_tasks.pop(int(task_id), None)
+        self._last_finished_task_id = int(task_id)
+        functional = self._functional_error_message(error or "") if not success else ""
+        self.activity_feedback.finished(
+            int(task_id),
+            str(label),
+            str(kind),
+            success=bool(success),
+            error=functional,
+        )
+        self._refresh_activity_history()
         if not hasattr(self, "busy_revealer"):
             return False
         if remaining and self._active_tasks:
-            priority, next_label, _kind = sorted(self._active_tasks.values(), key=lambda row: row[0])[0]
+            _priority, next_label, _kind = sorted(self._active_tasks.values(), key=lambda row: row[0])[0]
             prefix = f"{remaining} opérations · " if remaining > 1 else ""
-            self.busy_label.set_label(prefix + next_label)
+            self.busy_label.set_visible(True)
+            self.busy_label.set_label("En cours · " + prefix + next_label)
+            self.activity_dismiss.set_visible(False)
             self.busy_spinner.set_visible(True)
             self.busy_spinner.start()
+            return False
+        if self._show_pending_activity_error():
             return False
         self.busy_spinner.stop()
         self.busy_spinner.set_visible(False)
         self.activity_status_icon.set_visible(True)
-        if success:
-            self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
-            self.activity_status_icon.add_css_class("activity-success")
-            self.activity_status_icon.remove_css_class("activity-error")
-            self.busy_label.set_label(f"Terminé · {label}")
-            delay = 4
-        else:
-            self.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
-            self.activity_status_icon.add_css_class("activity-error")
-            self.activity_status_icon.remove_css_class("activity-success")
-            functional = self._functional_error_message(error or "")
-            self.busy_label.set_label(f"Échec · {functional}")
-            delay = 8
+        self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
+        self.activity_status_icon.add_css_class("activity-success")
+        self.activity_status_icon.remove_css_class("activity-error")
+        self.busy_label.set_visible(True)
+        self.busy_label.set_label(f"Terminé · {label}")
+        self.activity_dismiss.set_visible(False)
         self.busy_revealer.set_reveal_child(True)
-        self._cancel_activity_hide()
-        self._activity_hide_source = GLib.timeout_add_seconds(delay, self._hide_activity_feedback)
+        self._schedule_activity_reduce()
         return False
 
     @staticmethod
@@ -1821,7 +1920,26 @@ class MainWindow(Adw.ApplicationWindow):
         self.busy_spinner = Gtk.Spinner(); self.busy_spinner.set_visible(False); busy.append(self.busy_spinner)
         self.activity_status_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
         self.activity_status_icon.set_visible(False); busy.append(self.activity_status_icon)
-        self.busy_label = Gtk.Label(label="", xalign=0); self.busy_label.set_hexpand(True); busy.append(self.busy_label)
+        self.busy_label = Gtk.Label(label="", xalign=0)
+        self.busy_label.set_hexpand(True); self.busy_label.set_wrap(True); busy.append(self.busy_label)
+
+        self.activity_history_button = Gtk.MenuButton(label="Historique")
+        self.activity_history_button.set_icon_name("view-list-symbolic")
+        self.activity_history_button.set_tooltip_text("Historique des opérations")
+        self.activity_history_button.set_visible(False)
+        history_popover = Gtk.Popover()
+        self.activity_history_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.activity_history_box.set_margin_top(8); self.activity_history_box.set_margin_bottom(8)
+        self.activity_history_box.set_margin_start(10); self.activity_history_box.set_margin_end(10)
+        history_popover.set_child(self.activity_history_box)
+        self.activity_history_button.set_popover(history_popover)
+        busy.append(self.activity_history_button)
+
+        self.activity_dismiss = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        self.activity_dismiss.set_tooltip_text("Acquitter le résultat courant")
+        self.activity_dismiss.set_visible(False)
+        self.activity_dismiss.connect("clicked", lambda _button: self._dismiss_activity_feedback())
+        busy.append(self.activity_dismiss)
         root.append(self.busy_revealer); self.busy_revealer.set_child(busy)
 
         self.navigate("dashboard")
@@ -2779,7 +2897,11 @@ class MainWindow(Adw.ApplicationWindow):
             attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
             errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
             if acquisitions or attention or errors:
-                self.toast(f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)", 6)
+                self._activity_result(
+                    f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)",
+                    success=not bool(attention or errors),
+                    persistent=bool(attention or errors),
+                )
         def err(exc: BaseException) -> None:
             self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
             self._render_dashboard()
