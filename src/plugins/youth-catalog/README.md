@@ -44,6 +44,21 @@ Le cache est isolé par identité et par source. Une mise à jour remplace seule
 
 Recherche texte, âge, type d’âge, source, langue, format, fiction/documentaire et thèmes sont composables sur le cache local. Les âges inférés peuvent être exclus.
 
+## Page Jeunesse
+
+La page `ui.page.youth` reprend le modèle de Recherche avec des filtres locaux dédiés :
+
+- âge exact 0–17 ans ;
+- type d’âge (recommandé, intérêt, lecture, éditeur, inféré) ;
+- source, langue, format, type et thèmes ;
+- recherche texte locale.
+
+Les âges inférés sont exclus par défaut. Ouvrir la page ou modifier un filtre ne déclenche jamais de réseau.
+
+Une collecte distante exige de sélectionner une source puis de cliquer **Collecter cette source**. Les sources exposant un `browse()` âge-aware peuvent recevoir âge et thèmes ; sinon le contrat standard `search()` est utilisé. **Plus de résultats** reprend seulement le curseur explicite de cette source.
+
+La liste/détail standard affiche la tranche d’âge, son type, le libellé d’origine, la source et la confiance. Une notice publique attestée reste ouvrable dans le navigateur et la navigation vers la fiche Bibliothèque utilise uniquement le contrat public du Core.
+
 ## Suite
 
-Ce premier groupe fournit le moteur et le contrat de source. Restent séparés : audit des providers existants, sources spécialisées (BookTrust/équivalents), découverte Internet et UI spécialisée proche de Recherche.
+Le moteur, BookTrust, la découverte de sources et l’UI spécialisée sont séparés en plugins/incréments. Restent notamment d’autres sources jeunesse qualifiées et la recette UX complète.
