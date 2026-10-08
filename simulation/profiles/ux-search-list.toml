@@ -8,7 +8,6 @@ startup_timeout_seconds = 20
 binary = "cifereca"
 no_plugins = true
 force_plugins = [
-  "ui.page.home",
   "core.ui.pages",
   "core.ui.widgets",
   "core.ui.titlebar",
