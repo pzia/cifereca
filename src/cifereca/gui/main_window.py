@@ -950,6 +950,7 @@ class MasterDetailPage(Gtk.Box):
         # windows the previous single horizontal row forced search/filter
         # controls to compete with the page title and description.
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.page_header = header
         header.set_margin_top(16)
         header.set_margin_start(18)
         header.set_margin_end(18)
@@ -1010,10 +1011,9 @@ class MasterDetailPage(Gtk.Box):
                 self._narrow_master_detail = narrow
                 if not narrow:
                     self._narrow_detail_visible = False
-                    self.detail_back.set_visible(False)
+            self._set_narrow_detail_chrome(self._narrow_detail_visible)
             if self._narrow_master_detail:
                 paned.set_position(0 if self._narrow_detail_visible else max_position)
-                self.detail_back.set_visible(self._narrow_detail_visible)
             else:
                 paned.set_position(min(440, max(0, max_position - 360)))
 
@@ -1075,6 +1075,11 @@ class MasterDetailPage(Gtk.Box):
             return False
         keys.connect("key-pressed", key_pressed); self.add_controller(keys)
         self.list_stack.set_visible_child_name("empty")
+        self.connect("map", lambda _widget: self._set_narrow_detail_chrome(self._narrow_detail_visible))
+        self.connect(
+            "unmap",
+            lambda _widget: getattr(self.window, "_set_narrow_detail_shell", lambda _active: None)(False),
+        )
 
     def _factory_setup(self, _factory: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
         list_item.set_child(BookListCell(self.window))
@@ -1117,11 +1122,21 @@ class MasterDetailPage(Gtk.Box):
                 return True
         return False
 
+    def _set_narrow_detail_chrome(self, detail_visible: bool) -> None:
+        """Hide list-only chrome while the narrow layout shows an exclusive detail."""
+        active = bool(self._narrow_master_detail and detail_visible)
+        self.page_header.set_visible(not active)
+        self.toolbar.set_visible(not active)
+        self.detail_back.set_visible(active)
+        setter = getattr(self.window, "_set_narrow_detail_shell", None)
+        if callable(setter):
+            setter(active)
+
     def _show_narrow_detail(self) -> None:
         if not self._narrow_master_detail:
             return
         self._narrow_detail_visible = True
-        self.detail_back.set_visible(True)
+        self._set_narrow_detail_chrome(True)
         self.paned.set_position(0)
         self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD)
 
@@ -1129,7 +1144,7 @@ class MasterDetailPage(Gtk.Box):
         if not self._narrow_master_detail:
             return
         self._narrow_detail_visible = False
-        self.detail_back.set_visible(False)
+        self._set_narrow_detail_chrome(False)
         max_position = int(self.paned.get_property("max-position"))
         if max_position > 0:
             self.paned.set_position(max_position)
@@ -1721,6 +1736,7 @@ class MainWindow(Adw.ApplicationWindow):
         body.set_vexpand(True)
         root.append(body)
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.sidebar = sidebar
         sidebar.set_size_request(160, -1)
         add_css(sidebar, "sidebar")
         body.append(sidebar)
@@ -1755,6 +1771,12 @@ class MainWindow(Adw.ApplicationWindow):
 
         self.navigate("dashboard")
         return root
+
+    def _set_narrow_detail_shell(self, active: bool) -> None:
+        """Give exclusive narrow details the shell width normally used by navigation."""
+        sidebar = getattr(self, "sidebar", None)
+        if sidebar is not None:
+            sidebar.set_visible(not bool(active))
 
     class _UiHost:
         def __init__(self, window: "MainWindow", action_context=None) -> None:
