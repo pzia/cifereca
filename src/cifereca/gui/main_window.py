@@ -17,6 +17,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 from .. import __version__
+from ..catalogue_link import safe_document_link_url
 from ..config import Config
 from ..core.search import file_format
 from ..identity_selection import identity_change_required
@@ -618,8 +619,10 @@ class DetailPanel(Gtk.Box):
         link_buttons = []
         self._rendered_document_urls = set()
         for link in presentation.links:
-            uri = str(link.url or "")
-            if not uri.startswith(("http://", "https://")) or uri in self._rendered_document_urls:
+            # Plugins can supply UiBookDetailPresentation.links directly:
+            # enforce the public URL contract at the final GTK link sink too.
+            uri = safe_document_link_url(link.url, relation=link.relation)
+            if not uri or uri in self._rendered_document_urls:
                 continue
             button = Gtk.LinkButton(uri=uri, label=str(link.label))
             button.set_tooltip_text(str(link.label))
