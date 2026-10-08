@@ -79,11 +79,11 @@ data = ["specialized-seed"]
 gap = "Source intégrée et filtre âge UI non reliés à la simulation centrale"
 
 [package.youth-detail-enrichment]
-data = ["specialized-seed"]
+data = []
 gap = "Enrichissements concordants/contradictoires, latences, cache"
 
 [package.youth-source-booktrust]
-data = ["specialized-seed"]
+data = []
 gap = "Faux HTML Bookfinder/BookTrust et pagination HTTP absents"
 
 [package.youth-source-discovery]
