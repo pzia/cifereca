@@ -1462,6 +1462,9 @@ class MainWindow(Adw.ApplicationWindow):
         .tag-content { background: alpha(@accent_color, 0.14); font-weight: 600; }
         .tag-form { background: alpha(@success_color, 0.14); }
         .book-tag:focus { outline: 2px solid @accent_color; }
+        .facet-value { border-radius: 8px; padding: 2px 6px; background: alpha(@accent_color, 0.08); }
+        .facet-value:hover { background: alpha(@accent_color, 0.16); }
+        .facet-value:focus { outline: 2px solid @accent_color; }
         .success-badge { background: alpha(@success_color, 0.20); color: @success_color; }
         .cover-frame { border-radius: 7px; background: alpha(currentColor, 0.06); }
         .busy-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 8px 14px; }
@@ -3741,6 +3744,49 @@ class MainWindow(Adw.ApplicationWindow):
         from .book_facets import facets_for_book
         return [(f.field,f.label,f.value) for f in facets_for_book(item,self.service.provider_display_name)]
 
+
+    def _facet_value_button(self, label, field, value, controls):
+        caption = str(label or value or "").strip()
+        button = Gtk.Button()
+        button.add_css_class("flat")
+        button.add_css_class("facet-value")
+        text = Gtk.Label(label=caption, xalign=0)
+        text.set_ellipsize(Pango.EllipsizeMode.END)
+        text.set_max_width_chars(28)
+        button.set_child(text)
+        tooltip = f"Filtrer par {caption}"
+        button.set_tooltip_text(tooltip)
+        try:
+            button.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
+        except (AttributeError, TypeError):
+            pass
+        button._cifereca_facet_field = str(field)
+        button._cifereca_facet_value = value
+        button.connect(
+            "clicked",
+            lambda _button, f=field, v=value: self._search_facet(f, v, controls),
+        )
+        return button
+
+
+    def _facet_value_group(self, choices, field, controls):
+        group = Gtk.FlowBox()
+        group.set_selection_mode(Gtk.SelectionMode.NONE)
+        group.set_halign(Gtk.Align.START)
+        group.set_valign(Gtk.Align.CENTER)
+        group.set_min_children_per_line(1)
+        group.set_max_children_per_line(4)
+        group.set_column_spacing(4)
+        group.set_row_spacing(4)
+        seen = set()
+        for label, value in choices:
+            key = (str(label or "").strip().casefold(), str(value or ""))
+            if not key[0] or key in seen:
+                continue
+            seen.add(key)
+            group.insert(self._facet_value_button(label, field, value, controls), -1)
+        return group
+
     def _attach_row_facets(self, rows, objects, controls):
         from .book_facets import facets_for_book, project_list_facets
         allowed = {'author': 0, 'format': 1, 'language': 2, 'collection': 3, 'source': 4}
@@ -3767,61 +3813,124 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _add_facets(self, detail, item, controls):
         values = self._facet_values(item)
+        value_map = {}
+        for field, label, value in values:
+            value_map.setdefault(field, []).append((label, value))
+
+        row_fields = {
+            "Source": "source",
+            "Provenance": "source",
+            "Fournisseur": "source",
+            "Format": "format",
+            "Support": "support",
+            "Auteur": "author",
+            "Éditeur": "publisher",
+            "Sujets": "subject",
+            "Sujet": "subject",
+            "Collection / série": "collection",
+            "Collection": "collection",
+            "Série": "series",
+            "ISBN": "isbn",
+            "Identifiants": "isbn",
+            "Langue": "language",
+            "Langues": "language",
+        }
+        subtitle_fallback_fields = {
+            "author", "publisher", "subject", "series", "collection", "language",
+        }
+
         def bind_rows(widget):
             if isinstance(widget, Adw.ActionRow):
-                title = widget.get_title()
-                field = {"Source":"source","Provenance":"source","Fournisseur":"source","Format":"format","Auteur":"author","Éditeur":"publisher","Sujets":"subject","Sujet":"subject","Collection / série":"collection","Collection":"collection","Série":"series","ISBN":"isbn","Identifiants":"isbn","Langue":"language","Langues":"language"}.get(title)
-                choices = [value for f, _label, value in values if f == field]
-                if not choices and field in {'author', 'publisher', 'subject', 'series', 'collection', 'language'}:
-                    displayed = widget.get_subtitle()
-                    if displayed and displayed != '—': choices = [displayed]
-                previous = getattr(widget, '_cifereca_facet_handler', None)
+                field = row_fields.get(widget.get_title())
+                original_subtitle = getattr(
+                    widget,
+                    "_cifereca_facet_original_subtitle",
+                    widget.get_subtitle(),
+                )
+                widget._cifereca_facet_original_subtitle = original_subtitle
+
+                previous = getattr(widget, "_cifereca_facet_values", None)
                 if previous is not None:
-                    widget.disconnect(previous)
-                    widget._cifereca_facet_handler = None
-                if choices and len(choices) == 1:
-                    if field == 'isbn' and len(choices) != 1:
-                        return
-                    widget.set_activatable(True)
-                    indicator = getattr(widget, '_cifereca_facet_indicator', None)
-                    if indicator is None:
-                        indicator = Gtk.Image.new_from_icon_name("system-search-symbolic")
-                        indicator.set_tooltip_text("Utiliser cette valeur comme facette")
-                        widget.add_suffix(indicator)
-                        widget._cifereca_facet_indicator = indicator
-                    widget._cifereca_facet_handler = widget.connect(
-                        "activated",
-                        lambda _row, f=field, text=choices[0]: self._search_facet(f, text, controls),
+                    try:
+                        widget.remove(previous)
+                    except (AttributeError, TypeError):
+                        previous.set_visible(False)
+                    widget._cifereca_facet_values = None
+
+                choices = list(value_map.get(field, ())) if field else []
+                if not choices and field in subtitle_fallback_fields:
+                    displayed = str(original_subtitle or "").strip()
+                    if displayed and displayed != "—":
+                        choices = [(displayed, displayed)]
+
+                widget.set_activatable(False)
+                if choices:
+                    widget.set_subtitle("")
+                    facet_values = self._facet_value_group(choices, field, controls)
+                    facet_values.set_tooltip_text(
+                        "Valeurs filtrables : utilisez Tab puis Entrée ou Espace"
                     )
+                    widget.add_suffix(facet_values)
+                    widget._cifereca_facet_values = facet_values
                 else:
-                    widget.set_activatable(False)
+                    widget.set_subtitle(original_subtitle)
+
             child = widget.get_first_child()
             while child:
                 bind_rows(child)
                 child = child.get_next_sibling()
+
         bind_rows(detail.content)
-        subtitle = getattr(detail, '_subtitle_label', None)
-        authors = [(label, value) for field, label, value in values if field == 'author']
-        if subtitle is not None and authors:
-            previous = getattr(subtitle, '_cifereca_facet_handler', None)
-            if previous is not None: subtitle.disconnect(previous)
-            subtitle.set_markup(' · '.join('<a href="author:'+str(i)+'">'+GLib.markup_escape_text(label)+'</a>' for i,(label,_value) in enumerate(authors)))
-            def author_clicked(_label, uri):
-                for i, (_caption, value) in enumerate(authors):
-                    if uri == 'author:'+str(i):
-                        self._search_facet('author', value, controls); return True
-                return True
-            subtitle._cifereca_facet_handler = subtitle.connect('activate-link', author_clicked)
+
+        subtitle = getattr(detail, "_subtitle_label", None)
+        authors = list(value_map.get("author", ()))
+        if subtitle is not None:
+            author_box = getattr(subtitle, "_cifereca_author_facets", None)
+            if author_box is not None:
+                parent = author_box.get_parent()
+                if parent is not None:
+                    parent.remove(author_box)
+                subtitle._cifereca_author_facets = None
+            subtitle.set_visible(True)
+            if authors:
+                parent = subtitle.get_parent()
+                if parent is not None:
+                    subtitle.set_visible(False)
+                    author_box = self._facet_value_group(authors, "author", controls)
+                    author_box.add_css_class("detail-subtitle")
+                    parent.append(author_box)
+                    subtitle._cifereca_author_facets = author_box
+
         identity = self.service.current_identity
-        binding = self.service.adept_return_for_artifact(str(item.get("artifact_id") or ""), identity.identity_id if identity else "")
+        binding = self.service.adept_return_for_artifact(
+            str(item.get("artifact_id") or ""),
+            identity.identity_id if identity else "",
+        )
         if binding:
             button = Gtk.Button(label="Restituer le prêt ADEPT")
-            button.set_tooltip_text("Restituer avec le profil d’origine ; conserver le fichier local. Le retour fournisseur reste une action distincte.")
+            button.set_tooltip_text(
+                "Restituer avec le profil d’origine ; conserver le fichier local. "
+                "Le retour fournisseur reste une action distincte."
+            )
             def return_loan(_button):
-                self.runner.submit("Restitution du prêt ADEPT…", lambda: self.service.return_adept_acquisition(binding["acquisition_id"]),
-                    lambda _result: (button.set_sensitive(False), self._activity_result("Retour enregistré, jeton absent · fichier conservé" + (" · état local vérifié" if _result.get("verification") == "confirmed" else " · vérification locale non confirmée"))),
-                    lambda exc: self.show_error(str(exc), "Restitution ADEPT impossible"), control=button,
-                    priority=TaskPriority.USER_ACTION)
+                self.runner.submit(
+                    "Restitution du prêt ADEPT…",
+                    lambda: self.service.return_adept_acquisition(binding["acquisition_id"]),
+                    lambda _result: (
+                        button.set_sensitive(False),
+                        self._activity_result(
+                            "Retour enregistré, jeton absent · fichier conservé"
+                            + (
+                                " · état local vérifié"
+                                if _result.get("verification") == "confirmed"
+                                else " · vérification locale non confirmée"
+                            )
+                        ),
+                    ),
+                    lambda exc: self.show_error(str(exc), "Restitution ADEPT impossible"),
+                    control=button,
+                    priority=TaskPriority.USER_ACTION,
+                )
             button.connect("clicked", return_loan)
             detail.add_actions([button])
 

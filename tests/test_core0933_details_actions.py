@@ -53,31 +53,40 @@ def test_action_width_budget_has_exact_fit_boundary():
     assert action_budget(-1) == 0
 
 
-def test_detail_facets_do_not_append_duplicate_footer_tags_and_disconnect_previous_handlers():
+def test_detail_facets_replace_previous_inline_value_group_without_footer_tags():
     tree = ast.parse(SOURCE.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_add_facets")
-    calls = [node for node in ast.walk(method) if isinstance(node, ast.Call)]
+    source = ast.unparse(method)
 
-    assert not any(isinstance(node.func, ast.Attribute) and node.func.attr == "_append_content" for node in calls)
-    assert any(isinstance(node.func, ast.Attribute) and node.func.attr == "disconnect" for node in calls)
+    assert "_append_content" not in source
+    assert "_cifereca_facet_values" in source
+    assert "widget.remove(previous)" in source
+    assert "widget.add_suffix(facet_values)" in source
 
 
-class _Image:
-    @classmethod
-    def new_from_icon_name(cls, _name):
-        return cls()
+class _FacetGroup:
+    def __init__(self, choices, field, controls):
+        self.choices = list(choices)
+        self.field = field
+        self.controls = controls
+        self.visible = True
+        self.tooltip = ""
 
-    def set_tooltip_text(self, _text):
-        pass
+    def set_tooltip_text(self, text):
+        self.tooltip = text
+
+    def set_visible(self, value):
+        self.visible = value
 
 
 class _Row:
     def __init__(self, title="Provenance", subtitle="Bibliothèques de Paris"):
         self.title = title
         self.subtitle = subtitle
-        self.handlers = {}
-        self.serial = 0
+        self.active = False
+        self.suffixes = []
+        self.removed = []
 
     def get_title(self):
         return self.title
@@ -85,59 +94,71 @@ class _Row:
     def get_subtitle(self):
         return self.subtitle
 
+    def set_subtitle(self, value):
+        self.subtitle = value
+
     def set_activatable(self, value):
         self.active = value
 
-    def connect(self, event, callback):
-        self.serial += 1
-        self.handlers[self.serial] = callback
-        return self.serial
-
-    def disconnect(self, identifier):
-        del self.handlers[identifier]
-
     def add_suffix(self, widget):
-        self.suffix = widget
+        self.suffixes.append(widget)
+
+    def remove(self, widget):
+        self.removed.append(widget)
+        if widget in self.suffixes:
+            self.suffixes.remove(widget)
 
     def get_first_child(self):
         return None
 
 
-def test_inline_source_uses_provider_id_and_rebinding_does_not_duplicate_handler():
+def _facet_host(values):
+    return NS(
+        _facet_values=lambda item: list(values),
+        _facet_value_group=lambda choices, field, controls: _FacetGroup(choices, field, controls),
+        service=NS(current_identity=NS(identity_id="id"), adept_return_for_artifact=lambda *args: None),
+    )
+
+
+def test_inline_source_uses_provider_id_and_rebinding_replaces_value_group():
     row = _Row()
-    row._cifereca_facet_handler = row.connect("activated", lambda *_: None)
-    calls = []
-    host = NS(
-        _facet_values=lambda item: [("source", "Bibliothèques de Paris", "paris")],
-        _search_facet=lambda field, value, controls: calls.append((field, value, controls)),
-        service=NS(current_identity=NS(identity_id="id"), adept_return_for_artifact=lambda *args: None),
-    )
+    previous = _FacetGroup([("Ancienne", "old")], "source", object())
+    row._cifereca_facet_values = previous
+    row.suffixes.append(previous)
+    host = _facet_host([("source", "Bibliothèques de Paris", "paris")])
     detail = NS(content=row, _subtitle_label=None, add_actions=lambda buttons: None)
     controls = object()
-    adw = NS(ActionRow=_Row)
-    fn = _method("MainWindow", "_add_facets", {"Adw": adw, "Gtk": NS(Button=object, Image=_Image), "TaskPriority": NS(USER_ACTION=0)})
+    fn = _method(
+        "MainWindow",
+        "_add_facets",
+        {"Adw": NS(ActionRow=_Row), "TaskPriority": NS(USER_ACTION=0)},
+    )
 
     fn(host, detail, {}, controls)
-    fn(host, detail, {}, controls)
 
-    assert len(row.handlers) == 1
-    next(iter(row.handlers.values()))(row)
-    assert calls == [("source", "paris", controls)]
+    assert previous in row.removed
+    assert row.active is False
+    assert row.subtitle == ""
+    current = row._cifereca_facet_values
+    assert current.field == "source"
+    assert current.choices == [("Bibliothèques de Paris", "paris")]
+    assert current.controls is controls
 
 
-def test_epub_only_publisher_remains_searchable_from_inline_detail():
+def test_epub_only_publisher_uses_displayed_subtitle_as_filter_value():
     row = _Row(title="Éditeur", subtitle="Éditeur EPUB")
-    calls = []
-    host = NS(
-        _facet_values=lambda item: [],
-        _search_facet=lambda field, value, controls: calls.append((field, value, controls)),
-        service=NS(current_identity=NS(identity_id="id"), adept_return_for_artifact=lambda *args: None),
-    )
+    host = _facet_host([])
     detail = NS(content=row, _subtitle_label=None, add_actions=lambda buttons: None)
     controls = object()
-    fn = _method("MainWindow", "_add_facets", {"Adw": NS(ActionRow=_Row), "Gtk": NS(Button=object, Image=_Image), "TaskPriority": NS(USER_ACTION=0)})
+    fn = _method(
+        "MainWindow",
+        "_add_facets",
+        {"Adw": NS(ActionRow=_Row), "TaskPriority": NS(USER_ACTION=0)},
+    )
 
     fn(host, detail, {}, controls)
 
-    next(iter(row.handlers.values()))(row)
-    assert calls == [("publisher", "Éditeur EPUB", controls)]
+    current = row._cifereca_facet_values
+    assert current.field == "publisher"
+    assert current.choices == [("Éditeur EPUB", "Éditeur EPUB")]
+    assert row.subtitle == ""

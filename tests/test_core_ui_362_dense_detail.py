@@ -90,10 +90,12 @@ def test_notice_prioritizes_summary_and_filters_essential_duplicates():
     assert source.index("'Image du livre'") > source.index("'Catalogue'")
 
 
-def test_multivalue_facets_are_not_bound_to_display_concatenations():
+def test_multivalue_facets_render_individual_filter_buttons_not_display_concatenations():
     source = ast.unparse(_method("MainWindow", "_add_facets"))
-    assert "len(choices) == 1" in source
-    assert "widget.get_subtitle()" not in source[source.index("if choices and len(choices) == 1"):]
+    assert "self._facet_value_group(choices, field, controls)" in source
+    assert "len(choices) == 1" not in source
+    assert "if not choices and field in subtitle_fallback_fields" in source
+    assert "widget.set_subtitle('')" in source
 
 
 def test_library_nominal_acquisition_state_and_single_presence_are_hidden():
