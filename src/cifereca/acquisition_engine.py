@@ -353,6 +353,14 @@ class AcquisitionLedger:
         )
         return acquisition_id
 
+    @staticmethod
+    def _plan_metadata(plan: AcquisitionPlan) -> dict[str, Any]:
+        return {
+            "requested_format": plan.requested_format,
+            "candidate_shape": plan.candidate.safe_shape(),
+            "offer_id": plan.offer_id,
+        }
+
     def set_plan(self, acquisition_id: str, plan: AcquisitionPlan) -> None:
         self.storage.acquisition_update_state(
             acquisition_id,
@@ -360,15 +368,26 @@ class AcquisitionLedger:
             strategy=plan.strategy,
             executor=plan.executor,
             candidate_id=plan.candidate.candidate_id,
-            metadata={
-                "requested_format": plan.requested_format,
-                "candidate_shape": plan.candidate.safe_shape(),
-                "offer_id": plan.offer_id,
-            },
+            metadata=self._plan_metadata(plan),
         )
 
-    def begin(self, acquisition_id: str) -> None:
-        self.storage.acquisition_update_state(acquisition_id, "acquiring", increment_attempt=True)
+    def begin(
+        self,
+        acquisition_id: str,
+        *,
+        plan: AcquisitionPlan | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Begin an attempt, optionally replacing its plan atomically on retry."""
+        self.storage.acquisition_update_state(
+            acquisition_id,
+            "acquiring",
+            increment_attempt=True,
+            strategy=plan.strategy if plan is not None else None,
+            executor=plan.executor if plan is not None else None,
+            candidate_id=plan.candidate.candidate_id if plan is not None else None,
+            metadata={**(self._plan_metadata(plan) if plan is not None else {}), **(metadata or {})},
+        )
 
     def complete(self, acquisition_id: str, artifact: Artifact) -> None:
         self.storage.artifact_put(artifact)
