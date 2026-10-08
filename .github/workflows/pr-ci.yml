@@ -346,7 +346,7 @@ jobs:
             >"$evidence/ffmpeg.log" 2>&1 &
           ffmpeg_pid=$!
 
-          /tmp/cifereca-venv/bin/python "$GITHUB_WORKSPACE/simulation/datasetctl.py" cifereca ux-small --verbose -- --force-plugin transport.http \
+          /tmp/cifereca-venv/bin/python "$GITHUB_WORKSPACE/simulation/datasetctl.py" cifereca ux-small --verbose -- --force-plugin transport.http --force-plugin core.ui.pages --force-plugin core.ui.widgets --force-plugin core.ui.titlebar --force-plugin core.ui.system \
             >"$evidence/cifereca.stdout.log" 2>"$evidence/cifereca.stderr.log" &
           app_pid=$!
 
