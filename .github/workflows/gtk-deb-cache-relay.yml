@@ -30,6 +30,8 @@ jobs:
               apt-get install -y --no-install-recommends                 python3 ca-certificates debian-archive-keyring apt-utils dpkg tar xz-utils
               python3 bootstrap.py                 --download-only                 --deb-cache /work/.gtk-deb-cache
             '
+          sudo chown -R "$(id -u):$(id -g)" .gtk-deb-cache
+          rm -rf .gtk-deb-cache/partial
           tar -C "$GITHUB_WORKSPACE" -czf gtk4-deb-cache-debian13-trixie-amd64.tar.gz .gtk-deb-cache
           cp environnements/openai-chat-debian/packages-lock.json packages-lock.debian13.json
           echo "deb_count=$(find .gtk-deb-cache -maxdepth 1 -name '*.deb' | wc -l)" >> "$GITHUB_STEP_SUMMARY"
