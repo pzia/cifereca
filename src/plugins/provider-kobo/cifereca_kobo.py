@@ -55,6 +55,7 @@ class KoboSession(ProviderSession):
         self.api_version = ""
         self.vault_release = ""
         self.acquisition_access = "unknown"
+        self.last_library_rejections: list[dict[str, str]] = []
         profile = str(self.options.get("display_profile") or config.get("kobo_backup.display_profile", "Android") or "Android").strip()
         self.display_profile = profile if profile in {"Android", "Desktop"} else "Android"
         self.supports_acquisition_display_profile = False
@@ -149,10 +150,35 @@ class KoboSession(ProviderSession):
 
     def library(self) -> list[SearchResult]:
         items = self.client.library_manifest()
+        self.last_library_rejections = [
+            dict(row)
+            for row in getattr(self.client, "last_manifest_rejections", ())
+            if isinstance(row, dict)
+        ]
         _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
         _sample_missing = next((sorted(x.keys()) for x in items if isinstance(x, dict) and not self.cover_url(x)), None)
         _TRACE_LOG.debug("TRACE kobo covers source=library credential=%s items=%s with_cover=%s missing=%s sample_missing_keys=%s", self.credential_id, len(items), _cover_count, len(items)-_cover_count, _sample_missing)
-        return [self.normalize_item(x, default_collection="library") for x in items]
+        rows: list[SearchResult] = []
+        for raw in items:
+            if not isinstance(raw, dict):
+                self.last_library_rejections.append({
+                    "type": "invalid_shape",
+                    "reason": "item_not_object",
+                })
+                continue
+            try:
+                rows.append(self.normalize_item(raw, default_collection="library"))
+            except ProviderError:
+                reason = (
+                    "missing_product_id"
+                    if not str(raw.get("product_id") or raw.get("id") or "").strip()
+                    else "normalization_error"
+                )
+                self.last_library_rejections.append({
+                    "type": "ProviderError",
+                    "reason": reason,
+                })
+        return rows
 
     def backup_manifest(self) -> list[dict[str, Any]]:
         items = self.client.library_manifest()
@@ -230,6 +256,11 @@ class KoboSession(ProviderSession):
             "catalog_search_rejections": [
                 dict(row)
                 for row in getattr(self.catalog, "last_search_rejections", ())
+                if isinstance(row, dict)
+            ],
+            "library_rejections": [
+                dict(row)
+                for row in self.last_library_rejections
                 if isinstance(row, dict)
             ],
         })
