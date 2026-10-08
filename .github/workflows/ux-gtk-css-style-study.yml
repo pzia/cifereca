@@ -121,9 +121,34 @@ jobs:
             tap 90 513
             sleep 1.5
             savepng "$root/gtk-style-evidence/$theme/05-optimiseur.png"
+            tap 90 295
+            sleep 1.0
+            savepng "$root/gtk-style-evidence/$theme/06-recents.png"
+            tap 90 338
+            sleep 1.0
+            savepng "$root/gtk-style-evidence/$theme/07-emprunts.png"
+            tap 90 380
+            sleep 1.0
+            savepng "$root/gtk-style-evidence/$theme/08-historique.png"
+            tap 90 425
+            sleep 1.0
+            savepng "$root/gtk-style-evidence/$theme/09-reservations.png"
+            tap 112 558
+            sleep 1.0
+            savepng "$root/gtk-style-evidence/$theme/10-technique.png"
+            actual_pid="$(xdotool getwindowpid "$win" 2>/dev/null || true)"
+            xdotool windowclose "$win" 2>/dev/null || true
+            if [ -n "$actual_pid" ]; then kill -TERM "$actual_pid" 2>/dev/null || true; fi
             kill -TERM "$apppid" 2>/dev/null || true
             wait "$apppid" 2>/dev/null || true
-            sleep 0.4
+            sleep 1
+            remaining="$(xdotool search --onlyvisible --name 'Cifereca' 2>/dev/null | head -1 || true)"
+            if [ -n "$remaining" ]; then
+              echo "STALE GTK WINDOW after $theme; terminating native app" >&2
+              pid="$(xdotool getwindowpid "$remaining" 2>/dev/null || true)"
+              if [ -n "$pid" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+              sleep 0.5
+            fi
           done
           kill -TERM "$wmpid" 2>/dev/null || true
           INNER
