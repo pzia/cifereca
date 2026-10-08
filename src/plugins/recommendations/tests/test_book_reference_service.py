@@ -44,9 +44,9 @@ def test_deactivate_clears_pending_reference_from_previous_session():
     disposed = []
     plugin = RecommendationsPlugin()
     plugin.context = SimpleNamespace(config={})
+    plugin.recommend_from_book(book())
     plugin._view = SimpleNamespace(dispose=lambda: disposed.append(True))
 
-    plugin.recommend_from_book(book())
     plugin.deactivate()
 
     assert disposed == [True]
