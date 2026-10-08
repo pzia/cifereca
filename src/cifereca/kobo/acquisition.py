@@ -111,9 +111,24 @@ class KoboOfferAdapter:
     @staticmethod
     def candidate_requires_authorization(row: dict[str, Any]) -> bool:
         kobo = row.get("kobo")
-        if isinstance(kobo, dict) and "requires_kobo_authorization" in kobo:
-            return bool(kobo.get("requires_kobo_authorization"))
-        return bool(row.get("requires_kobo_authorization"))
+        nested = kobo.get("requires_kobo_authorization") if isinstance(kobo, dict) else None
+        # A null/blank nested field must not mask a populated root flag.
+        value = nested if nested is not None and str(nested).strip() else row.get("requires_kobo_authorization")
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in {0, 1}:
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if not normalized:
+                return False
+        # An unrecognised, populated flag is treated as requiring
+        # authorization rather than silently sending a descriptor unauthenticated.
+        return value is not None
 
     @classmethod
     def normalize_candidate(cls, row: dict[str, Any]) -> AcquisitionCandidate:
