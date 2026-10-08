@@ -5,6 +5,7 @@ from pathlib import Path
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
+from cifereca.plugin_api import BookAccessFact, book_access_facts
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -82,6 +83,13 @@ def test_shared_artifact_exposes_only_placements_for_requested_identity(tmp_path
             "alice-target", "legacy-target",
         }
         assert b1 not in {row["placement_id"] for row in alice["placements"]}
+        legacy_view = next(p for p in alice["placements"] if p["placement_id"] == legacy)
+        # Core assigns historical unscoped local files to the default identity;
+        # the public projection must expose that effective (not raw NULL) owner.
+        assert legacy_view["identity_id"] == "alice"
+        assert BookAccessFact("local", "placement.present") in book_access_facts(
+            alice, identity_id="alice",
+        )
 
         assert bob["placement_count"] == 1
         assert [row["placement_id"] for row in bob["placements"]] == [b1]
@@ -112,5 +120,43 @@ def test_legacy_unscoped_placements_are_never_exposed_to_secondary_identity(tmp_
         assert len(rows) == 1
         assert [row["placement_id"] for row in rows[0]["placements"]] == [bob]
         assert legacy not in {row["placement_id"] for row in rows[0]["placements"]}
+    finally:
+        service.close()
+
+
+def test_legacy_only_local_book_is_attested_for_default_identity(tmp_path):
+    service = _service(tmp_path)
+    try:
+        content = b"same epub contents"
+        sha = hashlib.sha256(content).hexdigest()
+        artifact_id = f"sha256:{sha}"
+        service.storage.artifact_put({
+            "artifact_id": artifact_id, "sha256": sha,
+            "size": len(content), "media_format": "epub", "metadata": {},
+        })
+        legacy = _placement(
+            service, tmp_path, owner="legacy", filename="old.epub",
+            artifact_id=artifact_id, item_id="old",
+        )
+        service.storage.catalog_entry_put({
+            "artifact_id": artifact_id, "placement_id": legacy,
+            "title": "Ancien livre", "author": "Autrice",
+            "identity_id": None, "provider_id": "local",
+            "item_id": "old", "local_state": "local",
+            "media_format": "epub", "metadata": {},
+        })
+        alice_rows = service.library_entries(identity_id="alice", scan=False)
+        bob_rows = service.library_entries(identity_id="bob", scan=False)
+        assert len(alice_rows) == 1
+        assert bob_rows == []
+        row = alice_rows[0]
+        assert row["identity_ids"] == ["alice"]
+        assert [(p["placement_id"], p["identity_id"]) for p in row["placements"]] == [
+            (legacy, "alice"),
+        ]
+        assert book_access_facts(row, identity_id="alice") == (
+            BookAccessFact("local", "placement.present"),
+        )
+        assert book_access_facts(row, identity_id="bob") == ()
     finally:
         service.close()
