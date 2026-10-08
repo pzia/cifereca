@@ -28,6 +28,7 @@ from ..models import Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResu
 from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
+from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
@@ -3798,11 +3799,34 @@ class MainWindow(Adw.ApplicationWindow):
         source_provider = str(item.get('provider_id') or item.get('source_provider') or 'local')
         source_credential = str(item.get('source_credential') or (item.get('metadata') or {}).get('source_credential') or '')
         source_item_id = str(item.get('item_id') or item.get('source_item_id') or (item.get('record_id') or ''))
+        known_possessions = ()
+        manager = getattr(self, 'plugin_manager', None)
+        library_read = manager.broker('library.read') if manager else None
+        if library_read is not None:
+            try:
+                logical = library_read.book(source_item_id) if source_item_id else None
+                if logical is None and item.get('artifact_id'):
+                    logical = library_read.for_artifact(str(item.get('artifact_id')))
+                known_possessions = tuple(logical.possessions) if logical is not None else ()
+            except Exception as exc:
+                self.diagnostics.add(
+                    'UI', 'read known possessions', 'error',
+                    detail={'error': type(exc).__name__, 'message': str(exc)},
+                )
         for target in self.service.identities:
             if target.identity_id==identity_id:continue
-            # Do not offer a duplicate transfer when the target already owns
-            # this provider/item.  A valid local placement is authoritative;
-            # title-only matches are intentionally ignored.
+            # A current Core possession is authoritative even when there is no
+            # local file yet for the target identity.
+            if source_item_id and identity_has_attested_possession(
+                known_possessions,
+                identity_id=target.identity_id,
+                provider_id=source_provider,
+                source_item_id=source_item_id,
+                credential_id=source_credential,
+            ):
+                continue
+            # Keep the placement fallback for older/local-only records that are
+            # not represented in the logical possession projection.
             if source_item_id:
                 try:
                     already_owned = self.service.local_placement_for_source(
@@ -3823,7 +3847,6 @@ class MainWindow(Adw.ApplicationWindow):
                     lambda _result:(self.toast('Livre envoyé'),self.refresh_recent(),self.refresh_library(False)),
                     control=_button,priority=TaskPriority.USER_ACTION,kind='materialize')
             button.connect('clicked',send);buttons.append(button)
-        manager = getattr(self, 'plugin_manager', None)
         routing = manager.broker('artifact.routing') if manager else None
         context = self._book_action_context(item) if routing is not None else None
         if routing is not None and context is not None and context.artifact is not None:
