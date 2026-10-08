@@ -10,7 +10,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Pango
 
 from .cover_loader import CoverLoader
-from .book_facets import LIST_FACET_MAX_CHARS, compact_facet_label
+from .book_facets import LIST_FACET_MAX_CHARS, compact_facet_label, compact_row_meta
 
 
 def _add_css(widget: Gtk.Widget, *classes: str) -> Gtk.Widget:
@@ -338,7 +338,9 @@ class BookListCell(Gtk.Box):
         tags=getattr(item,'tags',None)
         if tags is not None:
             for facet,callback in tags:
-                guarded=lambda _b,cb=callback,key=item.key:cb(_b) if self._bound_key==key else None
+                guarded=None
+                if callable(callback):
+                    guarded=lambda _b,cb=callback,key=item.key:cb(_b) if self._bound_key==key else None
                 self.facet_box.insert(attribute_tag(facet.label,guarded,group=facet.group,tooltip=facet.tooltip),-1)
         else:
             for label,callback in getattr(item,'facet_actions',()):self.facet_box.insert(attribute_tag(label,callback),-1)
@@ -362,14 +364,21 @@ class BookListCell(Gtk.Box):
             link.connect("activate-link", activate)
             self.author_box.insert(link, -1)
         self.author_box.set_visible(bool(authors))
-        self.meta_label.set_label(item.meta)
-        self.meta_label.set_visible(bool(item.meta))
+        visible_facet_labels = [
+            facet.label for facet,_callback in (tags or [])
+            if getattr(facet,'field',None) != '_overflow'
+        ]
+        meta_text = compact_row_meta(item.meta, visible_facet_labels)
+        self.meta_label.set_label(meta_text)
+        self.meta_label.set_visible(bool(meta_text))
         self._source_callback = getattr(item, "source_action", None)
         if self._source_callback:
             self.badge_label.set_markup('<a href="source">' + GLib.markup_escape_text(item.badge) + '</a>')
         else:
             self.badge_label.set_label(item.badge)
-        self.badge_label.set_visible(bool(item.badge) and not any(f.field=="source" and f.label==item.badge for f,_ in (tags or [])))
+        visible_keys = {str(label).strip().casefold() for label in visible_facet_labels}
+        badge_key = str(item.badge or '').strip().casefold()
+        self.badge_label.set_visible(bool(item.badge) and badge_key not in visible_keys)
         self._action_callback = item.action_callback
         try: self.action_button.set_icon_name(getattr(item, 'action_icon_name', None) or 'view-more-symbolic')
         except Exception: pass
