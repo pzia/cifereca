@@ -21,6 +21,41 @@ _TRACE_LOG = logging.getLogger("cifereca.trace")
 
 
 def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path) -> Acquisition:
+    """Reconcile a failed Kobo attempt instead of leaving it in flight."""
+    started: list[str] = []
+    try:
+        return _execute_kobo_acquisition_impl(service, item, target_dir, started=started)
+    except Exception as exc:
+        if started:
+            ledger_id = started[-1]
+            try:
+                row = service.storage.acquisition_get(ledger_id)
+                if row is not None and row.get("status") == "acquiring":
+                    error_code = getattr(exc, "code", None)
+                    if not isinstance(error_code, str) or not error_code.isidentifier():
+                        error_code = "kobo_acquisition_failed"
+                    retryable_hint = getattr(exc, "retryable", None)
+                    retryable = (
+                        retryable_hint if isinstance(retryable_hint, bool)
+                        else not isinstance(exc, ProviderConfigurationError)
+                    )
+                    service.acquisition_ledger.fail(
+                        ledger_id,
+                        code=error_code,
+                        message="Échec de l'acquisition Kobo ; consulter les diagnostics.",
+                        retryable=retryable,
+                    )
+            except Exception:
+                _TRACE_LOG.exception(
+                    "TRACE kobo acquisition ledger reconciliation failed item_id=%s",
+                    item.record_id,
+                )
+        raise
+
+
+def _execute_kobo_acquisition_impl(
+    service: Any, item: SearchResult, target_dir: Path, *, started: list[str],
+) -> Acquisition:
     session = service._session_for_source(item.source_provider, item.source_credential)
     source_account_id = session.accounts[0].unique_id if len(session.accounts) == 1 else None
     identity = service.identity_for_connection(item.source_provider, item.source_credential)
@@ -542,6 +577,7 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
     ledger_row = service.storage.acquisition_get(ledger_id)
     if ledger_row is not None and ledger_row.get("status") != "acquiring":
         service.acquisition_ledger.begin(ledger_id)
+    started.append(ledger_id)
 
     def execute_download() -> dict[str, Any]:
         source = request.get("source") if isinstance(request, dict) else {}
