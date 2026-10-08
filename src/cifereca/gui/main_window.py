@@ -2029,6 +2029,8 @@ class MainWindow(Adw.ApplicationWindow):
                 opener(plugin_id)
         def navigate(self, route: str) -> None:
             self.window.navigate(route)
+        def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool:
+            return self.window.open_book_detail(book, identity_id=identity_id)
         def build_action_bar(self, actions):
             bar = AdaptiveActionBar()
             for action in actions:
@@ -4192,6 +4194,27 @@ class MainWindow(Adw.ApplicationWindow):
         self._library_entries_cache = list(entries)
         self._render_library(entries)
         if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
+
+    def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool:
+        """Open an attested book in the active identity's standard Library detail.
+
+        Public plugin callers cannot navigate to another identity implicitly.
+        The lookup uses only the already loaded Library snapshot, with no
+        filesystem scan or network operation on the GTK main thread.
+        """
+        from ..core.book_navigation import library_key_for_book
+
+        identity = getattr(self.service, "current_identity", None)
+        active_id = str(getattr(identity, "identity_id", "") or "")
+        if not active_id or (identity_id is not None and identity_id != active_id):
+            return False
+        key = library_key_for_book(
+            book, getattr(self, "_library_entries_cache", ()), identity_id=active_id,
+        )
+        if not key:
+            return False
+        self._open_library_item(key)
+        return True
 
     def _open_library_item(self, key: str) -> None:
         """Navigate to Library while retaining the current book identity."""

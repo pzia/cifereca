@@ -33,7 +33,7 @@ from .models import (
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncSourceRef, AdeptProfileRef, RuntimeAcquisitionCapabilities,
     MaintenanceToolInfo, MaintenanceContext, MaintenancePlan, MaintenanceResult, MaintenanceTool,
     TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, CatalogServiceFactory, HealthCheckResult, DiagnosticsCheckProvider, DocumentTransformer,
-    UiActionContext, UiBookListHost, UiBookDetailHost, UiFacetHost, UiActionHost, UiPluginManagementHost,
+    UiActionContext, UiBookListHost, UiBookDetailHost, UiFacetHost, UiActionHost, UiBookNavigationHost, UiPluginManagementHost,
 )
 from .brokers import (CatalogBroker, AcquisitionBroker, SynchronizationBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker, RuntimeCapabilitiesBroker, AdeptProfileBroker, AdeptLoanBroker,
     ArtifactExecutionBroker, LibraryReadBroker, LibraryMaintenanceBroker, ArtifactRoutingBroker, CacheBroker, TaskBroker)
@@ -75,7 +75,7 @@ __all__ = [
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef", "AdeptProfileRef", "RuntimeAcquisitionCapabilities",
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult", "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "CatalogServiceFactory", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
-    "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiPluginManagementHost",
+    "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiBookNavigationHost", "UiPluginManagementHost",
     "CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",
     "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text",
