@@ -29,6 +29,7 @@ from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
+from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .loan_view import (
     LOAN_FILTER_LABELS,
@@ -773,13 +774,14 @@ class DetailPanel(Gtk.Box):
         clear_box(self.content)
         self._clear_actions()
         medium = "Numérique" if item.medium == "digital" else "Physique"
-        self._cover_and_title(item.title, None, None, [medium, item.state or "Réservation"])
+        presentation = booking_presentation(item)
+        self._cover_and_title(item.title, None, None, [medium, presentation.status_label])
         self._group("Réservation", [
+            ("État", presentation.status_label),
             ("Réservé le", fr_date(item.booking_date)),
             ("Disponible depuis", fr_date(item.availability_date)),
-            ("Disponible jusqu'au", fr_date(item.available_until)),
+            ("Disponible jusqu’au", fr_date(item.available_until)),
             ("Bibliothèque", item.location or "—"),
-            ("Rang", item.rank or "—"),
         ])
         self._decorate(item)
 
@@ -3663,7 +3665,17 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _populate_bookings(self, rows: list[Booking]) -> None:
         self.booking_objects = {x.id: x for x in rows}
-        ui_rows = [BookListItem(x.id, x.title, x.location or "", f"Réservé le {fr_date(x.booking_date)} · Rang {x.rank or '—'}", x.state or "Réservation", None) for x in rows]
+        ui_rows = []
+        for item in rows:
+            presentation = booking_presentation(item)
+            ui_rows.append(BookListItem(
+                item.id,
+                item.title,
+                item.location or "",
+                f"Réservé le {fr_date(item.booking_date)}",
+                presentation.status_label,
+                None,
+            ))
         objects={x.id:{"source_provider":x.source_provider} for x in rows}
         self._attach_row_facets(ui_rows,objects,self.search_controls)
         self.booking_page.show_rows(ui_rows)
