@@ -2,6 +2,10 @@ name: Test Core
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/core-tests.yml'
 
 permissions:
   contents: read
