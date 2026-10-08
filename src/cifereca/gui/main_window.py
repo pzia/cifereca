@@ -1328,6 +1328,9 @@ class MainWindow(Adw.ApplicationWindow):
         _TRACE_LOG.info("TRACE gui build-main-shell begin")
         self.main_shell = self._build_main_shell()
         self.root_stack.add_named(self.main_shell, "main")
+        # Identities are Core configuration, not plugin state. Populate them
+        # immediately so a deferred/plugin UI failure cannot blank the selector.
+        self._populate_accounts()
         self.root_stack.set_visible_child_name("main")
         shell_ms = (time.perf_counter() - startup_started) * 1000.0
         self.ui_perf.record("startup.shell_interactive", shell_ms)
@@ -1622,14 +1625,17 @@ class MainWindow(Adw.ApplicationWindow):
             self.plugin_manager.activate()
             self.service.attach_plugin_manager(self.plugin_manager)
             self._plugins_changed()
-            _TRACE_LOG.info("TRACE gui schedule connect-configured")
-            GLib.idle_add(self.connect_configured_sources)
         except Exception as exc:
             self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
             if hasattr(self, "dashboard_loading_status"):
                 self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
                 self.dashboard_loading_status.set_visible(True)
         finally:
+            # Provider connection must not depend on successful page/header
+            # reconstruction. A CoreUI exception must never strand startup in
+            # local-only mode after plugins have been activated.
+            _TRACE_LOG.info("TRACE gui schedule connect-configured")
+            GLib.idle_add(self.connect_configured_sources)
             duration_ms = (time.perf_counter() - started) * 1000.0
             self.ui_perf.record("startup.plugins_activation", duration_ms)
             _TRACE_LOG.info("TRACE gui plugin-activation end duration_ms=%.1f", duration_ms)
