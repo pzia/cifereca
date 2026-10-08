@@ -28,6 +28,7 @@ from ..models import Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResu
 from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
+from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .task_runner import TaskPriority, TaskRunner
 from .ui_perf import UiPerfMonitor
 from .plugin_manager_page import PluginManagerPage
@@ -991,13 +992,20 @@ class MasterDetailPage(Gtk.Box):
         self.paned.set_vexpand(True)
         self._narrow_master_detail = False
         self._narrow_detail_visible = False
-        self._narrow_breakpoint = 860
+        self._narrow_breakpoint = MASTER_DETAIL_NARROW_WINDOW_WIDTH
 
         def adapt_paned_position(paned, _pspec=None) -> None:
             max_position = int(paned.get_property("max-position"))
             if max_position <= 0:
                 return
-            narrow = max_position < self._narrow_breakpoint
+            try:
+                window_width = int(self.window.get_width())
+            except (AttributeError, TypeError, ValueError):
+                window_width = 0
+            narrow = master_detail_is_narrow(
+                window_width,
+                breakpoint=self._narrow_breakpoint,
+            )
             if narrow != self._narrow_master_detail:
                 self._narrow_master_detail = narrow
                 if not narrow:
