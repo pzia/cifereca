@@ -6,6 +6,14 @@ from cifereca.language import normalize_language_tag, language_label
 CONTENT_FIELDS=frozenset({'title','author','subject','series','collection'})
 FORM_FIELDS=frozenset({'source','format','support','publisher','isbn','language','date'})
 LABELS={'author':'Auteur','subject':'Sujet','series':'Série','collection':'Collection','publisher':'Éditeur','source':'Source','format':'Format','support':'Support','isbn':'ISBN','language':'Langue'}
+LIST_FACET_MAX_CHARS=24
+
+def compact_facet_label(value, max_chars=LIST_FACET_MAX_CHARS):
+    """Keep pathological facet metadata from dictating list-row width."""
+    text=str(value or '').strip()
+    if len(text)<=max_chars:return text
+    if max_chars<=1:return '…'[:max_chars]
+    return text[:max_chars-1].rstrip()+'…'
 
 @dataclass(frozen=True)
 class BookFacet:

@@ -10,6 +10,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Pango
 
 from .cover_loader import CoverLoader
+from .book_facets import LIST_FACET_MAX_CHARS, compact_facet_label
 
 
 def _add_css(widget: Gtk.Widget, *classes: str) -> Gtk.Widget:
@@ -23,9 +24,11 @@ def attribute_tag(label,callback=None,*,group='form',tooltip=None):
     Real GTK runtimes use a flat button for mouse/keyboard activation. The
     label fallback keeps lightweight contract tests independent from Gtk.Button.
     """
+    full_label=str(label)
+    display_label=compact_facet_label(full_label)
     button_cls = getattr(Gtk, 'Button', None)
     if callback and button_cls is not None:
-        tag=button_cls(label=str(label))
+        tag=button_cls(label=display_label)
         try: tag.add_css_class('flat')
         except Exception: pass
         tag.connect('clicked', lambda _button: callback(None))
@@ -33,18 +36,18 @@ def attribute_tag(label,callback=None,*,group='form',tooltip=None):
         tag=Gtk.Label()
         if callback:
             # Escaped plain markup: intentionally no <a> hyperlink styling.
-            tag.set_markup(GLib.markup_escape_text(str(label)))
+            tag.set_markup(GLib.markup_escape_text(display_label))
             tag.connect('activate-link', lambda _label, _uri: (callback(None), True)[1])
         else:
-            tag.set_label(str(label))
+            tag.set_label(display_label)
         try:
-            tag.set_xalign(0.5); tag.set_ellipsize(Pango.EllipsizeMode.END); tag.set_max_width_chars(28)
+            tag.set_xalign(0.0); tag.set_ellipsize(Pango.EllipsizeMode.END); tag.set_max_width_chars(LIST_FACET_MAX_CHARS)
         except Exception: pass
     try:
-        tag.set_halign(Gtk.Align.CENTER); tag.set_valign(Gtk.Align.CENTER)
+        tag.set_halign(Gtk.Align.START); tag.set_valign(Gtk.Align.CENTER)
     except Exception: pass
     _add_css(tag,'book-tag','tag-content' if group=='content' else 'tag-form')
-    tag.set_tooltip_text(tooltip or str(label))
+    tag.set_tooltip_text(tooltip or full_label)
     return tag
 
 class CoverView(Gtk.Overlay):
@@ -283,7 +286,8 @@ class BookListCell(Gtk.Box):
 
         self.facet_box = Gtk.FlowBox()
         self.facet_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.facet_box.set_halign(Gtk.Align.CENTER)
+        self.facet_box.set_halign(Gtk.Align.FILL)
+        self.facet_box.set_hexpand(True)
         self.facet_box.set_min_children_per_line(1); self.facet_box.set_max_children_per_line(4)
         labels.append(self.facet_box)
         self.meta_label = Gtk.Label(xalign=0)
