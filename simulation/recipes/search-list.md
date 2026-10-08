@@ -100,7 +100,8 @@ Chaque largeur produit :
 ```text
 evidence/search-list/<largeur>/
   01-search-list.png
-  02-search-list-scrolled.png
+  02-selected-detail.png
+  03-search-list-scrolled.png
   report.json
   cifereca.stdout.log
   cifereca.stderr.log
@@ -117,7 +118,9 @@ La recette est **verte** seulement si, pour les trois largeurs :
 5. les facettes longues sont affichées sous forme compacte/ellipsée, sans agrandir la liste ;
 6. la ligne à 10 auteurs et celle à 10 auteurs longs restent contenues horizontalement ;
 7. après scroll, les cellules recyclées ne conservent ni facettes ni callbacks d'une autre ligne ;
-8. la fenêtre Cifereca est encore vivante au moment des deux captures.
+8. à 1024 px et plus, sélectionner un livre conserve un master-detail côte à côte : le détail apparaît sans faire disparaître la liste ;
+9. le mode liste/détail exclusif n'est accepté qu'aux vraies largeurs étroites ;
+10. la fenêtre Cifereca est encore vivante au moment des captures.
 
 Pour les facettes, la borne actuellement déclarée par le Core est
 `LIST_FACET_MAX_CHARS = 24`. Le cas 24 caractères doit rester entier ; le cas
