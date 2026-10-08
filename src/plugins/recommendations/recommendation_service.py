@@ -32,6 +32,7 @@ class RecommendationResult:
     network_batches: int = 0
     cache_unknown_calls: int = 0
     cancelled: bool = False
+    profile_books: tuple[Any, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,9 @@ def compute_recommendations(
 
     if not books or not queries or not providers:
         trace_performance()
-        return RecommendationResult(len(books), queries, (), providers)
+        return RecommendationResult(
+            len(books), queries, (), providers, profile_books=tuple(books)
+        )
 
     batches: list[list[Any]] = []
     warnings: list[str] = []
@@ -309,6 +312,7 @@ def compute_recommendations(
             network_batches,
             cache_unknown_calls,
             True,
+            tuple(books),
         )
 
     if progress:
@@ -334,4 +338,5 @@ def compute_recommendations(
         network_batches,
         cache_unknown_calls,
         False,
+        tuple(books),
     )
