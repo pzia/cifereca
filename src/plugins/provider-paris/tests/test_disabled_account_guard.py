@@ -162,3 +162,36 @@ def test_pairings_status_recovers_after_next_successful_connect(monkeypatch):
         assert session.pairing_status == {"complete": True, "error": None}
     finally:
         session.close()
+
+
+def test_connect_marks_partial_pairings_as_incomplete(monkeypatch):
+    session = _session()
+    monkeypatch.setattr(session.client, "login", lambda username, password: {"success": True})
+    monkeypatch.setattr(
+        session.client,
+        "summary",
+        lambda provider, uid: {"DisplayName": "Lecteur", "Barcode": "123", "Status": "active"},
+    )
+    linked = type("Linked", (), {
+        "display_name": "Lié",
+        "barcode": "456",
+        "unique_id": "linked-1",
+        "is_primary": False,
+        "provider_id": "",
+        "credential_id": "",
+        "provider_label": "",
+    })()
+
+    def partial_pairings():
+        session.client.last_pairing_errors = [{"upstream": "DILICOM", "type": "RuntimeError"}]
+        return [linked]
+
+    monkeypatch.setattr(session.client, "pairings", partial_pairings)
+
+    try:
+        accounts = session.connect()
+
+        assert len(accounts) == 2
+        assert session.pairing_status == {"complete": False, "error": "RuntimeError"}
+    finally:
+        session.close()
