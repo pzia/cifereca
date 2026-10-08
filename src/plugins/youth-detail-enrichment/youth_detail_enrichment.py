@@ -112,7 +112,7 @@ def _match(book: BookRef, candidate: object) -> Match | None:
     if book_isbn and candidate_isbn and book_isbn == candidate_isbn:
         return Match(candidate, 100, f"isbn:{book_isbn}")
 
-    book_provider = _fold(book_ids.get("provider") or book.provenance.provider_id if book.provenance else "")
+    book_provider = _fold(book_ids.get("provider") or (book.provenance.provider_id if book.provenance else ""))
     book_source_item = _text(book_ids.get("source_item_id"))
     candidate_provider = _fold(candidate_ids.get("provider") or getattr(candidate, "source_id", ""))
     candidate_source_item = _text(candidate_ids.get("source_item_id") or getattr(candidate, "record_id", ""))
