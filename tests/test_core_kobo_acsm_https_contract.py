@@ -34,6 +34,10 @@ def _payload(*candidates: dict) -> dict:
         ("https", "GET", "https://user:password@cdn.example/book.acsm"),
         ("https", "GET", "https://cdn.example:invalid/book.acsm"),
         ("https", "GET", "https://cdn.example/book.acsm\ninvalid"),
+        ("https", "GET", "https://cdn.example/book.acsm\n"),
+        ("https", "GET", " https://cdn.example/book.acsm"),
+        ("https", "GET", "https://@cdn.example/book.acsm"),
+        ("https", "GET", "https://cdn.example\\@evil.example/book.acsm"),
     ],
 )
 def test_acsm_selection_excludes_invalid_transport_and_url(transport, method, url):
