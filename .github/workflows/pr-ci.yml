@@ -33,7 +33,7 @@ jobs:
   ci:
     name: PR CI
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +52,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
             {
               echo "core=true"
+              echo "core_ui=true"
               echo "plugins=true"
               echo "plugin_targets="
               echo "packaging=true"
@@ -71,6 +72,7 @@ jobs:
           }
 
           core=false
+          core_ui=false
           plugins=false
           plugin_targets=""
           plugin_scope_all=false
@@ -79,7 +81,19 @@ jobs:
           gui=false
           dataset=false
 
-          if matches '^(src/cifereca/|tests/|pyproject\.toml$)'; then
+          ui_test_re='^tests/(test_core_ui_.*|test_core_09.*|test_gui_compat|test_query_controls_batching|test_ui_iteration_097|test_shell_controls_097_dev5|test_adept_ui_contract|test_identity_save_ui_contract|test_core_book_detail_projection|test_cover_loader|test_regressions_099|test_095_consolidation|test_core042_library_ui|test_core_415_titlebar_action_registry|test_core_458_unknown_medium|test_core_464_document_links|test_core_470_provider_search_capabilities|test_builtin_ui_rationalization|test_e2e_instrumentation|test_e2e_runner_contract)\.py$'
+
+          if matches '^(src/cifereca/(gui/|builtin_ui/|app\.py$))' || matches "$ui_test_re"; then
+            core_ui=true
+          fi
+
+          if grep -E '^src/cifereca/' "$changed_file" | grep -Ev '^src/cifereca/(gui/|builtin_ui/|app\.py$)' >/dev/null 2>&1; then
+            core=true
+          fi
+          if grep -E '^tests/' "$changed_file" | grep -Ev "$ui_test_re" >/dev/null 2>&1; then
+            core=true
+          fi
+          if matches '^pyproject\.toml$'; then
             core=true
           fi
 
@@ -106,10 +120,23 @@ jobs:
 
           if matches '^(e2e/|src/cifereca/(app\.py|gui/|builtin_ui/)|environnements/openai-chat-debian/capture_app\.py$)'; then
             gui=true
-            core=true
+            core_ui=true
           fi
 
           if matches '^simulation/'; then
+            dataset=true
+          fi
+
+          # Changes to CI policy validate every gate once. Selective scopes are
+          # only trusted after the workflow definition itself has gone green.
+          if matches '^\.github/workflows/'; then
+            core=true
+            core_ui=true
+            plugins=true
+            plugin_scope_all=true
+            packaging=true
+            install=true
+            gui=true
             dataset=true
           fi
 
@@ -122,12 +149,13 @@ jobs:
           fi
 
           python=false
-          if [[ "$core" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true ]]; then
+          if [[ "$core" == true || "$core_ui" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true ]]; then
             python=true
           fi
 
           {
             echo "core=$core"
+            echo "core_ui=$core_ui"
             echo "plugins=$plugins"
             echo "plugin_targets=$plugin_targets"
             echo "packaging=$packaging"
@@ -145,21 +173,45 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install Core test dependencies
-        if: steps.scope.outputs.core == 'true'
+        if: steps.scope.outputs.core == 'true' || steps.scope.outputs.core_ui == 'true'
         run: |
-          python -m pip install --disable-pip-version-check -e ".[dev]" "Pillow>=10,<12"
+          python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12"
           if [[ "${{ steps.scope.outputs.plugins }}" == "true" ]]; then
             python -m pip install --disable-pip-version-check "PyMuPDF>=1.26,<2"
           fi
 
       - name: Install plugin-only test dependencies
-        if: steps.scope.outputs.plugins == 'true' && steps.scope.outputs.core != 'true'
+        if: steps.scope.outputs.plugins == 'true' && steps.scope.outputs.core != 'true' && steps.scope.outputs.core_ui != 'true'
         run: python -m pip install --disable-pip-version-check "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12" "PyMuPDF>=1.26,<2"
 
       - name: Run Core tests
         if: steps.scope.outputs.core == 'true'
         run: python -m pytest -q tests
 
+      - name: Run CoreUI tests
+        if: steps.scope.outputs.core_ui == 'true' && steps.scope.outputs.core != 'true'
+        run: |
+          python -m pytest -q \
+            tests/test_core_ui_*.py \
+            tests/test_core_09*.py \
+            tests/test_gui_compat.py \
+            tests/test_query_controls_batching.py \
+            tests/test_ui_iteration_097.py \
+            tests/test_shell_controls_097_dev5.py \
+            tests/test_adept_ui_contract.py \
+            tests/test_identity_save_ui_contract.py \
+            tests/test_core_book_detail_projection.py \
+            tests/test_cover_loader.py \
+            tests/test_regressions_099.py \
+            tests/test_095_consolidation.py \
+            tests/test_core042_library_ui.py \
+            tests/test_core_415_titlebar_action_registry.py \
+            tests/test_core_458_unknown_medium.py \
+            tests/test_core_464_document_links.py \
+            tests/test_core_470_provider_search_capabilities.py \
+            tests/test_builtin_ui_rationalization.py \
+            tests/test_e2e_instrumentation.py \
+            tests/test_e2e_runner_contract.py
       - name: Run plugin tests
         if: steps.scope.outputs.plugins == 'true'
         env:
