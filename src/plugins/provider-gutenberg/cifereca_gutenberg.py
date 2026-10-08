@@ -133,7 +133,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.16"
+        user_agent = "cifereca-gutenberg/1.2.17"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
@@ -167,6 +167,13 @@ class GutenbergSession(ProviderSession):
             )
         if "\r" in self.contact or "\n" in self.contact:
             raise ProviderConfigurationError("Project Gutenberg : contact User-Agent invalide")
+
+    def _diagnostic(self, *args: Any, **kwargs: Any) -> None:
+        try:
+            if self.diagnostics is not None:
+                self.diagnostics.add(*args, **kwargs)
+        except Exception:
+            pass
 
     def connect(self) -> list[Account]:
         self.connected = True
@@ -218,7 +225,7 @@ class GutenbergSession(ProviderSession):
                 "TRACE gutenberg parse failed bytes=%s base=%s error=%s",
                 len(content), _safe_url(base_url), exc,
             )
-            self.diagnostics.add(
+            self._diagnostic(
                 "GUTENBERG", "OPDS parse", "error",
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 detail={"bytes": len(content), "base_url": _safe_url(base_url), "error": str(exc)},
@@ -422,7 +429,7 @@ class GutenbergSession(ProviderSession):
             "TRACE gutenberg parse sample=%s",
             [(row.record_id, row.title, _safe_url(str(row.download_url or ""))) for row in rows[:5]],
         )
-        self.diagnostics.add(
+        self._diagnostic(
             "GUTENBERG", "OPDS parse", "ok",
             duration_ms=duration_ms, detail=detail, level="detailed",
         )
@@ -549,18 +556,18 @@ class GutenbergSession(ProviderSession):
                 response = self.client.get(current_url, params=params); response.raise_for_status()
             except httpx.HTTPError as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000); status = getattr(getattr(exc, "response", None), "status_code", None)
-                self.diagnostics.add("GUTENBERG", "OPDS search", "error", duration_ms=elapsed_ms,detail={"endpoint": endpoint, "status": status, "error": type(exc).__name__, "requested_page": page})
+                self._diagnostic("GUTENBERG", "OPDS search", "error", duration_ms=elapsed_ms,detail={"endpoint": endpoint, "status": status, "error": type(exc).__name__, "requested_page": page})
                 raise ProviderError(f"Project Gutenberg : recherche OPDS indisponible ({exc})") from exc
             self._remember_page(rows_cache,page_index,str(response.url))
             next_url=self._next_page_url(response.content,str(response.url))
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
             if page_index == page: break
             if not next_url:
-                self.diagnostics.add("GUTENBERG", "OPDS pagination", "ok",detail={"requested_page": page, "last_available_page": page_index}, level="detailed"); return []
+                self._diagnostic("GUTENBERG", "OPDS pagination", "ok",detail={"requested_page": page, "last_available_page": page_index}, level="detailed"); return []
             current_url=next_url; params=None; page_index+=1
         assert response is not None
         parsed = self._parse_feed(response.content, str(response.url)); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
-        self.diagnostics.add("GUTENBERG", "OPDS search", "ok", duration_ms=duration_ms,detail={"results": len(rows), "parsed_results": len(parsed), "query_len": len(query), "field": field, "page": page},level="detailed")
+        self._diagnostic("GUTENBERG", "OPDS search", "ok", duration_ms=duration_ms,detail={"results": len(rows), "parsed_results": len(parsed), "query_len": len(query), "field": field, "page": page},level="detailed")
         return rows
 
     def _epub_candidates(self, content: bytes, base_url: str) -> list[tuple[str, str]]:
@@ -719,7 +726,7 @@ class GutenbergSession(ProviderSession):
             "TRACE gutenberg download end record_id=%s path=%s bytes=%s dt_ms=%s",
             item.record_id, path.name, size, duration_ms,
         )
-        self.diagnostics.add(
+        self._diagnostic(
             "GUTENBERG", "EPUB download", "ok", duration_ms=duration_ms,
             detail={"bytes": size, "record_id": item.record_id, "transport": "transport.http"},
             level="detailed",
