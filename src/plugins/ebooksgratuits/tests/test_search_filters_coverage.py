@@ -46,7 +46,7 @@ class SearchFilterCoverageTests(unittest.TestCase):
         client=SimpleNamespace(get=lambda *args,**kwargs:response,close=lambda:None)
         session=mod.EbooksSession(
             credential_id="public",label="",credentials={},options={},
-            config={},storage=None,diagnostics=None,transport=None,
+            config={},diagnostics=None,transport=None,
         )
         session.connected=True
         session.client=client
