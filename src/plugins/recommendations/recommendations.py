@@ -182,11 +182,13 @@ class RecommendationsPlugin:
             return 8
 
     def deactivate(self):
-        if self._view is not None:
-            self._view.dispose()
-        self._view = None
-        self._pending_reference = None
-        self.context = None
+        try:
+            if self._view is not None:
+                self._view.dispose()
+        finally:
+            self._view = None
+            self._pending_reference = None
+            self.context = None
 
     def build(self, host):
         from gi.repository import GLib, Gtk
