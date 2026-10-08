@@ -88,3 +88,13 @@ préserver la qualité du classement.
 
 Les autres protections existantes restent actives : classement provisoire limité à la tête
 utile, coalescence des rafraîchissements partiels, MMR borné et rendu GTK virtualisé.
+
+
+## Diagnostic de performance
+
+Les refresh Recommendations émettent deux lignes de trace expurgées dans le logger `cifereca.plugin.recommendations` :
+
+- `TRACE recommendations performance ...` : `snapshot_ms`, `profile_ms`, `providers_ms`, `catalog_ms`, `rank_ms`, `total_ms` ;
+- `TRACE recommendations ui ...` : `apply_ms` et `total_ui_ms`.
+
+Les traces ne contiennent ni identifiant de profil, ni titre de livre, ni requête catalogue. Pour #519, comparer en priorité `snapshot_ms` au `total_ui_ms` sur le profil représentatif, trois fois de suite.
