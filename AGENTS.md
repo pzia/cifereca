@@ -99,5 +99,6 @@ Rôles autorisés :
 8. Une PR ne peut être mergée que par le rôle `cicd`.
 9. En cas d'ambiguïté, choisir le rôle propriétaire du composant à modifier ; si cela implique de changer de rôle, créer une issue au lieu de franchir la frontière.
 10. Tant que l'issue #310 reste ouverte pour quota GitHub Actions épuisé, `cicd` peut merger malgré des checks rouges **uniquement** lorsque les jobs concernés n'ont jamais démarré (`steps` vide/null, aucun log de test) et que le diff est compris, mergeable, sans review/thread bloquant ni échec fonctionnel réel connu. Cette exception expire automatiquement à la fermeture de #310.
+11. Une PR **ne doit jamais être réalignée, rebasée ou mise à jour sur le HEAD de sa branche cible au seul motif qu'elle est `behind`**. Le rôle `cicd` tente le merge de la PR dans son état courant. Un réalignement n'est justifié que par un conflit Git empêchant le merge, une règle de protection l'imposant explicitement, ou une incompatibilité fonctionnelle/technique concrète avec la branche cible. L'ancienneté ou le nombre de commits de retard ne constituent pas, à eux seuls, une incompatibilité. Éviter les rebases/updates préventifs qui créent du churn, invalident des validations ou déclenchent inutilement la CI.
 
 Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique.
