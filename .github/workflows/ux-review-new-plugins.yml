@@ -1,0 +1,130 @@
+name: Temporary UX review – real GTK plugin pages
+on:
+  push:
+    branches: [ux/review-plugins-literary-constellations-youth-20261008]
+    paths: [.github/workflows/ux-review-new-plugins.yml]
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-ux-plugin-dataset
+      CIFERECA_HOST_XDG: /tmp/cifereca-ux-plugin-host
+      PYTHONPATH: ${{ github.workspace }}/src
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up GTK4 environment and isolated simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 libxtst6 xdotool openbox wmctrl python3-venv python3-gi python3-gi-cairo python3-cairo python3-pil gir1.2-gtk-4.0 gir1.2-adw-1 python3-httpx python3-packaging
+          /usr/bin/python3 - <<'PY'
+          import gi
+          gi.require_version("Gtk", "4.0")
+          gi.require_version("Adw", "1")
+          from gi.repository import Gtk, Adw
+          print("gtk_import: OK", Gtk.get_major_version(), Gtk.get_minor_version())
+          print("adwaita_import: OK")
+          PY
+          /usr/bin/python3 -m venv --system-site-packages /tmp/ux-venv
+          /tmp/ux-venv/bin/pip install -q --disable-pip-version-check "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=11,<13" "PyMuPDF>=1.26,<2"
+          mkdir -p /tmp/ux-plugin-zips "$CIFERECA_HOST_XDG"/{config,data,cache,state} /tmp/ux-plugin-bin ux-plugin-evidence
+          for plugin in transport-http provider-bnf-catalogue provider-gallica provider-gutenberg home-page epub_optimizer recommendations literary-criticism constellations youth-catalog youth-source-booktrust; do
+            /usr/bin/python3 scripts/package-plugin.py "src/plugins/$plugin" --out /tmp/ux-plugin-zips
+          done
+          cat >/tmp/ux-plugin-bin/cifereca <<'EOF'
+          #!/usr/bin/env bash
+          exec /tmp/ux-venv/bin/python -m cifereca "$@"
+          EOF
+          chmod +x /tmp/ux-plugin-bin/cifereca
+          export PATH="/tmp/ux-plugin-bin:$PATH"
+          export XDG_CONFIG_HOME="$CIFERECA_HOST_XDG/config" XDG_DATA_HOME="$CIFERECA_HOST_XDG/data" XDG_CACHE_HOME="$CIFERECA_HOST_XDG/cache" XDG_STATE_HOME="$CIFERECA_HOST_XDG/state"
+          for archive in /tmp/ux-plugin-zips/*.zip; do
+            /tmp/ux-venv/bin/python -m cifereca.cli plugin install "$archive" --replace
+          done
+          export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
+          /tmp/ux-venv/bin/python simulation/datasetctl.py doctor ux-small >ux-plugin-evidence/doctor.txt 2>&1
+          /tmp/ux-venv/bin/python simulation/datasetctl.py rebuild ux-small
+          /tmp/ux-venv/bin/python simulation/datasetctl.py summary ux-small --json >ux-plugin-evidence/summary.json
+          /tmp/ux-venv/bin/python simulation/datasetctl.py env ux-small >/tmp/ux-plugin-env.sh
+          source /tmp/ux-plugin-env.sh
+          /tmp/ux-venv/bin/python -m cifereca.cli catalog-scan >ux-plugin-evidence/library.json
+      - name: Capture original real Cifereca GTK pages – 1366 and 1024 widths
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/tmp/ux-plugin-bin:$PATH"
+          export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
+          source /tmp/ux-plugin-env.sh
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1366x900x24" bash <<'INNER'
+          set -euo pipefail
+          export GDK_BACKEND=x11 GSK_RENDERER=cairo GDK_SCALE=1 GTK_A11Y=none NO_AT_BRIDGE=1
+          root="$GITHUB_WORKSPACE"
+          openbox > "$root/ux-plugin-evidence/openbox.log" 2>&1 &
+          wmpid=$!
+          /tmp/ux-venv/bin/python "$root/simulation/datasetctl.py" cifereca ux-small --verbose -- --force-plugin transport.http --force-plugin core.ui.pages --force-plugin core.ui.widgets --force-plugin core.ui.titlebar --force-plugin core.ui.system --force-plugin ui.page.constellations --force-plugin ui.page.literary-criticism --force-plugin literary.criticism --force-plugin navigation.constellations --force-plugin catalog.youth --force-plugin criticism.source.rss --force-plugin ui.page.recommendations --force-plugin ui.page.epub-optimizer >"$root/ux-plugin-evidence/app.out" 2>"$root/ux-plugin-evidence/app.err" &
+          apppid=$!
+          win=""
+          for _ in $(seq 1 100); do
+            if ! kill -0 "$apppid" 2>/dev/null; then echo "APP DIED" >&2; break; fi
+            win="$(xdotool search --onlyvisible --name 'Cifereca' 2>/dev/null | head -1 || true)"
+            [ -n "$win" ] && break
+            sleep 0.3
+          done
+          if [ -z "$win" ]; then
+            echo "ERROR no visible GTK application" >&2
+            sed -n '1,140p' "$root/ux-plugin-evidence/app.err"
+            exit 1
+          fi
+          wmctrl -ir "$win" -b add,maximized_vert,maximized_horz || true
+          xdotool windowactivate --sync "$win" || true
+          sleep 3
+          mkdir -p "$root/ux-plugin-evidence/wide" "$root/ux-plugin-evidence/narrow"
+          /tmp/ux-venv/bin/python - <<'PY'
+          import os
+          from PIL import ImageGrab
+          ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save("ux-plugin-evidence/wide/00.png")
+          PY
+          for i in $(seq -w 1 20); do
+            xdotool key --clearmodifiers ctrl+Next
+            sleep 1.25
+            OUT="$root/ux-plugin-evidence/wide/$i.png" /tmp/ux-venv/bin/python - <<'PY'
+          import os
+          from PIL import ImageGrab
+          ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save(os.environ["OUT"])
+          PY
+          done
+          wmctrl -ir "$win" -b remove,maximized_vert,maximized_horz || true
+          wmctrl -ir "$win" -e 0,0,0,1024,768 || true
+          xdotool windowactivate --sync "$win" || true
+          sleep 1
+          for i in $(seq -w 1 20); do
+            xdotool key --clearmodifiers ctrl+Next
+            sleep 0.75
+            OUT="$root/ux-plugin-evidence/narrow/$i.png" /tmp/ux-venv/bin/python - <<'PY'
+          import os
+          from PIL import ImageGrab
+          ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save(os.environ["OUT"])
+          PY
+          done
+          xdotool key --clearmodifiers ctrl+q || true
+          sleep 1
+          kill -TERM "$apppid" "$wmpid" 2>/dev/null || true
+          wait "$apppid" 2>/dev/null || true
+          INNER
+      - name: Clean isolated simulator
+        if: always()
+        shell: bash
+        run: |
+          /tmp/ux-venv/bin/python simulation/datasetctl.py down ux-small || true
+      - name: Upload real GTK evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cifereca-ux-new-plugins-real-gtk
+          path: ux-plugin-evidence/
+          retention-days: 14
+          if-no-files-found: warn
