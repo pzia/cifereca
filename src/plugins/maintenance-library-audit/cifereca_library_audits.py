@@ -466,6 +466,8 @@ class NamingRepairTool(_ReadOnlyTool):
             try:
                 mutation = broker.plan(LibraryMutationRequest("normalize_filename", placement_id=placement_id))
                 result = broker.run(mutation, control)
+                if getattr(result, "ok", True) is False:
+                    failures += 1
                 changed += int(getattr(result, "changed", 0) or 0)
                 warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
             except Exception as exc:
@@ -563,6 +565,8 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                     keep_placement_id=keep_id,
                 ))
                 result = broker.run(mutation, control)
+                if getattr(result, "ok", True) is False:
+                    failures += 1
                 changed += int(getattr(result, "changed", 0) or 0)
                 warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
             except Exception as exc:
