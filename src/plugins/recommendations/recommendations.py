@@ -182,10 +182,13 @@ class RecommendationsPlugin:
             return 8
 
     def deactivate(self):
-        if self._view is not None:
-            self._view.dispose()
-        self._view = None
-        self.context = None
+        try:
+            if self._view is not None:
+                self._view.dispose()
+        finally:
+            self._view = None
+            self._pending_reference = None
+            self.context = None
 
     def build(self, host):
         from gi.repository import GLib, Gtk
@@ -411,7 +414,23 @@ class UxRecommendationsView:
         # changes. Refresh recommendations for those events, but invalidate a
         # library snapshot only when the persisted library/sync projection for
         # that identity changed.
+        identity_widget = getattr(self, "_identity", None)
+        previous_identity = (
+            self.selected_identity_id()
+            if identity_widget is not None
+            else getattr(self, "_active_identity_id", None)
+        )
         changed_identities = self._reload_identities()
+        current_identity = (
+            self.selected_identity_id()
+            if identity_widget is not None
+            else previous_identity
+        )
+        if previous_identity is not None and previous_identity != current_identity:
+            self._reference_book = None
+            self.plugin._pending_reference = None
+            self._reference_books = []
+            self._reload_reference_books(())
         snapshot_cache = getattr(self, "_library_snapshot_cache", None)
         if snapshot_cache is not None:
             signatures = getattr(self, "_identity_library_signatures", {})

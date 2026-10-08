@@ -1,4 +1,4 @@
-# Recommandations CIFERECA 0.2.22
+# Recommandations CIFERECA 0.2.23
 
 Compatible avec **Plugin API >=1.4,<2** (source de vérité : `cifereca-plugin.json`).
 
@@ -64,7 +64,7 @@ Aucun accès privé au Core, aucune acquisition, aucun téléchargement.
 ## Installation
 
 ```bash
-cifereca-cli plugin install cifereca-recommendations-0.2.22.zip --replace
+cifereca-cli plugin install cifereca-recommendations-0.2.23.zip --replace
 ```
 
 Puis redémarrer Cifereca si une ancienne version du module était déjà chargée.
@@ -109,7 +109,7 @@ La recette `tests/test_snapshot_burst_measurement.py` compare trois recalculs sy
 
 ## Rapport de traces installé
 
-Depuis 0.2.22, `trace_report.py` transforme les traces expurgées de plusieurs relances en un résumé directement exploitable pour #519.
+Depuis 0.2.23, `trace_report.py` transforme les traces expurgées de plusieurs relances en un résumé directement exploitable pour #519.
 
 Recette sur une installation réelle :
 
