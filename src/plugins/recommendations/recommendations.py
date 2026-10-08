@@ -507,6 +507,8 @@ class UxRecommendationsView:
             while self._identity_model.get_n_items():
                 self._identity_model.remove(0)
             selected = 0
+            current_index = None
+            selected_index = None
             for row in rows:
                 identity_id = str(row.get("identity_id") or "")
                 if not identity_id:
@@ -514,8 +516,15 @@ class UxRecommendationsView:
                 self._identity_ids.append(identity_id)
                 current_signatures[identity_id] = _library_overview_signature(row)
                 self._identity_model.append(str(row.get("label") or row.get("name") or identity_id))
-                if row.get("selected") or identity_id == current:
-                    selected = len(self._identity_ids) - 1
+                index = len(self._identity_ids) - 1
+                if identity_id == current:
+                    current_index = index
+                if row.get("selected"):
+                    selected_index = index
+            if selected_index is not None:
+                selected = selected_index
+            elif current_index is not None:
+                selected = current_index
             self._identity.set_sensitive(bool(self._identity_ids))
             if self._identity_ids:
                 self._identity.set_selected(selected)
