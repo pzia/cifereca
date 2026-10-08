@@ -273,7 +273,7 @@ jobs:
           export XDG_STATE_HOME="$CIFERECA_HOST_XDG/state"
 
           for archive in /tmp/plugin-zips/*.zip; do
-            /usr/bin/python3 -m cifereca.cli plugin install "$archive" --no-activate --replace
+            /usr/bin/python3 -m cifereca.cli plugin install "$archive" --replace
           done
           /usr/bin/python3 -m cifereca.cli plugin packages > /tmp/plugin-packages.json
 
@@ -392,7 +392,7 @@ jobs:
           capture "$evidence/02-search.png"
 
           # Search against the simulator-backed/local known catalogue.
-          xdotool mousemove --sync 520 142
+          xdotool mousemove --sync 520 120
           xdotool click 1
           xdotool key ctrl+a
           xdotool type --delay 110 --clearmodifiers "tour"
@@ -400,19 +400,26 @@ jobs:
           sleep 6
           capture "$evidence/03-query-tour.png"
 
+          # Extend the same query to the simulator-backed provider catalogues.
+          xdotool mousemove --sync 1260 120
+          sleep 0.5
+          xdotool click 1
+          sleep 8
+          capture "$evidence/04-online.png"
+
           # Visit the library from the sidebar and keep it visible.
           xdotool mousemove --sync 90 252
           sleep 0.5
           xdotool click 1
           sleep 5
-          capture "$evidence/04-library.png"
+          capture "$evidence/05-library.png"
 
           # Open a likely first visible row/card to demonstrate detail interaction.
           xdotool mousemove --sync 650 330
           sleep 0.5
           xdotool click 1
           sleep 5
-          capture "$evidence/05-detail.png"
+          capture "$evidence/06-detail.png"
 
           kill -TERM "$app_pid" 2>/dev/null || true
           sleep 1
