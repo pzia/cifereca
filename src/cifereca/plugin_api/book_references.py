@@ -6,6 +6,8 @@ homepage must never become a fabricated canonical bibliographic identifier.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Literal
 from typing import Any, Mapping
 
 from .models import BookRef
@@ -97,4 +99,73 @@ def book_ref_from_row(row: Mapping[str, Any]) -> BookRef:
     )
 
 
-__all__ = ["book_ref_from_row"]
+
+
+@dataclass(frozen=True, slots=True)
+class BookAccessFact:
+    """An access claim and the exact class of evidence supporting it.
+
+    "local" means a file is present, not that it is legally owned; "borrowed"
+    means an active loan, not that another reader can currently borrow it.
+    """
+
+    kind: Literal["local", "owned", "borrowed", "borrowable", "free"]
+    evidence: str
+
+
+def book_access_facts(
+    row: Mapping[str, Any], *, identity_id: str | None = None,
+) -> tuple[BookAccessFact, ...]:
+    """Project only *explicit* access evidence from public catalogue/library rows.
+
+    No inferred rights from a provider name, an HTTP download link, a generic
+    availability label or a loan previously seen in another identity. Unknown
+    access is represented by an empty tuple rather than a fabricated status.
+    """
+    if not isinstance(row, Mapping):
+        return ()
+    identities = row.get("identity_ids")
+    if identity_id and isinstance(identities, (tuple, list)) and identities:
+        if identity_id not in identities:
+            return ()
+    elif identity_id and row.get("identity_id") and row["identity_id"] != identity_id:
+        return ()
+
+    facts: list[BookAccessFact] = []
+
+    def add(kind: Literal["local", "owned", "borrowed", "borrowable", "free"], evidence: str) -> None:
+        fact = BookAccessFact(kind, evidence)
+        if fact not in facts:
+            facts.append(fact)
+
+    if row.get("local") is True:
+        add("local", "library.local")
+
+    possessions = row.get("possessions")
+    if isinstance(possessions, (tuple, list)):
+        for entry in possessions:
+            if not isinstance(entry, Mapping) or entry.get("state") != "active":
+                continue
+            if identity_id and entry.get("identity_id") != identity_id:
+                continue
+            if entry.get("kind") == "owned":
+                add("owned", "entitlement.owned")
+            elif entry.get("kind") == "loan":
+                add("borrowed", "entitlement.loan")
+
+    metadata = row.get("metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    search = metadata.get("search_result")
+    search = search if isinstance(search, Mapping) else {}
+    for source, name in ((row, "provider"), (metadata, "metadata"), (search, "search_result")):
+        # Identity-scoped possession is not proven by an unscoped catalogue hit.
+        if source.get("owned") is True and (not identity_id or row.get("identity_id") == identity_id):
+            add("owned", name + ".owned")
+        if source.get("borrowable") is True or source.get("available_to_borrow") is True:
+            add("borrowable", name + ".borrowable")
+        if source.get("free") is True:
+            add("free", name + ".free")
+    return tuple(facts)
+
+
+__all__ = ["book_ref_from_row", "BookAccessFact", "book_access_facts"]
