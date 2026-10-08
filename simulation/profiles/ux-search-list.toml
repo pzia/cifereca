@@ -1,0 +1,24 @@
+name = "ux-search-list"
+description = "Recette UX ciblée sur la liste Recherche : largeur, titres/auteurs/facettes extrêmes."
+
+[runtime]
+startup_timeout_seconds = 20
+
+[cifereca]
+binary = "cifereca"
+no_plugins = true
+force_plugins = [
+  "ui.page.home",
+  "core.ui.pages",
+  "core.ui.widgets",
+  "core.ui.titlebar",
+  "core.ui.system",
+]
+width = 1024
+height = 768
+
+[library]
+epubs = 12
+seed = 20261008
+identity_dir = "ux"
+provider_dir = "local"
