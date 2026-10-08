@@ -287,6 +287,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
         library_read=self._broker("library.read")
         candidates=[]
         missing_path=0
+        read_failures=0
         for row in _rows(metadata.library_entries(identity_id=context.identity_id)):
             if not row.get("local"):
                 continue
@@ -297,8 +298,10 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 continue
             artifact=None
             if artifact_id:
-                try: artifact=library_read.artifact(artifact_id)
-                except Exception: artifact=None
+                try:
+                    artifact=library_read.artifact(artifact_id)
+                except Exception:
+                    read_failures += 1
             candidates.append({
                 "path": path,
                 "title": str(row.get("title") or PurePath(path).name),
@@ -306,17 +309,28 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 "expected_size": int(getattr(artifact,"size_bytes",0) or 0),
                 "expected_sha256": str(getattr(artifact,"sha256","") or row.get("sha256") or ""),
             })
-        warnings=(f"{missing_path} entrée(s) locale(s) sans chemin observable.",) if missing_path else ()
+        warnings=[]
+        if missing_path:
+            warnings.append(f"{missing_path} entrée(s) locale(s) sans chemin observable.")
+        if read_failures:
+            warnings.append(
+                f"{read_failures} artefact(s) sans métadonnées de référence : broker library.read en erreur."
+            )
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=f"{len(candidates)} fichier(s) local(aux) à vérifier.",
-            warnings=warnings,
-            facts={"candidates": tuple(candidates), "missing_path": missing_path},
+            warnings=tuple(warnings),
+            facts={
+                "candidates": tuple(candidates),
+                "missing_path": missing_path,
+                "read_failures": read_failures,
+            },
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
         candidates=tuple(plan.facts.get("candidates",()))
         warnings=list(plan.warnings)
+        read_failures=int(plan.facts.get("read_failures") or 0)
         invalid=0
         missing=0
         by_issue={}
@@ -336,11 +350,17 @@ class IntegrityAuditTool(_ReadOnlyTool):
                     warnings.append(f"{row.get('title') or PurePath(str(row.get('path') or '')).name}: {', '.join(issues)}")
         control.report(current=len(candidates),total=len(candidates) or 1,message="Audit d’intégrité terminé")
         return MaintenanceResult(
-            ok=invalid==0,
+            ok=invalid==0 and read_failures==0,
             changed=0,
             summary=f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), dont {missing} manquant(s).",
             warnings=tuple(warnings),
-            facts={"checked":len(candidates),"invalid":invalid,"missing":missing,"issues":by_issue},
+            facts={
+                "checked":len(candidates),
+                "invalid":invalid,
+                "missing":missing,
+                "read_failures":read_failures,
+                "issues":by_issue,
+            },
         )
 
 
