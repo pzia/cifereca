@@ -40,6 +40,27 @@ UI_TEST_GLOBS = (
     "tests/test_regressions_099.py",
 )
 
+E2E_ALL_PREFIXES = ("e2e/",)
+E2E_ALL_FILES = {
+    "environnements/openai-chat-debian/capture_app.py",
+    # Changing the selector itself must validate every E2E route once.
+    "scripts/ci-select-core-tests.py",
+}
+E2E_NAVIGATION_PREFIXES = ("src/cifereca/builtin_ui/",)
+E2E_NAVIGATION_FILES = {
+    "src/cifereca/gui/main_window.py",
+    "src/cifereca/gui/query_controls.py",
+    "src/cifereca/gui/shell_model.py",
+    "src/cifereca/gui/navigation_history.py",
+}
+E2E_STARTUP_FILES = {
+    "src/cifereca/app.py",
+    "src/cifereca/gui/action_widgets.py",
+    "src/cifereca/gui/task_runner.py",
+    "src/cifereca/gui/plugin_manager_page.py",
+    "src/cifereca/gui/ui_perf.py",
+}
+
 
 def _is_ui_source(path: str) -> bool:
     return path in UI_SOURCE_FILES or path.startswith(UI_SOURCE_PREFIXES)
@@ -89,13 +110,27 @@ def select(paths: list[str], root: Path = ROOT) -> tuple[str, list[str]]:
     return "full", ["tests"]
 
 
+def select_e2e(paths: list[str]) -> str:
+    changed = [path.strip() for path in paths if path.strip()]
+    if any(path in E2E_ALL_FILES or path.startswith(E2E_ALL_PREFIXES) for path in changed):
+        return "all"
+    if any(
+        path in E2E_NAVIGATION_FILES or path.startswith(E2E_NAVIGATION_PREFIXES)
+        for path in changed
+    ):
+        return "core-navigation"
+    if any(path in E2E_STARTUP_FILES for path in changed):
+        return "startup"
+    return "none"
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Select the smallest safe Core pytest target set for PR CI.")
+    parser = argparse.ArgumentParser(description="Select the smallest safe Core/E2E target set for PR CI.")
     parser.add_argument("changed_file", type=Path)
     args = parser.parse_args()
     paths = args.changed_file.read_text(encoding="utf-8").splitlines()
     mode, targets = select(paths)
-    print(mode + "\t" + " ".join(targets))
+    print(mode + "\t" + " ".join(targets) + "\t" + select_e2e(paths))
     return 0
 
 
