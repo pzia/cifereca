@@ -11,9 +11,24 @@ force_plugins = ["ui.page.home"]
 width = 1300
 height = 850
 
-[library]
-epubs = 100
+[[identities]]
+id = "ux"
+label = "Camille"
+directory_name = "camille"
+reading_languages = ["fr"]
+epubs = 70
 seed = 20261006
+
+[[identities]]
+id = "ux-secondary"
+label = "Alexandre"
+directory_name = "alexandre"
+reading_languages = ["fr", "en"]
+epubs = 30
+seed = 20261007
+
+[library]
+provider_dir = "local"
 
 [services.opds]
 enabled = true
