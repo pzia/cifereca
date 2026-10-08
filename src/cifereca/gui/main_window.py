@@ -3080,7 +3080,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
         self._search_mode = "local"
         self.search_objects = {}
-        self._render_search_results()
+        shown = self._render_search_results()
         self._sync_search_detail_after_results()
         self.search_global_button.set_sensitive(True)
 
