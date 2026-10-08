@@ -56,8 +56,7 @@ button:focus-visible, entry:focus-visible, row:focus-visible {
   outline: 2px solid #b8a0ff;
   outline-offset: 2px;
 }
-button.suggested-action, .suggested-action,
-button:checked, .toggle:checked {
+button.suggested-action, .suggested-action {
   background-color: #b8a0ff;
   color: #1b1735;
   border-color: #b8a0ff;
@@ -73,3 +72,23 @@ row:hover { background-color: #485a76; }
 separator { background-color: #66748f; }
 progressbar progress, scale highlight { background-color: #b8a0ff; }
 label.dim-label, .dim-label { color: #c4cde1; }
+
+/* V2 — après inspection visuelle de la V1 :
+   boutons de facettes dégonflés, barre d'outils plus légère et titres lisibles. */
+button.flat {
+  background-color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  padding: 3px 6px;
+}
+button.flat:hover { background-color: #53628b; }
+button.book-tag, button.book-tag.flat {
+  background-color: #344258;
+  color: #f6f7ff;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 2px 6px;
+}
+button.book-tag.tag-content { background-color: #2c4c4d; }
+button.book-tag:hover { background-color: #53628b; }
+label.book-title { font-size: 14px; font-weight: 700; }
