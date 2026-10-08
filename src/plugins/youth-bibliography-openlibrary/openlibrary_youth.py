@@ -14,7 +14,7 @@ BASE = "https://openlibrary.org"
 SEARCH_URL = BASE + "/search.json"
 _FIELDS = "key,title,author_name,first_publish_year,isbn,language,subject,publisher,edition_key,cover_i"
 _ISBN_CLEAN = re.compile(r"[^0-9Xx]")
-_OLID = re.compile(r"^OL[0-9]+[WMA]$", re.I)
+_OLID = re.compile(r"^OL[0-9]+[WM]$", re.I)
 _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
@@ -75,10 +75,68 @@ def _work_url(key: object) -> str:
         olid = normalize_olid(raw)
         if not olid:
             return ""
-        prefix = "/works/" if olid.endswith("W") else "/books/" if olid.endswith("M") else "/authors/"
+        prefix = "/works/" if olid.endswith("W") else "/books/"
         url = BASE + prefix + olid
     parts = urlsplit(url)
     return url if parts.scheme == "https" and parts.hostname == "openlibrary.org" else ""
+
+
+def _year(value: object) -> int | None:
+    match = re.search(r"\b(1[0-9]{3}|20[0-9]{2})\b", _text(value))
+    return int(match.group(1)) if match else None
+
+
+def parse_direct_record(row: object, *, olid: str) -> "BibliographyRecord | None":
+    if not isinstance(row, Mapping):
+        return None
+    normalized = normalize_olid(olid)
+    title = _text(row.get("title"))
+    if not normalized or not title:
+        return None
+    isbns: list[str] = []
+    for field in ("isbn_13", "isbn_10"):
+        for raw in _values(row.get(field), limit=20):
+            isbn = normalize_isbn(raw)
+            if isbn and isbn not in isbns:
+                isbns.append(isbn)
+    languages = []
+    for value in _values(row.get("languages"), limit=12):
+        code = value.rstrip("/").split("/")[-1]
+        if code and code not in languages:
+            languages.append(code)
+    authors = []
+    for value in row.get("authors", ()) if isinstance(row.get("authors"), (list, tuple)) else ():
+        if isinstance(value, Mapping):
+            author = value.get("author") if isinstance(value.get("author"), Mapping) else value
+            key = _text(author.get("key")) if isinstance(author, Mapping) else ""
+            if key:
+                authors.append(key.rstrip("/").split("/")[-1])
+    covers = _values(row.get("covers"), limit=1)
+    cover_url = ""
+    if covers:
+        try:
+            cover_id = int(covers[0])
+            if cover_id > 0:
+                cover_url = f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg"
+        except (TypeError, ValueError):
+            pass
+    editions = (normalized,) if normalized.endswith("M") else ()
+    return BibliographyRecord(
+        source_id="openlibrary",
+        record_id=normalized,
+        title=title,
+        authors=tuple(dict.fromkeys(authors)),
+        isbns=tuple(isbns),
+        languages=tuple(languages),
+        subjects=_values(row.get("subjects"), limit=30),
+        publishers=_values(row.get("publishers"), limit=12),
+        edition_ids=editions,
+        first_publish_year=_year(row.get("first_publish_date") or row.get("publish_date")),
+        notice_url=_work_url(normalized),
+        cover_url=cover_url,
+        age_ranges=(),
+        metadata={"bibliographic_only": True, "age_evidence": "none", "source": "openlibrary.object"},
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +254,23 @@ class OpenLibraryBibliography:
                 now = self._clock()
             self._last_request = now
 
+    def _get_json(self, url: str) -> object:
+        self._throttle()
+        response = self.client.get(url)
+        if response.status_code == 404:
+            return {}
+        if response.status_code >= 400:
+            raise RuntimeError(f"Open Library HTTP {response.status_code}")
+        content_type = _text(response.headers.get("content-type")).casefold()
+        if content_type and "json" not in content_type:
+            raise RuntimeError("Open Library response is not JSON")
+        if len(response.content) > 2_000_000:
+            raise RuntimeError("Open Library response exceeds 2 MB")
+        try:
+            return response.json()
+        except Exception as exc:
+            raise RuntimeError("Open Library invalid JSON") from exc
+
     def _request(self, *, q: str, limit: int, page: int = 1, lang: str = "") -> tuple[BibliographyRecord, ...]:
         clean_q = _text(q)
         if not clean_q:
@@ -245,7 +320,20 @@ class OpenLibraryBibliography:
         normalized = normalize_olid(olid)
         if not normalized:
             return ()
-        return self._request(q=f"olid:{normalized}", limit=5)
+        cache_key = ("olid", normalized)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self._cache.move_to_end(cache_key)
+            return cached
+        prefix = "/works/" if normalized.endswith("W") else "/books/"
+        payload = self._get_json(BASE + prefix + normalized + ".json")
+        record = parse_direct_record(payload, olid=normalized)
+        records = (record,) if record is not None else ()
+        self._cache[cache_key] = records
+        self._cache.move_to_end(cache_key)
+        while len(self._cache) > self.cache_size:
+            self._cache.popitem(last=False)
+        return records
 
     def search(self, query: str, *, limit: int = 10, page: int = 1, language: str = "") -> tuple[BibliographyRecord, ...]:
         return self._request(q=_text(query), limit=limit, page=page, lang=language)
