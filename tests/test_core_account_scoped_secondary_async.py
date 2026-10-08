@@ -150,6 +150,7 @@ def _service_host():
     host.identity_by_id = lambda _id: None
     host.last_history = ["existing active history"]
     host.last_bookings = ["existing active booking"]
+    host.config = NS(get=lambda _key, default: default)
     writes = []
     host.storage = NS(
         cache_get=lambda *_a: None,
