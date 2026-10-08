@@ -23,11 +23,12 @@ def _harness():
     module = ast.fix_missing_locations(ast.Module(body=[future, *methods], type_ignores=[]))
     ns = {"TaskPriority": NS(USER_ACTION="user", NORMAL="normal")}
     exec(compile(module, str(SOURCE), "exec"), ns)
-    Runner = type("Runner", (), {
-        "__init__": lambda self: setattr(self, "requests", []),
-        "submit": lambda self, title, work, ok, err=None, **kwargs:
-            self.requests.append(NS(work=work, ok=ok, err=err, kwargs=kwargs)),
-    })
+    class Runner:
+        def __init__(self):
+            self.requests = []
+
+        def submit(self, title, work, ok, err=None, **kwargs):
+            self.requests.append(NS(work=work, ok=ok, err=err, kwargs=kwargs))
     Host = type("Host", (), {name: ns[name] for name in (
         "_identity_request_current", "refresh_recent", "refresh_library",
     )})
