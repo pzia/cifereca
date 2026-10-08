@@ -349,7 +349,8 @@ class AcquisitionLedger:
                 "status": "discovered",
                 "title": title,
                 "metadata": {"offer_id": offer.offer_id, **offer.metadata},
-            }
+            },
+            insert_only=True,
         )
         return acquisition_id
 
