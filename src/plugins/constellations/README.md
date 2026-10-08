@@ -28,3 +28,38 @@ L'état d'accès reste explicite : `owned`, `borrowable`, `free` ou `external`.
 ## Périmètre
 
 Ce groupe traite #701, #702 et #703. La vue spatiale GTK #704 reste séparée et dépend des contrats publics Core suivis dans #705. Le plugin n'importe aucun module privé `cifereca.*` et ne déclenche aucune acquisition implicite.
+
+## Vue interactive — suite de #738 (0.2.0)
+
+La page `ui.page.constellations` ajoute l'action **Explorer les liens** depuis une
+fiche livre. Elle réutilise intégralement `ConstellationGraph` de #738 pour les
+relations, modes, parcours et remplacements ; l'adaptateur ne fait que projeter les
+notices publiques `BookRef` et les libellés.
+
+Choisir un profil lit sa bibliothèque locale. **Chercher en ligne** est explicite.
+Le détail central utilise le composant public standard, les voisins sont des boutons
+avec raisons et état de disponibilité. La grille s'adapte à une seule colonne sur
+petite largeur et conserve la navigation clavier. Historique précédent/suivant,
+quatre modes, curseur proche/surprenant, départ/arrivée et variantes de promenade.
+L'URL affichée est uniquement celle de la notice fournie par la source.
+
+Le retour à la fiche Bibliothèque existante consomme facultativement la navigation
+publique de #737. Il respecte le profil demandé ; sans résultat, un message indique
+que la notice locale n'est pas disponible.
+
+Le snapshot local est mis en cache par identité, invalidé par les notifications de
+l'hôte et par Actualiser. Toute réponse tardive d'un ancien contexte est ignorée.
+Pour borner le coût quadratique du moteur, cette version affiche explicitement sa
+limite : 300 notices locales + 100 résultats de recherche. La promenade borne
+également le nombre d'expansions, même si l'arrivée est inaccessible.
+
+Corrections du socle : catégorie `navigation.constellation` déclarée ; suppression
+de la référence `_ISBN_CLEAN` non définie ; équivalence ISBN-10/13 ; identifiants de
+livre distincts non fusionnés sur un simple titre/auteur commun ; pages négatives
+non interprétées comme une lecture courte.
+
+Limite Core suivie dans #705 : aucun contrat public ne fournit encore les résultats
+calculés de Recommandations. La page utilise les snapshots locaux et les catalogues,
+pas les objets privés de ce plugin. La recette visuelle GTK reste dans #706 ; les
+tests locaux couvrent le moteur, les projections et les callbacks sans prétendre
+constituer une recette GUI.

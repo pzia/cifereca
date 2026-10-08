@@ -29,12 +29,12 @@ def test_invalid_isbn_is_not_used_as_deduplication_key():
     assert len(result) == 2
 
 
-def test_deduplicates_title_author_without_stable_identifier():
+def test_distinct_book_ids_are_not_merged_by_title_author():
     result = deduplicate_books([
         book("a", "Même livre", "Même auteur"),
         book("b", "Même livre", "Même auteur"),
     ])
-    assert len(result) == 1
+    assert len(result) == 2
 
 
 def test_does_not_merge_title_only_without_author_or_identifier():
