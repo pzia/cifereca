@@ -185,6 +185,7 @@ class RecommendationsPlugin:
         if self._view is not None:
             self._view.dispose()
         self._view = None
+        self._pending_reference = None
         self.context = None
 
     def build(self, host):
