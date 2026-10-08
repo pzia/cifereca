@@ -182,9 +182,19 @@ def book_access_facts(
     metadata = metadata if isinstance(metadata, Mapping) else {}
     search = metadata.get("search_result")
     search = search if isinstance(search, Mapping) else {}
+    # Library rows are sometimes assembled from a local placement for one
+    # identity and an entitlement for another. Their merged metadata no longer
+    # identifies which identity supplied an "owned" flag. Only an explicitly
+    # scoped, active possession can attest ownership in a multi-identity row.
+    scoped_ids = {
+        value for value in identities
+        if isinstance(value, str) and value
+    } if isinstance(identities, (tuple, list)) else set()
+    metadata_owned_is_scoped = len(scoped_ids) <= 1
     for source, name in ((row, "provider"), (metadata, "metadata"), (search, "search_result")):
-        # Identity-scoped possession is not proven by an unscoped catalogue hit.
-        if source.get("owned") is True and (not identity_id or row.get("identity_id") == identity_id):
+        # A catalogue's general availability is not proof of ownership.
+        if (source.get("owned") is True and metadata_owned_is_scoped
+                and (not identity_id or row.get("identity_id") == identity_id)):
             add("owned", name + ".owned")
         if source.get("borrowable") is True or source.get("available_to_borrow") is True:
             add("borrowable", name + ".borrowable")
