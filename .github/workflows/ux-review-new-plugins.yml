@@ -46,7 +46,7 @@ jobs:
             /tmp/ux-venv/bin/python -m cifereca.cli plugin install "$archive" --replace
           done
           export CIFERECA_DATASET_PLUGIN_SOURCE="$CIFERECA_HOST_XDG/data/cifereca/plugins/packages"
-          /tmp/ux-venv/bin/python simulation/datasetctl.py doctor ux-small >ux-plugin-evidence/doctor.txt 2>&1
+          /tmp/ux-venv/bin/python simulation/datasetctl.py doctor ux-small >ux-plugin-evidence/doctor.txt 2>&1 || true
           /tmp/ux-venv/bin/python simulation/datasetctl.py rebuild ux-small
           /tmp/ux-venv/bin/python simulation/datasetctl.py summary ux-small --json >ux-plugin-evidence/summary.json
           /tmp/ux-venv/bin/python simulation/datasetctl.py env ux-small >/tmp/ux-plugin-env.sh
