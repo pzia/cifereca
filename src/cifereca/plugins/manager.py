@@ -4,7 +4,7 @@ import logging
 import shutil
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -26,6 +26,23 @@ from .python_dependencies import PythonDependencyManager, PythonDependencyTransa
 from .state import PluginStateStore
 
 _LOG = logging.getLogger("cifereca.plugins")
+
+
+def _load_builtin_package(root: Path) -> InstalledPackage:
+    """Load builtin UI with the Core runtime version, never stale manifest metadata."""
+    from cifereca import __version__
+    from .manifest import load_manifest
+
+    manifest = load_manifest(root / "cifereca-plugin.json")
+    manifest = replace(
+        manifest,
+        package=replace(manifest.package, version=__version__),
+        plugins=tuple(
+            replace(plugin, version=__version__, package_version=__version__)
+            for plugin in manifest.plugins
+        ),
+    )
+    return InstalledPackage(manifest, root, "builtin")
 
 
 @dataclass(slots=True)
@@ -109,10 +126,9 @@ class PluginManager:
                 self._diag("package discovery", "error", {"package": package_id, "error": str(exc)})
         # The shipped UI is a normal contribution package. Recovery remains in
         # the shell if a user disables/replaces the management page.
-        from .manifest import load_manifest
         builtin_root = Path(__file__).resolve().parents[1] / "builtin_ui"
         if self._builtin_ui:
-            packages.insert(0, InstalledPackage(load_manifest(builtin_root / "cifereca-plugin.json"), builtin_root, "builtin"))
+            packages.insert(0, _load_builtin_package(builtin_root))
         # Categories must exist before plugin type validation.
         for package in packages:
             for category in package.manifest.categories:
