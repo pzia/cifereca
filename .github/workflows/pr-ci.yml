@@ -34,7 +34,7 @@ jobs:
   ci:
     name: PR CI
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +128,20 @@ jobs:
               python3 scripts/ci-select-core-tests.py "$changed_file"
             )
           fi
+
+          if matches '^\.github/workflows/'; then
+            core=true
+            core_mode=full
+            core_targets=tests
+            plugins=true
+            plugin_scope_all=true
+            packaging=true
+            install=true
+            gui=true
+            e2e_scenario=all
+            dataset=true
+          fi
+
           if [[ "$e2e_scenario" != "none" ]]; then
             gui=true
           fi
