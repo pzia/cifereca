@@ -36,7 +36,7 @@ Voir `docs/PLUGIN-BOUNDARIES.md`.
 
 - Paris réutilise l'inspection et la publication publiques d'artefacts.
 - Gallica conserve ses régressions OPDS/audio dans son package plugin.
-- Kobo porte son contrat provider dans `plugins/provider-kobo/tests/`.
+- Kobo porte son contrat provider dans `src/plugins/provider-kobo/tests/`.
 - Kobo-Adept est un runtime spécialisé séparé du Core.
 - `transport.http` mutualise transport, health check et publication finale d'artefacts.
 - La politique de redaction diagnostics est exposée publiquement et partagée.
