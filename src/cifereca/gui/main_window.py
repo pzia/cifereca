@@ -950,6 +950,7 @@ class MasterDetailPage(Gtk.Box):
         # windows the previous single horizontal row forced search/filter
         # controls to compete with the page title and description.
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.page_header = header
         header.set_margin_top(16)
         header.set_margin_start(18)
         header.set_margin_end(18)
@@ -992,6 +993,7 @@ class MasterDetailPage(Gtk.Box):
         self.paned.set_vexpand(True)
         self._narrow_master_detail = False
         self._narrow_detail_visible = False
+        self._narrow_sidebar_restore_visible: bool | None = None
         self._narrow_breakpoint = MASTER_DETAIL_NARROW_WINDOW_WIDTH
 
         def adapt_paned_position(paned, _pspec=None) -> None:
@@ -1010,6 +1012,7 @@ class MasterDetailPage(Gtk.Box):
                 self._narrow_master_detail = narrow
                 if not narrow:
                     self._narrow_detail_visible = False
+                    self._set_narrow_detail_context(False)
                     self.detail_back.set_visible(False)
             if self._narrow_master_detail:
                 paned.set_position(0 if self._narrow_detail_visible else max_position)
@@ -1075,6 +1078,10 @@ class MasterDetailPage(Gtk.Box):
             return False
         keys.connect("key-pressed", key_pressed); self.add_controller(keys)
         self.list_stack.set_visible_child_name("empty")
+        # A narrow detail may hide shell navigation. Restore it while this page
+        # is unmapped, then re-apply the detail context if the user comes back.
+        self.connect("unmap", lambda _widget: self._set_narrow_detail_context(False))
+        self.connect("map", lambda _widget: self._set_narrow_detail_context(self._narrow_detail_visible))
 
     def _factory_setup(self, _factory: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
         list_item.set_child(BookListCell(self.window))
@@ -1117,10 +1124,28 @@ class MasterDetailPage(Gtk.Box):
                 return True
         return False
 
+    def _set_narrow_detail_context(self, active: bool) -> None:
+        """Reserve the narrow page for the active detail without losing list state."""
+        self.page_header.set_visible(not active)
+        self.toolbar.set_visible(not active)
+        sidebar = getattr(self.window, "sidebar", None)
+        if sidebar is None:
+            return
+        if active:
+            if self._narrow_sidebar_restore_visible is None:
+                self._narrow_sidebar_restore_visible = bool(sidebar.get_visible())
+            sidebar.set_visible(False)
+            return
+        restore = self._narrow_sidebar_restore_visible
+        self._narrow_sidebar_restore_visible = None
+        if restore is not None:
+            sidebar.set_visible(bool(restore))
+
     def _show_narrow_detail(self) -> None:
         if not self._narrow_master_detail:
             return
         self._narrow_detail_visible = True
+        self._set_narrow_detail_context(True)
         self.detail_back.set_visible(True)
         self.paned.set_position(0)
         self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD)
@@ -1129,6 +1154,7 @@ class MasterDetailPage(Gtk.Box):
         if not self._narrow_master_detail:
             return
         self._narrow_detail_visible = False
+        self._set_narrow_detail_context(False)
         self.detail_back.set_visible(False)
         max_position = int(self.paned.get_property("max-position"))
         if max_position > 0:
@@ -1721,6 +1747,7 @@ class MainWindow(Adw.ApplicationWindow):
         body.set_vexpand(True)
         root.append(body)
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.sidebar = sidebar
         sidebar.set_size_request(160, -1)
         add_css(sidebar, "sidebar")
         body.append(sidebar)
