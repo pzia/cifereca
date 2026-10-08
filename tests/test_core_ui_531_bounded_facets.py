@@ -27,12 +27,24 @@ def test_short_facet_is_unchanged():
     assert compact_facet_label("EPUB") == "EPUB"
 
 
-def test_narrow_layout_contract_keeps_facets_left_aligned_and_wrappable():
+def test_narrow_layout_contract_bounds_projected_facets_to_two_rows():
     source = open("src/cifereca/gui/book_widgets.py", encoding="utf-8").read()
     assert "self.facet_box.set_halign(Gtk.Align.FILL)" in source
     assert "self.facet_box.set_hexpand(True)" in source
-    assert "self.facet_box.set_min_children_per_line(1)" in source
-    assert "self.facet_box.set_max_children_per_line(4)" in source
+    assert "self.facet_box.set_homogeneous(True)" in source
+    assert "self.facet_box.set_min_children_per_line(3)" in source
+    assert "self.facet_box.set_max_children_per_line(3)" in source
+    assert "self.facet_box.set_column_spacing(4)" in source
+    assert "self.facet_box.set_row_spacing(4)" in source
+
+
+def test_clickable_facet_label_can_shrink_inside_bounded_columns():
+    source = open("src/cifereca/gui/book_widgets.py", encoding="utf-8").read()
+    assert "text.set_single_line_mode(True)" in source
+    assert "text.set_ellipsize(Pango.EllipsizeMode.END)" in source
+    assert "text.set_max_width_chars(LIST_FACET_MAX_CHARS)" in source
+    assert "text.set_hexpand(True)" in source
+    assert "tag.set_child(text)" in source
 
 
 def test_list_cell_bounds_legacy_author_and_source_labels():
