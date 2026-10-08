@@ -3,7 +3,7 @@
   "release": "0.9.44+dev.8",
   "packages": {
     "org.cifereca.provider.baen": {
-      "version": "0.1.8",
+      "version": "0.1.9",
       "name": "Baen"
     },
     "org.cifereca.ui.page.diagnostics": {
