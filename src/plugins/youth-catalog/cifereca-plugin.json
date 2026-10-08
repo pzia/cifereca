@@ -1,0 +1,38 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.youth-catalog",
+    "version": "0.1.0",
+    "name": "Jeunesse",
+    "publisher": "CIFERECA",
+    "plugin_api": ">=1.4,<2"
+  },
+  "categories": [
+    {
+      "id": "youth.source",
+      "display_name": "Source jeunesse",
+      "contract": "cifereca.youth-source/1",
+      "resolution": "all",
+      "description": "Sources jeunesse spécialisées exposant des résultats bibliographiques et des tranches d’âge attestées."
+    }
+  ],
+  "plugins": [
+    {
+      "id": "catalog.youth",
+      "type": "catalog.youth",
+      "version": "0.1.0",
+      "entrypoint": "youth_catalog:PLUGIN",
+      "display_name": "Jeunesse",
+      "description": "Catalogue jeunesse multi-source filtrable par âge et type d’âge.",
+      "help_text": "Socle sans UI ni collecte implicite : conserve les libellés d’âge source, normalise les bornes 0–17 ans, distingue intérêt/lecture/recommandé/éditeur/inféré, agrège uniquement sur preuve bibliographique forte et recherche dans le cache local. Les sources distantes ne sont interrogées que par action explicite.",
+      "enabled_by_default": false,
+      "priority": -50,
+      "instantiation": "singleton_public",
+      "capabilities": [
+        "youth.catalog",
+        "youth.filter.age",
+        "youth.source.aggregate"
+      ]
+    }
+  ]
+}

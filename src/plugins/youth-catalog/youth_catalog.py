@@ -1,0 +1,558 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
+import re
+from typing import Iterable, Mapping, Protocol, Sequence
+from urllib.parse import urlsplit, urlunsplit
+
+_WS = re.compile(r"\s+")
+_ISBN_CLEAN = re.compile(r"[^0-9Xx]")
+_RANGE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:[-–—]|à|to)\s*(\d{1,2})(?!\d)", re.I)
+_PLUS_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:\+|ans?\s+et\s+\+|years?\s+and\s+up)(?!\d)", re.I)
+_FROM_RE = re.compile(r"(?:à\s+partir\s+de|dès|from|ages?\s+from)\s*(\d{1,2})(?!\d)", re.I)
+_UP_TO_RE = re.compile(r"(?:jusqu[’']?à|up\s+to|under)\s*(\d{1,2})(?!\d)", re.I)
+_AGES_RE = re.compile(r"(?:ages?\s*)?(\d{1,2})\s*(?:ans?|years?)?(?!\d)", re.I)
+AGE_KINDS = {"interest", "reading", "recommended", "publisher", "inferred"}
+
+
+def _text(value: object) -> str:
+    return _WS.sub(" ", str(value or "").strip())
+
+
+def _fold(value: object) -> str:
+    return _text(value).casefold()
+
+
+def _field(value: object, name: str, default: object = "") -> object:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _iter_values(value: object) -> tuple[object, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        return (value,)
+    if isinstance(value, Mapping):
+        return tuple(value.values())
+    try:
+        return tuple(value)  # type: ignore[arg-type]
+    except TypeError:
+        return (value,)
+
+
+def _names(value: object) -> tuple[str, ...]:
+    out: list[str] = []
+    for raw in _iter_values(value):
+        if isinstance(raw, Mapping):
+            raw = raw.get("name") or raw.get("label") or ""
+        for part in str(raw or "").split(";"):
+            item = _text(part)
+            if item and item not in out:
+                out.append(item)
+    return tuple(out)
+
+
+def _tokens(value: object) -> tuple[str, ...]:
+    out: list[str] = []
+    for raw in _iter_values(value):
+        if isinstance(raw, Mapping):
+            raw = raw.get("name") or raw.get("label") or raw.get("value") or ""
+        for part in re.split(r"[,;|]", str(raw or "")):
+            item = _fold(part)
+            if item and item not in out:
+                out.append(item)
+    return tuple(out)
+
+
+def canonical_url(value: object) -> str:
+    raw = _text(value)
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+        port = parts.port
+    except ValueError:
+        return ""
+    scheme = parts.scheme.casefold()
+    if scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
+        return ""
+    host = parts.hostname.casefold()
+    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    netloc = host if port is None or default_port else f"{host}:{port}"
+    return urlunsplit((scheme, netloc, parts.path or "/", parts.query, ""))
+
+
+def normalize_isbn(value: object) -> str:
+    raw = _ISBN_CLEAN.sub("", _text(value)).upper()
+    if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
+        total = sum((10 - i) * int(d) for i, d in enumerate(raw[:9]))
+        total += 10 if raw[-1] == "X" else int(raw[-1])
+        return raw if total % 11 == 0 else ""
+    if len(raw) == 13 and raw.isdigit():
+        total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(raw))
+        return raw if total % 10 == 0 else ""
+    return ""
+
+
+def normalize_age_kind(value: object, *, label: str = "", inferred: bool = False) -> str:
+    if inferred:
+        return "inferred"
+    raw = _fold(value)
+    aliases = {
+        "interest": "interest", "interest age": "interest", "âge d’intérêt": "interest", "age d'intérêt": "interest",
+        "reading": "reading", "reading age": "reading", "âge de lecture": "reading", "age de lecture": "reading",
+        "recommended": "recommended", "recommendation": "recommended", "âge recommandé": "recommended",
+        "publisher": "publisher", "éditeur": "publisher", "editeur": "publisher",
+        "inferred": "inferred", "infered": "inferred",
+    }
+    if raw in aliases:
+        return aliases[raw]
+    low = _fold(label)
+    if "interest age" in low or "âge d’intérêt" in low or "age d'intérêt" in low:
+        return "interest"
+    if "reading age" in low or "âge de lecture" in low or "age de lecture" in low:
+        return "reading"
+    if "publisher" in low or "éditeur" in low or "editeur" in low:
+        return "publisher"
+    return "recommended"
+
+
+@dataclass(frozen=True, slots=True)
+class YouthAgeRange:
+    age_min: int
+    age_max: int | None = None
+    age_kind: str = "recommended"
+    source_label: str = ""
+    source_id: str = ""
+    confidence: float = 1.0
+    provenance: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.age_min < 18:
+            raise ValueError("age_min must be between 0 and 17")
+        if self.age_max is not None and not self.age_min <= self.age_max < 18:
+            raise ValueError("age_max must be between age_min and 17")
+        if self.age_kind not in AGE_KINDS:
+            raise ValueError("invalid age_kind")
+        if not 0.0 <= float(self.confidence) <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
+
+    def contains(self, age: int) -> bool:
+        return 0 <= int(age) < 18 and int(age) >= self.age_min and (self.age_max is None or int(age) <= self.age_max)
+
+
+def parse_age_label(
+    label: object,
+    *,
+    source_id: str = "",
+    age_kind: str = "",
+    inferred: bool = False,
+    confidence: float | None = None,
+) -> tuple[YouthAgeRange, ...]:
+    text = _text(label)
+    if not text:
+        return ()
+    kind = normalize_age_kind(age_kind, label=text, inferred=inferred)
+    conf = float(confidence) if confidence is not None else (0.55 if inferred else 1.0)
+    if re.search(r"\b(?:about|approx(?:\.|imately)?|environ|vers)\b", text, re.I):
+        conf = min(conf, 0.8)
+    match = _RANGE_RE.search(text)
+    if match:
+        lo, hi = int(match.group(1)), int(match.group(2))
+    else:
+        match = _FROM_RE.search(text) or _PLUS_RE.search(text)
+        if match:
+            lo, hi = int(match.group(1)), None
+        else:
+            match = _UP_TO_RE.search(text)
+            if match:
+                lo, hi = 0, int(match.group(1))
+            else:
+                match = _AGES_RE.search(text)
+                if not match:
+                    return ()
+                lo = hi = int(match.group(1))
+    if lo > 17:
+        return ()
+    if hi is not None:
+        hi = min(17, hi)
+        if hi < lo:
+            return ()
+    sid = _fold(source_id)
+    return (YouthAgeRange(
+        age_min=lo, age_max=hi, age_kind=kind, source_label=text, source_id=sid,
+        confidence=max(0.0, min(1.0, conf)), provenance=tuple(filter(None, (sid,))),
+    ),)
+
+
+def age_range_from_structured(value: object, *, source_id: str = "") -> YouthAgeRange | None:
+    if not isinstance(value, Mapping):
+        return None
+    label = _text(value.get("source_label") or value.get("label") or "")
+    inferred = bool(value.get("inferred"))
+    kind = normalize_age_kind(value.get("age_kind") or value.get("kind"), label=label, inferred=inferred)
+    try:
+        lo = int(value.get("age_min"))
+    except (TypeError, ValueError):
+        parsed = parse_age_label(label, source_id=source_id, age_kind=kind, inferred=inferred, confidence=value.get("confidence"))
+        return parsed[0] if parsed else None
+    try:
+        raw_max = value.get("age_max")
+        hi = int(raw_max) if raw_max not in (None, "") else None
+        confidence = float(value.get("confidence", 0.55 if inferred else 1.0))
+        sid = _fold(value.get("source_id") or source_id)
+        return YouthAgeRange(lo, hi, kind, label, sid, confidence, tuple(filter(None, (sid,))))
+    except (TypeError, ValueError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceInfo:
+    source_id: str
+    display_name: str
+    homepage_url: str = ""
+
+
+class YouthSource(Protocol):
+    def source_info(self) -> object: ...
+    def search(self, query: str, *, cursor: str | None = None, limit: int = 50) -> object: ...
+
+
+def source_info(source: object) -> SourceInfo:
+    method = getattr(source, "source_info", None)
+    if not callable(method):
+        raise TypeError("youth source must expose source_info()")
+    raw = method()
+    source_id = _fold(_field(raw, "source_id") or _field(raw, "id"))
+    display_name = _text(_field(raw, "display_name") or _field(raw, "name"))
+    homepage_url = canonical_url(_field(raw, "homepage_url") or _field(raw, "url"))
+    if not source_id or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,127}", source_id):
+        raise ValueError("invalid youth source_id")
+    if not display_name:
+        raise ValueError("youth source display_name is required")
+    return SourceInfo(source_id, display_name, homepage_url)
+
+
+def validate_source_contract(source: object) -> SourceInfo:
+    info = source_info(source)
+    if not callable(getattr(source, "search", None)):
+        raise TypeError("youth source must expose search()")
+    return info
+
+
+@dataclass(frozen=True, slots=True)
+class YouthBook:
+    record_id: str
+    source_id: str
+    title: str
+    authors: tuple[str, ...] = ()
+    identifiers: Mapping[str, str] = field(default_factory=dict)
+    notice_url: str = ""
+    friendly_url: str = ""
+    age_ranges: tuple[YouthAgeRange, ...] = ()
+    language: str = ""
+    formats: tuple[str, ...] = ()
+    book_type: str = ""
+    themes: tuple[str, ...] = ()
+    provenance: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class YouthMatch:
+    status: str
+    score: int
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class IngestReport:
+    identity_id: str
+    source_id: str
+    accepted: int = 0
+    rejected: int = 0
+    errors: tuple[str, ...] = ()
+    next_cursor: str = ""
+    fresh_until: str = ""
+
+
+def _extract_age_ranges(raw: object, source_id: str) -> tuple[YouthAgeRange, ...]:
+    rows: list[YouthAgeRange] = []
+    for value in _iter_values(_field(raw, "age_ranges", ())):
+        item = age_range_from_structured(value, source_id=source_id)
+        if item is not None and item not in rows:
+            rows.append(item)
+    labels: list[tuple[str, object]] = []
+    for name in ("age_label", "recommended_age", "reading_age", "interest_age", "publisher_age"):
+        value = _field(raw, name, "")
+        if value not in (None, ""):
+            labels.append((name, value))
+    metadata = _field(raw, "metadata", {})
+    if isinstance(metadata, Mapping):
+        for name in ("age_label", "recommended_age", "reading_age", "interest_age", "publisher_age"):
+            value = metadata.get(name)
+            if value not in (None, ""):
+                labels.append((name, value))
+    for name, value in labels:
+        kind = {"reading_age": "reading", "interest_age": "interest", "publisher_age": "publisher"}.get(name, "recommended")
+        for label in _iter_values(value):
+            for item in parse_age_label(label, source_id=source_id, age_kind=kind):
+                if item not in rows:
+                    rows.append(item)
+    return tuple(rows)
+
+
+def normalize_record(raw: object, *, source_id: str) -> YouthBook:
+    title = _text(_field(raw, "title"))
+    if not title:
+        raise ValueError("title is required")
+    authors = _names(_field(raw, "authors") or _field(raw, "author"))
+    raw_ids = _field(raw, "identifiers", {})
+    identifiers: dict[str, str] = {}
+    if isinstance(raw_ids, Mapping):
+        for key, value in raw_ids.items():
+            if _text(value):
+                identifiers[str(key).casefold()] = _text(value)
+    for name in ("isbn", "isbn10", "isbn13"):
+        value = _field(raw, name, "")
+        isbn = normalize_isbn(value) if value else ""
+        if isbn:
+            identifiers["isbn"] = isbn
+            break
+    if "isbn" in identifiers:
+        isbn = normalize_isbn(identifiers["isbn"])
+        if isbn:
+            identifiers["isbn"] = isbn
+        else:
+            identifiers.pop("isbn", None)
+    source_item = _text(_field(raw, "source_item_id") or _field(raw, "item_id") or _field(raw, "record_id"))
+    if source_item:
+        identifiers.setdefault("source_item_id", source_item)
+    sid = _fold(source_id)
+    identifiers.setdefault("provider", sid)
+    notice_url = canonical_url(_field(raw, "notice_url") or _field(raw, "canonical_url"))
+    friendly_url = canonical_url(_field(raw, "friendly_url") or notice_url)
+    record_id = _text(_field(raw, "record_id") or _field(raw, "item_id") or source_item or notice_url or title)
+    return YouthBook(
+        record_id=record_id, source_id=sid, title=title, authors=authors, identifiers=identifiers,
+        notice_url=notice_url, friendly_url=friendly_url, age_ranges=_extract_age_ranges(raw, sid),
+        language=_fold(_field(raw, "language") or _field(raw, "lang")),
+        formats=_tokens(_field(raw, "formats") or _field(raw, "format")),
+        book_type=_fold(_field(raw, "book_type") or _field(raw, "type")),
+        themes=_tokens(_field(raw, "themes") or _field(raw, "subjects") or _field(raw, "subject")),
+        provenance=(sid,),
+    )
+
+
+def bibliographic_match(left: YouthBook, right: YouthBook) -> YouthMatch:
+    left_isbn = normalize_isbn(left.identifiers.get("isbn", ""))
+    right_isbn = normalize_isbn(right.identifiers.get("isbn", ""))
+    if left_isbn and left_isbn == right_isbn:
+        return YouthMatch("confirmed", 100, (f"isbn:{left_isbn}",))
+    if left.notice_url and left.notice_url == right.notice_url:
+        return YouthMatch("confirmed", 90, ("notice-url",))
+    lp, rp = _fold(left.identifiers.get("provider")), _fold(right.identifiers.get("provider"))
+    li, ri = _text(left.identifiers.get("source_item_id")), _text(right.identifiers.get("source_item_id"))
+    if lp and lp == rp and li and li == ri:
+        return YouthMatch("confirmed", 85, ("source-item",))
+    if _fold(left.title) == _fold(right.title) and _fold(left.title):
+        la = {_fold(value) for value in left.authors if _fold(value)}
+        ra = {_fold(value) for value in right.authors if _fold(value)}
+        if la & ra:
+            return YouthMatch("suggested", 60, ("title-exact", "author-exact"))
+    return YouthMatch("none", 0, ())
+
+
+def _merge(left: YouthBook, right: YouthBook) -> YouthBook:
+    identifiers = dict(left.identifiers)
+    for key, value in right.identifiers.items():
+        identifiers.setdefault(key, value)
+    return replace(
+        left,
+        authors=tuple(dict.fromkeys(left.authors + right.authors)),
+        identifiers=identifiers,
+        friendly_url=left.friendly_url or right.friendly_url,
+        notice_url=left.notice_url or right.notice_url,
+        age_ranges=tuple(dict.fromkeys(left.age_ranges + right.age_ranges)),
+        language=left.language or right.language,
+        formats=tuple(dict.fromkeys(left.formats + right.formats)),
+        book_type=left.book_type or right.book_type,
+        themes=tuple(dict.fromkeys(left.themes + right.themes)),
+        provenance=tuple(dict.fromkeys(left.provenance + right.provenance)),
+    )
+
+
+def merge_confirmed(records: Sequence[YouthBook]) -> tuple[YouthBook, ...]:
+    groups: list[YouthBook] = []
+    for record in records:
+        for index, current in enumerate(groups):
+            if bibliographic_match(current, record).status == "confirmed":
+                groups[index] = _merge(current, record)
+                break
+        else:
+            groups.append(record)
+    return tuple(groups)
+
+
+def _extract_page(value: object) -> tuple[Iterable[object], str, int]:
+    if isinstance(value, Mapping):
+        rows = value.get("items") or value.get("results") or ()
+        cursor = _text(value.get("next_cursor"))
+        try:
+            fresh = max(0, int(value.get("fresh_for_seconds") or 0))
+        except (TypeError, ValueError):
+            fresh = 0
+        return rows, cursor, fresh
+    return value if value is not None else (), "", 0
+
+
+class YouthCatalogIndex:
+    def __init__(self) -> None:
+        self._sources: dict[str, dict[str, tuple[YouthBook, ...]]] = {}
+        self._merged: dict[str, tuple[YouthBook, ...]] = {}
+        self._fresh_until: dict[tuple[str, str], str] = {}
+
+    @staticmethod
+    def identity_key(identity_id: object) -> str:
+        return _text(identity_id) or "default"
+
+    def ingest(
+        self,
+        identity_id: str,
+        source_id: str,
+        rows: Iterable[object],
+        *,
+        replace_source: bool = True,
+        fresh_for_seconds: int = 0,
+    ) -> IngestReport:
+        identity = self.identity_key(identity_id)
+        sid = _fold(source_id)
+        if not sid:
+            raise ValueError("source_id is required")
+        accepted: list[YouthBook] = []
+        errors: list[str] = []
+        for index, raw in enumerate(rows or ()):
+            try:
+                accepted.append(normalize_record(raw, source_id=sid))
+            except Exception as exc:
+                errors.append(f"item[{index}]: {exc}")
+        per_source = self._sources.setdefault(identity, {})
+        per_source[sid] = tuple(accepted) if replace_source else per_source.get(sid, ()) + tuple(accepted)
+        self._merged.pop(identity, None)
+        fresh_until = ""
+        if fresh_for_seconds > 0:
+            until = datetime.now(timezone.utc) + timedelta(seconds=int(fresh_for_seconds))
+            fresh_until = until.replace(microsecond=0).isoformat()
+            self._fresh_until[(identity, sid)] = fresh_until
+        return IngestReport(identity, sid, len(accepted), len(errors), tuple(errors), fresh_until=fresh_until)
+
+    def fresh_until(self, identity_id: str, source_id: str) -> str:
+        return self._fresh_until.get((self.identity_key(identity_id), _fold(source_id)), "")
+
+    def entries(self, identity_id: str) -> tuple[YouthBook, ...]:
+        identity = self.identity_key(identity_id)
+        if identity not in self._merged:
+            rows = [record for records in self._sources.get(identity, {}).values() for record in records]
+            self._merged[identity] = merge_confirmed(rows)
+        return self._merged[identity]
+
+    def search(
+        self,
+        identity_id: str,
+        query: str = "",
+        *,
+        age: int | None = None,
+        age_kind: str = "",
+        source_id: str = "",
+        language: str = "",
+        format: str = "",
+        book_type: str = "",
+        themes: Iterable[str] = (),
+        include_inferred: bool = True,
+    ) -> tuple[YouthBook, ...]:
+        q, source, lang, fmt, typ = _fold(query), _fold(source_id), _fold(language), _fold(format), _fold(book_type)
+        kind = normalize_age_kind(age_kind) if age_kind else ""
+        wanted_themes = {_fold(value) for value in themes if _fold(value)}
+        out: list[YouthBook] = []
+        for book in self.entries(identity_id):
+            if q and q not in " ".join((book.title, *book.authors, *book.themes)).casefold():
+                continue
+            if source and source not in book.provenance:
+                continue
+            if lang and book.language != lang:
+                continue
+            if fmt and fmt not in book.formats:
+                continue
+            if typ and book.book_type != typ:
+                continue
+            if wanted_themes and not wanted_themes.issubset(set(book.themes)):
+                continue
+            if age is not None:
+                matches = [
+                    rng for rng in book.age_ranges
+                    if rng.contains(int(age)) and (not kind or rng.age_kind == kind)
+                    and (include_inferred or rng.age_kind != "inferred")
+                ]
+                if not matches:
+                    continue
+            elif kind and not any(rng.age_kind == kind for rng in book.age_ranges):
+                continue
+            out.append(book)
+        return tuple(out)
+
+    def clear_identity(self, identity_id: str) -> None:
+        identity = self.identity_key(identity_id)
+        self._sources.pop(identity, None)
+        self._merged.pop(identity, None)
+        for key in [key for key in self._fresh_until if key[0] == identity]:
+            self._fresh_until.pop(key, None)
+
+
+class YouthCatalogPlugin:
+    def __init__(self) -> None:
+        self.index = YouthCatalogIndex()
+        self.context: object | None = None
+
+    def activate(self, context: object) -> None:
+        self.context = context
+
+    def deactivate(self) -> None:
+        self.context = None
+
+    def ingest(self, identity_id: str, source_id: str, rows: Iterable[object], **options: object) -> IngestReport:
+        return self.index.ingest(identity_id, source_id, rows, **options)
+
+    def search_cached(self, identity_id: str, query: str = "", **filters: object) -> tuple[YouthBook, ...]:
+        """Search cached rows only. Never calls a remote source."""
+        return self.index.search(identity_id, query, **filters)
+
+    def collect_source(
+        self,
+        identity_id: str,
+        source: object,
+        query: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+        replace_source: bool = True,
+    ) -> IngestReport:
+        try:
+            info = validate_source_contract(source)
+        except Exception as exc:
+            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
+        bounded = max(1, min(int(limit), 500))
+        try:
+            raw = source.search(_text(query), cursor=cursor, limit=bounded)  # type: ignore[attr-defined]
+            rows, next_cursor, fresh = _extract_page(raw)
+            report = self.index.ingest(
+                identity_id, info.source_id, rows,
+                replace_source=replace_source, fresh_for_seconds=fresh,
+            )
+            return replace(report, next_cursor=next_cursor)
+        except Exception as exc:
+            return IngestReport(self.index.identity_key(identity_id), info.source_id, rejected=1, errors=(f"search: {exc}",))
+
+
+PLUGIN = YouthCatalogPlugin()
