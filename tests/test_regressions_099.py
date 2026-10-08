@@ -66,7 +66,7 @@ class Widget:
     @classmethod
     def new_from_strings(cls,*a):return cls()
     def __getattr__(self,name):
-        if name.startswith('set_'):return lambda v:self.props.__setitem__(name[4:],v)
+        if name.startswith('set_'):return lambda *values:self.props.__setitem__(name[4:],values[0] if len(values)==1 else values)
         if name=='start':return lambda:None
         raise AttributeError(name)
 
