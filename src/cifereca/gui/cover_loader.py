@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import base64
+import binascii
 from concurrent.futures import ThreadPoolExecutor
 from .cover_preview import create_preview, preview_path
 import hashlib
@@ -108,6 +110,8 @@ class CoverLoader:
             "ui_decode_slow": 0,
             "deduplicated": 0,
             "cancelled_callbacks": 0,
+            "data_url_ok": 0,
+            "data_url_invalid": 0,
         }
         self.preview_root=self.root/"previews-v1";self.preview_root.mkdir(exist_ok=True)
         self._preview_pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix="cifereca-preview")
@@ -181,6 +185,35 @@ class CoverLoader:
             return False
         return False
 
+    @staticmethod
+    def _decode_data_url(url: str) -> bytes | None:
+        """Decode a bounded, supported image data URI without network access."""
+        try:
+            header, payload = url.split(",", 1)
+        except ValueError:
+            return None
+        metadata = header[5:].split(";") if header.startswith("data:") else []
+        if not metadata:
+            return None
+        mime = metadata[0].strip().lower()
+        supported = {
+            "image/jpeg", "image/jpg", "image/png", "image/gif",
+            "image/webp", "image/svg+xml",
+        }
+        flags = {part.strip().lower() for part in metadata[1:] if part.strip()}
+        if mime not in supported or "base64" not in flags:
+            return None
+        max_encoded = ((MAX_IMAGE + 2) // 3) * 4 + 4
+        if len(payload) > max_encoded:
+            return None
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except (ValueError, binascii.Error):
+            return None
+        if not data or len(data) > MAX_IMAGE:
+            return None
+        return data if CoverLoader._supported_image_bytes(data[:1024]) else None
+
     def _valid_cache_file(self, path: Path) -> bool:
         try:
             if not path.exists() or path.stat().st_size <= 0:
@@ -239,6 +272,46 @@ class CoverLoader:
         request = CoverRequest(holder)
         if not url:
             callback(None)
+            return request
+
+        if url.startswith("data:"):
+            path = self._path(url)
+            with self._lock:
+                self._stats["requested"] += 1
+            if not force and path.exists():
+                if self._valid_cache_file(path):
+                    with self._lock:
+                        self._stats["cache_hit_valid"] += 1
+                    callback(path)
+                    self._maybe_report()
+                    return request
+                self.invalidate(path)
+
+            data = self._decode_data_url(url)
+            if data is None:
+                with self._lock:
+                    self._stats["data_url_invalid"] += 1
+                callback(None)
+                self._maybe_report()
+                return request
+            try:
+                tmp = path.with_suffix(".tmp")
+                tmp.write_bytes(data)
+                tmp.replace(path)
+            except OSError:
+                try:
+                    path.with_suffix(".tmp").unlink(missing_ok=True)
+                except OSError:
+                    pass
+                with self._lock:
+                    self._stats["data_url_invalid"] += 1
+                callback(None)
+                self._maybe_report()
+                return request
+            with self._lock:
+                self._stats["data_url_ok"] += 1
+            callback(path)
+            self._maybe_report()
             return request
 
         if url.startswith('file:'):
@@ -415,6 +488,8 @@ class CoverLoader:
             + int(snapshot["download_ok"])
             + int(snapshot["download_failed"])
             + int(snapshot["decode_failed"])
+            + int(snapshot["data_url_ok"])
+            + int(snapshot["data_url_invalid"])
         )
         if completed - self._last_report_total < 20:
             return
