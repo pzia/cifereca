@@ -62,6 +62,10 @@ class KoboSession(ProviderSession):
         self.supports_acquisition_acsm = False
 
     def connect(self) -> list[Account]:
+        self.capability_names = set()
+        self.capability_details = {}
+        self.supports_acquisition_acsm = False
+        self.supports_acquisition_display_profile = False
         status = self.client.status(authenticated=False)
         self.api_version = str(status.get("api_version") or status.get("version") or "")
         self.vault_release = str(status.get("release") or "").strip()
