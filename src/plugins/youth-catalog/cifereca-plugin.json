@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-catalog",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "name": "Jeunesse",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -20,11 +20,11 @@
     {
       "id": "catalog.youth",
       "type": "catalog.youth",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "entrypoint": "youth_catalog:PLUGIN",
       "display_name": "Jeunesse",
       "description": "Catalogue jeunesse multi-source filtrable par âge et type d’âge.",
-      "help_text": "Socle sans UI ni collecte implicite : conserve les libellés d’âge source, normalise les bornes 0–17 ans, distingue intérêt/lecture/recommandé/éditeur/inféré, agrège uniquement sur preuve bibliographique forte et recherche dans le cache local. Les sources distantes ne sont interrogées que par action explicite.",
+      "help_text": "Moteur du catalogue Jeunesse : conserve les libellés d’âge source, distingue intérêt/lecture/recommandé/éditeur/inféré, agrège uniquement sur preuve bibliographique forte et recherche dans le cache local. Aucune collecte distante implicite.",
       "enabled_by_default": false,
       "priority": -50,
       "instantiation": "singleton_public",
@@ -32,6 +32,33 @@
         "youth.catalog",
         "youth.filter.age",
         "youth.source.aggregate"
+      ]
+    },
+    {
+      "id": "ui.page.youth",
+      "type": "ui.page",
+      "version": "0.2.0",
+      "entrypoint": "youth_page:PLUGIN",
+      "display_name": "Jeunesse — recherche",
+      "description": "Recherche spécialisée par âge sur le cache Jeunesse et collecte explicite des sources activées.",
+      "help_text": "Page proche de Recherche avec filtres âge/type d’âge/source/langue/format/type/thèmes. Les changements de filtres ne lisent que le cache. Une source distante n’est interrogée qu’avec « Collecter cette source » ou « Plus de résultats ».",
+      "enabled_by_default": false,
+      "priority": -50,
+      "instantiation": "singleton_public",
+      "requires_brokers": [
+        "identities",
+        "tasks"
+      ],
+      "requires_contracts": [
+        {
+          "category": "youth.source",
+          "contract": "cifereca.youth-source",
+          "version": ">=1,<2",
+          "mode": "optional"
+        }
+      ],
+      "capabilities": [
+        "youth.ui.search"
       ]
     }
   ]
