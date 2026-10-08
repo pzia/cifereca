@@ -35,6 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          mkdir -p simulation/recipes simulation/profiles
           cp _ux_recipe/simulation/datasetctl.py simulation/datasetctl.py
           cp _ux_recipe/simulation/profiles/ux-search-list.toml simulation/profiles/ux-search-list.toml
           cp _ux_recipe/simulation/recipes/search_list_fixture.py simulation/recipes/search_list_fixture.py
