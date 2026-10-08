@@ -143,10 +143,10 @@ def book_access_facts(
             add("local", "library.local")
         else:
             placements = row.get("placements")
-            if isinstance(placements, (list, tuple)) and placements:
-                # A merged book may have one local copy and several remote
-                # rights belonging to other identities. Only a present
-                # placement proves local access for the requested identity.
+            if isinstance(placements, (list, tuple)):
+                # An explicit placement inventory is authoritative even when
+                # empty: a stale catalogue row must never imply a local file.
+                # A merged book may hold copies for different identities.
                 if any(
                     isinstance(p, Mapping)
                     and p.get("identity_id") == identity_id

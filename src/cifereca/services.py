@@ -3361,7 +3361,7 @@ class LibraryService:
             meta = dict(row.get("metadata") or {})
             return {
                 "placement_id": str(row.get("placement_id") or ""),
-                "identity_id": row.get("identity_id"),
+                "identity_id": row.get("identity_id") or default_identity_id,
                 "provider_id": str(row.get("provider_id") or "local"),
                 "source_item_id": str(row.get("source_item_id") or ""),
                 "kind": str(meta.get("placement_kind") or ("storage" if meta.get("storage_target_id") else "library")),
