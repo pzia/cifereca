@@ -34,7 +34,7 @@ jobs:
   ci:
     name: PR CI
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -118,6 +118,18 @@ jobs:
             dataset=true
           fi
 
+          if matches '^\.github/workflows/'; then
+            core=true
+            core_mode=full
+            core_targets=tests
+            plugins=true
+            plugin_scope_all=true
+            packaging=true
+            install=true
+            gui=true
+            dataset=true
+          fi
+
           if [[ "$plugins" == true && "$plugin_scope_all" != true ]]; then
             plugin_targets="$(
               awk -F/ '/^src\/plugins\/[^/]+\// {print $1 "/" $2 "/" $3}' "$changed_file" |
@@ -160,7 +172,7 @@ jobs:
       - name: Install Core test dependencies
         if: steps.scope.outputs.core == 'true'
         run: |
-          python -m pip install --disable-pip-version-check -e ".[dev]" "Pillow>=10,<12"
+          python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12"
           if [[ "${{ steps.scope.outputs.plugins }}" == "true" ]]; then
             python -m pip install --disable-pip-version-check "PyMuPDF>=1.26,<2"
           fi
