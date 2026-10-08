@@ -21,6 +21,8 @@ on:
       - "scripts/verify-packaging.py"
       - "scripts/package-all-in-one.py"
       - "scripts/package-dev-snapshot.py"
+      - "scripts/package_partial_plugins.py"
+      - "scripts/test_partial_plugin_release.py"
       - ".github/workflows/**"
   workflow_dispatch:
 
@@ -99,7 +101,7 @@ jobs:
             plugin_scope_all=true
           fi
 
-          if matches '^(src/plugins/|scripts/(plugin_packaging\.py|test_plugin_packaging\.py|verify-packaging\.py|package-all-in-one\.py|package-dev-snapshot\.py)$)'; then
+          if matches '^(src/plugins/|scripts/(plugin_packaging\.py|test_plugin_packaging\.py|verify-packaging\.py|package-all-in-one\.py|package-dev-snapshot\.py|package_partial_plugins\.py|test_partial_plugin_release\.py)$)'; then
             packaging=true
             plugins=true
           fi
@@ -208,7 +210,7 @@ jobs:
         if: steps.scope.outputs.packaging == 'true'
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
 
       - name: Smoke installed Core wheel
         if: steps.scope.outputs.install == 'true'
