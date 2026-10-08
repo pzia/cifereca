@@ -21,6 +21,22 @@ def test_deduplicates_attested_same_isbn_and_preserves_best_availability():
     assert set(result[0].subjects) == {"sf", "science-fiction"}
 
 
+def test_invalid_isbn_is_not_used_as_deduplication_key():
+    result = deduplicate_books([
+        book("a", "Alpha", "Auteur A", identifiers={"isbn": "9780000000000"}),
+        book("b", "Beta", "Auteur B", identifiers={"isbn": "9780000000000"}),
+    ])
+    assert len(result) == 2
+
+
+def test_deduplicates_title_author_without_stable_identifier():
+    result = deduplicate_books([
+        book("a", "Même livre", "Même auteur"),
+        book("b", "Même livre", "Même auteur"),
+    ])
+    assert len(result) == 1
+
+
 def test_does_not_merge_title_only_without_author_or_identifier():
     result = deduplicate_books([book("", "Homonyme", ""), book("", "Homonyme", "")])
     assert len(result) == 2
@@ -82,7 +98,8 @@ def test_project_mode_prefers_shared_subject_and_forward_progression():
     seed = next(key for key, value in graph.books.items() if value.title == "Intro")
     ranked = graph.rank(seed, mode="project")
     assert {item.book.title for item in ranked} == {"Suite", "Encore intro"}
-    assert any(reason.startswith("progression:+") for reason in ranked[0].reasons)
+    assert ranked[0].book.title == "Suite"
+    assert "progression:+30" in ranked[0].reasons
 
 
 def test_mood_mode_marks_inferred_attributes_and_ignores_unqualified():
