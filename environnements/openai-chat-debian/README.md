@@ -52,6 +52,7 @@ command -v ffmpeg || true
 Si `bootstrap.py` échoue sur la résolution DNS, construire le cache sur un
 runner GitHub plutôt que d'installer autre chose localement. Le runner doit
 être Debian 13 pour respecter Python 3.13 et les paquets de cette recette.
+Le modèle prêt à copier est `github-cache-relay.yml.example` dans ce répertoire.
 
 Séquence de relais recommandée :
 
@@ -144,17 +145,28 @@ python3 simulation/datasetctl.py summary ux-small
 ```
 
 Le profil fournit les faux services, les EPUB et les variables XDG. La recette
-GTK fournit Xvfb/D-Bus/GTK. Pour vérifier l'intégration sans vidéo :
+GTK fournit Xvfb/D-Bus/GTK.
+
+`datasetctl snapshot` cible encore le harnais historique à `.venv/bin/python` ;
+pour cette recette Debian 13, utiliser directement `datasetctl exec` avec
+`headless` et `capture_app.py`. Exemple de screenshot réel :
 
 ```bash
-export CIFERECA_GTK_TEST_HARNESS="$PWD/environnements/openai-chat-debian"
+mkdir -p evidence
+REPO_ROOT="$PWD"
 
-python3 simulation/datasetctl.py snapshot ux-small \
-  --harness "$CIFERECA_GTK_TEST_HARNESS" \
-  --out /tmp/cifereca-ux-small.png \
-  --width 1300 --height 850 --wait 4
+python3 simulation/datasetctl.py exec ux-small -- \
+  env REPO_ROOT="$REPO_ROOT" \
+  environnements/openai-chat-debian/headless \
+  --screen 1300x850x24 -- \
+  "$REPO_ROOT/environnements/openai-chat-debian/gtk-python" \
+  "$REPO_ROOT/environnements/openai-chat-debian/capture_app.py" \
+  --wait 4 \
+  --out "$REPO_ROOT/evidence/ux-small.png" \
+  --cwd "$REPO_ROOT" \
+  -- \
+  python3 "$REPO_ROOT/simulation/datasetctl.py" cifereca ux-small --verbose
 ```
-
 Pour une vidéo, vérifier d'abord que `ffmpeg` est disponible sur l'hôte. Le
 principe est de démarrer FFmpeg **dans le même `headless`** que Cifereca : il
 hérite ainsi du même `DISPLAY` et du même `XAUTHORITY`. `capture_app.py` lance
