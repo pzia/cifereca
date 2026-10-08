@@ -121,6 +121,11 @@ class KoboCatalogService:
     def search(self, query: str, *, field: str = "all", limit: int = 50, page: int = 0) -> list[SearchResult]:
         self.last_search_rejections = []
         payload = self.client.search(query, field=field, scope="all", limit=limit, page=page)
+        self.last_search_rejections.extend(
+            dict(row)
+            for row in getattr(self.client, "last_search_merge_rejections", ())
+            if isinstance(row, dict)
+        )
         items = payload.get("items")
         if not isinstance(items, list):
             return []
