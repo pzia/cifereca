@@ -91,6 +91,72 @@ def test_connect_keeps_account_when_no_explicit_disabled_signal(monkeypatch):
         session.close()
 
 
+def test_connect_falls_back_to_dilicom_summary_when_syracuse_is_unavailable(monkeypatch):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    monkeypatch.setattr(session.client, "login", lambda username, password: {"success": True})
+    attempts = []
+
+    def summary(provider, uid):
+        attempts.append((provider, uid))
+        if provider == "SYRACUSE":
+            raise RuntimeError("syracuse unavailable")
+        return {"DisplayName": "Lecteur numérique", "Barcode": "456", "Status": "active"}
+
+    monkeypatch.setattr(session.client, "summary", summary)
+    monkeypatch.setattr(session.client, "pairings", lambda: [])
+
+    try:
+        accounts = session.connect()
+
+        assert attempts == [("SYRACUSE", ""), ("DILICOM", "")]
+        assert len(accounts) == 1
+        assert accounts[0].display_name == "Lecteur numérique"
+        assert session.connected is True
+        assert session.account_status == {"usable": True, "reason": None}
+        assert any(
+            args[:3] == ("API", "summary SYRACUSE", "error")
+            and kwargs.get("detail", {}).get("upstream") == "SYRACUSE"
+            and kwargs.get("detail", {}).get("error") == "RuntimeError"
+            and "message" not in kwargs.get("detail", {})
+            for args, kwargs in diagnostics.rows
+        )
+    finally:
+        session.close()
+
+
+def test_connect_preserves_first_summary_error_when_both_backends_fail(monkeypatch):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    monkeypatch.setattr(session.client, "login", lambda username, password: {"success": True})
+    attempts = []
+
+    def summary(provider, uid):
+        attempts.append((provider, uid))
+        raise RuntimeError(f"{provider} unavailable")
+
+    monkeypatch.setattr(session.client, "summary", summary)
+    pairings_called = []
+    monkeypatch.setattr(session.client, "pairings", lambda: pairings_called.append(True) or [])
+
+    try:
+        with pytest.raises(RuntimeError, match="SYRACUSE unavailable"):
+            session.connect()
+
+        assert attempts == [("SYRACUSE", ""), ("DILICOM", "")]
+        assert pairings_called == []
+        assert session.connected is False
+        errors = [
+            kwargs.get("detail", {})
+            for args, kwargs in diagnostics.rows
+            if args[:2] in {("API", "summary SYRACUSE"), ("API", "summary DILICOM")}
+        ]
+        assert [row.get("upstream") for row in errors] == ["SYRACUSE", "DILICOM"]
+        assert all("message" not in row for row in errors)
+    finally:
+        session.close()
+
+
 def test_unknown_status_does_not_false_positive():
     session = _session()
     try:

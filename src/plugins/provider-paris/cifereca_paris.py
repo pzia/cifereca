@@ -157,7 +157,30 @@ class ParisProviderSession(ProviderSession):
         if not username or not password:
             raise ProviderConfigurationError("Bibliothèques de Paris : identifiant et mot de passe requis")
         self.client.login(username, password)
-        summary = self.client.summary("SYRACUSE", "")
+        summary: dict[str, Any] | None = None
+        first_summary_error: Exception | None = None
+        for upstream in ("SYRACUSE", "DILICOM"):
+            try:
+                summary = self.client.summary(upstream, "")
+                break
+            except Exception as exc:
+                if first_summary_error is None:
+                    first_summary_error = exc
+                try:
+                    self.diagnostics.add(
+                        "API", f"summary {upstream}", "error",
+                        detail={
+                            "provider": self.provider_id,
+                            "credential_id": self.credential_id,
+                            "upstream": upstream,
+                            "error": type(exc).__name__,
+                        },
+                    )
+                except Exception:
+                    pass
+        if summary is None:
+            assert first_summary_error is not None
+            raise first_summary_error
         unusable_reason = self._account_unusable_reason(summary)
         if unusable_reason:
             self.account_status = {"usable": False, "reason": unusable_reason}
