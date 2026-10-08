@@ -100,10 +100,13 @@ def parse_direct_record(row: object, *, olid: str) -> "BibliographyRecord | None
             if isbn and isbn not in isbns:
                 isbns.append(isbn)
     languages = []
-    for value in _values(row.get("languages"), limit=12):
-        code = value.rstrip("/").split("/")[-1]
-        if code and code not in languages:
-            languages.append(code)
+    raw_languages = row.get("languages")
+    if isinstance(raw_languages, (list, tuple)):
+        for value in raw_languages[:12]:
+            key = _text(value.get("key")) if isinstance(value, Mapping) else _text(value)
+            code = key.rstrip("/").split("/")[-1]
+            if code and code not in languages:
+                languages.append(code)
     authors = []
     for value in row.get("authors", ()) if isinstance(row.get("authors"), (list, tuple)) else ():
         if isinstance(value, Mapping):
