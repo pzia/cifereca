@@ -3530,12 +3530,26 @@ class MainWindow(Adw.ApplicationWindow):
         return [(f.field,f.label,f.value) for f in facets_for_book(item,self.service.provider_display_name)]
 
     def _attach_row_facets(self, rows, objects, controls):
-        from .book_facets import facets_for_book
-        allowed = {'format': 0, 'author': 1, 'collection': 2, 'source': 3}
+        from .book_facets import facets_for_book, project_list_facets
+        allowed = {'author': 0, 'format': 1, 'language': 2, 'collection': 3, 'source': 4}
         for row in rows:
-            facets=[facet for facet in facets_for_book(objects.get(row.key,{}),self.service.provider_display_name) if facet.field in allowed]
+            facets=[
+                facet for facet in facets_for_book(
+                    objects.get(row.key,{}),
+                    self.service.provider_display_name,
+                )
+                if facet.field in allowed
+            ]
             facets.sort(key=lambda facet:(allowed[facet.field], facet.label.casefold()))
-            row.tags=[(facet,lambda _b,f=facet.field,text=facet.value:self._search_facet(f,text,controls)) for facet in facets]
+            facets=project_list_facets(facets)
+            row.tags=[
+                (
+                    facet,
+                    None if facet.field=='_overflow' else
+                    (lambda _b,f=facet.field,text=facet.value:self._search_facet(f,text,controls)),
+                )
+                for facet in facets
+            ]
             row.author_actions=[];row.source_action=None;row.facet_actions=[]
 
 
