@@ -222,6 +222,7 @@ class BookListItem(GObject.Object):
         action_label: str | None = None,
         action_callback: Callable[[Gtk.Button], None] | None = None,
         action_icon_name: str | None = None,
+        badge_style: str | None = None,
     ):
         super().__init__()
         self.key = key
@@ -229,6 +230,7 @@ class BookListItem(GObject.Object):
         self.subtitle = subtitle or ""
         self.meta = meta or ""
         self.badge = badge or ""
+        self.badge_style = str(badge_style or "")
         self.thumbnail_url = thumbnail_url
         self.cover_provider = cover_provider
         self.cover_record_id = cover_record_id
@@ -372,6 +374,11 @@ class BookListCell(Gtk.Box):
         self.meta_label.set_label(meta_text)
         self.meta_label.set_visible(bool(meta_text))
         self._source_callback = getattr(item, "source_action", None)
+        for css_class in ("loan-overdue", "loan-imminent", "loan-normal"):
+            self.badge_label.remove_css_class(css_class)
+        badge_style = str(getattr(item, "badge_style", "") or "")
+        if badge_style:
+            self.badge_label.add_css_class(badge_style)
         if self._source_callback:
             self.badge_label.set_markup('<a href="source">' + GLib.markup_escape_text(item.badge) + '</a>')
         else:
@@ -429,6 +436,8 @@ class BookListCell(Gtk.Box):
         self.subtitle_label.set_label("")
         self.meta_label.set_label("")
         self.badge_label.set_label("")
+        for css_class in ("loan-overdue", "loan-imminent", "loan-normal"):
+            self.badge_label.remove_css_class(css_class)
         self._action_callback = None
         self._source_callback = None
         self.author_box.set_visible(False)

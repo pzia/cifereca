@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import date, datetime
 
 
 LOAN_FILTER_LABELS = {
@@ -48,3 +50,47 @@ def loan_context_label(
     if language_filtered:
         return f"{visible} affiché(s) · {scope} · {total} prêts"
     return f"{scope} · {total} prêts"
+
+
+@dataclass(frozen=True)
+class LoanDuePresentation:
+    label: str
+    style: str
+    sort_key: tuple[int, int]
+
+
+def loan_due_presentation(
+    due_at: str | None,
+    *,
+    is_late: bool = False,
+    today: date | None = None,
+) -> LoanDuePresentation:
+    current_day = today or date.today()
+    due_day = None
+    if due_at:
+        try:
+            parsed = datetime.fromisoformat(str(due_at).replace("Z", "+00:00"))
+            due_day = parsed.astimezone().date() if parsed.tzinfo is not None else parsed.date()
+        except (TypeError, ValueError):
+            due_day = None
+
+    if due_day is None:
+        if is_late:
+            return LoanDuePresentation("En retard", "loan-overdue", (0, 0))
+        return LoanDuePresentation("Échéance inconnue", "loan-normal", (5, 0))
+
+    delta = (due_day - current_day).days
+    if delta < 0:
+        days = abs(delta)
+        unit = "jour" if days == 1 else "jours"
+        return LoanDuePresentation(
+            f"En retard de {days} {unit}",
+            "loan-overdue",
+            (0, delta),
+        )
+    if delta == 0:
+        return LoanDuePresentation("Retour aujourd’hui", "loan-imminent", (1, 0))
+    if delta == 1:
+        return LoanDuePresentation("Retour demain", "loan-imminent", (2, 1))
+    style = "loan-imminent" if delta <= 3 else "loan-normal"
+    return LoanDuePresentation(f"Retour dans {delta} jours", style, (3, delta))
