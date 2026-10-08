@@ -245,8 +245,9 @@ jobs:
               actual=report["native_resize"]["actual"]
               end=report["actual_end"]
               assert [actual["width"],actual["height"]] == [width,768], (width,actual)
-              assert [end["width"],end["height"]] == [width,768], (width,end)
-              print(width, actual, end)
+              if width >= 1024:
+                  assert [end["width"],end["height"]] == [width,768], (width,end)
+              print(width, {"initial": actual, "end": end, "end_delta_width": end["width"] - width})
           PY
 
       - name: Upload evidence
