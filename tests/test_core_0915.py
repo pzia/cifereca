@@ -107,17 +107,35 @@ class Core0915(unittest.TestCase):
         exec(self.extract('_group'),ns);ns['_group'](NS(content=content,_append_content=content.append),'Notice',[('Source','Paris'),('Format','EPUB'),('Éditeur','Long')])
         grid.set_max_children_per_line.assert_called_once_with(3);self.assertEqual(len(grid.children),3)
         self.assertEqual(group.children,[grid]);self.assertEqual(content.children,[group])
-    def test_library_actions_in_header_and_icon_only(self):
+    def test_library_actions_in_header_and_advanced_menu(self):
         page=NS(header_actions=Mock(),toolbar=Mock(),connect_selected=Mock())
-        button=Mock();controls=NS(primary=Mock(),entry=Mock());window=NS(_query_controls=Mock(return_value=controls),_library_search_online=Mock(),_library_selected=Mock())
-        ns={'MasterDetailPage':lambda *args:page,'Gtk':NS(Button=NS(new_from_icon_name=lambda name:button,__call__=lambda **kw:button))}
-        class Buttons:
-            def __new__(cls,**kwargs):return button
+        controls=NS(primary=Mock(),entry=Mock())
+        window=NS(
+            _query_controls=Mock(return_value=controls),
+            _library_search_online=Mock(),_library_selected=Mock(),
+            refresh_library=Mock(),choose_acsm=Mock(),run_kobo_backup=Mock(),
+            open_library_folder=Mock(),
+        )
+        class Widget:
+            def __init__(self,*args,**kwargs):self.children=[];self.handlers={};self.kwargs=kwargs
+            def append(self,child):self.children.append(child)
+            def set_child(self,child):self.child=child
+            def set_popover(self,child):self.popover=child
+            def connect(self,name,callback):self.handlers[name]=callback
+            def __getattr__(self,name):
+                if name.startswith('set_'):return lambda *args:None
+                raise AttributeError(name)
+        class Buttons(Widget):
             @staticmethod
-            def new_from_icon_name(name):return button
-        ns['Gtk'].Button=Buttons
+            def new_from_icon_name(name):return Buttons(icon_name=name)
+        gtk=NS(
+            Button=Buttons,MenuButton=Widget,Popover=Widget,Box=Widget,
+            Orientation=NS(VERTICAL=0,HORIZONTAL=1),
+        )
+        ns={'MasterDetailPage':lambda *args:page,'Gtk':gtk}
         exec(self.extract('_build_library_page'),ns);ns['_build_library_page'](window)
-        self.assertEqual(page.header_actions.append.call_count,5);page.toolbar.append.assert_called_once_with(controls)
+        self.assertEqual(page.header_actions.append.call_count,3)
+        page.toolbar.append.assert_called_once_with(controls)
     def test_recent_refresh_in_header_not_toolbar(self):
         page=NS(header_actions=Mock(),toolbar=Mock(),connect_selected=Mock());button=Mock()
         ns={'MasterDetailPage':lambda *args:page,'Gtk':NS(Button=NS(new_from_icon_name=lambda name:button))}
