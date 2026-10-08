@@ -1,6 +1,6 @@
-# Recommandations CIFERECA 0.2.11
+# Recommandations CIFERECA 0.2.22
 
-Version fonctionnelle pour **Cifereca Core 0.9.44-dev.1 / Plugin API 1.4**.
+Compatible avec **Plugin API >=1.4,<2** (source de vérité : `cifereca-plugin.json`).
 
 ## Structure courante
 
@@ -64,7 +64,7 @@ Aucun accès privé au Core, aucune acquisition, aucun téléchargement.
 ## Installation
 
 ```bash
-cifereca-cli plugin install cifereca-recommendations-0.2.4.zip --replace
+cifereca-cli plugin install cifereca-recommendations-0.2.22.zip --replace
 ```
 
 Puis redémarrer Cifereca si une ancienne version du module était déjà chargée.
