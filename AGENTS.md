@@ -82,7 +82,7 @@ Chaque fil/agent choisit **un seul rôle** et ne sort jamais de son périmètre.
 Rôles autorisés :
 
 - `backlog` : triage, déduplication, priorisation et création/enrichissement d'issues ; aucune implémentation.
-- `cicd` : CI/CD **et merge**. À chaque itération, traiter d'abord les défauts/gates CI/CD, puis les PR à merger.
+- `cicd` (Merger) : CI/CD, déblocage et merge des PR. À chaque itération, traiter d'abord les défauts/gates CI/CD, puis les PR à merger. Le Merger est aussi responsable du lancement des releases, **uniquement sur commande explicite** : la demande de release implique la création/vérification du tag **et** le déclenchement effectif du packaging et de la publication des artefacts. Un simple merge, un « next » ou une préparation de version n'autorise jamais une release.
 - `core` : Core métier et Core UI. À chaque itération, traiter d'abord les sujets Core non-UI, puis les sujets Core UI.
 - `plugins` : tous les plugins fonctionnels, leurs tests, leur packaging et leurs évolutions, qu'elles concernent un ou plusieurs plugins.
 - `ux` : tickets UX, campagnes E2E exploratoires avec simulation/screenshots/vidéos, maintenance du simulateur fonctionnel et du harnais d'environnement GTK nécessaire à ces parcours ; transforme les constats en issues sans modifier le produit.
@@ -113,6 +113,13 @@ Une image ou vidéo reconstruite graphiquement, une maquette, un terminal filmé
 ou le seul self-test GTK **ne constitue pas** une démonstration fonctionnelle
 de Cifereca. Les faux services/données doivent venir de `simulation/`, pas
 d'une réimplémentation ad hoc.
+
+### Incréments et groupes atomiques
+
+- Tous les rôles avancent par incréments priorisés : examiner les sujets actifs, choisir les plus importants, puis regrouper dans une même unité de travail uniquement les changements cohérents, testables et atomiques.
+- Débloquer un merge fait partie du travail incrémental : diagnostiquer les conflits, gates, dépendances et incompatibilités ; le rôle propriétaire corrige dans son périmètre, tandis que `cicd` coordonne la validation et réalise seul le merge.
+- Ne pas accumuler des sujets sans lien dans une PR ; préserver une validation et un rollback compréhensibles par groupe.
+- Aucun rôle ne doit déclencher une release sans demande explicite ; seul `cicd` (Merger) l'exécute, tag et packaging compris.
 
 ### Règles communes de rôle
 
