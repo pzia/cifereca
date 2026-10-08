@@ -51,6 +51,10 @@ def catalogue_notice_url(row, *, base=None, provider=None):
     for value in candidates:
         if not isinstance(value, str) or not value.strip():
             continue
+        # urljoin/urlsplit may silently remove tabs or line breaks: reject the
+        # original provider value *before* resolving any relative URL.
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            continue
         candidate = urljoin(base, value) if reference else value
         safe = catalogue_url({'friendly_url': candidate})
         if not safe:
