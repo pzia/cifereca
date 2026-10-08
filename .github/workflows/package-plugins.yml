@@ -25,7 +25,7 @@ jobs:
         run: python scripts/verify-packaging.py
 
       - name: Test packaging scripts
-        run: python -m unittest scripts.test_plugin_packaging
+        run: python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
 
       - name: Build all-in-one bundle
         run: python scripts/package-all-in-one.py

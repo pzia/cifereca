@@ -120,7 +120,7 @@ jobs:
       - name: Validate packaging
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
 
       - name: Build Core wheel
         run: python -m pip wheel --no-deps --no-build-isolation . -w dist
