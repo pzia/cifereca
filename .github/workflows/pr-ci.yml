@@ -224,7 +224,7 @@ jobs:
     env:
       CIFERECA_DATASET_RUNTIME: /tmp/cifereca-video-dataset
       CIFERECA_HOST_XDG: /tmp/cifereca-video-host
-      PYTHONPATH: \${{ github.workspace }}/src
+      PYTHONPATH: ${{ github.workspace }}/src
 
     steps:
       - uses: actions/checkout@v4
@@ -330,14 +330,14 @@ jobs:
           ffmpeg -y -hide_banner -loglevel warning \
             -thread_queue_size 512 \
             -f x11grab -draw_mouse 1 -framerate 24 \
-            -video_size 1366x900 -i "\${DISPLAY}.0" \
+            -video_size 1366x900 -i "${DISPLAY}.0" \
             -c:v libx264 -preset veryfast -crf 20 \
             -pix_fmt yuv420p -movflags +faststart \
             "$evidence/cifereca-ux-small.mp4" \
             >"$evidence/ffmpeg.log" 2>&1 &
           ffmpeg_pid=$!
 
-          /usr/bin/python3 "$GITHUB_WORKSPACE/simulation/datasetctl.py" cifereca ux-small --verbose \
+          /usr/bin/python3 "$GITHUB_WORKSPACE/simulation/datasetctl.py" cifereca ux-small --verbose -- --force-plugin transport.http \
             >"$evidence/cifereca.stdout.log" 2>"$evidence/cifereca.stderr.log" &
           app_pid=$!
 
@@ -352,12 +352,12 @@ jobs:
 
           # Wait for a real, visible GTK surface.
           visible=""
-          for _ in \$(seq 1 80); do
+          for _ in $(seq 1 80); do
             if ! kill -0 "$app_pid" 2>/dev/null; then
               echo "Cifereca exited before showing a window" >&2
               exit 1
             fi
-            visible="\$(xdotool search --onlyvisible --name 'Cifereca' 2>/dev/null | head -n1 || true)"
+            visible="$(xdotool search --onlyvisible --name 'Cifereca' 2>/dev/null | head -n1 || true)"
             if [ -n "$visible" ]; then
               break
             fi
