@@ -51,7 +51,7 @@ from .action_widgets import AdaptiveActionBar
 from .query_model import result_row, online_search, progressive_online_search, merge_results
 from .shell_model import resolve_pages, visible_actions, page_actions, delegated_accounts, menu_sections, contextual_actions, validate_action_selection
 from ..plugin_api import (
-    ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookRef, BookReferenceRecommendationService, DetailField, DetailSection, DocumentLink,
+    ArtifactFormat, ArtifactRef, ArtifactRouteRequest, BookReferenceRecommendationService, DetailField, DetailSection, DocumentLink, book_ref_from_row,
     MaintenanceContext, SyncRequest, UiActionContext, UiBookDetailPresentation, UiPageContribution, document_links,
 )
 
@@ -4106,13 +4106,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _book_action_context(self, item) -> UiActionContext:
         metadata = dict(item.get("metadata") or {}) if isinstance(item, dict) else {}
-        book = BookRef(
-            book_id=str(item.get("item_id") or item.get("record_id") or item.get("key") or item.get("artifact_id") or ""),
-            title=str(item.get("title") or ""),
-            authors=tuple(x.strip() for x in str(item.get("author") or "").split(";") if x.strip()),
-            identifiers={"provider": str(item.get("provider_id") or item.get("source_provider") or "")},
-            metadata=metadata,
-        )
+        book = book_ref_from_row(item)
         artifact = None
         path_value = item.get("local_path") or metadata.get("path")
         artifact_id = str(item.get("artifact_id") or "")

@@ -53,9 +53,9 @@ def test_book_ref_can_carry_available_metadata_without_losing_existing_fields():
 
 def test_library_action_context_forwards_item_metadata_into_book_ref():
     source = _method("_book_action_context")
-    assert "metadata=metadata" in source
-    assert "title=str(item.get('title')" in source
-    assert "authors=tuple(" in source
+    assert "book_ref_from_row(item)" in source
+    assert "metadata = dict(item.get('metadata') or {})" in source
+    assert "book=book" in source
 
 
 def test_recommendation_action_requires_active_capability_and_public_protocol():
