@@ -79,8 +79,9 @@ jobs:
             sleep 0.22
             xdotool click 1
           }
-          for theme in 01-clair-v1 01-clair-v2 02-nocturne-v1 02-nocturne-v2 03-papier-v1 03-papier-v2; do
+          for theme in 02-nocturne-v1 01-clair-v2 02-nocturne-v2 03-papier-v2; do
             echo "CAPTURE STYLE $theme"
+            sleep 2
             mkdir -p "$root/gtk-style-evidence/$theme"
             cp "$root/ux_style_lab/$theme.css" "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
             cp "$root/ux_style_lab/$theme.css" "$root/gtk-style-evidence/$theme/gtk.css"
@@ -107,7 +108,7 @@ jobs:
             sleep 2
             tap 1240 120
             sleep 3
-            tap 470 650
+            tap 285 267
             sleep 1.0
             savepng "$root/gtk-style-evidence/$theme/02-recherche-detail.png"
             tap 90 248
@@ -141,7 +142,7 @@ jobs:
             if [ -n "$actual_pid" ]; then kill -TERM "$actual_pid" 2>/dev/null || true; fi
             kill -TERM "$apppid" 2>/dev/null || true
             wait "$apppid" 2>/dev/null || true
-            sleep 1
+            sleep 2
             remaining="$(xdotool search --onlyvisible --name 'Cifereca' 2>/dev/null | head -1 || true)"
             if [ -n "$remaining" ]; then
               echo "STALE GTK WINDOW after $theme; terminating native app" >&2
