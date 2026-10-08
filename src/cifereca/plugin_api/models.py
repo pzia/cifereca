@@ -412,6 +412,43 @@ class UiBookDetailPresentation:
 
 
 @dataclass(frozen=True, slots=True)
+class CachedBookDetail:
+    """Bounded, cache-only book detail contribution from a plugin.
+
+    The book and identity must match the request exactly. Freshness and source
+    are explicit: the Core does not turn stale or inferred evidence into facts.
+    Plugins must not perform network or disk scans in cached_detail().
+    """
+
+    book_id: str
+    identity_id: str
+    sections: tuple[DetailSection, ...] = ()
+    actions: tuple[UiBookDetailAction, ...] = ()
+    source: Provenance | None = None
+    updated_at: str = ""
+    freshness_token: str = ""
+    stale: bool = False
+
+
+@runtime_checkable
+class BookDetailCacheEnricher(Protocol):
+    """Optional service resolved via category book.detail.enrichment.
+
+    Strictly read an already materialized local cache. No network access,
+    subscription refresh, search, acquisition, or filesystem scan.
+    """
+
+    def cached_detail(self, book: BookRef, *, identity_id: str) -> CachedBookDetail | None: ...
+
+
+@runtime_checkable
+class BookDetailCacheNotifier(Protocol):
+    """Optional invalidation notification when the plugin cache changes."""
+
+    def subscribe_cache(self, callback: Callable[[], None]) -> Callable[[], None]: ...
+
+
+@dataclass(frozen=True, slots=True)
 class FacetTag:
     id: str
     label: str
@@ -1045,7 +1082,7 @@ __all__ = [
     "PluginState", "ResolutionMode", "InstantiationMode", "ContractRequirementMode", "CategoryDefinition", "Dependency", "ContractRequirement",
     "SystemRequirement", "PluginDescriptor", "RequirementStatus", "PluginStatus",
     "PluginDirectories", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput", "DrmMutationRequest", "DrmMutationResult", "DrmRuntime", "StorageTarget", "StorageResult",
-    "ResolvedPluginService", "Provenance", "YouthAgeKind", "YouthAgeRange", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation",
+    "ResolvedPluginService", "Provenance", "YouthAgeKind", "YouthAgeRange", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "CachedBookDetail", "BookDetailCacheEnricher", "BookDetailCacheNotifier", "FacetTag", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef",
