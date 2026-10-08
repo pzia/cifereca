@@ -1326,8 +1326,13 @@ class PublicBookMasterDetailView:
         panel.show_presentation(detail)
         buttons = []
         for action in getattr(detail, "actions", ()) or ():
-            uri = str(getattr(action, "uri", "") or "")
-            if uri.startswith(("http://", "https://")):
+            raw_uri = str(getattr(action, "uri", "") or "")
+            if raw_uri:
+                # Plugin actions share the same URL security boundary as
+                # document links. Drop invalid URI actions completely.
+                uri = safe_document_link_url(raw_uri, relation="related")
+                if not uri:
+                    continue
                 button = Gtk.LinkButton(uri=uri, label=str(action.title))
                 button.set_tooltip_text(str(action.title))
             else:
