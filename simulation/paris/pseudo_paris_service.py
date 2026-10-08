@@ -440,7 +440,7 @@ class DatasetCache:
 
         active_rows = []
         selected_active: set[tuple[str, str]] = set()
-        while len(active_rows) < self.active_loans:
+        while len(active_rows) < self.active_loans_count:
             provider = "DILICOM" if loan_rng.random() < 0.80 and digital_ids else "SYRACUSE"
             record_id = loan_rng.choice(digital_ids if provider == "DILICOM" else physical_ids)
             uid = loan_rng.choices(account_uids, weights=[6, 2, 2], k=1)[0]
