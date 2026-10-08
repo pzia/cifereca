@@ -138,7 +138,7 @@ def scroll_down(control: X11Input, width: int, height: int, steps: int = 10) -> 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--query", default="UXSTRESS normal")
+    parser.add_argument("--query", default="UXSTRESS")
     parser.add_argument("--window-width", type=int, required=True)
     parser.add_argument("--window-height", type=int, default=720)
     parser.add_argument("--startup-wait", type=float, default=4.0)
