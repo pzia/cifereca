@@ -13,6 +13,7 @@ on:
       - "pyproject.toml"
       - "VERSION"
       - "scripts/ci-run-plugin-tests.sh"
+      - "scripts/ci-select-core-tests.py"
       - "scripts/ci-smoke-installed-wheel.sh"
       - "scripts/plugin_packaging.py"
       - "scripts/test_plugin_packaging.py"
@@ -52,6 +53,8 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
             {
               echo "core=true"
+              echo "core_mode=full"
+              echo "core_targets=tests"
               echo "plugins=true"
               echo "plugin_targets="
               echo "packaging=true"
@@ -71,6 +74,8 @@ jobs:
           }
 
           core=false
+          core_mode=none
+          core_targets=""
           plugins=false
           plugin_targets=""
           plugin_scope_all=false
@@ -79,7 +84,7 @@ jobs:
           gui=false
           dataset=false
 
-          if matches '^(src/cifereca/|tests/|pyproject\.toml$)'; then
+          if matches '^(src/cifereca/|tests/|pyproject\.toml$|scripts/ci-select-core-tests\.py$)'; then
             core=true
           fi
 
@@ -121,6 +126,12 @@ jobs:
             )"
           fi
 
+          if [[ "$core" == true ]]; then
+            IFS=$'\t' read -r core_mode core_targets < <(
+              python3 scripts/ci-select-core-tests.py "$changed_file"
+            )
+          fi
+
           python=false
           if [[ "$core" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true ]]; then
             python=true
@@ -128,6 +139,8 @@ jobs:
 
           {
             echo "core=$core"
+            echo "core_mode=$core_mode"
+            echo "core_targets=$core_targets"
             echo "plugins=$plugins"
             echo "plugin_targets=$plugin_targets"
             echo "packaging=$packaging"
@@ -158,7 +171,12 @@ jobs:
 
       - name: Run Core tests
         if: steps.scope.outputs.core == 'true'
-        run: python -m pytest -q tests
+        env:
+          CORE_TEST_MODE: ${{ steps.scope.outputs.core_mode }}
+          CORE_TEST_TARGETS: ${{ steps.scope.outputs.core_targets }}
+        run: |
+          echo "Core test mode: $CORE_TEST_MODE"
+          python -m pytest -q --durations=10 $CORE_TEST_TARGETS
 
       - name: Run plugin tests
         if: steps.scope.outputs.plugins == 'true'
