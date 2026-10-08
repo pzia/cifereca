@@ -133,7 +133,7 @@ class QueryControls(Gtk.Box):
         return QueryState(self.entry.get_text().strip(), FIELDS[self.field.get_selected()],
                           ('all','physical','digital','unknown')[self.scope.get_selected()], self.provider.values(), self.types.values(), self.languages.values())
 
-    def set_state(self, state):
+    def set_state(self, state, *, notify=True):
         self._programmatic_update = True
         try:
             self.entry.set_text(state.text); self.field.set_selected(FIELDS.index(state.field))
@@ -141,4 +141,10 @@ class QueryControls(Gtk.Box):
             self.provider.set_values(state.providers); self.types.set_values(state.types); self.languages.set_values(getattr(state, 'languages', ()))
         finally:
             self._programmatic_update = False
-        self._changed()
+        if notify:
+            self._changed()
+        else:
+            self._last_notified_state = self.state()
+            updater = getattr(self, "_update_search_capability_hint", None)
+            if callable(updater):
+                updater()
