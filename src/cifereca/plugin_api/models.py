@@ -894,6 +894,16 @@ class UiActionHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiBookNavigationHost(UiPageHost, Protocol):
+    """Optional public navigation to a book in the active identity's Library.
+
+    Returns False when the book is absent, ambiguous or not in the currently
+    selected identity; it never searches another user's library implicitly.
+    """
+    def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool: ...
+
+
+@runtime_checkable
 class UiPluginManagementHost(UiPageHost, Protocol):
     def open_plugin_settings(self, plugin_id: str) -> None: ...
 
