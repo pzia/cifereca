@@ -36,7 +36,8 @@ def test_search_record_is_bibliographic_only_and_never_has_age():
     assert record.age_ranges == ()
     assert record.metadata["bibliographic_only"] is True
     assert record.metadata["age_evidence"] == "none"
-    assert "age" not in {str(key).casefold() for key in record.__dict__ if key != "age_ranges"}
+    assert record.age_ranges == ()
+    assert set(record.metadata) == {"bibliographic_only", "age_evidence", "source"}
 
 
 def test_invalid_search_rows_are_ignored():
