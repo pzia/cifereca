@@ -1034,10 +1034,18 @@ class MasterDetailPage(Gtk.Box):
         self.factory.connect("unbind", self._factory_unbind)
 
         self.listview = Gtk.ListView.new(self.selection, self.factory)
-        self.listview.add_css_class("boxed-list")
         self.listview.set_single_click_activate(False)
+        self.listview.set_hexpand(True)
+        self.listview.set_halign(Gtk.Align.FILL)
         self.scroll = Gtk.ScrolledWindow()
-        self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # The list viewport must own horizontal allocation. GTK_POLICY_NEVER
+        # lets child natural width drive the scroller, which makes pathological
+        # row metadata capable of shifting the whole list outside the viewport.
+        self.scroll.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.AUTOMATIC)
+        self.scroll.set_propagate_natural_width(False)
+        self.scroll.set_min_content_width(0)
+        self.scroll.set_hexpand(True)
+        self.scroll.set_vexpand(True)
         self.scroll.set_child(self.listview)
         self.list_stack.add_named(self.scroll, "list")
         self.paned.set_start_child(self.list_stack)

@@ -33,3 +33,11 @@ def test_narrow_layout_contract_keeps_facets_left_aligned_and_wrappable():
     assert "self.facet_box.set_hexpand(True)" in source
     assert "self.facet_box.set_min_children_per_line(1)" in source
     assert "self.facet_box.set_max_children_per_line(4)" in source
+
+
+def test_list_cell_bounds_legacy_author_and_source_labels():
+    source = open("src/cifereca/gui/book_widgets.py", encoding="utf-8").read()
+    assert "link.set_max_width_chars(LIST_FACET_MAX_CHARS)" in source
+    assert "self.badge_label.set_max_width_chars(18)" in source
+    assert "self.set_hexpand(True)" in source
+    assert "self.set_halign(Gtk.Align.FILL)" in source
