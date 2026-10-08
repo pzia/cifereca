@@ -33,11 +33,28 @@ def _media_type(fmt: str, explicit: str | None = None) -> str:
     }.get(value, "application/octet-stream")
 
 
-def _artifact_ref(storage: Any, artifact_id: str, *, book_id: str | None = None) -> ArtifactRef | None:
+def _identity_placements(storage: Any, artifact_id: str, *, identity_id: str | None = None,
+                         default_identity_id: str | None = None) -> list[dict[str, Any]]:
+    """Return present placements for one identity, or all for legacy maintenance calls."""
+    return [
+        placement for placement in storage.placements(state="present")
+        if str(placement.get("artifact_id") or "") == str(artifact_id)
+        and (identity_id is None or
+             str(placement.get("identity_id") or default_identity_id or "") == identity_id)
+    ]
+
+
+def _artifact_ref(storage: Any, artifact_id: str, *, book_id: str | None = None,
+                  identity_id: str | None = None,
+                  default_identity_id: str | None = None) -> ArtifactRef | None:
     row = storage.artifact_get(str(artifact_id))
     if row is None:
         return None
-    placements = [p for p in storage.placements(state="present") if str(p.get("artifact_id") or "") == str(artifact_id)]
+    placements = _identity_placements(
+        storage, artifact_id, identity_id=identity_id, default_identity_id=default_identity_id,
+    )
+    if identity_id is not None and not placements:
+        return None
     filename = Path(str(placements[0].get("path"))).name if placements else ""
     metadata = dict(row.get("metadata") or {})
     fmt = str(row.get("media_format") or "unknown")
@@ -70,11 +87,18 @@ def _placement_ref(row: dict[str, Any]) -> ArtifactPlacementRef:
     )
 
 
-def _variant_ref(storage: Any, row: dict[str, Any], *, book_id: str = "") -> ArtifactVariant | None:
+def _variant_ref(storage: Any, row: dict[str, Any], *, book_id: str = "",
+                 identity_id: str | None = None,
+                 default_identity_id: str | None = None) -> ArtifactVariant | None:
     artifact = storage.artifact_get(str(row.get("artifact_id") or ""))
     if artifact is None:
         return None
-    placements = [p for p in storage.placements(state="present") if str(p.get("artifact_id") or "") == str(row.get("artifact_id") or "")]
+    placements = _identity_placements(
+        storage, str(row.get("artifact_id") or ""), identity_id=identity_id,
+        default_identity_id=default_identity_id,
+    )
+    if identity_id is not None and not placements:
+        return None
     filename = Path(str(placements[0].get("path"))).name if placements else ""
     metadata = dict(row.get("metadata") or {})
     fmt = str(artifact.get("media_format") or "unknown")
