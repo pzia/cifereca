@@ -28,7 +28,7 @@ from .models import (
     StorageTarget,
     SystemRequirement,
     UiActionContribution, UiPageContribution, UiPageHost, UiIdentityHost, UiIdentityViewHost, UiMasterDetailHost, UiBookMasterDetailView, UiBookListEntry, UiBookDetailAction, DocumentLink, UiBookDetailPresentation, UiPageActionHost, UiPageProvider, UiTitlebarProvider, WidgetCatalog,
-    ResolvedPluginService, Provenance, BookRef, BookReferenceRecommendationService, DetailField, DetailSection, FacetTag, ArtifactFormat, ArtifactRef, ArtifactVariant,
+    ResolvedPluginService, Provenance, YouthAgeKind, YouthAgeRange, BookRef, BookReferenceRecommendationService, DetailField, DetailSection, FacetTag, ArtifactFormat, ArtifactRef, ArtifactVariant,
     ArtifactPlacementRef, ArtifactPossessionRef, LogicalBookArtifacts, LibraryMutationOperation, LibraryMutationRequest, LibraryMutationPlan, LibraryMutationResult,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncSourceRef, AdeptProfileRef, RuntimeAcquisitionCapabilities,
     MaintenanceToolInfo, MaintenanceContext, MaintenancePlan, MaintenanceResult, MaintenanceTool,
@@ -59,6 +59,7 @@ from .acquisition_recipes import (
     BundleRecipeError, BundleTrack, BundleAcquisitionRecipe,
     normalize_audio_format, validate_audio_bundle_manifest,
 )
+from .youth_ages import youth_age_from_label, youth_age_matches
 from .book_references import book_ref_from_row
 from .document_links import document_links
 
@@ -69,7 +70,7 @@ __all__ = [
     "StorageTarget", "StorageResult", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
     "PluginDescriptor", "PluginDirectories", "PluginLifecycle", "PluginState", "InstantiationMode",
     "PluginStatus", "RequirementStatus", "ResolutionMode", "SystemRequirement",
-    "ResolvedPluginService", "Provenance", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "FacetTag",
+    "ResolvedPluginService", "Provenance", "YouthAgeKind", "YouthAgeRange", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "FacetTag",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
     "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncSourceRef", "AdeptProfileRef", "RuntimeAcquisitionCapabilities",
@@ -84,7 +85,7 @@ __all__ = [
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
-    "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest", "document_links", "book_ref_from_row",
+    "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest", "document_links", "book_ref_from_row", "youth_age_from_label", "youth_age_matches",
     "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "Medium", "SearchResult",
     "CredentialField", "ProviderCapabilities", "ProviderSearchCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",
