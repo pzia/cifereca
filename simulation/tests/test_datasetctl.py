@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import datasetctl
@@ -26,6 +27,25 @@ class DatasetCtlTests(unittest.TestCase):
                 self.assertTrue(ctx["script"].is_file(), path.name)
                 ports.append(ctx["port"])
             self.assertEqual(len(ports), len(set(ports)), path.name)
+
+
+    def test_zombie_process_is_not_treated_as_alive(self):
+        with patch.object(datasetctl, "_linux_proc_state", return_value="Z"), \
+             patch.object(datasetctl.os, "kill") as kill:
+            self.assertFalse(datasetctl.is_pid_alive(12345))
+            kill.assert_not_called()
+
+    def test_ci_smoke_profile_keeps_all_services_with_tiny_volumes(self):
+        _, profile = datasetctl.load_profile("ci-smoke")
+        services = datasetctl.enabled_service_configs(profile)
+        self.assertEqual(set(services), {"opds", "bnf", "kobo", "paris", "numilog"})
+        self.assertLessEqual(int(profile["library"]["epubs"]), 3)
+        self.assertLessEqual(int(services["opds"]["books_per_source"]), 5)
+        self.assertLessEqual(int(services["bnf"]["books"]), 5)
+        self.assertLessEqual(int(services["kobo"]["catalog_books"]), 8)
+        self.assertLessEqual(int(services["paris"]["books"]), 8)
+        self.assertLessEqual(int(services["numilog"]["books"]), 8)
+        self.assertFalse(profile["cifereca"]["copy_installed_plugins"])
 
     def test_prepare_writes_isolated_cifereca_configuration(self):
         catalog = datasetctl.load_catalog()
