@@ -1,0 +1,212 @@
+name: UX loans history bookings step 5
+
+on:
+  push:
+    branches:
+      - ux/loans-history-bookings-step5
+    paths:
+      - ".github/workflows/ux-loans-history-bookings-step5.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CIFERECA_DATASET_RUNTIME: /tmp/cifereca-step5
+      PYTHONPATH: ${{ github.workspace }}/src
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d77081279f82defbdd1e1d23cf55c04c29d402a1
+
+      - name: Install runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxtst6 \
+            python3-gi python3-gi-cairo python3-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            python3-httpx python3-packaging
+
+      - name: Prepare ux-small + Paris plugin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          /usr/bin/python3 simulation/datasetctl.py rebuild ux-small
+
+          store="$CIFERECA_DATASET_RUNTIME/ux-small/xdg/data/cifereca/plugins/packages"
+          mkdir -p "$store"
+          /usr/bin/python3 - "$store" <<'PY'
+          from pathlib import Path
+          import json, shutil, sys
+
+          store = Path(sys.argv[1])
+          src = Path("src/plugins/provider-paris")
+          manifest = json.loads((src / "cifereca-plugin.json").read_text())
+          package = manifest["package"]
+          root = store / package["id"]
+          target = root / package["version"]
+          shutil.copytree(src, target, dirs_exist_ok=True)
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "current.json").write_text(
+              json.dumps({"active": package["version"], "previous": None}, indent=2) + "\n"
+          )
+
+          # Keep only the Paris account so the UX review is deterministic.
+          cfg = Path("/tmp/cifereca-step5/ux-small/xdg/config/cifereca/config.json")
+          data = json.loads(cfg.read_text())
+          data["providers"]["accounts"] = [
+              row for row in data["providers"]["accounts"] if row.get("provider") == "paris"
+          ]
+          cfg.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+          PY
+
+      - name: Write review driver
+        shell: bash
+        run: |
+          cat > /tmp/step5_review.py <<'PY'
+          from __future__ import annotations
+          import ctypes as C
+          import json, os, subprocess, sys, time
+          from pathlib import Path
+          from PIL import ImageGrab
+
+          ROOT=Path.cwd()
+          sys.path.insert(0, str(ROOT/"environnements"/"openai-chat-debian"))
+          from x11_input import X11Input
+
+          OUT=ROOT/"step5-evidence"
+          OUT.mkdir(parents=True, exist_ok=True)
+          WIDTH,HEIGHT=1366,768
+
+          def shot(name):
+              p=OUT/name
+              ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).save(p)
+              return str(p)
+
+          def shortcut(c, mod, key):
+              c.key(mod, True)
+              try:
+                  c.key(key, True); c.key(key, False)
+              finally:
+                  c.key(mod, False)
+
+          def resize(c):
+              x11=c.x11; display=c.display
+              x11.XDefaultRootWindow.argtypes=[C.c_void_p]; x11.XDefaultRootWindow.restype=C.c_ulong
+              x11.XQueryTree.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_ulong),C.POINTER(C.POINTER(C.c_ulong)),C.POINTER(C.c_uint)]
+              x11.XQueryTree.restype=C.c_int
+              x11.XGetGeometry.argtypes=[C.c_void_p,C.c_ulong,C.POINTER(C.c_ulong),C.POINTER(C.c_int),C.POINTER(C.c_int),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint),C.POINTER(C.c_uint)]
+              x11.XGetGeometry.restype=C.c_int
+              x11.XMoveResizeWindow.argtypes=[C.c_void_p,C.c_ulong,C.c_int,C.c_int,C.c_uint,C.c_uint]
+              x11.XFree.argtypes=[C.c_void_p]
+              root=x11.XDefaultRootWindow(display); rr=C.c_ulong(); pr=C.c_ulong(); children=C.POINTER(C.c_ulong)(); n=C.c_uint()
+              if not x11.XQueryTree(display,root,C.byref(rr),C.byref(pr),C.byref(children),C.byref(n)): return None
+              best=None
+              try:
+                  for i in range(n.value):
+                      xid=children[i]; gr=C.c_ulong(); x=C.c_int(); y=C.c_int(); w=C.c_uint(); h=C.c_uint(); b=C.c_uint(); d=C.c_uint()
+                      if x11.XGetGeometry(display,xid,C.byref(gr),C.byref(x),C.byref(y),C.byref(w),C.byref(h),C.byref(b),C.byref(d)):
+                          area=int(w.value)*int(h.value)
+                          if w.value>500 and h.value>400 and (best is None or area>best[0]):
+                              best=(area,int(xid),int(w.value),int(h.value))
+                  if not best: return None
+                  _,xid,bw,bh=best
+                  x11.XMoveResizeWindow(display,xid,0,0,WIDTH,HEIGHT)
+                  x11.XSync(display,False); time.sleep(.8)
+                  return {"before":[bw,bh],"requested":[WIDTH,HEIGHT]}
+              finally:
+                  if children: x11.XFree(children)
+
+          def next_page(c, times=1, wait=1.2):
+              for _ in range(times):
+                  shortcut(c,"Control_L","Page_Down")
+                  time.sleep(wait)
+
+          out=(OUT/"cifereca.stdout.log").open("w")
+          err=(OUT/"cifereca.stderr.log").open("w")
+          app=subprocess.Popen([
+              "/usr/bin/python3","-m","cifereca",
+              "--force-plugin","core.ui.pages",
+              "--force-plugin","core.ui.widgets",
+              "--force-plugin","core.ui.titlebar",
+              "--force-plugin","core.ui.system",
+              "--force-plugin","provider.paris",
+              "--verbose"
+          ],cwd=ROOT,env=os.environ.copy(),stdout=out,stderr=err,text=True)
+
+          control=None
+          report={"main_sha":"d77081279f82defbdd1e1d23cf55c04c29d402a1","shots":[]}
+          try:
+              time.sleep(8)
+              if app.poll() is not None:
+                  raise RuntimeError(f"app rc={app.returncode}")
+              control=X11Input(); report["resize"]=resize(control); time.sleep(1)
+
+              # Accueil -> Emprunts : 4 pages forward (Recherche, Bibliothèque, Récents, Emprunts)
+              next_page(control,4,1.0)
+              time.sleep(4)
+              report["shots"].append(shot("01-loans.png"))
+              control.click(285,245); time.sleep(2)
+              report["shots"].append(shot("02-loans-detail.png"))
+
+              # Emprunts -> Historique
+              next_page(control,1,1.0)
+              time.sleep(4)
+              report["shots"].append(shot("03-history.png"))
+              control.click(285,245); time.sleep(2)
+              report["shots"].append(shot("04-history-detail.png"))
+
+              # Historique -> Réservations
+              next_page(control,1,1.0)
+              time.sleep(4)
+              report["shots"].append(shot("05-bookings.png"))
+              control.click(285,245); time.sleep(2)
+              report["shots"].append(shot("06-bookings-detail.png"))
+
+              # Switch identity and revisit same three pages to capture empty/different states.
+              control.click(970,28); time.sleep(.5)
+              control.key("Down",True); control.key("Down",False)
+              control.key("Return",True); control.key("Return",False)
+              time.sleep(3)
+
+              # Back to Emprunts using previous page twice.
+              shortcut(control,"Control_L","Page_Up"); time.sleep(1)
+              shortcut(control,"Control_L","Page_Up"); time.sleep(3)
+              report["shots"].append(shot("07-loans-alexandre.png"))
+              next_page(control,1,1.0); time.sleep(3)
+              report["shots"].append(shot("08-history-alexandre.png"))
+              next_page(control,1,1.0); time.sleep(3)
+              report["shots"].append(shot("09-bookings-alexandre.png"))
+
+              (OUT/"report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
+          finally:
+              if control:
+                  try: shortcut(control,"Control_L","q")
+                  except Exception: pass
+                  control.close()
+              try: app.wait(timeout=4)
+              except subprocess.TimeoutExpired:
+                  app.terminate()
+                  try: app.wait(timeout=3)
+                  except subprocess.TimeoutExpired: app.kill(); app.wait()
+              out.close(); err.close()
+          PY
+
+          /usr/bin/python3 simulation/datasetctl.py exec ux-small -- \
+            env PYTHONPATH="$GITHUB_WORKSPACE/src" GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none NO_AT_BRIDGE=1 \
+            xvfb-run -a -s "-screen 0 1366x768x24" \
+              /usr/bin/python3 /tmp/step5_review.py
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-loans-history-bookings-step5
+          path: step5-evidence/
+          if-no-files-found: error
+          retention-days: 2
