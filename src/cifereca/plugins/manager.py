@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from cifereca.paths import cache_dir, data_dir
+from cifereca.plugin_release import expected_plugin_packages, package_freshness
 from cifereca.plugin_api import (
     PluginContext, PluginDirectories, PluginDescriptor, PluginStatus, ResolvedPluginService,
     ContractRequirement, check_service_contract, contract_version_matches,
@@ -894,10 +895,17 @@ class PluginManager:
             shutil.rmtree(root, ignore_errors=True)
         self.activate()
 
-    def package_inventory(self) -> list[dict[str, Any]]:
+    def package_inventory(self, *, include_expected: bool = False) -> list[dict[str, Any]]:
+        installed = self.packages.all_packages()
+        expected = expected_plugin_packages()
+        package_ids = set(installed)
+        if include_expected:
+            package_ids.update(expected)
+
         rows: list[dict[str, Any]] = []
-        for package_id, versions in sorted(self.packages.all_packages().items()):
-            pointer = self.packages.pointer(package_id)
+        for package_id in sorted(package_ids):
+            versions = list(installed.get(package_id, ()))
+            pointer = self.packages.pointer(package_id) if versions else {"active": None, "previous": None}
             active = pointer.get("active")
             package = None
             if active:
@@ -905,30 +913,42 @@ class PluginManager:
                     package = self.packages.load(package_id, active)
                 except Exception:
                     package = None
+            release_info = expected.get(package_id, {})
+            freshness = package_freshness(package_id, active, versions)
             rows.append({
                 "package_id": package_id,
-                "name": package.manifest.package.name if package else package_id,
-                "publisher": package.manifest.package.publisher if package else "",
+                "name": package.manifest.package.name if package else release_info.get("name", package_id),
+                "publisher": package.manifest.package.publisher if package else ("cifereca" if release_info else ""),
                 "active": active,
                 "previous": pointer.get("previous"),
                 "versions": versions,
                 "sha256": package.sha256 if package else "",
+                **freshness,
             })
         if self._builtin_ui:
             from cifereca import __version__
-            rows.insert(0, {"package_id": "core.ui", "name": "Interface cifereca", "publisher": "cifereca",
-                        "active": __version__, "previous": None, "versions": [__version__], "sha256": "builtin", "builtin": True})
+            rows.insert(0, {
+                "package_id": "core.ui", "name": "Interface cifereca", "publisher": "cifereca",
+                "active": __version__, "previous": None, "versions": [__version__],
+                "sha256": "builtin", "builtin": True,
+                "expected_version": None, "freshness": "unknown", "freshness_reason": "builtin",
+            })
         return rows
 
     def diagnostic(self, plugin_id: str | None = None) -> list[dict[str, Any]]:
         from cifereca.system_status import installation_date
         statuses = [self.status(plugin_id)] if plugin_id else self.statuses()
+        package_rows = {row["package_id"]: row for row in self.package_inventory(include_expected=True)}
         out: list[dict[str, Any]] = []
         for status in statuses:
             d = status.descriptor
+            package_row = package_rows.get(d.package_id, {})
             out.append({
                 "plugin_id": d.id, "display_name": d.display_name or d.id, "type": d.type,
                 "version": d.version, "package_id": d.package_id, "package_version": d.package_version,
+                "expected_package_version": package_row.get("expected_version"),
+                "package_freshness": package_row.get("freshness", "unknown"),
+                "package_freshness_reason": package_row.get("freshness_reason", "unmanaged"),
                 "description": d.description, "help_text": d.help_text,
                 "enabled": status.enabled, "state": status.state,
                 "installed_at": installation_date(self._records[d.id].package.root),
