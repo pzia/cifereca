@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: d77081279f82defbdd1e1d23cf55c04c29d402a1
+          ref: ux/loans-history-bookings-step5
 
       - name: Install runtime
         run: |
