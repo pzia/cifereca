@@ -274,7 +274,7 @@ class DatasetCache:
     ) -> None:
         self.cache_dir = cache_dir
         self.books = books
-        self.active_loans = active_loans
+        self.active_loans_count = active_loans
         self.history_items = history_items
         self.bookings = bookings
         self.digital_ratio = digital_ratio
@@ -371,13 +371,13 @@ class DatasetCache:
             meta.get("schema_version") == CACHE_SCHEMA_VERSION
             and meta.get("app_version") == APP_VERSION
             and meta.get("books") == str(self.books)
-            and meta.get("active_loans") == str(self.active_loans)
+            and meta.get("active_loans") == str(self.active_loans_count)
             and meta.get("history_items") == str(self.history_items)
             and meta.get("bookings") == str(self.bookings)
             and meta.get("digital_ratio") == str(self.digital_ratio)
             and meta.get("seed") == str(self.seed)
             and counts["books"] == self.books
-            and counts["active"] == self.active_loans
+            and counts["active"] == self.active_loans_count
             and counts["history"] == self.history_items
             and counts["bookings"] == self.bookings
         )
@@ -440,7 +440,7 @@ class DatasetCache:
 
         active_rows = []
         selected_active: set[tuple[str, str]] = set()
-        while len(active_rows) < self.active_loans:
+        while len(active_rows) < self.active_loans_count:
             provider = "DILICOM" if loan_rng.random() < 0.80 and digital_ids else "SYRACUSE"
             record_id = loan_rng.choice(digital_ids if provider == "DILICOM" else physical_ids)
             uid = loan_rng.choices(account_uids, weights=[6, 2, 2], k=1)[0]
@@ -501,7 +501,7 @@ class DatasetCache:
                 ("schema_version", CACHE_SCHEMA_VERSION),
                 ("app_version", APP_VERSION),
                 ("books", str(self.books)),
-                ("active_loans", str(self.active_loans)),
+                ("active_loans", str(self.active_loans_count)),
                 ("history_items", str(self.history_items)),
                 ("bookings", str(self.bookings)),
                 ("digital_ratio", str(self.digital_ratio)),
