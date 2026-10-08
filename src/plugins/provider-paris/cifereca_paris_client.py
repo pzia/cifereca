@@ -62,6 +62,8 @@ class ParisClient:
         self.username: str | None = None
         self.last_search_warnings: list[str] = []
         self.last_pairing_errors: list[dict[str, str]] = []
+        self.last_history_errors: list[dict[str, str]] = []
+        self.last_booking_errors: list[dict[str, str]] = []
         self.last_pnb_borrow: dict[str, Any] = {"phase": "idle"}
 
     def _create_http_client(self, profile: str = "browser") -> httpx.Client:
@@ -284,8 +286,26 @@ class ParisClient:
             return [normalize_history(x, provider) for x in rows if isinstance(x, dict)]
         return self._timed("API", f"history {provider}", work)
 
+    def _aggregate_account_rows(self, operation: str, loader, uid: str) -> list[Any]:
+        rows: list[Any] = []
+        errors: list[dict[str, str]] = []
+        for provider in ("DILICOM", "SYRACUSE"):
+            try:
+                rows.extend(loader(provider, uid))
+            except Exception as exc:
+                errors.append({"upstream": provider, "type": type(exc).__name__})
+        if operation == "history":
+            self.last_history_errors = errors
+        elif operation == "bookings":
+            self.last_booking_errors = errors
+        if len(errors) == 2 and not rows:
+            kinds = ",".join(sorted({row["type"] for row in errors}))
+            raise ParisError(f"{operation} indisponible: {kinds}")
+        return rows
+
     def all_history(self, uid: str = "") -> list[HistoryItem]:
-        rows = self.history("DILICOM", uid) + self.history("SYRACUSE", uid)
+        self.last_history_errors = []
+        rows = self._aggregate_account_rows("history", self.history, uid)
         return sorted(rows, key=lambda x: x.borrowed_at or x.returned_at or "", reverse=True)
 
     def bookings(self, provider: str, uid: str = "") -> list[Booking]:
@@ -297,7 +317,8 @@ class ParisClient:
         return self._timed("API", f"bookings {provider}", work)
 
     def all_bookings(self, uid: str = "") -> list[Booking]:
-        return self.bookings("DILICOM", uid) + self.bookings("SYRACUSE", uid)
+        self.last_booking_errors = []
+        return self._aggregate_account_rows("bookings", self.bookings, uid)
 
     def pairings(self) -> list[Account]:
         def work():
