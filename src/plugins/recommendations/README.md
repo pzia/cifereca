@@ -98,3 +98,10 @@ Les refresh Recommendations émettent deux lignes de trace expurgées dans le lo
 - `TRACE recommendations ui ...` : `apply_ms` et `total_ui_ms`.
 
 Les traces ne contiennent ni identifiant de profil, ni titre de livre, ni requête catalogue. Pour #519, comparer en priorité `snapshot_ms` au `total_ui_ms` sur le profil représentatif, trois fois de suite.
+
+
+## Snapshot bibliothèque de session
+
+Depuis 0.2.20, Recommendations conserve un snapshot de projection par identité pendant la session. Les recalculs manuels, changements de filtres nécessitant un recalcul et retours sur une identité déjà visitée ne relisent plus systématiquement `metadata.library_entries(..., scan=False)`. Une notification `identity_overview` invalide le cache avant le recalcul coalescé suivant.
+
+La recette `tests/test_snapshot_burst_measurement.py` compare trois recalculs synthétiques de 562 livres : le chemin sans cache effectue 3 lectures complètes, le chemin avec cache 1 seule. Les traces `TRACE recommendations performance` exposent désormais aussi `snapshot_cached=true|false`, sans identifiant ni contenu de livre.
