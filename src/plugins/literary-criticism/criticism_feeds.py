@@ -4,28 +4,58 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
-from urllib.parse import urljoin
+import ipaddress
+from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree as ET
 import json
 
 from literary_criticism import canonical_url, discover_feed_links
 
 MAX_BYTES = 2 * 1024 * 1024
+_PRIVATE_HOST_NAMES = {"localhost", "local", "localdomain"}
+_PRIVATE_HOST_SUFFIXES = (".localhost", ".local", ".localdomain")
+
+
+def public_url(value):
+    url = canonical_url(value)
+    if not url:
+        return ""
+    host = (urlsplit(url).hostname or "").rstrip(".").casefold()
+    if not host or host in _PRIVATE_HOST_NAMES or any(host.endswith(suffix) for suffix in _PRIVATE_HOST_SUFFIXES):
+        return ""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return url
+    return url if address.is_global else ""
+
+
+def public_join(base_url, value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return public_url(urljoin(base_url, raw))
 
 
 def fetch_public(url, *, client=None):
     """Explicit public HTTP(S) GET, bounded redirects/bytes/time, no credentials."""
     import httpx
     own = client is None
-    client = client or httpx.Client(timeout=15, follow_redirects=False)
+    client = client or httpx.Client(timeout=15, follow_redirects=False, trust_env=False)
     try:
         for _ in range(5):
-            url = canonical_url(url)
+            url = public_url(url)
             if not url:
                 raise ValueError('URL HTTP(S) publique requise')
             with client.stream('GET', url, headers={'Accept': 'application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html'}) as response:
                 if response.is_redirect:
-                    url = urljoin(url, response.headers.get('location', ''))
+                    location = response.headers.get('location', '')
+                    if not location:
+                        raise ValueError('Redirection sans destination')
+                    redirected = public_url(urljoin(url, location))
+                    if not redirected:
+                        raise ValueError('Redirection vers une URL non publique refusée')
+                    url = redirected
                     continue
                 response.raise_for_status()
                 chunks, size = [], 0
@@ -60,15 +90,21 @@ def date_text(raw):
 def parse_feed(payload, url, *, limit=100):
     if len(payload) > MAX_BYTES:
         raise ValueError('Flux trop volumineux')
-    if payload.lstrip().startswith(b'{'):
+    if payload.lstrip().startswith((b'{', b'[')):
         raw = json.loads(payload)
+        if not isinstance(raw, dict):
+            raise ValueError('Objet JSON Feed attendu')
         if not str(raw.get('version', '')).startswith('https://jsonfeed.org/version/'):
             raise ValueError('JSON Feed attendu')
-        return [{'title': r.get('title'), 'url': canonical_url(r.get('url') or r.get('external_url'), base_url=url),
+        items = raw.get('items', [])
+        if not isinstance(items, list):
+            raise ValueError('Liste items JSON Feed attendue')
+        bounded = max(1, min(int(limit), 500))
+        return [{'title': r.get('title'), 'url': public_join(url, r.get('url') or r.get('external_url')),
                  'critic_author': ', '.join(a.get('name', '') for a in r.get('authors', []) if isinstance(a, dict)),
                  'published_at': date_text(r.get('date_published')), 'excerpt': r.get('summary', ''),
                  'language': r.get('language') or raw.get('language', ''), 'book': r.get('_cifereca_book', {})}
-                for r in raw.get('items', [])[:limit] if isinstance(r, dict)]
+                for r in items[:bounded] if isinstance(r, dict)]
     # Refuse DTDs/entities before ElementTree; no external or expansive XML.
     if b'<!DOCTYPE' in payload.upper() or b'<!ENTITY' in payload.upper():
         raise ValueError('DTD et entités non autorisées')
@@ -93,33 +129,42 @@ def parse_feed(payload, url, *, limit=100):
             link = next((el.get('href', '') for el in item.findall(atom+'link') if el.get('rel', 'alternate') == 'alternate'), '')
         isbn = [el.text or '' for el in item.findall(dc+'identifier') if (el.text or '').lower().startswith('urn:isbn:')]
         rows.append({'title': text('title') or text(atom+'title'),
-            'url': canonical_url(link, base_url=url),
+            'url': public_join(url, link),
             'critic_author': text('author') or text(dc+'creator') or text(atom+'author/'+atom+'name'),
             'published_at': date_text(text('pubDate') or text(atom+'published') or text(atom+'updated') or text(dc+'date')),
             'excerpt': text('description') or text(atom+'summary'),
             'language': text(dc+'language') or language,
             # Never treat the critic as the author of the reviewed book.
             'book': {'title': text(bookns+'title'), 'authors': [el.text or '' for el in item.findall(bookns+'author')],
-                     'isbns': [s[9:] for s in isbn], 'notice_url': text(bookns+'notice')}})
+                     'isbns': [s[9:] for s in isbn], 'notice_url': public_join(url, text(bookns+'notice'))}})
     return rows
 
 
 def discover_url(url, *, fetch=fetch_public):
+    url = public_url(url)
+    if not url:
+        raise ValueError('URL HTTP(S) publique requise')
     final, body = fetch(url)
+    final = public_url(final)
+    if not final:
+        raise ValueError('Destination finale non publique refusée')
     try:
         parse_feed(body, final, limit=1)
     except (ValueError, ET.ParseError, TypeError):
-        return discover_feed_links(final, body.decode('utf-8', errors='replace'))
+        return tuple(
+            candidate for candidate in discover_feed_links(final, body.decode('utf-8', errors='replace'))
+            if public_url(candidate.url)
+        )
     from literary_criticism import FeedCandidate
     return (FeedCandidate(final, final, final, evidence='explicit-feed'),)
 
 
 class FeedSource:
     def __init__(self, url='', *, fetch=fetch_public):
-        self.url, self.fetch = canonical_url(url), fetch
+        self.url, self.fetch = public_url(url), fetch
 
     def activate(self, context):
-        self.url = canonical_url(context.config.get('feed_url'))
+        self.url = public_url(context.config.get('feed_url'))
         return self
 
     def source_info(self):
@@ -135,6 +180,9 @@ class FeedSource:
         if cursor:
             return {'items': []}
         final, body = self.fetch(self.url)
+        final = public_url(final)
+        if not final:
+            raise ValueError('Destination finale non publique refusée')
         return {'items': parse_feed(body, final, limit=min(500, max(1, limit))), 'fresh_for_seconds': 900}
 
 

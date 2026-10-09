@@ -3,7 +3,7 @@ import httpx
 import pytest
 from cifereca.plugin_api import BookRef
 from literary_criticism import normalize_article, normalize_isbn, match_article, canonical_url
-from criticism_feeds import FeedSource, parse_feed, discover_url, fetch_public
+from criticism_feeds import FeedSource, parse_feed, discover_url, fetch_public, public_url
 from criticism_page import ReviewStore, CriticismPage, collect_snapshot, filtered_matches
 
 RSS = b'''<rss version="2.0" xmlns:b="https://cifereca.org/ns/book/1" xmlns:dc="http://purl.org/dc/elements/1.1/"><channel><language>fr</language><item><title>Critique</title><link>/article</link><dc:creator>Critiqueur</dc:creator><description>&lt;p&gt;Court extrait&lt;/p&gt;</description><pubDate>Thu, 08 Oct 2026 12:00:00 GMT</pubDate><b:title>Livre</b:title><b:author>Autrice</b:author><dc:identifier>urn:isbn:9780306406157</dc:identifier></item></channel></rss>'''
@@ -103,3 +103,105 @@ def test_http_redirect_and_size_limit(monkeypatch):
 def test_xml_entities_rejected():
     with pytest.raises(ValueError):
         parse_feed(b'<!DOCTYPE rss [<!ENTITY x "huge">]><rss/>','https://r.test/rss')
+
+
+
+def test_public_url_rejects_local_and_non_global_literal_addresses():
+    assert not public_url("http://localhost/feed")
+    assert not public_url("http://books.local/feed")
+    assert not public_url("http://127.0.0.1/feed")
+    assert not public_url("http://[::1]/feed")
+    assert not public_url("http://10.0.0.1/feed")
+    assert not public_url("http://192.168.1.10/feed")
+    assert not public_url("http://169.254.1.1/feed")
+    assert public_url("https://reviews.test/feed") == "https://reviews.test/feed"
+
+
+def test_fetch_public_rejects_private_target_before_network():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, content=RSS)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="publique"):
+            fetch_public("http://127.0.0.1/feed", client=client)
+    assert calls == 0
+
+
+def test_fetch_public_rejects_redirect_to_private_target():
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"Location": "http://127.0.0.1/feed"},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="non publique"):
+            fetch_public("https://reviews.test/start", client=client)
+    assert calls == ["https://reviews.test/start"]
+
+
+def test_discovery_filters_private_feed_candidates_even_with_injected_fetch():
+    body = b"""
+      <html><head>
+        <link rel="alternate" type="application/rss+xml" href="http://127.0.0.1/feed"/>
+        <link rel="alternate" type="application/atom+xml" href="/public-feed"/>
+      </head></html>
+    """
+    rows = discover_url("https://reviews.test/page", fetch=lambda url: (url, body))
+    assert [row.url for row in rows] == ["https://reviews.test/public-feed"]
+
+
+def test_feed_item_private_article_and_notice_urls_are_not_exposed():
+    payload = b"""<rss version="2.0"
+        xmlns:b="https://cifereca.org/ns/book/1">
+      <channel><item>
+        <title>Critique</title>
+        <link>http://127.0.0.1/article</link>
+        <b:title>Livre</b:title>
+        <b:notice>http://10.0.0.2/book</b:notice>
+      </item></channel>
+    </rss>"""
+    row = parse_feed(payload, "https://reviews.test/feed")[0]
+    assert row["url"] == ""
+    assert row["book"]["notice_url"] == ""
+
+
+def test_json_feed_root_must_be_an_object():
+    with pytest.raises(ValueError, match="Objet JSON Feed"):
+        parse_feed(
+            b'[{"version":"https://jsonfeed.org/version/1.1"}]',
+            "https://reviews.test/feed",
+        )
+
+
+
+def test_injected_fetch_final_destination_is_revalidated():
+    with pytest.raises(ValueError, match="finale non publique"):
+        discover_url(
+            "https://reviews.test/feed",
+            fetch=lambda url: ("http://127.0.0.1/feed", RSS),
+        )
+
+    source = FeedSource(
+        "https://reviews.test/feed",
+        fetch=lambda url: ("http://10.0.0.2/feed", RSS),
+    )
+    with pytest.raises(ValueError, match="finale non publique"):
+        source.collect()
+
+
+def test_json_feed_items_must_be_a_list_and_missing_url_stays_empty():
+    bad = b'{"version":"https://jsonfeed.org/version/1.1","items":{"a":1}}'
+    with pytest.raises(ValueError, match="Liste items JSON Feed"):
+        parse_feed(bad, "https://reviews.test/feed")
+
+    missing = b'{"version":"https://jsonfeed.org/version/1.1","items":[{"title":"A","summary":"Short"}]}'
+    row = parse_feed(missing, "https://reviews.test/feed")[0]
+    assert row["url"] == ""

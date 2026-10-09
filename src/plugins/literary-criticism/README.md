@@ -68,3 +68,19 @@ n'est présélectionné. La page fournit la découverte par URL explicite.
 La section « Périmètre » ci-dessus décrit le socle #736 ; la présente suite implémente
 #714 via les contributions publiques `book.detail` déjà disponibles. La validation
 locale reste sans GTK ; la recette visuelle est suivie dans #716.
+
+
+## Durcissements source RSS/Atom 0.3.0
+
+La source fournie applique désormais une frontière **publique** avant tout accès réseau et après chaque redirection :
+
+- refus de `localhost`, `.local`, `.localdomain` ;
+- refus des IP littérales non globales (loopback, privées, link-local, réservées, multicast, etc.) ;
+- refus des redirections vers une cible non publique ;
+- revalidation de la destination finale, y compris avec un transport injecté ;
+- client HTTP interne avec `trust_env=False` ;
+- liens article et notice contenus dans RSS/Atom/JSON Feed filtrés par la même règle ;
+- racine JSON Feed obligatoirement objet et `items` obligatoirement liste ;
+- URL manquante conservée vide : elle n’hérite jamais de l’URL du feed.
+
+Les limites existantes restent inchangées : 2 Mio maximum, cinq redirections au plus, aucun corps d’article téléchargé, DTD/entités XML refusées.
