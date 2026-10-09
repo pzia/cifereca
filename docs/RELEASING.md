@@ -85,6 +85,10 @@ strict `--require-plugins-only`, si le Core/API cible n'est pas compatible, si l
 snapshot n'est pas strictement plugins-only ou si les tests updater/rollback ciblés
 échouent.
 
+Une release plugins-only déjà **publiée est immuable** : une relance avec le même tag
+est refusée avant remplacement des assets. Seul un brouillon interrompu peut être
+repris avec `--clobber`, et le tag doit toujours pointer vers le même `GITHUB_SHA`.
+
 Le ZIP publié reçoit une attestation SLSA signée par GitHub Actions via
 `actions/attest@v4`. La confiance ne repose donc pas sur le sidecar `.sha256`
 pris isolément : l'utilisateur vérifie d'abord l'attestation et l'identité du
