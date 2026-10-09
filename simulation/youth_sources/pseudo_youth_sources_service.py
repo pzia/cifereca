@@ -12,7 +12,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import sys
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 SEED = 20261009
 ISBN = "9780140328721"
@@ -56,6 +56,15 @@ def booktrust_listing(*, page: int = 1, empty: bool = False,
             f'<p>by {_html(author)} 2024</p><p>For ages {group}</p>'
             f'<p>{_html(theme)}</p></article>'
         )
+    # Le plugin n'invente jamais une page suivante : le faux catalogue
+    # doit exposer un vrai lien vers la page suivante lorsqu'elle existe.
+    if not empty and page * 2 < len(eligible):
+        params = [("page", str(page + 1))]
+        if age_group:
+            params.append(("ageGroups", age_group))
+        params.extend(("bookfinderCategories[]", category) for category in categories)
+        href = "/book-recommendations/bookfinder/bookfinder-recommendations/?" + urlencode(params)
+        blocks.append(f'<a href="{_html(href)}">Next page</a>')
     return ('<!doctype html><html><body><main>' + ''.join(blocks) +
             '<a href="/book-recommendations/bookfinder/">Bookfinder</a></main></body></html>').encode()
 
