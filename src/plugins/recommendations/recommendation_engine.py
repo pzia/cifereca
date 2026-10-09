@@ -92,17 +92,124 @@ def series_values(item: Any) -> list[str]:
     return field_values(item, "series", "collection")
 
 
+def _canonical_isbn(value: Any) -> str:
+    raw = re.sub(r"[^0-9Xx]", "", _text(value)).upper()
+    if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
+        total = sum((10 - index) * (10 if char == "X" else int(char)) for index, char in enumerate(raw))
+        if total % 11:
+            return ""
+        prefix = "978" + raw[:9]
+        check = (10 - sum(int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(prefix)) % 10) % 10
+        return prefix + str(check)
+    if len(raw) == 13 and raw.isdigit():
+        total = sum(int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(raw))
+        return raw if total % 10 == 0 else ""
+    return ""
+
+
+def _identifier_mappings(item: Any) -> tuple[Mapping[str, Any], ...]:
+    out: list[Mapping[str, Any]] = []
+    direct = get_field(item, "identifiers", {})
+    if isinstance(direct, Mapping):
+        out.append(direct)
+    md = metadata(item)
+    nested = md.get("identifiers")
+    if isinstance(nested, Mapping):
+        out.append(nested)
+    epub = md.get("epub_metadata")
+    if isinstance(epub, Mapping):
+        nested = epub.get("identifiers")
+        if isinstance(nested, Mapping):
+            out.append(nested)
+    return tuple(out)
+
+
+def _identifier_scalar(value: Any) -> str:
+    return normalize(value).replace(" ", "")
+
+
 def identifier_values(item: Any) -> set[str]:
-    values = field_values(item, "identifiers", "isbn", "isbns")
+    """Return only strong, namespaced bibliographic identifiers.
+
+    Provider names and source item ids are never authoritative alone. ISBNs are
+    checksum-validated and canonicalised to ISBN-13. Other explicit identifier
+    fields stay namespaced by their key so unrelated schemes cannot collide.
+    """
+
     cleaned: set[str] = set()
-    for value in values:
-        raw = re.sub(r"[^0-9xX]", "", _text(value))
-        if len(raw) in {10, 13}:
-            cleaned.add(raw.lower())
-        else:
-            key = normalize(value).replace(" ", "")
-            if key:
-                cleaned.add(key)
+    provider = _text(
+        get_field(item, "source_provider", "")
+        or get_field(item, "provider_id", "")
+        or get_field(item, "provider", "")
+    )
+    source_item = _text(
+        get_field(item, "source_item_id", "")
+        or get_field(item, "item_id", "")
+        or get_field(item, "record_id", "")
+    )
+
+    isbn_values = field_values(
+        item,
+        "isbn",
+        "isbns",
+        "isbn10",
+        "isbn_10",
+        "isbn13",
+        "isbn_13",
+    )
+    for value in isbn_values:
+        isbn = _canonical_isbn(value)
+        if isbn:
+            cleaned.add("isbn:" + isbn)
+
+    ignored_mapping_keys = {
+        "provider",
+        "provider_id",
+        "source_provider",
+        "source",
+        "source_id",
+        "item_id",
+        "source_item_id",
+        "record_id",
+        "id",
+    }
+    isbn_mapping_keys = {"isbn", "isbns", "isbn10", "isbn_10", "isbn13", "isbn_13"}
+
+    for mapping in _identifier_mappings(item):
+        provider = _text(
+            mapping.get("provider")
+            or mapping.get("provider_id")
+            or mapping.get("source_provider")
+            or provider
+        )
+        source_item = _text(
+            mapping.get("source_item_id")
+            or mapping.get("item_id")
+            or mapping.get("record_id")
+            or source_item
+        )
+        for raw_key, raw_value in mapping.items():
+            key = normalize(raw_key).replace(" ", "_")
+            if not key:
+                continue
+            values = _as_values(raw_value)
+            if key in isbn_mapping_keys:
+                for value in values:
+                    isbn = _canonical_isbn(value)
+                    if isbn:
+                        cleaned.add("isbn:" + isbn)
+                continue
+            if key in ignored_mapping_keys:
+                continue
+            for value in values:
+                scalar = _identifier_scalar(value)
+                if scalar:
+                    cleaned.add(f"{key}:{scalar}")
+
+    provider_key = _identifier_scalar(provider)
+    source_key = _identifier_scalar(source_item)
+    if provider_key and source_key:
+        cleaned.add(f"source:{provider_key}:{source_key}")
     return cleaned
 
 
