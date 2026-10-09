@@ -129,6 +129,11 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "Published plugins-only release $RELEASE_TAG is immutable; refusing asset replacement." >&2
+              exit 1
+            fi
             gh release edit "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --title "$RELEASE_TAG"               --draft
           else
             gh release create "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$RELEASE_TAG"               --generate-notes               --draft
