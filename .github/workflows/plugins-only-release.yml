@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/plugins-only-release.yml"
       - "scripts/ci-plugins-only-runtime-gate.sh"
+      - "scripts/test_partial_plugin_release.py"
       - "scripts/package_partial_plugins.py"
       - "scripts/plugin_packaging.py"
       - "src/cifereca/dev_updater.py"
@@ -65,7 +66,7 @@ jobs:
           version="$(tr -d '[:space:]' < VERSION)"
           tag="plugins-v${version}-pr-${{ github.event.pull_request.number }}"
           python -m scripts.package_partial_plugins \
-            --packages "org.cifereca.ui.page.diagnostics" \
+            --packages "org.cifereca.ui.page.diagnostics,org.cifereca.youth-source-discovery" \
             --id "$tag" \
             --out dist
           archive="dist/$tag.zip"
@@ -210,6 +211,23 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: ${{ steps.build.outputs.archive }}
+
+      # Authenticity is verified before a draft or any public asset is created.
+      # The ZIP sidecar alone proves only integrity, not the signing identity.
+      - name: Verify signed provenance before publishing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="${{ steps.build.outputs.archive }}"
+          test -s "$archive"
+          (cd dist && sha256sum -c "$RELEASE_TAG.zip.sha256")
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml" \
+            --source-ref "refs/heads/main" \
+            --source-digest "$GITHUB_SHA"
 
       - name: Create or update draft GitHub Release
         env:

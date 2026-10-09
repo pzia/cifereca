@@ -55,40 +55,57 @@ fi
 # subsequent update can verify inactive state preservation and rollback.
 "$runtime_update_dev" "$archive" --require-plugins-only --expected-sha256 "$digest" --json > "$base/seed.json"
 
-read -r package_id package_version <<<"$(python - "$archive" <<'PY'
+# Track all selected packages instead of silently testing the first one.
+selected_file="$base/selected-packages.tsv"
+python - "$archive" "$selected_file" <<'PY'
 import json
 import sys
 import zipfile
-
+from pathlib import Path
 with zipfile.ZipFile(sys.argv[1]) as z:
-    matches = [n for n in z.namelist() if n.endswith("/cifereca-plugins-only.json")]
+    matches = [name for name in z.namelist() if name.endswith("/cifereca-plugins-only.json")]
     if len(matches) != 1:
         raise SystemExit("plugins-only index missing or ambiguous")
     index = json.loads(z.read(matches[0]))
-if not index.get("packages"):
+rows = index.get("packages")
+if not isinstance(rows, list) or not rows:
     raise SystemExit("plugins-only package selection is empty")
-row = index["packages"][0]
-print(row["package_id"], row["version"])
+selected = []
+for row in rows:
+    package_id, version = str(row["package_id"]), str(row["version"])
+    if not package_id or not version or any(c in package_id + version for c in "\t\r\n/\\"):
+        raise SystemExit("unsafe selected package id/version")
+    selected.append((package_id, version))
+if len({package_id for package_id, _ in selected}) != len(selected):
+    raise SystemExit("duplicate selected packages")
+Path(sys.argv[2]).write_text("".join(f"{pid}\t{version}\n" for pid, version in selected), encoding="utf-8")
 PY
-)"
 
-package_root="$XDG_DATA_HOME/cifereca/plugins/packages/$package_id"
-version_root="$package_root/$package_version"
-test -d "$version_root"
+store_root="$XDG_DATA_HOME/cifereca/plugins/packages"
+inactive_package="$(head -n 1 "$selected_file" | cut -f 1)"
+while IFS=$'\t' read -r package_id package_version; do
+  test -d "$store_root/$package_id/$package_version"
+done < "$selected_file"
 
-# Preserve an installed-but-inactive package across a real strict replacement.
-python - "$package_root/current.json" <<'PY'
+# First selected package is intentionally inactive; all others stay active.
+# This exercises mixed active/inactive state with one multi-package ZIP.
+while IFS=$'\t' read -r package_id package_version; do
+  package_root="$store_root/$package_id"
+  version_root="$package_root/$package_version"
+  if [[ "$package_id" == "$inactive_package" ]]; then
+    python - "$package_root/current.json" <<'PY'
 import json
 import sys
 from pathlib import Path
-
 path = Path(sys.argv[1])
-payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+payload = json.loads(path.read_text(encoding="utf-8"))
 payload["active"] = None
 path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
+  fi
+  printf 'must disappear on successful replace\n' > "$version_root/.p0-success-sentinel"
+done < "$selected_file"
 
-printf 'must disappear on successful replace\n' > "$version_root/.p0-success-sentinel"
 mkdir -p "$XDG_DATA_HOME/cifereca"
 printf 'p0-user-data-integrity\n' > "$XDG_DATA_HOME/cifereca/.p0-user-data"
 data_before="$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')"
@@ -97,16 +114,23 @@ data_before="$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $
 
 "$runtime_update_dev" "$archive"   --require-plugins-only   --expected-sha256 "$digest"   --json > "$base/success.json"
 
-test ! -e "$version_root/.p0-success-sentinel"
-python - "$package_root/current.json" <<'PY'
+while IFS=$'\t' read -r package_id package_version; do
+  package_root="$store_root/$package_id"
+  version_root="$package_root/$package_version"
+  test ! -e "$version_root/.p0-success-sentinel"
+  expected_active="$package_version"
+  if [[ "$package_id" == "$inactive_package" ]]; then expected_active=""; fi
+  python - "$package_root/current.json" "$expected_active" <<'PY'
 import json
 import sys
 from pathlib import Path
-
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if payload.get("active") is not None:
-    raise SystemExit(f"inactive package was unexpectedly activated: {payload}")
+expected = sys.argv[2] or None
+if payload.get("active") != expected:
+    raise SystemExit(f"active state changed: {payload!r}; expected {expected!r}")
 PY
+done < "$selected_file"
+
 test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
 
 tree_digest() {
@@ -132,7 +156,7 @@ cp "$runtime/pyproject.toml" "$runtime/pyproject.toml.p0"
 cp "$runtime/VERSION" "$runtime/VERSION.p0"
 sed -i 's/^version = ".*"/version = "0.0.1"/' "$runtime/pyproject.toml"
 printf '0.0.1\n' > "$runtime/VERSION"
-before_incompatible="$(tree_digest "$package_root")"
+before_incompatible="$(tree_digest "$store_root")"
 set +e
 "$runtime_update_dev" "$archive"   --require-plugins-only   --expected-sha256 "$digest"   --json > "$base/incompatible.json" 2>&1
 incompatible_rc=$?
@@ -144,13 +168,15 @@ if [[ "$incompatible_rc" -eq 0 ]]; then
   exit 1
 fi
 grep -q "Core cible" "$base/incompatible.json"
-test "$(tree_digest "$package_root")" = "$before_incompatible"
+test "$(tree_digest "$store_root")" = "$before_incompatible"
 test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
 
 # Force only the post-install inventory smoke to fail. The real package install
 # runs first; automatic rollback must restore the exact pre-attempt package tree.
-printf 'must return after rollback\n' > "$version_root/.p0-rollback-sentinel"
-before_rollback="$(tree_digest "$package_root")"
+while IFS=$'\t' read -r package_id package_version; do
+  printf 'must return after rollback\n' > "$store_root/$package_id/$package_version/.p0-rollback-sentinel"
+done < "$selected_file"
+before_rollback="$(tree_digest "$store_root")"
 cli="$runtime/.venv/bin/cifereca-cli"
 real_cli="$cli.p0-real"
 mv "$cli" "$real_cli"
@@ -174,8 +200,10 @@ if [[ "$rollback_rc" -eq 0 ]]; then
   exit 1
 fi
 grep -q "smoke plugins" "$base/rollback.json"
-test -f "$version_root/.p0-rollback-sentinel"
-test "$(tree_digest "$package_root")" = "$before_rollback"
+while IFS=$'\t' read -r package_id package_version; do
+  test -f "$store_root/$package_id/$package_version/.p0-rollback-sentinel"
+done < "$selected_file"
+test "$(tree_digest "$store_root")" = "$before_rollback"
 test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
 
-echo "plugins-only runtime gate passed for $package_id $package_version"
+echo "plugins-only runtime gate passed for $(wc -l < "$selected_file") selected packages; $inactive_package inactive"
