@@ -4,7 +4,9 @@ from openlibrary_youth import (
     BibliographyRecord,
     OpenLibraryBibliography,
     normalize_isbn,
+    normalize_language,
     normalize_olid,
+    normalize_query,
     parse_direct_record,
     parse_record,
 )
@@ -232,4 +234,118 @@ def test_cache_prevents_duplicate_search_requests():
         sleeper=lambda seconds: None,
     )
     assert source.search("fox") == source.search("fox")
+    assert calls == 1
+
+
+
+def test_work_and_edition_paths_are_strictly_typed():
+    assert parse_record({"key": "/authors/OL34184A", "title": "Author object"}) is None
+    assert parse_record({"key": "/books/OL45804W", "title": "Wrong work suffix"}) is None
+    assert parse_record({"key": "/works/OL7353617M", "title": "Wrong edition suffix"}) is None
+    assert parse_record({"key": "https://evil.example/works/OL45804W", "title": "Foreign URL"}) is None
+
+    work = parse_record(search_doc(key="/works/OL45804W/"))
+    assert work is not None
+    assert work.notice_url == "https://openlibrary.org/works/OL45804W"
+
+
+def test_language_parameter_is_strict_and_malformed_values_are_omitted():
+    assert normalize_language("EN") == "en"
+    assert normalize_language("eng") == "eng"
+    assert normalize_language("en-US") == ""
+    assert normalize_language("../etc") == ""
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": []},
+        )
+
+    source = OpenLibraryBibliography(
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        clock=lambda: 100.0,
+        sleeper=lambda seconds: None,
+    )
+    assert source.search("fox", language="en-US") == ()
+    assert "lang" not in seen[0].url.params
+
+
+def test_search_query_is_whitespace_normalized_and_hard_bounded():
+    raw = "  fox   " + ("x" * 500)
+    normalized = normalize_query(raw)
+    assert len(normalized) == 300
+    assert normalized.startswith("fox ")
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": []},
+        )
+
+    source = OpenLibraryBibliography(
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        clock=lambda: 100.0,
+        sleeper=lambda seconds: None,
+    )
+    source.search(raw)
+    assert len(seen[0].url.params["q"]) == 300
+
+
+def test_redirect_responses_are_rejected_for_search_and_direct_lookup():
+    source = OpenLibraryBibliography(
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                302,
+                headers={
+                    "content-type": "application/json",
+                    "location": "https://evil.example/",
+                },
+                json={},
+            )
+        )),
+        clock=lambda: 100.0,
+        sleeper=lambda seconds: None,
+    )
+
+    try:
+        source.search("fox")
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "HTTP 302" in str(exc)
+
+    try:
+        source.lookup_olid("OL45804W")
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "HTTP 302" in str(exc)
+
+
+def test_invalid_language_does_not_split_cache_entries():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"docs": [search_doc()]},
+        )
+
+    source = OpenLibraryBibliography(
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        clock=lambda: 100.0,
+        sleeper=lambda seconds: None,
+    )
+    first = source.search("fox", language="../")
+    second = source.search("fox", language="")
+    assert first == second
     assert calls == 1

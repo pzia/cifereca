@@ -16,6 +16,8 @@ _FIELDS = "key,title,author_name,first_publish_year,isbn,language,subject,publis
 _ISBN_CLEAN = re.compile(r"[^0-9Xx]")
 _OLID = re.compile(r"^OL[0-9]+[WM]$", re.I)
 _EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_LANGUAGE = re.compile(r"^[a-z]{2,3}$", re.I)
+_MAX_QUERY_CHARS = 300
 
 
 def _text(value: object) -> str:
@@ -65,20 +67,40 @@ def normalize_olid(value: object) -> str:
     return raw if _OLID.fullmatch(raw) else ""
 
 
+def normalize_language(value: object) -> str:
+    raw = _text(value).casefold()
+    return raw if _LANGUAGE.fullmatch(raw) else ""
+
+
+def normalize_query(value: object) -> str:
+    return _text(value)[:_MAX_QUERY_CHARS]
+
+
 def _work_url(key: object) -> str:
     raw = _text(key)
     if not raw:
         return ""
     if raw.startswith("/"):
-        url = BASE + raw
-    else:
-        olid = normalize_olid(raw)
+        parts = urlsplit(raw)
+        if parts.scheme or parts.netloc or parts.query or parts.fragment:
+            return ""
+        match = re.fullmatch(r"/(works|books)/(OL[0-9]+[WM])/?", parts.path, re.I)
+        if not match:
+            return ""
+        kind = match.group(1).casefold()
+        olid = normalize_olid(match.group(2))
         if not olid:
             return ""
-        prefix = "/works/" if olid.endswith("W") else "/books/"
-        url = BASE + prefix + olid
-    parts = urlsplit(url)
-    return url if parts.scheme == "https" and parts.hostname == "openlibrary.org" else ""
+        if (kind == "works" and not olid.endswith("W")) or (kind == "books" and not olid.endswith("M")):
+            return ""
+        return f"{BASE}/{kind}/{olid}"
+    if "/" in raw or "://" in raw:
+        return ""
+    olid = normalize_olid(raw)
+    if not olid:
+        return ""
+    prefix = "/works/" if olid.endswith("W") else "/books/"
+    return BASE + prefix + olid
 
 
 def _year(value: object) -> int | None:
@@ -156,7 +178,7 @@ class BibliographyRecord:
     first_publish_year: int | None = None
     notice_url: str = ""
     cover_url: str = ""
-    age_ranges: tuple[()] = ()
+    age_ranges: tuple[object, ...] = ()
     metadata: Mapping[str, object] | None = None
 
 
@@ -262,7 +284,7 @@ class OpenLibraryBibliography:
         response = self.client.get(url)
         if response.status_code == 404:
             return {}
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             raise RuntimeError(f"Open Library HTTP {response.status_code}")
         content_type = _text(response.headers.get("content-type")).casefold()
         if content_type and "json" not in content_type:
@@ -275,12 +297,12 @@ class OpenLibraryBibliography:
             raise RuntimeError("Open Library invalid JSON") from exc
 
     def _request(self, *, q: str, limit: int, page: int = 1, lang: str = "") -> tuple[BibliographyRecord, ...]:
-        clean_q = _text(q)
+        clean_q = normalize_query(q)
         if not clean_q:
             return ()
         bounded_limit = max(1, min(int(limit), 20))
         bounded_page = max(1, min(int(page), 100))
-        language = _text(lang).casefold()[:8]
+        language = normalize_language(lang)
         cache_key = (clean_q, bounded_limit, bounded_page, language)
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -291,7 +313,7 @@ class OpenLibraryBibliography:
         if language:
             params["lang"] = language
         response = self.client.get(SEARCH_URL, params=params)
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             raise RuntimeError(f"Open Library HTTP {response.status_code}")
         content_type = _text(response.headers.get("content-type")).casefold()
         if content_type and "json" not in content_type:
@@ -339,7 +361,7 @@ class OpenLibraryBibliography:
         return records
 
     def search(self, query: str, *, limit: int = 10, page: int = 1, language: str = "") -> tuple[BibliographyRecord, ...]:
-        return self._request(q=_text(query), limit=limit, page=page, lang=language)
+        return self._request(q=normalize_query(query), limit=limit, page=page, lang=language)
 
 
 PLUGIN = OpenLibraryBibliography()
