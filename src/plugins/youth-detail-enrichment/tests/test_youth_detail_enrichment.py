@@ -196,3 +196,77 @@ def test_non_public_or_credential_url_never_becomes_action():
     assert result is not None
     assert result.actions == ()
     assert canonical_url("file:///tmp/book") == ""
+
+
+
+class LookupCatalog:
+    def __init__(self, rows):
+        self.rows = tuple(rows)
+        self.find_calls = []
+        self.search_calls = []
+
+    def find_cached(self, identity_id, **kwargs):
+        self.find_calls.append((identity_id, kwargs))
+        isbn = normalize_isbn(kwargs.get("isbn"))
+        if isbn:
+            return tuple(
+                row for row in self.rows
+                if normalize_isbn(getattr(row, "identifiers", {}).get("isbn")) == isbn
+            )
+        provider = str(kwargs.get("provider") or "").casefold()
+        item = str(kwargs.get("source_item_id") or "")
+        if provider and item:
+            return tuple(
+                row for row in self.rows
+                if str(getattr(row, "identifiers", {}).get("provider") or "").casefold() == provider
+                and str(getattr(row, "identifiers", {}).get("source_item_id") or "") == item
+            )
+        return ()
+
+    def search_cached(self, identity_id, query):
+        self.search_calls.append((identity_id, query))
+        raise AssertionError("title search must not be used when find_cached is available")
+
+
+def test_cached_detail_prefers_strong_lookup_even_when_title_differs():
+    row = candidate(
+        title="Titre de la source",
+        isbn="9780306406157",
+        ranges=(age(8, 10, "interest", label="Interest age 8-10"),),
+    )
+    catalog = LookupCatalog([row])
+    plugin = YouthDetailEnrichment().activate(Context(catalog))
+    book = BookRef("book", "Titre local complètement différent", identifiers={"isbn": "0306406152"})
+
+    result = plugin.cached_detail(book, identity_id="alice")
+
+    assert result is not None
+    assert len(catalog.find_calls) == 1
+    assert catalog.find_calls[0][0] == "alice"
+    assert catalog.find_calls[0][1]["isbn"] == "9780306406157"
+    assert catalog.find_calls[0][1]["limit"] == 20
+    assert catalog.search_calls == []
+    assert result.source.metadata["match"] == "isbn:9780306406157"
+
+
+def test_cached_detail_with_modern_catalog_never_falls_back_to_title_author():
+    catalog = LookupCatalog([candidate()])
+    plugin = YouthDetailEnrichment().activate(Context(catalog))
+    book = BookRef("book", "Titre", ("Autrice",))
+
+    assert plugin.cached_detail(book, identity_id="alice") is None
+    assert catalog.find_calls == []
+    assert catalog.search_calls == []
+
+
+def test_cached_detail_strong_lookup_failure_is_isolated():
+    class BrokenLookup:
+        def find_cached(self, identity_id, **kwargs):
+            raise RuntimeError("broken local index")
+
+        def search_cached(self, identity_id, query):
+            raise AssertionError("must not fallback after modern lookup failure")
+
+    plugin = YouthDetailEnrichment().activate(Context(BrokenLookup()))
+    book = BookRef("book", "Titre", identifiers={"isbn": "9780306406157"})
+    assert plugin.cached_detail(book, identity_id="alice") is None

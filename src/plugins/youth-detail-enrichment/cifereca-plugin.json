@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-detail-enrichment",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "name": "Jeunesse — enrichissement des fiches",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "youth.detail.enrichment",
       "type": "book.detail.enrichment",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "entrypoint": "youth_detail_enrichment:PLUGIN",
       "display_name": "Jeunesse — âges dans les fiches",
       "description": "Affiche depuis le cache Jeunesse les âges attestés dans les fiches livre standard.",
-      "help_text": "Lecture stricte du cache local catalog.youth. Une fiche n’est enrichie que si la notice Jeunesse correspond par ISBN, provider+identifiant source ou URL de notice. Titre+auteur seul n’est jamais suffisant. Aucun réseau, scan ou collecte au rendu.",
+      "help_text": "Lecture stricte du cache local catalog.youth. `find_cached()` est utilisé en priorité pour ISBN, provider+identifiant source ou URL de notice ; titre+auteur seul n’est jamais suffisant. Fallback `search_cached()` uniquement pour compatibilité avec un ancien moteur Jeunesse. Aucun réseau, scan ou collecte au rendu.",
       "enabled_by_default": false,
       "priority": -50,
       "instantiation": "singleton_public",
