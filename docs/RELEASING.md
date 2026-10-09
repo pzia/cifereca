@@ -48,6 +48,12 @@ plus ancien ou plus récent. Chaque package doit accepter la Plugin API
 installée. En cas d'échec, l'opération est refusée, y compris en
 `--dry-run`, avant d'installer quoi que ce soit.
 
+Après l'installation, le smoke vérifie également que **chaque package
+sélectionné et actif** figure bien dans l'inventaire du Core cible. Une
+installation qui se termine sans erreur CLI mais perd un package actif
+déclenche la restauration. Les packages volontairement inactifs ne sont
+ni réactivés, ni considérés manquants par cette vérification.
+
 Un index plugins-only interdit explicitement une archive Core. Les nouveaux
 snapshots partiels portent aussi `scope: "plugins-only"` dans le manifest
 principal `cifereca-dev.json`. **Si l'index manque, l'updater refuse le ZIP
