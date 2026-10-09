@@ -324,3 +324,13 @@ Documentation : `simulation/adept/README.md` ; suivi : #773.
 Le service `transport_failures` est accessible uniquement sur `127.0.0.1:8102` dans les profils `ux-small`, `ux-all`, `ux-errors`. Le vrai `HttpTransport` est testé contre 429/503, timeout, HTML ou MIME incorrect, taille excessive, réponse vide, boucle de redirection et redirection inter-origines supprimant les en-têtes sensibles. Un EPUB fictif permet aussi un téléchargement positif.
 
 Ces tests ne constituent pas un scénario E2E GTK, une annulation de tâche ou une preuve de couverture du cache. Voir `simulation/transport/README.md` et `simulation/tests/test_http_negative_contracts.py`.
+
+## OPDS — cas négatifs Gallica et Gutenberg
+
+Le service OPDS existant propose des réponses d'erreur **sur demande** via
+`?ux_fault=` (429, 503, XML malformé, racine XML non Atom, flux vide,
+panne de page suivante, boucle de redirection) ainsi que des EPUB
+invalides ou MIME HTML. `simulation/tests/test_opds_negative_contracts.py`
+vérifie les **vrais** plugins Gallica/Gutenberg et `transport.http`
+sur `127.0.0.1`, sans reconfigurer la production.
+Voir `simulation/opds/README.md`. Pas de preuve E2E GTK.

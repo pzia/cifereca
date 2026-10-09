@@ -16,6 +16,8 @@ epubs = 25
 seed = 20261006
 
 
+# Scénarios négatifs OPDS disponibles uniquement avec ?ux_fault=...
+# (429/503, XML invalide, pagination interrompue), jamais implicitement.
 [services.opds]
 enabled = true
 books_per_source = 500
