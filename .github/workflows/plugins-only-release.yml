@@ -1,6 +1,14 @@
 name: Release plugins-only
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/plugins-only-release.yml"
+      - "scripts/ci-plugins-only-runtime-gate.sh"
+      - "scripts/package_partial_plugins.py"
+      - "scripts/plugin_packaging.py"
+      - "src/cifereca/dev_updater.py"
+      - "tests/test_dev_partial_plugin_updates.py"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -13,17 +21,73 @@ on:
         type: string
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
-  artifact-metadata: write
+  contents: read
 
 concurrency:
-  group: plugins-only-release-${{ inputs.release_tag }}
+  group: plugins-only-release-${{ inputs.release_tag || github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
+  validate-pr:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install validation dependencies
+        run: |
+          python -m pip install --disable-pip-version-check \
+            "setuptools>=69" wheel "pytest>=8,<9" \
+            "packaging>=24,<26" "httpx>=0.28.1,<0.29"
+
+      - name: Validate packaging and strict updater tests
+        run: |
+          python scripts/verify-packaging.py
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
+          python -m pytest -q tests/test_dev_partial_plugin_updates.py
+
+      - name: Build deterministic PR plugins-only snapshot
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="plugins-v${version}-pr-${{ github.event.pull_request.number }}"
+          python -m scripts.package_partial_plugins \
+            --packages "org.cifereca.ui.page.diagnostics" \
+            --id "$tag" \
+            --out dist
+          archive="dist/$tag.zip"
+          test -s "$archive"
+          test -s "$archive.sha256"
+          python -m scripts.package_partial_plugins --verify "$archive"
+          (cd dist && sha256sum -c "$tag.zip.sha256")
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Exercise the real plugins-only runtime gate
+        shell: bash
+        env:
+          CIFERECA_P0_GATE_ROOT: ${{ runner.temp }}/cifereca-p0-pr-gate
+        run: bash scripts/ci-plugins-only-runtime-gate.sh "${{ steps.build.outputs.archive }}"
+
   release:
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
