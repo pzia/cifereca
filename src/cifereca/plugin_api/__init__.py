@@ -5,6 +5,7 @@ External plugins should import from this package only.  Internal modules such as
 """
 
 from .context import PluginContext
+from .public_http import fetch_public_http
 from .errors import (AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled)
 from .models import (
     AcquisitionOffer, AcquisitionPreferences, AcquisitionOfferSet,
@@ -89,6 +90,7 @@ __all__ = [
     "BUNDLE_MANIFEST_NAME", "BUNDLE_MANIFEST_VERSION", "BundleError", "BundleManifest", "BundleMember",
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
     "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest", "document_links", "book_ref_from_row", "BookAccessFact", "book_access_facts", "CachedBookDetailContribution", "collect_cached_book_details", "subscribe_cached_book_detail_changes", "youth_age_from_label", "youth_age_matches",
+    "fetch_public_http",
     "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "Medium", "SearchResult",
     "CredentialField", "ProviderCapabilities", "ProviderSearchCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",
