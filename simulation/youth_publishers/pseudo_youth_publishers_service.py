@@ -18,16 +18,18 @@ US = [
     ("award-book-9781805075103", "Why School Matters", "Age: 3+"),
     ("baby-book-9780140328721", "Baby Book", "Age: 18+ months"),
     ("older-book-9780306406157", "Older Book", "Age: 10+"),
+    ("infant-book-9782211348171", "Infant Book", "Age: 6+ months"),
 ]
 FR = [
     ("histoire-petit-loup", "L'histoire de Petit Loup", "3 à 6 ans", "Sylvie Neeman", "album", "9782211348171"),
     ("roman-ado", "Roman ado", "13 ans et +", "Alice Auteur, Bob Auteur", "roman", "9782211345613"),
     ("sans-age", "Sans âge", "indéterminé", "Auteur inconnu", "album", "9782211324649"),
+    ("tout-petit", "Tout petit", "0 à 3 ans", "Camille Exemple", "album", "9782408045074"),
 ]
 
 
 def usborne_html(*, page: int) -> bytes:
-    rows = US[:2] if page == 1 else US[2:] if page == 2 else []
+    rows = US[(page - 1) * 2:page * 2]
     parts = ['<!doctype html><html><body><main>']
     for slug, title, age in rows:
         link = "/us/" + slug
@@ -41,16 +43,17 @@ def usborne_html(*, page: int) -> bytes:
 
 
 def ecole_html(*, page: int, query: str) -> bytes:
-    rows = FR[:2] if page == 1 else FR[2:] if page == 2 else []
-    if query.casefold() in {"nothing", "aucun"}:
-        rows = []
+    # Filtrer avant de paginer : une recherche ne dépend pas de mots magiques.
+    needle = " ".join(query.split()).casefold()
+    matched = [row for row in FR if needle in row[1].casefold()]
+    rows = matched[(page - 1) * 2:page * 2]
     parts = ['<!doctype html><html lang="fr"><body>']
     for slug, title, age, author, typ, isbn in rows:
         parts.append(f'<div>{age}</div><a href="/livre/{slug}">{html.escape(title)}</a>'
                      f'<p>{html.escape(author)}</p><div>{typ}</div>'
                      f'<p>ISBN: {isbn}</p>')
-    if page == 1 and rows:
-        href = ("/recherche-avancee?page=2&search_api_views_fulltext="
+    if page * 2 < len(matched):
+        href = (f"/recherche-avancee?page={page + 1}&search_api_views_fulltext="
                 + quote(query) + "&types=livre")
         parts.append(f'<a href="{html.escape(href, quote=True)}">Afficher plus de résultats</a>')
     parts.append("</body></html>")
@@ -84,6 +87,8 @@ class FakePublishers:
                                       "publishers": ["usborne", "ecole-loisirs"]})
         if path.startswith("/publishers/"):
             fault = (qs.get("fault") or [""])[0]
+            if fault == "malformed":
+                return self.send(h, 200, "text/html; charset=utf-8", b'<html><a href="')
             if fault == "503":
                 return self.send(h, 503, "text/html", b"Unavailable")
             if fault == "wrong-type":
@@ -92,12 +97,16 @@ class FakePublishers:
                 return self.send(h, 200, "text/html", b"x" * 2_000_001)
         if path == "/publishers/usborne/us/books/browse-by-age" or path.startswith(
                 "/publishers/usborne/us/books/browse-by-age/"):
-            page = max(1, min(100, int((qs.get("p") or ["1"])[0])))
+            page = int((qs.get("p") or ["1"])[0])
+            if not 1 <= page <= 100:
+                raise ValueError("invalid page")
             return self.send(h, 200, "text/html; charset=utf-8", usborne_html(page=page))
         if path == "/publishers/ecole/recherche-avancee":
             if (qs.get("types") or ["livre"])[0] != "livre":
                 return self.send(h, 200, "text/html; charset=utf-8", ecole_html(page=3, query=""))
-            page = max(1, min(100, int((qs.get("page") or ["1"])[0])))
+            page = int((qs.get("page") or ["1"])[0])
+            if not 1 <= page <= 100:
+                raise ValueError("invalid page")
             query = (qs.get("search_api_views_fulltext") or [""])[0]
             return self.send(h, 200, "text/html; charset=utf-8",
                              ecole_html(page=page, query=query))
