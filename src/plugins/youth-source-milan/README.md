@@ -41,3 +41,9 @@ Aucun âge n'est déduit de la collection (`Littérature 9-12 ans`, etc.), du r�
 - timeout borné ;
 - 8 fiches produit maximum qualifiées par appel ;
 - aucune collecte implicite.
+
+## Validation source → catalogue (P1 #813)
+
+La collecte Milan refuse un âge hors **0–17** ou non numérique **avant tout appel HTTP**, même lorsque la page de catalogue est vide. La recette plugin déterministe exerce le vrai `MilanYouthSource.browse`, l'entrée âge-aware `fetch_source_page` de la page Jeunesse, puis l'index `YouthCatalogPlugin`, sur un client HTTP simulé sans réseau extérieur. Elle couvre la pagination, la conservation d'ISBN et provenance, l'indisponibilité 503/timeout et une reprise explicite ; la lecture du cache n'active pas de requête réseau.
+
+Ces tests techniques ne prouvent ni l'accessibilité actuelle du site public Milan ni un parcours utilisateur GTK avec source activée : ces points relèvent de la validation dédiée et de la recette UX indépendante.
