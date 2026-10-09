@@ -257,6 +257,27 @@ def _browse_url(*, age: int | None, page: int) -> str:
     return base if bounded_page == 1 else base + "?" + urlencode({"p": bounded_page})
 
 
+def next_page_cursor(html: str, *, current_page: int) -> str:
+    for kind, label, href in _tokens(html):
+        if kind != "link" or _fold(label) != "next page":
+            continue
+        url = _allowed_url(href)
+        if not url or not urlsplit(url).path.startswith("/us/books/browse-by-age"):
+            continue
+        try:
+            params = {}
+            for part in urlsplit(url).query.split("&"):
+                if "=" in part:
+                    key, value = part.split("=", 1)
+                    params[key] = value
+            page = int(params.get("p", ""))
+        except (TypeError, ValueError):
+            continue
+        if current_page < page <= 100:
+            return str(page)
+    return ""
+
+
 class UsborneYouthSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
@@ -317,13 +338,14 @@ class UsborneYouthSource:
             raise ValueError("invalid Usborne page cursor")
         page = min(page, 100)
         url = _browse_url(age=age, page=page)
+        html = self._get(url)
         rows = parse_listing(
-            self._get(url),
+            html,
             text_filter=text_filter,
             age=age,
             limit=max(1, min(int(limit), 40)),
         )
-        next_cursor = str(page + 1) if rows and page < 100 else ""
+        next_cursor = next_page_cursor(html, current_page=page)
         return {
             "items": rows,
             "next_cursor": next_cursor,
