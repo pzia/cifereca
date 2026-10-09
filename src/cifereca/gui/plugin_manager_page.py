@@ -17,7 +17,7 @@ from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
     filter_package_plugins, plugin_role, plugin_dependents, plugin_relationships,
-    functional_plugin_groups,
+    functional_plugin_groups, required_extension_ids,
     package_matches_query,
     plugin_summary_counts,
 )
@@ -186,6 +186,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         if not self._view_query and self._view_filter == "all" and self._view_role == "all":
             self._append_family_navigation(statuses)
 
+        # A search for a principal plugin also finds its required extensions,
+        # including those installed through a different package.
+        related_ids = required_extension_ids(statuses, self._view_query)
         installed_packages = [
             package for package in inventory
             if any(status.descriptor.package_id == package["package_id"] for status in statuses)
@@ -210,6 +213,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 query=self._view_query,
                 state_filter=self._view_filter,
                 role_filter=self._view_role,
+                related_ids=related_ids,
             )
             package_plugins.sort(
                 key=lambda status: (
