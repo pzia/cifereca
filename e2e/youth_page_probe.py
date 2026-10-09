@@ -152,6 +152,21 @@ def main() -> int:
         actual = {book.record_id for book in page.view.rows.values()}
         assert actual == set(expected), f"expected {expected}, observed {actual}"
 
+    def detail_rows():
+        """Read actual libadwaita detail rows, not only catalog data."""
+        found = []
+
+        def visit(widget):
+            if isinstance(widget, Adw.ActionRow):
+                found.append((str(widget.get_title() or ""), str(widget.get_subtitle() or "")))
+            child = widget.get_first_child()
+            while child is not None:
+                visit(child)
+                child = child.get_next_sibling()
+
+        visit(page.view.master._page.detail)
+        return found
+
     def start_ui():
         assert window.view_stack.get_visible_child_name() == "youth"
         assert page.view is not None, "Real ui.page.youth factory not called"
@@ -164,7 +179,20 @@ def main() -> int:
         capture("00-empty-cache")
         camille, alex = records()
         assert catalog.ingest("camille", "booktrust", camille).accepted == 6
+        milan = dict(
+            camille[1],
+            record_id="milan-forest",
+            source_item_id="milan-forest",
+            age_ranges=[{
+                "age_min": 8, "age_max": 12, "age_kind": "publisher",
+                "source_label": "8–12 ans (Milan)", "source_id": "milan",
+                "confidence": 0.9,
+            }],
+        )
+        assert catalog.ingest("camille", "milan", [milan]).accepted == 1
         assert catalog.ingest("alex", "booktrust", alex).accepted == 1
+        merged = catalog.search_cached("camille", "Forest")
+        assert len(merged) == 1 and set(merged[0].provenance) == {"booktrust", "milan"}
         page.view.render_cached()
         later(200, cached_camille)
 
@@ -228,6 +256,21 @@ def main() -> int:
         assert page.view.selected_book.record_id == "interest-eight"
         # The selected book must preserve the real source age label.
         assert page.view.selected_book.age_ranges[0].source_label == "8–12 ans"
+        assert set(page.view.selected_book.provenance) == {"booktrust", "milan"}
+        shown = detail_rows()
+        assert any(
+            "source booktrust" in subtitle and "8–12 ans" in subtitle
+            for _, subtitle in shown
+        ), f"BookTrust age not rendered in GTK detail: {shown!r}"
+        assert any(
+            "source milan" in subtitle and "8–12 ans (Milan)" in subtitle
+            for _, subtitle in shown
+        ), f"Milan age not rendered in GTK detail: {shown!r}"
+        assert any(
+            title == "Sources" and "booktrust" in subtitle and "milan" in subtitle
+            for title, subtitle in shown
+        ), f"Multi-source provenance not rendered in GTK detail: {shown!r}"
+        result["detail_provenance"] = shown
         capture("06-keyboard-search-detail")
         later(160, click_collect_without_source)
 
@@ -259,6 +302,24 @@ def main() -> int:
         assert page.view.selected_book.record_id == "interest-eight"
         result["no_source_feedback"] = message
         capture("07-no-source-feedback")
+        page.view.age.set_selected(0)
+        page.view.query.set_text("Age inconnu")
+        later(200, select_unknown_age)
+
+    def select_unknown_age():
+        assert_rows("unknown")
+        page.view.master._page.selection.set_selected(0)
+        later(200, verify_unknown_age)
+
+    def verify_unknown_age():
+        assert page.view.selected_book is not None
+        assert page.view.selected_book.record_id == "unknown"
+        shown = detail_rows()
+        assert any(
+            title == "Âge" and "Aucune tranche d’âge attestée" in subtitle
+            for title, subtitle in shown
+        ), f"Unknown age not described in GTK detail: {shown!r}"
+        capture("08-unknown-age-detail")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
