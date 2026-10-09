@@ -95,9 +95,10 @@ def test_invalid_or_external_product_links_are_ignored():
     assert parse_listing(html) == ()
 
 
-def test_next_cursor_requires_explicit_next_page_link():
+def test_next_cursor_requires_explicit_immediate_next_page_link():
     assert next_page_cursor(HTML, current_page=1) == "2"
     assert next_page_cursor("<a href='?p=2'>Next Page</a>", current_page=1) == "2"
+    assert next_page_cursor("<a href='?p=3'>Next Page</a>", current_page=1) == ""
     assert next_page_cursor("<a href='?p=1'>Next Page</a>", current_page=1) == ""
     assert next_page_cursor("<p>No next page</p>", current_page=1) == ""
 
@@ -157,6 +158,10 @@ def test_invalid_cursor_fails_before_network():
     )
     with pytest.raises(ValueError):
         source.browse(cursor="not-a-page")
+    with pytest.raises(ValueError):
+        source.browse(cursor="0")
+    with pytest.raises(ValueError):
+        source.browse(cursor="101")
     assert calls == 0
 
 
@@ -203,3 +208,71 @@ def test_source_info_is_structural_youth_source():
     }
     assert normalize_isbn13("9781805075103") == "9781805075103"
     assert normalize_isbn13("9780000000000") == ""
+
+
+
+def test_duplicate_badge_after_title_does_not_lose_published_age():
+    html = """
+      <a href="/us/book-9781805075103">Real Product Title</a>
+      <div>Age: 3+</div>
+      <a href="/us/book-9781805075103">Award Winner</a>
+      <a href="/us/older-9780306406157">Older</a>
+      <div>Age: 10+</div>
+    """
+    rows = parse_listing(html)
+    assert [row["title"] for row in rows] == ["Real Product Title", "Older"]
+    assert rows[0]["age_ranges"][0]["age_min"] == 3
+
+
+def test_redirect_response_is_rejected_not_followed():
+    source = UsborneYouthSource(
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                302,
+                headers={
+                    "content-type": "text/html",
+                    "location": "https://evil.example/",
+                },
+                text="redirect",
+            )
+        ))
+    )
+    with pytest.raises(RuntimeError, match="302"):
+        source.browse()
+
+
+def test_browse_path_prefix_spoof_is_rejected():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+
+    source = UsborneYouthSource(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    with pytest.raises(ValueError):
+        source._get("https://usborne.com/us/books/browse-by-age-evil")
+    assert calls == 0
+
+
+def test_local_filter_is_bounded_to_300_characters():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text=HTML,
+        )
+
+    source = UsborneYouthSource(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    query = "older" + ("x" * 500)
+    result = source.search(query)
+    assert result["items"] == ()
+    assert seen[0].url.path == "/us/books/browse-by-age"
+    assert "q" not in seen[0].url.params
