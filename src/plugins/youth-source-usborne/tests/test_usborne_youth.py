@@ -257,22 +257,24 @@ def test_browse_path_prefix_spoof_is_rejected():
     assert calls == 0
 
 
-def test_local_filter_is_bounded_to_300_characters():
-    seen = []
+def test_local_filter_is_bounded_to_300_characters(monkeypatch):
+    captured = []
 
-    def handler(request):
-        seen.append(request)
-        return httpx.Response(
-            200,
-            headers={"content-type": "text/html"},
-            text=HTML,
-        )
+    def fake_parse(html, *, text_filter="", age=None, limit=40):
+        captured.append(text_filter)
+        return ()
 
+    monkeypatch.setattr("usborne_youth.parse_listing", fake_parse)
     source = UsborneYouthSource(
-        client=httpx.Client(transport=httpx.MockTransport(handler))
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text=HTML,
+            )
+        ))
     )
-    query = "older" + ("x" * 500)
-    result = source.search(query)
-    assert result["items"] == ()
-    assert seen[0].url.path == "/us/books/browse-by-age"
-    assert "q" not in seen[0].url.params
+    source.search("older" + ("x" * 500))
+    assert len(captured) == 1
+    assert len(captured[0]) == 300
+    assert captured[0].startswith("older")
