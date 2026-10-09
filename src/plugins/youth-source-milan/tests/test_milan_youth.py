@@ -153,6 +153,59 @@ def test_paginated_catalogue_without_recognized_books_is_not_silent_empty_succes
     assert MilanYouthSource(client=empty).browse(age=8, limit=2)["items"] == ()
 
 
+def test_generic_milan_product_labels_keep_verified_product_urls():
+    listing = """
+      <a href="/livres/63047-moqueuse/">Lire la suite</a>
+      <a href="/livres/77561-lescargot/">Voir le livre</a>
+      <a href="/livres/63047-moqueuse/">Moqueuse</a>
+      <a href="https://evil.example/livres/1-bad/">Voir le livre</a>
+      <a href="/livres/page/2/">Voir la suite</a>
+    """
+    diagnostic = {}
+    assert listing_products(listing, listing_diagnostic=diagnostic) == (
+        ("Moqueuse", "https://www.editionsmilan.com/livres/63047-moqueuse/"),
+        ("lescargot", "https://www.editionsmilan.com/livres/77561-lescargot/"),
+    )
+    assert listing_products(listing, text_filter="escargot") == (
+        ("lescargot", "https://www.editionsmilan.com/livres/77561-lescargot/"),
+    )
+    assert diagnostic["generic_product_label_count"] == 2
+    assert diagnostic["recognized_product_count"] == 2
+    assert diagnostic["product_href_count"] == 3
+
+
+def test_generic_milan_cards_qualify_only_detail_verified_age_and_isbn():
+    listing = """
+      <a href="/livres/63047-moqueuse/">Voir le livre</a>
+      <a href="/livres/77561-lescargot/">Lire la suite</a>
+      <a href="/livres/99999-adulte/">Voir le livre</a>
+      <a href="/livres/page/2/">Suivant</a>
+    """
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        path = request.url.path
+        data = (
+            listing if path == "/livres/"
+            else MOQUEUSE if "63047" in path
+            else ESCARGOT if "77561" in path
+            else ADULT
+        )
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=data)
+
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.browse(age=8, limit=2)
+    assert [item["title"] for item in result["items"]] == ["Moqueuse", "L'escargot"]
+    assert [item["isbn13"] for item in result["items"]] == [
+        "9782408020804", "9782408045074",
+    ]
+    assert result["next_cursor"] == "2"
+    assert source.diagnostic_snapshot()["generic_product_label_count"] == 3
+    assert source.diagnostic_snapshot()["detail_requests"] == 2
+    assert seen == ["/livres/", "/livres/63047-moqueuse/", "/livres/77561-lescargot/"]
+
+
 def test_detail_requires_explicit_age_and_valid_isbn():
     row = parse_detail(
         MOQUEUSE,

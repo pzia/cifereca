@@ -205,7 +205,11 @@ def listing_products(
     listing_diagnostic: dict | None = None,
 ) -> tuple[tuple[str, str], ...]:
     query = _fold(text_filter)
-    found: dict[str, str] = {}
+    # A catalogue card can use only "Voir le livre" as anchor text.
+    # Keep its *strictly allowlisted* product URL and obtain the real
+    # published title, age and ISBN from the detail page during browse().
+    found: dict[str, tuple[str, bool]] = {}
+    generic_count = 0
     for kind, label, href in tokens(html, listing_diagnostic=listing_diagnostic):
         if kind != "link":
             continue
@@ -214,13 +218,19 @@ def listing_products(
             continue
         clean = _text(label)
         low = _fold(clean)
-        if low in _GENERIC_LINKS or low.startswith("voir "):
+        fallback = low in _GENERIC_LINKS or low.startswith("voir ")
+        if fallback:
+            generic_count += 1
+            slug = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1].partition("-")[2]
+            clean = _text(slug.replace("-", " "))[:160]
+        if not clean:
             continue
-        previous = found.get(url, "")
-        if not previous or len(clean) > len(previous):
-            found[url] = clean
+        previous_title, previous_fallback = found.get(url, ("", True))
+        if (not previous_title or (previous_fallback and not fallback)
+                or (previous_fallback == fallback and len(clean) > len(previous_title))):
+            found[url] = (clean, fallback)
     out = []
-    for url, title in found.items():
+    for url, (title, _fallback) in found.items():
         if query and query not in _fold(title):
             continue
         out.append((title, url))
@@ -228,6 +238,7 @@ def listing_products(
             break
     if listing_diagnostic is not None:
         listing_diagnostic["recognized_product_count"] = len(out)
+        listing_diagnostic["generic_product_label_count"] = generic_count
     return tuple(out)
 
 
