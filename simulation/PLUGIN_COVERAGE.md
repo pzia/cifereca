@@ -109,3 +109,15 @@ Il ne s'agit pas d'une validation GTK ni du véritable backend Kobo-Adept.
 Le service `transport_failures` est accessible uniquement sur `127.0.0.1:8102` dans les profils `ux-small`, `ux-all`, `ux-errors`. Le vrai `HttpTransport` est testé contre 429/503, timeout, HTML ou MIME incorrect, taille excessive, réponse vide, boucle de redirection et redirection inter-origines supprimant les en-têtes sensibles. Un EPUB fictif permet aussi un téléchargement positif.
 
 Ces tests ne constituent pas un scénario E2E GTK, une annulation de tâche ou une preuve de couverture du cache. Voir `simulation/transport/README.md` et `simulation/tests/test_http_negative_contracts.py`.
+
+## OPDS Gallica/Gutenberg — erreurs de protocole
+
+Le serveur OPDS existant accepte `?ux_fault=` pour sept états négatifs
+de flux (429/503, XML invalide, mauvais document, zéro notice, échec de
+page suivante, redirection bouclée). Des réponses EPUB invalides et
+HTML testent `transport.http`. Les tests sont dans
+`simulation/tests/test_opds_negative_contracts.py`.
+
+Les scénarios sont **opt-in**, sans impact sur les catalogues des profils
+`ux-small`, `ux-all`, `ux-errors` en mode normal ; les preuves de
+fonctionnement GTK et les vrais fournisseurs ne sont pas vérifiés.
