@@ -23,13 +23,13 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 | **plugins** | Fonctionnalités sous src/plugins/, manifestes et tests de chaque plugin. Consommer uniquement cifereca.plugin_api ; demander une évolution Core si nécessaire. |
 | **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires, preuves GTK et tickets UX ; ne corrige pas le produit. |
 | **cicd** | Workflows, packaging, tests transverses, vérification des artefacts, résolution des blocages CI et **merge** des PR prêtes. |
-| **focus** | **Méta-rôle** : choisit les étapes selon P0 → P1 → P2 et prend successivement les rôles ci-dessus. Ne constitue pas une exception aux frontières. |
+| **focus** | **Méta-rôle** : choisit les étapes selon P0 → P1 → P2 ; adopte `backlog`, `core`, `plugins` ou `cicd`. Le rôle `ux` reste indépendant et **exclu de focus**. |
 
 Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **simulation** = ux (périmètre simulateurs et recettes). Le rôle core donne priorité au non-UI à **priorité égale**, et cicd aux gates CI avant les merges à **priorité égale**. Ces préférences ne dépassent jamais P0/P1/P2.
 
 ## Méta-rôle focus : une étape à la fois
 
-Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal :
+Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal : **focus ne prend jamais le rôle `ux` (ni son alias `simulation`)**. Il transmet les recettes visuelles et simulations UX au propriétaire UX indépendant, même pour un P0, puis avance sur un autre travail autorisé.
 
 1. **Lire la situation** : état de main, issues P0/P1/P2, PR, CI, dépendances et preuves déjà disponibles.
 2. **Choisir une seule action utile** : priorité la plus haute, travail non dupliqué et résultat vérifiable ; annoncer le rôle actif et la référence GitHub.

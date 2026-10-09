@@ -7,7 +7,7 @@ Le guide canonique est [AGENTS.md](../../AGENTS.md).
 - `plugins` : composants fonctionnels et tests spécifiques.
 - `ux` : parcours et preuves GTK ; inclut la simulation exploratoire.
 - `cicd` : CI/CD, packaging, merges ; alias `merger`.
-- `focus` : méta-rôle d'orchestration P0 → P1 → P2, changeant de rôle **entre** les étapes.
+- `focus` : méta-rôle d'orchestration P0 → P1 → P2 ; peut adopter `backlog`, `core`, `plugins` ou `cicd`, **jamais `ux` / `simulation`**, qui demeure un rôle indépendant.
 
 Un rôle actif par étape, avec un livrable vérifiable. En mode classique, le rôle reste celui choisi dans le fil ; en mode `focus`, l'orchestrateur réévalue et peut en changer à chaque étape. Aucun rôle ne franchit la frontière d'un autre pour éviter un handoff.
 
