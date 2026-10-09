@@ -81,3 +81,8 @@ seed = 20261008
 [services.youth_sources]
 enabled = true
 seed = 20261009
+
+# Synthetic editor age labels; no production host redirection.
+[services.youth_publishers]
+enabled = true
+seed = 20261009
