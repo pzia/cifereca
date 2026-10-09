@@ -571,7 +571,7 @@ def test_milan_diagnostic_callback_failure_does_not_block_collecting():
     from types import SimpleNamespace
 
     source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
-        lambda req: httpx.Response(200, text="<p>Aucun livre</p>")
+        lambda req: httpx.Response(200, headers={"content-type": "text/html"}, text="<p>Aucun livre</p>")
     )))
     source.activate(SimpleNamespace(report_diagnostic=lambda *args, **kwargs: 1 / 0))
     assert source.browse(age=8)["items"] == ()
