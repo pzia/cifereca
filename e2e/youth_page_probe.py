@@ -621,6 +621,17 @@ def main() -> int:
         assert any(title == "Sources" and "booktrust" in sub and "milan" in sub for title, sub in shown), shown
         result["same_isbn_detail"] = shown
         capture("01-conflicting-age-sources-preserved")
+        later(140, editions_first_isbn_in_view)
+
+    def editions_first_isbn_in_view():
+        scroller = page.view.master._page.detail.body_scroll
+        adjustment = scroller.get_vadjustment()
+        adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        later(200, editions_first_isbn_scrolled)
+
+    def editions_first_isbn_scrolled():
+        assert ("ISBN", "9780306406157") in detail_rows()
+        capture("01b-first-isbn-visible-after-scroll")
         page.view.master._page.selection.set_selected(1)
         later(220, editions_second_detail)
 
@@ -636,6 +647,17 @@ def main() -> int:
         assert not any("source booktrust" in sub for _, sub in shown), shown
         result["different_isbn_detail"] = shown
         capture("02-second-edition-separated")
+        later(140, editions_second_isbn_in_view)
+
+    def editions_second_isbn_in_view():
+        scroller = page.view.master._page.detail.body_scroll
+        adjustment = scroller.get_vadjustment()
+        adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        later(200, editions_second_isbn_scrolled)
+
+    def editions_second_isbn_scrolled():
+        assert ("ISBN", "9780140328721") in detail_rows()
+        capture("02b-second-isbn-visible-after-scroll")
         page.view.age.set_selected(7)  # âge 6: seulement BookTrust 5-7
         later(180, editions_age_six)
 
