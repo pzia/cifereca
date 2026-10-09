@@ -74,6 +74,85 @@ def test_listing_extracts_product_links_and_filters_locally():
     )
 
 
+
+def test_listing_recognizes_accessible_cover_only_links_without_inventing_titles():
+    listing = """
+      <section>
+        <a href="/livres/63047-moqueuse/">
+          <picture><img loading="lazy" alt="Couverture de Moqueuse"></picture>
+        </a>
+        <a href="/livres/77561-lescargot/" aria-label="L'escargot">
+          <svg aria-hidden="true"></svg>
+        </a>
+        <a href="/livres/99999-adulte/" title="Essai adulte"></a>
+        <a href="/livres/63047-moqueuse/">Moqueuse — roman jeunesse</a>
+        <a href="https://evil.example/livres/1-bad/">
+          <img alt="Couverture de faux livre">
+        </a>
+        <a href="/livres/collections/99-truc/"><img alt="Collection sans livre"></a>
+        <a href="/livres/page/2/" aria-label="Page suivante"></a>
+      </section>
+    """
+    assert listing_products(listing) == (
+        ("Moqueuse — roman jeunesse", "https://www.editionsmilan.com/livres/63047-moqueuse/"),
+        ("L'escargot", "https://www.editionsmilan.com/livres/77561-lescargot/"),
+        ("Essai adulte", "https://www.editionsmilan.com/livres/99999-adulte/"),
+    )
+    assert listing_products(listing, text_filter="escargot") == (
+        ("L'escargot", "https://www.editionsmilan.com/livres/77561-lescargot/"),
+    )
+    assert next_cursor(listing, current_page=1) == "2"
+
+
+def test_cover_only_listing_collects_real_details_with_age_isbn_and_request_limit():
+    listing = (
+        '<a href="/livres/63047-moqueuse/">'
+        '<img alt="Couverture de Moqueuse"></a>'
+        '<a href="/livres/77561-lescargot/" title="L\'escargot"></a>'
+        '<a href="/livres/page/2/">Suivant</a>'
+    )
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path == "/livres/":
+            html = listing
+        elif request.url.path == "/livres/63047-moqueuse/":
+            html = MOQUEUSE
+        elif request.url.path == "/livres/77561-lescargot/":
+            html = ESCARGOT
+        else:
+            raise AssertionError(str(request.url))
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.browse(age=8, limit=2)
+    assert [row["title"] for row in result["items"]] == ["Moqueuse", "L'escargot"]
+    assert [row["isbn13"] for row in result["items"]] == [
+        "9782408020804", "9782408045074",
+    ]
+    assert result["next_cursor"] == "2"
+    assert seen == ["/livres/", "/livres/63047-moqueuse/", "/livres/77561-lescargot/"]
+
+
+def test_paginated_catalogue_without_recognized_books_is_not_silent_empty_success():
+    listing = '<div><a href="/livres/page/2/">2</a></div>'
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, headers={"content-type": "text/html"}, text=listing
+        )
+    ))
+    with pytest.raises(RuntimeError, match="no recognizable book links"):
+        MilanYouthSource(client=client).browse(age=8, limit=2)
+    # A genuinely empty non-paginated listing remains an empty successful response.
+    empty = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, headers={"content-type": "text/html"}, text="<p>Aucun résultat</p>"
+        )
+    ))
+    assert MilanYouthSource(client=empty).browse(age=8, limit=2)["items"] == ()
+
+
 def test_detail_requires_explicit_age_and_valid_isbn():
     row = parse_detail(
         MOQUEUSE,
