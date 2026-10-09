@@ -26,6 +26,20 @@ SCENARIOS = {
         ),
         "runner": "gtk-probe",
     },
+    "youth-1024": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : page Jeunesse GTK réelle, XTEST, 1024px, âges, identité, provenance.",
+        "runner": "gtk-youth",
+        "width": 1024,
+    },
+    "youth-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : page Jeunesse GTK réelle, XTEST, 1366px, âges, identité, provenance.",
+        "runner": "gtk-youth",
+        "width": 1366,
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -147,7 +161,14 @@ def main() -> int:
             stderr_path = scenario_dir / "stderr.log"
             trace_path = scenario_dir / "trace.jsonl"
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
-            if scenario.get("runner") == "gtk-probe":
+            if scenario.get("runner") == "gtk-youth":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/youth_page_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-probe":
                 command = [
                     xvfb, "-a", "-s", "-screen 0 1280x1024x24",
                     args.python, str(ROOT / "e2e/search_filter_probe.py"),
@@ -180,7 +201,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") == "gtk-probe" and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-youth"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
