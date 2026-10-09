@@ -67,3 +67,25 @@ catalogue, recherches, pagination, détails, téléchargements EPUB synthétique
 `httpx.MockTransport` dirigé uniquement vers le faux serveur loopback :
 `simulation/tests/test_baen_http_service.py`. Le service n'active aucun
 plugin Baen dans Cifereca et ne prouve pas un parcours GUI.
+
+## Découverte de sources et enrichissement Jeunesse — scénarios exécutables
+
+Le manifeste des JDD spécialisés passe à la **version 2** : les profils
+`ux-small`, `ux-all`, `ux-errors` régénèrent automatiquement les
+anciens caches lorsque la version change. Deux nouvelles fixtures synthétiques
+sont accessibles via `CIFERECA_UX_SPECIALIZED_DATA` et le service éditorial :
+
+- `youth-discovery.json` / `GET /youth/discovery.json` : résultats
+  dupliqués, source attestant des âges, âge en mois, bruit documentaire,
+  URL privée, credentials et inspection de page en erreur. Le vrai plugin
+  `YouthSourceDiscoveryPlugin` construit un dossier avec revue manuelle.
+- `youth-enrichment.json` / `GET /youth/enrichment.json` : preuve ISBN
+  forte, éditions distinctes, conflit de doublons, titre seul refusé,
+  séparation des identités, cache inaccessible. Le vrai
+  `YouthDetailEnrichment` utilise un index **synthétique en mémoire**, sans
+  recherche distante ni mutation du cache du Core.
+
+`simulation/tests/test_youth_workflow_contracts.py` vérifie les deux plugins.
+Les URLs `.example` restent fictives : **aucune requête HTTP externe** n'est
+effectuée pendant l'exécution du workflow de découverte ou enrichissement.
+La GUI GTK et la persistance applicative ne sont pas encore recettées.
