@@ -9,6 +9,8 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import re
+from collections.abc import Mapping
 from pathlib import Path
 import subprocess
 import sys
@@ -93,6 +95,60 @@ def qualification_status(https_requests: list[str], notices: list[dict]) -> str:
     if not https_requests:
         return "BLOCKED"
     return "PASS" if notices else "NO_VERIFIED_NOTICE"
+
+
+# Only allow bounded structural metadata through the operator-facing JSON.
+# Never publish arbitrary plugin diagnostic values, response bodies or URLs.
+_MILAN_DIAGNOSTIC_COUNTS = frozenset({
+    "page", "requested_limit", "detail_requests", "http_status",
+    "html_bytes", "anchor_count", "milan_catalogue_href_count",
+    "product_href_count", "product_link_text_count",
+    "product_link_accessible_count", "product_link_unnamed_count",
+    "unrecognized_catalogue_href_count", "recognized_product_count",
+    "qualified_items",
+})
+_MILAN_DIAGNOSTIC_FLAGS = frozenset({
+    "age_filter_present", "content_type_is_html", "next_cursor_present",
+})
+_MILAN_DIAGNOSTIC_PHASES = frozenset({"listing", "products", "complete"})
+
+
+def plugin_diagnostic_for(source: object, source_id: str) -> dict[str, object]:
+    """Return the plugin's last *sanitized* local diagnostics on success/failure.
+
+    This is a read-only snapshot; it does not trigger another HTTP request.
+    BookTrust has no corresponding diagnostic contract yet.
+    """
+    if source_id != "milan":
+        return {}
+    snapshot = getattr(source, "diagnostic_snapshot", None)
+    if not callable(snapshot):
+        return {}
+    try:
+        raw = snapshot()
+    except Exception:
+        return {}
+    if not isinstance(raw, Mapping) or raw.get("source") != "milan":
+        return {}
+    result: dict[str, object] = {"source": "milan"}
+    for key in _MILAN_DIAGNOSTIC_COUNTS:
+        value = raw.get(key)
+        if type(value) is int and 0 <= value <= 100_000_000:
+            result[key] = value
+    for key in _MILAN_DIAGNOSTIC_FLAGS:
+        value = raw.get(key)
+        if type(value) is bool:
+            result[key] = value
+    phase = raw.get("phase")
+    if isinstance(phase, str) and phase in _MILAN_DIAGNOSTIC_PHASES:
+        result["phase"] = phase
+    digest = raw.get("html_sha256_prefix")
+    if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{16}", digest):
+        result["html_sha256_prefix"] = digest
+    error_type = raw.get("error_type")
+    if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z][A-Za-z_0-9]{0,49}", error_type):
+        result["error_type"] = error_type
+    return result
 
 
 def bundle(name: str, files: tuple[str, ...], workspace: Path) -> Path:
@@ -181,6 +237,12 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
             if not requests:
                 report["reason"] = "no public HTTPS request observed"
         finally:
+            # The transient Core profile is deleted after this call. Capture
+            # only whitelisted diagnostic counters before it disappears,
+            # including when browse()/ingest() raised an exception.
+            diagnostic = plugin_diagnostic_for(source, args.source)
+            if diagnostic:
+                report["plugin_diagnostic"] = diagnostic
             client.close()
             report["https_requests"] = requests
             report["requests_count"] = len(requests)
