@@ -12,6 +12,7 @@ on:
       - 'pyproject.toml'
       - 'VERSION'
       - 'scripts/ci-select-core-tests.py'
+      - 'scripts/ci_select_plugin_tests.py'
       - 'scripts/check_release_inventory.py'
       - 'scripts/ci-install-gtk-e2e-runtime.sh'
       - 'scripts/package_partial_plugins.py'

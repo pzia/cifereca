@@ -51,3 +51,18 @@ documentations/handoffs, plugins seuls, Core GUI ou API partagée,
 scripts consommés, modifications mixtes, dispatch et exclusions.
 Les workflows conservent également une possibilité de lancement manuel
 pour valider le SHA de `main` lors d'un incident ou avant une release.
+
+## Sélection prudente des packages de tests (P0 #856)
+
+PR et push Plugins partagent `scripts/ci_select_plugin_tests.py`.
+Seuls des ajouts/modifications de modules `src/plugins/<package>/tests/test_*.py`
+(éventuellement accompagnés de docs) sélectionnent les packages concernés.
+Code produit, manifeste, helper/conftest, suppression ou renommage imposent
+la suite complète : les dépendances entre plugins ne sont pas encore modélisées.
+Cette tranche ne prétend donc pas cibler un changement produit isolé.
+
+Push : diff `before..sha`, historique complet et vérification du checkout.
+PR : diff merge-base vers head, compatible avec le checkout de merge GitHub.
+SHA absent/zéro, diff inaccessible, historique divergent ou dispatch manuel :
+repli complet explicite, avec raison JSON dans les logs. Aucun skip silencieux.
+Le runner existant reçoit les répertoires comme arguments Bash séparés.
