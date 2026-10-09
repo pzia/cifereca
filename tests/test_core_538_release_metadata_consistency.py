@@ -31,6 +31,26 @@ def test_source_release_metadata_share_one_version():
     assert plugin_release["release"] == expected
 
 
+def test_release_inventory_matches_all_source_plugin_manifests():
+    """Prevent an incomplete Core release after adding or updating a plugin."""
+    release = json.loads(
+        (ROOT / "src" / "cifereca" / "plugin-release.json").read_text(encoding="utf-8")
+    )
+    actual = {}
+    for manifest_path in sorted((ROOT / "src" / "plugins").glob("*/cifereca-plugin.json")):
+        package = json.loads(manifest_path.read_text(encoding="utf-8"))["package"]
+        package_id = str(package["id"])
+        assert package_id not in actual, f"Duplicate plugin package: {package_id}"
+        actual[package_id] = {
+            "version": str(package["version"]),
+            "name": str(package["name"]),
+        }
+    assert release["packages"] == actual, (
+        "Core release inventory must include every source package at its actual "
+        "version and name; synchronize plugin-release.json before the next release"
+    )
+
+
 def test_core_release_exposes_strict_plugins_only_cli(capsys):
     """The released Core must ship the updater contract used by official plugin ZIPs."""
     import pytest
