@@ -97,11 +97,3 @@ gap = "Pas de faux service HTTP de recherche avancée ni de recette GTK pour l�
 [package.youth-source-usborne]
 data = []
 gap = "Pas de faux service HTTP Browse by Age ni de recette GTK Usborne"
-
-[package.youth-source-ecole-loisirs]
-data = []
-gap = "Aucun faux service dédié pour recherche avancée HTML (âge explicite, ISBN, pagination), ni scénario E2E."
-
-[package.youth-source-usborne]
-data = []
-gap = "Aucun faux service HTML Browse by Age (mois/ans, catégories, pagination), ni scénario E2E."
