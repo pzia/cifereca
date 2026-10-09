@@ -12,6 +12,7 @@ import json
 from literary_criticism import canonical_url, discover_feed_links
 
 MAX_BYTES = 2 * 1024 * 1024
+_PRIVATE_HOST_NAMES = {"localhost", "local", "localdomain"}
 _PRIVATE_HOST_SUFFIXES = (".localhost", ".local", ".localdomain")
 
 
@@ -20,7 +21,7 @@ def public_url(value):
     if not url:
         return ""
     host = (urlsplit(url).hostname or "").rstrip(".").casefold()
-    if not host or host == "localhost" or any(host.endswith(suffix) for suffix in _PRIVATE_HOST_SUFFIXES):
+    if not host or host in _PRIVATE_HOST_NAMES or any(host.endswith(suffix) for suffix in _PRIVATE_HOST_SUFFIXES):
         return ""
     try:
         address = ipaddress.ip_address(host)
@@ -88,7 +89,7 @@ def parse_feed(payload, url, *, limit=100):
             raise ValueError('Objet JSON Feed attendu')
         if not str(raw.get('version', '')).startswith('https://jsonfeed.org/version/'):
             raise ValueError('JSON Feed attendu')
-        return [{'title': r.get('title'), 'url': canonical_url(r.get('url') or r.get('external_url'), base_url=url),
+        return [{'title': r.get('title'), 'url': public_url(urljoin(url, str(r.get('url') or r.get('external_url') or ''))),
                  'critic_author': ', '.join(a.get('name', '') for a in r.get('authors', []) if isinstance(a, dict)),
                  'published_at': date_text(r.get('date_published')), 'excerpt': r.get('summary', ''),
                  'language': r.get('language') or raw.get('language', ''), 'book': r.get('_cifereca_book', {})}
@@ -117,23 +118,29 @@ def parse_feed(payload, url, *, limit=100):
             link = next((el.get('href', '') for el in item.findall(atom+'link') if el.get('rel', 'alternate') == 'alternate'), '')
         isbn = [el.text or '' for el in item.findall(dc+'identifier') if (el.text or '').lower().startswith('urn:isbn:')]
         rows.append({'title': text('title') or text(atom+'title'),
-            'url': canonical_url(link, base_url=url),
+            'url': public_url(urljoin(url, link)),
             'critic_author': text('author') or text(dc+'creator') or text(atom+'author/'+atom+'name'),
             'published_at': date_text(text('pubDate') or text(atom+'published') or text(atom+'updated') or text(dc+'date')),
             'excerpt': text('description') or text(atom+'summary'),
             'language': text(dc+'language') or language,
             # Never treat the critic as the author of the reviewed book.
             'book': {'title': text(bookns+'title'), 'authors': [el.text or '' for el in item.findall(bookns+'author')],
-                     'isbns': [s[9:] for s in isbn], 'notice_url': text(bookns+'notice')}})
+                     'isbns': [s[9:] for s in isbn], 'notice_url': public_url(urljoin(url, text(bookns+'notice')))}})
     return rows
 
 
 def discover_url(url, *, fetch=fetch_public):
+    url = public_url(url)
+    if not url:
+        raise ValueError('URL HTTP(S) publique requise')
     final, body = fetch(url)
     try:
         parse_feed(body, final, limit=1)
     except (ValueError, ET.ParseError, TypeError):
-        return discover_feed_links(final, body.decode('utf-8', errors='replace'))
+        return tuple(
+            candidate for candidate in discover_feed_links(final, body.decode('utf-8', errors='replace'))
+            if public_url(candidate.url)
+        )
     from literary_criticism import FeedCandidate
     return (FeedCandidate(final, final, final, evidence='explicit-feed'),)
 
