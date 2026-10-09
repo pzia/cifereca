@@ -34,12 +34,14 @@ from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 
 
-def install_real_youth(core: CiferecaCore, work: Path, *, with_booktrust: bool = False) -> None:
+def install_real_youth(core: CiferecaCore, work: Path, *, with_booktrust: bool = False, with_milan: bool = False) -> None:
     packages = [
         ("youth-catalog", ("cifereca-plugin.json", "youth_catalog.py", "youth_page.py")),
     ]
     if with_booktrust:
         packages.append(("youth-source-booktrust", ("cifereca-plugin.json", "booktrust_youth.py")))
+    if with_milan:
+        packages.append(("youth-source-milan", ("cifereca-plugin.json", "milan_youth.py")))
     for name, files in packages:
         source = ROOT / "src/plugins" / name
         archive = work / f"{name}.zip"
@@ -51,6 +53,8 @@ def install_real_youth(core: CiferecaCore, work: Path, *, with_booktrust: bool =
     plugins = ("catalog.youth", "ui.page.youth")
     if with_booktrust:
         plugins += ("youth.source.booktrust",)
+    if with_milan:
+        plugins += ("youth.source.milan",)
     for plugin_id in plugins:
         assert statuses[plugin_id].state in {"ready", "degraded"}, (
             f"{plugin_id} not activated: {statuses[plugin_id]}"
@@ -83,7 +87,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1024, 1366))
-    parser.add_argument("--booktrust", action="store_true", help="Use the real installed BookTrust source with offline HTTP fixtures")
+    provider = parser.add_mutually_exclusive_group()
+    provider.add_argument("--booktrust", action="store_true", help="Use installed BookTrust with offline HTTP fixtures")
+    provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -95,6 +101,7 @@ def main() -> int:
         "backend": "GTK4/X11/Xvfb", "screen_width": args.width,
         "real_package": "src/plugins/youth-catalog",
         "booktrust_source_installed": args.booktrust,
+        "milan_source_installed": args.milan,
         "steps": [], "status": "RUNNING",
     }
     start = monotonic()
@@ -105,18 +112,55 @@ def main() -> int:
         no_plugins=False,
         force_plugins=(
             ("catalog.youth", "ui.page.youth", "youth.source.booktrust")
-            if args.booktrust else ("catalog.youth", "ui.page.youth")
+            if args.booktrust else
+            ("catalog.youth", "ui.page.youth", "youth.source.milan")
+            if args.milan else ("catalog.youth", "ui.page.youth")
         ),
         activate_plugins=False,
     )
     work = tempfile.TemporaryDirectory(prefix="youth-gtk-package-")
-    install_real_youth(core, Path(work.name), with_booktrust=args.booktrust)
+    install_real_youth(core, Path(work.name), with_booktrust=args.booktrust, with_milan=args.milan)
     catalog = core.plugins.service("catalog.youth")
     page = core.plugins.service("ui.page.youth")
     assert catalog is not None and page is not None
 
     requests = []
     fault = {"unavailable": False}
+    if args.milan:
+        import httpx
+        from milan.pseudo_milan_service import listing, detail
+
+        milan = core.plugins.service("youth.source.milan")
+        assert milan is not None, "Installed Milan provider unavailable"
+
+        def milan_respond(request):
+            assert request.url.host == "www.editionsmilan.com", request.url
+            assert request.url.scheme == "https", request.url
+            requests.append(str(request.url))
+            if fault["unavailable"]:
+                return httpx.Response(503, text="Simulated Milan outage", request=request)
+            uri = request.url.path
+            if uri == "/livres/":
+                payload = listing(1)
+            elif uri == "/livres/page/2/":
+                payload = listing(2)
+            elif uri.startswith("/livres/"):
+                payload = detail(uri.rstrip("/").split("/")[-1])
+            else:
+                raise AssertionError(f"Unexpected Milan URL: {uri}")
+            assert payload is not None, f"No fixture for {uri}"
+            return httpx.Response(
+                200, content=payload,
+                headers={"content-type": "text/html; charset=utf-8"},
+                request=request,
+            )
+
+        milan.client.close()
+        milan.client = httpx.Client(
+            transport=httpx.MockTransport(milan_respond),
+            trust_env=False, follow_redirects=False,
+        )
+
     if args.booktrust:
         import httpx
         from youth_sources.pseudo_youth_sources_service import booktrust_listing
@@ -218,6 +262,9 @@ def main() -> int:
         if args.booktrust:
             source_start_ui()
             return
+        if args.milan:
+            milan_start_ui()
+            return
         assert len(page.view.sources) == 0, "No external youth source should activate in this fixture"
         assert_rows()
         capture("00-empty-cache")
@@ -313,6 +360,141 @@ def main() -> int:
         assert len(requests) == 2, "Local age filter unexpectedly triggered HTTP"
         assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
         capture("03-local-empty-distinct-from-outage")
+        result["status"] = "PASS"
+        write_report()
+        rc[0] = 0
+        app.quit()
+
+
+    def milan_start_ui():
+        assert len(page.view.sources) == 1, "Installed Milan provider not listed"
+        assert page.view.sources[0].plugin_id == "youth.source.milan"
+        assert page.view.source.get_model().get_n_items() == 2
+        assert_rows()
+        assert requests == [], "Opening Milan page triggered remote HTTP"
+        capture("00-milan-source-no-cache")
+        page.view.source.set_selected(1)
+        later(180, milan_collect)
+
+    def milan_collect():
+        assert page.view.selected_source_plugin() == "youth.source.milan"
+        assert not requests, "Selecting Milan triggered remote HTTP"
+        device.click_widget(collect_button())
+        later(170, milan_success)
+
+    def milan_success():
+        if len(page.view.rows) != 4 and monotonic() - start < 19:
+            later(180, milan_success)
+            return
+        assert len(page.view.rows) == 4, f"Milan cache count: {page.view.rows!r}"
+        assert len(requests) == 9, f"Expected listing + 8 bounded detail fetches: {requests!r}"
+        assert requests[0] == "https://www.editionsmilan.com/livres/"
+        assert "99993-jeunesse-neuf" not in " ".join(requests)
+        status = page.view.status.get_text()
+        assert "4 notice(s) reçue(s) de Éditions Milan" in status, status
+        assert "page suivante disponible" in status, status
+        assert len(catalog.search_cached("camille")) == 4
+        # Immediate capture documents the actual empty -> list CROSSFADE.
+        capture("01-milan-collected-four")
+        later(1100, milan_list_settled)
+
+    def milan_list_settled():
+        # Do not mistake the temporary outgoing "Aucun résultat en cache"
+        # status-page overlay for a lasting UX defect.
+        stack = page.view.master._page.list_stack
+        assert stack.get_visible_child_name() == "list", "Collected rows not made visible"
+        assert not stack.get_transition_running(), "Empty-to-list GTK transition still running"
+        assert len(page.view.rows) == 4
+        capture("01b-milan-list-settled")
+        page.view.master._page.selection.set_selected(0)
+        later(250, milan_notice)
+
+    def milan_notice():
+        book = page.view.selected_book
+        assert book is not None, "Selecting Milan book failed"
+        assert set(book.provenance) == {"milan"}
+        assert len(book.age_ranges) == 1
+        assert book.age_ranges[0].age_kind == "publisher"
+        assert "À partir de" in book.age_ranges[0].source_label
+        expected_uri = book.notice_url
+        assert expected_uri.startswith("https://www.editionsmilan.com/livres/")
+        assert page.view.master._page.detail._rendered_document_urls == {expected_uri}
+        def links(widget):
+            result_links = []
+            if isinstance(widget, Gtk.LinkButton):
+                result_links.append(widget)
+            child = widget.get_first_child()
+            while child is not None:
+                result_links.extend(links(child))
+                child = child.get_next_sibling()
+            return result_links
+        rendered = links(page.view.master._page.detail)
+        notice = [link for link in rendered if link.get_uri() == expected_uri]
+        assert len(notice) == 1, f"Expected 1 notice link for {expected_uri}: {[(b.get_label(), b.get_uri()) for b in rendered]!r}"
+        # GTK4 LinkButton may render its text in a child GtkLabel while
+        # Gtk.Button.get_label() returns None. Inspect the actual widget tree.
+        def widget_text(widget):
+            labels = [widget.get_text()] if isinstance(widget, Gtk.Label) else []
+            child = widget.get_first_child()
+            while child is not None:
+                labels.extend(widget_text(child))
+                child = child.get_next_sibling()
+            return labels
+        label = notice[0].get_label() or " ".join(widget_text(notice[0]))
+        assert "Voir la notice publique" in label, f"Notice link text missing in GTK: {label!r}"
+        assert notice[0].get_mapped(), "Notice link not mapped in real GTK detail"
+        result["milan_notice_uri"] = expected_uri
+        capture("02-milan-notice-link")
+        # A URL is verified at the real GTK link sink. Do not activate a real
+        # browser/portal in the network-isolated E2E environment.
+        def find_more(widget):
+            if isinstance(widget, Gtk.Button) and widget.get_label() == "Plus de résultats":
+                return widget
+            child = widget.get_first_child()
+            while child is not None:
+                found = find_more(child)
+                if found is not None:
+                    return found
+                child = child.get_next_sibling()
+            return None
+        more = find_more(page.view.widget)
+        assert more is not None and more.get_mapped(), "Milan pagination button missing"
+        device.click_widget(more)
+        later(170, milan_page_two)
+
+    def milan_page_two():
+        if len(page.view.rows) != 5 and monotonic() - start < 30:
+            later(180, milan_page_two)
+            return
+        assert len(page.view.rows) == 5, f"Milan append pagination failed: {page.view.rows!r}"
+        assert len(requests) == 12, f"Expected listing + 2 page-2 detail requests: {requests!r}"
+        assert requests[9] == "https://www.editionsmilan.com/livres/page/2/"
+        assert not page.view.next_cursor, "Milan terminal page still exposes next cursor"
+        capture("03-milan-page-two-appended")
+        fault["unavailable"] = True
+        device.click_widget(collect_button())
+        later(160, milan_outage)
+
+    def milan_outage():
+        message = page.view.status.get_text()
+        if "Échec de la source" not in message and monotonic() - start < 40:
+            later(170, milan_outage)
+            return
+        assert message == "Échec de la source. Le cache précédent est conservé.", message
+        assert len(requests) == 13, f"Outage requires exactly one new explicit call: {requests!r}"
+        assert len(page.view.rows) == 5
+        assert len(catalog.search_cached("camille")) == 5
+        result["milan_requests"] = list(requests)
+        result["milan_outage_feedback"] = message
+        capture("04-milan-outage-cache-preserved")
+        page.view.age.set_selected(1)  # 0 years; all attested Milan ages start at 1+
+        later(200, milan_empty)
+
+    def milan_empty():
+        assert_rows()
+        assert len(requests) == 13, "Local age filter unexpectedly contacted Milan"
+        assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
+        capture("05-milan-empty-without-request")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
@@ -469,7 +651,7 @@ def main() -> int:
         if rc[0]:
             fail("GTK Youth probe timed out (30s)")
         return False
-    GLib.timeout_add_seconds(45 if args.booktrust else 30, timed_out)
+    GLib.timeout_add_seconds(55 if args.milan else 45 if args.booktrust else 30, timed_out)
     app.run([sys.argv[0]])
     if not (out / "screen.json").exists():
         result.update(status="FAIL", error="GTK closed before probe completed")
