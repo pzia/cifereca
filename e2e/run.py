@@ -17,6 +17,22 @@ CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
 SECRET_KEY = re.compile(r"(token|password|secret|authorization|cookie)", re.I)
 
 SCENARIOS = {
+    "youth-page-1024": {
+        "plugin": "org.cifereca.youth-catalog",
+        "fixture": "youth-page",
+        "description": "P1 Jeunesse, 1024px, âges et identités.",
+        "runner": "gtk-probe",
+        "probe": "youth_page_probe.py",
+        "screen": "1024x900x24",
+    },
+    "youth-page-1366": {
+        "plugin": "org.cifereca.youth-catalog",
+        "fixture": "youth-page",
+        "description": "P1 Jeunesse, 1366px, âges et identités.",
+        "runner": "gtk-probe",
+        "probe": "youth_page_probe.py",
+        "screen": "1366x900x24",
+    },
     "search-filter-p0": {
         "plugin": "core",
         "fixture": "search-filters",
@@ -138,7 +154,7 @@ def main() -> int:
             env.update({
                 "GDK_BACKEND": "x11",
                 "PYTHONPATH": str(ROOT / "src"),
-                "CODEX_HEADLESS_SCREEN": "1280x1024x24",
+                "CODEX_HEADLESS_SCREEN": scenario.get("screen", "1280x1024x24"),
             })
             scenario_dir = args.out / name
             scenario_dir.mkdir(parents=True, exist_ok=True)
@@ -149,8 +165,8 @@ def main() -> int:
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
             if scenario.get("runner") == "gtk-probe":
                 command = [
-                    xvfb, "-a", "-s", "-screen 0 1280x1024x24",
-                    args.python, str(ROOT / "e2e/search_filter_probe.py"),
+                    xvfb, "-a", "-s", f"-screen 0 {scenario.get('screen', '1280x1024x24')}",
+                    args.python, str(ROOT / "e2e" / scenario.get("probe", "search_filter_probe.py")),
                     "--out", str(scenario_dir),
                 ]
             else:
