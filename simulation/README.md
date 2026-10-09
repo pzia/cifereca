@@ -304,3 +304,17 @@ python3 -m unittest discover -s simulation/tests -p 'test_youth_workflow_contrac
 Le rapprochement des livres se fait par identifiants forts, jamais par
 titre seul. Le moteur de découverte ne promeut jamais un candidat sans
 qualification manuelle. Aucun test GTK n'est revendiqué.
+
+## États ADEPT simulés
+
+Le profil UX spécialisé exporte un `adept-profiles.json` fictif : aucune
+identité Adobe, aucun secret et aucune liseuse réelle. Tester le véritable
+adaptateur (contrat CLI JSON v8) sans installer Kobo-Adept :
+
+```sh
+python3 -m unittest discover -s simulation/tests -p 'test_adept_profile_simulation.py' -v
+python3 simulation/plugin_scenarios.py --out /tmp/cifereca-ux-adept
+python3 simulation/adept/fake_kobo_adept_cli.py --fixture /tmp/cifereca-ux-adept/adept-profiles.json profile list --json
+```
+
+Documentation : `simulation/adept/README.md` ; suivi : #773.

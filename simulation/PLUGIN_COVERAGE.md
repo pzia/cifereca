@@ -89,3 +89,17 @@ sont accessibles via `CIFERECA_UX_SPECIALIZED_DATA` et le service éditorial :
 Les URLs `.example` restent fictives : **aucune requête HTTP externe** n'est
 effectuée pendant l'exécution du workflow de découverte ou enrichissement.
 La GUI GTK et la persistance applicative ne sont pas encore recettées.
+
+## Kobo-Adept — profils synthétiques
+
+`adept-profiles.json` fournit **cinq profils purement fictifs** (créé,
+incomplet, prêt, sans liseuse et expiré) dans les JDD spécialisés.
+`simulation/adept/fake_kobo_adept_cli.py` expose uniquement les commandes
+de contrat et de profils, sans compte Adobe, jeton, certificat, ACSM ni DRM.
+Le vrai `KoboAdeptRuntime` est testé via un sous-processus Python :
+`simulation/tests/test_adept_profile_simulation.py`.
+
+Un profil créé via la fausse CLI est volontairement **incomplet** : aucun
+message de réussite de provisioning ne doit être inféré. Les opérations
+d'association et de suppression sont des simulations sans mutation.
+Il ne s'agit pas d'une validation GTK ni du véritable backend Kobo-Adept.

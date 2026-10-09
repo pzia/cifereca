@@ -63,8 +63,8 @@ data = ["local-library"]
 gap = "Affinité, aucune recommandation, données partielles, performance"
 
 [package.runtime-kobo-adept]
-data = []
-gap = "Profils ADEPT absents/incomplets et échecs reproductibles"
+data = ["specialized-seed"]
+gap = "États ADEPT factices et CLI subprocess v8 couverts ; pas de vrai provisioning/DRM ni E2E GTK"
 
 [package.transport-http]
 data = []

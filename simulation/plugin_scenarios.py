@@ -18,7 +18,7 @@ from pathlib import Path
 from common.fake_books import FakeBookFactory, epub_bytes
 
 SEED = 20261008
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ISBN_A = "9780306406157"
 ISBN_B = "9780140328721"
 ISBN_C = "9780553386790"
@@ -259,6 +259,51 @@ def youth_enrichment_cases():
     }
 
 
+def adept_profile_cases():
+    """États de profils ADEPT fictifs. Aucune identité ou clé DRM réelle."""
+    def profile(name, complete=False, fetch=False, acsm=False, *, devices=(), state="created"):
+        return {
+            "profile_id": f"ux-fiction-{name}",
+            "name": name,
+            "complete": complete,
+            "fetch_capable": fetch,
+            "acsm_fetch_ready": acsm,
+            "account": None,
+            "user_uuid": None,
+            "device_derived": False,
+            "devices": list(devices),
+            "provisioning": {
+                "state": state,
+                "adept_identity_available": complete,
+                "device_linked": bool(devices),
+                "reader_backed_identity_ready": complete,
+                "acsm_fetch_ready": acsm,
+            },
+        }
+
+    return {
+        "version": 1, "synthetic": True,
+        "profiles": [
+            profile("nouveau"),
+            profile("incomplet", complete=True, state="partial"),
+            profile("pret", complete=True, fetch=True, acsm=True, state="ready",
+                    devices=({"name": "lecteur-fictif"},)),
+            profile("sans-liseuse", complete=True, fetch=True, acsm=True, state="ready"),
+            profile("expiration", complete=True, fetch=False, acsm=False, state="expired"),
+        ],
+        "absent": ["inconnu"],
+        "provision_returns_incomplete": True,
+        "capabilities": {
+            "adept": {"profile_provisioning": {"available": True}},
+            "download": {"acsm": {"available": True}, "http": {"available": True}},
+        },
+        "warnings": [
+            "Aucun compte, numéro de série, clé DRM, fichier ACSM ou jeton réel.",
+            "Les états ne sont pas un backend ADEPT ; un nouveau profil reste incomplet.",
+        ],
+    }
+
+
 def reproducible_epub(payload: bytes) -> bytes:
     """Neutraliser les timestamps ZIP volatils sans changer le contenu EPUB.
 
@@ -290,6 +335,7 @@ def create(out: Path, *, seed: int = SEED) -> dict:
         "constellations.json": constellations_records(),
         "youth-discovery.json": youth_discovery_cases(),
         "youth-enrichment.json": youth_enrichment_cases(),
+        "adept-profiles.json": adept_profile_cases(),
     }
     for name, payload in contents.items():
         (out / name).write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -299,7 +345,7 @@ def create(out: Path, *, seed: int = SEED) -> dict:
     paths = sorted(p for p in out.iterdir() if p.is_file() and p.name != "manifest.json")
     manifest = {"version": SCHEMA_VERSION, "synthetic": True, "seed": seed,
                 "scope": ["jeunesse", "critique-litteraire", "constellations", "epub-optimizer",
-                          "youth-discovery", "youth-detail-enrichment"],
+                          "youth-discovery", "youth-detail-enrichment", "runtime-kobo-adept"],
                 "files": {p.name: sha256(p.read_bytes()).hexdigest() for p in paths},
                 "warning": "JDD de contrat isolés ; activation explicite, aucun E2E GTK prouvé."}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
