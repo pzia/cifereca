@@ -76,7 +76,14 @@ class MilanContractTests(unittest.TestCase):
             plugin = MilanYouthSource(client=client)
             all_page = plugin.browse(limit=8)
             self.assertEqual([row["title"] for row in all_page["items"]],
-                             ["Moqueuse", "L'escargot"])
+                             ["Moqueuse", "L'escargot", "Notice fictive sept", "Notice fictive huit"])
+            # Nine distinct product links are published. The real adapter must
+            # inspect *exactly* eight, including rejected sheets, plus listing.
+            self.assertEqual(len(srv.seen), 9)
+            self.assertEqual(srv.seen[0], CATALOG)
+            self.assertEqual(len(set(srv.seen)), 9)
+            self.assertTrue(srv.seen[-1].endswith("/99994-jeunesse-huit/"))
+            self.assertFalse(any("99993-jeunesse-neuf" in url for url in srv.seen))
             self.assertEqual(all_page["next_cursor"], "2")
             self.assertEqual(all_page["items"][0]["authors"], ("Nathalie Somers",))
             self.assertEqual(all_page["items"][0]["isbn13"], "9782408020804")
@@ -85,9 +92,12 @@ class MilanContractTests(unittest.TestCase):
                              "milan.product.explicit")
             self.assertEqual(all_page["items"][1]["age_ranges"][0]["age_min"], 1)
             self.assertTrue(all(u.startswith(CATALOG) for u in srv.seen))
-            # Page 2 has a title without explicit age, which must be excluded.
+            # The no-age record is ignored; a second, attested record makes
+            # genuine forward pagination observable.
             page2 = plugin.browse(cursor=all_page["next_cursor"])
-            self.assertEqual(page2["items"], ())
+            self.assertEqual([row["title"] for row in page2["items"]],
+                             ["Notice fictive page deux"])
+            self.assertEqual(page2["items"][0]["age_ranges"][0]["age_min"], 12)
             self.assertEqual(page2["next_cursor"], "")
             self.assertEqual([r["title"] for r in plugin.browse(age=4)["items"]],
                              ["L'escargot"])
@@ -100,7 +110,6 @@ class MilanContractTests(unittest.TestCase):
                 plugin.browse(cursor="101")
             with self.assertRaises(ValueError):
                 plugin._get("https://evil.example/livres/", kind="listing")
-            self.assertLessEqual(len(srv.seen), 25)
 
     def test_errors_are_served_and_rejected_by_real_plugin(self):
         with LoopbackMilan() as srv, srv.client() as client:
@@ -115,7 +124,7 @@ class MilanContractTests(unittest.TestCase):
                 plugin._get(CATALOG + "22222-missing/", kind="product")
             with urlopen(srv.root + "/health") as response:
                 health = json.load(response)
-            self.assertEqual(health["products"], 5)
+            self.assertEqual(health["products"], 11)
             self.assertTrue(health["synthetic"])
             self.assertEqual(health["seed"], 20261009)
 
@@ -125,6 +134,21 @@ class MilanContractTests(unittest.TestCase):
                 content = a.read()
             with urlopen(srv.root + "/milan/livres/") as b:
                 self.assertEqual(content, b.read())
+
+    def test_missing_isbn_truncated_product_and_pagination_are_distinct(self):
+        with LoopbackMilan() as srv, srv.client() as client:
+            plugin = MilanYouthSource(client=client)
+            missing = plugin._get(CATALOG + "99997-sans-isbn/", kind="product")
+            truncated = plugin._get(CATALOG + "99996-tronque/", kind="product")
+            from milan_youth import parse_detail
+            self.assertNotIn("Code ISBN", missing)
+            self.assertIsNone(parse_detail(missing, url=CATALOG + "99997-sans-isbn/"))
+            self.assertFalse(truncated.endswith("</html>"))
+            self.assertIsNone(parse_detail(truncated, url=CATALOG + "99996-tronque/"))
+            page2 = plugin.browse(cursor="2", age=12)
+            self.assertEqual(len(page2["items"]), 1)
+            self.assertEqual(page2["items"][0]["title"], "Notice fictive page deux")
+            self.assertTrue(all(u.startswith(CATALOG) for u in srv.seen))
 
 
 if __name__ == "__main__":
