@@ -145,7 +145,9 @@ def test_only_four_contributors_are_inspected():
 
 def test_cache_subscription_is_unsubscribed_and_errors_are_isolated():
     events = []
-    registered, unsubscribed = threading.Event(), threading.Event()
+    registered, unsubscribed, refreshed = (
+        threading.Event(), threading.Event(), threading.Event(),
+    )
 
     class Notifier:
         def subscribe_cache(self, callback):
@@ -162,7 +164,9 @@ def test_cache_subscription_is_unsubscribed_and_errors_are_isolated():
         def subscribe_cache(self, callback):
             raise ValueError("broken subscription")
 
-    callback = lambda: events.append(("refresh", None))
+    def callback():
+        events.append(("refresh", None))
+        refreshed.set()
     close = subscribe_cached_book_detail_changes([
         _resolved("b", Broken()),
         _resolved("a", Notifier()),
@@ -172,7 +176,7 @@ def test_cache_subscription_is_unsubscribed_and_errors_are_isolated():
         assert registered.wait(timeout=1)
         # The background registration schedules one refresh to cover the
         # interval between initial read and listener installation.
-        assert any(event[0] == "refresh" for event in events)
+        assert refreshed.wait(timeout=1)
         refresh_count = sum(event[0] == "refresh" for event in events)
         events[0][1]()
         assert sum(event[0] == "refresh" for event in events) == refresh_count + 1
