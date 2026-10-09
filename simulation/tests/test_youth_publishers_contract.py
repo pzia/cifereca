@@ -93,7 +93,7 @@ class PublisherFixturesTests(unittest.TestCase):
             self.assertEqual(baby["age_ranges"][0]["source_label"], "Age: 18+ months")
             self.assertTrue(server.seen[0].startswith(BROWSE + "/3-5-years"))
             p2 = plugin.browse(cursor=p1["next_cursor"])
-            self.assertEqual([r["title"] for r in p2["items"]], ["Older Book"])
+            self.assertEqual([r["title"] for r in p2["items"]], ["Older Book", "Infant Book"])
             self.assertEqual(p2["next_cursor"], "")
             self.assertEqual([r["title"] for r in plugin.search("school")["items"]],
                              ["Why School Matters"])
@@ -109,7 +109,7 @@ class PublisherFixturesTests(unittest.TestCase):
     def test_ecole_real_adapter_preserves_explicit_unknown_age_and_pagination(self):
         with Loopback() as server, server.httpx_client() as client:
             plugin = EcoleLoisirsYouthSource(client=client)
-            p1 = plugin.search("loup")
+            p1 = plugin.search("")
             self.assertEqual([r["title"] for r in p1["items"]],
                              ["L'histoire de Petit Loup", "Roman ado"])
             self.assertEqual(p1["next_cursor"], "2")
@@ -119,8 +119,8 @@ class PublisherFixturesTests(unittest.TestCase):
             self.assertEqual(first["age_ranges"][0]["age_max"], 6)
             self.assertEqual(second["age_ranges"][0]["age_min"], 13)
             self.assertTrue(server.seen[0].startswith(SEARCH + "?"))
-            page2 = plugin.search("loup", cursor=p1["next_cursor"])
-            self.assertEqual([r["title"] for r in page2["items"]], ["Sans âge"])
+            page2 = plugin.search("", cursor=p1["next_cursor"])
+            self.assertEqual([r["title"] for r in page2["items"]], ["Sans âge", "Tout petit"])
             self.assertEqual(page2["items"][0]["age_ranges"], [])
             self.assertEqual(page2["items"][0]["metadata"]["age_label"], "indéterminé")
             self.assertEqual(page2["next_cursor"], "")

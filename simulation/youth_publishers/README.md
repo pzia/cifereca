@@ -27,3 +27,27 @@ Le simulateur n'introduit aucune nouvelle capacité applicative, ne modifie
 aucun domaine de production, ne remplit pas directement les caches des
 plugins et **ne prouve pas le rendu GTK E2E**. La suite est suivie dans #800
 et #774.
+
+## Compléments nourrissons, recherche et erreurs (#800)
+
+La seconde page Usborne contient aussi `Infant Book`, étiqueté
+`Age: 6+ months` ; la première conserve `Age: 18+ months`. Ces libellés
+permettent de recetter la projection conservatrice du vrai adaptateur
+(1 et 2 ans, avec les mois d'origine conservés dans les métadonnées).
+
+L'école des loisirs propose `Tout petit` avec l'âge explicite `0 à 3 ans`
+en seconde page. Le filtre `search_api_views_fulltext` s'applique au titre,
+sans tenir compte de la casse, **avant pagination** (deux résultats par
+page). Ainsi `LOUP` retourne une fiche, `petit` deux, et toute recherche
+sans correspondance retourne une liste vide sans lien suivant. Les filtres
+sont indépendants et ne modifient pas le catalogue. Ce contrat synthétique
+ne prétend pas reproduire le moteur de pertinence du site réel.
+
+Les deux endpoints renvoient 400 pour une page non numérique ou hors
+1–100, au lieu de convertir silencieusement les bornes. `fault=malformed`
+renvoie un HTML tronqué déterministe, en complément des erreurs 503,
+MIME et taille existantes. Aucun de ces tests n'atteste un parcours GTK.
+
+```sh
+python -m unittest discover -s simulation/tests -p 'test_publisher_http_edges.py'
+```
