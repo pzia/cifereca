@@ -242,6 +242,7 @@ def test_work_and_edition_paths_are_strictly_typed():
     assert parse_record({"key": "/authors/OL34184A", "title": "Author object"}) is None
     assert parse_record({"key": "/books/OL45804W", "title": "Wrong work suffix"}) is None
     assert parse_record({"key": "/works/OL7353617M", "title": "Wrong edition suffix"}) is None
+    assert parse_record({"key": "https://evil.example/works/OL45804W", "title": "Foreign URL"}) is None
 
     work = parse_record(search_doc(key="/works/OL45804W/"))
     assert work is not None
