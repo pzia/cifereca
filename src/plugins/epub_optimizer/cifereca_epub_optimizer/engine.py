@@ -167,20 +167,27 @@ def _validate_archive_structure(
         reason = _unsafe_zip_entry(info)
         if reason:
             raise EpubOptimizationError(f"entrée ZIP refusée ({reason}) : {info.filename}")
+        if info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+            raise EpubOptimizationError(
+                f"entrée ZIP refusée (compression OCF non supportée) : {info.filename}"
+            )
         canonical_names.append(info.filename.casefold())
     if len(canonical_names) != len(set(canonical_names)):
         raise EpubOptimizationError("EPUB invalide : chemins ZIP dupliqués")
 
-    names = [info.filename for info in infos]
-    mimetype_name = _find_case_insensitive(names, "mimetype")
-    if mimetype_name is None:
-        raise EpubOptimizationError("EPUB sans entrée mimetype")
-    mimetype_info = next(info for info in infos if info.filename == mimetype_name)
-    if mimetype_info.is_dir() or mimetype_info.file_size > 128:
+    mimetype_info = infos[0]
+    if mimetype_info.filename != "mimetype":
+        raise EpubOptimizationError("EPUB invalide : mimetype doit être la première entrée")
+    if (
+        mimetype_info.is_dir()
+        or mimetype_info.compress_type != zipfile.ZIP_STORED
+        or bool(mimetype_info.extra)
+        or mimetype_info.file_size != len(b"application/epub+zip")
+    ):
         raise EpubOptimizationError("mimetype EPUB invalide")
-    if archive.read(mimetype_info).strip() != b"application/epub+zip":
+    if archive.read(mimetype_info) != b"application/epub+zip":
         raise EpubOptimizationError("mimetype EPUB invalide")
-    return mimetype_name
+    return "mimetype"
 
 
 def _find_case_insensitive(names: list[str], wanted: str) -> str | None:
