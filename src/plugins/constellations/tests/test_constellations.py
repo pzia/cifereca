@@ -222,6 +222,16 @@ def test_cache_without_freshness_token_never_reuses_stale_graph():
     assert {row.title for row in second.books.values()} == {"B"}
 
 
+def test_missing_freshness_token_discards_a_previously_cached_graph():
+    service = ConstellationService()
+    original = service.graph_for("alice", [book("a", "A", "Auteur")], freshness_token="v1")
+    without_proof = service.graph_for("alice", [book("b", "B", "Autre")])
+    refreshed = service.graph_for("alice", [book("c", "C", "Autrice")], freshness_token="v1")
+    assert without_proof is not original
+    assert refreshed is not original
+    assert {row.title for row in refreshed.books.values()} == {"C"}
+
+
 def test_anonymous_identity_is_never_cached_even_with_token():
     service = ConstellationService()
     first = service.graph_for("", [book("a", "A", "Auteur")], freshness_token="1")
