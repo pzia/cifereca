@@ -31,6 +31,21 @@ cifereca-update-dev dist/cifereca-plugins-only-preview-manual.zip \
 
 **Important :** une empreinte recopiée depuis la même archive, un sidecar non authentifié ou un manifeste embarqué n'établit **aucune provenance**. L'option est facultative pour conserver les anciens snapshots de développement. Pour une publication officielle, utiliser le workflow **Release plugins-only** et vérifier son attestation GitHub signée avant de dériver le SHA-256 passé à l'updater.
 
+### Mode strict à utiliser pour une release plugins-only approuvée
+
+Le client qui installe une release plugins-only **doit connaître son contexte de confiance hors du ZIP**. Pour refuser toute rétrogradation silencieuse vers un snapshot dev générique (sans index de provenance), et garantir que les octets extraits sont ceux dont l'empreinte a été approuvée :
+
+~~~bash
+cifereca-update-dev dist/cifereca-plugins-only-preview-manual.zip \\
+  --require-plugins-only --expected-sha256 "$SHA256_APPROUVE" --dry-run --json
+cifereca-update-dev dist/cifereca-plugins-only-preview-manual.zip \\
+  --require-plugins-only --expected-sha256 "$SHA256_APPROUVE" --json
+~~~
+
+Avec `--require-plugins-only`, le programme refuse **avant toute extraction** l'absence de `--expected-sha256` ; après vérification de la copie privée du ZIP, il exige également le marqueur `scope: plugins-only`, l'index, les versions Core/API et les SHA de packages. Une ancienne archive de développement sans index est **acceptée par défaut** dans le mode historique, mais **refusée** en mode strict. La vérification utilise la **copie privée déjà validée** pour empêcher le remplacement du ZIP source entre le contrôle de SHA et son extraction.
+
+**Limite :** ce mode ne crée pas à lui seul la chaîne de confiance. Le hachage attendu doit venir d'un canal extérieur **authentifié indépendamment** (p. ex. processus de publication vérifié), et non du ZIP ou de son sidecar. La publication officielle est assurée par **Release plugins-only**, avec attestation GitHub vérifiable ; #577 conserve les extensions P2 de provenance et de compatibilité multi-version.
+
 ## Compatibilité avec le Core cible (précontrôle obligatoire avant installation)
 
 Le contrôle d'intégrité `--verify` ne suffit **pas** à garantir la compatibilité d'une ancienne version Core. Avant d'installer, relever les versions du Core et de la Plugin API **du runtime cible**, puis vérifier :
