@@ -172,12 +172,24 @@ def main() -> int:
 
     def start_search():
         window.navigate("search")
+        # The Stack transition must map Search before computing GTK/X11 bounds.
+        later(400, focus_search_entry)
+
+    def focus_search_entry():
         controls = window.search_controls
-        device.click_widget(controls.entry)  # real XTEST mouse click
+        coords = device.click_widget(controls.entry)  # real XTEST mouse click
+        result["search_click"] = coords
+        later(180, type_search)
+
+    def type_search():
+        controls = window.search_controls
+        result["search_entry_focused"] = bool(controls.entry.has_focus())
+        if not controls.entry.has_focus():
+            raise AssertionError("Clic XTEST n'a pas donné le focus au champ Recherche")
         device.type_text("Camille")           # real keyboard events
         device.key("Return", True)
         device.key("Return", False)
-        later(200, wait_results)
+        later(220, wait_results)
 
     def wait_results():
         state = snapshot()
