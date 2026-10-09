@@ -816,6 +816,7 @@ def build_dev_snapshot(
     snapshot_id: str | None = None,
     filename: str | None = None,
     activate: bool = True,
+    plugins_only: bool = False,
 ) -> Path:
     snapshot_id = snapshot_id or default_snapshot_id()
     if (
@@ -834,6 +835,10 @@ def build_dev_snapshot(
         manifest = {
             "format": 1,
             "kind": "cifereca-dev-snapshot",
+            # Distinguish indexed partial snapshots from historical generic
+            # development snapshots. The runtime must require the index when
+            # this marker is present (including when the index was stripped).
+            **({"scope": "plugins-only"} if plugins_only else {}),
             "id": snapshot_id,
             "created_at": git_created_at(),
             "plugins": [
