@@ -218,7 +218,9 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         self._target_runtime("0.0.1")
         self._assert_refused_before_mutation(self.snapshot, "Core cible.*différent du Core testé")
         self._target_runtime(verify_partial_snapshot(self.snapshot)["core_version_tested"])
-        self.assertTrue(dev.apply_snapshot(self.snapshot, dry_run=True)["plugins_only_indexed"])
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            self.assertTrue(dev.apply_snapshot(self.snapshot, dry_run=True)["plugins_only_indexed"])
 
     def test_indexed_partial_rejects_incompatible_target_plugin_api(self) -> None:
         version = verify_partial_snapshot(self.snapshot)["core_version_tested"]
@@ -227,7 +229,7 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         self._target_runtime(version, api="1.4.0")
 
     def test_missing_target_core_metadata_fails_before_mutation(self) -> None:
-        (self.core / "current" / "VERSION").unlink()
+        (self.core / "current" / "pyproject.toml").unlink()
         self._assert_refused_before_mutation(self.snapshot, "runtime Core cible")
 
     def test_incoherent_index_is_rejected_before_any_install(self) -> None:
