@@ -90,7 +90,7 @@ def date_text(raw):
 def parse_feed(payload, url, *, limit=100):
     if len(payload) > MAX_BYTES:
         raise ValueError('Flux trop volumineux')
-    if payload.lstrip().startswith(b'{'):
+    if payload.lstrip().startswith((b'{', b'[')):
         raw = json.loads(payload)
         if not isinstance(raw, dict):
             raise ValueError('Objet JSON Feed attendu')
