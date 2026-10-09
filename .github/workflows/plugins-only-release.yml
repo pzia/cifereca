@@ -151,6 +151,139 @@ jobs:
               raise SystemExit("Selected packages missing after real strict install: " + ", ".join(missing))
           PY
 
+      - name: Exercise real strict install, incompatible refusal and rollback
+        shell: bash
+        env:
+          CIFERECA_INSTALL_ROOT: ${{ runner.temp }}/cifereca-p0/runtime
+          CIFERECA_BIN_DIR: ${{ runner.temp }}/cifereca-p0/bin
+          XDG_DATA_HOME: ${{ runner.temp }}/cifereca-p0/data
+          XDG_CONFIG_HOME: ${{ runner.temp }}/cifereca-p0/config
+          XDG_STATE_HOME: ${{ runner.temp }}/cifereca-p0/state
+          XDG_CACHE_HOME: ${{ runner.temp }}/cifereca-p0/cache
+        run: |
+          set -euo pipefail
+          archive="${{ steps.build.outputs.archive }}"
+          digest="$(sha256sum "$archive" | awk '{print $1}')"
+          rm -rf "$RUNNER_TEMP/cifereca-p0"
+          mkdir -p "$CIFERECA_BIN_DIR" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+
+          python - <<'PY'
+          from pathlib import Path
+          from cifereca.updater import install_source
+          result = install_source(Path("."), keep=3)
+          if not result.get("ok") or not result.get("current"):
+              raise SystemExit(f"isolated Core install failed: {result}")
+          PY
+
+          read -r package_id package_version <<<"$(python - "$archive" <<'PY'
+          import json, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              matches = [n for n in z.namelist() if n.endswith("/cifereca-plugins-only.json")]
+              if len(matches) != 1:
+                  raise SystemExit("plugins-only index missing or ambiguous")
+              index = json.loads(z.read(matches[0]))
+          if not index.get("packages"):
+              raise SystemExit("plugins-only package selection is empty")
+          row = index["packages"][0]
+          print(row["package_id"], row["version"])
+          PY
+          )"
+
+          package_root="$XDG_DATA_HOME/cifereca/plugins/packages/$package_id"
+          version_root="$package_root/$package_version"
+          test -d "$version_root"
+
+          # Model an installed-but-inactive package using the package-store pointer
+          # consumed by the production updater. The successful strict update must
+          # preserve this state and replace the selected package contents.
+          python - "$package_root/current.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+          payload["active"] = None
+          path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+          PY
+          printf 'must disappear on successful replace\n' > "$version_root/.p0-success-sentinel"
+          mkdir -p "$XDG_DATA_HOME/cifereca"
+          printf 'p0-user-data-integrity\n' > "$XDG_DATA_HOME/cifereca/.p0-user-data"
+          data_before="$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')"
+
+          "$CIFERECA_BIN_DIR/cifereca-update-dev" "$archive"             --require-plugins-only             --expected-sha256 "$digest"             --json > "$RUNNER_TEMP/cifereca-p0/success.json"
+          test ! -e "$version_root/.p0-success-sentinel"
+          python - "$package_root/current.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if payload.get("active") is not None:
+              raise SystemExit(f"inactive package was unexpectedly activated: {payload}")
+          PY
+          test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
+
+          tree_digest() {
+            python - "$1" <<'PY'
+          import hashlib, sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          h = hashlib.sha256()
+          for path in sorted(p for p in root.rglob("*") if p.is_file()):
+              h.update(path.relative_to(root).as_posix().encode())
+              h.update(b"\0")
+              h.update(path.read_bytes())
+              h.update(b"\0")
+          print(h.hexdigest())
+          PY
+          }
+
+          # A mismatched target Core must fail before plugin backup/install.
+          runtime="$(readlink -f "$CIFERECA_INSTALL_ROOT/current")"
+          cp "$runtime/pyproject.toml" "$runtime/pyproject.toml.p0"
+          sed -i 's/^version = ".*"/version = "0.0.1"/' "$runtime/pyproject.toml"
+          before_incompatible="$(tree_digest "$package_root")"
+          set +e
+          "$CIFERECA_BIN_DIR/cifereca-update-dev" "$archive"             --require-plugins-only             --expected-sha256 "$digest"             --json > "$RUNNER_TEMP/cifereca-p0/incompatible.json" 2>&1
+          incompatible_rc=$?
+          set -e
+          mv "$runtime/pyproject.toml.p0" "$runtime/pyproject.toml"
+          if [[ "$incompatible_rc" -eq 0 ]]; then
+            echo "Incompatible installed Core unexpectedly accepted." >&2
+            exit 1
+          fi
+          test "$(tree_digest "$package_root")" = "$before_incompatible"
+          test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
+
+          # Force only the post-install inventory smoke to fail. Package install
+          # still runs through the real CLI, so automatic rollback must restore
+          # exactly the pre-attempt package tree and keep user data intact.
+          printf 'must return after rollback\n' > "$version_root/.p0-rollback-sentinel"
+          before_rollback="$(tree_digest "$package_root")"
+          cli="$runtime/.venv/bin/cifereca-cli"
+          real_cli="$cli.p0-real"
+          mv "$cli" "$real_cli"
+          cat > "$cli" <<EOF
+          #!/usr/bin/env bash
+          if [[ "\${1:-}" == "plugin" && "\${2:-}" == "list" ]]; then
+            echo "forced P0 post-install smoke failure" >&2
+            exit 86
+          fi
+          exec "$real_cli" "\$@"
+          EOF
+          chmod +x "$cli"
+
+          set +e
+          "$CIFERECA_BIN_DIR/cifereca-update-dev" "$archive"             --require-plugins-only             --expected-sha256 "$digest"             --json > "$RUNNER_TEMP/cifereca-p0/rollback.json" 2>&1
+          rollback_rc=$?
+          set -e
+          mv "$real_cli" "$cli"
+          if [[ "$rollback_rc" -eq 0 ]]; then
+            echo "Forced post-install smoke failure unexpectedly succeeded." >&2
+            exit 1
+          fi
+          grep -q "smoke plugins" "$RUNNER_TEMP/cifereca-p0/rollback.json"
+          test -f "$version_root/.p0-rollback-sentinel"
+          test "$(tree_digest "$package_root")" = "$before_rollback"
+          test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
+
       - name: Attest plugins-only artifact provenance
         uses: actions/attest@v4
         with:
