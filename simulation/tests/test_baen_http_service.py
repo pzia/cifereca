@@ -23,6 +23,7 @@ for path in (SIM, REPO / "src", REPO / "src/plugins/baen"):
 
 import httpx
 import datasetctl
+from plugin_coverage import build_report
 from baen.pseudo_baen_service import BaenFakeApp, Handler
 from cifereca_baen import BaenSession, ProviderError
 
@@ -105,6 +106,11 @@ class BaenContractTests(unittest.TestCase):
         service = catalog["baen"]
         self.assertEqual(service["plugins"], [])
         self.assertEqual(service["fixture_packages"], ["baen"])
+        row = next(item for item in build_report()["packages"] if item["package"] == "baen")
+        self.assertEqual(row["services"], [])
+        self.assertIn("baen", row["http_fixtures"])
+        self.assertEqual(row["status"], "partial")
+        self.assertFalse(row["e2e_gtk_verified"])
         for name in ("ux-small", "ux-all", "ux-errors"):
             _, profile = datasetctl.load_profile(name)
             self.assertIn("baen", datasetctl.enabled_service_configs(profile))
