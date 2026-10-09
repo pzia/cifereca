@@ -97,3 +97,7 @@ gap = "Fixture HTTP avancée testée avec vrai parseur ; aucun parcours GTK comp
 [package.youth-source-usborne]
 data = []
 gap = "Fixture HTML Browse by Age testée avec vrai parseur ; aucun parcours GTK complet"
+
+[package.youth-source-milan]
+data = []
+gap = "Tests unitaires de catalogue et fiches produit ; simulateur HTTP dédié et parcours GTK non vérifiés"
