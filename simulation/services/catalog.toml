@@ -67,3 +67,16 @@ plugins = ["provider.ebooksgratuits"]
 [service.ebooksgratuits.args]
 books = "--books"
 seed = "--seed"
+
+# Synthetic editorial fixture server; no plugins are forced automatically.
+# Only RSS/JSON Feed routes are directly consumable by a current plugin;
+# youth and constellation JSON routes expose fixtures, not plugin APIs.
+[service.editorial]
+script = "editorial/pseudo_editorial_service.py"
+default_port = 8097
+health_path = "/health"
+plugins = []
+fixture_packages = ["literary-criticism", "youth-catalog", "constellations"]
+
+[service.editorial.args]
+seed = "--seed"

@@ -219,3 +219,21 @@ réparer un fichier corrompu et reconstruire lors d'un changement de seed.
 **Attention :** leur disponibilité sur disque ne les injecte pas
 automatiquement dans les caches des plugins, ne crée pas de source distante
 et ne valide pas l'UI GTK. Les étapes HTTP/E2E restent suivies dans #772 et #774.
+
+## Pseudo-service éditorial HTTP
+
+`ux-small`, `ux-all` et `ux-errors` démarrent un service **strictement
+local** sur le port 8097, sans activer automatiquement de plugin.
+Les deux flux de critique (RSS, JSON Feed) sont consommables par le vrai
+parseur de Critique littéraire lors d'un abonnement **explicite**.
+
+```bash
+python3 simulation/datasetctl.py up ux-small
+curl http://127.0.0.1:8097/criticism/rss.xml
+curl http://127.0.0.1:8097/criticism/jsonfeed.json
+python3 simulation/datasetctl.py down ux-small
+```
+
+Des endpoints JSON Jeunesse/Constellations exposent les fixtures comme données
+de test ; cela **n'implique aucune injection dans leurs pages GTK**.
+Documentation et cas négatifs : `simulation/editorial/README.md`.

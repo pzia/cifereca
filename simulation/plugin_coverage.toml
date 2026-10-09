@@ -8,7 +8,7 @@ gap = "Faux catalogue/acquisition Baen et erreurs HTTP absents"
 
 [package.constellations]
 data = ["local-library", "specialized-seed"]
-gap = "Promenades, modes et graphe à vérifier sur la vraie UI"
+gap = "JSON exposé en HTTP local ; promenades et graphe à vérifier sur vraie UI"
 
 [package.diagnostics-page]
 data = ["local-library"]
@@ -28,7 +28,7 @@ gap = "États vide/partiel/erreur identités à recetter"
 
 [package.literary-criticism]
 data = ["specialized-seed"]
-gap = "Flux de test non servis en HTTP, abonnements et page GTK non recettés"
+gap = "Flux RSS/JSON Feed servis en HTTP local ; abonnements, page GTK et autres sources non recettés"
 
 [package.maintenance-library-audit]
 data = ["local-library"]
@@ -76,7 +76,7 @@ gap = "Réponses OpenLibrary structurées et contresens bibliographiques"
 
 [package.youth-catalog]
 data = ["specialized-seed"]
-gap = "Source intégrée et filtre âge UI non reliés à la simulation centrale"
+gap = "JSON exposé en HTTP local mais pas consommé par la page Jeunesse ; filtre âge GUI non recetté"
 
 [package.youth-detail-enrichment]
 data = []

@@ -39,7 +39,10 @@ aucun abonnement, réseau, identité utilisateur ou compte externe.
 **État après l'intégration :** ces fixtures sont générées dans le runtime isolé
 par `datasetctl` si `[specialized].enabled = true` (profils `ux-small`,
 `ux-all`, `ux-errors`) et signalées par `summary --json`.
-Elles ne sont toujours pas servies par HTTP, injectées dans les caches métier,
+Les flux RSS et JSON Feed de critique sont désormais **servis par HTTP local** via
+`simulation/editorial/pseudo_editorial_service.py` ; les JSON Jeunesse et
+Constellations sont consultables comme fixtures, mais ne sont **pas des API
+plugins injectées automatiquement**. Les fichiers ne sont pas injectés dans les caches métier,
 ni recettées par le harnais E2E GTK. Elles ne simulent pas les
 pages BookTrust/OpenLibrary, la découverte distante, l'ADEPT ni les formats
 PDF/DRM. Lier ces scénarios à des faux services et des tests GUI réels reste
