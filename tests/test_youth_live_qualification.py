@@ -42,6 +42,8 @@ def test_evidence_requires_real_source_label_and_origin():
                 age_ranges=(age,), notice_url="https://www.editionsmilan.com/livres/97384-lumilane/",
                 provenance=("milan",))
     assert len(script.evidence_for((NS(**book),), "milan")) == 1
+    assert not script.evidence_for((NS(**(book | {"provenance": ()})),), "milan")
+    assert not script.evidence_for((NS(**(book | {"provenance": ("booktrust",)})),), "milan")
     assert not script.evidence_for((NS(**(book | {"notice_url": "https://evil.example/"})),), "milan")
     assert not script.evidence_for((NS(**(book | {"identifiers": {}})),), "milan")
     wrong = NS(**(vars(age) | {"source_label": ""}))
@@ -52,3 +54,11 @@ def test_evidence_requires_real_source_label_and_origin():
             notice_url="https://www.booktrust.org.uk/book-recommendations/bookfinder/example/",
             provenance=("booktrust",))
     assert len(script.evidence_for((bt,), "booktrust")) == 1
+
+
+def test_live_qualification_requires_an_observed_https_request():
+    script = script_module()
+    qualified = [{"title": "Example", "provenance": ["milan"]}]
+    assert script.qualification_status([], qualified) == "BLOCKED"
+    assert script.qualification_status(["https://www.editionsmilan.com/livres/"], []) == "NO_VERIFIED_NOTICE"
+    assert script.qualification_status(["https://www.editionsmilan.com/livres/"], qualified) == "PASS"

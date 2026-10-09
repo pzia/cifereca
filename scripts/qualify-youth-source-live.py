@@ -57,6 +57,9 @@ def plan(args: argparse.Namespace) -> dict:
 def evidence_for(books: tuple, source_id: str) -> list[dict]:
     evidence = []
     for book in books:
+        provenance = tuple(getattr(book, "provenance", ()) or ())
+        if source_id not in provenance:
+            continue
         ranges = []
         for age in getattr(book, "age_ranges", ()) or ():
             kind = getattr(age, "age_kind", "")
@@ -80,8 +83,16 @@ def evidence_for(books: tuple, source_id: str) -> list[dict]:
             continue
         evidence.append({"title": str(getattr(book, "title", ""))[:160],
                          "isbn13": isbn, "notice_url": url,
-                         "ages": ranges, "provenance": list(getattr(book, "provenance", ()) or ())})
+                         "ages": ranges, "provenance": list(provenance)})
     return evidence
+
+
+def qualification_status(https_requests: list[str], notices: list[dict]) -> str:
+    # An installed source may return cached or synthetic records. Neither is
+    # evidence of a live HTTPS qualification without an observed request.
+    if not https_requests:
+        return "BLOCKED"
+    return "PASS" if notices else "NO_VERIFIED_NOTICE"
 
 
 def bundle(name: str, files: tuple[str, ...], workspace: Path) -> Path:
@@ -165,8 +176,10 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
                 "ingest_errors": list(result.errors),
                 "next_cursor_present": bool(raw.get("next_cursor")),
                 "qualified_notices": notices[:args.limit],
-                "result": "PASS" if notices else "NO_VERIFIED_NOTICE",
+                "result": qualification_status(requests, notices),
             })
+            if not requests:
+                report["reason"] = "no public HTTPS request observed"
         finally:
             client.close()
             report["https_requests"] = requests
