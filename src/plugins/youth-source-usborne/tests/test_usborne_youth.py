@@ -278,3 +278,89 @@ def test_local_filter_is_bounded_to_300_characters(monkeypatch):
     assert len(captured) == 1
     assert len(captured[0]) == 300
     assert captured[0].startswith("older")
+
+
+def test_usborne_diagnostic_success_and_local_snapshot_without_extra_network():
+    import json
+    from types import SimpleNamespace
+
+    sent, requests = [], []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert source.diagnostic_snapshot() == {}
+    assert source.activate(SimpleNamespace(
+        report_diagnostic=lambda *args, **kwargs: sent.append((args, kwargs))
+    )) is source
+    output = source.browse(age=3, limit=3)
+    assert len(output["items"]) == 2
+    d = source.diagnostic_snapshot()
+    assert d["source"] == "usborne" and d["phase"] == "complete"
+    assert d["state"] == "items" and d["request_count"] == 1
+    assert d["http_status"] == 200 and d["content_type_is_html"] is True
+    assert d["html_bytes"] == len(HTML.encode("utf-8"))
+    assert len(d["html_sha256_prefix"]) == 16
+    assert d["product_url_count"] == 3 and d["anchor_count"] == 5
+    assert d["returned_items"] == 2 and d["qualified_age_count"] == 2
+    assert d["next_cursor_present"] is True
+    assert d["age_filter_present"] is True
+    assert d["duration_ms"] >= 0 and "T" in d["attempted_at_utc"]
+    assert sent[-1][0] == ("Usborne youth catalogue collection", "ok")
+    assert sent[-1][1]["detail"] == d
+    assert sent[-1][1]["level"] == "normal"
+    assert len(requests) == 1
+    encoded = json.dumps(d)
+    assert "Why School" not in encoded
+    assert "/us/" not in encoded
+    assert "9781805075103" not in encoded
+
+
+def test_usborne_diagnostic_error_and_timeout_are_typed_not_logged_raw():
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(429, headers={"content-type": "text/html"}, text="secret token")
+    )))
+    with pytest.raises(RuntimeError, match="429"):
+        source.browse(age=3)
+    d = source.diagnostic_snapshot()
+    assert (d["http_status"], d["request_count"], d["state"]) == (429, 1, "error")
+    assert d["phase"] == "listing" and d["error_type"] == "RuntimeError"
+    assert "secret token" not in str(d)
+
+    def timeout(req):
+        raise httpx.ReadTimeout("private URL", request=req)
+
+    source.client = httpx.Client(transport=httpx.MockTransport(timeout))
+    with pytest.raises(httpx.ReadTimeout):
+        source.browse(age=3)
+    d = source.diagnostic_snapshot()
+    assert d["request_count"] == 1
+    assert d["error_type"] == "ReadTimeout"
+    assert "http_status" not in d and "private URL" not in str(d)
+
+
+def test_usborne_diagnostic_empty_does_not_mark_site_healthy():
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(
+            200, headers={"content-type": "text/html"}, text="<p>no books</p>"
+        )
+    )))
+    assert source.browse(age=5)["items"] == ()
+    d = source.diagnostic_snapshot()
+    assert d["state"] == "empty_unverified" and d["returned_items"] == 0
+    assert d["product_url_count"] == 0
+
+
+def test_usborne_diagnostic_broker_failure_does_not_change_collection():
+    from types import SimpleNamespace
+
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+    )))
+    source.activate(SimpleNamespace(
+        report_diagnostic=lambda *args, **kwargs: 1 / 0
+    ))
+    assert len(source.browse(age=3)["items"]) == 2
+    assert source.diagnostic_snapshot()["state"] == "items"
