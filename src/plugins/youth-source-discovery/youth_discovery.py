@@ -391,6 +391,93 @@ def discover_sources(
     return DiscoveryReport(clean_query, tuple(candidates), inspected, tuple(search_errors), tuple(fetch_errors))
 
 
+def _qualification_fingerprint(candidate: SourceCandidate) -> str:
+    parts = [
+        candidate.domain,
+        candidate.homepage_url,
+        candidate.title,
+        str(candidate.score),
+        candidate.status,
+    ]
+    for item in candidate.evidence:
+        parts.extend([
+            item.kind,
+            item.label,
+            str(item.age_min),
+            "" if item.age_max is None else str(item.age_max),
+            str(item.strength),
+            item.origin,
+            item.unit,
+            "" if item.age_min_months is None else str(item.age_min_months),
+        ])
+    parts.extend(candidate.sample_urls)
+    return sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def qualification_dossier(report: DiscoveryReport) -> QualificationDossier:
+    rows = []
+    for candidate in report.candidates:
+        rows.append(QualificationCandidate(
+            fingerprint=_qualification_fingerprint(candidate),
+            domain=candidate.domain,
+            title=candidate.title,
+            homepage_url=candidate.homepage_url,
+            score=candidate.score,
+            status=candidate.status,
+            evidence=candidate.evidence,
+            evidence_kinds=tuple(sorted({item.kind for item in candidate.evidence})),
+            evidence_origins=tuple(sorted({item.origin for item in candidate.evidence})),
+            sample_urls=candidate.sample_urls,
+            diagnostics=candidate.diagnostics,
+            manual_review_required=True,
+        ))
+    return QualificationDossier(
+        schema_version=1,
+        query=report.query,
+        candidates=tuple(rows),
+        search_errors=report.search_errors,
+        fetch_errors=report.fetch_errors,
+    )
+
+
+def dossier_mapping(dossier: QualificationDossier) -> Mapping[str, object]:
+    return {
+        "schema_version": dossier.schema_version,
+        "query": dossier.query,
+        "candidates": [
+            {
+                "fingerprint": candidate.fingerprint,
+                "domain": candidate.domain,
+                "title": candidate.title,
+                "homepage_url": candidate.homepage_url,
+                "score": candidate.score,
+                "status": candidate.status,
+                "manual_review_required": candidate.manual_review_required,
+                "evidence_kinds": list(candidate.evidence_kinds),
+                "evidence_origins": list(candidate.evidence_origins),
+                "sample_urls": list(candidate.sample_urls),
+                "diagnostics": list(candidate.diagnostics),
+                "evidence": [
+                    {
+                        "kind": item.kind,
+                        "label": item.label,
+                        "age_min": item.age_min,
+                        "age_max": item.age_max,
+                        "strength": item.strength,
+                        "origin": item.origin,
+                        "unit": item.unit,
+                        "age_min_months": item.age_min_months,
+                    }
+                    for item in candidate.evidence
+                ],
+            }
+            for candidate in dossier.candidates
+        ],
+        "search_errors": list(dossier.search_errors),
+        "fetch_errors": list(dossier.fetch_errors),
+    }
+
+
 class YouthSourceDiscoveryPlugin:
     def discover(
         self,
@@ -402,6 +489,12 @@ class YouthSourceDiscoveryPlugin:
         inspect_limit: int = 5,
     ) -> DiscoveryReport:
         return discover_sources(query, search=search, fetch=fetch, limit=limit, inspect_limit=inspect_limit)
+
+    def qualification_dossier(self, report: DiscoveryReport) -> QualificationDossier:
+        return qualification_dossier(report)
+
+    def export_dossier(self, report: DiscoveryReport) -> Mapping[str, object]:
+        return dossier_mapping(qualification_dossier(report))
 
 
 PLUGIN = YouthSourceDiscoveryPlugin()
