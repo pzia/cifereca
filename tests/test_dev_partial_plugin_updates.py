@@ -419,7 +419,8 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
     def test_strict_mode_accepts_verified_selected_packages_and_keeps_disabled_state(self) -> None:
         digest = hashlib.sha256(self.snapshot.read_bytes()).hexdigest()
         patches = self._sandbox()
-        with patches[0], patches[1], patches[2], patches[3] as core_install, patches[4] as smoke, patches[5] as install:
+        with patches[0], patches[1], patches[2], patches[3] as core_install, patches[4] as smoke, patches[5] as install, \
+             patch.object(dev, "_verify_strict_installed_packages") as verify:
             dry = dev.apply_snapshot(
                 self.snapshot, dry_run=True, expected_sha256=digest,
                 require_plugins_only=True,
@@ -440,6 +441,11 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         core_install.assert_not_called()
         self.assertEqual(install.call_count, 2)
         smoke.assert_called_once_with([ALPHA, BETA])
+        verify.assert_called_once()
+        self.assertEqual(
+            [(package, version, active) for package, version, _path, active in verify.call_args.args[0]],
+            [(ALPHA, "1.2.3", False), (BETA, "2.0", True)],
+        )
 
     def test_strict_mode_cannot_downgrade_to_unmarked_legacy_snapshot(self) -> None:
         from scripts.plugin_packaging import build_dev_snapshot
