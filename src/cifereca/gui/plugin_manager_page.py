@@ -16,6 +16,7 @@ from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
     filter_package_plugins, plugin_role, plugin_dependents, plugin_relationships,
+    functional_plugin_groups,
     package_matches_query,
     plugin_summary_counts,
 )
@@ -43,6 +44,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._view_filter = "all"
         self._view_role = "all"
         self._package_expansion: dict[str, bool] = {}
+        self._family_navigation_open = True
+        self._family_expansion: dict[str, bool] = {}
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -176,6 +179,12 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             self.manager.package_inventory(include_expected=True)
             if inventory is None else inventory
         )
+        # A functional overview precedes package cards. These two projections
+        # are deliberately separate: activation and installation are always
+        # managed by the original package inventory below.
+        if not self._view_query and self._view_filter == "all" and self._view_role == "all":
+            self._append_family_navigation(statuses)
+
         installed_packages = [
             package for package in inventory
             if any(status.descriptor.package_id == package["package_id"] for status in statuses)
@@ -260,6 +269,101 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             empty.set_wrap(True)
             empty.add_css_class("dim-label")
             container.append(empty)
+
+    def _append_family_navigation(self, statuses: list[Any]) -> None:
+        """Keyboard-accessible, cross-package index of manifest relationships."""
+        groups = functional_plugin_groups(statuses)
+        if not groups:
+            return
+
+        attention_states = {"blocked", "degraded", "incompatible", "error"}
+        affected = sum(
+            row.state in attention_states
+            for root, children in groups for row in (root, *children)
+        )
+        label = (
+            f"Fonctionnalités et extensions · {len(groups)} ensemble(s)"
+            f" · {sum(len(children) for _, children in groups)} extension(s)"
+        )
+        if affected:
+            label += f" · {affected} à examiner"
+        overview = Gtk.Expander(label=label)
+        overview.set_tooltip_text(
+            "Parcourir les dépendances déclarées entre plugins, même dans des packages différents"
+        )
+        overview.set_expanded(self._family_navigation_open)
+        overview.connect(
+            "notify::expanded",
+            lambda expander, _pspec: setattr(
+                self, "_family_navigation_open", bool(expander.get_expanded())
+            ),
+        )
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.set_margin_top(8)
+        explanation = Gtk.Label(
+            label="Rattachements fondés uniquement sur les dépendances requises. "
+                  "Ouvrez une fiche pour l’activer ou la configurer dans son package.",
+            xalign=0,
+        )
+        explanation.set_wrap(True)
+        explanation.add_css_class("caption")
+        explanation.add_css_class("dim-label")
+        content.append(explanation)
+
+        for root, children in groups:
+            descriptor = root.descriptor
+            root_name = str(descriptor.display_name or descriptor.id)
+            issues = sum(row.state in attention_states for row in (root, *children))
+            group_label = f"{root_name} · {len(children)} extension(s)"
+            if issues:
+                group_label += f" · {issues} à examiner"
+            family = Gtk.Expander(label=group_label)
+            family.set_tooltip_text(f"Extensions dépendant de {root_name}")
+            family.set_expanded(self._family_expansion.get(descriptor.id, bool(issues)))
+            family.connect(
+                "notify::expanded",
+                lambda expander, _pspec, pid=descriptor.id:
+                    self._family_expansion.__setitem__(
+                        pid, bool(expander.get_expanded())
+                    ),
+            )
+            members = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            root_button = Gtk.Button(label=f"Ouvrir le plugin principal : {root_name}")
+            root_button.set_tooltip_text(
+                f"Afficher {root_name} dans son package d’installation"
+            )
+            root_button.connect(
+                "clicked", lambda _button, pid=descriptor.id: self.focus_plugin(pid)
+            )
+            members.append(root_button)
+            for child in children:
+                d = child.descriptor
+                name = str(d.display_name or d.id)
+                role = PLUGIN_ROLE_LABELS[plugin_role(d)]
+                state = _STATE_LABELS.get(child.state, child.state)
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                navigate = Gtk.Button(
+                    label=f"↳ {name} · {role} · {d.package_id}"
+                )
+                navigate.set_hexpand(True)
+                navigate.set_tooltip_text(
+                    f"Ouvrir l’extension {name} dans son package d’installation"
+                )
+                navigate.connect(
+                    "clicked", lambda _button, pid=d.id: self.focus_plugin(pid)
+                )
+                row.append(navigate)
+                status_label = Gtk.Label(label=state, xalign=0)
+                if child.state in attention_states:
+                    status_label.add_css_class("warning")
+                status_label.add_css_class("caption")
+                row.append(status_label)
+                members.append(row)
+            family.set_child(members)
+            content.append(family)
+
+        overview.set_child(content)
+        self.inventory_box.append(overview)
 
     def _append_package(self, package, package_plugins, *, statuses=()):
         package_id = str(package["package_id"])

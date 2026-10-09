@@ -201,3 +201,68 @@ def filter_package_plugins(
         if needle in haystack:
             out.append(status)
     return out
+
+
+def functional_plugin_groups(
+    statuses: Iterable[object],
+) -> tuple[tuple[object, tuple[object, ...]], ...]:
+    """Group installed extensions under declared required ancestors.
+
+    Families are a navigation lens. Only manifest requires.plugin edges
+    are traversed, including transitive edges. A plugin with multiple roots
+    belongs to the lexicographically first root, to avoid duplicates.
+    Missing dependencies and closed cycles never invent parent plugins.
+    All plugins remain available in the package inventory.
+    """
+    rows = {
+        str(getattr(row.descriptor, "id", "") or ""): row
+        for row in statuses
+        if getattr(row, "descriptor", None) is not None
+        and getattr(row.descriptor, "id", None)
+    }
+
+    def parents(identifier: str) -> tuple[str, ...]:
+        descriptor = rows[identifier].descriptor
+        return tuple(sorted({
+            str(dep.plugin)
+            for dep in (getattr(descriptor, "requires", ()) or ())
+            if getattr(dep, "plugin", None) in rows
+            and dep.plugin != identifier
+        }))
+
+    ancestors: dict[str, tuple[str, ...]] = {}
+    for identifier in sorted(rows):
+        visited = set()
+        pending = [identifier]
+        roots = set()
+        while pending:
+            current = pending.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            required = parents(current)
+            if not required:
+                roots.add(current)
+            else:
+                pending.extend(required)
+        ancestors[identifier] = tuple(sorted(roots))
+
+    groups: dict[str, list[object]] = {}
+    for identifier in sorted(rows):
+        roots = [root for root in ancestors[identifier] if root != identifier]
+        if roots:
+            groups.setdefault(roots[0], []).append(rows[identifier])
+
+    def sort_key(row: object) -> tuple[str, str]:
+        descriptor = row.descriptor
+        return (
+            str(getattr(descriptor, "display_name", "") or descriptor.id).casefold(),
+            str(descriptor.id),
+        )
+
+    return tuple(
+        (rows[root], tuple(sorted(children, key=sort_key)))
+        for root, children in sorted(
+            groups.items(), key=lambda item: sort_key(rows[item[0]])
+        )
+    )
