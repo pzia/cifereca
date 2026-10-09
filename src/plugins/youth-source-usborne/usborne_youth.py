@@ -12,7 +12,7 @@ import httpx
 BASE = "https://usborne.com"
 BROWSE = BASE + "/us/books/browse-by-age"
 _PRODUCT_RE = re.compile(r"-(\d{13})/?$")
-_AGE_RE = re.compile(r"\bAge\s*:?\s*(\d{1,3})\+\s*(months?)?\b", re.I)
+_AGE_RE = re.compile(r"\bAge\s*:?\s*(\d{1,3})\+\s*(months?)?", re.I)
 _BADGES = {"new", "award winner", "coming soon", "bestseller", "best seller"}
 _WS = re.compile(r"\s+")
 AGE_PATHS = (
