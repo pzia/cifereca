@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
 from html.parser import HTMLParser
+from time import perf_counter
 import math
 import re
 from typing import Mapping
@@ -291,6 +294,8 @@ def next_page_cursor(html: str, *, current_page: int) -> str:
 class UsborneYouthSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
+        self.context = None
+        self._last_diagnostic: dict[str, object] = {}
         self.client = client or httpx.Client(
             timeout=max(1.0, min(float(timeout_seconds), 30.0)),
             follow_redirects=False,
@@ -301,6 +306,25 @@ class UsborneYouthSource:
                 "Accept-Language": "en",
             },
         )
+
+    def activate(self, context):
+        self.context = context
+        return self
+
+    def diagnostic_snapshot(self) -> dict[str, object]:
+        """Last explicit browse outcome only; never a URL, page body or title."""
+        return dict(self._last_diagnostic)
+
+    def _publish_diagnostic(self, status: str) -> None:
+        if self.context is not None:
+            try:
+                self.context.report_diagnostic(
+                    "Usborne youth catalogue collection", status,
+                    detail=self.diagnostic_snapshot(), level="normal",
+                )
+            except Exception:
+                # Broker diagnostics must not change source behavior.
+                pass
 
     def close(self) -> None:
         if self._own_client:
@@ -322,7 +346,14 @@ class UsborneYouthSource:
         base = "/us/books/browse-by-age"
         if path != base and not path.startswith(base + "/"):
             raise ValueError("only Usborne Browse by Age pages are allowed")
+        self._last_diagnostic["request_count"] = int(self._last_diagnostic.get("request_count", 0)) + 1
         response = self.client.get(allowed)
+        self._last_diagnostic.update({
+            "http_status": response.status_code,
+            "content_type_is_html": "html" in _fold(response.headers.get("content-type")),
+            "html_bytes": len(response.content),
+            "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
+        })
         if response.status_code >= 300:
             raise RuntimeError(f"Usborne HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type"))
@@ -350,20 +381,59 @@ class UsborneYouthSource:
             raise ValueError("invalid Usborne page cursor")
         if not 1 <= page <= 100:
             raise ValueError("invalid Usborne page cursor")
-        url = _browse_url(age=age, page=page)
-        html = self._get(url)
-        rows = parse_listing(
-            html,
-            text_filter=_text(text_filter)[:_MAX_FILTER_CHARS],
-            age=age,
-            limit=max(1, min(int(limit), 40)),
-        )
-        next_cursor = next_page_cursor(html, current_page=page)
-        return {
-            "items": rows,
-            "next_cursor": next_cursor,
-            "fresh_for_seconds": 86400,
+        started = perf_counter()
+        self._last_diagnostic = {
+            "source": "usborne",
+            "attempted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "page": page,
+            "requested_limit": max(1, min(int(limit), 40)),
+            "age_filter_present": age is not None,
+            "text_filter_present": bool(_text(text_filter)),
+            "phase": "listing",
+            "request_count": 0,
         }
+        try:
+            url = _browse_url(age=age, page=page)
+            html = self._get(url)
+            self._last_diagnostic["phase"] = "parsing"
+            rows = parse_listing(
+                html,
+                text_filter=_text(text_filter)[:_MAX_FILTER_CHARS],
+                age=age,
+                limit=max(1, min(int(limit), 40)),
+            )
+            # A diagnostic-only second parse of the bounded HTML: no network.
+            tokens = _tokens(html)
+            product_urls = {
+                product_url
+                for kind, _label, href in tokens if kind == "link"
+                for product_url, _isbn in (_product_url(href),) if product_url
+            }
+            cursor_out = next_page_cursor(html, current_page=page)
+            self._last_diagnostic.update({
+                "anchor_count": sum(kind == "link" for kind, _label, _href in tokens),
+                "product_url_count": len(product_urls),
+                "returned_items": len(rows),
+                "qualified_age_count": len(rows),
+                "next_cursor_present": bool(cursor_out),
+                "phase": "complete",
+                "state": "items" if rows else "empty_unverified",
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("ok" if rows else "empty")
+            return {
+                "items": rows,
+                "next_cursor": cursor_out,
+                "fresh_for_seconds": 86400,
+            }
+        except Exception as exc:
+            self._last_diagnostic.update({
+                "state": "error",
+                "error_type": type(exc).__name__,
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("error")
+            raise
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 40) -> Mapping[str, object]:
         # No free-text remote endpoint is assumed. Filter the explicitly loaded
