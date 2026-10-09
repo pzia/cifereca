@@ -275,3 +275,53 @@ def test_clear_identity_clears_bibliography_overlay_too():
     assert index.entries("alice")[0].bibliography_sources == ("openlibrary",)
     index.clear_identity("alice")
     assert index.entries("alice") == ()
+
+
+
+def test_find_cached_by_isbn_does_not_depend_on_title():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "booktrust", [
+        row("Titre source très différent", isbn10="0306406152", age_label="8+"),
+    ])
+    found = index.find("alice", isbn="9780306406157")
+    assert len(found) == 1
+    assert found[0].title == "Titre source très différent"
+    assert found[0].identifiers["isbn"] == "9780306406157"
+
+
+def test_find_cached_supports_provider_item_and_notice_url():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "source.one", [
+        row(
+            "Livre",
+            record_id="item-42",
+            source_item_id="item-42",
+            notice_url="HTTPS://EXAMPLE.ORG/book/42#fragment",
+            age_label="9+",
+        ),
+    ])
+    by_item = index.find("alice", provider="source.one", source_item_id="item-42")
+    by_url = index.find("alice", notice_url="https://example.org/book/42")
+    assert [book.record_id for book in by_item] == ["item-42"]
+    assert [book.record_id for book in by_url] == ["item-42"]
+
+
+def test_find_cached_never_uses_title_author_and_is_identity_scoped():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "source", [row("Même titre", "Même auteur", age_label="8+")])
+    index.ingest("bob", "source", [row("Autre", isbn13="9780306406157", age_label="10+")])
+    assert index.find("alice") == ()
+    assert index.find("alice", isbn="9780306406157") == ()
+    assert [book.title for book in index.find("bob", isbn="9780306406157")] == ["Autre"]
+
+
+def test_find_cached_preserves_bibliographic_overlay():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "booktrust", [
+        row("Livre", isbn13="9780306406157", age_label="8+"),
+    ])
+    index.ingest_bibliography("alice", "openlibrary", "9780306406157", [bibliography_row()])
+    found = index.find("alice", isbn="9780306406157")
+    assert len(found) == 1
+    assert found[0].bibliography_sources == ("openlibrary",)
+    assert found[0].publishers == ("Open Publisher",)
