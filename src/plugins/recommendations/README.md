@@ -121,3 +121,20 @@ grep "TRACE recommendations" <fichier.log> | \
 Le rapport donne le nombre de refresh, les snapshots cachés/non cachés et les médianes/min/max de `snapshot_ms`, profil, recherche catalogue, classement, calcul total, application UI et temps UI total. Avec au moins trois relances, il signale explicitement si plusieurs snapshots complets non cachés persistent après l’amorçage.
 
 Pour une recette déterministe volumineuse, le dépôt fournit aussi `simulation/profiles/ux-library.toml` (1 000 EPUB locaux + Kobo Vault + Numilog). Le rapport n’enregistre ni identité, ni titre, ni requête catalogue.
+
+
+## Durcissement des identifiants — 0.2.26
+
+La déduplication et le filtre « Exclure les possédés » ne comparent plus un sac de valeurs d’identifiants non typées.
+
+Preuves fortes acceptées :
+
+- ISBN-10/ISBN-13 après validation checksum et canonicalisation en ISBN-13 ;
+- couple `provider + source_item_id` (ou alias `item_id` / `record_id`) ;
+- autres schémas explicitement nommés dans `identifiers`, conservés sous forme namespacée (`doi:…`, `ark:…`, etc.).
+
+Un provider seul, un identifiant source seul ou un champ générique `id` ne sont pas des preuves bibliographiques suffisantes. Deux catalogues partageant la même valeur brute ne peuvent donc plus produire un faux doublon si leurs namespaces diffèrent.
+
+Le repli faible n’est utilisé qu’en absence totale d’identifiant fort et exige **titre + auteur**. Un titre sans auteur ne suffit jamais à déclarer une recommandation déjà possédée.
+
+Le classement, MMR, streaming progressif, cache de snapshot et mode « livre de référence » restent inchangés.
