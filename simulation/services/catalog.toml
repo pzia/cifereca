@@ -80,3 +80,15 @@ fixture_packages = ["literary-criticism", "youth-catalog", "constellations"]
 
 [service.editorial.args]
 seed = "--seed"
+
+# Real adapters keep public domain allowlists; only contract tests inject a
+# transport that forwards to this strictly-local synthetic HTTP service.
+[service.youth_sources]
+script = "youth_sources/pseudo_youth_sources_service.py"
+default_port = 8098
+health_path = "/health"
+plugins = []
+fixture_packages = ["youth-source-booktrust", "youth-bibliography-openlibrary"]
+
+[service.youth_sources.args]
+seed = "--seed"
