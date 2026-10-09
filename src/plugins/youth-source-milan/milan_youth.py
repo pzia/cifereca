@@ -321,7 +321,7 @@ class MilanYouthSource:
         else:
             raise ValueError("invalid Milan request kind")
         response = self.client.get(allowed)
-        if response.status_code >= 400:
+        if not 200 <= response.status_code < 300:
             raise RuntimeError(f"Milan HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type"))
         if content_type and "html" not in content_type:
@@ -351,9 +351,11 @@ class MilanYouthSource:
         products = listing_products(listing_html, text_filter=text_filter, limit=36)
 
         out = []
+        inspected = 0
         for title, url in products:
-            if len(out) >= bounded:
+            if len(out) >= bounded or inspected >= 8:
                 break
+            inspected += 1
             detail = parse_detail(self._get(url, kind="product"), url=url, fallback_title=title)
             if detail is None:
                 continue
