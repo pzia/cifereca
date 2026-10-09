@@ -264,3 +264,66 @@ def test_valid_archive_structure_still_accepts_normal_epub():
                 max_uncompressed_mb=64,
             )
         assert name == "mimetype"
+
+
+
+def _write_epub_with_mimetype_variant(
+    path: Path,
+    *,
+    mimetype_name: str = "mimetype",
+    mimetype_payload: bytes = MIMETYPE,
+    mimetype_compression: int = zipfile.ZIP_STORED,
+    mimetype_first: bool = True,
+):
+    with zipfile.ZipFile(path, "w") as zf:
+        if not mimetype_first:
+            zf.writestr("META-INF/container.xml", CONTAINER)
+        zf.writestr(
+            mimetype_name,
+            mimetype_payload,
+            compress_type=mimetype_compression,
+        )
+        if mimetype_first:
+            zf.writestr("META-INF/container.xml", CONTAINER)
+        zf.writestr("OEBPS/content.opf", OPF)
+        zf.writestr("OEBPS/page.xhtml", XHTML)
+        zf.writestr(
+            "OEBPS/images/page.jpg",
+            image_bytes("JPEG", size=(64, 64)),
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"mimetype_first": False}, "première entrée ZIP"),
+        ({"mimetype_compression": zipfile.ZIP_DEFLATED}, "non compressé"),
+        ({"mimetype_name": "MIMETYPE"}, "sensible à la casse"),
+        ({"mimetype_payload": MIMETYPE + b"\n"}, "contenu exact"),
+    ],
+)
+def test_analysis_rejects_nonconformant_epub_mimetype(kwargs, message):
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.epub"
+        _write_epub_with_mimetype_variant(src, **kwargs)
+        with pytest.raises(EpubOptimizationError, match=message):
+            analyze_epub(src, profile=builtin_profile("generic-eink"))
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"mimetype_first": False},
+        {"mimetype_compression": zipfile.ZIP_DEFLATED},
+        {"mimetype_name": "MIMETYPE"},
+        {"mimetype_payload": MIMETYPE + b" "},
+    ],
+)
+def test_transform_rejects_same_nonconformant_mimetype_variants(kwargs):
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.epub"
+        dst = Path(td) / "out.epub"
+        _write_epub_with_mimetype_variant(src, **kwargs)
+        with pytest.raises(EpubOptimizationError):
+            optimize_epub(src, dst, profile=builtin_profile("generic-eink"))
+        assert not dst.exists()
