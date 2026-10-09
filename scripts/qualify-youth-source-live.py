@@ -30,6 +30,13 @@ SOURCES = {
         "plugin": "youth.source.milan", "host": "www.editionsmilan.com",
         "max_requests": 9,
     },
+    "ecole-loisirs": {
+        "package": "youth-source-ecole-loisirs",
+        "module": "ecole_loisirs_youth.py",
+        "plugin": "youth.source.ecole-loisirs",
+        "host": "www.ecoledesloisirs.fr",
+        "max_requests": 1,
+    },
 }
 
 
@@ -81,7 +88,7 @@ def evidence_for(books: tuple, source_id: str) -> list[dict]:
         url = str(getattr(book, "notice_url", "") or "")
         if not url.startswith("https://") or urlsplit(url).hostname != SOURCES[source_id]["host"]:
             continue
-        if source_id == "milan" and not (len(isbn) == 13 and isbn.isdigit()):
+        if source_id in {"milan", "ecole-loisirs"} and not (len(isbn) == 13 and isbn.isdigit()):
             continue
         evidence.append({"title": str(getattr(book, "title", ""))[:160],
                          "isbn13": isbn, "notice_url": url,
@@ -216,8 +223,15 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
         )
         source.client = client
         try:
-            raw = source.browse(age=args.age, themes=(), text_filter="",
-                                cursor=None, limit=args.limit)
+            if args.source == "ecole-loisirs":
+                # Public advanced search already exposes the published age,
+                # ISBN and public notice link on the first page. Exactly ONE
+                # GET, no product-page fetch, no pagination or open crawler.
+                raw = source.search("loup", cursor=None, limit=40)
+                report["public_query"] = "loup"
+            else:
+                raw = source.browse(age=args.age, themes=(), text_filter="",
+                                    cursor=None, limit=args.limit)
             if not isinstance(raw, dict):
                 raise RuntimeError("source page is not a mapping")
             result = catalog.ingest(
@@ -225,7 +239,10 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
                 replace_source=True,
                 fresh_for_seconds=raw.get("fresh_for_seconds", 0),
             )
-            cached = catalog.search_cached("qualification-only", source_id=args.source)
+            cached = catalog.search_cached(
+                "qualification-only", source_id=args.source,
+                **({"age": args.age} if args.source == "ecole-loisirs" else {}),
+            )
             notices = evidence_for(cached, args.source)
             report.update({
                 "accepted": result.accepted, "rejected": result.rejected,

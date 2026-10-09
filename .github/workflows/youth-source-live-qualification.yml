@@ -12,6 +12,7 @@ on:
         options:
           - booktrust
           - milan
+          - ecole-loisirs
       confirm_live:
         description: 'I authorize a bounded live HTTPS request to the public publisher site'
         required: true
@@ -45,12 +46,16 @@ jobs:
         run: |
           set -euo pipefail
           case "$SOURCE" in
-            booktrust|milan) ;;
+            booktrust|milan|ecole-loisirs) ;;
             *) echo 'Invalid public source' >&2; exit 2 ;;
           esac
+          # The publisher's first search page contains age 3–6 evidence.
+          # The 3-years case still executes one GET and filters cache locally.
+          AGE=8
+          if [[ "$SOURCE" == "ecole-loisirs" ]]; then AGE=3; fi
           mkdir -p youth-live-evidence
           python scripts/qualify-youth-source-live.py \
-            --source "$SOURCE" --age 8 --limit 2 --timeout 6 \
+            --source "$SOURCE" --age "$AGE" --limit 2 --timeout 6 \
             --confirm-live > youth-live-evidence/result.json
       - name: Publish result summary
         if: always()
