@@ -31,8 +31,24 @@ def _html(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def booktrust_listing(*, page: int = 1, empty: bool = False) -> bytes:
-    entries = () if empty or page > 2 else (DATA[:2] if page == 1 else DATA[2:])
+def booktrust_listing(*, page: int = 1, empty: bool = False,
+                      age_group: str = "", categories: tuple[str, ...] = ()) -> bytes:
+    # BookTrust's groups overlap; only asserted age ranges can enter a result.
+    eligible = list(DATA)
+    if age_group:
+        import re
+        group = re.search(r"(\\d+)\\s+to\\s+(\\d+)", age_group, flags=re.I)
+        if group is None:
+            eligible = []
+        else:
+            lo, hi = int(group.group(1)), int(group.group(2))
+            eligible = [item for item in eligible
+                        if int(item[3].split(" to ")[0]) <= hi
+                        and int(item[3].split(" to ")[1]) >= lo]
+    if categories:
+        permitted = {c.casefold() for c in categories}
+        eligible = [item for item in eligible if item[6].casefold() in permitted]
+    entries = () if empty else eligible[(page - 1) * 2:page * 2]
     blocks = []
     for slug, title, author, group, interest, reading, theme in entries:
         blocks.append(
@@ -124,7 +140,9 @@ class YouthSourcesApp:
             page = min(100, max(1, int((args.get("page") or ["1"])[0])))
             blank = (args.get("ageGroups") or [""])[0] == "empty"
             return self.send(handler, 200, "text/html; charset=utf-8",
-                             booktrust_listing(page=page, empty=blank))
+                             booktrust_listing(page=page, empty=blank,
+                                 age_group=(args.get("ageGroups") or [""])[0],
+                                 categories=tuple(args.get("bookfinderCategories[]", ()))))
         if path.startswith("/booktrust" + BOOK_PREFIX):
             slug = path.rstrip("/").split("/")[-1]
             body = booktrust_detail(slug)
