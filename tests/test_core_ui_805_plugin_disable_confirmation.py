@@ -124,6 +124,8 @@ def test_disable_parent_with_two_levels_requires_explicit_confirmation():
     assert dialog.presented is True
     assert dialog.default == dialog.close == "cancel"
     assert "2 extension(s)" in dialog.body
+    assert "\n• source (sources)" in dialog.body
+    assert "\\n" not in dialog.body
     assert "source (sources)" in dialog.body
     assert "extension (extensions)" in dialog.body
     assert "bloquées" in dialog.body
