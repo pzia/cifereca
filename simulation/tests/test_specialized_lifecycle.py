@@ -47,7 +47,7 @@ class SpecializedLifecycleTests(unittest.TestCase):
             self.assertEqual(first["env"]["CIFERECA_UX_SPECIALIZED_DATA"], str(root))
             self.assertTrue(datasetctl.summary_payload(profile, catalog)["specialized"]["complete"])
             manifest = json.loads((root / "manifest.json").read_text())
-            self.assertEqual(len(manifest["files"]), 9)
+            self.assertEqual(len(manifest["files"]), 10)
             self.assertEqual(manifest["version"], plugin_scenarios.SCHEMA_VERSION)
 
             # A previously complete V1 manifest must not hide newly added JDD.
