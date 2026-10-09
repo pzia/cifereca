@@ -90,6 +90,7 @@ def main() -> int:
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--booktrust", action="store_true", help="Use installed BookTrust with offline HTTP fixtures")
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
+    provider.add_argument("--editions", action="store_true", help="Offline same-title editions and conflicting provenance on real GTK")
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -102,6 +103,7 @@ def main() -> int:
         "real_package": "src/plugins/youth-catalog",
         "booktrust_source_installed": args.booktrust,
         "milan_source_installed": args.milan,
+        "conflicting_editions": args.editions,
         "steps": [], "status": "RUNNING",
     }
     start = monotonic()
@@ -264,6 +266,9 @@ def main() -> int:
             return
         if args.milan:
             milan_start_ui()
+            return
+        if args.editions:
+            editions_start_ui()
             return
         assert len(page.view.sources) == 0, "No external youth source should activate in this fixture"
         assert_rows()
@@ -495,6 +500,133 @@ def main() -> int:
         assert len(requests) == 13, "Local age filter unexpectedly contacted Milan"
         assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
         capture("05-milan-empty-without-request")
+        result["status"] = "PASS"
+        write_report()
+        rc[0] = 0
+        app.quit()
+
+
+    def editions_start_ui():
+        """Three synthetic source records: same ISBN merges, distinct ISBN does not."""
+        assert page.view.sources == (), "No remote provider should run in offline edition fixture"
+        assert_rows()
+        shared = dict(
+            title="Livre miroir", authors=["Autrice commune"],
+            language="fr", formats=["epub"], book_type="fiction",
+            themes=["aventure"],
+        )
+        same_isbn = "9780306406157"
+        other_isbn = "9780140328721"
+        bt = dict(
+            shared, record_id="mirror-bt", source_item_id="bt-mirror",
+            isbn=same_isbn,
+            notice_url="https://www.booktrust.org.uk/book-recommendations/bookfinder/mirror-a/",
+            age_ranges=[{
+                "age_min": 5, "age_max": 7, "age_kind": "interest",
+                "source_id": "booktrust", "source_label": "Interest age: 5 to 7",
+                "confidence": 0.85,
+            }],
+        )
+        milan_same = dict(
+            shared, record_id="mirror-milan-a", source_item_id="milan-mirror-a",
+            isbn=same_isbn,
+            notice_url="https://www.editionsmilan.com/livres/12345-mirror-a/",
+            age_ranges=[{
+                "age_min": 12, "age_max": None, "age_kind": "publisher",
+                "source_id": "milan", "source_label": "À partir de 12 ans",
+                "confidence": 1.0,
+            }],
+        )
+        milan_other = dict(
+            shared, record_id="mirror-milan-b", source_item_id="milan-mirror-b",
+            isbn=other_isbn,
+            notice_url="https://www.editionsmilan.com/livres/12346-mirror-b/",
+            age_ranges=[{
+                "age_min": 8, "age_max": None, "age_kind": "publisher",
+                "source_id": "milan", "source_label": "À partir de 8 ans",
+                "confidence": 1.0,
+            }],
+        )
+        assert catalog.ingest("camille", "booktrust", [bt]).accepted == 1
+        assert catalog.ingest("camille", "milan", [milan_same, milan_other]).accepted == 2
+        merged = catalog.search_cached("camille", "Livre miroir")
+        assert len(merged) == 2, f"Distinct ISBNs were incorrectly collapsed: {merged!r}"
+        by_isbn = {book.identifiers.get("isbn"): book for book in merged}
+        assert set(by_isbn) == {same_isbn, other_isbn}
+        assert len(by_isbn[same_isbn].age_ranges) == 2
+        assert set(by_isbn[same_isbn].provenance) == {"booktrust", "milan"}
+        assert tuple(by_isbn[other_isbn].provenance) == ("milan",)
+        assert catalog.search_cached("alex", "Livre miroir") == ()
+        page.view.query.set_text("Livre miroir")
+        later(230, editions_two_rows)
+
+    def editions_two_rows():
+        assert_rows("mirror-bt", "mirror-milan-b")
+        assert page.view.master._page.store.get_n_items() == 2
+        assert page.view.master._page.list_stack.get_visible_child_name() == "list"
+        assert not requests, "Offline edits made a remote request"
+        capture("00-same-title-two-editions")
+        page.view.master._page.selection.set_selected(0)
+        later(220, editions_conflict_detail)
+
+    def editions_conflict_detail():
+        book = page.view.selected_book
+        assert book and book.record_id == "mirror-bt"
+        assert set(book.provenance) == {"booktrust", "milan"}
+        assert [(row.age_min, row.age_max) for row in book.age_ranges] == [(5, 7), (12, None)]
+        shown = detail_rows()
+        assert any("source booktrust" in sub and "Interest age: 5 to 7" in sub for _, sub in shown), shown
+        assert any("source milan" in sub and "À partir de 12 ans" in sub for _, sub in shown), shown
+        assert any(title == "Sources" and "booktrust" in sub and "milan" in sub for title, sub in shown), shown
+        result["same_isbn_detail"] = shown
+        capture("01-conflicting-age-sources-preserved")
+        page.view.master._page.selection.set_selected(1)
+        later(220, editions_second_detail)
+
+    def editions_second_detail():
+        book = page.view.selected_book
+        assert book and book.record_id == "mirror-milan-b", book
+        assert book.identifiers.get("isbn") == "9780140328721"
+        assert set(book.provenance) == {"milan"}
+        shown = detail_rows()
+        assert any("source milan" in sub and "À partir de 8 ans" in sub for _, sub in shown), shown
+        assert not any("source booktrust" in sub for _, sub in shown), shown
+        result["different_isbn_detail"] = shown
+        capture("02-second-edition-separated")
+        page.view.age.set_selected(7)  # âge 6: seulement BookTrust 5-7
+        later(180, editions_age_six)
+
+    def editions_age_six():
+        assert_rows("mirror-bt")
+        capture("03-age-six-only-first-edition")
+        page.view.age.set_selected(10)  # âge 9: seulement Milan 8+
+        later(180, editions_age_nine)
+
+    def editions_age_nine():
+        assert_rows("mirror-milan-b")
+        capture("04-age-nine-only-second-edition")
+        page.view.age_kind.set_selected(2)  # Âge d'intérêt, aucun à 9 ans
+        later(180, editions_no_interest)
+
+    def editions_no_interest():
+        assert_rows()
+        assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
+        capture("05-no-interest-age-at-nine")
+        page.view.age_kind.set_selected(4)  # Âge éditeur
+        page.view.age.set_selected(13)  # âge 12 : les deux éditions distinctes
+        later(200, editions_publisher_twelve)
+
+    def editions_publisher_twelve():
+        assert_rows("mirror-bt", "mirror-milan-b")
+        capture("06-publisher-age-twelve-keeps-both")
+        page.view.identity.set_selected(1)  # Alex sans ces notices
+        later(200, editions_identity_isolated)
+
+    def editions_identity_isolated():
+        assert_rows()
+        assert not requests, "Identity/age filters triggered network"
+        assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
+        capture("07-other-profile-stays-empty")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0

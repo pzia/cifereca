@@ -118,7 +118,8 @@ def test_youth_booktrust_replay_uses_real_installed_provider_and_offline_http():
     names = [name for name, _ in runner.select(None, "catalog.youth")]
     assert names == [
         "youth-1024", "youth-1366", "youth-booktrust-1024", "youth-booktrust-1366",
-        "youth-milan-1024", "youth-milan-1366"
+        "youth-milan-1024", "youth-milan-1366",
+        "youth-editions-1024", "youth-editions-1366",
     ]
     for name in names[2:4]:
         scenario = runner.SCENARIOS[name]
@@ -149,3 +150,21 @@ def test_youth_milan_replay_uses_installed_source_and_safe_notice_action():
     assert "milan_page_two" in source
     assert "milan_outage" in source
     assert "05-milan-empty-without-request" in source
+
+
+def test_youth_conflicting_editions_run_through_existing_real_gtk_runner():
+    runner = _module()
+    for name in ("youth-editions-1024", "youth-editions-1366"):
+        scenario = runner.SCENARIOS[name]
+        assert scenario["runner"] == "gtk-youth"
+        assert scenario["fixture"] == "search-filters"
+        assert scenario["editions"] is True
+        assert scenario["width"] in (1024, 1366)
+        assert not scenario.get("booktrust") and not scenario.get("milan")
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert 'same_isbn = "9780306406157"' in source
+    assert 'other_isbn = "9780140328721"' in source
+    assert 'assert set(by_isbn) == {same_isbn, other_isbn}' in source
+    assert '"01-conflicting-age-sources-preserved"' in source
+    assert '"02-second-edition-separated"' in source
+    assert '"07-other-profile-stays-empty"' in source
