@@ -113,12 +113,18 @@ def _isbn(value: object) -> str:
 def _identifier_map(book: object) -> dict[str, str]:
     identifiers = _mapping(_field(book, "identifiers", {}))
     out = {str(key).strip().casefold(): _text(value) for key, value in identifiers.items() if _text(value)}
-    if "isbn" in out:
-        valid = _isbn(out["isbn"])
+    canonical_isbn = ""
+    for key in ("isbn", "isbn13", "isbn_13", "isbn10", "isbn_10"):
+        if key not in out:
+            continue
+        valid = _isbn(out[key])
         if valid:
-            out["isbn"] = valid
-        else:
-            out.pop("isbn", None)
+            canonical_isbn = valid
+            break
+    if canonical_isbn:
+        out["isbn"] = canonical_isbn
+    else:
+        out.pop("isbn", None)
     provider = _first(out.get("provider"), _meta_value(book, "provider_id", "source_provider"))
     source_item = _first(out.get("source_item_id"), _meta_value(book, "item_id", "record_id"))
     if provider:
@@ -347,16 +353,16 @@ def _merge_books(left: ConstellationBook, right: ConstellationBook) -> Constella
 
 def deduplicate_books(books: Iterable[object]) -> tuple[ConstellationBook, ...]:
     by_key: dict[str, ConstellationBook] = {}
-    fallback_index: dict[tuple[str, str], str] = {}
+    opaque_fallback_index: dict[tuple[str, str], str] = {}
     for raw in books:
         book = normalize_book(raw)
         key = book.key
         if key.startswith("opaque:") and book.title and book.authors:
+            # Weak title+author fallback may collapse two equally opaque rows, but
+            # must never attach an unidentified row to a strongly identified edition.
             fallback = (_fold(book.title), _fold(book.authors[0]))
-            key = fallback_index.get(fallback, key)
-            fallback_index.setdefault(fallback, key)
-        elif book.title and book.authors:
-            fallback_index.setdefault((_fold(book.title), _fold(book.authors[0])), key)
+            key = opaque_fallback_index.get(fallback, key)
+            opaque_fallback_index.setdefault(fallback, key)
         current = by_key.get(key)
         by_key[key] = book if current is None else _merge_books(current, book)
     return tuple(sorted(by_key.values(), key=lambda item: item.key))
@@ -583,11 +589,16 @@ class ConstellationService:
     def graph_for(self, identity_id: str, books: Iterable[object], *, freshness_token: str = "") -> ConstellationGraph:
         identity = _text(identity_id)
         token = _text(freshness_token)
-        current = self._cache.get(identity)
+        cacheable = bool(identity and token)
+        current = self._cache.get(identity) if cacheable else None
         if current is not None and current[0] == token:
             return current[1]
         graph = ConstellationGraph(books)
-        self._cache[identity] = (token, graph)
+        if cacheable:
+            self._cache[identity] = (token, graph)
+        elif identity:
+            # A caller that cannot attest freshness must never inherit an older graph.
+            self._cache.pop(identity, None)
         return graph
 
     def invalidate(self, identity_id: str | None = None) -> None:
