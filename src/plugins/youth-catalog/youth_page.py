@@ -111,6 +111,30 @@ def book_ref(book: object) -> BookRef:
     )
 
 
+def age_badge(age_range: object) -> str:
+    """Short age chip: preserve the precise kind and provenance in the detail."""
+    lo = getattr(age_range, "age_min", None)
+    hi = getattr(age_range, "age_max", None)
+    if lo is None and hi is None:
+        return "Âge inconnu"
+    if lo is None:
+        bounds = f"≤{hi}"
+    elif hi is None:
+        bounds = f"{lo}+"
+    elif lo == hi:
+        bounds = str(lo)
+    else:
+        bounds = f"{lo}–{hi}"
+    kind = _fold(getattr(age_range, "age_kind", ""))
+    prefix = {
+        "interest": "Intérêt ",
+        "reading": "Lecture ",
+        "publisher": "Éditeur ",
+        "inferred": "Inféré ",
+    }.get(kind, "")
+    return f"{prefix}{bounds} ans"
+
+
 def list_entry(book: object) -> UiBookListEntry:
     ranges = tuple(getattr(book, "age_ranges", ()) or ())
     age_summary = " · ".join(age_text(row) for row in ranges[:2])
@@ -118,7 +142,7 @@ def list_entry(book: object) -> UiBookListEntry:
     formats = tuple(getattr(book, "formats", ()) or ())
     source = ", ".join(tuple(getattr(book, "provenance", ()) or ())[:3])
     meta = " · ".join(filter(None, (age_summary, language, ", ".join(formats), source)))
-    badge = age_text(ranges[0]).replace("Âge recommandé · ", "") if ranges else "Âge non qualifié"
+    badge = age_badge(ranges[0]) if ranges else "Âge inconnu"
     return UiBookListEntry(
         key=book_key(book),
         title=_text(getattr(book, "title", "")),

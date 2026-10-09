@@ -14,6 +14,16 @@ from urllib.parse import parse_qs, urlsplit
 
 DEFAULT_PORT = 8101
 SEED = 20261009
+
+
+def fictional_isbn(index: int) -> str:
+    """Distinct syntactically valid ISBN-13 checksums for synthetic notices."""
+    prefix = f"9780000{index:05d}"
+    assert len(prefix) == 12
+    total = sum(int(digit) * (1 if pos % 2 == 0 else 3)
+                for pos, digit in enumerate(prefix))
+    return prefix + str((10 - total % 10) % 10)
+
 # Fixtures inventées ; les ISBN sont des identifiants de forme valide.
 PRODUCTS = {
     "63047-moqueuse": {
@@ -36,6 +46,36 @@ PRODUCTS = {
         "author": "Autrice Exemple", "collection": "Découverte",
         "themes": "lecture", "isbn": "9780000000000",
     },
+    "99997-sans-isbn": {
+        "title": "ISBN absent", "age": "À partir de 5 ans",
+        "author": "Auteur fictif", "collection": "Essai de contrat",
+        "themes": "sans identifiant", "isbn": "",
+    },
+    "99996-tronque": {
+        "title": "HTML tronqué", "age": "À partir de 7 ans",
+        "author": "Auteur fictif", "collection": "Essai de contrat",
+        "themes": "erreur", "isbn": fictional_isbn(6),
+    },
+    "99995-jeunesse-sept": {
+        "title": "Notice fictive sept", "age": "À partir de 9 ans",
+        "author": "Autrice fictive", "collection": "Recette",
+        "themes": "aventure", "isbn": fictional_isbn(7),
+    },
+    "99994-jeunesse-huit": {
+        "title": "Notice fictive huit", "age": "À partir de 10 ans",
+        "author": "Autrice fictive", "collection": "Recette",
+        "themes": "aventure", "isbn": fictional_isbn(8),
+    },
+    "99993-jeunesse-neuf": {
+        "title": "Notice fictive neuf non inspectée", "age": "À partir de 11 ans",
+        "author": "Autrice fictive", "collection": "Recette",
+        "themes": "aventure", "isbn": fictional_isbn(9),
+    },
+    "77777-jeunesse-page-deux": {
+        "title": "Notice fictive page deux", "age": "À partir de 12 ans",
+        "author": "Autrice fictive", "collection": "Recette",
+        "themes": "lecture", "isbn": fictional_isbn(10),
+    },
     "88888-sans-age": {
         "title": "Sans âge attesté", "age": "",
         "author": "Auteur Exemple", "collection": "Premiers romans 8-12 ans",
@@ -43,8 +83,15 @@ PRODUCTS = {
     },
 }
 PAGES = {
-    1: ("63047-moqueuse", "77561-lescargot", "99999-adulte", "99998-mauvais-isbn"),
-    2: ("88888-sans-age",),
+    # The ninth product must never be fetched: the production adapter inspects
+    # at most eight product sheets per page, even if some are rejected.
+    1: (
+        "63047-moqueuse", "77561-lescargot", "99999-adulte",
+        "99998-mauvais-isbn", "99997-sans-isbn", "99996-tronque",
+        "99995-jeunesse-sept", "99994-jeunesse-huit",
+        "99993-jeunesse-neuf",
+    ),
+    2: ("88888-sans-age", "77777-jeunesse-page-deux"),
 }
 
 
@@ -66,15 +113,19 @@ def detail(slug: str) -> bytes | None:
     row = PRODUCTS.get(slug)
     if row is None:
         return None
+    if slug == "99996-tronque":
+        # A product response cut off before publishing a usable age or ISBN.
+        return b"<html lang='fr'><body><h1>HTML tronque</h1><div>Age</div><div>"
     q = lambda key: html.escape(row[key], quote=True)
     age = f'<div>Âge</div><div>{q("age")}</div>' if row["age"] else ""
+    isbn = f'<div>Code ISBN</div><div>{q("isbn")}</div>' if row["isbn"] else ""
     return (
         "<!doctype html><html lang='fr'><body>"
         f'<h1>{q("title")}</h1>'
         f'<div>Auteur</div><div>{q("author")}</div>'
         f'<div>Collection</div><div>{q("collection")}</div>'
         f'<div>Thèmes</div><div>{q("themes")}</div>'
-        + age + f'<div>Code ISBN</div><div>{q("isbn")}</div>'
+        + age + isbn +
         "</body></html>"
     ).encode("utf-8")
 

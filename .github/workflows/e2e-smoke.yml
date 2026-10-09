@@ -6,6 +6,7 @@ on:
     paths:
       - 'e2e/**'
       - 'src/cifereca/gui/**'
+      - 'src/plugins/youth-catalog/**'
       - '.github/workflows/e2e-smoke.yml'
       - 'tests/test_e2e_runner_contract.py'
 
