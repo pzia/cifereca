@@ -7,7 +7,7 @@ in daemon threads, with a process-wide concurrency ceiling and a short budget.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from threading import BoundedSemaphore, Condition, Thread
+from threading import BoundedSemaphore, Condition, Event, Lock, Thread
 from time import monotonic
 from typing import Callable, Iterable
 
@@ -22,6 +22,9 @@ from .models import (
 # Deliberately no unbounded shared queue. A plugin stuck in cached_detail()
 # occupies at most one of these slots; future requests skip the busy slot.
 _CACHE_READ_SLOTS = BoundedSemaphore(4)
+# Registration and teardown are plugin code too: neither may block GTK.
+_CACHE_SUBSCRIPTION_SLOTS = BoundedSemaphore(4)
+_CACHE_UNSUBSCRIBE_SLOTS = BoundedSemaphore(4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,29 +156,93 @@ def collect_cached_book_details(
 def subscribe_cached_book_detail_changes(
     services: Iterable[ResolvedPluginService], callback: Callable[[], None],
 ) -> Callable[[], None]:
-    """Subscribe to cache changes without making the Core depend on a plugin.
+    """Subscribe without executing any third-party callback on the GTK thread.
 
-    Callbacks may arrive on a plugin worker; GTK consumers must dispatch their
-    own UI updates. Closing the view can always unsubscribe all listeners.
+    At most four registration calls run concurrently across views. A hung
+    plugin cannot block rendering or create an unlimited number of threads.
+    Callers can close immediately, even before registration has completed;
+    a late registration is then unsubscribed rather than leaked. Callbacks
+    already queued when the view closes become inert.
     """
+    closed = Event()
+    mutex = Lock()
     unsubscribe: list[Callable[[], None]] = []
-    for resolved in services:
-        subscribe = getattr(getattr(resolved, "service", None), "subscribe_cache", None)
-        if not callable(subscribe):
-            continue
+
+    def notify() -> None:
+        if not closed.is_set():
+            callback()
+
+    def close_in_background(close: Callable[[], None]) -> None:
+        # Even unsubscribe_cache can run arbitrary plugin code; never invoke
+        # it from the view's close handler. A saturated pool is fail-closed:
+        # notify() stays inert if a malicious plugin never finishes cleanup.
+        if not _CACHE_UNSUBSCRIBE_SLOTS.acquire(blocking=False):
+            return
+
+        def run() -> None:
+            try:
+                try:
+                    close()
+                except Exception:
+                    pass
+            finally:
+                _CACHE_UNSUBSCRIBE_SLOTS.release()
+
         try:
-            close = subscribe(callback)
-            if callable(close):
-                unsubscribe.append(close)
+            Thread(target=run, name="cifereca-cache-unsubscribe", daemon=True).start()
+        except RuntimeError:
+            _CACHE_UNSUBSCRIBE_SLOTS.release()
+
+    def register(subscribe: Callable) -> None:
+        try:
+            close = subscribe(notify)
+            if not callable(close):
+                return
+            with mutex:
+                if closed.is_set():
+                    late = True
+                else:
+                    unsubscribe.append(close)
+                    late = False
+            if late:
+                close_in_background(close)
+            else:
+                # Catch cache updates between the initial detail render and
+                # asynchronous subscription registration.
+                try:
+                    notify()
+                except Exception:
+                    pass
         except Exception:
-            continue
+            pass
+        finally:
+            _CACHE_SUBSCRIPTION_SLOTS.release()
+
+    ordered: dict[str, Callable] = {}
+    for resolved in services:
+        plugin_id = str(getattr(resolved, "plugin_id", "") or "")
+        subscribe = getattr(getattr(resolved, "service", None), "subscribe_cache", None)
+        if plugin_id and callable(subscribe):
+            ordered.setdefault(plugin_id, subscribe)
+
+    for subscribe in (ordered[plugin_id] for plugin_id in sorted(ordered)[:4]):
+        if not _CACHE_SUBSCRIPTION_SLOTS.acquire(blocking=False):
+            break
+        try:
+            Thread(
+                target=register, args=(subscribe,),
+                name="cifereca-cache-subscribe", daemon=True,
+            ).start()
+        except RuntimeError:
+            _CACHE_SUBSCRIPTION_SLOTS.release()
 
     def close_all() -> None:
-        while unsubscribe:
-            try:
-                unsubscribe.pop()()
-            except Exception:
-                pass
+        with mutex:
+            closed.set()
+            closers = tuple(unsubscribe)
+            unsubscribe.clear()
+        for close in reversed(closers):
+            close_in_background(close)
 
     return close_all
 
