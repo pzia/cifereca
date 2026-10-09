@@ -302,3 +302,103 @@ def test_redirect_response_is_rejected_not_followed():
     )
     with pytest.raises(RuntimeError, match="302"):
         source.search("x")
+
+@pytest.mark.parametrize("invalid_age", (-1, 18, 100, "invalid", "9.5"))
+def test_invalid_age_is_rejected_before_any_http_request(invalid_age):
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, headers={"content-type": "text/html"}, text="<p>Empty</p>")
+
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ValueError, match="age must"):
+        source.browse(age=invalid_age)
+    assert seen == []
+
+
+def test_milan_page_pipeline_into_real_youth_cache_survives_outages():
+    """Real age-aware UI fetch + Milan parser + YouthCatalog cache; network mocked."""
+    from pathlib import Path
+    import sys
+
+    catalog_dir = Path(__file__).resolve().parents[2] / "youth-catalog"
+    if str(catalog_dir) not in sys.path:
+        sys.path.insert(0, str(catalog_dir))
+    from youth_catalog import YouthCatalogPlugin
+    from youth_page import fetch_source_page, page_parts
+
+    state = {"fault": "", "requests": []}
+
+    def handler(request):
+        assert request.url.host == "www.editionsmilan.com"
+        state["requests"].append(str(request.url))
+        if state["fault"] == "http503":
+            return httpx.Response(503, headers={"content-type": "text/html"}, text="offline")
+        if state["fault"] == "timeout":
+            raise httpx.ReadTimeout("offline", request=request)
+        if request.url.path == "/livres/":
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+                '<a href="/livres/63047-moqueuse/">Moqueuse</a>'
+                '<a href="/livres/page/2/">Suivant</a>'
+            ))
+        if request.url.path == "/livres/page/2/":
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+                '<a href="/livres/77561-lescargot/">L escargot</a>'
+            ))
+        if request.url.path == "/livres/63047-moqueuse/":
+            html = MOQUEUSE
+            if state["fault"] == "recovered":
+                html = html.replace("<h1>Moqueuse</h1>", "<h1>Moqueuse retrouvée</h1>")
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+        if request.url.path == "/livres/77561-lescargot/":
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=ESCARGOT)
+        raise AssertionError(f"unexpected Milan URL: {request.url}")
+
+    source = MilanYouthSource(
+        client=httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
+    )
+    catalog = YouthCatalogPlugin()
+    assert catalog.search_cached("camille") == ()
+    assert state["requests"] == []
+
+    first = fetch_source_page(source, "", age=8, themes=(), cursor=None, limit=8)
+    rows, cursor, ttl = page_parts(first)
+    assert cursor == "2" and ttl == 86400
+    report = catalog.ingest("camille", "milan", rows, fresh_for_seconds=ttl)
+    assert (report.accepted, report.rejected) == (1, 0)
+    book = catalog.search_cached("camille", age=8, age_kind="publisher")[0]
+    assert book.title == "Moqueuse"
+    assert book.identifiers["isbn"] == "9782408020804"
+    assert book.provenance == ("milan",)
+    assert book.age_ranges[0].source_id == "milan"
+    assert book.age_ranges[0].source_label == "À partir de 8 ans"
+    assert catalog.search_cached("alex") == ()
+
+    second = fetch_source_page(source, "", age=None, themes=(), cursor=cursor, limit=8)
+    rows2, cursor2, ttl2 = page_parts(second)
+    assert cursor2 == ""
+    assert catalog.ingest("camille", "milan", rows2, replace_source=False, fresh_for_seconds=ttl2).accepted == 1
+    assert {b.title for b in catalog.search_cached("camille")} == {"Moqueuse", "L'escargot"}
+    prior = catalog.search_cached("camille")
+    fresh_before = catalog.index.fresh_until("camille", "milan")
+    calls_before = len(state["requests"])
+    assert fresh_before
+    assert {b.title for b in catalog.search_cached("camille", age=8)} == {"Moqueuse", "L'escargot"}
+    assert len(state["requests"]) == calls_before  # cache reads stay local
+
+    for fault, error in (("http503", RuntimeError), ("timeout", httpx.ReadTimeout)):
+        state["fault"] = fault
+        with pytest.raises(error):
+            fetch_source_page(source, "", age=8, themes=(), cursor=None, limit=8)
+        assert catalog.search_cached("camille") == prior
+        assert catalog.index.fresh_until("camille", "milan") == fresh_before
+        assert catalog.search_cached("alex") == ()
+
+    state["fault"] = "recovered"
+    recovered = fetch_source_page(source, "", age=8, themes=(), cursor=None, limit=8)
+    records, _, fresh = page_parts(recovered)
+    assert catalog.ingest("camille", "milan", records, replace_source=True, fresh_for_seconds=fresh).accepted == 1
+    assert [b.title for b in catalog.search_cached("camille", age=8)] == ["Moqueuse retrouvée"]
+    assert catalog.search_cached("alex") == ()
+    assert len(state["requests"]) == calls_before + 4  # 2 failures + listing and detail
