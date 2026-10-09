@@ -203,3 +203,16 @@ def test_youth_notice_real_gtk_click_launches_isolated_https_sink_only():
     assert 'assert invocations == [[result["milan_notice_uri"]]]' in source
     assert '"02b-milan-notice-launched-to-offline-browser"' in source
     assert 'assert len(requests) == 9, "Clicking notice must not re-collect' in source
+
+
+def test_youth_plugin_manager_real_gtk_inspection_and_keyboard_search():
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert "def open_installed_plugin_manager():" in source
+    assert 'window.navigate("plugins")' in source
+    assert 'manager.get_mapped()' in source
+    assert 'device.click_widget(manager.plugin_search)' in source
+    assert 'device.type_text("youth")' in source
+    assert '"09-real-plugin-manager-installed"' in source
+    assert '"10-real-plugin-manager-youth-search"' in source
+    assert '"11-youth-restored-after-plugin-manager"' in source
+    assert 'plugin_states() == result["plugin_states_before_manager"]' in source

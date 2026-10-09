@@ -224,3 +224,20 @@ L'étape `02b-milan-notice-launched-to-offline-browser.png` et le JSON
 **clic GTK → gestionnaire HTTPS local de test**. Ce protocole ne prouve
 pas qu'un navigateur externe réel est installé ni la disponibilité du site
 éditeur. Hors du XDG de test, aucune association HTTPS n'est modifiée.
+
+### Activation : preuve GTK du gestionnaire de plugins (UX #758)
+
+Les parcours locaux `youth-1024` et `youth-1366` se terminent
+désormais par la **vraie page Plugins** de Cifereca, après l'installation
+et l'activation du vrai package Jeunesse. L'utilisateur recherche
+`youth` dans la zone GTK du gestionnaire par **saisie clavier XTEST**.
+Le banc vérifie l'état activé affiché, le statut technique, l'absence
+d'activation involontaire et l'absence de requête réseau.
+
+Les captures `09-real-plugin-manager-installed.png`,
+`10-real-plugin-manager-youth-search.png` et
+`11-youth-restored-after-plugin-manager.png` documentent le parcours
+**Jeunesse → Plugins → recherche jeunesse → retour Jeunesse**, aux
+largeurs 1024 et 1366 px. Cette recette ne désinstalle pas de package
+et ne prétend pas recetter une première installation manuelle par la
+boîte de dialogue du sélecteur de fichiers.
