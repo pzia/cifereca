@@ -56,6 +56,11 @@ def booktrust_listing(*, page: int = 1, empty: bool = False,
             f'<p>by {_html(author)} 2024</p><p>For ages {group}</p>'
             f'<p>{_html(theme)}</p></article>'
         )
+    # The real BookTrust adapter advances only on an attested next-page link.
+    if not empty and page * 2 < len(eligible):
+        blocks.append(
+            f'<a href="{BOOK_PREFIX}bookfinder-recommendations/?page={page + 1}">Next page</a>'
+        )
     return ('<!doctype html><html><body><main>' + ''.join(blocks) +
             '<a href="/book-recommendations/bookfinder/">Bookfinder</a></main></body></html>').encode()
 
