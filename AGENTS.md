@@ -47,6 +47,19 @@ Un blocage doit produire un handoff exploitable, pas un faux succès. Focus coor
 
 Un push de journal sur main peut déclencher les workflows Core, Plugins et validation de l'installation, créer du bruit et des conflits, sans apporter de meilleure traçabilité qu'une issue. **Choix par défaut : issue/PR**, mise à jour aux changements d'état, et non push direct d'un journal.
 
+## Frugalité des GitHub Actions : règle commune
+
+**Chaque minute de CI doit apporter une preuve nécessaire.** Cette discipline s'applique à tous les rôles, y compris `focus`, et ne diminue jamais les contrôles obligatoires.
+
+- **Avant de déclencher** : consulter le SHA, le diff, les checks et runs déjà disponibles. Ne pas relancer un workflow pour simple suivi d'état, ni répéter des tests sans changement pertinent ou hypothèse de panne documentée. Un run vert ne vaut que pour son SHA et son périmètre.
+- **Cibler au plus juste** : exécuter d'abord les vérifications locales et les tests du composant modifié. En CI, privilégier les chemins affectés et leurs dépendances ; documentation, notes et gouvernance seules ne justifient aucune suite lourde. Ne réserver les matrices Python complètes et GTK/E2E exhaustifs qu'aux changements qui les nécessitent, aux gates obligatoires et aux publications.
+- **Éviter les doublons** : ne pas lancer manuellement ce que les checks de la PR valident déjà ; regrouper les vérifications compatibles, utiliser les caches pertinents et ne pas repousser inutilement un nouveau commit pour obtenir un run. Les essais PR devenus obsolètes peuvent être annulés ; **jamais** une publication en cours.
+- **Respecter le budget** : surveiller les minutes Actions, limiter les tentatives et la conservation d'artefacts au nécessaire. Si le quota ou les runners bloquent les jobs, consigner le diagnostic et **arrêter les relances** ; à la reprise, commencer par une seule vérification ciblée, pas une batterie complète.
+- **Ne pas fabriquer de déclencheurs** : privilégier issues et PR pour les handoffs, jamais des commits de journal sur `main` ni une branche partagée de triggers. Toute release exige une autorisation explicite et conserve ses validations exhaustives, empreintes, provenance et rollback ; aucun raccourci budgétaire sur la sécurité.
+- **Responsabilité** : `cicd` est propriétaire du routage, du coût des workflows et des merges ; les autres rôles lui transmettent un besoin de validation coûteuse plutôt que de multiplier les déclenchements. Un check obligatoire rouge ou inconnu n'est jamais réputé réussi pour économiser la CI.
+
+Le plan opérationnel et les tests de sélection sont suivis dans [#856](https://github.com/pzia/cifereca/issues/856).
+
 ## Architecture, tests et preuves
 
 - Core : src/cifereca/. Plugins fonctionnels : src/plugins/<plugin>/. Le framework src/cifereca/plugins/ appartient au Core ; un plugin de production n'importe aucun module privé Core. Voir docs/ARCHITECTURE.md et docs/PLUGIN-BOUNDARIES.md.
