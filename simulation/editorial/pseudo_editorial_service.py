@@ -83,6 +83,8 @@ class EditorialFakeApp:
             "/criticism/rss.xml": ("criticism.rss.xml", "application/rss+xml; charset=utf-8"),
             "/criticism/jsonfeed.json": ("criticism.jsonfeed.json", "application/feed+json; charset=utf-8"),
             "/youth/records.json": ("youth.json", "application/json; charset=utf-8"),
+            "/youth/discovery.json": ("youth-discovery.json", "application/json; charset=utf-8"),
+            "/youth/enrichment.json": ("youth-enrichment.json", "application/json; charset=utf-8"),
             "/constellations/records.json": ("constellations.json", "application/json; charset=utf-8"),
             "/criticism/cases.json": ("criticism.json", "application/json; charset=utf-8"),
         }
