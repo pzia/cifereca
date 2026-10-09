@@ -241,3 +241,25 @@ Les captures `09-real-plugin-manager-installed.png`,
 largeurs 1024 et 1366 px. Cette recette ne désinstalle pas de package
 et ne prétend pas recetter une première installation manuelle par la
 boîte de dialogue du sélecteur de fichiers.
+
+### Observation clavier Entrée — écart UX P1 #910 (non bloquante)
+
+Sur les deux scénarios locaux `youth-1024` et `youth-1366`,
+après une recherche `Forest` saisie **physiquement par XTEST**
+dans le vrai `Gtk.Entry`, le banc émet `Return` puis `KP_Enter`.
+Il compte les émissions du signal GTK `activate`, capture les statuts
+visibles avant/après, la route et les notices affichées, et garantit
+**zéro accès distant** sans source précise sélectionnée.
+
+Nouvelles preuves : `05b-youth-return-gtk-observation.png` et
+`05c-youth-keypad-enter-gtk-observation.png` à chaque largeur, avec
+`screen.json > keyboard_enter_observation` (deux signaux GTK, changement
+ou non du retour utilisateur). La capture `06-keyboard-search-detail.png`
+reste le parcours suivant.
+
+**Ce probe est exploratoire.** Son PASS valide seulement les frappes,
+signaux et invariants de sécurité, **pas** la réparation de #910 : il
+n'exige pas d'action visible ou de second Entrée déclenchant une collecte
+avec source sélectionnée. Ces comportements restent au rôle Plugins et
+devront recevoir des assertions d'acceptation après implémentation.
+Aucun nouveau scénario ni workflow CI n'a été créé.

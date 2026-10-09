@@ -216,3 +216,16 @@ def test_youth_plugin_manager_real_gtk_inspection_and_keyboard_search():
     assert '"10-real-plugin-manager-youth-search"' in source
     assert '"11-youth-restored-after-plugin-manager"' in source
     assert 'plugin_states() == result["plugin_states_before_manager"]' in source
+
+
+def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert 'page.view.query.connect("activate", activated)' in source
+    assert 'keys("Return")' in source
+    assert 'keys("KP_Enter")' in source
+    assert 'audit["gtk_activate_signals"] == 1' in source
+    assert 'audit["gtk_activate_signals"] == 2' in source
+    assert 'assert requests == [], "No selected source:' in source
+    assert 'audit["criterion_910_satisfied"] = False' in source
+    assert '"05b-youth-return-gtk-observation"' in source
+    assert '"05c-youth-keypad-enter-gtk-observation"' in source
