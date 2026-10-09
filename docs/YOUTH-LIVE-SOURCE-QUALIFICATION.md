@@ -1,8 +1,10 @@
 # Qualification HTTPS Jeunesse — P1 #741
 
-Cette recette est une opération locale, explicite et ponctuelle. Elle ne se lance
-pas en CI et ne contacte aucun site sans --confirm-live. Elle constitue une
-preuve complémentaire aux fixtures et aux captures GTK déjà intégrées.
+Cette recette est une opération explicite et ponctuelle : locale ou via
+un workflow GitHub Actions **manuel uniquement**, jamais automatique.
+Elle ne contacte aucun site sans accord explicite (--confirm-live en local,
+confirmation dédiée dans GitHub Actions). Elle complète les fixtures et
+les captures GTK déjà intégrées.
 
 ## Préparation
 
@@ -35,6 +37,29 @@ Milan, jusqu'à une page et huit fiches (neuf requêtes HTTPS maximales) :
 
 Les paramètres imposent un âge 0–17, un nombre de notices demandé 1–3 et un
 timeout 2–15 secondes. Aucune page suivante n'est parcourue automatiquement.
+
+## Alternative si le poste local n'a pas d'accès DNS/HTTPS
+
+Le workflow [Qualify youth public HTTPS (manual)](../.github/workflows/youth-source-live-qualification.yml)
+est exclusivement `workflow_dispatch` : aucune PR, poussée sur `main` ou
+planification ne déclenche de requête extérieure. Sur le dépôt GitHub :
+
+1. Ouvrir **Actions → Qualify youth public HTTPS (manual) → Run workflow**,
+   en sélectionnant **main** puis une seule source (`booktrust` ou `milan`).
+2. Après décision explicite de contacter ce site public, cocher
+   `I authorize a bounded live HTTPS request...`. Sans la case, le job est
+   ignoré. Ne pas utiliser ce mode pour tester les fixtures.
+3. Consulter le résumé de l'exécution et télécharger l'artefact JSON
+   `youth-source-live-evidence` (conservé 7 jours), puis joindre la preuve
+   pertinente à [#741](https://github.com/pzia/cifereca/issues/741).
+
+Le job dispose d'un délai maximal de **4 minutes**, d'un seul fournisseur,
+d'un **maximum de 1 requête BookTrust ou 9 Milan** via les bornes du script,
+sans proxy ni redirection. Un résultat `BLOCKED` ou `NO_VERIFIED_NOTICE`
+ne prouve pas un succès. **Ne pas relancer à répétition**, surtout après
+403/429/timeout : cela consomme le budget Actions et peut solliciter
+inutilement le site. Un verdict `PASS` reste à confirmer depuis le JSON ;
+ce workflow n'est ni un check requis ni une release.
 
 ## Interprétation des résultats
 
