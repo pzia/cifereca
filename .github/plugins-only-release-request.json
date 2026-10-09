@@ -7,6 +7,6 @@
   ],
   "purpose": "P0 #787: publish and verify officially attested plugins-only artifacts; no Core release",
   "authorized_on": "2026-10-09",
-  "request_revision": 2,
-  "retry_reason": "P0 CI fix: inactive selected packages are stored but intentionally omitted from CLI inventory"
+  "request_revision": 3,
+  "retry_reason": "GitHub hosted attestations unavailable on user-owned private repo; use Sigstore Cosign keyless signed bundle and verify downloaded draft"
 }
