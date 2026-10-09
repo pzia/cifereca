@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/plugins-only-release.yml"
       - "scripts/ci-plugins-only-runtime-gate.sh"
+      - "scripts/test_partial_plugin_release.py"
       - "scripts/package_partial_plugins.py"
       - "scripts/plugin_packaging.py"
       - "src/cifereca/dev_updater.py"
@@ -65,7 +66,7 @@ jobs:
           version="$(tr -d '[:space:]' < VERSION)"
           tag="plugins-v${version}-pr-${{ github.event.pull_request.number }}"
           python -m scripts.package_partial_plugins \
-            --packages "org.cifereca.ui.page.diagnostics" \
+            --packages "org.cifereca.ui.page.diagnostics,org.cifereca.youth-source-discovery" \
             --id "$tag" \
             --out dist
           archive="dist/$tag.zip"
