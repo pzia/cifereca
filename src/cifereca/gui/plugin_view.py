@@ -167,6 +167,59 @@ def _status_matches_state(status: object, state_filter: str) -> bool:
     return True
 
 
+def required_extension_ids(
+    statuses: Iterable[object], query: str,
+) -> frozenset[str]:
+    """Find installed descendants of a named plugin across package boundaries.
+
+    Only manifest `requires.plugin` edges count: a recommendation is optional
+    and must not be presented as a child. This is a read-only search aid, not
+    dependency activation or a replacement for the package inventory.
+    """
+    needle = str(query or "").strip().casefold()
+    if not needle:
+        return frozenset()
+    rows = {
+        str(row.descriptor.id): row.descriptor
+        for row in statuses
+        if getattr(row, "descriptor", None) is not None
+        and getattr(row.descriptor, "id", None)
+    }
+    seeds = {
+        identifier for identifier, descriptor in rows.items()
+        if needle in identifier.casefold()
+        or needle in str(getattr(descriptor, "display_name", "") or "").casefold()
+    }
+    if not seeds:
+        return frozenset()
+    # A family uses namespaced identifiers (e.g. youth / youth.ext), so a
+    # parent query can directly match both parent and descendants. Only the
+    # highest matching ancestors count as search roots; matched children must
+    # still appear in the extension results.
+    roots = {
+        identifier for identifier in seeds
+        if not any(
+            getattr(dep, "plugin", None) in seeds
+            for dep in (getattr(rows[identifier], "requires", ()) or ())
+            if getattr(dep, "plugin", None) != identifier
+        )
+    } or seeds
+    children: dict[str, set[str]] = {}
+    for identifier, descriptor in rows.items():
+        for dep in getattr(descriptor, "requires", ()) or ():
+            parent_id = str(getattr(dep, "plugin", "") or "")
+            if parent_id in rows and parent_id != identifier:
+                children.setdefault(parent_id, set()).add(identifier)
+    found = set(seeds)
+    pending = list(seeds)
+    while pending:
+        for child in children.get(pending.pop(), ()):
+            if child not in found:
+                found.add(child)
+                pending.append(child)
+    return frozenset(found - roots)
+
+
 def filter_package_plugins(
     package: dict[str, object],
     statuses: Iterable[object],
@@ -174,9 +227,11 @@ def filter_package_plugins(
     query: str = "",
     state_filter: str = "all",
     role_filter: str = "all",
+    related_ids: Iterable[str] = (),
 ) -> list[object]:
     needle = str(query or "").strip().casefold()
     package_match = package_matches_query(package, needle)
+    related = frozenset(related_ids) if needle else frozenset()
     out: list[object] = []
     for status in statuses:
         if not _status_matches_state(status, state_filter):
@@ -188,6 +243,9 @@ def filter_package_plugins(
             continue
         descriptor = getattr(status, "descriptor", None)
         if descriptor is None:
+            continue
+        if str(getattr(descriptor, "id", "") or "") in related:
+            out.append(status)
             continue
         haystack = " ".join(
             _text(value)
