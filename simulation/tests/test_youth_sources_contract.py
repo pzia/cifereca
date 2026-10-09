@@ -93,12 +93,14 @@ class YouthSourcesContractTests(unittest.TestCase):
     def test_real_booktrust_search_pagination_age_filters_detail_and_error(self):
         with LoopbackServer() as server, server.injected_httpx() as client:
             plugin = BookTrustSource(client=client)
-            page = plugin.browse(age=10, themes=["Adventure"], cursor="1")
+            selected = plugin.browse(age=10, themes=["Adventure"], cursor="1")
+            self.assertEqual([i["title"] for i in selected["items"]], ["The Firefly Atlas"])
+            self.assertIn("ageGroups=9+to+11+years", server.received[0])
+            self.assertIn("bookfinderCategories%5B%5D=Adventure", server.received[0])
+            page = plugin.browse(cursor="1")
             self.assertEqual([i["title"] for i in page["items"]],
                              ["The Firefly Atlas", "The Garden of Words"])
             self.assertEqual(page["next_cursor"], "2")
-            self.assertIn("ageGroups=9+to+11+years", server.received[0])
-            self.assertIn("bookfinderCategories%5B%5D=Adventure", server.received[0])
             two = plugin.browse(cursor=page["next_cursor"])
             self.assertEqual([i["title"] for i in two["items"]], ["The Last Shore"])
             last = plugin.browse(cursor=two["next_cursor"])
