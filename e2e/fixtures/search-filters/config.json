@@ -1,0 +1,8 @@
+{
+  "library": {"directory": "${E2E_LIBRARY}"},
+  "identities": [
+    {"id": "camille", "label": "Camille", "directory_name": "camille"},
+    {"id": "alex", "label": "Alex", "directory_name": "alex"}
+  ],
+  "providers": {"accounts": [], "gallica_migration_031": false}
+}
