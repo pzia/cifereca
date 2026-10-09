@@ -95,6 +95,7 @@ class YouthSourcesContractTests(unittest.TestCase):
             plugin = BookTrustSource(client=client)
             selected = plugin.browse(age=10, themes=["Adventure"], cursor="1")
             self.assertEqual([i["title"] for i in selected["items"]], ["The Firefly Atlas"])
+            self.assertEqual(selected["next_cursor"], "", "Une unique fiche filtrée ne doit pas inventer une seconde page")
             self.assertIn("ageGroups=9+to+11+years", server.received[0])
             self.assertIn("bookfinderCategories%5B%5D=Adventure", server.received[0])
             page = plugin.browse(cursor="1")
