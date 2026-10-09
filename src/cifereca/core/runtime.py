@@ -10,6 +10,7 @@ from ..plugins import PackageStore, PluginConfigStore, PluginManager, PluginStat
 from ..services import LibraryService
 from ..brokers import build_public_brokers
 from ..storage import Storage
+from .llm_service import optional_llm_service
 
 
 @dataclass(slots=True)
@@ -60,11 +61,13 @@ class CiferecaCore:
             if config_path is not None else PluginConfigStore()
         )
         brokers = build_public_brokers(library)
+        llm = optional_llm_service(config)
         plugins = PluginManager(
             builtin_ui=True,
             disable_plugins=no_plugins,
             force_plugins=force_plugins,
             brokers=brokers,
+            core_services={"llm": llm} if llm is not None else {},
             package_store=package_store,
             state_store=state_store,
             config_store=plugin_config_store,
