@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 from cifereca_epub_optimizer.engine import (
     DrmProtectedError,
