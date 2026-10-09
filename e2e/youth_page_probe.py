@@ -418,9 +418,19 @@ def main() -> int:
                 child = child.get_next_sibling()
             return result_links
         rendered = links(page.view.master._page.detail)
-        notice = [link for link in rendered if link.get_label() == "Voir la notice publique"]
-        assert len(notice) == 1, f"Expected 1 visible notice action: {[(b.get_label(), b.get_uri()) for b in rendered]!r}"
-        assert notice[0].get_uri() == expected_uri
+        notice = [link for link in rendered if link.get_uri() == expected_uri]
+        assert len(notice) == 1, f"Expected 1 notice link for {expected_uri}: {[(b.get_label(), b.get_uri()) for b in rendered]!r}"
+        # GTK4 LinkButton may render its text in a child GtkLabel while
+        # Gtk.Button.get_label() returns None. Inspect the actual widget tree.
+        def widget_text(widget):
+            labels = [widget.get_text()] if isinstance(widget, Gtk.Label) else []
+            child = widget.get_first_child()
+            while child is not None:
+                labels.extend(widget_text(child))
+                child = child.get_next_sibling()
+            return labels
+        label = notice[0].get_label() or " ".join(widget_text(notice[0]))
+        assert "Voir la notice publique" in label, f"Notice link text missing in GTK: {label!r}"
         assert notice[0].get_mapped(), "Notice link not mapped in real GTK detail"
         result["milan_notice_uri"] = expected_uri
         capture("02-milan-notice-link")
