@@ -185,19 +185,6 @@ def reproducible_epub(payload: bytes) -> bytes:
     return output.getvalue()
 
 
-def stable_epub(book) -> bytes:
-    """Neutraliser les timestamps ZIP de FakeBookFactory pour un SHA stable."""
-    payload = epub_bytes(book)
-    output = io.BytesIO()
-    with zipfile.ZipFile(io.BytesIO(payload)) as original, zipfile.ZipFile(output, "w") as target:
-        for member in original.infolist():
-            info = zipfile.ZipInfo(member.filename, (2020, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_STORED if member.filename == "mimetype" else zipfile.ZIP_DEFLATED
-            info.external_attr = 0o600 << 16
-            target.writestr(info, original.read(member.filename))
-    return output.getvalue()
-
-
 def create(out: Path, *, seed: int = SEED) -> dict:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
