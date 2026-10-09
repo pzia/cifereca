@@ -373,6 +373,66 @@ class FakeOPDSApp:
         self.cache = cache
         self.broken_assets_every = max(0, int(broken_assets_every))
 
+    # Scénarios activés seulement avec ?ux_fault=..., pour préserver les
+    # endpoints et caches des profils existants (et exclure tout réseau externe).
+    # Le curseur suivant du scénario broken-next est volontairement invalide.
+    def catalog_fault(self, handler, path: str, qs: dict[str, list[str]]) -> bool:
+        fault = (qs.get("ux_fault") or [""])[0]
+        if fault not in {
+            "rate-limit", "unavailable", "malformed", "wrong-root",
+            "empty", "broken-next", "redirect-loop",
+        }:
+            return False
+        if fault == "rate-limit":
+            handler.send_response(HTTPStatus.TOO_MANY_REQUESTS)
+            handler.send_header("Content-Type", "text/plain")
+            handler.send_header("Content-Length", "0")
+            handler.send_header("Retry-After", "3")
+            handler.end_headers()
+            return True
+        if fault == "unavailable":
+            self.send_json(handler, HTTPStatus.SERVICE_UNAVAILABLE,
+                           {"error": "fictional OPDS outage"})
+            return True
+        if fault == "redirect-loop":
+            handler.send_response(HTTPStatus.FOUND)
+            handler.send_header("Location", handler.path)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+            return True
+        if fault == "malformed":
+            self._send(handler, HTTPStatus.OK, "application/atom+xml",
+                       b"<feed><entry>broken")
+            return True
+        if fault == "wrong-root":
+            self._send(handler, HTTPStatus.OK, "application/atom+xml",
+                       b'<?xml version="1.0"?><html><title>Not an OPDS feed</title></html>')
+            return True
+        base = self._base(handler)
+        if fault == "broken-next":
+            page = int((qs.get("page") or ["1"])[0])
+            start_record = int((qs.get("startRecord") or ["1"])[0])
+            if page >= 2 or start_record > 1:
+                self.send_json(handler, HTTPStatus.SERVICE_UNAVAILABLE,
+                               {"error": "fictional OPDS next-page outage"})
+                return True
+            next_url = (base + path + "?ux_fault=broken-next"
+                        + ("&startRecord=51" if path.startswith("/gallica") else "&page=2"))
+            links = ('<link rel="next" type="application/atom+xml" '
+                     f'href="{esc(next_url)}"/>')
+        else:
+            links = ""
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<feed xmlns="{ATOM}"><id>urn:cifereca:ux:opds:fault:{fault}</id>'
+            '<title>OPDS fixture sans notice</title>'
+            '<updated>2026-10-09T00:00:00Z</updated>'
+            + links + '</feed>'
+        ).encode("utf-8")
+        self._send(handler, HTTPStatus.OK,
+                   "application/atom+xml;profile=opds-catalog", body)
+        return True
+
     def asset_is_broken(self, book_id: int) -> bool:
         return self.broken_assets_every > 0 and int(book_id) % self.broken_assets_every == 0
 
@@ -720,6 +780,9 @@ class FakeOPDSApp:
             return self.gallica_root(handler)
         if path == "/gallica/opensearch.xml":
             return self.gallica_opensearch(handler)
+        if path in {"/gallica/services/engine/search/opds", "/gutenberg/ebooks/search.opds"}:
+            if self.catalog_fault(handler, path, qs):
+                return
         if path == "/gallica/services/engine/search/opds":
             return self.gallica_search(handler, qs)
         if path == "/gutenberg/ebooks/search.opds":
@@ -730,6 +793,12 @@ class FakeOPDSApp:
             return self.cover(handler, m.group(1), int(m.group(2)))
         m = re.fullmatch(r"/(gallica|gutenberg)/epub/(\d+)\.epub", path)
         if m:
+            if (qs.get("ux_fault") or [""])[0] == "invalid-epub":
+                return self._send(handler, HTTPStatus.OK, "application/epub+zip",
+                                  b"corrupt synthetic EPUB")
+            if (qs.get("ux_fault") or [""])[0] == "wrong-mime":
+                return self._send(handler, HTTPStatus.OK, "text/html",
+                                  b"<html>synthetic asset failure</html>")
             return self.epub(handler, m.group(1), int(m.group(2)))
         m = re.fullmatch(r"/gallica/pdf/(\d+)\.pdf", path)
         if m:
