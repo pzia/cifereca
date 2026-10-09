@@ -43,10 +43,12 @@ installé, URLs publiques consultées, décompte des requêtes et des notices,
 titres, ISBN si présent, tranches d'âge explicitement publiées, provenance et
 erreurs éventuelles. Aucun jeton, compte utilisateur ou cache permanent.
 
-- PASS : au moins une notice avec âge et provenance explicitement attestés,
-  après ingestion dans le vrai catalogue et lecture du vrai cache.
+- PASS : au moins une requête HTTPS publique observée et au moins une notice
+  avec âge et provenance explicites de la source interrogée, après ingestion
+  dans le vrai catalogue et lecture du vrai cache.
 - NO_VERIFIED_NOTICE : pas de notice répondant aux exigences ; aucune réussite.
-- BLOCKED : échec réseau, du plugin ou de l'installation ; aucune réussite.
+- BLOCKED : échec réseau, du plugin ou de l'installation, ou aucune
+  requête HTTPS réellement observée ; aucune réussite.
 - NOT_RUN : l'accord --confirm-live est absent ; aucune requête.
 - INVALID_INPUT : paramètres hors bornes ; aucune requête.
 
