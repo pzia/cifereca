@@ -542,6 +542,14 @@ class YouthCatalogIndex:
                 accepted.append(normalize_record(raw, source_id=sid))
             except Exception as exc:
                 errors.append(f"item[{index}]: {exc}")
+        # Reject an entirely malformed refresh atomically: never replace
+        # the last usable cache with zero valid records and parsing failures.
+        # A genuinely empty (error-free) page is still an authoritative result.
+        if errors and not accepted:
+            return IngestReport(
+                identity, sid, 0, len(errors), tuple(errors),
+                fresh_until=self.fresh_until(identity, sid),
+            )
         per_source = self._sources.setdefault(identity, {})
         per_source[sid] = tuple(accepted) if replace_source else per_source.get(sid, ()) + tuple(accepted)
         self._merged.pop(identity, None)
@@ -550,6 +558,10 @@ class YouthCatalogIndex:
             until = datetime.now(timezone.utc) + timedelta(seconds=int(fresh_for_seconds))
             fresh_until = until.replace(microsecond=0).isoformat()
             self._fresh_until[(identity, sid)] = fresh_until
+        elif replace_source:
+            # A successful authoritative refresh without freshness must not
+            # inherit an obsolete TTL from the previous response.
+            self._fresh_until.pop((identity, sid), None)
         return IngestReport(identity, sid, len(accepted), len(errors), tuple(errors), fresh_until=fresh_until)
 
     def ingest_bibliography(

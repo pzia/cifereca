@@ -227,3 +227,53 @@ def test_script_and_style_text_do_not_become_age_or_theme_evidence():
     assert len(cards) == 1
     assert cards[0].recommended_age == "8 to 10"
     assert "Adventure" in cards[0].themes
+
+
+def test_booktrust_http_outage_preserves_catalog_cache_then_recovers():
+    """Real BookTrust adapter + real youth cache, no external HTTP requests."""
+    from pathlib import Path
+    import sys
+    catalog_dir = Path(__file__).resolve().parents[2] / "youth-catalog"
+    if str(catalog_dir) not in sys.path:
+        sys.path.insert(0, str(catalog_dir))
+    from youth_catalog import YouthCatalogPlugin
+
+    state = {"response": "ok", "calls": 0}
+
+    def handler(request):
+        state["calls"] += 1
+        if state["response"] == "unavailable":
+            return httpx.Response(503, headers={"content-type": "text/html"}, text="unavailable")
+        if state["response"] == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
+        html = LIST_HTML.replace("Quest", "Recovered Quest") if state["response"] == "recovered" else LIST_HTML
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False)
+    source = BookTrustSource(client=client)
+    catalog = YouthCatalogPlugin()
+    first = catalog.collect_source("camille", source, "")
+    assert first.accepted == 2 and first.rejected == 0
+    assert [book.title for book in catalog.search_cached("camille", age=8)] == ["Quest"]
+    assert catalog.search_cached("alex") == ()
+    fresh_before = catalog.index.fresh_until("camille", "booktrust")
+    assert fresh_before
+    calls_before = state["calls"]
+    catalog.search_cached("camille", age=8)
+    assert state["calls"] == calls_before  # reading the cache is offline
+
+    for outage in ("unavailable", "timeout"):
+        state["response"] = outage
+        report = catalog.collect_source("camille", source, "")
+        assert report.rejected == 1 and report.accepted == 0
+        assert "search:" in report.errors[0]
+        assert [book.title for book in catalog.search_cached("camille", age=8)] == ["Quest"]
+        assert catalog.index.fresh_until("camille", "booktrust") == fresh_before
+        assert catalog.search_cached("alex") == ()
+
+    state["response"] = "recovered"
+    recovered = catalog.collect_source("camille", source, "")
+    assert recovered.accepted == 2 and recovered.rejected == 0
+    assert [book.title for book in catalog.search_cached("camille", age=8)] == ["Recovered Quest"]
+    assert catalog.search_cached("camille", "Quest")  # result is explicit, after recovery
+    assert state["calls"] == calls_before + 3

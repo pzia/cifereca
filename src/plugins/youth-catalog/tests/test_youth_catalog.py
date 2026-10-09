@@ -138,6 +138,45 @@ def test_cache_is_isolated_by_identity_and_targeted_source_replace():
     assert [b.title for b in index.entries("bob")] == ["B"]
 
 
+def test_all_invalid_source_refresh_preserves_last_good_cache_and_freshness():
+    index = YouthCatalogIndex()
+    index.ingest("camille", "booktrust", [row("Notice attestée", age_label="8+")], fresh_for_seconds=180)
+    index.ingest("camille", "milan", [row("Autre source", age_label="9+")])
+    index.ingest("alex", "booktrust", [row("Notice Alex", age_label="10+")])
+    previous_freshness = index.fresh_until("camille", "booktrust")
+    previous = index.entries("camille")
+    report = index.ingest(
+        "camille", "booktrust", [{"title": ""}, {"title": None}],
+        fresh_for_seconds=300, replace_source=True,
+    )
+    assert report.accepted == 0 and report.rejected == 2
+    assert len(report.errors) == 2
+    assert report.fresh_until == previous_freshness
+    assert index.entries("camille") == previous
+    assert index.fresh_until("camille", "booktrust") == previous_freshness
+    assert [book.title for book in index.entries("alex")] == ["Notice Alex"]
+
+
+def test_empty_valid_source_refresh_clears_only_target_and_obsolete_ttl():
+    index = YouthCatalogIndex()
+    index.ingest("camille", "booktrust", [row("Avant", age_label="8+")], fresh_for_seconds=120)
+    index.ingest("camille", "milan", [row("Milan", age_label="9+")])
+    assert index.fresh_until("camille", "booktrust")
+    report = index.ingest("camille", "booktrust", [], replace_source=True)
+    assert report.accepted == report.rejected == 0
+    assert [book.title for book in index.entries("camille")] == ["Milan"]
+    assert index.fresh_until("camille", "booktrust") == ""
+    assert [book.title for book in index.search("camille", age=9)] == ["Milan"]
+
+
+def test_mixed_valid_and_invalid_refresh_keeps_accepted_records():
+    index = YouthCatalogIndex()
+    index.ingest("camille", "booktrust", [row("Avant", age_label="8+")])
+    report = index.ingest("camille", "booktrust", [row("Après", age_label="9+"), {"title": ""}])
+    assert (report.accepted, report.rejected) == (1, 1)
+    assert [book.title for book in index.entries("camille")] == ["Après"]
+
+
 class GoodSource:
     def __init__(self):
         self.calls = 0
