@@ -58,3 +58,8 @@ seed = 20261008
 [services.editorial]
 enabled = true
 seed = 20261008
+
+# Synthetic BookTrust and OpenLibrary contracts; no real domain redirection.
+[services.youth_sources]
+enabled = true
+seed = 20261009
