@@ -39,9 +39,10 @@ jobs:
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario search-filter-p0
 
       - name: Replay Jeunesse P1 in a real virtual GTK4 environment
+        if: ${{ !cancelled() }}
         env:
           CIFERECA_E2E_PYTHON: /usr/bin/python3
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth --out e2e-artifacts/youth
 
       - name: Publish E2E summary
         if: always()
