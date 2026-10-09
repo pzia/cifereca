@@ -481,3 +481,92 @@ def test_milan_page_pipeline_into_real_youth_cache_survives_outages():
     assert [b.title for b in catalog.search_cached("camille", age=8)] == ["Moqueuse retrouvée"]
     assert catalog.search_cached("alex") == ()
     assert len(state["requests"]) == calls_before + 4  # 2 failures + listing and detail
+
+
+def test_milan_collection_reports_only_sanitized_structure_through_plugin_context():
+    from types import SimpleNamespace
+    import json
+
+    listing = (
+        '<a href="/livres/63047-moqueuse/"><img alt="Couverture de Moqueuse"></a>'
+        '<a href="/livres/page/2/">Suivant</a>'
+        '<a href="/livres/collections/recents/">Voir les collections</a>'
+        '<a href="https://evil.example/other/path?secret=ABC">Mauvais domaine</a>'
+    )
+
+    def handler(request):
+        return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"},
+                              text=listing if request.url.path == "/livres/" else MOQUEUSE)
+
+    sent = []
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert source.activate(SimpleNamespace(report_diagnostic=lambda *args, **kwargs: sent.append((args, kwargs)))) is source
+    result = source.browse(age=8, limit=2)
+    assert len(result["items"]) == 1
+    diag = source.diagnostic_snapshot()
+    assert diag["http_status"] == 200
+    assert diag["content_type_is_html"] is True
+    assert diag["html_bytes"] > 0 and len(diag["html_sha256_prefix"]) == 16
+    assert diag["anchor_count"] == 4
+    assert diag["milan_catalogue_href_count"] == 3
+    assert diag["product_href_count"] == 1
+    assert diag["product_link_accessible_count"] == 1
+    assert diag["unrecognized_catalogue_href_count"] == 2
+    assert diag["recognized_product_count"] == 1
+    assert diag["next_cursor_present"] is True
+    assert diag["detail_requests"] == 1 and diag["qualified_items"] == 1
+    assert diag["phase"] == "complete"
+    assert sent and sent[-1][0] == ("Milan catalogue collection", "ok")
+    assert sent[-1][1]["level"] == "normal"
+    assert sent[-1][1]["detail"] == diag
+    payload = json.dumps(diag)
+    assert "Moqueuse" not in payload
+    assert "evil.example" not in payload
+    assert "secret=ABC" not in payload
+    assert "/livres/63047" not in payload
+
+
+def test_milan_diagnostic_survives_http_error_and_paginated_parser_failure():
+    from types import SimpleNamespace
+
+    sent = []
+    context = SimpleNamespace(report_diagnostic=lambda *args, **kwargs: sent.append((args, kwargs)))
+    failure = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(429, headers={"content-type": "text/html"}, text="denied")
+    )))
+    failure.activate(context)
+    with pytest.raises(RuntimeError, match="429"):
+        failure.browse(age=8)
+    detail = failure.diagnostic_snapshot()
+    assert detail["http_status"] == 429
+    assert detail["phase"] == "listing"
+    assert detail["error_type"] == "RuntimeError"
+    assert sent[-1][0] == ("Milan catalogue collection", "error")
+
+    empty = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<a href="/livres/page/2/">Suivant</a>',
+        )
+    )))
+    empty.activate(context)
+    with pytest.raises(RuntimeError, match="no recognizable book links"):
+        empty.browse(age=8)
+    detail = empty.diagnostic_snapshot()
+    assert detail["anchor_count"] == 1
+    assert detail["product_href_count"] == 0
+    assert detail["next_cursor_present"] is True
+    assert detail["detail_requests"] == 0
+    assert detail["error_type"] == "RuntimeError"
+    assert sent[-1][0] == ("Milan catalogue collection", "error")
+
+
+def test_milan_diagnostic_callback_failure_does_not_block_collecting():
+    from types import SimpleNamespace
+
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, text="<p>Aucun livre</p>")
+    )))
+    source.activate(SimpleNamespace(report_diagnostic=lambda *args, **kwargs: 1 / 0))
+    assert source.browse(age=8)["items"] == ()
+    assert source.diagnostic_snapshot()["phase"] == "complete"
