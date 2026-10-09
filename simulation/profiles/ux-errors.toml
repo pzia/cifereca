@@ -16,7 +16,10 @@ epubs = 25
 seed = 20261006
 
 
-# Ce service OPDS accepte aussi ?ux_fault=rate-limit/unavailable/malformed/\n# wrong-root/empty/broken-next/redirect-loop, sans déclenchement implicite.\n[services.opds]\nenabled = true
+# Scénarios négatifs OPDS disponibles uniquement avec ?ux_fault=...
+# (429/503, XML invalide, pagination interrompue), jamais implicitement.
+[services.opds]
+enabled = true
 books_per_source = 500
 broken_assets_every = 7
 seed = 20261006
