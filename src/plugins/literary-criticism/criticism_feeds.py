@@ -96,11 +96,15 @@ def parse_feed(payload, url, *, limit=100):
             raise ValueError('Objet JSON Feed attendu')
         if not str(raw.get('version', '')).startswith('https://jsonfeed.org/version/'):
             raise ValueError('JSON Feed attendu')
+        items = raw.get('items', [])
+        if not isinstance(items, list):
+            raise ValueError('Liste items JSON Feed attendue')
+        bounded = max(1, min(int(limit), 500))
         return [{'title': r.get('title'), 'url': public_join(url, r.get('url') or r.get('external_url')),
                  'critic_author': ', '.join(a.get('name', '') for a in r.get('authors', []) if isinstance(a, dict)),
                  'published_at': date_text(r.get('date_published')), 'excerpt': r.get('summary', ''),
                  'language': r.get('language') or raw.get('language', ''), 'book': r.get('_cifereca_book', {})}
-                for r in raw.get('items', [])[:limit] if isinstance(r, dict)]
+                for r in items[:bounded] if isinstance(r, dict)]
     # Refuse DTDs/entities before ElementTree; no external or expansive XML.
     if b'<!DOCTYPE' in payload.upper() or b'<!ENTITY' in payload.upper():
         raise ValueError('DTD et entités non autorisées')
@@ -141,6 +145,9 @@ def discover_url(url, *, fetch=fetch_public):
     if not url:
         raise ValueError('URL HTTP(S) publique requise')
     final, body = fetch(url)
+    final = public_url(final)
+    if not final:
+        raise ValueError('Destination finale non publique refusée')
     try:
         parse_feed(body, final, limit=1)
     except (ValueError, ET.ParseError, TypeError):
@@ -173,6 +180,9 @@ class FeedSource:
         if cursor:
             return {'items': []}
         final, body = self.fetch(self.url)
+        final = public_url(final)
+        if not final:
+            raise ValueError('Destination finale non publique refusée')
         return {'items': parse_feed(body, final, limit=min(500, max(1, limit))), 'fresh_for_seconds': 900}
 
 
