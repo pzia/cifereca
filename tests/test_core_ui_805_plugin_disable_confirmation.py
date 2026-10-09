@@ -132,6 +132,12 @@ def test_disable_parent_with_two_levels_requires_explicit_confirmation():
     dialog.respond("cancel")
     assert calls == [] and changed == []
     assert all(row.enabled for row in statuses)
+    # Retrying after cancellation must still require confirmation, then write once.
+    switch.click_off()
+    assert len(dialogs) == 2
+    assert calls == []
+    dialogs[1].respond("disable")
+    assert calls == [("main", False)]
 
 
 def test_confirm_disables_parent_exactly_once_without_disabling_child_preferences():
