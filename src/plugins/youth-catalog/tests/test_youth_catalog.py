@@ -35,7 +35,7 @@ def test_parse_interest_and_reading_age_kinds():
 
 
 def test_inferred_age_is_flagged_and_lower_confidence():
-    item = parse_age_label("about 11 years", inferred=True)[0]
+    item = parse_age_label("11+", inferred=True)[0]
     assert item.age_kind == "inferred"
     assert item.confidence <= 0.55
 
@@ -108,7 +108,8 @@ def test_inferred_ranges_can_be_excluded():
         row("Explicit", age_label="10+"),
         row("Inferred", age_ranges=[{"age_min": 10, "kind": "recommended", "inferred": True}]),
     ])
-    assert {b.title for b in index.search("alice", age=11)} == {"Explicit", "Inferred"}
+    assert {b.title for b in index.search("alice", age=11, include_inferred=True)} == {"Explicit", "Inferred"}
+    assert [b.title for b in index.search("alice", age=11)] == ["Explicit"]
     assert [b.title for b in index.search("alice", age=11, include_inferred=False)] == ["Explicit"]
 
 
@@ -325,3 +326,40 @@ def test_find_cached_preserves_bibliographic_overlay():
     assert len(found) == 1
     assert found[0].bibliography_sources == ("openlibrary",)
     assert found[0].publishers == ("Open Publisher",)
+
+
+
+def test_ambiguous_partial_and_approximate_age_labels_are_not_evidence():
+    for label in ("8 ans", "8", "about 11 years", "recommandé pour 8 ans",
+                  "Une aventure 9+ passionnante", "Collection 10–12 ans",
+                  "under 8", "Interest age 8-10 extra", "8+\n"):
+        assert parse_age_label(label) == (), label
+        assert parse_age_label(label, inferred=True) == (), label
+
+
+def test_explicit_labels_preserve_original_and_source():
+    for label, lo, hi in (("  9+  ", 9, None), ("10–12 ans", 10, 12),
+                          ("Interest age 8-10", 8, 10), ("0+", 0, None),
+                          ("17+", 17, None), ("up to 6 years", 0, 6)):
+        (age,) = parse_age_label(label, source_id="Publisher")
+        assert (age.age_min, age.age_max) == (lo, hi)
+        assert age.source_label == label
+        assert age.source_id == "publisher"
+        assert age.provenance == ("publisher",)
+    assert parse_age_label("18+") == ()
+    assert parse_age_label("12–8 ans") == ()
+
+
+def test_cache_filter_rejects_ambiguous_labels_without_remote_collection():
+    plugin = YouthCatalogPlugin()
+    source = GoodSource()
+    plugin.collect_source("alice", source, "")
+    calls = source.calls
+    for age in (0, 7, 17):
+        plugin.search_cached("alice", age=age)
+    assert source.calls == calls
+    index = YouthCatalogIndex()
+    index.ingest("alice", "source", [row("Ambiguous", age_label="8 ans"),
+                                       row("Attested", age_label="8+")])
+    assert [b.title for b in index.search("alice", age=8)] == ["Attested"]
+    assert len(index.entries("alice")) == 2

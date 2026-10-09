@@ -79,3 +79,16 @@ Une notice Jeunesse sélectionnée peut être enrichie via les services `youth.b
 ## Suite
 
 Le moteur, BookTrust, la découverte de sources, Open Library et l’UI spécialisée sont séparés en plugins/incréments. Restent notamment d’autres sources jeunesse qualifiées et la recette UX complète.
+
+### Filtre d'âge strict (0.4.1)
+
+Les recommandations françaises passent par `cifereca.plugin_api.youth_ages`.
+Les libellés anglais complets, par exemple `Interest age 8-10` ou
+`Reading age 7 to 9`, sont normalisés sans extraire de nombres dans une
+phrase. `8 ans`, une description libre, un âge approximatif ou une
+correspondance partielle restent inconnus. Le libellé original et la
+provenance sont conservés.
+
+Les âges inférés sont exclus du filtre par défaut ; `include_inferred=True`
+constitue un opt-in explicite. Les notices sans âge attesté restent dans le
+cache mais ne satisfont pas un filtre d'âge. Aucun accès réseau n'est ajouté.
