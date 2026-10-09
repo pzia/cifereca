@@ -44,3 +44,17 @@ Les capacités de zoom/paysage ne sont pas inventées par le transformer : un pr
 cd src/plugins/epub_optimizer
 python -m pytest -q
 ```
+
+
+## Durcissement ZIP EPUB — 0.3.2
+
+La validation de l’archive EPUB est maintenant effectuée **avant** toute lecture de contenu significative :
+
+- limite globale décompressée contrôlée avant lecture de `mimetype` ;
+- chemins ZIP obligatoirement canoniques : refus de `./`, doubles séparateurs et autres alias ;
+- doublons insensibles à la casse toujours refusés ;
+- entrées ZIP chiffrées refusées explicitement ;
+- liens symboliques Unix dans l’archive refusés ;
+- entrée `mimetype` obligatoire, non répertoire, bornée à 128 octets et vérifiée après les limites structurelles.
+
+Cette validation est partagée par `analyze_epub()` et `optimize_epub()`. Les règles DRM EPUB, limites d’images, conservation des contenus sensibles et comportement PDF restent inchangés.
