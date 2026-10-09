@@ -6,6 +6,7 @@ from youth_page import (
     FilterState,
     YouthPagePlugin,
     YouthView,
+    YouthEnterSequence,
     age_badge,
     age_detail,
     age_text,
@@ -352,3 +353,103 @@ def test_stale_bibliography_completion_is_dropped_after_selection_change():
     view.selected_book = youth_book(record_id="two")
     dispatch.pop()()
     assert completed == []
+
+
+def test_enter_sequence_is_cache_first_and_remote_only_after_matching_explicit_selection():
+    seq = YouthEnterSequence()
+    token = ("alice", "youth.source.booktrust", FilterState(query="Forest", age=8))
+    assert seq.advance(token=token, query="Forest", source_selected=True) == "local"
+    assert seq.advance(token=token, query="Forest", source_selected=True) == "remote"
+    assert seq.advance(token=token, query="Forest", source_selected=True) == "already_requested"
+
+    changed_age = ("alice", "youth.source.booktrust", FilterState(query="Forest", age=9))
+    assert seq.advance(token=changed_age, query="Forest", source_selected=True) == "local"
+    changed_profile = ("bob", "youth.source.booktrust", FilterState(query="Forest", age=9))
+    assert seq.advance(token=changed_profile, query="Forest", source_selected=True) == "local"
+    seq.reset()
+    assert seq.advance(token=changed_profile, query="Forest", source_selected=True) == "local"
+
+
+def test_enter_sequence_never_fetches_all_sources_or_single_character_query():
+    seq = YouthEnterSequence()
+    local = ("alice", "", FilterState(query="Forest"))
+    assert seq.advance(token=local, query="Forest", source_selected=False) == "local"
+    assert seq.advance(token=local, query="Forest", source_selected=False) == "choose_source"
+    assert seq.advance(token=local, query="Forest", source_selected=False) == "choose_source"
+    short = ("alice", "youth.source.milan", FilterState(query="F"))
+    assert seq.advance(token=short, query="F", source_selected=True) == "local"
+    assert seq.advance(token=short, query="F", source_selected=True) == "short_query"
+    assert seq.advance(token=short, query="F", source_selected=True) == "short_query"
+
+
+def test_youth_entry_activate_routes_cache_then_one_selected_source_only():
+    view = object.__new__(YouthView)
+    messages, fetches, renders = [], [], []
+    identity, source, query, age = ["alice"], [""], ["Forest"], [8]
+    view.enter_sequence = YouthEnterSequence()
+    view.identity_id = lambda: identity[0]
+    view.selected_source_plugin = lambda: source[0]
+    view.filter_state = lambda: FilterState(query=query[0], age=age[0])
+    view.render_cached = lambda: renders.append("local")
+    view.status = NS(set_label=messages.append)
+    view.rows = {"one": NS(title="Forest")}
+    view._remote_request = lambda cursor: fetches.append((identity[0], source[0], cursor))
+
+    view.query_activated()
+    assert messages[-1].startswith("Recherche en cache : 1 résultat(s).")
+    assert len(renders) == 1 and fetches == []
+    view.query_activated()
+    assert "source Jeunesse précise" in messages[-1]
+    assert fetches == []
+
+    source[0] = "youth.source.booktrust"
+    view.query_activated()
+    assert len(renders) == 2 and fetches == []
+    view.query_activated()
+    assert fetches == [("alice", "youth.source.booktrust", "")]
+    view.query_activated()
+    assert len(fetches) == 1
+    assert "déjà demandée" in messages[-1]
+
+    age[0] = 9
+    view.query_activated()
+    assert len(renders) == 3 and len(fetches) == 1
+    identity[0] = "bob"
+    view.query_activated()
+    assert len(renders) == 4 and len(fetches) == 1
+    query[0] = "F"
+    view.query_activated()
+    view.query_activated()
+    assert len(fetches) == 1
+    assert "au moins 2 caractères" in messages[-1]
+
+
+def test_youth_remote_submissions_are_idempotent_while_the_same_token_is_pending():
+    view = object.__new__(YouthView)
+    tasks = Tasks()
+    messages, dispatch, completed = [], [], []
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda callback: dispatch.append(callback))
+    view.status = NS(set_label=messages.append)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.filter_state = lambda: FilterState(query="Forest", age=8, themes=())
+    token = ("alice", "youth.source.booktrust", "Forest", 8, ())
+    view.run_remote(lambda control: {"items": [1]}, completed.append, token)
+    view.run_remote(lambda control: {"items": [2]}, completed.append, token)
+    assert len(tasks.handles) == 1
+    assert messages[-1] == "Cette collecte est déjà en cours."
+    tasks.handles[0].finish()
+    assert view._remote_running_token == token
+    dispatch.pop(0)()
+    assert view._remote_running_token is None
+    assert completed == [{"items": [1]}]
+    view.run_remote(lambda control: {"items": [3]}, completed.append, token)
+    assert len(tasks.handles) == 2
+
+
+def test_youth_text_entry_is_connected_to_gtk_activate():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "youth_page.py").read_text(encoding="utf-8")
+    assert 'self.query.connect("activate", lambda *_: self.query_activated())' in source
