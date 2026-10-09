@@ -31,6 +31,19 @@ def test_source_release_metadata_share_one_version():
     assert plugin_release["release"] == expected
 
 
+def test_core_release_exposes_strict_plugins_only_cli(capsys):
+    """The released Core must ship the updater contract used by official plugin ZIPs."""
+    import pytest
+    from cifereca.dev_updater import main
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--help"])
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--require-plugins-only" in help_text
+    assert "--expected-sha256" in help_text
+
+
 def test_runtime_source_version_matches_release_file():
     import cifereca
 
