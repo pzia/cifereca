@@ -47,7 +47,8 @@ class SpecializedLifecycleTests(unittest.TestCase):
             self.assertEqual(first["env"]["CIFERECA_UX_SPECIALIZED_DATA"], str(root))
             self.assertTrue(datasetctl.summary_payload(profile, catalog)["specialized"]["complete"])
             manifest = json.loads((root / "manifest.json").read_text())
-            self.assertEqual(len(manifest["files"]), 7)
+            self.assertEqual(len(manifest["files"]), 9)
+            self.assertEqual(manifest["version"], plugin_scenarios.SCHEMA_VERSION)
 
             second = datasetctl.prepare(profile, catalog)
             self.assertEqual(json.loads((second["specialized"] / "manifest.json").read_text()), manifest)
