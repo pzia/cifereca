@@ -354,5 +354,54 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         plugin_install.assert_called_once()
 
 
+    def test_trusted_zip_digest_accepted_before_dry_run_and_real_install(self) -> None:
+        digest = hashlib.sha256(self.snapshot.read_bytes()).hexdigest()
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            result = dev.apply_snapshot(
+                self.snapshot, dry_run=True, expected_sha256=digest.upper(),
+            )
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["sha256"], digest)
+        self.assertEqual(self._version(ALPHA), "0.9")
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            applied = dev.apply_snapshot(self.snapshot, expected_sha256=digest)
+        self.assertTrue(applied["plugins_only_indexed"])
+        self.assertEqual(self._version(ALPHA), "1.2.3")
+
+    def test_changed_zip_is_rejected_before_extraction_or_backup(self) -> None:
+        trusted = hashlib.sha256(self.snapshot.read_bytes()).hexdigest()
+        changed = self._edited_snapshot(dev_edit=lambda data: data.update(created_at="changed"))
+        self.assertNotEqual(hashlib.sha256(changed.read_bytes()).hexdigest(), trusted)
+        with patch.object(dev, "_extract_snapshot") as extract, \
+             patch.object(dev, "_backup_plugins") as backup, \
+             patch.object(dev, "_install_plugin_replace") as install:
+            with self.assertRaisesRegex(dev.DevUpdateError, "SHA-256 du snapshot"):
+                dev.apply_snapshot(changed, expected_sha256=trusted)
+        extract.assert_not_called()
+        backup.assert_not_called()
+        install.assert_not_called()
+        self.assertEqual(self._version(ALPHA), "0.9")
+        self.assertFalse(self.state.exists())
+
+    def test_invalid_trusted_digest_rejected_before_extraction_even_in_dry_run(self) -> None:
+        for digest in ("", "0" * 63, "0" * 65, "gg" * 32, "0" * 64 + chr(10)):
+            with self.subTest(digest=digest), patch.object(dev, "_extract_snapshot") as extract:
+                with self.assertRaisesRegex(dev.DevUpdateError, "empreinte SHA-256 attendue invalide"):
+                    dev.apply_snapshot(self.snapshot, dry_run=True, expected_sha256=digest)
+                extract.assert_not_called()
+        self.assertEqual(self._version(ALPHA), "0.9")
+
+    def test_cli_expected_sha256_is_checked_before_extracting(self) -> None:
+        with patch.object(dev, "_extract_snapshot") as extract, \
+             patch.object(dev, "_print") as display:
+            code = dev.main([str(self.snapshot), "--dry-run", "--expected-sha256", "0" * 64])
+        self.assertEqual(code, 1)
+        extract.assert_not_called()
+        self.assertIn("SHA-256 du snapshot", str(display.call_args))
+
+
+
 if __name__ == "__main__":
     unittest.main()

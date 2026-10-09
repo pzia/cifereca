@@ -18,7 +18,18 @@ La sélection porte sur les IDs des packages (champ package.id), jamais sur les 
 
 Le ZIP reprend le contrat cifereca-dev-snapshot utilisé par cifereca-update-dev : uniquement les packages choisis, aucun wheel Core. Le manifest principal porte `scope: "plugins-only"` et l'index obligatoire `cifereca-plugins-only.json` recense versions, IDs des plugins, contraintes Plugin API, SHA-256 de chaque package, SHA source et version Core **de construction** (non une promesse de compatibilité avec toutes les versions Core). Si l'index manque malgré ce marqueur, l'updater refuse la mise à jour **avant toute sauvegarde ou installation**, même en mode `--dry-run`. Les snapshots dev génériques historiques sans marqueur restent compatibles.
 
-Le fichier .zip.sha256 authentifie le ZIP complet sous réserve que sa provenance soit fiable. Une archive reconditionnée ou son index modifié est rejeté par --verify si les métadonnées ne correspondent plus aux packages.
+Le fichier `.zip.sha256` permet de vérifier la cohérence du ZIP avec sa somme publiée, **mais pas l'identité du producteur** si les deux fichiers proviennent d'une même source non fiable. Un ZIP et son index modifiés de façon cohérente peuvent passer le contrôle interne `--verify`.
+
+Pour imposer une empreinte obtenue **indépendamment d'un canal de confiance vérifié**, passer `--expected-sha256` à l'updater : il compare le SHA-256 de l'archive complète **avant extraction, sauvegarde ou installation**, y compris en `--dry-run`. Exemple, en remplaçant la valeur par celle validée hors du ZIP téléchargé :
+
+~~~bash
+cifereca-update-dev dist/cifereca-plugins-only-preview-manual.zip \
+  --expected-sha256 "$SHA256_APPROUVE" --dry-run --json
+cifereca-update-dev dist/cifereca-plugins-only-preview-manual.zip \
+  --expected-sha256 "$SHA256_APPROUVE" --json
+~~~
+
+**Important :** une empreinte recopiée depuis la même archive, un sidecar non authentifié ou un manifeste embarqué n'établit **aucune provenance**. L'option est facultative pour conserver les anciens snapshots de développement. La politique de provenance des releases officielles reste ouverte (#787 / #577).
 
 ## Compatibilité avec le Core cible (précontrôle obligatoire avant installation)
 
