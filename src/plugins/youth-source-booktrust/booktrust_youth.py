@@ -267,7 +267,8 @@ def next_cursor(html: str, *, current_page: int) -> str:
     for kind, _label, href in _tokens(html):
         if kind != "link":
             continue
-        url = _allowed_url(href)
+        raw = _text(href)
+        url = _allowed_url(RECOMMENDATIONS + raw if raw.startswith("?") else raw)
         if not url or urlsplit(url).path.rstrip("/") + "/" != urlsplit(RECOMMENDATIONS).path.rstrip("/") + "/":
             continue
         query = parse_qs(urlsplit(url).query)
