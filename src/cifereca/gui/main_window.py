@@ -1435,6 +1435,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._cached_book_services = ()
         self._cached_book_unsubscribe = lambda: None
         self._selected_search_id: str | None = None
+        self._search_detail_request_generation = 0
         self._last_search_query = ""
         self._search_mode = "local"
         self._search_local_objects: dict[str, dict[str, Any]] = {}
@@ -2721,6 +2722,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._populate_accounts()
         self._render_dashboard()
         self._search_generation = getattr(self, "_search_generation", 0) + 1
+        self._search_detail_request_generation += 1
         self._search_local_objects = {}; self.search_objects = {}; self._remote_search_results = []
         self._search_mode = "local"; self._remote_query_key = None; self._selected_search_id = None
         if hasattr(self, "search_page"):
@@ -3617,6 +3619,9 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def _search_selected(self, row: BookListItem | None) -> None:
+        # A result id alone is not enough: ids can be reused by another
+        # provider, selection, query, or identity while holdings are in flight.
+        self._search_detail_request_generation += 1
         self._cancel_cached_book_details()
         if row is None:
             self._selected_search_id = None
@@ -3683,26 +3688,55 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_local_book_actions(self.search_page.detail,result_row(item))
         self._request_cached_book_details("search", item.id, result_row(item))
         selected_id = item.id
+        context = self._search_detail_request_context()
         self.runner.submit(
             "Chargement des disponibilités…",
             lambda: self.service.holdings(item, self._last_search_query, force=False),
-            lambda detail: self._apply_search_detail(selected_id, item, detail),
-            lambda exc: self._search_detail_error(selected_id, item, exc),
+            lambda detail: self._apply_search_detail(selected_id, item, detail, context=context),
+            lambda exc: self._search_detail_error(selected_id, item, exc, context=context),
             priority=TaskPriority.METADATA, kind="holdings",
         )
 
-    def _apply_search_detail(self, selected_id: str, item: SearchResult, detail: ItemDetail) -> None:
-        if self._selected_search_id == selected_id:
-            self.search_page.detail.show_item_detail(item, detail)
-            self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
-            self._add_local_book_actions(self.search_page.detail,result_row(item))
-            self._request_cached_book_details("search", item.id, result_row(item))
+    def _search_detail_request_context(self) -> tuple[int, int, int, str | None]:
+        identity = self.service.current_identity
+        return (
+            self._search_detail_request_generation,
+            self._identity_context_generation,
+            getattr(self, "_search_generation", 0),
+            identity.identity_id if identity is not None else None,
+        )
 
-    def _search_detail_error(self, selected_id: str, item: SearchResult, exc: BaseException) -> None:
-        if self._selected_search_id == selected_id:
-            self.search_page.detail.show_search(item, loading=False)
-            self._add_local_book_actions(self.search_page.detail,result_row(item))
-            self._request_cached_book_details("search", item.id, result_row(item))
+    def _search_detail_context_current(
+        self, selected_id: str, context: tuple[int, int, int, str | None] | None,
+    ) -> bool:
+        if self._closed or self._selected_search_id != selected_id:
+            return False
+        if context is None:
+            # Compatibility for synchronous callers; every async callback
+            # created by this class supplies a captured request context.
+            return True
+        return context == self._search_detail_request_context()
+
+    def _apply_search_detail(
+        self, selected_id: str, item: SearchResult, detail: ItemDetail,
+        *, context: tuple[int, int, int, str | None] | None = None,
+    ) -> None:
+        if not self._search_detail_context_current(selected_id, context):
+            return
+        self.search_page.detail.show_item_detail(item, detail)
+        self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+        self._add_local_book_actions(self.search_page.detail, result_row(item))
+        self._request_cached_book_details("search", item.id, result_row(item))
+
+    def _search_detail_error(
+        self, selected_id: str, item: SearchResult, exc: BaseException,
+        *, context: tuple[int, int, int, str | None] | None = None,
+    ) -> None:
+        if not self._search_detail_context_current(selected_id, context):
+            return
+        self.search_page.detail.show_search(item, loading=False)
+        self._add_local_book_actions(self.search_page.detail, result_row(item))
+        self._request_cached_book_details("search", item.id, result_row(item))
         self.toast(f"Disponibilités indisponibles : {exc}", 5)
 
     # ---------- history ----------
@@ -4295,9 +4329,13 @@ class MainWindow(Adw.ApplicationWindow):
             source_provider=str(provider), metadata=meta)
 
     def _load_known_detail(self, item):
+        # Explicitly opening a known-catalogue detail supersedes a previous
+        # holdings request, even if the selected list key stays unchanged.
+        self._search_detail_request_generation += 1
         selected = self._selected_search_id
+        context = self._search_detail_request_context()
         self.runner.submit("Disponibilités…", lambda: self.service.holdings(item, self._last_search_query, force=False),
-            lambda detail: self._apply_search_detail(selected, item, detail),
+            lambda detail: self._apply_search_detail(selected, item, detail, context=context),
             priority=TaskPriority.USER_ACTION, kind="holdings")
 
     def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
