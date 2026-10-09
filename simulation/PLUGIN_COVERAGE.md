@@ -103,3 +103,9 @@ Un profil créé via la fausse CLI est volontairement **incomplet** : aucun
 message de réussite de provisioning ne doit être inféré. Les opérations
 d'association et de suppression sont des simulations sans mutation.
 Il ne s'agit pas d'une validation GTK ni du véritable backend Kobo-Adept.
+
+## Transport HTTP : erreurs et redirections déterministes
+
+Le service `transport_failures` est accessible uniquement sur `127.0.0.1:8102` dans les profils `ux-small`, `ux-all`, `ux-errors`. Le vrai `HttpTransport` est testé contre 429/503, timeout, HTML ou MIME incorrect, taille excessive, réponse vide, boucle de redirection et redirection inter-origines supprimant les en-têtes sensibles. Un EPUB fictif permet aussi un téléchargement positif.
+
+Ces tests ne constituent pas un scénario E2E GTK, une annulation de tâche ou une preuve de couverture du cache. Voir `simulation/transport/README.md` et `simulation/tests/test_http_negative_contracts.py`.

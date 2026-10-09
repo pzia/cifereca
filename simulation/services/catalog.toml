@@ -127,3 +127,14 @@ fixture_packages = ["baen"]
 
 [service.baen.args]
 seed = "--seed"
+
+# HTTP transport failure lab, without activating transport.http.
+[service.transport_failures]
+script = "transport/pseudo_http_failure_service.py"
+default_port = 8102
+health_path = "/health"
+plugins = []
+fixture_packages = ["transport-http"]
+
+[service.transport_failures.args]
+seed = "--seed"
