@@ -56,6 +56,22 @@ SCENARIOS = {
         "width": 1366,
         "booktrust": True,
     },
+    "youth-milan-1024": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : vrai Milan activé, pagination, lien notice GTK et panne HTTP simulée à 1024px.",
+        "runner": "gtk-youth",
+        "width": 1024,
+        "milan": True,
+    },
+    "youth-milan-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : vrai Milan activé, pagination, lien notice GTK et panne HTTP simulée à 1366px.",
+        "runner": "gtk-youth",
+        "width": 1366,
+        "milan": True,
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -184,6 +200,7 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/youth_page_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                     *(["--booktrust"] if scenario.get("booktrust") else []),
+                    *(["--milan"] if scenario.get("milan") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
                 command = [
