@@ -173,37 +173,7 @@ test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" =
 
 # Force only the post-install inventory smoke to fail. The real package install
 # runs first; automatic rollback must restore the exact pre-attempt package tree.
-while IFS=
-before_rollback="$(tree_digest "$store_root")"
-cli="$runtime/.venv/bin/cifereca-cli"
-real_cli="$cli.p0-real"
-mv "$cli" "$real_cli"
-cat > "$cli" <<EOF
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "plugin" && "\${2:-}" == "list" ]]; then
-  echo "forced P0 post-install smoke failure" >&2
-  exit 86
-fi
-exec "$real_cli" "\$@"
-EOF
-chmod +x "$cli"
-
-set +e
-"$runtime_update_dev" "$archive"   --require-plugins-only   --expected-sha256 "$digest"   --json > "$base/rollback.json" 2>&1
-rollback_rc=$?
-set -e
-mv "$real_cli" "$cli"
-if [[ "$rollback_rc" -eq 0 ]]; then
-  echo "forced post-install smoke failure unexpectedly succeeded" >&2
-  exit 1
-fi
-grep -q "smoke plugins" "$base/rollback.json"
-while IFS=
-test "$(tree_digest "$store_root")" = "$before_rollback"
-test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
-
-echo "plugins-only runtime gate passed for $(wc -l < "$selected_file") selected packages; $inactive_package inactive"
-\t' read -r package_id package_version; do
+while IFS=$'\t' read -r package_id package_version; do
   printf 'must return after rollback\n' > "$store_root/$package_id/$package_version/.p0-rollback-sentinel"
 done < "$selected_file"
 before_rollback="$(tree_digest "$store_root")"
@@ -230,47 +200,10 @@ if [[ "$rollback_rc" -eq 0 ]]; then
   exit 1
 fi
 grep -q "smoke plugins" "$base/rollback.json"
-test -f "$version_root/.p0-rollback-sentinel"
-test "$(tree_digest "$store_root")" = "$before_rollback"
-test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
-
-echo "plugins-only runtime gate passed for $package_id $package_version"
-\t' read -r package_id package_version; do
+while IFS=$'\t' read -r package_id package_version; do
   test -f "$store_root/$package_id/$package_version/.p0-rollback-sentinel"
 done < "$selected_file"
 test "$(tree_digest "$store_root")" = "$before_rollback"
 test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
 
-echo "plugins-only runtime gate passed for $package_id $package_version"
-\t' read -r package_id package_version; do
-  printf 'must return after rollback\n' > "$store_root/$package_id/$package_version/.p0-rollback-sentinel"
-done < "$selected_file"
-before_rollback="$(tree_digest "$store_root")"
-cli="$runtime/.venv/bin/cifereca-cli"
-real_cli="$cli.p0-real"
-mv "$cli" "$real_cli"
-cat > "$cli" <<EOF
-#!/usr/bin/env bash
-if [[ "\${1:-}" == "plugin" && "\${2:-}" == "list" ]]; then
-  echo "forced P0 post-install smoke failure" >&2
-  exit 86
-fi
-exec "$real_cli" "\$@"
-EOF
-chmod +x "$cli"
-
-set +e
-"$runtime_update_dev" "$archive"   --require-plugins-only   --expected-sha256 "$digest"   --json > "$base/rollback.json" 2>&1
-rollback_rc=$?
-set -e
-mv "$real_cli" "$cli"
-if [[ "$rollback_rc" -eq 0 ]]; then
-  echo "forced post-install smoke failure unexpectedly succeeded" >&2
-  exit 1
-fi
-grep -q "smoke plugins" "$base/rollback.json"
-test -f "$version_root/.p0-rollback-sentinel"
-test "$(tree_digest "$store_root")" = "$before_rollback"
-test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
-
-echo "plugins-only runtime gate passed for $package_id $package_version"
+echo "plugins-only runtime gate passed for $(wc -l < "$selected_file") selected packages; $inactive_package inactive"
