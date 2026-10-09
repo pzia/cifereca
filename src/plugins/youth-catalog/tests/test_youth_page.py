@@ -99,6 +99,67 @@ def test_compact_list_badge_keeps_full_source_age_and_provenance_in_detail():
     assert list_entry(youth_book(age_ranges=())).badge == "Âge inconnu"
 
 
+def test_homonymous_editions_display_distinct_verified_isbns_in_list_and_detail():
+    same_title = dict(title="Livre miroir", authors=("Même autrice",))
+    first = youth_book(
+        **same_title,
+        identifiers={"isbn": "0-306-40615-2", "source_item_id": "one"},
+        age_ranges=(
+            YouthAgeRange(5, 7, "interest", "5–7 ans", "booktrust"),
+            YouthAgeRange(12, None, "publisher", "À partir de 12 ans", "milan"),
+        ),
+        provenance=("booktrust", "milan"),
+    )
+    second = youth_book(
+        **same_title,
+        record_id="other",
+        identifiers={"isbn": "9780140328721", "source_item_id": "two"},
+        age_ranges=(YouthAgeRange(8, None, "publisher", "À partir de 8 ans", "milan"),),
+        provenance=("milan",),
+    )
+    rows = (list_entry(first), list_entry(second))
+    assert rows[0].title == rows[1].title == "Livre miroir"
+    assert rows[0].subtitle == rows[1].subtitle == "Même autrice"
+    assert rows[0].meta.startswith("ISBN 9780306406157 ·")
+    assert rows[1].meta.startswith("ISBN 9780140328721 ·")
+    assert rows[0].badge == "Intérêt 5–7 ans"
+    assert rows[1].badge == "Éditeur 8+ ans"
+    assert rows[0].key != rows[1].key
+    details = [detail_presentation(book) for book in (first, second)]
+    fields = [
+        {field.id: field.value for section in d.sections for field in section.fields}
+        for d in details
+    ]
+    assert fields[0]["isbn"] == "9780306406157"
+    assert fields[1]["isbn"] == "9780140328721"
+    assert fields[0]["sources"] == "booktrust, milan"
+    assert fields[1]["sources"] == "milan"
+    assert len(details[0].sections[0].fields) == 2  # conflicting age attestations preserved
+    assert len(details[1].sections[0].fields) == 1
+
+
+def test_missing_or_invalid_isbn_uses_labeled_source_reference_without_inventing_edition():
+    missing = youth_book(
+        record_id="source-42", identifiers={"source_item_id": "public-42"},
+        source_id="booktrust",
+    )
+    meta = list_entry(missing).meta
+    assert meta.startswith("Référence source booktrust:public-42 ·")
+    fields = {f.id: f.value for section in detail_presentation(missing).sections for f in section.fields}
+    assert fields["source-reference"] == "booktrust:public-42"
+    assert "isbn" not in fields
+
+    invalid = youth_book(
+        source_id="milan", record_id="other",
+        identifiers={"isbn": "9780306406158"},
+    )
+    assert list_entry(invalid).meta.startswith("Référence source milan:other ·")
+    assert not any(field.id == "isbn" for section in detail_presentation(invalid).sections for field in section.fields)
+    neither = youth_book(source_id="", record_id="", identifiers={})
+    assert "ISBN " not in list_entry(neither).meta
+    assert "Référence source" not in list_entry(neither).meta
+
+
 def test_document_link_rejects_credentials_and_non_http():
     assert public_url("https://example.org/book")
     assert not public_url("https://user:secret@example.org/book")
