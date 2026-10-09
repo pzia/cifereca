@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -208,13 +209,17 @@ def _installed_target_versions() -> tuple[str, str]:
         source = (release / "src" / "cifereca" / "plugin_api" / "version.py").read_text(
             encoding="utf-8",
         )
-        match = re.search(
-            r'^PLUGIN_API_VERSION\\s*=\\s*["\\']([^"\\']+)["\\']',
-            source, flags=re.MULTILINE,
-        )
-        if match is None:
-            raise ValueError("PLUGIN_API_VERSION absent")
-        api_version = str(Version(match.group(1)))
+        declarations = [
+            node.value for node in ast.parse(source).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PLUGIN_API_VERSION"
+                for target in node.targets
+            )
+        ]
+        if len(declarations) != 1:
+            raise ValueError("PLUGIN_API_VERSION absent ou ambigu")
+        api_version = str(Version(ast.literal_eval(declarations[0])))
         return core_version, api_version
     except (OSError, ValueError, updater.UpdateError, InvalidVersion) as exc:
         raise DevUpdateError(
