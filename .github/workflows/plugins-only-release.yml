@@ -93,13 +93,19 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       PACKAGE_IDS: ${{ inputs.package_ids }}
-      CIFERECA_INSTALL_ROOT: ${{ runner.temp }}/cifereca-p0/runtime
-      CIFERECA_BIN_DIR: ${{ runner.temp }}/cifereca-p0/bin
-      XDG_DATA_HOME: ${{ runner.temp }}/cifereca-p0/data
-      XDG_STATE_HOME: ${{ runner.temp }}/cifereca-p0/state
-      XDG_CONFIG_HOME: ${{ runner.temp }}/cifereca-p0/config
 
     steps:
+      - name: Configure isolated runtime directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CIFERECA_INSTALL_ROOT=$RUNNER_TEMP/cifereca-p0/runtime"
+            echo "CIFERECA_BIN_DIR=$RUNNER_TEMP/cifereca-p0/bin"
+            echo "XDG_DATA_HOME=$RUNNER_TEMP/cifereca-p0/data"
+            echo "XDG_STATE_HOME=$RUNNER_TEMP/cifereca-p0/state"
+            echo "XDG_CONFIG_HOME=$RUNNER_TEMP/cifereca-p0/config"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
