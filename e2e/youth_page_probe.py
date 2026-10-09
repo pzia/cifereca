@@ -863,10 +863,13 @@ def main() -> int:
         # #910 exploratory observation: emit real GTK activate signals via
         # XTEST without prescribing an (unimplemented) product behavior.
         # Passing E2E means the observation is genuine, NOT that #910 is fixed.
-        assert page.view.query.has_focus(), "Keyboard target lost focus"
+        # Gtk.Entry contains an internal Gtk.Text focus target in GTK4;
+        # Entry.has_focus() alone is not a reliable keyboard assertion.
+        entry_has_focus = bool(page.view.query.has_focus())
         assert page.view.selected_source_plugin() == "", "Local fixture unexpectedly has a remote source"
         result["keyboard_enter_observation"] = {
             "status_before": page.view.status.get_text(),
+            "entry_widget_has_focus": entry_has_focus,
             "query": page.view.query.get_text(),
             "identity_id": page.view.identity_id(),
             "source_plugin": page.view.selected_source_plugin(),
