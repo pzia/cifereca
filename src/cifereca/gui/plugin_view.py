@@ -36,7 +36,8 @@ def plugin_role(descriptor: object) -> str:
     category = str(getattr(descriptor, "type", "") or "").strip()
     if category.startswith("ui."):
         return "ui"
-    if category in _SOURCE_TYPES or category.startswith(("provider.", "source.")):
+    if (category in _SOURCE_TYPES or category.startswith(("provider.", "source."))
+            or category.endswith(".source") or ".source." in category):
         return "source"
     if category in _SERVICE_TYPES or category.endswith(".enrichment"):
         return "service"
