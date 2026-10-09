@@ -208,7 +208,7 @@ def test_isbn10_and_isbn13_identifier_aliases_share_canonical_key():
 def test_invalid_isbn_alias_is_not_promoted_to_strong_identity():
     result = deduplicate_books([
         book("a", "Alpha", "Auteur A", identifiers={"isbn13": "9780000000000"}),
-        book("b", "Beta", "Auteur B", identifiers={"isbn10": "0000000000"}),
+        book("b", "Beta", "Auteur B", identifiers={"isbn10": "0306406153"}),
     ])
     assert len(result) == 2
     assert all(not row.key.startswith("isbn:") for row in result)
