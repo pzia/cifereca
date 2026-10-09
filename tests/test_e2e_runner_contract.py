@@ -227,5 +227,7 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
     assert 'audit["gtk_activate_signals"] == 2' in source
     assert 'assert requests == [], "No selected source:' in source
     assert 'audit["criterion_910_satisfied"] = False' in source
+    assert 'assert audit["return_visible_feedback"]' in source
+    assert 'assert audit["keypad_visible_feedback"]' in source
     assert '"05b-youth-return-gtk-observation"' in source
     assert '"05c-youth-keypad-enter-gtk-observation"' in source

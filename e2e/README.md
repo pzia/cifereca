@@ -257,9 +257,10 @@ Nouvelles preuves : `05b-youth-return-gtk-observation.png` et
 ou non du retour utilisateur). La capture `06-keyboard-search-detail.png`
 reste le parcours suivant.
 
-**Ce probe est exploratoire.** Son PASS valide seulement les frappes,
-signaux et invariants de sécurité, **pas** la réparation de #910 : il
-n'exige pas d'action visible ou de second Entrée déclenchant une collecte
-avec source sélectionnée. Ces comportements restent au rôle Plugins et
-devront recevoir des assertions d'acceptation après implémentation.
+**Après le correctif clavier #910**, ce probe exige désormais un retour
+visible pour la première Entrée (cache local) et pour la seconde (demande
+d'une source précise si « Toutes les sources » est sélectionné). Il interdit
+toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
+fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
+sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
