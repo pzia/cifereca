@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-source-booktrust",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "name": "Jeunesse — BookTrust",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "youth.source.booktrust",
       "type": "youth.source",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "entrypoint": "booktrust_youth:PLUGIN",
       "display_name": "BookTrust Bookfinder",
       "description": "Source jeunesse BookTrust avec âges d’intérêt et de lecture explicites.",
-      "help_text": "Parcourt Bookfinder uniquement sur action explicite. Les listes fournissent les tranches recommandées publiées ; le détail d’une fiche récupère séparément Interest age et Reading age. Aucun crawl complet ni recherche texte distante inventée : la recherche libre filtre seulement la page Bookfinder explicitement chargée.",
+      "help_text": "Parcourt Bookfinder uniquement sur action explicite. Les listes fournissent les tranches recommandées publiées ; le détail récupère séparément Interest age et Reading age. Les âges hors groupes Bookfinder retournent vide sans requête non filtrée. Pagination uniquement si un lien de page suivante est publié, curseurs invalides rejetés, URLs strictement BookTrust HTTPS.",
       "enabled_by_default": false,
       "priority": -60,
       "instantiation": "singleton_public",
