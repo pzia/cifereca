@@ -614,7 +614,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         activation_group.append(activation_label)
         toggle = Gtk.Switch(); toggle.set_active(bool(status.enabled)); toggle.set_valign(Gtk.Align.CENTER)
         toggle.set_tooltip_text(f"Activer ou désactiver {d.display_name or d.id}")
-        toggle.connect("notify::active", lambda sw, _p, pid=d.id: self._toggle(pid, sw.get_active()))
+        toggle.connect("notify::active", lambda sw, _p, pid=d.id: self._toggle(pid, sw.get_active(), sw))
         activation_group.append(toggle); settings.append(activation_group)
         box.append(settings)
         return box
@@ -649,7 +649,69 @@ class PluginManagerPage(Gtk.ScrolledWindow):
     def _reload(self) -> None:
         self.manager.activate(); self.refresh(); self.on_changed()
 
-    def _toggle(self, plugin_id: str, enabled: bool) -> None:
+    def _toggle(
+        self, plugin_id: str, enabled: bool, switch: Gtk.Switch | None = None,
+    ) -> None:
+        if getattr(self, "_restoring_activation_switch", False):
+            return
+        if not enabled:
+            statuses = tuple(self.manager.statuses())
+            parent = next(
+                (row for row in statuses
+                 if row.descriptor.id == plugin_id and row.enabled), None,
+            )
+            if parent is not None:
+                affected = tuple(
+                    row for row in plugin_dependents(
+                        plugin_id, statuses, transitive=True,
+                    ) if row.enabled
+                )
+                if affected:
+                    # A switch emits notify::active before the user has
+                    # confirmed. Revert it without triggering a second write.
+                    if switch is not None:
+                        self._restoring_activation_switch = True
+                        try:
+                            switch.set_active(True)
+                        finally:
+                            self._restoring_activation_switch = False
+                    self._confirm_disable(plugin_id, parent, affected)
+                    return
+        self._apply_toggle(plugin_id, enabled)
+
+    def _confirm_disable(self, plugin_id: str, parent: Any, affected: tuple[Any, ...]) -> None:
+        """Confirm deactivation across packages; leave the dependent flags as-is."""
+        name = str(parent.descriptor.display_name or plugin_id)
+        count = len(affected)
+        names = [
+            f"• {row.descriptor.display_name or row.descriptor.id} "
+            f"({row.descriptor.package_id})"
+            for row in affected[:6]
+        ]
+        if count > 6:
+            names.append(f"… et {count - 6} autre(s)")
+        body = (
+            f"{count} extension(s) activée(s) requièrent « {name} » :\\n"
+            + "\\n".join(names)
+            + "\\n\\nElles resteront configurées comme activées, mais seront "
+              "bloquées tant que ce plugin principal est désactivé."
+        )
+        dialog = Adw.MessageDialog.new(
+            self.window, f"Désactiver « {name} » et ses extensions ?", body,
+        )
+        dialog.add_response("cancel", "Conserver l’activation")
+        dialog.add_response("disable", "Désactiver")
+        dialog.set_response_appearance("disable", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect(
+            "response",
+            lambda _dialog, response:
+                self._apply_toggle(plugin_id, False) if response == "disable" else None,
+        )
+        dialog.present()
+
+    def _apply_toggle(self, plugin_id: str, enabled: bool) -> None:
         try:
             self.manager.set_enabled(plugin_id, enabled)
         except Exception as exc:
