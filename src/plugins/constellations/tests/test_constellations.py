@@ -165,3 +165,76 @@ def test_replace_step_changes_only_one_intermediate_step():
     walk = Walk("balanced", tuple(WalkStep(by_title[t]) for t in ["A", "B", "C", "D", "E"]), 0)
     revised = graph.replace_step(walk, 2, by_title["X"].key)
     assert [step.book.title for step in revised.steps] == ["A", "B", "X", "D", "E"]
+
+
+
+def test_opaque_row_never_merges_into_strongly_identified_edition_by_title_author():
+    result = deduplicate_books([
+        book(
+            "strong",
+            "Même livre",
+            "Même auteur",
+            identifiers={"isbn": "9780306406157"},
+            subjects=["édition-identifiée"],
+        ),
+        {
+            "title": "Même livre",
+            "authors": ["Même auteur"],
+            "metadata": {"subjects": ["notice-sans-identifiant"]},
+        },
+    ])
+    assert len(result) == 2
+    assert {row.key.startswith("isbn:") for row in result} == {False, True}
+
+
+def test_equally_opaque_rows_can_still_collapse_by_title_author():
+    first = {"title": "Même livre", "authors": ["Même auteur"], "metadata": {"subjects": ["a"]}}
+    second = {"title": "Même livre", "authors": ["Même auteur"], "metadata": {"subjects": ["b"]}}
+    result = deduplicate_books([first, second])
+    assert len(result) == 1
+    assert set(result[0].subjects) == {"a", "b"}
+
+
+def test_isbn10_and_isbn13_identifier_aliases_share_canonical_key():
+    result = deduplicate_books([
+        book("a", "Livre", "Auteur", identifiers={"isbn10": "0306406152"}),
+        book("b", "Livre", "Auteur", identifiers={"isbn13": "9780306406157"}),
+    ])
+    assert len(result) == 1
+    assert result[0].key == "isbn:9780306406157"
+    assert result[0].identifiers["isbn"] == "9780306406157"
+
+
+def test_invalid_isbn_alias_is_not_promoted_to_strong_identity():
+    result = deduplicate_books([
+        book("a", "Alpha", "Auteur A", identifiers={"isbn13": "9780000000000"}),
+        book("b", "Beta", "Auteur B", identifiers={"isbn10": "0306406153"}),
+    ])
+    assert len(result) == 2
+    assert all(not row.key.startswith("isbn:") for row in result)
+
+
+def test_cache_without_freshness_token_never_reuses_stale_graph():
+    service = ConstellationService()
+    first = service.graph_for("alice", [book("a", "A", "Auteur")])
+    second = service.graph_for("alice", [book("b", "B", "Autre")])
+    assert second is not first
+    assert {row.title for row in second.books.values()} == {"B"}
+
+
+def test_missing_freshness_token_discards_a_previously_cached_graph():
+    service = ConstellationService()
+    original = service.graph_for("alice", [book("a", "A", "Auteur")], freshness_token="v1")
+    without_proof = service.graph_for("alice", [book("b", "B", "Autre")])
+    refreshed = service.graph_for("alice", [book("c", "C", "Autrice")], freshness_token="v1")
+    assert without_proof is not original
+    assert refreshed is not original
+    assert {row.title for row in refreshed.books.values()} == {"C"}
+
+
+def test_anonymous_identity_is_never_cached_even_with_token():
+    service = ConstellationService()
+    first = service.graph_for("", [book("a", "A", "Auteur")], freshness_token="1")
+    second = service.graph_for("", [book("b", "B", "Autre")], freshness_token="1")
+    assert second is not first
+    assert {row.title for row in second.books.values()} == {"B"}
