@@ -172,15 +172,21 @@ def _validate_archive_structure(
         raise EpubOptimizationError("EPUB invalide : chemins ZIP dupliqués")
 
     names = [info.filename for info in infos]
-    mimetype_name = _find_case_insensitive(names, "mimetype")
-    if mimetype_name is None:
+    if "mimetype" not in names:
+        if _find_case_insensitive(names, "mimetype") is not None:
+            raise EpubOptimizationError("mimetype EPUB invalide : nom sensible à la casse")
         raise EpubOptimizationError("EPUB sans entrée mimetype")
-    mimetype_info = next(info for info in infos if info.filename == mimetype_name)
+
+    mimetype_info = next(info for info in infos if info.filename == "mimetype")
     if mimetype_info.is_dir() or mimetype_info.file_size > 128:
         raise EpubOptimizationError("mimetype EPUB invalide")
-    if archive.read(mimetype_info).strip() != b"application/epub+zip":
-        raise EpubOptimizationError("mimetype EPUB invalide")
-    return mimetype_name
+    if infos[0].filename != "mimetype":
+        raise EpubOptimizationError("mimetype EPUB invalide : doit être la première entrée ZIP")
+    if mimetype_info.compress_type != zipfile.ZIP_STORED:
+        raise EpubOptimizationError("mimetype EPUB invalide : doit être non compressé")
+    if archive.read(mimetype_info) != b"application/epub+zip":
+        raise EpubOptimizationError("mimetype EPUB invalide : contenu exact attendu")
+    return "mimetype"
 
 
 def _find_case_insensitive(names: list[str], wanted: str) -> str | None:
