@@ -137,7 +137,7 @@ def test_relationships_only_use_declared_requires_recommends_contracts():
     optional = _row("research.optional", "catalog.service", recommends=("youth.main",))
     lines = plugin_relationships(plug, [base, plug, optional])
     assert "Requiert : youth main" in lines
-    assert "Recommande : research.optional" in lines  # absent plugin stays by ID
+    assert "Recommande : research optional" in lines
     assert "Contrats utilisés : catalog.youth" in lines
     assert "Requis par : youth ages" in plugin_relationships(
         base, [base, plug, optional],
