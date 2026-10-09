@@ -17,6 +17,15 @@ CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
 SECRET_KEY = re.compile(r"(token|password|secret|authorization|cookie)", re.I)
 
 SCENARIOS = {
+    "search-filter-p0": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": (
+            "P0 #660 : vraie recherche Camille, XTEST ouverture/fermeture des cinq "
+            "filtres GTK ; requête, 36 résultats, compteur, sélection et scroll inchangés."
+        ),
+        "runner": "gtk-probe",
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -138,15 +147,22 @@ def main() -> int:
             stderr_path = scenario_dir / "stderr.log"
             trace_path = scenario_dir / "trace.jsonl"
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
-            command = [
-                xvfb, "-a", "-s", "-screen 0 1280x1024x24", args.python, str(CAPTURE),
-                "--startup-timeout", str(args.startup_timeout),
-                *scenario.get("capture_args", []),
-                "--out", str(png),
-                "--cwd", str(ROOT),
-                "--",
-                args.python, "-m", "cifereca", *scenario["args"],
-            ]
+            if scenario.get("runner") == "gtk-probe":
+                command = [
+                    xvfb, "-a", "-s", "-screen 0 1280x1024x24",
+                    args.python, str(ROOT / "e2e/search_filter_probe.py"),
+                    "--out", str(scenario_dir),
+                ]
+            else:
+                command = [
+                    xvfb, "-a", "-s", "-screen 0 1280x1024x24", args.python, str(CAPTURE),
+                    "--startup-timeout", str(args.startup_timeout),
+                    *scenario.get("capture_args", []),
+                    "--out", str(png),
+                    "--cwd", str(ROOT),
+                    "--",
+                    args.python, "-m", "cifereca", *scenario["args"],
+                ]
             with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
                 completed = subprocess.run(
                     command, cwd=ROOT, env=env, check=False,
@@ -164,6 +180,9 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
+                if scenario.get("runner") == "gtk-probe" and report_data.get("status") != "PASS":
+                    assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
+                    returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
             if returncode == 0 and minimum_change is not None:
                 if visual_change_ratio is None:

@@ -61,3 +61,26 @@ Le runner matérialise cette fixture dans un HOME/XDG temporaire neuf à chaque 
 Les chemins variables utilisent le jeton `${E2E_LIBRARY}`, remplacé par la bibliothèque temporaire du run.
 
 La fixture `startup` fournit une identité E2E stable, une bibliothèque vide et aucun compte provider réel.
+
+
+## Recette P0 #660 — filtres Recherche
+
+`python e2e/run.py --scenario search-filter-p0` ouvre la **vraie fenêtre
+CIFERECA** sous Xvfb. Deux identités distinctes sont configurées (Camille et
+Alex), avec 36 notices connues associées à Camille et quatre associées
+uniquement à Alex. Aucun fournisseur n'est interrogé en ligne.
+
+Le script XTEST clique et saisit **Camille**, lance la recherche locale, puis
+ne démarre les captures que lorsque les 36 résultats, le compteur et une
+sélection/position de scroll non nulles sont observés. Il ouvre et ferme
+physiquement Source, Format, Langue, Champ et Type sans changer les options.
+Chaque capture de popover et de retour est corrélée à un relevé GTK :
+requête, clés de résultat, compteur, sélection, scroll, route et nombre de
+requêtes. Tout changement est un **échec**, pas une capture considérée comme
+réussie par défaut.
+
+Artefacts : `e2e-artifacts/search-filter-p0/00-before.png`,
+`01-source-open.png`/`01-source-close.png` jusqu'à `05-support-close.png`,
+`screen.json` (SHA de commit, mesures et empreintes de captures), et traces
+du runner. En cas d'échec, conserver ces preuves et ouvrir un correctif
+CoreUI ; ce test ne clôt pas à lui seul #660 avant sa recette sur CI.
