@@ -329,6 +329,33 @@ class FilterState:
     include_inferred: bool = False
 
 
+class YouthEnterSequence:
+    """Two deliberate Enter activations; reset on any filter/identity change."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._token = None
+        self._stage = 0
+
+    def advance(self, *, token: object, query: str, source_selected: bool) -> str:
+        if token != self._token:
+            self._token = token
+            self._stage = 0
+        if self._stage == 0:
+            self._stage = 1
+            return "local"
+        if not source_selected:
+            return "choose_source"
+        if len(_text(query)) < 2:
+            return "short_query"
+        if self._stage == 1:
+            self._stage = 2
+            return "remote"
+        return "already_requested"
+
+
 class YouthPagePlugin:
     def activate(self, context):
         self.context, self.view, self.pending = context, None, None
@@ -373,6 +400,8 @@ class YouthView:
         self.catalog = plugin.context.service("catalog.youth")
         self.rows, self.selected_book = {}, None
         self.generation, self.task, self.disposed = 0, None, False
+        self.enter_sequence = YouthEnterSequence()
+        self._remote_running_token = None
         self.next_cursor, self.next_source_plugin = "", ""
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.status = Gtk.Label(
@@ -405,6 +434,7 @@ class YouthView:
             filters.append(widget)
         for entry in (self.query, self.language, self.format, self.book_type, self.themes):
             entry.connect("changed", lambda *_: self.filters_changed())
+        self.query.connect("activate", lambda *_: self.query_activated())
         for dropdown in (self.age, self.age_kind, self.source):
             dropdown.connect("notify::selected", lambda *_: self.filters_changed())
         self.inferred.connect("toggled", lambda *_: self.filters_changed())
@@ -437,7 +467,10 @@ class YouthView:
 
     def button(self, label, callback):
         button = self.Gtk.Button(label=label)
-        button.connect("clicked", lambda *_: callback())
+        def clicked(*_args):
+            self.enter_sequence.reset()
+            callback()
+        button.connect("clicked", clicked)
         return button
 
     def _identity_rows(self):
@@ -508,10 +541,39 @@ class YouthView:
 
     def filters_changed(self):
         self.generation += 1
+        sequence = getattr(self, "enter_sequence", None)
+        if sequence is not None:
+            sequence.reset()
+        self._remote_running_token = None
         if self.task:
             self.task.cancel()
         self.next_cursor = self.next_source_plugin = ""
         self.render_cached()
+
+    def query_activated(self):
+        """Return and KP_Enter: local first, chosen-source remote second."""
+        state = self.filter_state()
+        selected = self.selected_source_plugin()
+        action = self.enter_sequence.advance(
+            token=(self.identity_id(), selected, state),
+            query=state.query, source_selected=bool(selected),
+        )
+        if action == "local":
+            self.render_cached()
+            count = len(self.rows)
+            next_step = (
+                "Appuyez une seconde fois sur Entrée pour collecter cette source."
+                if selected else "Choisissez une source pour étendre la recherche."
+            )
+            self.status.set_label(f"Recherche en cache : {count} résultat(s). {next_step}")
+        elif action == "choose_source":
+            self.status.set_label("Choisissez une source Jeunesse précise avant toute collecte en ligne.")
+        elif action == "short_query":
+            self.status.set_label("Saisissez au moins 2 caractères pour étendre la recherche en ligne.")
+        elif action == "remote":
+            self._remote_request("")
+        else:
+            self.status.set_label("Collecte déjà demandée pour cette recherche. Modifiez un filtre pour recommencer.")
 
     def seed(self, book):
         if book is None:
@@ -631,6 +693,7 @@ class YouthView:
         generation = self.generation
         if self.task:
             self.task.cancel()
+        self._remote_running_token = None
         self.status.set_label("Enrichissement bibliographique explicite en cours…")
         self.task = broker.submit(operation, label="Bibliographie Jeunesse", kind="youth")
         def done(handle):
@@ -703,6 +766,9 @@ class YouthView:
         self._remote_request(self.next_cursor)
 
     def run_remote(self, operation, complete, token):
+        if getattr(self, "_remote_running_token", None) == token:
+            self.status.set_label("Cette collecte est déjà en cours.")
+            return
         broker = self.plugin.context.broker("tasks")
         if broker is None:
             self.status.set_label("Broker de tâches indisponible.")
@@ -711,6 +777,7 @@ class YouthView:
         generation = self.generation
         if self.task:
             self.task.cancel()
+        self._remote_running_token = token
         self.status.set_label("Collecte explicite en cours…")
         self.task = broker.submit(operation, label="Catalogue Jeunesse", kind="youth")
         def done(handle):
@@ -723,6 +790,7 @@ class YouthView:
                 current_token = (self.identity_id(), self.selected_source_plugin(), current.query, current.age, current.themes)
                 if self.disposed or generation != self.generation or current_token != token:
                     return False
+                self._remote_running_token = None
                 if error or result is None:
                     self.status.set_label("Échec de la source. Le cache précédent est conservé.")
                 else:
