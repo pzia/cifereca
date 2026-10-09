@@ -254,3 +254,14 @@ pointant explicitement sur la boucle locale (voir
 `simulation/tests/test_youth_sources_contract.py`), **sans modifier**
 leurs domaines autorisés. Ce mécanisme **n'injecte pas** automatiquement
 les résultats dans l'écran GTK Jeunesse. Voir `simulation/youth_sources/README.md`.
+
+## Sources jeunesse éditeurs (Usborne, école des loisirs)
+
+Les profils UX complets exposent aussi les contrats HTML des deux éditeurs
+sur `127.0.0.1:8099`. Les vrais parseurs sont vérifiés par
+`simulation/tests/test_youth_publishers_contract.py` avec un transport
+HTTPX local injecté ; **aucun domaine externe n'est reconfiguré**.
+
+Ce dispositif couvre les ISBN, âges publiés (dont mois), pagination et
+erreurs déterministes, **pas** l'écran GTK ni les caches réels des plugins.
+Voir `simulation/youth_publishers/README.md` et #800.
