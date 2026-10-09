@@ -40,11 +40,11 @@ gap = "Zéro résultat, indisponibilité et formats atypiques"
 
 [package.provider-gallica]
 data = ["opds"]
-gap = "Acquisition, audio, pagination et défaillances au-delà d'OPDS"
+gap = "OPDS : 429/503, XML tronqué, page suivante interrompue, EPUB invalide ; audio et GTK non recettés"
 
 [package.provider-gutenberg]
 data = ["opds"]
-gap = "Parcours téléchargement et cache/erreurs au-delà d'OPDS"
+gap = "OPDS : 429/503, XML tronqué, page suivante interrompue, EPUB invalide ; cache et GTK non recettés"
 
 [package.provider-kobo]
 data = ["kobo"]
