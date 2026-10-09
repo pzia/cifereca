@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Éditeurs jeunesse fictifs : Usborne et l'école des loisirs, localhost uniquement.
+"""Éditeurs jeunesse fictifs : Usborne, école des loisirs et Milan, localhost uniquement.
 
 Les vrais plugins restent verrouillés sur leurs propres domaines HTTPS.
 Les tests injectent un transport httpx.MockTransport sans DNS ni comptes.
@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlsplit
@@ -24,6 +25,50 @@ FR = [
     ("roman-ado", "Roman ado", "13 ans et +", "Alice Auteur, Bob Auteur", "roman", "9782211345613"),
     ("sans-age", "Sans âge", "indéterminé", "Auteur inconnu", "album", "9782211324649"),
 ]
+
+# Fiches synthétiques : aucune donnée ni identité de lecteur réelle.
+MILAN = [
+    ("1001-lune", "La lune de Camille", "À partir de 3 ans", "9782408020804"),
+    ("1002-foret", "La forêt d'Alexandre", "À partir de 8 ans", "9782408045074"),
+    ("1003-sans-age", "Collection 9-12 ans sans âge publié", "", "9782408020804"),
+    ("1004-adulte", "Lecture adulte", "À partir de 18 ans", "9782408020804"),
+    ("1005-isbn-absent", "Sans ISBN", "À partir de 4 ans", ""),
+    ("1006-isbn-invalide", "ISBN invalide", "À partir de 4 ans", "9780000000000"),
+    ("1007-bebe", "Le jardin du bébé", "À partir de 1 an", "9782211348171"),
+    ("1008-etoile", "L'étoile du soir", "À partir de 12 ans", "9782211345613"),
+    ("1009-neuvieme", "Neuvième fiche", "À partir de 6 ans", "9782211324649"),
+]
+
+
+def milan_listing(page: int) -> bytes:
+    rows = MILAN if page == 1 else MILAN[-1:] if page == 2 else []
+    parts = ['<!doctype html><html lang="fr"><body>']
+    for slug, title, _age, _isbn in rows:
+        parts.append(f'<a href="/livres/{slug}/">{html.escape(title)}</a>')
+    if rows:
+        parts.append('<a href="https://outside.example/livres/999-externe/">Externe</a>')
+    if page == 1:
+        parts.append('<a href="/livres/1001-lune/">Lire la suite</a>')
+        parts.append('<a href="/livres/page/2/">Suivant</a>')
+    parts.append('</body></html>')
+    return ''.join(parts).encode('utf-8')
+
+
+def milan_detail(slug: str) -> bytes | None:
+    row = next((r for r in MILAN if r[0] == slug), None)
+    if row is None:
+        return None
+    _, title, age, isbn = row
+    parts = [f'<!doctype html><html lang="fr"><body><h1>{html.escape(title)}</h1>',
+             '<div>Auteur</div><div>Alice Exemple; Bob Exemple</div>',
+             '<div>Collection</div><div>Lectures synthétiques 9-12 ans</div>',
+             '<div>Thèmes</div><div>nature; amitié</div>']
+    if age:
+        parts.append(f'<div>Âge</div><div>{html.escape(age)}</div>')
+    if isbn:
+        parts.append(f'<div>Code ISBN</div><div>{isbn}</div>')
+    parts.append('</body></html>')
+    return ''.join(parts).encode('utf-8')
 
 
 def usborne_html(*, page: int) -> bytes:
@@ -81,15 +126,32 @@ class FakePublishers:
         path = parsed.path
         if path == "/health":
             return self.json(h, 200, {"ok": True, "synthetic": True, "seed": self.seed,
-                                      "publishers": ["usborne", "ecole-loisirs"]})
+                                      "publishers": ["usborne", "ecole-loisirs", "milan"]})
         if path.startswith("/publishers/"):
             fault = (qs.get("fault") or [""])[0]
             if fault == "503":
                 return self.send(h, 503, "text/html", b"Unavailable")
+            if fault == "404":
+                return self.send(h, 404, "text/html", b"Not found")
+            if fault == "malformed":
+                return self.send(h, 200, "text/html; charset=utf-8", b'<html><a href="')
             if fault == "wrong-type":
                 return self.json(h, 200, {"error": "not HTML"})
             if fault == "oversized":
                 return self.send(h, 200, "text/html", b"x" * 2_000_001)
+        prefix = "/publishers/milan"
+        if path.startswith(prefix + "/livres/"):
+            suffix = path[len(prefix):]
+            listing = re.fullmatch(r"/livres/(?:page/([0-9]+)/)?", suffix)
+            if listing:
+                page = int(listing.group(1) or "1")
+                if not 1 <= page <= 100:
+                    return self.json(h, 400, {"error": "invalid Milan page"})
+                return self.send(h, 200, "text/html; charset=utf-8", milan_listing(page))
+            product = re.fullmatch(r"/livres/([0-9]+-[^/]+)/", suffix)
+            body = milan_detail(product.group(1)) if product else None
+            if body is not None:
+                return self.send(h, 200, "text/html; charset=utf-8", body)
         if path == "/publishers/usborne/us/books/browse-by-age" or path.startswith(
                 "/publishers/usborne/us/books/browse-by-age/"):
             page = max(1, min(100, int((qs.get("p") or ["1"])[0])))

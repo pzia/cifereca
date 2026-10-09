@@ -255,9 +255,9 @@ pointant explicitement sur la boucle locale (voir
 leurs domaines autorisés. Ce mécanisme **n'injecte pas** automatiquement
 les résultats dans l'écran GTK Jeunesse. Voir `simulation/youth_sources/README.md`.
 
-## Sources jeunesse éditeurs (Usborne, école des loisirs)
+## Sources jeunesse éditeurs (Usborne, école des loisirs, Milan)
 
-Les profils UX complets exposent aussi les contrats HTML des deux éditeurs
+Les profils UX complets exposent aussi les contrats HTML des trois éditeurs
 sur `127.0.0.1:8099`. Les vrais parseurs sont vérifiés par
 `simulation/tests/test_youth_publishers_contract.py` avec un transport
 HTTPX local injecté ; **aucun domaine externe n'est reconfiguré**.

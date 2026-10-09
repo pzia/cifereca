@@ -70,7 +70,7 @@ class PublisherFixturesTests(unittest.TestCase):
         service = catalog["youth_publishers"]
         self.assertEqual(service["plugins"], [])
         self.assertEqual(set(service["fixture_packages"]),
-                         {"youth-source-usborne", "youth-source-ecole-loisirs"})
+                         {"youth-source-usborne", "youth-source-ecole-loisirs", "youth-source-milan"})
         for name in ("ux-small", "ux-all", "ux-errors"):
             _, profile = datasetctl.load_profile(name)
             self.assertIn("youth_publishers", datasetctl.enabled_service_configs(profile))

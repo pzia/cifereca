@@ -99,7 +99,7 @@ script = "youth_publishers/pseudo_youth_publishers_service.py"
 default_port = 8099
 health_path = "/health"
 plugins = []
-fixture_packages = ["youth-source-usborne", "youth-source-ecole-loisirs"]
+fixture_packages = ["youth-source-usborne", "youth-source-ecole-loisirs", "youth-source-milan"]
 
 [service.youth_publishers.args]
 seed = "--seed"
