@@ -15,6 +15,7 @@ _PRODUCT_RE = re.compile(r"-(\d{13})/?$")
 _AGE_RE = re.compile(r"\bAge\s*:?\s*(\d{1,3})\+\s*(months?)?", re.I)
 _BADGES = {"new", "award winner", "coming soon", "bestseller", "best seller"}
 _WS = re.compile(r"\s+")
+_MAX_FILTER_CHARS = 300
 AGE_PATHS = (
     (0, 2, "0-3-years"),
     (3, 4, "3-5-years"),
@@ -278,7 +279,7 @@ def next_page_cursor(html: str, *, current_page: int) -> str:
             page = int(params.get("p", ""))
         except (TypeError, ValueError):
             continue
-        if current_page < page <= 100:
+        if page == int(current_page) + 1 and page <= 100:
             return str(page)
     return ""
 
@@ -313,10 +314,12 @@ class UsborneYouthSource:
         if not allowed:
             raise ValueError("Usborne URL rejected")
         parts = urlsplit(allowed)
-        if not parts.path.startswith("/us/books/browse-by-age"):
+        path = parts.path.rstrip("/")
+        base = "/us/books/browse-by-age"
+        if path != base and not path.startswith(base + "/"):
             raise ValueError("only Usborne Browse by Age pages are allowed")
         response = self.client.get(allowed)
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             raise RuntimeError(f"Usborne HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type"))
         if content_type and "html" not in content_type:
@@ -338,15 +341,16 @@ class UsborneYouthSource:
         # Themes are intentionally ignored rather than translated into invented URLs.
         del themes
         try:
-            page = max(1, int(cursor or "1"))
-        except ValueError:
+            page = int(cursor or "1")
+        except (TypeError, ValueError):
             raise ValueError("invalid Usborne page cursor")
-        page = min(page, 100)
+        if not 1 <= page <= 100:
+            raise ValueError("invalid Usborne page cursor")
         url = _browse_url(age=age, page=page)
         html = self._get(url)
         rows = parse_listing(
             html,
-            text_filter=text_filter,
+            text_filter=_text(text_filter)[:_MAX_FILTER_CHARS],
             age=age,
             limit=max(1, min(int(limit), 40)),
         )
@@ -360,7 +364,7 @@ class UsborneYouthSource:
     def search(self, query: str, *, cursor: str | None = None, limit: int = 40) -> Mapping[str, object]:
         # No free-text remote endpoint is assumed. Filter the explicitly loaded
         # Browse by Age page locally, as with the BookTrust adapter.
-        return self.browse(text_filter=_text(query), cursor=cursor, limit=limit)
+        return self.browse(text_filter=_text(query)[:_MAX_FILTER_CHARS], cursor=cursor, limit=limit)
 
 
 PLUGIN = UsborneYouthSource()
