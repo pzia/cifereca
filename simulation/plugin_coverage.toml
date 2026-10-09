@@ -79,16 +79,16 @@ data = ["specialized-seed"]
 gap = "JSON exposé en HTTP local mais pas consommé par la page Jeunesse ; filtre âge GUI non recetté"
 
 [package.youth-detail-enrichment]
-data = []
-gap = "Enrichissements concordants/contradictoires, latences, cache"
+data = ["specialized-seed"]
+gap = "Scénarios forts/ambiguës/identités en cache uniquement ; pas de vrais caches GTK ni latences"
 
 [package.youth-source-booktrust]
 data = []
 gap = "Pages HTML et pagination simulées en HTTP local ; écran GTK non recetté"
 
 [package.youth-source-discovery]
-data = []
-gap = "Fixtures de métarecherche explicite, doublons et sources invalides"
+data = ["specialized-seed"]
+gap = "Fixtures métarecherche et dossiers qualification, sans réseau réel ni activation automatique"
 
 [package.youth-source-ecole-loisirs]
 data = []
