@@ -10,6 +10,7 @@ from xml.etree import ElementTree as ET
 import json
 
 from literary_criticism import canonical_url, discover_feed_links
+from cifereca.plugin_api import fetch_public_http
 
 MAX_BYTES = 2 * 1024 * 1024
 _PRIVATE_HOST_NAMES = {"localhost", "local", "localdomain"}
@@ -38,37 +39,44 @@ def public_join(base_url, value):
 
 
 def fetch_public(url, *, client=None):
-    """Explicit public HTTP(S) GET, bounded redirects/bytes/time, no credentials."""
-    import httpx
-    own = client is None
-    client = client or httpx.Client(timeout=15, follow_redirects=False, trust_env=False)
-    try:
-        for _ in range(5):
-            url = public_url(url)
-            if not url:
-                raise ValueError('URL HTTP(S) publique requise')
-            with client.stream('GET', url, headers={'Accept': 'application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html'}) as response:
-                if response.is_redirect:
-                    location = response.headers.get('location', '')
-                    if not location:
-                        raise ValueError('Redirection sans destination')
-                    redirected = public_url(urljoin(url, location))
-                    if not redirected:
-                        raise ValueError('Redirection vers une URL non publique refusée')
-                    url = redirected
-                    continue
-                response.raise_for_status()
-                chunks, size = [], 0
-                for chunk in response.iter_bytes():
-                    size += len(chunk)
-                    if size > MAX_BYTES:
-                        raise ValueError('Réponse trop volumineuse')
-                    chunks.append(chunk)
-                return url, b''.join(chunks)
-        raise ValueError('Trop de redirections')
-    finally:
-        if own:
-            client.close()
+    """Bounded public feed GET with DNS-pinned sockets.
+
+    The optional injected client is reserved for offline test transports.
+    Production never uses httpx's separate DNS resolution / connection path.
+    """
+    url = public_url(url)
+    if not url:
+        raise ValueError('URL HTTP(S) publique requise')
+    if client is None:
+        return fetch_public_http(url, max_bytes=MAX_BYTES)
+
+    # Deterministic HTTP mock used by the plugin's existing test suite only.
+    # External injected clients must not be used to fetch untrusted live feeds.
+    for _ in range(5):
+        url = public_url(url)
+        if not url:
+            raise ValueError('URL HTTP(S) publique requise')
+        with client.stream('GET', url, headers={
+            'Accept': 'application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html',
+        }) as response:
+            if response.is_redirect:
+                location = response.headers.get('location', '')
+                if not location:
+                    raise ValueError('Redirection sans destination')
+                redirected = public_url(urljoin(url, location))
+                if not redirected:
+                    raise ValueError('Redirection vers une URL non publique refusée')
+                url = redirected
+                continue
+            response.raise_for_status()
+            chunks, size = [], 0
+            for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise ValueError('Réponse trop volumineuse')
+                chunks.append(chunk)
+            return url, b''.join(chunks)
+    raise ValueError('Trop de redirections')
 
 
 def date_text(raw):
