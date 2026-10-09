@@ -273,7 +273,7 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
         identifiers.update(identifier_values(book))
         title = normalize(get_field(book, "title", ""))
         auth = "/".join(sorted(normalize(a) for a in author_values(book) if normalize(a)))
-        if title:
+        if title and auth:
             existing_pairs.add(f"{title}|{auth}")
 
     lexical_terms = title_terms + description_terms
@@ -305,7 +305,7 @@ def is_already_present(profile: ProfileVector, item: Any) -> bool:
         return bool(profile.identifiers.intersection(ids))
     title = normalize(get_field(item, "title", ""))
     auth = "/".join(sorted(normalize(a) for a in author_values(item) if normalize(a)))
-    return bool(title and f"{title}|{auth}" in profile.existing_pairs)
+    return bool(title and auth and f"{title}|{auth}" in profile.existing_pairs)
 
 
 def _weighted_exact(
