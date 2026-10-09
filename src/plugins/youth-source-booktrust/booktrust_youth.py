@@ -369,16 +369,16 @@ class BookTrustSource:
         if self._own_client:
             self.client.close()
 
-    def _get_text(self, url: str) -> str:
+    def _get_text(self, url: str, *, for_listing: bool = False) -> str:
         allowed = _allowed_url(url)
         if not allowed:
             raise ValueError("BookTrust URL outside allowlist")
-        if self._last_diagnostic.get("phase") == "listing":
+        if for_listing:
             self._last_diagnostic["request_count"] = int(
                 self._last_diagnostic.get("request_count", 0)
             ) + 1
         response = self.client.get(allowed)
-        if self._last_diagnostic.get("phase") == "listing":
+        if for_listing:
             self._last_diagnostic.update({
                 "http_status": response.status_code,
                 "content_type_is_html": "html" in _fold(response.headers.get("content-type")),
@@ -431,7 +431,7 @@ class BookTrustSource:
         bounded = max(1, min(int(limit), 50))
         try:
             url = _query_url(age=age, themes=themes, page=page)
-            html = self._get_text(url)
+            html = self._get_text(url, for_listing=True)
             self._last_diagnostic["phase"] = "parsing"
             cards = parse_recommendations(
                 html, text_filter=text_filter, limit=bounded,
