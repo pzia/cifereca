@@ -14,6 +14,7 @@ on:
       - "VERSION"
       - "scripts/ci-run-plugin-tests.sh"
       - "scripts/ci-select-core-tests.py"
+      - "scripts/ci_select_plugin_tests.py"
       - "scripts/check_release_inventory.py"
       - "scripts/ci-install-gtk-e2e-runtime.sh"
       - "scripts/ci-smoke-installed-wheel.sh"
@@ -87,7 +88,7 @@ jobs:
           install=false
           dataset=false
 
-          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/check_release_inventory\.py$)'; then
+          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$)'; then
             core=true
           fi
 
@@ -122,12 +123,11 @@ jobs:
             install=true
           fi
 
-          if [[ "$plugins" == true && "$plugin_scope_all" != true ]]; then
-            plugin_targets="$(
-              awk -F/ '/^src\/plugins\/[^/]+\// {print $1 "/" $2 "/" $3}' "$changed_file" |
-                sort -u |
-                paste -sd' ' -
-            )"
+          if [[ "$plugins" == true ]]; then
+            python3 scripts/ci_select_plugin_tests.py \
+              --event "$GITHUB_EVENT_NAME" --base "$BASE_SHA" --head "$HEAD_SHA" \
+              --targets-file "$RUNNER_TEMP/cifereca-plugin-targets"
+            plugin_targets="$(cat "$RUNNER_TEMP/cifereca-plugin-targets")"
           fi
 
           if [[ "$core" == true ]]; then
@@ -239,4 +239,3 @@ jobs:
           trap 'python simulation/datasetctl.py down ux-small' EXIT
           python simulation/datasetctl.py status ux-small
           python simulation/datasetctl.py config ux-small
-

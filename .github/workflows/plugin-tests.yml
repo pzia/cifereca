@@ -13,6 +13,8 @@ on:
       - 'pyproject.toml'
       - 'VERSION'
       - 'scripts/ci-run-plugin-tests.sh'
+      - 'scripts/ci_select_plugin_tests.py'
+      - 'tests/test_ci_plugin_selection.py'
       - '.github/workflows/plugin-tests.yml'
 
 permissions:
@@ -28,6 +30,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select affected plugin tests
+        id: scope
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: >-
+          python3 scripts/ci_select_plugin_tests.py
+          --event "$GITHUB_EVENT_NAME" --base "$BEFORE_SHA" --head "$HEAD_SHA"
+          --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
         with:
@@ -41,4 +55,12 @@ jobs:
       - name: Run plugin tests
         env:
           PYTHONPATH: ${{ github.workspace }}/src
-        run: bash scripts/ci-run-plugin-tests.sh
+          PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}
+        shell: bash
+        run: |
+          if [[ -n "$PLUGIN_TARGETS" ]]; then
+            read -r -a targets <<< "$PLUGIN_TARGETS"
+            bash scripts/ci-run-plugin-tests.sh "${targets[@]}"
+          else
+            bash scripts/ci-run-plugin-tests.sh
+          fi
