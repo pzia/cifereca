@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-source-ecole-loisirs",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "name": "Jeunesse — l'école des loisirs",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "youth.source.ecole-loisirs",
       "type": "youth.source",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "entrypoint": "ecole_loisirs_youth:PLUGIN",
       "display_name": "l'école des loisirs — âges éditeur",
       "description": "Recherche publique l'école des loisirs avec tranches d'âge et ISBN publiés.",
-      "help_text": "Utilise uniquement la recherche publique avancée de l'école des loisirs, limitée aux livres. Les tranches d'âge publiées sont conservées telles quelles ; les notices marquées indéterminé restent sans tranche plutôt que d'inventer un âge. Pagination explicite uniquement.",
+      "help_text": "Utilise uniquement la recherche publique avancée de l'école des loisirs, limitée aux livres. Les tranches d'âge publiées sont conservées telles quelles ; aucun âge ne traverse la frontière entre deux cartes. `indéterminé` reste sans tranche. Requêtes bornées, pagination immédiate explicite uniquement, redirections rejetées.",
       "enabled_by_default": false,
       "priority": -60,
       "instantiation": "singleton_public",
