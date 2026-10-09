@@ -32,3 +32,26 @@ Les versions contenant un suffixe PEP 440 de prerelease (`aN`, `bN`, `rcN`) ou u
 La publication crée ou met à jour d'abord une release en brouillon, charge les assets avec `--clobber`, puis enlève le statut brouillon seulement à la fin. Une relance peut donc réutiliser le même tag et remplacer les assets sans produire une seconde release.
 
 Les assets publiés sont ceux présents dans `dist/` : wheel Core, ZIP de distribution, snapshot de développement et `SHA256SUMS`.
+
+
+## Prévisualisations plugins-only (sans Core)
+
+Pour un snapshot produit par `scripts/package_partial_plugins.py`, `cifereca-update-dev`
+valide **avant toute sauvegarde ou mutation** l'index embarqué
+`cifereca-plugins-only.json` : identifiant de snapshot, origine,
+sélection exacte des packages, versions et SHA-256, contraintes Plugin API.
+
+**Compatibilité volontairement stricte** : la version du Core installé
+(`runtime/current`) doit être **exactement** `core_version_tested`.
+Cette version testée n'est pas une promesse de compatibilité avec un Core
+plus ancien ou plus récent. Chaque package doit accepter la Plugin API
+installée. En cas d'échec, l'opération est refusée, y compris en
+`--dry-run`, avant d'installer quoi que ce soit.
+
+Un index plugins-only interdit explicitement une archive Core. Les anciens
+snapshots de développement **génériques** sans index continuent d'être
+acceptés selon leurs règles historiques ; l'index ne doit donc pas être
+retiré d'une prévisualisation pour contourner la vérification. Le format
+officiel d'une future release partielle nécessitera une convention de
+publication identifiable dans le manifest principal : cette extension
+CI/CD reste à coordonner dans #787 et #577.
