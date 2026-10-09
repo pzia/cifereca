@@ -166,6 +166,98 @@ def constellations_records():
             "records": rows}
 
 
+
+def youth_discovery_cases():
+    """Requêtes fictives d'une métarecherche injectée, sans appels réseau.
+
+    Les domaines .example sont des noms réservés à la documentation ; les
+    scénarios de boucle locale, credentials et URL privées sont rejetés.
+    """
+    return {
+        "version": 1, "synthetic": True, "query": "livres enfants",
+        "search_results": [
+            {"url": "https://lecture.example/books/atlas",
+             "title": "Atlas", "snippet": "Interest age: 8-10"},
+            {"url": "https://lecture.example/books/luciole",
+             "title": "Luciole", "snippet": "Reading age: 7 to 9"},
+            {"url": "https://petits.example/books/jardin",
+             "title": "Jardin", "snippet": "Picture books for children"},
+            {"url": "https://noise.example/press",
+             "title": "Durées", "snippet": "Publication cycle: 18 months"},
+            {"url": "http://127.0.0.1/private", "title": "Privé",
+             "snippet": "Reading age: 6 to 8"},
+            {"url": "https://user:password@credential.example/book", "title": "Secret",
+             "snippet": "Age: 10+"},
+            {"url": "https://lecture.example/books/atlas",
+             "title": "Doublon", "snippet": "Interest age: 8-10"},
+        ],
+        "fetch_pages": {
+            "https://lecture.example/books/atlas": {
+                "content_type": "text/html", "text": "<p>Interest age: 8-10</p>"},
+            "https://lecture.example/books/luciole": {
+                "content_type": "text/html", "text": "<p>Reading age: 7 to 9</p>"},
+            "https://petits.example/books/jardin": {
+                "content_type": "text/html",
+                "text": "<meta name='description' content='Age: 18+ months'><p>Baby books</p>"},
+        },
+        "fail_fetch_urls": ["https://noise.example/press"],
+        "expected_domains": ["lecture.example", "petits.example"],
+        "never_register_automatically": True,
+        "manual_review_required": True,
+    }
+
+
+def youth_enrichment_cases():
+    """Relations bibliographiques, preuves et identités; aucun cache réel touché."""
+    return {
+        "version": 1, "synthetic": True,
+        "identities": ["ux-camille", "ux-alexandre"],
+        "source_records": [1, 2, 3, 4, 5, 6, 7],
+        "cases": {
+            "isbn_exact": {
+                "book_id": "ux-enrichment-exact", "title": "Un titre local différent",
+                "identifiers": {"isbn": ISBN_B}, "identity_id": "ux-camille",
+                "expected_record": "youth-2",
+                "expected_match": "isbn:" + ISBN_B,
+            },
+            "edition_conflict": {
+                "book_id": "ux-enrichment-conflict",
+                "title": "L'Atlas des lucioles",
+                "identifiers": {"isbn": ISBN_C}, "identity_id": "ux-camille",
+                "expected_record": "youth-5",
+                "expected_match": "isbn:" + ISBN_C,
+            },
+            "ambiguous_isbn": {
+                "book_id": "ux-enrichment-ambiguous",
+                "title": "L'Atlas des lucioles",
+                "identifiers": {"isbn": ISBN_A}, "identity_id": "ux-camille",
+                "expected_record": None,
+            },
+            "title_only": {
+                "book_id": "ux-enrichment-title-only",
+                "title": "L'Atlas des lucioles",
+                "identifiers": {}, "identity_id": "ux-camille",
+                "expected_record": None,
+            },
+            "wrong_identity": {
+                "book_id": "ux-enrichment-other-identity",
+                "title": "Le Jardin des mots",
+                "identifiers": {"isbn": ISBN_B}, "identity_id": "ux-alexandre",
+                "expected_record": None,
+            },
+            "missing_identity": {
+                "book_id": "ux-enrichment-no-identity",
+                "title": "Le Jardin des mots",
+                "identifiers": {"isbn": ISBN_B}, "identity_id": "",
+                "expected_record": None,
+            },
+        },
+        "cache_scope": {"ux-camille": [1, 2, 3, 4, 5, 6, 7], "ux-alexandre": []},
+        "requires_strong_identifier": True,
+        "never_fetch_network": True,
+    }
+
+
 def reproducible_epub(payload: bytes) -> bytes:
     """Neutraliser les timestamps ZIP volatils sans changer le contenu EPUB.
 
@@ -195,6 +287,8 @@ def create(out: Path, *, seed: int = SEED) -> dict:
         "criticism.json": criticism_records(),
         "criticism.jsonfeed.json": criticism_jsonfeed(),
         "constellations.json": constellations_records(),
+        "youth-discovery.json": youth_discovery_cases(),
+        "youth-enrichment.json": youth_enrichment_cases(),
     }
     for name, payload in contents.items():
         (out / name).write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -203,9 +297,10 @@ def create(out: Path, *, seed: int = SEED) -> dict:
     (out / "optimizer-corrupt.epub").write_bytes(b"this is not a valid EPUB file\n")
     paths = sorted(p for p in out.iterdir() if p.is_file() and p.name != "manifest.json")
     manifest = {"version": 1, "synthetic": True, "seed": seed,
-                "scope": ["jeunesse", "critique-litteraire", "constellations", "epub-optimizer"],
+                "scope": ["jeunesse", "critique-litteraire", "constellations", "epub-optimizer",
+                          "youth-discovery", "youth-detail-enrichment"],
                 "files": {p.name: sha256(p.read_bytes()).hexdigest() for p in paths},
-                "warning": "Fixtures de contrat hors ligne ; pas encore de service HTTP ni E2E GTK."}
+                "warning": "JDD de contrat isolés ; activation explicite, aucun E2E GTK prouvé."}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return manifest
 
