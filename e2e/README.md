@@ -174,3 +174,12 @@ et la provenance. Aucun rapprochement automatique par titre/autrice ne doit
 faire fusionner des ISBN différents. Les fiches et ISBN sont fictifs ou
 utilisés uniquement comme données de test structurées ; aucune disponibilité
 éditoriale externe n'est attestée.
+
+#### Visibilité des identifiants d'édition (UX #891, correctif produit #894)
+
+Cette recette vérifie maintenant **l'affichage réel** des deux ISBN dans
+les cellules `Gtk.ListView` mappées (`meta_label`, y compris à 1024 px),
+ainsi que les `Adw.ActionRow` de chacune des deux fiches sélectionnées.
+Les ISBN sont distincts et ne fuient pas d'une fiche à l'autre. Le scénario
+sans ISBN du cache local vérifie la mention **Référence source** dans la fiche,
+sans faux ISBN. Les captures aux deux largeurs restent la preuve visuelle.
