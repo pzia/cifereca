@@ -29,7 +29,7 @@ cifereca-update-dev dist/cifereca-plugins-only-preview-manual.zip \
   --expected-sha256 "$SHA256_APPROUVE" --json
 ~~~
 
-**Important :** une empreinte recopiée depuis la même archive, un sidecar non authentifié ou un manifeste embarqué n'établit **aucune provenance**. L'option est facultative pour conserver les anciens snapshots de développement. La politique de provenance des releases officielles reste ouverte (#787 / #577).
+**Important :** une empreinte recopiée depuis la même archive, un sidecar non authentifié ou un manifeste embarqué n'établit **aucune provenance**. L'option est facultative pour conserver les anciens snapshots de développement. Pour une publication officielle, utiliser le workflow **Release plugins-only** et vérifier son attestation GitHub signée avant de dériver le SHA-256 passé à l'updater.
 
 ## Compatibilité avec le Core cible (précontrôle obligatoire avant installation)
 
@@ -59,4 +59,4 @@ cifereca-update-dev <snapshot.zip> --json
 
 L'updater existant effectue la sauvegarde préalable des plugins touchés, restaure en cas d'échec et lance son smoke test. Il préserve l'activation d'un package déjà installé. Les packages non sélectionnés sont inchangés ; aucun tag ou GitHub Release n'est créé par ce workflow.
 
-**Reste hors de ce groupe** : la signature/provenance forte des publications, la politique de tags plugins-only, la compatibilité Core multi-version et son application par l'updater, le contrôle d'upgrade/rollback d'une release complète à une partielle, la traçabilité persistante de la provenance dans l'UI et la publication officielle des artefacts. Ces points doivent être validés avant de déclarer #577 terminé et avant toute release publique.
+La preview reste volontairement non publiée et ne constitue pas une release. La publication officielle et attestée est assurée séparément par **Release plugins-only** ; #577 conserve les extensions P2 (compatibilité Core multi-version, provenance persistée dans l'UI, automatisation de sélection et scénarios complets full↔partial).
