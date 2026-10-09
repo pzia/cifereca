@@ -10,8 +10,9 @@ import argparse
 import io
 import zipfile
 from hashlib import sha256
-import html
+import io
 import json
+import zipfile
 from pathlib import Path
 
 from common.fake_books import FakeBookFactory, epub_bytes

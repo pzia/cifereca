@@ -48,3 +48,8 @@ seed = 20261006
 enabled = true
 books = 2000
 seed = 20261006
+
+# Fixtures offline pour les modules jeunesse / critique / constellations / EPUB.
+[specialized]
+enabled = true
+seed = 20261008

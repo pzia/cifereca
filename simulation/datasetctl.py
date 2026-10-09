@@ -80,7 +80,7 @@ def load_profile(value: str) -> tuple[Path, dict]:
     if not name or not all(ch.isalnum() or ch in "-_" for ch in name):
         raise DatasetError("profile.name doit être un identifiant simple")
     profile["name"] = name
-    for section in ("runtime", "cifereca", "library", "services"):
+    for section in ("runtime", "cifereca", "library", "services", "specialized"):
         if section in profile and not isinstance(profile[section], dict):
             raise DatasetError(f"[{section}] doit être une table TOML")
     return path, profile
@@ -400,6 +400,40 @@ def generate_local_library(profile: dict, *, rebuild: bool = False) -> Path:
             (library / row["directory_name"] / provider_dir).mkdir(parents=True, exist_ok=True)
     return library
 
+def generate_specialized_data(profile: dict, *, rebuild: bool = False) -> Path | None:
+    """Fichiers spécialisés uniquement si [specialized] enabled=true.
+
+    N'injecte pas de données dans les caches applicatifs et n'effectue aucun réseau.
+    La comparaison du manifeste protège contre les fichiers effacés/corrompus.
+    """
+    config = profile.get("specialized") or {}
+    target = profile_runtime(profile) / "specialized"
+    if not config.get("enabled", False):
+        return None
+    import plugin_scenarios
+    seed = int(config.get("seed", plugin_scenarios.SEED))
+    manifest_path = target / "manifest.json"
+    valid = False
+    if not rebuild and manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            valid = (manifest.get("seed") == seed
+                and isinstance(manifest.get("files"), dict)
+                and bool(manifest["files"])
+                and all(
+                    (target / name).is_file()
+                    and hashlib.sha256((target / name).read_bytes()).hexdigest() == digest
+                    for name, digest in manifest["files"].items()
+                ))
+        except (OSError, ValueError, TypeError, KeyError):
+            valid = False
+    if not valid:
+        if target.exists():
+            shutil.rmtree(target)
+        plugin_scenarios.create(target, seed=seed)
+    return target
+
+
 def default_host_data_home() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
@@ -491,6 +525,8 @@ def isolated_env(profile: dict) -> dict[str, str]:
     })
     for key in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
+    if (profile.get("specialized") or {}).get("enabled", False):
+        env["CIFERECA_UX_SPECIALIZED_DATA"] = str(runtime / "specialized")
     return env
 
 
@@ -611,11 +647,13 @@ def prepare(profile: dict, catalog: dict[str, dict], *, rebuild_library: bool = 
     (runtime / "logs").mkdir(parents=True, exist_ok=True)
     (runtime / "downloads").mkdir(parents=True, exist_ok=True)
     library = generate_local_library(profile, rebuild=rebuild_library)
+    specialized = generate_specialized_data(profile, rebuild=rebuild_library)
     plugin_packages = sync_plugin_packages(profile)
     config_path, plugins_path = write_cifereca_config(profile, catalog, library)
     return {
         "runtime": runtime,
         "library": library,
+        "specialized": specialized,
         "plugin_packages": plugin_packages,
         "config": config_path,
         "plugins_config": plugins_path,
@@ -710,7 +748,7 @@ def down(profile: dict) -> None:
 def reset_runtime(profile: dict) -> None:
     down(profile)
     runtime = profile_runtime(profile)
-    for child in ("service-cache", "library", "downloads", "xdg", "logs"):
+    for child in ("service-cache", "library", "specialized", "downloads", "xdg", "logs"):
         path = runtime / child
         if path.exists():
             shutil.rmtree(path)
@@ -860,6 +898,31 @@ def command_status(args, catalog) -> int:
     return 0 if all(r["process"] and r["health"] for r in rows) else 1
 
 
+def specialized_status(profile: dict) -> dict:
+    config = profile.get("specialized") or {}
+    target = profile_runtime(profile) / "specialized"
+    enabled = config.get("enabled", False) is True
+    result = {"enabled": enabled, "path": str(target), "complete": False, "files": 0}
+    if not enabled:
+        return result
+    try:
+        manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+        files = manifest.get("files", {})
+        result["files"] = len(files)
+        result["complete"] = (
+            manifest.get("seed") == int(config.get("seed", 20261008))
+            and isinstance(files, dict) and bool(files)
+            and all(
+                (target / name).is_file()
+                and hashlib.sha256((target / name).read_bytes()).hexdigest() == digest
+                for name, digest in files.items()
+            )
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return result
+
+
 def summary_payload(profile: dict, catalog: dict[str, dict]) -> dict:
     runtime = profile_runtime(profile)
     library = runtime / "library"
@@ -893,6 +956,7 @@ def summary_payload(profile: dict, catalog: dict[str, dict]) -> dict:
             "complete": generated_epubs == configured_epubs,
         },
         "services": services,
+        "specialized": specialized_status(profile),
     }
 
 
@@ -959,7 +1023,9 @@ def command_config(args, catalog) -> int:
 def command_env(args, catalog) -> int:
     _, profile = load_profile(args.profile)
     prepared = prepare(profile, catalog)
-    for key in ("XDG_CONFIG_HOME","XDG_DATA_HOME","XDG_CACHE_HOME","XDG_STATE_HOME","CIFERECA_UX_PROFILE"):
+    for key in ("XDG_CONFIG_HOME","XDG_DATA_HOME","XDG_CACHE_HOME","XDG_STATE_HOME","CIFERECA_UX_PROFILE","CIFERECA_UX_SPECIALIZED_DATA"):
+        if key not in prepared["env"]:
+            continue
         print(f"export {key}={json.dumps(prepared['env'][key])}")
     return 0
 

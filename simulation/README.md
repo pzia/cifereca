@@ -191,3 +191,31 @@ Validez-le avec :
 ```bash
 python3 simulation/datasetctl.py doctor ux-mon-test
 ```
+
+## JDD spécialisés — intégration dans datasetctl
+
+Les profils `ux-small`, `ux-all` et `ux-errors` génèrent des fixtures
+synthétiques **hors ligne** pour Jeunesse, Critique littéraire, Constellations
+et Optimiseur EPUB. Elles sont déclarées par :
+
+```toml
+[specialized]
+enabled = true
+seed = 20261008
+```
+
+```sh
+python3 simulation/datasetctl.py rebuild ux-small
+python3 simulation/datasetctl.py env ux-small
+python3 simulation/datasetctl.py summary ux-small --json
+# données : ${CIFERECA_UX_SPECIALIZED_DATA}/youth.json et autres fichiers
+```
+
+Chaque profil possède son propre `runtime/specialized/`. Un manifeste avec
+empreintes SHA-256 permet à `prepare` de conserver les fichiers inchangés,
+réparer un fichier corrompu et reconstruire lors d'un changement de seed.
+`rebuild` et `reset` suppriment ces fichiers avec le profil isolé.
+
+**Attention :** leur disponibilité sur disque ne les injecte pas
+automatiquement dans les caches des plugins, ne crée pas de source distante
+et ne valide pas l'UI GTK. Les étapes HTTP/E2E restent suivies dans #772 et #774.
