@@ -89,3 +89,11 @@ gap = "Pages HTML et pagination simulées en HTTP local ; écran GTK non recett�
 [package.youth-source-discovery]
 data = []
 gap = "Fixtures de métarecherche explicite, doublons et sources invalides"
+
+[package.youth-source-ecole-loisirs]
+data = []
+gap = "Aucun faux service dédié pour recherche avancée HTML (âge explicite, ISBN, pagination), ni scénario E2E."
+
+[package.youth-source-usborne]
+data = []
+gap = "Aucun faux service HTML Browse by Age (mois/ans, catégories, pagination), ni scénario E2E."
