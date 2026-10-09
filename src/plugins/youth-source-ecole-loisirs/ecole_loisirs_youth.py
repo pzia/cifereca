@@ -173,6 +173,20 @@ def _card_type(tokens, start: int, end: int) -> str:
     return ""
 
 
+def _card_authors(tokens, start: int, end: int) -> tuple[str, ...]:
+    for kind, value, _ in tokens[start + 1:end]:
+        if kind != "text":
+            continue
+        cleaned = _text(value)
+        low = _fold(cleaned)
+        if not cleaned or low in _TYPES or low.startswith("- collection") or low.startswith("isbn:"):
+            continue
+        if len(cleaned) > 140 or cleaned.endswith("..."):
+            return ()
+        return tuple(part.strip() for part in cleaned.split(",") if part.strip())
+    return ()
+
+
 def parse_listing(html: str, *, limit: int = 40) -> tuple[Mapping[str, object], ...]:
     tokens = _tokens(html)
     products = []
@@ -206,6 +220,7 @@ def parse_listing(html: str, *, limit: int = 40) -> tuple[Mapping[str, object], 
             "record_id": isbn,
             "source_item_id": isbn,
             "title": title,
+            "authors": _card_authors(tokens, start, end),
             "isbn13": isbn,
             "notice_url": url,
             "friendly_url": url,
@@ -237,7 +252,11 @@ def next_cursor(html: str, *, current_page: int) -> str:
     for kind, label, href in _tokens(html):
         if kind != "link" or _fold(label) != "afficher plus de résultats":
             continue
-        url = _allowed_url(href)
+        raw = _text(href)
+        if raw.startswith("?"):
+            url = SEARCH + raw
+        else:
+            url = _allowed_url(raw)
         if not url or urlsplit(url).path != "/recherche-avancee":
             continue
         query = parse_qs(urlsplit(url).query)
