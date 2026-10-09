@@ -19,7 +19,7 @@ def test_inventory_renderer_groups_installed_plugins_by_package_not_category():
     assert "installed_packages" in source
     assert "status.descriptor.package_id == package['package_id']" in source
     assert "for category in categories" not in source
-    assert "self._append_package(package, package_plugins)" in source
+    assert "self._append_package(package, package_plugins, statuses=statuses)" in source
 
 
 def test_package_actions_live_only_in_package_card():
@@ -43,5 +43,7 @@ def test_uninstall_confirmation_names_package_and_affected_plugins():
 def test_package_card_lists_all_contributions_as_children():
     source = _method("_append_package")
     assert "for status in package_plugins:" in source
-    assert "plugin_frame.set_child(self._plugin_row(status, package))" in source
-    assert "contribution(s) fournie(s) par ce package" in source
+    assert "plugin_frame.set_child(self._plugin_row(status, package, statuses=statuses))" in source
+    assert "details.set_child(children)" in source
+    assert "Gtk.Expander()" in source
+    assert "contribution(s) · ouvrir les détails" in source
