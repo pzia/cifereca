@@ -62,9 +62,11 @@ from .acquisition_recipes import (
 from .youth_ages import youth_age_from_label, youth_age_matches
 from .book_references import book_ref_from_row, BookAccessFact, book_access_facts
 from .book_detail_cache import CachedBookDetailContribution, collect_cached_book_details, subscribe_cached_book_detail_changes
+from .llm import LLMRequest, LLMResult, LLMService
 from .document_links import document_links
 
 __all__ = [
+    "LLMRequest", "LLMResult", "LLMService",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
