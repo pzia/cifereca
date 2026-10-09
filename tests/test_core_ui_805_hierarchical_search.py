@@ -30,13 +30,13 @@ def row(identifier, *, package, name=None, requires=(), recommends=(),
 
 def inventory():
     rows = []
-    for name in ("Jeunesse", "Critique", "Constellations", "Recommandations"):
+    for group, name in enumerate(("Jeunesse", "Critique", "Constellations", "Recommandations")):
         root = name.lower()
         rows.append(row(root, package=root, name=name))
         for i in range(8):
             rows.append(row(
-                f"{root}.extension.{i}",
-                package=f"pkg-{root}-{i}",
+                f"addon.{group}.{i}",
+                package=f"pkg-addon-{group}-{i}",
                 name=f"Extension {i}",
                 requires=(root,),
                 category="book.detail.enrichment" if i % 2 else "catalog.service",
@@ -48,14 +48,14 @@ def inventory():
 
 def test_searching_a_principal_finds_all_32_required_extensions_across_packages():
     rows = inventory()
-    for root in ("jeunesse", "critique", "constellations", "recommandations"):
+    for group, root in enumerate(("jeunesse", "critique", "constellations", "recommandations")):
         ids = required_extension_ids(reversed(rows), root)
         assert len(ids) == 8
-        assert ids == {f"{root}.extension.{i}" for i in range(8)}
+        assert ids == {f"addon.{group}.{i}" for i in range(8)}
         assert root not in ids
         # The extension package name is deliberately unrelated to the root's
         # display name; cross-package relation is proven by the manifest.
-        extension = next(r for r in rows if r.descriptor.id == f"{root}.extension.0")
+        extension = next(r for r in rows if r.descriptor.id == f"addon.{group}.0")
         package = {"package_id": extension.descriptor.package_id,
                    "name": "Extension indépendante"}
         assert filter_package_plugins(package, [extension], query=root, related_ids=ids) == [extension]
