@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
 import ipaddress
+import http.client
+import socket
+import ssl
+from time import monotonic
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree as ET
 import json
@@ -37,24 +41,131 @@ def public_join(base_url, value):
     return public_url(urljoin(base_url, raw))
 
 
-def fetch_public(url, *, client=None):
-    """Explicit public HTTP(S) GET, bounded redirects/bytes/time, no credentials."""
-    import httpx
-    own = client is None
-    client = client or httpx.Client(timeout=15, follow_redirects=False, trust_env=False)
+def _public_socket(
+    host, port, *, timeout, resolve=None, socket_factory=None,
+):
+    """Pin the actual peer IP before sending any HTTP bytes.
+
+    All DNS answers (including resolved CNAME targets) must be global. The
+    selected numeric sockaddr goes straight to socket.connect(): no second
+    hostname lookup by the HTTP client or a system proxy is possible.
+    """
+    resolve = resolve or socket.getaddrinfo
+    socket_factory = socket_factory or socket.socket
     try:
-        for _ in range(5):
-            url = public_url(url)
-            if not url:
-                raise ValueError('URL HTTP(S) publique requise')
-            with client.stream('GET', url, headers={'Accept': 'application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html'}) as response:
+        answers = resolve(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("Résolution DNS du flux impossible") from exc
+    if not answers:
+        raise ValueError("Aucune adresse DNS pour le flux")
+    for family, kind, protocol, _name, address in answers:
+        try:
+            permitted = (
+                family in (socket.AF_INET, socket.AF_INET6)
+                and kind == socket.SOCK_STREAM
+                and ipaddress.ip_address(address[0]).is_global
+            )
+        except (ValueError, IndexError, TypeError):
+            permitted = False
+        if not permitted:
+            raise ValueError("Résolution DNS vers une adresse non publique refusée")
+    last_error = None
+    for family, kind, protocol, _name, address in answers:
+        conn = socket_factory(family, kind, protocol)
+        try:
+            conn.settimeout(timeout)
+            conn.connect(address)
+            peer_ip = ipaddress.ip_address(conn.getpeername()[0])
+            expected_ip = ipaddress.ip_address(address[0])
+            if not peer_ip.is_global or peer_ip != expected_ip:
+                raise ValueError("Socket connecté à une adresse non publique ou inattendue")
+            return conn
+        except ValueError:
+            conn.close()
+            raise
+        except OSError as exc:
+            last_error = exc
+            conn.close()
+    raise ValueError("Connexion au flux public impossible") from last_error
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = _public_socket(self.host, self.port, timeout=self.timeout)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        sock = _public_socket(self.host, self.port, timeout=self.timeout)
+        try:
+            # Keep the original hostname for both SNI and certificate checks.
+            # Only the TCP destination is the validated numeric address.
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except Exception:
+            sock.close()
+            raise
+
+
+def _fetch_pinned(url, *, timeout):
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        connection = _PinnedHTTPSConnection(
+            parts.hostname, parts.port or 443, timeout=timeout,
+            context=ssl.create_default_context(),
+        )
+    else:
+        connection = _PinnedHTTPConnection(parts.hostname, parts.port or 80, timeout=timeout)
+    target = parts.path or "/"
+    if parts.query:
+        target += "?" + parts.query
+    try:
+        connection.request(
+            "GET", target,
+            headers={
+                "Accept": "application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html",
+                "Accept-Encoding": "identity",
+                "Connection": "close",
+            },
+        )
+        response = connection.getresponse()
+        if response.status in (301, 302, 303, 307, 308):
+            return response.status, response.getheader("Location", ""), b""
+        if not 200 <= response.status < 300:
+            raise ValueError(f"Flux HTTP : réponse {response.status}")
+        payload = response.read(MAX_BYTES + 1)
+        if len(payload) > MAX_BYTES:
+            raise ValueError("Réponse trop volumineuse")
+        return response.status, "", payload
+    finally:
+        connection.close()
+
+
+def fetch_public(url, *, client=None):
+    """Fetch public feeds without DNS rebinding or private peer access.
+
+    The optional HTTP client is for deterministic test injection only. The
+    production path pins every public DNS resolution at TCP connect and does
+    TLS hostname verification against the original URL on each redirect.
+    """
+    deadline = monotonic() + 15.0
+    for _ in range(5):
+        url = public_url(url)
+        if not url:
+            raise ValueError("URL HTTP(S) publique requise")
+        if client is not None:
+            # Explicit injection supports existing offline httpx.MockTransport
+            # contract tests; it is never used by the installed FeedSource.
+            with client.stream(
+                "GET", url,
+                headers={"Accept": "application/atom+xml, application/rss+xml, application/feed+json, application/json, text/html"},
+            ) as response:
                 if response.is_redirect:
-                    location = response.headers.get('location', '')
+                    location = response.headers.get("location", "")
                     if not location:
-                        raise ValueError('Redirection sans destination')
+                        raise ValueError("Redirection sans destination")
                     redirected = public_url(urljoin(url, location))
                     if not redirected:
-                        raise ValueError('Redirection vers une URL non publique refusée')
+                        raise ValueError("Redirection vers une URL non publique refusée")
                     url = redirected
                     continue
                 response.raise_for_status()
@@ -62,13 +173,26 @@ def fetch_public(url, *, client=None):
                 for chunk in response.iter_bytes():
                     size += len(chunk)
                     if size > MAX_BYTES:
-                        raise ValueError('Réponse trop volumineuse')
+                        raise ValueError("Réponse trop volumineuse")
                     chunks.append(chunk)
-                return url, b''.join(chunks)
-        raise ValueError('Trop de redirections')
-    finally:
-        if own:
-            client.close()
+                return url, b"".join(chunks)
+
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise ValueError("Délai de lecture du flux dépassé")
+        status, location, body = _fetch_pinned(url, timeout=remaining)
+        if status in (301, 302, 303, 307, 308):
+            if not location:
+                raise ValueError("Redirection sans destination")
+            target = public_url(urljoin(url, location))
+            if not target:
+                raise ValueError("Redirection vers une URL non publique refusée")
+            if urlsplit(url).scheme == "https" and urlsplit(target).scheme != "https":
+                raise ValueError("Redirection HTTPS vers HTTP refusée")
+            url = target
+            continue
+        return url, body
+    raise ValueError("Trop de redirections")
 
 
 def date_text(raw):
