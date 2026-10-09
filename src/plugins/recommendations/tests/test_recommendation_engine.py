@@ -158,8 +158,8 @@ def test_invalid_isbn_is_not_a_strong_identifier():
 def test_different_identifier_schemes_cannot_collide_on_same_raw_value():
     doi = {"title": "A", "identifiers": {"doi": "10.1000/xyz"}}
     ark = {"title": "B", "identifiers": {"ark": "10.1000/xyz"}}
-    assert identifier_values(doi) == {"doi:101000xyz"}
-    assert identifier_values(ark) == {"ark:101000xyz"}
+    assert identifier_values(doi) == {"doi:10.1000/xyz"}
+    assert identifier_values(ark) == {"ark:10.1000/xyz"}
     assert candidate_key(doi) != candidate_key(ark)
 
 
@@ -219,3 +219,12 @@ def test_owned_fallback_still_matches_exact_title_and_author_when_no_ids_exist()
     ])
     candidate = {"title": " titre précis ", "author": "ALICE AUTEUR"}
     assert is_already_present(profile, candidate)
+
+
+
+def test_identifier_punctuation_is_preserved_to_avoid_false_collisions():
+    dashed = {"title": "A", "identifiers": {"doi": "ab-c"}}
+    compact = {"title": "B", "identifiers": {"doi": "abc"}}
+    assert identifier_values(dashed) == {"doi:ab-c"}
+    assert identifier_values(compact) == {"doi:abc"}
+    assert candidate_key(dashed) != candidate_key(compact)
