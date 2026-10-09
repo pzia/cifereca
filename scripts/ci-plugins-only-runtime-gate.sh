@@ -24,13 +24,26 @@ export XDG_STATE_HOME="$base/state"
 export XDG_CACHE_HOME="$base/cache"
 mkdir -p "$CIFERECA_BIN_DIR" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
 
-PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python - <<'PY'
+# Stage a genuine Core-only source install. The full-release manifest would
+# install every optional plugin and would make this targeted gate dependent on
+# unrelated provider visibility; full-release smoke belongs to its own gate.
+PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python - "$base/core-only-source" <<'PY'
+import shutil
+import sys
 from pathlib import Path
 from cifereca.updater import install_source
 
-result = install_source(Path("."), keep=3)
+source = Path.cwd()
+target = Path(sys.argv[1])
+ignore = shutil.ignore_patterns(
+    ".git", ".venv", ".updates", "release", "dist", "build",
+    ".pytest_cache", "__pycache__", "*.pyc", "*.pyo", "plugin-release.json",
+)
+shutil.copytree(source, target, ignore=ignore)
+assert not (target / "src/cifereca/plugin-release.json").exists()
+result = install_source(target, keep=3)
 if not result.get("ok") or not result.get("current"):
-    raise SystemExit(f"isolated Core install failed: {result}")
+    raise SystemExit(f"isolated Core-only install failed: {result}")
 PY
 
 runtime_update_dev="$CIFERECA_BIN_DIR/cifereca-update-dev"
@@ -38,6 +51,9 @@ if ! "$runtime_update_dev" --help | grep -q -- '--require-plugins-only'; then
   echo "strict plugins-only updater support is missing from installed runtime" >&2
   exit 1
 fi
+# Seed exactly the selected package through the real strict updater, so the
+# subsequent update can verify inactive state preservation and rollback.
+"$runtime_update_dev" "$archive" --require-plugins-only --expected-sha256 "$digest" --json > "$base/seed.json"
 
 read -r package_id package_version <<<"$(python - "$archive" <<'PY'
 import json
