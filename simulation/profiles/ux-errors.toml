@@ -68,3 +68,8 @@ seed = 20261009
 [services.youth_publishers]
 enabled = true
 seed = 20261009
+
+# Source Éditions Milan simulée, HTTPS officiel inchangé, transport de test injecté.
+[services.milan]
+enabled = true
+seed = 20261009
