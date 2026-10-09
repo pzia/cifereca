@@ -92,3 +92,14 @@ fixture_packages = ["youth-source-booktrust", "youth-bibliography-openlibrary"]
 
 [service.youth_sources.args]
 seed = "--seed"
+
+# HTML publisher contracts, tested with an injected local HTTPX transport.
+[service.youth_publishers]
+script = "youth_publishers/pseudo_youth_publishers_service.py"
+default_port = 8099
+health_path = "/health"
+plugins = []
+fixture_packages = ["youth-source-usborne", "youth-source-ecole-loisirs"]
+
+[service.youth_publishers.args]
+seed = "--seed"

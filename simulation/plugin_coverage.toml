@@ -92,8 +92,8 @@ gap = "Fixtures de métarecherche explicite, doublons et sources invalides"
 
 [package.youth-source-ecole-loisirs]
 data = []
-gap = "Pas de faux service HTTP de recherche avancée ni de recette GTK pour l’école des loisirs"
+gap = "Fixture HTTP avancée testée avec vrai parseur ; aucun parcours GTK complet"
 
 [package.youth-source-usborne]
 data = []
-gap = "Pas de faux service HTTP Browse by Age ni de recette GTK Usborne"
+gap = "Fixture HTML Browse by Age testée avec vrai parseur ; aucun parcours GTK complet"
