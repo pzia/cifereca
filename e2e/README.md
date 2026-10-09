@@ -152,3 +152,34 @@ un message d'échec est visible et le filtre local ne déclenche aucun HTTP.
 
 Cette recette complète celle de BookTrust. Elle exige le merge préalable
 de la PR BookTrust #879 lorsque la PR Milan est empilée sur sa branche.
+
+
+### Deux éditions homonymes, ISBN distincts et âges contradictoires (UX P1 #758)
+
+Les recettes `youth-editions-1024` et `youth-editions-1366` utilisent la
+**vraie interface GTK4/Xvfb**, sans plugin distant ni réseau :
+
+- 3 notices locales synthétiques ont exactement le même titre et la même
+  autrice, mais deux ISBN différents ;
+- BookTrust `5–7 ans` (intérêt) et Milan `à partir de 12 ans` (éditeur)
+  partagent le **premier ISBN** : une seule ligne, **deux preuves d'âge
+  conservées avec leurs sources** et visibles dans le détail ;
+- un **second ISBN** Milan `à partir de 8 ans`, même titre/autrice, doit
+  rester une **autre ligne** et n'afficher que son âge/source ;
+- filtres 6, 9 et 12 ans, nature d'âge intérêt/éditeur, et identité Alex
+  sans entrée, sont vérifiés sur la vraie liste/détail GTK.
+
+8 captures par largeur permettent d'inspecter la distinction des éditions
+et la provenance. Aucun rapprochement automatique par titre/autrice ne doit
+faire fusionner des ISBN différents. Les fiches et ISBN sont fictifs ou
+utilisés uniquement comme données de test structurées ; aucune disponibilité
+éditoriale externe n'est attestée.
+
+#### Visibilité des identifiants d'édition (UX #891, correctif produit #894)
+
+Cette recette vérifie maintenant **l'affichage réel** des deux ISBN dans
+les cellules `Gtk.ListView` mappées (`meta_label`, y compris à 1024 px),
+ainsi que les `Adw.ActionRow` de chacune des deux fiches sélectionnées.
+Les ISBN sont distincts et ne fuient pas d'une fiche à l'autre. Le scénario
+sans ISBN du cache local vérifie la mention **Référence source** dans la fiche,
+sans faux ISBN. Les captures aux deux largeurs restent la preuve visuelle.

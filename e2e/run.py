@@ -72,6 +72,22 @@ SCENARIOS = {
         "width": 1366,
         "milan": True,
     },
+    "youth-editions-1024": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : deux éditions même titre/ISBN différents, âges contradictoires par source, vrai GTK 1024.",
+        "runner": "gtk-youth",
+        "width": 1024,
+        "editions": True,
+    },
+    "youth-editions-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : deux éditions même titre/ISBN différents, âges contradictoires par source, vrai GTK 1366.",
+        "runner": "gtk-youth",
+        "width": 1366,
+        "editions": True,
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -201,6 +217,7 @@ def main() -> int:
                     "--out", str(scenario_dir), "--width", str(width),
                     *(["--booktrust"] if scenario.get("booktrust") else []),
                     *(["--milan"] if scenario.get("milan") else []),
+                    *(["--editions"] if scenario.get("editions") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
                 command = [
