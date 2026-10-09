@@ -149,6 +149,7 @@ def test_non_html_and_oversized_response_are_rejected():
 
 def test_next_cursor_requires_explicit_next_page_link():
     assert next_cursor(LIST_HTML, current_page=2) == "3"
+    assert next_cursor('<a href="?page=3">Next</a>', current_page=2) == "3"
     assert next_cursor('<a href="?page=5">Next</a>', current_page=2) == ""
     assert next_cursor("<p>End</p>", current_page=2) == ""
 
