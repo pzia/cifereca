@@ -168,3 +168,11 @@ def test_youth_conflicting_editions_run_through_existing_real_gtk_runner():
     assert '"01-conflicting-age-sources-preserved"' in source
     assert '"02-second-edition-separated"' in source
     assert '"07-other-profile-stays-empty"' in source
+
+    # #891: assertions target actual mapped GTK list cell labels plus the
+    # Adw.ActionRows of both selected editions, not only catalog records.
+    assert 'assert cell.meta_label.get_mapped()' in source
+    assert 'cell.meta_label.get_text().startswith(f"ISBN {isbn}")' in source
+    assert '("ISBN", "9780306406157") in shown' in source
+    assert '("ISBN", "9780140328721") in shown' in source
+    assert '("Référence source", "booktrust:unknown") in shown' in source
