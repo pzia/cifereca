@@ -78,9 +78,16 @@ La source fournie applique désormais une frontière **publique** avant tout acc
 - refus des IP littérales non globales (loopback, privées, link-local, réservées, multicast, etc.) ;
 - refus des redirections vers une cible non publique ;
 - revalidation de la destination finale, y compris avec un transport injecté ;
-- client HTTP interne avec `trust_env=False` ;
+- transport HTTP(S) interne sans proxy d’environnement, avec résolution DNS publique épinglée sur l’adresse TCP effectivement connectée ;
 - liens article et notice contenus dans RSS/Atom/JSON Feed filtrés par la même règle ;
 - racine JSON Feed obligatoirement objet et `items` obligatoirement liste ;
 - URL manquante conservée vide : elle n’hérite jamais de l’URL du feed.
 
 Les limites existantes restent inchangées : 2 Mio maximum, cinq redirections au plus, aucun corps d’article téléchargé, DTD/entités XML refusées.
+
+
+### Validation P0 du transport RSS
+
+Le chemin de production de `FeedSource` utilise directement `fetch_public` : il ne dépend pas du client `httpx` injectable réservé aux tests historiques. Les tests de non-régression du transport couvrent maintenant ce chemin par défaut et vérifient qu’un nom public résolu vers une adresse privée est refusé avant création du socket, puis qu’un peer différent de l’adresse DNS validée est refusé avant TLS/HTTP.
+
+Le transport épinglé est local à `criticism_feeds.py`. La recherche de références dans le dépôt ne montre pas de réutilisation par d’autres plugins : les autres chemins réseau restent donc hors périmètre de #824 et doivent être audités séparément s’ils nécessitent la même garantie.
