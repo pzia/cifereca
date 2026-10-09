@@ -76,7 +76,8 @@ script = "editorial/pseudo_editorial_service.py"
 default_port = 8097
 health_path = "/health"
 plugins = []
-fixture_packages = ["literary-criticism", "youth-catalog", "constellations"]
+fixture_packages = ["literary-criticism", "youth-catalog", "constellations",
+                    "youth-source-discovery", "youth-detail-enrichment"]
 
 [service.editorial.args]
 seed = "--seed"

@@ -287,3 +287,20 @@ Le plugin n'est pas activé automatiquement : ses URLs officielles restent
 inchangées. Documentation : `simulation/baen/README.md`.
 
 Cette couverture de contrat n'est **pas une preuve E2E GTK**.
+
+## Découverte et rapprochement Jeunesse (JDD spécialisés V2)
+
+`datasetctl prepare` produit deux nouveaux fichiers
+`youth-discovery.json` et `youth-enrichment.json` dans le runtime isolé ;
+un ancien manifeste V1 est reconstruit automatiquement.
+
+Le serveur éditorial expose respectivement
+`/youth/discovery.json` et `/youth/enrichment.json`, **sans les injecter
+automatiquement dans les plugins**. Les tests utilisent les vrais moteurs
+de découverte et de détails avec des callback/caches mémoire injectés :
+```bash
+python3 -m unittest discover -s simulation/tests -p 'test_youth_workflow_contracts.py' -v
+```
+Le rapprochement des livres se fait par identifiants forts, jamais par
+titre seul. Le moteur de découverte ne promeut jamais un candidat sans
+qualification manuelle. Aucun test GTK n'est revendiqué.

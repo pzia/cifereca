@@ -39,3 +39,12 @@ copies internes au même environnement isolé.
 L'intégration GUI, l'abonnement explicite dans l'écran Critiques, les sources
 HTML BookTrust, OpenLibrary et la simulation Baen demeurent des travaux
 distincts (#771, #772, #774).
+
+### Workflows Jeunesse additionnels
+
+Les JDD spécialisés v2 ajoutent deux routes JSON :
+`/youth/discovery.json` (sources candidates, doublons, mauvaises URLs,
+âges explicites et revue manuelle) et `/youth/enrichment.json`
+(preuve ISBN, ambiguïté, conflit d'édition, cloisonnement des identités).
+Ce sont **des fixtures de contrat**, pas des APIs du plugin. Aucune
+découverte distante ni insertion de cache n'est réalisée par le serveur.
