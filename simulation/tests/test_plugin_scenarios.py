@@ -62,7 +62,8 @@ class SpecializedFixturesTests(unittest.TestCase):
             youth = json.loads((a / "youth.json").read_text(encoding="utf-8"))
             self.assertIn("age_boundary_18_no_match", youth["cases"])
             self.assertTrue(any(not record["age_ranges"] for record in youth["records"]))
-            self.assertEqual(len(first["files"]), 7)
+            self.assertEqual(len(first["files"]), 9)
+            self.assertEqual(first["version"], plugin_scenarios.SCHEMA_VERSION)
 
     def test_youth_data_uses_real_normalizer_and_edition_proofs(self):
         from youth_catalog import normalize_record, bibliographic_match
