@@ -131,3 +131,24 @@ la panne HTTP 503 sur une seconde collecte volontaire, la conservation du cache
 et le filtre local produisant un résultat vide sans nouvelle requête.
 Cela ne couvre pas encore l'indisponibilité d'une source distante en production,
 ni la navigation effective vers la notice dans le navigateur.
+
+
+### Milan activé — pagination, notice GTK et panne 503 (UX P1 #758)
+
+Les scénarios `youth-milan-1024` et `youth-milan-1366` installent la **vraie
+extension** `youth-source-milan` dans le store isolé, puis simulent uniquement
+ses réponses HTTP avec `httpx.MockTransport` et les pages HTML versionnées
+de `simulation/milan/pseudo_milan_service.py`. Aucun trafic vers Milan
+n'est effectué.
+
+Sur la vraie GTK/Xvfb, le test confirme l'absence d'accès implicite,
+l'activation de Milan dans la liste des sources, le clic XTEST de collecte,
+les **quatre notices acceptées**, la pagination explicite (une cinquième
+notice), l'âge éditeur attesté et le **Gtk.LinkButton « Voir la notice
+publique »** avec URL HTTPS vérifiée. Le bouton n'est **pas activé** :
+l'ouverture d'un navigateur/portail et l'accès au site réel restent hors
+périmètre. Après HTTP 503 simulé, les cinq notices restent dans le cache,
+un message d'échec est visible et le filtre local ne déclenche aucun HTTP.
+
+Cette recette complète celle de BookTrust. Elle exige le merge préalable
+de la PR BookTrust #879 lorsque la PR Milan est empilée sur sa branche.
