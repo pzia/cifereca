@@ -241,3 +241,43 @@ def test_qualification_fingerprint_changes_when_evidence_changes():
     a = qualification_dossier(discover_sources("books", search=search_a))
     b = qualification_dossier(discover_sources("books", search=search_b))
     assert a.candidates[0].fingerprint != b.candidates[0].fingerprint
+
+
+def test_installed_discovery_package_remains_visible_when_disabled(tmp_path):
+    """Regression #853: the real manager must register the package's custom category."""
+    import json
+    from pathlib import Path
+
+    from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
+
+    manifest_path = Path(__file__).resolve().parents[1] / "cifereca-plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    package_id = manifest["package"]["id"]
+    version = manifest["package"]["version"]
+    plugin_id = manifest["plugins"][0]["id"]
+
+    # Reproduce a first clean installation without activating the optional
+    # metasearch plugin or making network requests.
+    store = PackageStore(tmp_path / "packages")
+    root = store.version_root(package_id, version)
+    root.mkdir(parents=True)
+    (root / "cifereca-plugin.json").write_text(
+        json.dumps(manifest), encoding="utf-8",
+    )
+    store.set_active(package_id, version)
+    manager = PluginManager(
+        package_store=store,
+        state_store=PluginStateStore(tmp_path / "plugin-state.json"),
+    )
+    try:
+        manager.activate()
+        rows = [row for row in manager.diagnostic() if row["package_id"] == package_id]
+        assert len(rows) == 1
+        assert rows[0]["plugin_id"] == plugin_id
+        assert rows[0]["type"] == "youth.discovery"
+        assert rows[0]["state"] == "disabled"
+        assert rows[0]["enabled"] is False
+        assert manager.categories.get("youth.discovery").contract_id == "cifereca.youth-discovery"
+        assert store.active_version(package_id) == version
+    finally:
+        manager.close()
