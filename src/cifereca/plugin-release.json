@@ -6,6 +6,10 @@
       "version": "0.1.9",
       "name": "Baen"
     },
+    "org.cifereca.constellations": {
+      "version": "0.3.0",
+      "name": "Constellations"
+    },
     "org.cifereca.ui.page.diagnostics": {
       "version": "0.1.7",
       "name": "Cifereca Diagnostics"
@@ -15,43 +19,47 @@
       "name": "Ebooks libres et gratuits"
     },
     "org.cifereca.epub-optimizer": {
-      "version": "0.3.1",
+      "version": "0.3.3",
       "name": "Cifereca EPUB/PDF Optimizer"
     },
     "org.cifereca.ui.page.home": {
       "version": "1.0.13",
       "name": "Accueil"
     },
+    "org.cifereca.literary-criticism": {
+      "version": "0.3.1",
+      "name": "Critique littéraire"
+    },
     "org.cifereca.maintenance.library-audit": {
-      "version": "0.2.2",
+      "version": "0.2.4",
       "name": "Cifereca Library Audits"
     },
     "org.cifereca.provider.bnf-catalogue": {
-      "version": "1.0.9",
+      "version": "1.0.10",
       "name": "BnF Catalogue général"
     },
     "org.cifereca.provider.gallica": {
-      "version": "1.2.16",
+      "version": "1.2.18",
       "name": "Gallica"
     },
     "org.cifereca.provider.gutenberg": {
-      "version": "1.2.16",
+      "version": "1.2.17",
       "name": "Project Gutenberg"
     },
     "org.cifereca.provider.kobo": {
-      "version": "1.2.11",
+      "version": "1.2.16",
       "name": "Kobo Suite Provider"
     },
     "org.cifereca.provider.numilog": {
-      "version": "0.1.12",
+      "version": "0.1.15",
       "name": "Numilog"
     },
     "org.cifereca.provider.paris": {
-      "version": "1.2.20",
+      "version": "1.2.24",
       "name": "Bibliothèques de Paris"
     },
     "org.cifereca.recommendations": {
-      "version": "0.2.25",
+      "version": "0.2.26",
       "name": "Recommandations CIFERECA"
     },
     "org.cifereca.runtime.kobo-adept": {
@@ -61,6 +69,38 @@
     "org.cifereca.transport.http": {
       "version": "1.0.4",
       "name": "Transport HTTP"
+    },
+    "org.cifereca.youth-bibliography-openlibrary": {
+      "version": "0.2.0",
+      "name": "Jeunesse — Open Library"
+    },
+    "org.cifereca.youth-catalog": {
+      "version": "0.4.2",
+      "name": "Jeunesse"
+    },
+    "org.cifereca.youth-detail-enrichment": {
+      "version": "0.2.0",
+      "name": "Jeunesse — enrichissement des fiches"
+    },
+    "org.cifereca.youth-source-booktrust": {
+      "version": "0.2.0",
+      "name": "Jeunesse — BookTrust"
+    },
+    "org.cifereca.youth-source-discovery": {
+      "version": "0.2.1",
+      "name": "Jeunesse — Découverte de sources"
+    },
+    "org.cifereca.youth-source-ecole-loisirs": {
+      "version": "0.2.0",
+      "name": "Jeunesse — l'école des loisirs"
+    },
+    "org.cifereca.youth-source-milan": {
+      "version": "0.1.0",
+      "name": "Jeunesse — Éditions Milan"
+    },
+    "org.cifereca.youth-source-usborne": {
+      "version": "0.2.0",
+      "name": "Jeunesse — Usborne"
     }
   }
 }
