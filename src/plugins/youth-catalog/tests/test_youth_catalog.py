@@ -350,6 +350,11 @@ def test_explicit_labels_preserve_original_and_source():
     assert parse_age_label("12–8 ans") == ()
 
 
+def test_invalid_age_confidence_is_not_evidence():
+    for confidence in (float("nan"), float("inf"), -0.1, 1.1, "invalid"):
+        assert parse_age_label("8+", confidence=confidence) == ()
+
+
 def test_cache_filter_rejects_ambiguous_labels_without_remote_collection():
     plugin = YouthCatalogPlugin()
     source = GoodSource()
