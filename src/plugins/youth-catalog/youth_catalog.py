@@ -6,13 +6,10 @@ import re
 from typing import Iterable, Mapping, Protocol, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
+from cifereca.plugin_api.youth_ages import youth_age_from_label
+
 _WS = re.compile(r"\s+")
 _ISBN_CLEAN = re.compile(r"[^0-9Xx]")
-_RANGE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:[-–—]|à|to)\s*(\d{1,2})(?!\d)", re.I)
-_PLUS_RE = re.compile(r"(?<!\d)(\d{1,2})\s*(?:\+|ans?\s+et\s+\+|years?\s+and\s+up)(?!\d)", re.I)
-_FROM_RE = re.compile(r"(?:à\s+partir\s+de|dès|from|ages?\s+from)\s*(\d{1,2})(?!\d)", re.I)
-_UP_TO_RE = re.compile(r"(?:jusqu[’']?à|up\s+to|under)\s*(\d{1,2})(?!\d)", re.I)
-_AGES_RE = re.compile(r"(?:ages?\s*)?(\d{1,2})\s*(?:ans?|years?)?(?!\d)", re.I)
 AGE_KINDS = {"interest", "reading", "recommended", "publisher", "inferred"}
 
 
@@ -156,39 +153,50 @@ def parse_age_label(
     inferred: bool = False,
     confidence: float | None = None,
 ) -> tuple[YouthAgeRange, ...]:
-    text = _text(label)
-    if not text:
+    # Only full labels are evidence; English labels are translated to the
+    # public parser's grammar, never extracted from prose.
+    if not isinstance(label, str) or not 0 < len(label) <= 120:
         return ()
+    if any(ord(char) < 32 or ord(char) == 127 for char in label):
+        return ()
+    text = _text(label)
     kind = normalize_age_kind(age_kind, label=text, inferred=inferred)
-    conf = float(confidence) if confidence is not None else (0.55 if inferred else 1.0)
-    if re.search(r"\b(?:about|approx(?:\.|imately)?|environ|vers)\b", text, re.I):
-        conf = min(conf, 0.8)
-    match = _RANGE_RE.search(text)
-    if match:
-        lo, hi = int(match.group(1)), int(match.group(2))
-    else:
-        match = _FROM_RE.search(text) or _PLUS_RE.search(text)
-        if match:
-            lo, hi = int(match.group(1)), None
-        else:
-            match = _UP_TO_RE.search(text)
-            if match:
-                lo, hi = 0, int(match.group(1))
-            else:
-                match = _AGES_RE.search(text)
-                if not match:
-                    return ()
-                lo = hi = int(match.group(1))
-    if lo > 17:
+    try:
+        conf = float(confidence) if confidence is not None else (0.55 if kind == "inferred" else 1.0)
+    except (TypeError, ValueError):
+        return ()
+    from math import isfinite
+    if not isfinite(conf) or not 0 <= conf <= 1:
+        return ()
+    normalized = youth_age_from_label(label, age_kind=kind, confidence=conf)
+    if normalized is None:
+        explicit = re.sub(r"^(?:interest age|reading age)\s+", "", text, flags=re.I)
+        canonical = ""
+        ranged = re.fullmatch(r"(?:ages?\s+)?(\d{1,2})\s*(?:[-–—]|to)\s*(\d{1,2})(?:\s+years?)?", explicit, re.I)
+        lower = re.fullmatch(r"(?:from|ages? from)\s+(\d{1,2})\s+years?", explicit, re.I)
+        plus = re.fullmatch(r"(\d{1,2})\s*(?:\+|years? and up)", explicit, re.I)
+        upper = re.fullmatch(r"up to\s+(\d{1,2})\s+years?", explicit, re.I)
+        if ranged:
+            canonical = f"{ranged[1]}-{ranged[2]} ans"
+        elif lower or plus:
+            match = lower or plus
+            canonical = f"{match[1]}+"
+        elif upper:
+            canonical = f"jusqu'à {upper[1]} ans"
+        if canonical:
+            normalized = youth_age_from_label(canonical, age_kind=kind, confidence=conf)
+    if normalized is None:
+        return ()
+    lo = normalized.age_min if normalized.age_min is not None else 0
+    hi = normalized.age_max
+    if lo >= 18:
         return ()
     if hi is not None:
         hi = min(17, hi)
-        if hi < lo:
-            return ()
     sid = _fold(source_id)
     return (YouthAgeRange(
-        age_min=lo, age_max=hi, age_kind=kind, source_label=text, source_id=sid,
-        confidence=max(0.0, min(1.0, conf)), provenance=tuple(filter(None, (sid,))),
+        age_min=lo, age_max=hi, age_kind=kind, source_label=label, source_id=sid,
+        confidence=conf, provenance=tuple(filter(None, (sid,))),
     ),)
 
 
@@ -647,7 +655,7 @@ class YouthCatalogIndex:
         format: str = "",
         book_type: str = "",
         themes: Iterable[str] = (),
-        include_inferred: bool = True,
+        include_inferred: bool = False,
     ) -> tuple[YouthBook, ...]:
         q, source, lang, fmt, typ = _fold(query), _fold(source_id), _fold(language), _fold(format), _fold(book_type)
         kind = normalize_age_kind(age_kind) if age_kind else ""
