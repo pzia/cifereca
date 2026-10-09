@@ -106,3 +106,28 @@ observée et les empreintes des captures. Il s'agit d'un parcours GTK4 réel
 avec fixtures de cache, **pas** d'un test HTTP BookTrust/Milan ni d'un
 parcours réseau. Les scénarios des fournisseurs et le cache offline après
 collecte restent à recetter séparément.
+
+
+### BookTrust activé — succès et panne 503 (UX P1 #758)
+
+La commande suivante sélectionne les **quatre** recettes Jeunesse (les deux tests cache
+et les deux tests BookTrust, sur 1024 et 1366 px) :
+
+```bash
+dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth
+```
+
+Les scénarios `youth-booktrust-1024` et `youth-booktrust-1366` installent le
+**vrai package** `youth-source-booktrust` avec `core.plugins.install()`,
+aux côtés de `youth-catalog`. Ils exécutent la vraie page GTK et cliquent
+sur « Collecter cette source » via XTEST. La réponse HTTP passe par
+`httpx.MockTransport` (HTML provenant du simulateur versionné
+`simulation/youth_sources/`) : **aucun appel au site BookTrust** et aucune
+preuve d'état du site réel ne sont revendiqués.
+
+Les captures/rapports vérifient successivement l'absence d'accès réseau lors
+de l'ouverture/du choix de source, la collecte volontaire de deux notices,
+la panne HTTP 503 sur une seconde collecte volontaire, la conservation du cache
+et le filtre local produisant un résultat vide sans nouvelle requête.
+Cela ne couvre pas encore l'indisponibilité d'une source distante en production,
+ni la navigation effective vers la notice dans le navigateur.

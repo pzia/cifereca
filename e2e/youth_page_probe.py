@@ -21,6 +21,7 @@ from time import monotonic
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "environnements" / "openai-chat-debian"))
+sys.path.insert(0, str(ROOT / "simulation"))
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -33,15 +34,24 @@ from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 
 
-def install_real_youth(core: CiferecaCore, work: Path) -> None:
-    source = ROOT / "src/plugins/youth-catalog"
-    archive = work / "youth-catalog.zip"
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
-        for name in ("cifereca-plugin.json", "youth_catalog.py", "youth_page.py"):
-            bundle.write(source / name, name)
-    core.plugins.install(archive)
+def install_real_youth(core: CiferecaCore, work: Path, *, with_booktrust: bool = False) -> None:
+    packages = [
+        ("youth-catalog", ("cifereca-plugin.json", "youth_catalog.py", "youth_page.py")),
+    ]
+    if with_booktrust:
+        packages.append(("youth-source-booktrust", ("cifereca-plugin.json", "booktrust_youth.py")))
+    for name, files in packages:
+        source = ROOT / "src/plugins" / name
+        archive = work / f"{name}.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for filename in files:
+                bundle.write(source / filename, filename)
+        core.plugins.install(archive)
     statuses = {status.descriptor.id: status for status in core.plugins.statuses()}
-    for plugin_id in ("catalog.youth", "ui.page.youth"):
+    plugins = ("catalog.youth", "ui.page.youth")
+    if with_booktrust:
+        plugins += ("youth.source.booktrust",)
+    for plugin_id in plugins:
         assert statuses[plugin_id].state in {"ready", "degraded"}, (
             f"{plugin_id} not activated: {statuses[plugin_id]}"
         )
@@ -73,6 +83,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1024, 1366))
+    parser.add_argument("--booktrust", action="store_true", help="Use the real installed BookTrust source with offline HTTP fixtures")
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -83,6 +94,7 @@ def main() -> int:
         "scenario": "youth-gtk", "git_sha": sha,
         "backend": "GTK4/X11/Xvfb", "screen_width": args.width,
         "real_package": "src/plugins/youth-catalog",
+        "booktrust_source_installed": args.booktrust,
         "steps": [], "status": "RUNNING",
     }
     start = monotonic()
@@ -91,14 +103,43 @@ def main() -> int:
     device = None
     core = CiferecaCore.open(
         no_plugins=False,
-        force_plugins=("catalog.youth", "ui.page.youth"),
+        force_plugins=(
+            ("catalog.youth", "ui.page.youth", "youth.source.booktrust")
+            if args.booktrust else ("catalog.youth", "ui.page.youth")
+        ),
         activate_plugins=False,
     )
     work = tempfile.TemporaryDirectory(prefix="youth-gtk-package-")
-    install_real_youth(core, Path(work.name))
+    install_real_youth(core, Path(work.name), with_booktrust=args.booktrust)
     catalog = core.plugins.service("catalog.youth")
     page = core.plugins.service("ui.page.youth")
     assert catalog is not None and page is not None
+
+    requests = []
+    fault = {"unavailable": False}
+    if args.booktrust:
+        import httpx
+        from youth_sources.pseudo_youth_sources_service import booktrust_listing
+
+        booktrust = core.plugins.service("youth.source.booktrust")
+        assert booktrust is not None, "Installed BookTrust source not available"
+        # Only transport responses are simulated; the installed provider
+        # still validates canonical BookTrust URLs and parses real HTML.
+        def respond(request):
+            assert request.url.host == "www.booktrust.org.uk", request.url
+            requests.append(str(request.url))
+            if fault["unavailable"]:
+                return httpx.Response(503, text="Simulated BookTrust outage", request=request)
+            return httpx.Response(
+                200, content=booktrust_listing(),
+                headers={"content-type": "text/html; charset=utf-8"},
+                request=request,
+            )
+
+        booktrust.client.close()
+        booktrust.client = httpx.Client(
+            transport=httpx.MockTransport(respond), trust_env=False, follow_redirects=False
+        )
 
     def write_report():
         result["duration_seconds"] = round(monotonic() - start, 2)
@@ -174,6 +215,9 @@ def main() -> int:
         assert window.get_width() <= args.width, "Youth window overflows Xvfb viewport"
         assert page.view.identity.get_model().get_n_items() == 2
         assert page.view.age.get_model().get_n_items() == 19, "Only 0..17 are selectable, not 18"
+        if args.booktrust:
+            source_start_ui()
+            return
         assert len(page.view.sources) == 0, "No external youth source should activate in this fixture"
         assert_rows()
         capture("00-empty-cache")
@@ -195,6 +239,84 @@ def main() -> int:
         assert len(merged) == 1 and set(merged[0].provenance) == {"booktrust", "milan"}
         page.view.render_cached()
         later(200, cached_camille)
+
+
+    def collect_button():
+        def walk(widget):
+            if isinstance(widget, Gtk.Button) and widget.get_label() == "Collecter cette source":
+                return widget
+            child = widget.get_first_child()
+            while child is not None:
+                found = walk(child)
+                if found is not None:
+                    return found
+                child = child.get_next_sibling()
+            return None
+        button = walk(page.view.widget)
+        assert button is not None and button.get_mapped(), "Collect action not mapped"
+        return button
+
+    def source_start_ui():
+        assert len(page.view.sources) == 1, "Installed BookTrust source missing from real GTK"
+        assert page.view.sources[0].plugin_id == "youth.source.booktrust"
+        assert page.view.source.get_model().get_n_items() == 2
+        assert_rows()
+        assert not requests, "Opening page triggered unsolicited HTTP"
+        capture("00-source-installed-cache-empty")
+        page.view.source.set_selected(1)
+        later(180, source_collect)
+
+    def source_collect():
+        assert page.view.selected_source_plugin() == "youth.source.booktrust"
+        assert not requests, "Selecting source triggered unsolicited HTTP"
+        assert_rows()
+        device.click_widget(collect_button())
+        later(120, source_success)
+
+    def source_success():
+        if len(page.view.rows) != 2 and monotonic() - start < 16:
+            later(130, source_success)
+            return
+        assert len(requests) == 1, f"Expected one explicit request: {requests!r}"
+        assert requests[0].startswith("https://www.booktrust.org.uk/book-recommendations/bookfinder/")
+        assert {book.record_id for book in page.view.rows.values()} == {
+            "atlas-des-lucioles", "jardin-des-mots"
+        }, f"Unexpected BookTrust results: {page.view.rows!r}"
+        status = page.view.status.get_text()
+        assert "2 notice(s) reçue(s) de BookTrust Bookfinder" in status, status
+        assert len(catalog.search_cached("camille")) == 2
+        capture("01-source-success-cache")
+        result["booktrust_requests_before_outage"] = list(requests)
+        fault["unavailable"] = True
+        device.click_widget(collect_button())
+        later(130, source_failure)
+
+    def source_failure():
+        status = page.view.status.get_text()
+        if "Échec de la source" not in status and monotonic() - start < 23:
+            later(130, source_failure)
+            return
+        assert len(requests) == 2, f"Outage requires second explicit click: {requests!r}"
+        assert "Échec de la source. Le cache précédent est conservé." in status, status
+        assert {book.record_id for book in page.view.rows.values()} == {
+            "atlas-des-lucioles", "jardin-des-mots"
+        }, "Outage destroyed the visible cache"
+        assert len(catalog.search_cached("camille")) == 2
+        result["booktrust_requests_after_outage"] = list(requests)
+        result["outage_message"] = status
+        capture("02-source-unavailable-cache-retained")
+        page.view.age.set_selected(18)  # 17 ans, no matching BookTrust cache
+        later(180, source_local_empty)
+
+    def source_local_empty():
+        assert_rows()
+        assert len(requests) == 2, "Local age filter unexpectedly triggered HTTP"
+        assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
+        capture("03-local-empty-distinct-from-outage")
+        result["status"] = "PASS"
+        write_report()
+        rc[0] = 0
+        app.quit()
 
     def cached_camille():
         assert_rows("zero", "interest-eight", "reading-ten", "seventeen", "inferred", "unknown")
@@ -347,7 +469,7 @@ def main() -> int:
         if rc[0]:
             fail("GTK Youth probe timed out (30s)")
         return False
-    GLib.timeout_add_seconds(30, timed_out)
+    GLib.timeout_add_seconds(45 if args.booktrust else 30, timed_out)
     app.run([sys.argv[0]])
     if not (out / "screen.json").exists():
         result.update(status="FAIL", error="GTK closed before probe completed")
