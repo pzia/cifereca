@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -111,6 +112,7 @@ def main() -> int:
         assert len(image.getcolors(maxcolors=2) or []) != 1, "blank GTK screenshot"
         path = out / f"{name}.png"
         image.save(path)
+        shutil.copyfile(path, out / "screen.png")  # Canonical E2E screenshot, including on failure.
         result["steps"].append({
             "stage": name, "image": path.name,
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
@@ -227,6 +229,36 @@ def main() -> int:
         # The selected book must preserve the real source age label.
         assert page.view.selected_book.age_ranges[0].source_label == "8–12 ans"
         capture("06-keyboard-search-detail")
+        later(160, click_collect_without_source)
+
+    def click_collect_without_source():
+        """XTEST no-source action: explicit feedback, no implicit remote request."""
+        assert not page.view.sources, "No remote youth provider should be installed"
+
+        def find_collect(widget):
+            if isinstance(widget, Gtk.Button) and widget.get_label() == "Collecter cette source":
+                return widget
+            child = widget.get_first_child()
+            while child is not None:
+                button = find_collect(child)
+                if button is not None:
+                    return button
+                child = child.get_next_sibling()
+            return None
+
+        button = find_collect(page.view.widget)
+        assert button is not None and button.get_mapped(), "Collect action is not visible"
+        result["no_source_click"] = device.click_widget(button)
+        later(200, verify_no_source)
+
+    def verify_no_source():
+        message = page.view.status.get_text()
+        assert "Choisissez une source Jeunesse avant de collecter." in message, message
+        assert_rows("interest-eight")
+        assert page.view.selected_book is not None
+        assert page.view.selected_book.record_id == "interest-eight"
+        result["no_source_feedback"] = message
+        capture("07-no-source-feedback")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
