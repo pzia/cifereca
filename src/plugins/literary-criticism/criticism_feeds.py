@@ -30,6 +30,13 @@ def public_url(value):
     return url if address.is_global else ""
 
 
+def public_join(base_url, value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return public_url(urljoin(base_url, raw))
+
+
 def fetch_public(url, *, client=None):
     """Explicit public HTTP(S) GET, bounded redirects/bytes/time, no credentials."""
     import httpx
@@ -89,7 +96,7 @@ def parse_feed(payload, url, *, limit=100):
             raise ValueError('Objet JSON Feed attendu')
         if not str(raw.get('version', '')).startswith('https://jsonfeed.org/version/'):
             raise ValueError('JSON Feed attendu')
-        return [{'title': r.get('title'), 'url': public_url(urljoin(url, str(r.get('url') or r.get('external_url') or ''))),
+        return [{'title': r.get('title'), 'url': public_join(url, r.get('url') or r.get('external_url')),
                  'critic_author': ', '.join(a.get('name', '') for a in r.get('authors', []) if isinstance(a, dict)),
                  'published_at': date_text(r.get('date_published')), 'excerpt': r.get('summary', ''),
                  'language': r.get('language') or raw.get('language', ''), 'book': r.get('_cifereca_book', {})}
@@ -118,14 +125,14 @@ def parse_feed(payload, url, *, limit=100):
             link = next((el.get('href', '') for el in item.findall(atom+'link') if el.get('rel', 'alternate') == 'alternate'), '')
         isbn = [el.text or '' for el in item.findall(dc+'identifier') if (el.text or '').lower().startswith('urn:isbn:')]
         rows.append({'title': text('title') or text(atom+'title'),
-            'url': public_url(urljoin(url, link)),
+            'url': public_join(url, link),
             'critic_author': text('author') or text(dc+'creator') or text(atom+'author/'+atom+'name'),
             'published_at': date_text(text('pubDate') or text(atom+'published') or text(atom+'updated') or text(dc+'date')),
             'excerpt': text('description') or text(atom+'summary'),
             'language': text(dc+'language') or language,
             # Never treat the critic as the author of the reviewed book.
             'book': {'title': text(bookns+'title'), 'authors': [el.text or '' for el in item.findall(bookns+'author')],
-                     'isbns': [s[9:] for s in isbn], 'notice_url': public_url(urljoin(url, text(bookns+'notice')))}})
+                     'isbns': [s[9:] for s in isbn], 'notice_url': public_join(url, text(bookns+'notice'))}})
     return rows
 
 
