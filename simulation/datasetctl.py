@@ -900,6 +900,7 @@ def command_status(args, catalog) -> int:
 
 
 def specialized_status(profile: dict) -> dict:
+    import plugin_scenarios
     config = profile.get("specialized") or {}
     target = profile_runtime(profile) / "specialized"
     enabled = config.get("enabled", False) is True
@@ -911,7 +912,7 @@ def specialized_status(profile: dict) -> dict:
         files = manifest.get("files", {})
         result["files"] = len(files)
         result["complete"] = (
-            manifest.get("version") == __import__("plugin_scenarios").SCHEMA_VERSION
+            manifest.get("version") == plugin_scenarios.SCHEMA_VERSION
             and manifest.get("seed") == int(config.get("seed", 20261008))
             and isinstance(files, dict) and bool(files)
             and all(
