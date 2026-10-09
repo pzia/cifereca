@@ -37,7 +37,7 @@ def booktrust_listing(*, page: int = 1, empty: bool = False,
     eligible = list(DATA)
     if age_group:
         import re
-        group = re.search(r"(\\d+)\\s+to\\s+(\\d+)", age_group, flags=re.I)
+        group = re.search(r"(\d+)\s+to\s+(\d+)", age_group, flags=re.I)
         if group is None:
             eligible = []
         else:
