@@ -179,8 +179,10 @@ def _card_authors(tokens, start: int, end: int) -> tuple[str, ...]:
             continue
         cleaned = _text(value)
         low = _fold(cleaned)
-        if not cleaned or low in _TYPES or low.startswith("- collection") or low.startswith("isbn:"):
+        if not cleaned:
             continue
+        if low in _TYPES or low.startswith("- collection") or low.startswith("isbn:"):
+            return ()
         if len(cleaned) > 140 or cleaned.endswith("..."):
             return ()
         return tuple(part.strip() for part in cleaned.split(",") if part.strip())
