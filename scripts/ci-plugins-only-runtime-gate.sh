@@ -28,12 +28,17 @@ mkdir -p "$CIFERECA_BIN_DIR" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOM
 # install every optional plugin and would make this targeted gate dependent on
 # unrelated provider visibility; full-release smoke belongs to its own gate.
 PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" python - "$base/core-only-source" <<'PY'
+import os
 import shutil
 import sys
 from pathlib import Path
 from cifereca.updater import install_source
 
-source = Path.cwd()
+# Release job pins the installation source to the GitHub-published Core tag.
+# PR validation intentionally uses its checkout while no Core release exists.
+source = Path(os.environ.get("CIFERECA_P0_CORE_SOURCE") or Path.cwd()).resolve()
+if not source.is_dir() or not (source / "VERSION").is_file():
+    raise SystemExit(f"Core source absent from runtime gate: {source}")
 target = Path(sys.argv[1])
 ignore = shutil.ignore_patterns(
     ".git", ".venv", ".updates", "release", "dist", "build",
