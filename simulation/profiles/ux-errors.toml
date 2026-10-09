@@ -53,3 +53,8 @@ seed = 20261006
 [specialized]
 enabled = true
 seed = 20261008
+
+# Réponses BookTrust et OpenLibrary synthétiques; aucun domaine réel redirigé.
+[services.youth_sources]
+enabled = true
+seed = 20261009
