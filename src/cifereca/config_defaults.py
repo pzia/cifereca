@@ -45,6 +45,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "diagnostics": {"enabled": True, "level": "normal"},
     "ui": {"width": 1320, "height": 840},
     "experimental_actions": False,
+    # LLM is never started and no book data can leave the device by default.
+    "llm": {
+        "enabled": False,
+        "provider": "openai-compatible",
+        "endpoint": "",
+        "model": "",
+        "allow_remote": False,
+        "api_key_env": "",
+        "timeout_seconds": 5,
+        "max_input_chars": 4000,
+        "max_output_tokens": 256,
+    },
     "acquisition": {"acsm_retention_days": 7},
     "library": {"directory": "~/EBooks"},
     "kobo_backup": {
