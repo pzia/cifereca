@@ -81,12 +81,15 @@ class PluginManager:
         disable_plugins: bool = False,
         force_plugins: Iterable[str] = (),
         brokers: dict[str, object] | None = None,
+        core_services: dict[str, object] | None = None,
         python_dependencies: PythonDependencyManager | None = None,
     ) -> None:
         self._builtin_ui = bool(builtin_ui)
         self._disable_plugins = bool(disable_plugins)
         self._force_plugins = {str(value).strip() for value in force_plugins if str(value).strip()}
         self._brokers = dict(brokers or {})
+        # Reserved opt-in services are Core-owned, not plugin implementations.
+        self._core_services = dict(core_services or {})
         self._service_subscribers: dict[str, list[Callable[[], None]]] = {}
         self._registry_generation = 0
         self._published_category_signatures: dict[str, tuple[object, ...]] = {}
@@ -586,6 +589,8 @@ class PluginManager:
         self._import_roots.clear()
 
     def service(self, plugin_id: str) -> object | None:
+        if plugin_id in self._core_services:
+            return self._core_services[plugin_id]
         record = self._records.get(plugin_id)
         return record.service if record is not None else None
 
