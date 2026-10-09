@@ -6,6 +6,8 @@ on:
     paths:
       - 'e2e/**'
       - 'src/cifereca/gui/**'
+      - 'src/plugins/youth-catalog/**'
+      - 'simulation/plugin_scenarios.py'
       - '.github/workflows/e2e-smoke.yml'
       - 'tests/test_e2e_runner_contract.py'
 
@@ -37,6 +39,11 @@ jobs:
         env:
           CIFERECA_E2E_PYTHON: /usr/bin/python3
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario search-filter-p0
+
+      - name: Replay Jeunesse P1 on real GTK at 1024 and 1366 px
+        env:
+          CIFERECA_E2E_PYTHON: /usr/bin/python3
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin org.cifereca.youth-catalog
 
       - name: Publish E2E summary
         if: always()
