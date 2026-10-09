@@ -72,7 +72,7 @@ gap = "Timeout, redirection, annulation, 429, cache HTTP"
 
 [package.youth-bibliography-openlibrary]
 data = []
-gap = "Réponses OpenLibrary structurées et contresens bibliographiques"
+gap = "Réponses OpenLibrary structurées en HTTP local, sans vrai E2E d’enrichissement"
 
 [package.youth-catalog]
 data = ["specialized-seed"]
@@ -84,8 +84,20 @@ gap = "Enrichissements concordants/contradictoires, latences, cache"
 
 [package.youth-source-booktrust]
 data = []
-gap = "Faux HTML Bookfinder/BookTrust et pagination HTTP absents"
+gap = "Pages HTML et pagination simulées en HTTP local ; écran GTK non recetté"
 
 [package.youth-source-discovery]
 data = []
 gap = "Fixtures de métarecherche explicite, doublons et sources invalides"
+
+[package.youth-source-ecole-loisirs]
+data = []
+gap = "Fixture HTTP avancée testée avec vrai parseur ; aucun parcours GTK complet"
+
+[package.youth-source-usborne]
+data = []
+gap = "Fixture HTML Browse by Age testée avec vrai parseur ; aucun parcours GTK complet"
+
+[package.youth-source-milan]
+data = []
+gap = "Catalogue et fiches produit testés en unitaires ; pas de simulateur HTTP dédié ni de parcours GTK vérifié"
