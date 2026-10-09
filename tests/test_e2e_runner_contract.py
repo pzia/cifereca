@@ -176,3 +176,16 @@ def test_youth_conflicting_editions_run_through_existing_real_gtk_runner():
     assert '("ISBN", "9780306406157") in shown' in source
     assert '("ISBN", "9780140328721") in shown' in source
     assert '("Référence source", "booktrust:unknown") in shown' in source
+
+
+def test_youth_active_sources_retry_only_after_explicit_gtk_click():
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert "def booktrust_retry_after_outage():" in source
+    assert "def booktrust_recovered():" in source
+    assert '"04-source-recovered-after-503"' in source
+    assert 'assert requests[0] == requests[1] == requests[2]' in source
+    assert "def milan_retry_after_outage():" in source
+    assert "def milan_recovered():" in source
+    assert '"06-milan-recovered-first-page"' in source
+    assert "len(requests) == 22" in source
+    assert 'assert len(page.view.rows) == 4, "Authoritative recovery' in source

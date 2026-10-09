@@ -365,6 +365,34 @@ def main() -> int:
         assert len(requests) == 2, "Local age filter unexpectedly triggered HTTP"
         assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
         capture("03-local-empty-distinct-from-outage")
+        # The same source must recover through a new deliberate click.
+        page.view.age.set_selected(0)
+        later(180, booktrust_retry_after_outage)
+
+    def booktrust_retry_after_outage():
+        assert_rows("atlas-des-lucioles", "jardin-des-mots")
+        assert len(requests) == 2, "Clearing local filter must not fetch remote"
+        assert "Échec de la source" in page.view.status.get_text()
+        fault["unavailable"] = False
+        device.click_widget(collect_button())
+        later(140, booktrust_recovered)
+
+    def booktrust_recovered():
+        if (
+            len(requests) != 3
+            or "2 notice(s) reçue(s) de BookTrust Bookfinder" not in page.view.status.get_text()
+        ) and monotonic() - start < 37:
+            later(140, booktrust_recovered)
+            return
+        assert len(requests) == 3, f"Recovery requires exactly one click: {requests!r}"
+        assert requests[0] == requests[1] == requests[2], "Retry changed canonical BookTrust URL"
+        assert_rows("atlas-des-lucioles", "jardin-des-mots")
+        assert len(catalog.search_cached("camille")) == 2
+        status = page.view.status.get_text()
+        assert "Échec de la source" not in status, status
+        result["booktrust_requests_after_recovery"] = list(requests)
+        result["booktrust_recovery_feedback"] = status
+        capture("04-source-recovered-after-503")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
@@ -500,6 +528,32 @@ def main() -> int:
         assert len(requests) == 13, "Local age filter unexpectedly contacted Milan"
         assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
         capture("05-milan-empty-without-request")
+        # Exit local no-results filter; only a further XTEST click may retry.
+        page.view.age.set_selected(0)
+        later(200, milan_retry_after_outage)
+
+    def milan_retry_after_outage():
+        assert len(page.view.rows) == 5
+        assert len(requests) == 13, "Clearing local filter must not fetch Milan"
+        assert "Échec de la source" in page.view.status.get_text()
+        fault["unavailable"] = False
+        device.click_widget(collect_button())
+        later(180, milan_recovered)
+
+    def milan_recovered():
+        status = page.view.status.get_text()
+        if (len(requests) != 22 or "4 notice(s) reçue(s) de Éditions Milan" not in status) and monotonic() - start < 49:
+            later(170, milan_recovered)
+            return
+        assert len(requests) == 22, f"Retry should fetch listing + eight details: {requests!r}"
+        assert requests[13] == requests[0], "Recovery did not restart at first Milan catalogue page"
+        assert len(page.view.rows) == 4, "Authoritative recovery must replace, not append stale page-two results"
+        assert len(catalog.search_cached("camille")) == 4
+        assert page.view.next_cursor == "2", "Recovery should expose the fresh second page"
+        assert "page suivante disponible" in status and "Échec de la source" not in status, status
+        result["milan_requests_after_recovery"] = list(requests)
+        result["milan_recovery_feedback"] = status
+        capture("06-milan-recovered-first-page")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
@@ -621,6 +675,17 @@ def main() -> int:
         assert any(title == "Sources" and "booktrust" in sub and "milan" in sub for title, sub in shown), shown
         result["same_isbn_detail"] = shown
         capture("01-conflicting-age-sources-preserved")
+        later(140, editions_first_isbn_in_view)
+
+    def editions_first_isbn_in_view():
+        scroller = page.view.master._page.detail.body_scroll
+        adjustment = scroller.get_vadjustment()
+        adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        later(200, editions_first_isbn_scrolled)
+
+    def editions_first_isbn_scrolled():
+        assert ("ISBN", "9780306406157") in detail_rows()
+        capture("01b-first-isbn-visible-after-scroll")
         page.view.master._page.selection.set_selected(1)
         later(220, editions_second_detail)
 
@@ -636,6 +701,17 @@ def main() -> int:
         assert not any("source booktrust" in sub for _, sub in shown), shown
         result["different_isbn_detail"] = shown
         capture("02-second-edition-separated")
+        later(140, editions_second_isbn_in_view)
+
+    def editions_second_isbn_in_view():
+        scroller = page.view.master._page.detail.body_scroll
+        adjustment = scroller.get_vadjustment()
+        adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        later(200, editions_second_isbn_scrolled)
+
+    def editions_second_isbn_scrolled():
+        assert ("ISBN", "9780140328721") in detail_rows()
+        capture("02b-second-isbn-visible-after-scroll")
         page.view.age.set_selected(7)  # âge 6: seulement BookTrust 5-7
         later(180, editions_age_six)
 

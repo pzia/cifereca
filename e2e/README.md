@@ -183,3 +183,24 @@ ainsi que les `Adw.ActionRow` de chacune des deux fiches sélectionnées.
 Les ISBN sont distincts et ne fuient pas d'une fiche à l'autre. Le scénario
 sans ISBN du cache local vérifie la mention **Référence source** dans la fiche,
 sans faux ISBN. Les captures aux deux largeurs restent la preuve visuelle.
+
+### Reprise explicite après panne distante (UX #758)
+
+Les scénarios existants `youth-booktrust-1024/1366` et
+`youth-milan-1024/1366` vérifient désormais toute la séquence
+**succès → HTTP 503 → cache conservé → filtre local sans requête →
+nouveau clic XTEST après rétablissement → succès**. L'extension réelle
+reste installée ; le simulateur ne remplace que les réponses HTTP.
+
+BookTrust : exactement trois requêtes, une par clic ; les deux notices
+restent visibles et le message d'échec disparaît après reprise.
+Milan : 9 requêtes pour page 1, 3 pour page 2, 1 pour la panne,
+9 après reprise explicite (22 au total). La reprise remplace le cache de
+cinq notices par les quatre notices fraîches de la première page et
+réactive la pagination, sans doublons ni perte silencieuse de provenance.
+
+Les étapes supplémentaires sont capturées dans
+`04-source-recovered-after-503.png` et
+`06-milan-recovered-first-page.png` aux deux résolutions. Ceci ne
+prouve pas la disponibilité des services publics ni la reconnexion
+réseau réelle : l'intégralité des réponses HTTP reste simulée.
