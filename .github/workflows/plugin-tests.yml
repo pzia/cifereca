@@ -4,6 +4,16 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - 'src/plugins/**'
+      - 'src/cifereca/**'
+      - '!src/cifereca/gui/**'
+      - '!src/cifereca/builtin_ui/**'
+      - '!src/cifereca/app.py'
+      - 'pyproject.toml'
+      - 'VERSION'
+      - 'scripts/ci-run-plugin-tests.sh'
+      - '.github/workflows/plugin-tests.yml'
 
 permissions:
   contents: read
