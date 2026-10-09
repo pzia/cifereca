@@ -94,6 +94,8 @@ def _work_url(key: object) -> str:
         if (kind == "works" and not olid.endswith("W")) or (kind == "books" and not olid.endswith("M")):
             return ""
         return f"{BASE}/{kind}/{olid}"
+    if "/" in raw or "://" in raw:
+        return ""
     olid = normalize_olid(raw)
     if not olid:
         return ""
