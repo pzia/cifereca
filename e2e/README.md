@@ -204,3 +204,23 @@ Les étapes supplémentaires sont capturées dans
 `06-milan-recovered-first-page.png` aux deux résolutions. Ceci ne
 prouve pas la disponibilité des services publics ni la reconnexion
 réseau réelle : l'intégralité des réponses HTTP reste simulée.
+
+### Notice publique : lancement réel sans trafic Internet (UX P1 #758)
+
+Les deux scénarios `youth-milan-1024` et `youth-milan-1366` valident
+désormais la **navigation GTK réelle** : après une collecte volontaire avec
+le vrai adaptateur Milan et un transport HTTP simulé, un clic de souris XTEST
+sur le vrai `Gtk.LinkButton « Voir la notice publique »` est envoyé.
+
+Dans le HOME/XDG **temporaire isolé du runner**, le test crée un gestionnaire
+d'URI HTTPS local via `Gio.AppInfo` et vérifie qu'il est bien le défaut
+**avant** d'autoriser le clic. Ce faux navigateur écrit uniquement l'URL
+reçue dans `local-https-handler.jsonl` et n'effectue aucune requête. La
+recette vérifie une invocation **exactement** égale à l'URL Milan affichée,
+aucun clic implicite et aucune modification du cache ni nouvelle collecte.
+
+L'étape `02b-milan-notice-launched-to-offline-browser.png` et le JSON
+`milan_notice_handler_invocations` prouvent le passage
+**clic GTK → gestionnaire HTTPS local de test**. Ce protocole ne prouve
+pas qu'un navigateur externe réel est installé ni la disponibilité du site
+éditeur. Hors du XDG de test, aucune association HTTPS n'est modifiée.

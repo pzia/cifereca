@@ -189,3 +189,17 @@ def test_youth_active_sources_retry_only_after_explicit_gtk_click():
     assert '"06-milan-recovered-first-page"' in source
     assert "len(requests) == 22" in source
     assert 'assert len(page.view.rows) == 4, "Authoritative recovery' in source
+
+
+def test_youth_notice_real_gtk_click_launches_isolated_https_sink_only():
+    # #758: ensure the real widget is clicked, and the resulting Gio-default
+    # handler invocation is asserted (a mere Gtk.LinkButton.uri isn't proof).
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert "Gio.AppInfo.create_from_commandline(" in source
+    assert 'set_as_default_for_type("x-scheme-handler/https")' in source
+    assert 'Gio.AppInfo.get_default_for_uri_scheme("https")' in source
+    assert 'assert not notice_sink_path.exists()' in source
+    assert 'device.click_widget(notice[0])' in source
+    assert 'assert invocations == [[result["milan_notice_uri"]]]' in source
+    assert '"02b-milan-notice-launched-to-offline-browser"' in source
+    assert 'assert len(requests) == 9, "Clicking notice must not re-collect' in source
