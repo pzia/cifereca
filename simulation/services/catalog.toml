@@ -67,3 +67,16 @@ plugins = ["provider.ebooksgratuits"]
 [service.ebooksgratuits.args]
 books = "--books"
 seed = "--seed"
+
+# Fixtures HTTP de contrats pour les plugins jeunesse.
+# Les vrais plugins conservent leurs domaines HTTPS ; les tests injectent
+# uniquement un transport HTTPX redirigé vers ce serveur local.
+[service.youth_sources]
+script = "youth_sources/pseudo_youth_sources_service.py"
+default_port = 8098
+health_path = "/health"
+plugins = []
+fixture_packages = ["youth-source-booktrust", "youth-bibliography-openlibrary"]
+
+[service.youth_sources.args]
+seed = "--seed"
