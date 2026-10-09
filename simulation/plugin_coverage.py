@@ -47,6 +47,9 @@ def build_report(*, matrix_path: Path = MATRIX, packages_dir: Path = PACKAGES,
             raise ValueError(f"{name}: entrée data invalide")
         served = sorted(name for name, s in catalog.items()
                         if any(pid in s.get("plugins", []) for pid in ids))
+        # An HTTP fixture is NOT an enabled provider or a verified E2E flow.
+        fixture_services = sorted(service for service, spec in catalog.items()
+                                  if name in spec.get("fixture_packages", []))
         # A declared service is not considered covered unless a matching manifest declares it.
         unknown = sorted(set(data) & SERVICE_NAMES - set(served))
         if unknown:
@@ -58,6 +61,7 @@ def build_report(*, matrix_path: Path = MATRIX, packages_dir: Path = PACKAGES,
             "plugin_ids": ids,
             "ui_routes": [p["id"] for p in plugins if p.get("type") == "ui.page"],
             "services": served,
+            "http_fixtures": fixture_services,
             "data": data,
             "unit_test_files": len(tests),
             "e2e_gtk_verified": False,
@@ -69,6 +73,7 @@ def build_report(*, matrix_path: Path = MATRIX, packages_dir: Path = PACKAGES,
     stats = {
         "packages": len(packages),
         "with_service": sum(bool(r["services"]) for r in packages),
+        "with_http_fixture": sum(bool(r["http_fixtures"]) for r in packages),
         "with_data": sum(bool(r["data"]) for r in packages),
         "without_data": sum(not r["data"] for r in packages),
         "with_unit_tests": sum(r["unit_test_files"] > 0 for r in packages),
