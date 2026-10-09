@@ -254,3 +254,14 @@ pointant explicitement sur la boucle locale (voir
 `simulation/tests/test_youth_sources_contract.py`), **sans modifier**
 leurs domaines autorisés. Ce mécanisme **n'injecte pas** automatiquement
 les résultats dans l'écran GTK Jeunesse. Voir `simulation/youth_sources/README.md`.
+
+## Baen — catalogue HTML et EPUB publics fictifs
+
+Le service `baen` est démarré sur `127.0.0.1:8100` pour les profils
+`ux-small`, `ux-all` et `ux-errors`. Les tests HTTP valident le vrai
+plugin Baen sur les résultats, les détails publics, le lien EPUB et les
+erreurs 429/503, avec un transport **injecté** et sans réseau externe.
+Le plugin n'est pas activé automatiquement : ses URLs officielles restent
+inchangées. Documentation : `simulation/baen/README.md`.
+
+Cette couverture de contrat n'est **pas une preuve E2E GTK**.
