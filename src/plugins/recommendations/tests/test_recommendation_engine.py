@@ -1,4 +1,11 @@
-from recommendation_engine import build_queries, rank_candidates
+from recommendation_engine import (
+    build_profile,
+    build_queries,
+    candidate_key,
+    identifier_values,
+    is_already_present,
+    rank_candidates,
+)
 
 
 def test_rank_excludes_existing_and_prefers_matching_author_subject():
@@ -96,3 +103,102 @@ def test_owned_filter_can_be_disabled_explicitly():
     shown = rank_candidates(books, [[owned]], exclude_owned=False)
     assert len(shown) == 1
     assert shown[0].item["title"] == "Possédé"
+
+
+
+def test_identifier_values_namespace_provider_and_source_item_together():
+    left = {
+        "title": "A",
+        "identifiers": {"provider": "kobo", "source_item_id": "42"},
+    }
+    right = {
+        "title": "B",
+        "identifiers": {"provider": "paris", "source_item_id": "42"},
+    }
+    other = {
+        "title": "C",
+        "identifiers": {"provider": "kobo", "source_item_id": "43"},
+    }
+
+    assert identifier_values(left) == {"source:kobo:42"}
+    assert identifier_values(right) == {"source:paris:42"}
+    assert identifier_values(other) == {"source:kobo:43"}
+    assert candidate_key(left) != candidate_key(right)
+    assert candidate_key(left) != candidate_key(other)
+
+
+def test_provider_name_alone_is_not_a_strong_identifier():
+    item = {
+        "title": "Livre",
+        "author": "Autrice",
+        "identifiers": {"provider": "kobo"},
+    }
+    assert identifier_values(item) == set()
+    assert candidate_key(item).startswith("ta:")
+
+
+def test_isbn10_and_isbn13_are_checksum_validated_and_canonicalized():
+    isbn10 = {"title": "A", "isbn10": "0-306-40615-2"}
+    isbn13 = {"title": "B", "identifiers": {"isbn13": "9780306406157"}}
+    assert identifier_values(isbn10) == {"isbn:9780306406157"}
+    assert identifier_values(isbn13) == {"isbn:9780306406157"}
+    assert candidate_key(isbn10) == candidate_key(isbn13)
+
+
+def test_invalid_isbn_is_not_a_strong_identifier():
+    item = {
+        "title": "Livre",
+        "author": "Autrice",
+        "identifiers": {"isbn13": "9780000000000"},
+    }
+    assert identifier_values(item) == set()
+    assert candidate_key(item).startswith("ta:")
+
+
+def test_different_identifier_schemes_cannot_collide_on_same_raw_value():
+    doi = {"title": "A", "identifiers": {"doi": "10.1000/xyz"}}
+    ark = {"title": "B", "identifiers": {"ark": "10.1000/xyz"}}
+    assert identifier_values(doi) == {"doi:101000xyz"}
+    assert identifier_values(ark) == {"ark:101000xyz"}
+    assert candidate_key(doi) != candidate_key(ark)
+
+
+def test_owned_detection_does_not_match_provider_or_source_item_individually():
+    profile = build_profile([
+        {
+            "title": "Possédé",
+            "author": "Alice",
+            "identifiers": {"provider": "kobo", "source_item_id": "42"},
+        }
+    ])
+    same_provider_other_item = {
+        "title": "Autre",
+        "author": "Alice",
+        "identifiers": {"provider": "kobo", "source_item_id": "43"},
+    }
+    other_provider_same_item = {
+        "title": "Autre 2",
+        "author": "Alice",
+        "identifiers": {"provider": "paris", "source_item_id": "42"},
+    }
+    exact = {
+        "title": "Autre titre",
+        "author": "Bob",
+        "identifiers": {"provider": "kobo", "source_item_id": "42"},
+    }
+
+    assert not is_already_present(profile, same_provider_other_item)
+    assert not is_already_present(profile, other_provider_same_item)
+    assert is_already_present(profile, exact)
+
+
+def test_owned_detection_matches_canonical_isbn_across_10_and_13_forms():
+    profile = build_profile([
+        {"title": "Possédé", "author": "Alice", "isbn10": "0306406152"}
+    ])
+    candidate = {
+        "title": "Autre titre",
+        "author": "Bob",
+        "isbn13": "9780306406157",
+    }
+    assert is_already_present(profile, candidate)
