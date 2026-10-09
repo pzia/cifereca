@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+import math
 from html.parser import HTMLParser
 import ipaddress
 import re
@@ -21,6 +23,11 @@ _STRONG_PATTERNS = (
 )
 
 _GENERIC_AGE = re.compile(r"\b(\d{1,2})\s*(?:\+|ans?\b|years?\s+(?:old|and\s+up)\b)", re.I)
+_MONTH_AGE = re.compile(
+    r"\b(?:age\s*:?\s*|from\s+|à\s+partir\s+de\s+|dès\s+)?"
+    r"(\d{1,3})\s*\+?\s*(?:months?|mois)\b",
+    re.I,
+)
 _YOUTH_CONTEXT = re.compile(
     r"\b(?:book|books|reading|reader|children|child|kids?|youth|teen|teens|young\s+adult|"
     r"livre|livres|lecture|lecteur|lectrice|enfant|enfants|jeunesse|ado|ados|adolescent|adolescente)\b",
@@ -84,6 +91,8 @@ class AgeEvidence:
     age_max: int | None
     strength: int
     origin: str
+    unit: str = "years"
+    age_min_months: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +112,31 @@ class DiscoveryReport:
     query: str
     candidates: tuple[SourceCandidate, ...]
     inspected_pages: int
+    search_errors: tuple[str, ...] = ()
+    fetch_errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class QualificationCandidate:
+    fingerprint: str
+    domain: str
+    title: str
+    homepage_url: str
+    score: int
+    status: str
+    evidence: tuple[AgeEvidence, ...]
+    evidence_kinds: tuple[str, ...]
+    evidence_origins: tuple[str, ...]
+    sample_urls: tuple[str, ...]
+    diagnostics: tuple[str, ...]
+    manual_review_required: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class QualificationDossier:
+    schema_version: int
+    query: str
+    candidates: tuple[QualificationCandidate, ...]
     search_errors: tuple[str, ...] = ()
     fetch_errors: tuple[str, ...] = ()
 
@@ -169,6 +203,22 @@ def detect_age_evidence(text: object, *, origin: str = "snippet") -> tuple[AgeEv
             if item not in found:
                 found.append(item)
                 spans.append(match.span())
+
+    for match in _MONTH_AGE.finditer(value):
+        amount = int(match.group(1))
+        if amount < 0 or amount >= 18 * 12:
+            continue
+        projected = int(math.ceil(amount / 12)) if amount else 0
+        if projected >= 18:
+            continue
+        label = _text(match.group(0))
+        item = AgeEvidence(
+            "publisher", label, projected, None, 90, origin,
+            unit="months", age_min_months=amount,
+        )
+        if item not in found:
+            found.append(item)
+            spans.append(match.span())
 
     for match in _GENERIC_AGE.finditer(value):
         if any(start <= match.start() < end or start < match.end() <= end for start, end in spans):
