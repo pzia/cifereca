@@ -74,17 +74,17 @@ def test_mmr_increases_author_diversity():
 
 def test_owned_filter_uses_explicit_identifier_before_title_author_fallback():
     books = [
-        {"title": "Même titre", "author": "Alice", "isbn": "9781111111111"},
+        {"title": "Même titre", "author": "Alice", "isbn": "9780306406157"},
     ]
     other_edition = {
         "title": "Même titre",
         "author": "Alice",
-        "isbn": "9782222222222",
+        "isbn": "9780140328721",
         "metadata": {"subjects": ["histoire"]},
         "source_provider": "p1",
     }
     ranked = rank_candidates(books, [[other_edition]], exclude_owned=True)
-    assert [row.item["isbn"] for row in ranked] == ["9782222222222"]
+    assert [row.item["isbn"] for row in ranked] == ["9780140328721"]
 
 
 def test_owned_filter_can_be_disabled_explicitly():
@@ -201,4 +201,21 @@ def test_owned_detection_matches_canonical_isbn_across_10_and_13_forms():
         "author": "Bob",
         "isbn13": "9780306406157",
     }
+    assert is_already_present(profile, candidate)
+
+
+
+def test_owned_fallback_never_matches_on_title_alone_without_author():
+    profile = build_profile([
+        {"title": "Titre générique", "author": ""},
+    ])
+    candidate = {"title": "Titre générique", "author": ""}
+    assert not is_already_present(profile, candidate)
+
+
+def test_owned_fallback_still_matches_exact_title_and_author_when_no_ids_exist():
+    profile = build_profile([
+        {"title": "Titre précis", "author": "Alice Auteur"},
+    ])
+    candidate = {"title": " titre précis ", "author": "ALICE AUTEUR"}
     assert is_already_present(profile, candidate)
