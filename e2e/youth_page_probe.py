@@ -860,6 +860,65 @@ def main() -> int:
     def finish_keyboard():
         assert page.view.query.get_text() == "Forest"
         assert_rows("interest-eight")
+        # #910 exploratory observation: emit real GTK activate signals via
+        # XTEST without prescribing an (unimplemented) product behavior.
+        # Passing E2E means the observation is genuine, NOT that #910 is fixed.
+        # Gtk.Entry contains an internal Gtk.Text focus target in GTK4;
+        # Entry.has_focus() alone is not a reliable keyboard assertion.
+        entry_has_focus = bool(page.view.query.has_focus())
+        assert page.view.selected_source_plugin() == "", "Local fixture unexpectedly has a remote source"
+        result["keyboard_enter_observation"] = {
+            "status_before": page.view.status.get_text(),
+            "entry_widget_has_focus": entry_has_focus,
+            "query": page.view.query.get_text(),
+            "identity_id": page.view.identity_id(),
+            "source_plugin": page.view.selected_source_plugin(),
+            "row_ids": sorted(book.record_id for book in page.view.rows.values()),
+            "gtk_activate_signals": 0,
+            "criterion_910_satisfied": None,
+            "note": "Observational UX probe; PASS does not mean Enter works as specified in #910.",
+        }
+        def activated(_entry):
+            result["keyboard_enter_observation"]["gtk_activate_signals"] += 1
+        page.view.query.connect("activate", activated)
+        keys("Return")
+        later(170, inspect_return)
+
+    def inspect_return():
+        audit = result["keyboard_enter_observation"]
+        assert audit["gtk_activate_signals"] == 1, (
+            f"Physical Return did not activate Gtk.Entry: {audit!r}"
+        )
+        assert page.view.query.get_text() == audit["query"]
+        assert_rows("interest-eight")
+        assert requests == [], "First Enter must never contact a remote source"
+        audit["return_status"] = page.view.status.get_text()
+        audit["return_visible_feedback"] = audit["return_status"] != audit["status_before"]
+        capture("05b-youth-return-gtk-observation")
+        keys("KP_Enter")
+        later(170, inspect_keypad_enter)
+
+    def inspect_keypad_enter():
+        audit = result["keyboard_enter_observation"]
+        assert audit["gtk_activate_signals"] == 2, (
+            f"Physical keypad Enter did not activate Gtk.Entry: {audit!r}"
+        )
+        assert page.view.query.get_text() == audit["query"]
+        assert_rows("interest-eight")
+        assert requests == [], "No selected source: consecutive Enter must not contact any provider"
+        audit["keypad_return_status"] = page.view.status.get_text()
+        audit["keypad_visible_feedback"] = (
+            audit["keypad_return_status"] != audit["return_status"]
+        )
+        audit["route_after"] = window.view_stack.get_visible_child_name()
+        audit["selected_source_after"] = page.view.selected_source_plugin()
+        # The acceptance requirement of #910 also includes explicit remote
+        # collection with a chosen provider, untested here. Do not auto-close.
+        audit["criterion_910_satisfied"] = False
+        audit["missing_no_source_feedback_observed"] = (
+            not audit["keypad_visible_feedback"]
+        )
+        capture("05c-youth-keypad-enter-gtk-observation")
         page.view.master._page.selection.set_selected(0)
         later(250, finish)
 
