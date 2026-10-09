@@ -196,6 +196,24 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         and row.get('state') in {'error', 'incompatible'}]
     if failed:
         raise DevUpdateError('smoke plugins: erreur des contributions installées: ' + ', '.join(map(str, failed)))
+    if package_ids is not None:
+        # An install command may return success while its package is absent
+        # from the runtime inventory (e.g. broken activation/discovery).
+        # Inactive packages intentionally have no active contribution; never
+        # activate them just to make the smoke pass.
+        visible = {
+            str(row.get("package_id"))
+            for row in rows if isinstance(row, dict) and row.get("package_id")
+        }
+        missing = sorted({
+            package_id for package_id in package_ids
+            if package_id not in visible and _package_is_active(package_id) is not False
+        })
+        if missing:
+            raise DevUpdateError(
+                "smoke plugins: packages actifs absents de l'inventaire: "
+                + ", ".join(missing)
+            )
     return {"plugin_count": len(rows)}
 
 
