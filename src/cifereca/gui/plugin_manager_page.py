@@ -16,6 +16,7 @@ from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
     filter_package_plugins, plugin_role, plugin_dependents, plugin_relationships,
+    plugin_extension_packages,
     package_matches_query,
     plugin_summary_counts,
 )
@@ -43,6 +44,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._view_filter = "all"
         self._view_role = "all"
         self._package_expansion: dict[str, bool] = {}
+        self._extension_expansion: dict[str, bool] = {}
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -187,6 +189,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             )
         )
 
+        # Filter before grouping: a source remains independently discoverable
+        # if a search or a role filter hides its parent feature.
+        visible: dict[str, tuple[dict, list]] = {}
         visible_plugins = 0
         visible_packages = 0
         for package in installed_packages:
@@ -209,9 +214,71 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             )
             if not package_plugins:
                 continue
+            visible[package["package_id"]] = (package, package_plugins)
             visible_plugins += len(package_plugins)
             visible_packages += 1
+
+        extension_parents = plugin_extension_packages(statuses)
+        linked: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+        child_ids: set[str] = set()
+        for child_id, (parent_id, contracts) in extension_parents.items():
+            if child_id in visible and parent_id in visible:
+                linked.setdefault(parent_id, []).append((child_id, contracts))
+                child_ids.add(child_id)
+
+        for package in installed_packages:
+            package_id = package["package_id"]
+            if package_id not in visible or package_id in child_ids:
+                continue
+            package_plugins = visible[package_id][1]
             self._append_package(package, package_plugins, statuses=statuses)
+            children = linked.get(package_id, ())
+            if not children:
+                continue
+            # The native GTK expander is keyboard-operable and provides an
+            # accessible disclosure state. Package cards retain their own
+            # independent activation/configuration and uninstall actions.
+            attached = Gtk.Expander()
+            attention = sum(
+                status.state in {"blocked", "degraded", "incompatible", "error"}
+                for child_id, _contracts in children
+                for status in visible[child_id][1]
+            )
+            attached_label = f"Sources et services liés · {len(children)} package(s)"
+            if attention:
+                attached_label += f" · {attention} à examiner"
+            attached.set_label(attached_label)
+            attached.set_tooltip_text(
+                "Packages liés par des contrats déclarés ; chacun reste installé et activé séparément"
+            )
+            expanded = bool(
+                self._view_query or self._view_filter != "all"
+                or self._view_role != "all" or attention
+            )
+            attached.set_expanded(self._extension_expansion.get(package_id, expanded))
+            attached.connect(
+                "notify::expanded",
+                lambda expander, _pspec, pid=package_id:
+                    self._extension_expansion.__setitem__(pid, bool(expander.get_expanded())),
+            )
+            attached_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            attached_box.set_margin_start(12)
+            for child_id, contracts in sorted(
+                children, key=lambda item: str(visible[item[0]][0].get("name") or item[0]).casefold()
+            ):
+                relation = Gtk.Label(
+                    label="Étend via : " + ", ".join(contracts), xalign=0,
+                )
+                relation.set_wrap(True)
+                relation.add_css_class("caption")
+                relation.add_css_class("dim-label")
+                attached_box.append(relation)
+                child_package, child_plugins = visible[child_id]
+                self._append_package(
+                    child_package, child_plugins, statuses=statuses, target=attached_box,
+                )
+            attached.set_child(attached_box)
+            container.append(attached)
 
         visible_missing = 0
         if self._view_filter == "all" and self._view_role == "all":
@@ -261,7 +328,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             empty.add_css_class("dim-label")
             container.append(empty)
 
-    def _append_package(self, package, package_plugins, *, statuses=()):
+    def _append_package(self, package, package_plugins, *, statuses=(), target=None):
         package_id = str(package["package_id"])
         package_name = str(package.get("name") or package_id)
         frame = Gtk.Frame()
@@ -373,7 +440,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         box.append(details)
 
         frame.set_child(box)
-        target = getattr(self, "inventory_box", self.outer)
+        target = target if target is not None else getattr(self, "inventory_box", self.outer)
         target.append(frame)
 
     def _plugin_row(self, status: Any, package=None, *, statuses=()) -> Gtk.Widget:
