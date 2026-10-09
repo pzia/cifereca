@@ -7,6 +7,7 @@ from booktrust_youth import (
     age_group_for,
     parse_detail,
     parse_recommendations,
+    next_cursor,
 )
 
 LIST_HTML = """
@@ -24,6 +25,7 @@ LIST_HTML = """
   <ul><li>Adventure</li><li>Historical</li></ul>
 </article>
 <a href="/book-recommendations/bookfinder/">Explore our Bookfinder</a>
+<a href="/book-recommendations/bookfinder/bookfinder-recommendations/?page=3">Next</a>
 </body></html>
 """
 
@@ -142,3 +144,85 @@ def test_non_html_and_oversized_response_are_rejected():
     )))
     with pytest.raises(RuntimeError, match="2 MB"):
         source2.browse()
+
+
+
+def test_next_cursor_requires_explicit_next_page_link():
+    assert next_cursor(LIST_HTML, current_page=2) == "3"
+    assert next_cursor('<a href="?page=5">Next</a>', current_page=2) == ""
+    assert next_cursor("<p>End</p>", current_page=2) == ""
+
+
+def test_unsupported_age_returns_empty_without_unfiltered_network_call():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+
+    source = BookTrustSource(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    page = source.browse(age=15)
+    assert page == {"items": (), "next_cursor": "", "fresh_for_seconds": 86400}
+    assert calls == 0
+
+
+def test_invalid_cursor_is_rejected_before_network():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+
+    source = BookTrustSource(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    with pytest.raises(ValueError):
+        source.browse(cursor="bad")
+    with pytest.raises(ValueError):
+        source.browse(cursor="101")
+    assert calls == 0
+
+
+def test_credentials_nonstandard_port_and_redirect_are_rejected():
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            302,
+            headers={"content-type": "text/html", "location": "https://evil.example/"},
+            text="redirect",
+        )
+
+    source = BookTrustSource(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    with pytest.raises(ValueError):
+        source.detail("https://user:secret@www.booktrust.org.uk/book-recommendations/bookfinder/x/")
+    with pytest.raises(ValueError):
+        source.detail("https://www.booktrust.org.uk:444/book-recommendations/bookfinder/x/")
+    assert calls == 0
+
+    with pytest.raises(RuntimeError, match="HTTP 302"):
+        source.browse()
+    assert calls == 1
+
+
+def test_script_and_style_text_do_not_become_age_or_theme_evidence():
+    html = """
+      <script>For ages 1 to 2</script>
+      <style>.x:after { content: 'For ages 3 to 4'; }</style>
+      <h3><a href="/book-recommendations/bookfinder/clean/">Clean Book</a></h3>
+      <p>by Clean Author 2020</p>
+      <p>For ages 8 to 10</p>
+      <p>Adventure</p>
+    """
+    cards = parse_recommendations(html)
+    assert len(cards) == 1
+    assert cards[0].recommended_age == "8 to 10"
+    assert "Adventure" in cards[0].themes
