@@ -103,7 +103,9 @@ class YouthSourcesContractTests(unittest.TestCase):
             self.assertEqual(page["next_cursor"], "2")
             two = plugin.browse(cursor=page["next_cursor"])
             self.assertEqual([i["title"] for i in two["items"]], ["The Last Shore"])
-            last = plugin.browse(cursor=two["next_cursor"])
+            self.assertEqual(two["next_cursor"], "")
+            # A terminal empty cursor means STOP, not a request for page 1.
+            last = plugin.browse(cursor="3")
             self.assertEqual(last["items"], [])
             self.assertEqual(last["next_cursor"], "")
             record = plugin.detail(BOOKFINDER + "atlas-des-lucioles/")
