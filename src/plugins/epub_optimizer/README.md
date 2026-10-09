@@ -58,3 +58,15 @@ La validation de l’archive EPUB est maintenant effectuée **avant** toute lect
 - entrée `mimetype` obligatoire, non répertoire, bornée à 128 octets et vérifiée après les limites structurelles.
 
 Cette validation est partagée par `analyze_epub()` et `optimize_epub()`. Les règles DRM EPUB, limites d’images, conservation des contenus sensibles et comportement PDF restent inchangés.
+
+
+## Durcissement conteneur EPUB — 0.3.3
+
+La validation de planification et la transformation utilisent désormais exactement le même contrat OCF pour l’entrée `mimetype` :
+
+- nom exact `mimetype` (casse significative) ;
+- première entrée du ZIP ;
+- stockage `ZIP_STORED`, sans compression ;
+- contenu exactement égal à `application/epub+zip`, sans espace ni retour ligne ajouté.
+
+Un EPUB non conforme est refusé dès l’analyse et la transformation applique la même décision. Les protections existantes restent inchangées : chemins ZIP canoniques, doublons insensibles à la casse refusés, symlinks et entrées chiffrées refusés, limite de taille décompressée, DRM et contenus raster sémantiques préservés.
