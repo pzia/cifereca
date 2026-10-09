@@ -85,7 +85,10 @@ strict `--require-plugins-only`, si le Core/API cible n'est pas compatible, si l
 snapshot n'est pas strictement plugins-only ou si les tests updater/rollback ciblés
 échouent. Il construit en plus un **runtime Core isolé réel** via l'updater normal,
 exécute le précontrôle strict puis l'installation plugins-only effective sur ce
-runtime, et vérifie l'inventaire des packages sélectionnés avant toute publication.
+runtime. Il vérifie aussi qu'un Core cible incompatible est refusé sans mutation,
+qu'un package installé mais inactif reste inactif, puis provoque un échec de smoke
+**après l'installation réelle** afin de confirmer la restauration exacte du package
+et l'intégrité des données utilisateur avant toute publication.
 
 Une release plugins-only déjà **publiée est immuable** : une relance avec le même tag
 est refusée avant remplacement des assets. Seul un brouillon interrompu peut être
