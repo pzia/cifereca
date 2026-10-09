@@ -133,7 +133,7 @@ class PartialPluginReleaseTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         release_job = workflow.split("\n  release:\n", 1)[1]
         steps = (
-            "name: Attest plugins-only artifact provenance",
+            "name: Sign plugins-only ZIP with Sigstore keyless",
             "name: Verify signed provenance before publishing",
             "name: Create or update draft GitHub Release",
             "name: Publish completed plugins-only release",
@@ -143,15 +143,38 @@ class PartialPluginReleaseTests(unittest.TestCase):
         verification = release_job[positions[1]:positions[2]]
         for evidence in (
             'sha256sum -c "$RELEASE_TAG.zip.sha256"',
-            'gh attestation verify "$archive"',
-            '--repo "$GITHUB_REPOSITORY"',
-            '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml"',
-            '--source-ref "refs/heads/main"',
-            '--source-digest "$GITHUB_SHA"',
+            'cosign verify-blob "$archive"',
+            '--bundle "$archive.sigstore.json"',
+            '--certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml@refs/heads/main"',
+            '--certificate-oidc-issuer "https://token.actions.githubusercontent.com"',
+            '--certificate-github-workflow-repository "$GITHUB_REPOSITORY"',
+            '--certificate-github-workflow-ref "refs/heads/main"',
+            '--certificate-github-workflow-sha "$GITHUB_SHA"',
             "set -euo pipefail",
         ):
             self.assertIn(evidence, verification)
         self.assertNotIn("|| true", verification)
+
+    def test_official_release_request_is_explicit_and_scoped(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/plugins-only-release.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('branches: [main]', workflow)
+        self.assertIn('".github/plugins-only-release-request.json"', workflow)
+        self.assertIn("name: Resolve explicitly authorized release request", workflow)
+        self.assertIn("name: Verify downloaded draft artifact and repeat P0 gates", workflow)
+        release_job = workflow.split("\n  release:\n", 1)[1]
+        self.assertLess(
+            release_job.index("name: Verify downloaded draft artifact and repeat P0 gates"),
+            release_job.index("name: Publish completed plugins-only release"),
+        )
+        self.assertIn('gh release download "$RELEASE_TAG"', release_job)
+        self.assertIn('--pattern "$RELEASE_TAG.zip.sigstore.json"', release_job)
+        self.assertIn('cosign verify-blob "$artifact_dir/$RELEASE_TAG.zip"', release_job)
+        self.assertNotIn("actions/attest@v4", release_job)
+        self.assertIn('bash scripts/ci-plugins-only-runtime-gate.sh "$artifact_dir/$RELEASE_TAG.zip"', release_job)
+        self.assertIn('bash scripts/ci-plugins-only-historical-core-gate.sh "$artifact_dir/$RELEASE_TAG.zip"', release_job)
 
     def test_modified_embedded_metadata_is_detected(self) -> None:
         original = self.build("org.cifereca.provider.alpha")

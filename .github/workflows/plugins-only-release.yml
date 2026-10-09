@@ -1,6 +1,12 @@
 name: Release plugins-only
 
 on:
+  # Only an explicit, reviewed release request on main triggers publication.
+  # Ordinary commits on main do not trigger a plugins-only release.
+  push:
+    branches: [main]
+    paths:
+      - ".github/plugins-only-release-request.json"
   pull_request:
     paths:
       - ".github/workflows/plugins-only-release.yml"
@@ -90,18 +96,12 @@ jobs:
         run: bash scripts/ci-plugins-only-historical-core-gate.sh "${{ steps.build.outputs.archive }}"
 
   release:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     permissions:
       contents: write
       id-token: write
-      attestations: write
-      artifact-metadata: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      PACKAGE_IDS: ${{ inputs.package_ids }}
-
     steps:
       - name: Configure isolated runtime directories
         shell: bash
@@ -118,6 +118,50 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Resolve explicitly authorized release request
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ inputs.release_tag }}
+          DISPATCH_PACKAGES: ${{ inputs.package_ids }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          if os.environ["GITHUB_EVENT_NAME"] == "push":
+              request = json.loads(
+                  Path(".github/plugins-only-release-request.json").read_text(encoding="utf-8")
+              )
+              if request.get("kind") != "authorized-plugins-only-release":
+                  raise SystemExit("Invalid explicit release request")
+              tag = request["release_tag"]
+              selected = request["package_ids"]
+          elif os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
+              tag = os.environ["DISPATCH_TAG"]
+              selected = os.environ["DISPATCH_PACKAGES"].split(",")
+          else:
+              raise SystemExit("Publication requires an explicit dispatch or main release request")
+
+          if not isinstance(tag, str) or not re.fullmatch(r"plugins-v[0-9A-Za-z.+_-]+", tag):
+              raise SystemExit("Invalid plugins-only release tag")
+          if not isinstance(selected, list) or not selected:
+              raise SystemExit("At least one package id is required")
+          if any(
+              not isinstance(package, str)
+              or not re.fullmatch(r"org\.cifereca\.[A-Za-z0-9._-]+", package)
+              for package in selected
+          ):
+              raise SystemExit("Invalid package id")
+          if len(selected) != len(set(selected)):
+              raise SystemExit("Duplicate package ids")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as destination:
+              destination.write(f"RELEASE_TAG={tag}\nPACKAGE_IDS={','.join(selected)}\n")
+          print(f"Release request: {tag}; packages: {', '.join(selected)}")
+          PY
 
       - name: Require main and validate plugins-only tag
         shell: bash
@@ -209,36 +253,61 @@ jobs:
               raise SystemExit("Official release must select at least one package")
           rows = json.loads(Path("dist/plugins-only-runtime-inventory.json").read_text(encoding="utf-8"))
           visible = {str(r.get("package_id")) for r in rows if isinstance(r, dict) and r.get("package_id")}
-          missing = sorted(selected - visible)
-          if missing:
-              raise SystemExit("Selected packages missing after real install: " + ", ".join(missing))
+          store = Path(os.environ["XDG_DATA_HOME"]) / "cifereca/plugins/packages"
+          active = set()
+          for package_id in selected:
+              pointer = store / package_id / "current.json"
+              if not pointer.is_file():
+                  raise SystemExit("Selected package missing from installed store: " + package_id)
+              state = json.loads(pointer.read_text(encoding="utf-8"))
+              if state.get("active"):
+                  active.add(package_id)
+          missing_active = sorted(active - visible)
+          if missing_active:
+              raise SystemExit("Active selected packages missing from CLI: " + ", ".join(missing_active))
+          unexpectedly_visible = sorted((selected - active) & visible)
+          if unexpectedly_visible:
+              raise SystemExit("Inactive selected packages unexpectedly visible: " + ", ".join(unexpectedly_visible))
+          print(f"Official inventory: {len(active)} active, {len(selected)-len(active)} inactive")
           PY
 
       - name: Refuse strict update on a historic installed Core
         shell: bash
         run: bash scripts/ci-plugins-only-historical-core-gate.sh "${{ steps.build.outputs.archive }}"
 
-      - name: Attest plugins-only artifact provenance
-        uses: actions/attest@v4
+      - name: Install Cosign for independent keyless provenance
+        uses: sigstore/cosign-installer@v4.1.1
         with:
-          subject-path: ${{ steps.build.outputs.archive }}
+          cosign-release: "v3.0.6"
 
-      # Authenticity is verified before a draft or any public asset is created.
-      # The ZIP sidecar alone proves only integrity, not the signing identity.
+      # Private personal GitHub repositories cannot use GitHub-hosted
+      # Artifact Attestations. Cosign signs exact ZIP bytes with GitHub OIDC.
+      # The public Sigstore transparency log records provenance metadata,
+      # NOT the private archive bytes.
+      - name: Sign plugins-only ZIP with Sigstore keyless
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.build.outputs.archive }}"
+          cosign sign-blob --yes --bundle "$archive.sigstore.json" "$archive"
+          test -s "$archive.sigstore.json"
+
+      # Authenticity is verified before a draft or any release asset is created.
+      # The SHA sidecar alone proves only integrity, not the signing identity.
       - name: Verify signed provenance before publishing
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           archive="${{ steps.build.outputs.archive }}"
           test -s "$archive"
           (cd dist && sha256sum -c "$RELEASE_TAG.zip.sha256")
-          gh attestation verify "$archive" \
-            --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml" \
-            --source-ref "refs/heads/main" \
-            --source-digest "$GITHUB_SHA"
+          cosign verify-blob "$archive" \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref "refs/heads/main" \
+            --certificate-github-workflow-sha "$GITHUB_SHA"
 
       - name: Create or update draft GitHub Release
         env:
@@ -256,7 +325,37 @@ jobs:
           else
             gh release create "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$RELEASE_TAG"               --generate-notes               --draft
           fi
-          gh release upload "$RELEASE_TAG"             "${{ steps.build.outputs.archive }}"             "${{ steps.build.outputs.archive }}.sha256"             --repo "$GITHUB_REPOSITORY"             --clobber
+          gh release upload "$RELEASE_TAG"             "${{ steps.build.outputs.archive }}"             "${{ steps.build.outputs.archive }}.sha256"             "${{ steps.build.outputs.archive }}.sigstore.json"             --repo "$GITHUB_REPOSITORY"             --clobber
+
+      # Download the GitHub-hosted draft assets, not the local build output.
+      # Failure leaves the release as a draft and prevents publication.
+      - name: Verify downloaded draft artifact and repeat P0 gates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/p0-downloaded-official"
+          mkdir -p "$artifact_dir"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$artifact_dir" \
+            --pattern "$RELEASE_TAG.zip" \
+            --pattern "$RELEASE_TAG.zip.sha256" \
+            --pattern "$RELEASE_TAG.zip.sigstore.json"
+          (cd "$artifact_dir" && sha256sum -c "$RELEASE_TAG.zip.sha256")
+          cmp "dist/$RELEASE_TAG.zip" "$artifact_dir/$RELEASE_TAG.zip"
+          cmp "dist/$RELEASE_TAG.zip.sigstore.json" "$artifact_dir/$RELEASE_TAG.zip.sigstore.json"
+          cosign verify-blob "$artifact_dir/$RELEASE_TAG.zip" \
+            --bundle "$artifact_dir/$RELEASE_TAG.zip.sigstore.json" \
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref "refs/heads/main" \
+            --certificate-github-workflow-sha "$GITHUB_SHA"
+          export CIFERECA_P0_GATE_ROOT="$RUNNER_TEMP/cifereca-p0-downloaded"
+          bash scripts/ci-plugins-only-runtime-gate.sh "$artifact_dir/$RELEASE_TAG.zip"
+          bash scripts/ci-plugins-only-historical-core-gate.sh "$artifact_dir/$RELEASE_TAG.zip"
 
       - name: Publish completed plugins-only release
         env:

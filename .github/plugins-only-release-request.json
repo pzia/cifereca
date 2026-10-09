@@ -1,0 +1,12 @@
+{
+  "kind": "authorized-plugins-only-release",
+  "release_tag": "plugins-v0.9.44+dev.11-001",
+  "package_ids": [
+    "org.cifereca.ui.page.diagnostics",
+    "org.cifereca.youth-source-discovery"
+  ],
+  "purpose": "P0 #787: publish and verify officially attested plugins-only artifacts; no Core release",
+  "authorized_on": "2026-10-09",
+  "request_revision": 3,
+  "retry_reason": "GitHub hosted attestations unavailable on user-owned private repo; use Sigstore Cosign keyless signed bundle and verify downloaded draft"
+}

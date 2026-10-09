@@ -1,66 +1,91 @@
-# Releases officielles plugins-only — contrat de confiance P0
+# Releases officielles plugins-only — provenance P0
 
-Une release plugins-only est publiée **uniquement sur ordre explicite**, via
-`.github/workflows/plugins-only-release.yml` déclenché sur `main`.
-Un snapshot de prévisualisation ou un simple ZIP accompagné de son SHA-256
-**ne prouve pas son origine**.
+La publication d'une release plugins-only exige **une commande explicite**. Le
+workflow `.github/workflows/plugins-only-release.yml` reste limité à `main` et
+se lance soit manuellement (`workflow_dispatch`), soit par une modification
+auditée, autorisée et fusionnée de
+`.github/plugins-only-release-request.json`. Un push ordinaire ne déclenche pas
+de release. La publication n'installe ni ne publie un nouveau Core.
 
-## Publication (CI/CD)
+## Signature et confidentialité
 
-Avant toute création de brouillon GitHub Release ou upload d'assets, le workflow :
+Le dépôt `pzia/cifereca` est privé et appartient à un compte GitHub personnel.
+GitHub Artifact Attestations refuse les dépôts privés de ce type ; `actions/attest`
+ne peut donc pas être la preuve de publication. Le workflow utilise **Cosign
+keyless** (Sigstore) : certificat émis sur l'identité OIDC du workflow GitHub
+sur `main`, preuve de transparence publique, bundle de signature
+`<tag>.zip.sigstore.json`. L'archive ZIP reste privée dans la GitHub Release ;
+**son empreinte, l'identité du signataire et les métadonnées de transparence
+peuvent être visibles publiquement via Sigstore/Rekor.**
 
-1. valide l'identifiant de release et la branche `main` ;
-2. reconstruit la sélection de packages, contrôle l'index, les SHA-256 et la compatibilité **Core exact + Plugin API** ;
-3. exerce l'installation stricte réelle, le refus d'un Core divergent et le rollback ;
-4. signe le ZIP avec `actions/attest@v4` (attestation SLSA) ;
-5. **revérifie l'attestation** des octets exacts avec `gh attestation verify`, en imposant le dépôt, le workflow signataire, `refs/heads/main` et le SHA du commit source.
+Le SHA-256 sidecar seul ne constitue **pas** une signature. La vérification Cosign
+contrôle l'identité exacte du workflow, le dépôt, la branche `main` et le SHA de
+source. La signature porte sur les **octets exacts du ZIP**.
 
-Une erreur à n'importe quelle étape **interdit la publication**. Le sidecar
-`.sha256` ne constitue pas une signature.
+## Contrôles obligatoires avant publication
+
+1. Périmètre plugins-only, sélection, versions Core exacte et Plugin API.
+2. Installation stricte, refus sans mutation sur Core incompatible (dont ancien
+   Core réel `v0.9.44+dev.10`), conservation des états et rollback.
+3. Signature du ZIP avec `cosign sign-blob --yes` et création du bundle Sigstore.
+4. Vérification indépendante de la signature, du SHA et des claims workflow/ref/SHA.
+5. Création de la GitHub Release **en brouillon seulement**.
+6. Téléchargement des vrais assets depuis ce brouillon, re-vérification du
+   SHA, de la signature et nouveau passage des gates de runtime et rollback.
+7. Publication seulement si toutes ces validations aboutissent.
+
+Si une étape échoue, **ne pas publier**. Les assets d'une release déjà publiée
+ne peuvent pas être remplacés par un rerun ; utiliser un nouveau tag.
 
 ## Vérification par le destinataire
 
-Télécharger le ZIP et son sidecar depuis la release GitHub, puis vérifier le ZIP
-*avant* de lancer `cifereca-update-dev`. Utiliser le **SHA de commit attendu de
-la release que vous avez vérifiée** (pas un SHA déclaré par le ZIP lui-même) :
+Prérequis : `gh` authentifié avec accès à la release privée, `cosign` récent,
+`sha256sum`, `cifereca-update-dev` disposant du mode strict.
 
 ```bash
 repo=pzia/cifereca
-tag="plugins-v<VERSION_CORE>-<SERIE>"
-expected_commit="<SHA_40_HEX_DE_MAIN_ATTENDU>"
+tag="plugins-v0.9.44+dev.11-001"
+expected_commit="<SHA_40_HEX_DU_RUN_OFFICIEL>"
+workflow="https://github.com/$repo/.github/workflows/plugins-only-release.yml@refs/heads/main"
 
 gh release download "$tag" --repo "$repo" \
-  --pattern "$tag.zip" --pattern "$tag.zip.sha256"
+  --pattern "$tag.zip" \
+  --pattern "$tag.zip.sha256" \
+  --pattern "$tag.zip.sigstore.json"
 
-gh attestation verify "$tag.zip" \
-  --repo "$repo" \
-  --signer-workflow "$repo/.github/workflows/plugins-only-release.yml" \
-  --source-ref refs/heads/main \
-  --source-digest "$expected_commit"
+cosign verify-blob "$tag.zip" \
+  --bundle "$tag.zip.sigstore.json" \
+  --certificate-identity "$workflow" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  --certificate-github-workflow-repository "$repo" \
+  --certificate-github-workflow-ref "refs/heads/main" \
+  --certificate-github-workflow-sha "$expected_commit"
 
 sha256sum -c "$tag.zip.sha256"
 verified_digest="$(sha256sum "$tag.zip" | awk '{print $1}')"
-
 cifereca-update-dev "$tag.zip" \
   --require-plugins-only --expected-sha256 "$verified_digest" \
   --dry-run --json
-# Après examen du rapport et approbation explicite :
+
+# Après vérification du Core installé et approbation :
 # cifereca-update-dev "$tag.zip" \
 #   --require-plugins-only --expected-sha256 "$verified_digest" --json
 ```
 
-L'index `cifereca-plugins-only.json` et les empreintes internes sont vérifiés
-par l'updater **avant mutation**, et la compatibilité est volontairement
-**exacte** avec la version Core déclarée comme testée. Les snapshots dev
-historiques sans marqueur ne sont pas promus en releases officielles. L'updater
-ne récupère pas d'attestation via le réseau : la vérification de signature et
-d'identité du signataire incombe au canal de distribution/à l'opérateur.
+L'updater **n'effectue pas d'appel réseau implicite** pour vérifier Cosign.
+La vérification de provenance est la responsabilité du canal de distribution
+et doit précéder l'installation. L'index plugins-only et les SHA internes sont
+validés avant toute mutation.
 
-## Limites
+## Conditions supplémentaires pour fermer P0 #787 / #839
 
-Les tests de PR valident le packaging, le refus en cas d'incompatibilité et le
-rollback, mais **ne signent pas et ne publient pas** de release officielle.
-La validation d'une attestation réellement produite requiert une exécution
-manuelle autorisée du workflow de publication ; elle ne peut être revendiquée
-avant un run de release réussi. Ne pas transformer un contrôle CI vert en
-autorisation de publication.
+Une CI de PR verte n'est pas une preuve de release. Il faut l'asset officiel
+publié, le bundle Sigstore, les contrôles téléchargés, et les logs d'installation
+compatible/incompatible/rollback avec intégrité du magasin et des données XDG.
+
+**Attention :** la version Core `0.9.44+dev.11` a été conservée sur `main`
+malgré des modifications survenues depuis le tag Core officiel du même numéro.
+Une égalité de version seule ne prouve pas l'identité des octets du Core.
+Tester le Core **réellement distribué** ; s'il ne dispose pas du mode strict,
+la recette de fermeture globale #839 nécessite une publication Core distincte,
+sur autorisation explicite. Ne pas clore P0 par déduction.
