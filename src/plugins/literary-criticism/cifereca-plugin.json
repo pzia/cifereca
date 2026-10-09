@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -82,11 +82,11 @@
     {
       "id": "criticism.source.rss",
       "type": "criticism.source",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "entrypoint": "criticism_feeds:PLUGIN",
       "display_name": "Source RSS/Atom",
       "description": "Source de critiques publique RSS 2, Atom ou JSON Feed.",
-      "help_text": "Configurez explicitement un flux public. Localhost, IP privées/réservées, redirections vers une cible non publique et liens d’article/notice privés sont refusés. Le client interne ignore les proxies d’environnement. Seuls les résumés sont conservés ; métadonnées du livre et de la critique restent distinctes.",
+      "help_text": "Configurez explicitement un flux public. Localhost, IP privées/réservées, DNS vers adresse non globale, peer TCP inattendu, redirections vers une cible non publique et downgrade HTTPS→HTTP sont refusés. La connexion TCP est épinglée sur l’adresse DNS validée tout en conservant SNI et vérification du certificat sur le hostname d’origine. Seuls les résumés sont conservés ; métadonnées du livre et de la critique restent distinctes.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
