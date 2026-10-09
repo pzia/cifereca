@@ -264,3 +264,74 @@ def test_valid_archive_structure_still_accepts_normal_epub():
                 max_uncompressed_mb=64,
             )
         assert name == "mimetype"
+
+
+
+def test_mimetype_must_be_exact_first_stored_and_without_extra_field():
+    profile = builtin_profile("generic-eink")
+    cases = []
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+
+        misplaced = root / "misplaced.epub"
+        with zipfile.ZipFile(misplaced, "w") as zf:
+            zf.writestr("META-INF/container.xml", CONTAINER)
+            zf.writestr("mimetype", MIMETYPE, compress_type=zipfile.ZIP_STORED)
+        cases.append(misplaced)
+
+        compressed = root / "compressed.epub"
+        with zipfile.ZipFile(compressed, "w") as zf:
+            zf.writestr("mimetype", MIMETYPE, compress_type=zipfile.ZIP_DEFLATED)
+        cases.append(compressed)
+
+        wrong_case = root / "wrong-case.epub"
+        with zipfile.ZipFile(wrong_case, "w") as zf:
+            zf.writestr("MIMETYPE", MIMETYPE, compress_type=zipfile.ZIP_STORED)
+        cases.append(wrong_case)
+
+        whitespace = root / "whitespace.epub"
+        with zipfile.ZipFile(whitespace, "w") as zf:
+            zf.writestr("mimetype", b"application/epub+zip\n", compress_type=zipfile.ZIP_STORED)
+        cases.append(whitespace)
+
+        extra = root / "extra.epub"
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = zipfile.ZIP_STORED
+        info.extra = b"\x01\x00\x00\x00"
+        with zipfile.ZipFile(extra, "w") as zf:
+            zf.writestr(info, MIMETYPE)
+        cases.append(extra)
+
+        for path in cases:
+            with pytest.raises(EpubOptimizationError):
+                analyze_epub(path, profile=profile)
+
+
+def test_ocf_rejects_non_stored_non_deflate_compression():
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.epub"
+        with zipfile.ZipFile(src, "w") as zf:
+            zf.writestr("mimetype", MIMETYPE, compress_type=zipfile.ZIP_STORED)
+            zf.writestr(
+                "OEBPS/page.xhtml",
+                XHTML,
+                compress_type=zipfile.ZIP_BZIP2,
+            )
+        with pytest.raises(EpubOptimizationError, match="compression OCF"):
+            analyze_epub(src, profile=builtin_profile("generic-eink"))
+
+
+def test_exact_mimetype_payload_is_not_trimmed_or_repaired_silently():
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.epub"
+        dst = Path(td) / "out.epub"
+        with zipfile.ZipFile(src, "w") as zf:
+            zf.writestr(
+                "mimetype",
+                b" application/epub+zip",
+                compress_type=zipfile.ZIP_STORED,
+            )
+        with pytest.raises(EpubOptimizationError, match="mimetype EPUB invalide"):
+            optimize_epub(src, dst, profile=builtin_profile("generic-eink"))
+        assert not dst.exists()
