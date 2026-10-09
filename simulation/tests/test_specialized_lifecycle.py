@@ -65,7 +65,7 @@ class SpecializedLifecycleTests(unittest.TestCase):
                                 updated["files"]["optimizer-valid.epub"])
 
             with zipfile.ZipFile(root / "optimizer-valid.epub") as z:
-                self.assertTrue(all(info.date_time == (2020, 1, 1, 0, 0, 0) for info in z.infolist()))
+                self.assertTrue(all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in z.infolist()))
 
             datasetctl.reset_runtime(profile)
             self.assertFalse(root.exists())
