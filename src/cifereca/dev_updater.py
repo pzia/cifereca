@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -341,11 +342,24 @@ def apply_snapshot(
     keep: int = 3,
     dry_run: bool = False,
     restart: bool = False,
+    expected_sha256: str | None = None,
 ) -> dict[str, Any]:
     try:
         archive = resolve_archive(archive)
     except ArchiveNotFoundError as exc:
         raise DevUpdateError(str(exc)) from exc
+    # The digest must come from a separate, trusted release channel: an
+    # adjacent .sha256 file delivered with the ZIP is not an authenticity proof.
+    # Check the complete archive before extracting any of its contents.
+    if expected_sha256 is not None:
+        if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+            raise DevUpdateError("empreinte SHA-256 attendue invalide")
+        try:
+            matching = hmac.compare_digest(_sha256(archive), expected_sha256.lower())
+        except OSError as exc:
+            raise DevUpdateError("snapshot illisible pour vérification SHA-256") from exc
+        if not matching:
+            raise DevUpdateError("SHA-256 du snapshot incompatible avec la provenance attendue")
     with tempfile.TemporaryDirectory(prefix="cifereca-dev-update-") as tmp:
         root, manifest = _extract_snapshot(archive, Path(tmp))
         snapshot_id = str(manifest.get("id") or archive.stem)
@@ -452,6 +466,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Updater de snapshots de développement cifereca")
     parser.add_argument("snapshot", nargs="?", help="ZIP snapshot (core et/ou plugins), dossier courant puis Téléchargements XDG")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--expected-sha256", metavar="HEXADECIMAL", help="Empreinte SHA-256 du ZIP obtenue d'une source de confiance, vérifiée avant extraction")
     parser.add_argument("--restart", action="store_true", help="Lance la nouvelle application après mise à jour")
     parser.add_argument("--keep", type=int, default=3)
     parser.add_argument("--python")
@@ -463,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
         result = apply_snapshot(
             args.snapshot, python=args.python, keep=args.keep,
             dry_run=args.dry_run, restart=args.restart,
+            expected_sha256=args.expected_sha256,
         )
         _print(result, args.json)
         return 0
