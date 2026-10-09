@@ -203,7 +203,11 @@ class YouthDetailEnrichment:
     def _catalog(self):
         context = getattr(self, "context", None)
         service = context.service("catalog.youth") if context is not None else None
-        return service if callable(getattr(service, "search_cached", None)) else None
+        if service is None:
+            return None
+        if callable(getattr(service, "find_cached", None)) or callable(getattr(service, "search_cached", None)):
+            return service
+        return None
 
     def cached_detail(self, book: BookRef, *, identity_id: str) -> CachedBookDetail | None:
         if not isinstance(book, BookRef) or not _text(identity_id):
@@ -212,14 +216,37 @@ class YouthDetailEnrichment:
         if catalog is None:
             return None
 
-        query = _text(book.title)
-        if not query:
-            return None
+        book_ids = _mapping(book.identifiers)
+        isbn = normalize_isbn(book_ids.get("isbn") or book_ids.get("isbn13") or book_ids.get("isbn10"))
+        provider = _fold(book_ids.get("provider") or (book.provenance.provider_id if book.provenance else ""))
+        source_item_id = _text(book_ids.get("source_item_id"))
+        notice_urls = _book_notice_urls(book)
+        notice_url = notice_urls[0] if notice_urls else ""
 
-        try:
-            candidates = tuple(catalog.search_cached(_text(identity_id), query))[:200]
-        except Exception:
-            return None
+        find_cached = getattr(catalog, "find_cached", None)
+        if callable(find_cached):
+            if not any((isbn, provider and source_item_id, notice_url)):
+                return None
+            try:
+                candidates = tuple(find_cached(
+                    _text(identity_id),
+                    isbn=isbn,
+                    provider=provider,
+                    source_item_id=source_item_id,
+                    notice_url=notice_url,
+                    limit=20,
+                ))[:20]
+            except Exception:
+                return None
+        else:
+            query = _text(book.title)
+            search_cached = getattr(catalog, "search_cached", None)
+            if not query or not callable(search_cached):
+                return None
+            try:
+                candidates = tuple(search_cached(_text(identity_id), query))[:200]
+            except Exception:
+                return None
 
         match = select_candidate(book, candidates)
         if match is None:
