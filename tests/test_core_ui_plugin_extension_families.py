@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 from cifereca.gui.plugin_view import (
     filter_package_plugins,
     plugin_extension_packages,
+    plugin_role,
 )
 
 
@@ -88,9 +89,9 @@ def test_feature_or_page_package_is_not_hidden_as_an_extension():
 
 def test_multiple_extensions_over_30_plugins_are_deterministically_grouped():
     statuses = [
-        _status("ui.main", "primary", "ui.page", requires_contracts=("catalog.extra",)),
+        _status("ui.main", "primary", "ui.page", requires_contracts=("source.extra",)),
         *[
-            _status(f"source.{index}", f"source-package-{index:02d}", "catalog.extra")
+            _status(f"source.{index}", f"source-package-{index:02d}", "source.extra")
             for index in range(36)
         ],
         _status("independent", "standalone", "ui.page"),
@@ -99,7 +100,7 @@ def test_multiple_extensions_over_30_plugins_are_deterministically_grouped():
     reversed_input = plugin_extension_packages(list(reversed(statuses)))
     assert forward == reversed_input
     assert len(forward) == 36
-    assert set(forward.values()) == {("primary", ("catalog.extra",))}
+    assert set(forward.values()) == {("primary", ("source.extra",))}
 
 
 def test_status_filter_does_not_hide_blocked_child_or_invent_state():
@@ -137,3 +138,10 @@ def test_extension_disclosure_and_package_actions_remain_separate():
     assert "self._confirm_remove" in source
     assert "details.set_child(children)" in source
     assert "Gtk.Expander()" in source
+
+
+def test_specialized_source_categories_are_filterable_as_sources():
+    assert plugin_role(NS(type="youth.source")) == "source"
+    assert plugin_role(NS(type="criticism.source")) == "source"
+    assert plugin_role(NS(type="source.external")) == "source"
+    assert plugin_role(NS(type="book.detail.enrichment")) == "service"
