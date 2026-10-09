@@ -84,3 +84,25 @@ Artefacts : `e2e-artifacts/search-filter-p0/00-before.png`,
 `screen.json` (SHA de commit, mesures et empreintes de captures), et traces
 du runner. En cas d'échec, conserver ces preuves et ouvrir un correctif
 CoreUI ; ce test ne clôt pas à lui seul #660 avant sa recette sur CI.
+
+## Recette Jeunesse P1 (#758)
+
+La recette `catalog.youth` utilise la vraie page `ui.page.youth`, le Core et
+le package versionné de `src/plugins/youth-catalog` installé dans le store
+isolé de la fixture. Aucune requête réseau n'est déclenchée ; le cache est
+alimenté directement avec des notices déterministes par identité.
+
+```bash
+dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth
+```
+
+Deux écrans Xvfb **1024×900** et **1366×900** sont exercés. Les captures
+`00-empty-cache` à `06-keyboard-search-detail` prouvent les états vides,
+tranches 0/8/12/17 (18 non proposé), âges d'intérêt/lecture/inféré,
+isolation Camille/Alex, recherche clavier XTEST, sélection et provenance.
+
+Chaque rapport `screen.json` inclut le SHA Git, la résolution réellement
+observée et les empreintes des captures. Il s'agit d'un parcours GTK4 réel
+avec fixtures de cache, **pas** d'un test HTTP BookTrust/Milan ni d'un
+parcours réseau. Les scénarios des fournisseurs et le cache offline après
+collecte restent à recetter séparément.
