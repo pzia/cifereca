@@ -64,6 +64,14 @@ Les anciens snapshots de développement **génériques** sans index et sans
 marqueur continuent d'être acceptés selon leurs règles historiques. Le
 format ne fournit **pas** de signature cryptographique : un adversaire capable
 de réécrire à la fois le marqueur et l'index doit être contré par la
-vérification de provenance du ZIP et de sa somme SHA-256 depuis une source fiable.
+vérification de provenance du ZIP depuis une source fiable.
+
+`cifereca-update-dev --expected-sha256 <64 chiffres hexadécimaux>` permet
+un contrôle du SHA-256 **obtenu d'un canal indépendant et authentifié**.
+La comparaison est effectuée avant extraction et avant toute mutation,
+y compris en `--dry-run`. L'option demeure facultative pour les snapshots
+historiques. Un `.zip.sha256` livré avec le ZIP sur un canal non fiable
+ne constitue pas une preuve d'origine.
+
 La publication officielle, les tags et cette authentification restent
 à coordonner dans #787 et #577.
