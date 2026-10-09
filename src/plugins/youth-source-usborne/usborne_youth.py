@@ -193,11 +193,15 @@ def parse_listing(
         if prior is None:
             products[url] = (index, cleaned, isbn)
             continue
-        _, previous_label, previous_isbn = prior
+        previous_index, previous_label, previous_isbn = prior
         previous_badge = _fold(previous_label) in _BADGES
         current_badge = _fold(cleaned) in _BADGES
-        chosen = cleaned if (previous_badge and not current_badge) or (not current_badge and len(cleaned) > len(previous_label)) else previous_label
-        products[url] = (index, chosen, previous_isbn)
+        if previous_badge and not current_badge:
+            products[url] = (index, cleaned, previous_isbn)
+        elif not previous_badge and current_badge:
+            products[url] = (previous_index, previous_label, previous_isbn)
+        elif not current_badge and len(cleaned) > len(previous_label):
+            products[url] = (index, cleaned, previous_isbn)
 
     ordered = sorted(
         ((position, title, url, isbn) for url, (position, title, isbn) in products.items()),
