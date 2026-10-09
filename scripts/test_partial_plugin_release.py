@@ -83,6 +83,48 @@ class PartialPluginReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(PackagingError, expected):
                     self.build(*selected)
 
+    def test_target_core_and_api_preflight_accepts_exact_tested_environment(self) -> None:
+        archive = self.build("org.cifereca.provider.alpha", "org.cifereca.provider.beta")
+        metadata = verify_partial_snapshot(archive)
+        accepted = verify_partial_snapshot(
+            archive,
+            target_core_version=metadata["core_version_tested"],
+            target_plugin_api_version="1.4.0",
+        )
+        self.assertEqual(accepted, metadata)
+
+    def test_target_core_drift_is_rejected_even_when_api_is_compatible(self) -> None:
+        archive = self.build("org.cifereca.provider.alpha")
+        with self.assertRaisesRegex(PackagingError, "Core cible"):
+            verify_partial_snapshot(
+                archive, target_core_version="0.0.0",
+                target_plugin_api_version="1.4.0",
+            )
+
+    def test_target_api_incompatibility_is_rejected_before_install(self) -> None:
+        archive = self.build("org.cifereca.provider.alpha")
+        tested = verify_partial_snapshot(archive)["core_version_tested"]
+        with self.assertRaisesRegex(PackagingError, "incompatible avec Plugin API"):
+            verify_partial_snapshot(
+                archive, target_core_version=tested,
+                target_plugin_api_version="3.0.0",
+            )
+        with self.assertRaisesRegex(PackagingError, "Plugin API cible invalide"):
+            verify_partial_snapshot(
+                archive, target_core_version=tested,
+                target_plugin_api_version="not-a-version",
+            )
+
+    def test_partial_target_specification_is_forbidden(self) -> None:
+        archive = self.build("org.cifereca.provider.alpha")
+        for kwargs in (
+            {"target_core_version": "0.9.44+dev.11"},
+            {"target_plugin_api_version": "1.4.0"},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(PackagingError, "requises ensemble"):
+                    verify_partial_snapshot(archive, **kwargs)
+
     def test_modified_embedded_metadata_is_detected(self) -> None:
         original = self.build("org.cifereca.provider.alpha")
         corrupted = self.root / "tampered.zip"
