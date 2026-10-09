@@ -19,14 +19,15 @@ def test_public_https_workflow_is_dispatch_only_and_confirmation_gated():
     assert "type: boolean" in triggers
     assert "if: ${{ inputs.confirm_live == true }}" in source
     assert "SOURCE: ${{ inputs.source }}" in source
-    assert "booktrust|milan) ;;" in source
+    assert "booktrust|milan|ecole-loisirs) ;;" in source
 
 
 def test_live_workflow_is_bounded_and_keeps_nonpass_evidence():
     source = WORKFLOW.read_text(encoding="utf-8")
     assert "permissions:\n  contents: read" in source
     assert "timeout-minutes: 4" in source
-    assert "--age 8 --limit 2 --timeout 6" in source
+    assert '--age "$AGE" --limit 2 --timeout 6' in source
+    assert 'if [[ "$SOURCE" == "ecole-loisirs" ]]; then AGE=3; fi' in source
     assert "--confirm-live > youth-live-evidence/result.json" in source
     assert source.count("if: always()") == 2
     assert "actions/upload-artifact@v4" in source

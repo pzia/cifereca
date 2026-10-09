@@ -165,3 +165,42 @@ def test_failed_live_qualification_preserves_structural_plugin_diagnostic(
         "product_href_count": 0, "next_cursor_present": True,
         "html_sha256_prefix": "a" * 16,
     }
+
+
+
+def test_ecole_loisirs_live_qualification_is_opt_in_and_single_request(capsys):
+    script = script_module()
+    args = script.parser().parse_args(["--source", "ecole-loisirs", "--age", "3"])
+    plan = script.plan(args)
+    assert plan["request_budget"] == 1
+    assert plan["allowed_host"] == "www.ecoledesloisirs.fr"
+    assert script.main(["--source", "ecole-loisirs"]) == 2
+    assert '"result": "NOT_RUN"' in capsys.readouterr().out
+    assert script.SOURCES["ecole-loisirs"]["plugin"] == "youth.source.ecole-loisirs"
+
+
+def test_ecole_loisirs_evidence_needs_attested_age_valid_isbn_and_public_origin():
+    script = script_module()
+    source_id = "ecole-loisirs"
+    age = NS(source_id=source_id, age_kind="publisher",
+             source_label="3 à 6 ans", age_min=3, age_max=6)
+    row = dict(
+        title="Milo et le loup", identifiers={"isbn": "9782211309684"},
+        age_ranges=(age,),
+        notice_url="https://www.ecoledesloisirs.fr/livre/milo-loup",
+        provenance=(source_id,),
+    )
+    assert len(script.evidence_for((NS(**row),), source_id)) == 1
+    assert not script.evidence_for((NS(**(row | {"identifiers": {}})),), source_id)
+    assert not script.evidence_for((NS(**(row | {"provenance": ()})),), source_id)
+    assert not script.evidence_for((NS(**(row | {"notice_url": "https://evil.example/livre/milo-loup"})),), source_id)
+    assert not script.evidence_for((NS(**(row | {"age_ranges": ()})),), source_id)
+
+
+def test_ecole_loisirs_routes_only_one_explicit_search_page_not_browse():
+    source = (Path(__file__).resolve().parents[1] /
+              "scripts/qualify-youth-source-live.py").read_text(encoding="utf-8")
+    assert 'raw = source.search("loup", cursor=None, limit=40)' in source
+    assert '"age": args.age' in source  # local cache filter, never HTTP age parameter
+    assert 'report["public_query"] = "loup"' in source
+    assert '"max_requests": 1' in source

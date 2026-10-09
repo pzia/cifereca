@@ -35,6 +35,21 @@ Milan, jusqu'à une page et huit fiches (neuf requêtes HTTPS maximales) :
 
     /tmp/cifereca-youth-check/bin/python scripts/qualify-youth-source-live.py --source milan --age 8 --limit 2 --confirm-live > milan-live.json
 
+**l'école des loisirs**, une unique requête HTTPS publique vers
+`/recherche-avancee` avec `types=livre` et le mot-clé fixe `loup` :
+
+    /tmp/cifereca-youth-check/bin/python scripts/qualify-youth-source-live.py --source ecole-loisirs --age 3 --limit 2 --confirm-live > ecole-loisirs-live.json
+
+Le vrai plugin `youth.source.ecole-loisirs` est installé avec le vrai
+`YouthCatalogPlugin` dans une identité et un store XDG éphémères.
+La réponse de **la première page seulement** est analysée : âge publié,
+ISBN valide et notice canonique; filtrage des 3 ans uniquement **en cache**.
+Aucune requête à une fiche produit ni à une page supplémentaire, même si
+le site annonce plusieurs résultats. Un résultat `PASS` exige une
+requête HTTPS réellement observée **et** une notice sourcée après ingestion.
+En cas de refus ou d'absence de notice, garder le JSON `BLOCKED` ou
+`NO_VERIFIED_NOTICE` sans second essai automatique.
+
 Les paramètres imposent un âge 0–17, un nombre de notices demandé 1–3 et un
 timeout 2–15 secondes. Aucune page suivante n'est parcourue automatiquement.
 
@@ -45,7 +60,7 @@ est exclusivement `workflow_dispatch` : aucune PR, poussée sur `main` ou
 planification ne déclenche de requête extérieure. Sur le dépôt GitHub :
 
 1. Ouvrir **Actions → Qualify youth public HTTPS (manual) → Run workflow**,
-   en sélectionnant **main** puis une seule source (`booktrust` ou `milan`).
+   en sélectionnant **main** puis une seule source (`booktrust`, `milan` ou `ecole-loisirs`).
 2. Après décision explicite de contacter ce site public, cocher
    `I authorize a bounded live HTTPS request...`. Sans la case, le job est
    ignoré. Ne pas utiliser ce mode pour tester les fixtures.
@@ -54,7 +69,7 @@ planification ne déclenche de requête extérieure. Sur le dépôt GitHub :
    pertinente à [#741](https://github.com/pzia/cifereca/issues/741).
 
 Le job dispose d'un délai maximal de **4 minutes**, d'un seul fournisseur,
-d'un **maximum de 1 requête BookTrust ou 9 Milan** via les bornes du script,
+d'un **maximum de 1 requête BookTrust / École des loisirs ou 9 Milan** via les bornes du script,
 sans proxy ni redirection. Un résultat `BLOCKED` ou `NO_VERIFIED_NOTICE`
 ne prouve pas un succès. **Ne pas relancer à répétition**, surtout après
 403/429/timeout : cela consomme le budget Actions et peut solliciter
