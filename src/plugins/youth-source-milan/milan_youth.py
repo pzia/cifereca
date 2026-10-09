@@ -88,6 +88,7 @@ class _Parser(HTMLParser):
         self._skip = 0
         self._href = ""
         self._anchor: list[str] = []
+        self._anchor_fallback = ""
         self._heading = 0
         self._heading_parts: list[str] = []
 
@@ -98,8 +99,16 @@ class _Parser(HTMLParser):
         if self._skip:
             return
         if name == "a":
-            self._href = dict(attrs).get("href", "")
+            attributes = dict(attrs)
+            self._href = attributes.get("href", "")
             self._anchor = []
+            self._anchor_fallback = _text(
+                attributes.get("aria-label") or attributes.get("title")
+            )
+        elif name == "img" and self._href and not self._anchor_fallback:
+            # Product cards may contain only a cover image inside the link.
+            # Its alt text is a published accessible label, not an inferred age.
+            self._anchor_fallback = _text(dict(attrs).get("alt"))
         if name in {"h1", "h2", "h3"}:
             self._heading += 1
             self._heading_parts = []
@@ -113,11 +122,13 @@ class _Parser(HTMLParser):
         if self._skip:
             return
         if name == "a" and self._href:
-            label = _text(" ".join(self._anchor))
+            label = _text(" ".join(self._anchor)) or self._anchor_fallback
+            label = re.sub(r"^couverture\s+(?:de\s+|du\s+|des\s+)", "", label, flags=re.I)
             if label:
                 self.tokens.append(("link", label, self._href))
             self._href = ""
             self._anchor = []
+            self._anchor_fallback = ""
         if name in {"h1", "h2", "h3"} and self._heading:
             label = _text(" ".join(self._heading_parts))
             if label:
@@ -359,6 +370,10 @@ class MilanYouthSource:
         bounded = max(1, min(int(limit), 8))
         listing_html = self._get(listing_url(page=page), kind="listing")
         products = listing_products(listing_html, text_filter=text_filter, limit=36)
+        # An unfiltered paginated catalogue with no recognizable cards is a
+        # parser/markup compatibility problem, not a valid empty book result.
+        if not products and not text_filter and next_cursor(listing_html, current_page=page):
+            raise RuntimeError("Milan paginated catalogue has no recognizable book links")
 
         out = []
         inspected = 0
