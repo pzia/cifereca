@@ -19,7 +19,9 @@ def _module():
 def test_reference_scenario_is_targetable_by_name_and_domain():
     runner = _module()
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
-    assert [name for name, _ in runner.select(None, "core")] == ["startup", "core-navigation"]
+    assert [name for name, _ in runner.select(None, "core")] == [
+        "search-filter-p0", "startup", "core-navigation",
+    ]
 
 
 def test_reference_scenario_runs_real_cifereca_without_plugins():
@@ -81,3 +83,31 @@ def test_capture_adaptive_settle_reuses_visual_change_metric():
     assert "def visual_change_ratio(" in source
     assert 'ratio >= args.wait_change_ratio' in source
     assert '"settle_after_actions_elapsed_seconds"' in source
+
+
+def test_search_filter_p0_runs_real_gtk_and_x11_events():
+    runner = _module()
+    scenario = runner.SCENARIOS["search-filter-p0"]
+    assert scenario["runner"] == "gtk-probe"
+    assert scenario["fixture"] == "search-filters"
+    assert scenario["plugin"] == "core"
+    source = (ROOT / "e2e/search_filter_probe.py").read_text(encoding="utf-8")
+    assert 'MainWindow(self, core.config, core.library, core.diagnostics)' in source
+    assert 'device.click_widget(controls.entry)' in source
+    assert 'device.type_text("Camille")' in source
+    assert 'device.click_widget(widget)' in source
+    for field in ("query", "rows", "count", "selected", "scroll", "search_requests"):
+        assert f'"{field}"' in source
+
+
+def test_search_filter_p0_has_two_identities_and_offline_catalogue():
+    import json
+    payload = json.loads(
+        (ROOT / "e2e/fixtures/search-filters/config.json").read_text(encoding="utf-8")
+    )
+    assert [row["id"] for row in payload["identities"]] == ["camille", "alex"]
+    runner = _module()
+    assert runner.SCENARIOS["search-filter-p0"]["runner"] == "gtk-probe"
+    assert 'core.storage.catalog_entry_put({' in (
+        ROOT / "e2e/search_filter_probe.py"
+    ).read_text(encoding="utf-8")
