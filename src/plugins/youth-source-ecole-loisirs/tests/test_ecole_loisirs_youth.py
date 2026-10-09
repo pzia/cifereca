@@ -100,9 +100,10 @@ def test_product_link_must_stay_on_publisher_host():
     assert parse_listing(html) == ()
 
 
-def test_next_cursor_requires_explicit_more_results_link():
+def test_next_cursor_requires_explicit_immediate_next_page_link():
     assert next_cursor(HTML, current_page=1) == "2"
     assert next_cursor("<a href='?page=2'>Afficher plus de résultats</a>", current_page=1) == "2"
+    assert next_cursor("<a href='?page=3'>Afficher plus de résultats</a>", current_page=1) == ""
     assert next_cursor("<a href='?page=1'>Afficher plus de résultats</a>", current_page=1) == ""
     assert next_cursor("<p>Fin</p>", current_page=1) == ""
 
@@ -197,3 +198,57 @@ def test_source_info_and_isbn_validation():
     }
     assert normalize_isbn13("978-2-211-34817-1") == "9782211348171"
     assert normalize_isbn13("9780000000000") == ""
+
+
+
+def test_age_never_bleeds_from_previous_product_card():
+    html = """
+      <div>3 à 6 ans</div>
+      <a href="/livre/aged">Avec âge</a>
+      <div>album</div>
+      <div>ISBN: 9782211348171</div>
+
+      <a href="/livre/no-age">Sans âge publié</a>
+      <div>roman</div>
+      <div>ISBN: 9782211345613</div>
+    """
+    rows = parse_listing(html)
+    assert [row["title"] for row in rows] == ["Avec âge"]
+
+
+def test_query_is_normalized_and_bounded_to_300_characters():
+    raw = "  loup   " + ("x" * 500)
+    url = search_url(raw, page=1)
+    request = httpx.Request("GET", url)
+    value = request.url.params["search_api_views_fulltext"]
+    assert len(value) == 300
+    assert value.startswith("loup ")
+
+
+def test_redirect_response_is_rejected_not_followed():
+    source = EcoleLoisirsYouthSource(
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                302,
+                headers={
+                    "content-type": "text/html",
+                    "location": "https://evil.example/",
+                },
+                text="redirect",
+            )
+        ))
+    )
+    with pytest.raises(RuntimeError, match="302"):
+        source.search("loup")
+
+
+def test_script_style_and_svg_cannot_inject_age_or_isbn():
+    html = """
+      <script>3 à 6 ans</script>
+      <style>.x:after { content: "ISBN: 9782211348171"; }</style>
+      <svg><text>3 à 6 ans</text></svg>
+      <a href="/livre/clean">Clean</a>
+      <div>album</div>
+      <div>ISBN: 9782211348171</div>
+    """
+    assert parse_listing(html) == ()
