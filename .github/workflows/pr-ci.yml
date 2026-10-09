@@ -16,6 +16,7 @@ on:
       - "scripts/ci-select-core-tests.py"
       - "scripts/ci-install-gtk-e2e-runtime.sh"
       - "scripts/ci-smoke-installed-wheel.sh"
+      - "scripts/ci-plugins-only-runtime-gate.sh"
       - "scripts/plugin_packaging.py"
       - "scripts/test_plugin_packaging.py"
       - "scripts/verify-packaging.py"
@@ -112,6 +113,12 @@ jobs:
 
           if matches '^simulation/'; then
             dataset=true
+          fi
+
+          # Gate script changes exercise packaging and installed-Core validation.
+          if matches '^scripts/ci-plugins-only-runtime-gate\.sh$'; then
+            packaging=true
+            install=true
           fi
 
           if [[ "$plugins" == true && "$plugin_scope_all" != true ]]; then
