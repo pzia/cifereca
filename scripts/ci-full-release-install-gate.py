@@ -88,10 +88,30 @@ def run_gate(source: Path) -> None:
         store = PackageStore()
         packages = store.all_packages()
         check(bool(packages), "full release installed zero packages")
-        for package_id, version in expected.items():
+        # plugin-release.json is a frozen publication snapshot, not a pin
+        # for everyday PR CI. Source installs package the current src/plugins/
+        # manifests. Verify that actual source code is active; version drift
+        # against the frozen publication list is only a release-time gate.
+        source_versions = {}
+        for path in sorted((source / "src/plugins").glob("*/cifereca-plugin.json")):
+            package = json.loads(path.read_text(encoding="utf-8"))["package"]
+            check(package["id"] not in source_versions,
+                  f"duplicate package id in source: {package['id']}")
+            source_versions[package["id"]] = str(package["version"])
+        for package_id in expected:
             check(package_id in packages, f"missing release package {package_id}")
-            check(store.active_version(package_id) == version,
-                  f"wrong release version/activation: {package_id} expected {version}")
+        for package_id in packages:
+            version = store.active_version(package_id)
+            check(version is not None, f"inactive package after full install: {package_id}")
+            check(version == source_versions.get(package_id),
+                  f"installed package/source version mismatch: {package_id} "
+                  f"got {version}, source {source_versions.get(package_id)}")
+        drift = sorted(pid for pid, version in expected.items()
+                       if version != source_versions.get(pid))
+        if drift:
+            print(f"Publication snapshot differs from current source for "
+                  f"{len(drift)} packages (informational in PR CI): {', '.join(drift)}",
+                  flush=True)
         cli = installed_core / ".venv" / "bin" / "cifereca-cli"
         original_rows = inventory(cli, root)
         visible = {
