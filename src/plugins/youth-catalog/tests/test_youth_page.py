@@ -6,6 +6,7 @@ from youth_page import (
     FilterState,
     YouthPagePlugin,
     YouthView,
+    age_badge,
     age_detail,
     age_text,
     book_ref,
@@ -59,12 +60,43 @@ def test_list_and_detail_expose_age_and_public_notice():
     row = list_entry(book)
     assert row.title == "Un livre"
     assert "8–10 ans" in row.meta
-    assert row.badge == "Âge d’intérêt · 8–10 ans"
+    assert row.badge == "Intérêt 8–10 ans"
     detail = detail_presentation(book)
     assert detail.title == "Un livre"
     assert detail.links[0].url == "https://example.org/book/42"
     assert detail.sections[0].title == "Âges attestés"
     assert "booktrust" in detail.sections[0].fields[0].value
+
+
+def test_badges_fit_compact_age_chips_without_hiding_kind():
+    cases = [
+        (YouthAgeRange(0, 6), "0–6 ans"),
+        (YouthAgeRange(8, 12, "interest"), "Intérêt 8–12 ans"),
+        (YouthAgeRange(10, 12, "reading"), "Lecture 10–12 ans"),
+        (YouthAgeRange(8, 12, "publisher"), "Éditeur 8–12 ans"),
+        (YouthAgeRange(8, 12, "inferred"), "Inféré 8–12 ans"),
+        (YouthAgeRange(17, None), "17+ ans"),
+        (NS(age_min=None, age_max=6, age_kind="recommended"), "≤6 ans"),
+        (YouthAgeRange(9, 9), "9 ans"),
+        (NS(age_min=None, age_max=None, age_kind="recommended"), "Âge inconnu"),
+    ]
+    for row, expected in cases:
+        assert age_badge(row) == expected
+        assert len(age_badge(row)) <= 18
+
+
+def test_compact_list_badge_keeps_full_source_age_and_provenance_in_detail():
+    book = youth_book(age_ranges=(
+        YouthAgeRange(10, 12, "reading", "Reading age 10-12", "booktrust", 0.9, ("booktrust",)),
+    ))
+    row = list_entry(book)
+    assert row.badge == "Lecture 10–12 ans"
+    assert "Âge de lecture · 10–12 ans" in row.meta
+    field = detail_presentation(book).sections[0].fields[0].value
+    assert "Reading age 10-12" in field
+    assert "source booktrust" in field
+    assert "confiance 90 %" in field
+    assert list_entry(youth_book(age_ranges=())).badge == "Âge inconnu"
 
 
 def test_document_link_rejects_credentials_and_non_http():
