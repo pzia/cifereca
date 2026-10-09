@@ -1,138 +1,66 @@
-# Cifereca — instructions pour les agents
+# Cifereca — guide des agents
 
-Ces règles s'appliquent à tout le dépôt.
+Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontières et le mode de collaboration. Les profils sous [.agents/roles/](.agents/roles/README.md) et les AGENTS.md locaux précisent les règles par répertoire. En cas de divergence documentaire, vérifier le code et les contrats actifs avant d'agir.
 
-## Frontières d'architecture
+## Priorités : une seule file
 
-### État actuel
+- **P0 — stabilité** : sécurité, régressions bloquantes, intégrité des données, installation, CI et release fiable.
+- **P1 — prochain plugin à terminer** : un seul plugin cible, avec ses dépendances et sa recette indispensables.
+- **P2 — reste** : autres plugins, ergonomie non bloquante, recherche et idées.
 
-- Le Core applicatif vit sous `src/cifereca/`.
-- Les plugins fonctionnels vivent sous `src/plugins/<plugin>/` et leurs tests spécifiques restent avec eux.
-- `src/cifereca/plugins/` est le framework de plugins (loader, manager, manifeste, dépendances, état), pas l'emplacement des plugins fonctionnels.
-- `src/cifereca/builtin_ui/` et l'orchestration résiduelle `src/cifereca/kobo/` restent à rationaliser. Le client Kobo-Vault appartient à `src/plugins/provider-kobo/`, et Paris à `src/plugins/provider-paris/`.
-- `bundled_plugins/` et `integrations/` ne sont plus des sources actives.
-- Le code de production d'un plugin ne doit dépendre que de l'API publique `cifereca.plugin_api`, pas des modules privés du Core.
+Le label GitHub P0/P1/P2 fait foi et doit être **unique par issue**. Le rôle, l'ancienneté et les anciennes sous-priorités de plugin ne changent pas le rang. La cible P1 est fixée par le backlog, pas par opportunité. Voir [#839](https://github.com/pzia/cifereca/issues/839) pour les critères courants de stabilité.
 
-Voir `docs/ARCHITECTURE.md` et `docs/PLUGIN-BOUNDARIES.md`.
+Avant chaque étape, examiner issues, PR, branches et CI récentes ; éviter les travaux concurrents. Si le premier sujet est bloqué, documenter précisément le blocage et avancer sur un autre sujet de **même priorité**. Ne passer plus bas que si les travaux prioritaires sont réellement bloqués ou indépendants, en laissant cette situation visible.
 
-### Cible
+## Rôles et propriétaires
 
-La cible structurelle distingue explicitement :
+Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités dans une même modification ; transmettre les dépendances au bon propriétaire.
 
-- `src/cifereca/` : Core, API publique, framework de plugins, GUI et primitives transversales ;
-- `src/plugins/` : source canonique des plugins fonctionnels.
+| Rôle | Livrable et périmètre |
+| --- | --- |
+| **backlog** | Priorités, critères d'acceptation, déduplication, dépendances et issues actionnables. Pas de code ni de merge. |
+| **core** | Core métier, stockage, services, API publique, framework de plugins ; également CoreUI (GTK/libadwaita). Pas de logique métier spécifique à un plugin. |
+| **plugins** | Fonctionnalités sous src/plugins/, manifestes et tests de chaque plugin. Consommer uniquement cifereca.plugin_api ; demander une évolution Core si nécessaire. |
+| **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires, preuves GTK et tickets UX ; ne corrige pas le produit. |
+| **cicd** | Workflows, packaging, tests transverses, vérification des artefacts, résolution des blocages CI et **merge** des PR prêtes. |
+| **focus** | **Méta-rôle** : choisit les étapes selon P0 → P1 → P2 et prend successivement les rôles ci-dessus. Ne constitue pas une exception aux frontières. |
 
-## Tests
+Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **simulation** = ux (périmètre simulateurs et recettes). Le rôle core donne priorité au non-UI à **priorité égale**, et cicd aux gates CI avant les merges à **priorité égale**. Ces préférences ne dépassent jamais P0/P1/P2.
 
-Classer un test selon ce qu'il affirme, pas selon les dépendances qu'il utilise.
+## Méta-rôle focus : une étape à la fois
 
-- Assertion propre à un plugin : `src/plugins/<plugin>/tests/`.
-- Assertion Core, contrat transversal ou orchestration générique : `tests/`.
-- Scénario traversant plusieurs plugins/Core/IHM : test fonctionnel ou E2E central.
-- Validation d'un faux service ou de son orchestrateur : `simulation/tests/`.
-- Validation de GTK/Xvfb/bootstrap : self-test sous `environnements/`.
+Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal :
 
-Ne jamais restaurer en bloc les anciens tests `_bundled`. Les invariants historiques doivent être migrés méthode par méthode sans chaîne de dépendances vers d'anciens tests.
+1. **Lire la situation** : état de main, issues P0/P1/P2, PR, CI, dépendances et preuves déjà disponibles.
+2. **Choisir une seule action utile** : priorité la plus haute, travail non dupliqué et résultat vérifiable ; annoncer le rôle actif et la référence GitHub.
+3. **Agir dans ce rôle** : produire un incrément cohérent (correctif + tests + PR, recette + preuves, triage, ou merge). Un changement de propriétaire implique une nouvelle étape.
+4. **Synchroniser** si un état change ou qu'un autre rôle doit intervenir : actualiser l'issue existante ou la PR avec **état, résultat, preuve/SHA, blocage, prochain rôle et action**. Ne pas créer une issue-journal par étape ni publier des commentaires sans information nouvelle.
+5. **Réévaluer** les priorités après l'étape ; continuer avec le même rôle ou en adopter un autre. « Next » demande l'étape suivante, **jamais** une release.
 
-Voir `docs/TEST-ORGANIZATION.md`.
+Un blocage doit produire un handoff exploitable, pas un faux succès. Focus coordonne ; seul **cicd** réalise un merge, après validation, et une release exige toujours une **commande explicite** (tag, packaging, publication et vérification des artefacts).
 
-Exécuter d'abord les tests les plus ciblés, puis la suite pertinente. Un `pytest` lancé à la racine ne couvre pas automatiquement les tests des plugins.
+## Synchronisation : issues plutôt que journal sur main
 
-## Simulation et environnements
+- **Issue GitHub = source de vérité** : priorité, propriétaire, périmètre, critères de sortie, blocages, décisions et prochain handoff. Réutiliser le ticket canonique ; créer une nouvelle issue seulement pour un problème distinct.
+- **PR = preuve d'implémentation** : diff atomique, tests ciblés, CI, review, lien à l'issue. Préférer une branche et une PR à toute écriture directe dans main.
+- **main = produit et documentation validée**, pas journal opérationnel modifié à chaque étape. Réserver un récapitulatif versionné aux décisions durables ou jalons, via PR.
 
-- `simulation/` est le banc de simulation fonctionnelle **actuel** : faux services, données, profils et orchestration.
-- `simulation/` est le référentiel versionné de simulation fonctionnelle ; le travail restant concerne sa rationalisation et sa maintenance, pas sa création.
-- Ne pas construire deux environnements de simulation concurrents : rationaliser progressivement les faux services, profils et outils dans `simulation/` et retirer les éléments devenus inutiles.
-- `environnements/` contient des recettes machine/runtime (GTK, Xvfb, D-Bus, bootstrap, capture), pas du code applicatif ni un substitut à la simulation fonctionnelle.
+Un push de journal sur main peut déclencher les workflows Core, Plugins et validation de l'installation, créer du bruit et des conflits, sans apporter de meilleure traçabilité qu'une issue. **Choix par défaut : issue/PR**, mise à jour aux changements d'état, et non push direct d'un journal.
 
-Voir `docs/SIMULATION.md` et `environnements/README.md`.
+## Architecture, tests et preuves
 
-## Validation
+- Core : src/cifereca/. Plugins fonctionnels : src/plugins/<plugin>/. Le framework src/cifereca/plugins/ appartient au Core ; un plugin de production n'importe aucun module privé Core. Voir docs/ARCHITECTURE.md et docs/PLUGIN-BOUNDARIES.md.
+- Placer les tests selon **l'invariant testé** : Core et contrats transverses dans tests/ ; assertions plugin dans src/plugins/<plugin>/tests/ ; simulateurs dans simulation/tests/ ; bootstrap GTK/Xvfb dans environnements/. Voir docs/TEST-ORGANIZATION.md.
+- simulation/ contient les faux services, datasets et profils fonctionnels ; environnements/ configure les machines, GTK, Xvfb et D-Bus. Ne pas créer de banc parallèle ; éviter le réseau réel dans les tests déterministes.
+- Exécuter les tests ciblés puis la suite pertinente. Un pytest lancé à la racine ne couvre pas nécessairement les tests de plugins. Ne pas réintroduire en bloc d'anciens tests _bundled.
+- Pour une **preuve UX GTK**, lire environnements/README.md, préparer le profil avec simulation/datasetctl.py, lancer **la vraie application** et capturer son écran et ses logs. Une maquette, un self-test GTK ou une vidéo reconstruite ne prouvent pas un parcours fonctionnel.
+- Ne pas versionner caches, environnements virtuels, captures brutes ou artefacts générés sans besoin explicite. Consulter docs/RATIONALIZATION-STATUS.md pour les dettes historiques, en privilégiant le code actuel en cas de contradiction.
 
-- Ne pas annoncer une validation GUI sans avoir réellement utilisé un environnement GTK adapté.
-- Ne pas confondre un self-test de l'environnement avec un test fonctionnel Cifereca.
-- Éviter les services externes réels dans les tests déterministes lorsqu'un simulateur versionné existe.
-- Ne pas versionner les caches, environnements virtuels, captures, ZIP de build ou autres artefacts générés sauf demande explicite.
+## Livraison et garde-fous
 
-## Rationalisation documentaire
+- Une PR = un changement cohérent et réversible, avec tests et critères d'acceptation. Corriger un blocage dans le rôle propriétaire ; sinon transmettre une issue ciblée.
+- **cicd** vérifie la CI, les reviews, les conflits et les risques avant merge. Un test réellement échoué n'est pas un simple check indisponible. Ne pas rebaser une PR uniquement parce qu'elle est derrière main ; actualiser seulement en cas de nécessité réelle.
+- **Aucune release implicite** : un merge, un « next », une PR ou une demande de préparation ne valent pas autorisation de publier.
+- Utiliser les skills locaux de .agents/skills/ : cifereca-plugin, cifereca-tests, cifereca-simulation et cifereca-release.
 
-`docs/RATIONALIZATION-STATUS.md` est l'index de référence pour distinguer :
-
-- rationalisation terminée ;
-- rationalisation en cours ;
-- dette structurelle restante ;
-- handoffs encore utiles ;
-- handoffs devenus historiques.
-
-Les anciens handoffs restent des traces de contexte ; en cas de contradiction, l'index de rationalisation et l'état réel du tree courant priment.
-
-## Skills
-
-Pour les tâches spécialisées, utiliser les skills repo-locaux sous `.agents/skills/` :
-
-- `cifereca-plugin` : création/modification/validation d'un plugin ;
-- `cifereca-tests` : placement et stratégie de tests ;
-- `cifereca-simulation` : faux services et profils fonctionnels ;
-- `cifereca-release` : version, packaging et validation de livraison.
-
-## Rôles de travail des agents
-
-Chaque fil/agent choisit **un seul rôle** et ne sort jamais de son périmètre. Un besoin hors périmètre doit être consigné dans une issue destinée au rôle propriétaire, sans implémentation opportuniste.
-
-Rôles autorisés :
-
-- `backlog` : triage, déduplication, priorisation et création/enrichissement d'issues ; aucune implémentation.
-- `cicd` (Merger) : CI/CD, déblocage et merge des PR. À chaque itération, traiter d'abord les défauts/gates CI/CD, puis les PR à merger. Le Merger est aussi responsable du lancement des releases, **uniquement sur commande explicite** : la demande de release implique la création/vérification du tag **et** le déclenchement effectif du packaging et de la publication des artefacts. Un simple merge, un « next » ou une préparation de version n'autorise jamais une release.
-- `core` : Core métier et Core UI. À chaque itération, traiter d'abord les sujets Core non-UI, puis les sujets Core UI.
-- `plugins` : tous les plugins fonctionnels, leurs tests, leur packaging et leurs évolutions, qu'elles concernent un ou plusieurs plugins.
-- `ux` : tickets UX, campagnes E2E exploratoires avec simulation/screenshots/vidéos, maintenance du simulateur fonctionnel et du harnais d'environnement GTK nécessaire à ces parcours ; transforme les constats en issues sans modifier le produit.
-
-### Procédure obligatoire du rôle `ux` pour une preuve GTK
-
-Quand une demande UX implique « lancer Cifereca », « faire une démo », « capturer
-l'écran » ou « faire une vidéo », le rôle `ux` doit commencer par
-`environnements/README.md` puis suivre la recette correspondant à l'hôte.
-
-Ordre attendu :
-
-1. identifier distribution, version Python et architecture ;
-2. choisir `environnements/openai-chat-debian/` pour Debian 13/Python 3.13 ou
-   `environnements/chatgpt-work/` pour Ubuntu 24.04/Python 3.12 ;
-3. bootstrapper et valider GTK/libadwaita avec le `check_import` de la recette ;
-4. si le réseau Debian local est bloqué, utiliser **GitHub Actions comme relais**
-   pour produire le cache `.deb`, récupérer l'artefact via les outils GitHub de
-   l'agent, puis bootstrapper offline ;
-5. régénérer le profil demandé avec `simulation/datasetctl.py rebuild <profil>`,
-   puis vérifier `status` et `summary` ;
-6. lancer la **vraie application Cifereca** dans les XDG du profil sous le Xvfb
-   du harnais GTK ;
-7. pour une vidéo, enregistrer ce même `$DISPLAY` avec FFmpeg `x11grab` pendant
-   le parcours et conserver les logs/captures comme preuves.
-
-Une image ou vidéo reconstruite graphiquement, une maquette, un terminal filmé
-ou le seul self-test GTK **ne constitue pas** une démonstration fonctionnelle
-de Cifereca. Les faux services/données doivent venir de `simulation/`, pas
-d'une réimplémentation ad hoc.
-
-### Incréments et groupes atomiques
-
-- Tous les rôles avancent par incréments priorisés : examiner les sujets actifs, choisir les plus importants, puis regrouper dans une même unité de travail uniquement les changements cohérents, testables et atomiques.
-- Débloquer un merge fait partie du travail incrémental : diagnostiquer les conflits, gates, dépendances et incompatibilités ; le rôle propriétaire corrige dans son périmètre, tandis que `cicd` coordonne la validation et réalise seul le merge.
-- Ne pas accumuler des sujets sans lien dans une PR ; préserver une validation et un rollback compréhensibles par groupe.
-- Aucun rôle ne doit déclencher une release sans demande explicite ; seul `cicd` (Merger) l'exécute, tag et packaging compris.
-
-### Règles communes de rôle
-
-1. Le périmètre d'un rôle est strict : aucun code, test, workflow ou merge hors périmètre.
-2. Lorsqu'une évolution hors périmètre est nécessaire, créer ou enrichir une issue pour le rôle propriétaire et poursuivre uniquement ce qui reste dans le périmètre courant.
-3. `cicd` traite d'abord la chaîne CI/CD ; seulement ensuite il traite les merges prêts.
-4. `core` traite d'abord le Core métier/services/API/stockage/framework ; seulement ensuite le Core UI.
-5. `plugins` peut travailler sur un plugin unique ou plusieurs plugins, mais ne modifie pas le Core pour satisfaire un besoin plugin : il ouvre une issue `core`.
-6. `ux` et `backlog` sont non implémentants côté produit. `ux` peut exécuter des E2E exploratoires, maintenir le simulateur fonctionnel et les recettes `environnements/` nécessaires à ces parcours, et produire screenshots/vidéos ; sa sortie produit reste une issue/backlog.
-7. Avant tout chantier significatif, vérifier les issues, PR et branches actives afin d'éviter les collisions et doublons.
-8. Une PR ne peut être mergée que par le rôle `cicd`.
-9. En cas d'ambiguïté, choisir le rôle propriétaire du composant à modifier ; si cela implique de changer de rôle, créer une issue au lieu de franchir la frontière.
-10. Tant que l'issue #310 reste ouverte pour quota GitHub Actions épuisé, `cicd` peut merger malgré des checks rouges **uniquement** lorsque les jobs concernés n'ont jamais démarré (`steps` vide/null, aucun log de test) et que le diff est compris, mergeable, sans review/thread bloquant ni échec fonctionnel réel connu. Cette exception expire automatiquement à la fermeture de #310.
-11. Une PR **ne doit jamais être réalignée, rebasée ou mise à jour sur le HEAD de sa branche cible au seul motif qu'elle est `behind`**. Le rôle `cicd` tente le merge de la PR dans son état courant. Un réalignement n'est justifié que par un conflit Git empêchant le merge, une règle de protection l'imposant explicitement, ou une incompatibilité fonctionnelle/technique concrète avec la branche cible. L'ancienneté ou le nombre de commits de retard ne constituent pas, à eux seuls, une incompatibilité. Éviter les rebases/updates préventifs qui créent du churn, invalident des validations ou déclenchent inutilement la CI.
-
-Les profils détaillés sous `.agents/roles/` sont des compléments de ce fichier. `AGENTS.md` reste la source canonique.
+Les consignes spécialisées et détaillées restent dans .agents/roles/ ; ce guide évite de les dupliquer.
