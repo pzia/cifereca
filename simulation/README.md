@@ -237,3 +237,20 @@ python3 simulation/datasetctl.py down ux-small
 Des endpoints JSON Jeunesse/Constellations exposent les fixtures comme données
 de test ; cela **n'implique aucune injection dans leurs pages GTK**.
 Documentation et cas négatifs : `simulation/editorial/README.md`.
+
+## Simulateurs jeunesse : BookTrust et OpenLibrary
+
+Les profils `ux-small`, `ux-all` et `ux-errors` exposent désormais des
+fixtures HTTP de contrats sur `127.0.0.1:8098`.
+
+```sh
+python3 simulation/datasetctl.py up ux-small
+curl http://127.0.0.1:8098/health
+python3 simulation/datasetctl.py down ux-small
+```
+
+Les vrais adaptateurs peuvent être testés avec un `httpx.MockTransport`
+pointant explicitement sur la boucle locale (voir
+`simulation/tests/test_youth_sources_contract.py`), **sans modifier**
+leurs domaines autorisés. Ce mécanisme **n'injecte pas** automatiquement
+les résultats dans l'écran GTK Jeunesse. Voir `simulation/youth_sources/README.md`.

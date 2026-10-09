@@ -38,7 +38,11 @@ Les providers Cifereca existants peuvent aussi alimenter directement l’index v
 
 ## Cache et performance
 
-Le cache est isolé par identité et par source. Une mise à jour remplace seulement la source ciblée et invalide l’agrégat de l’identité concernée. `search_cached()` ne déclenche **jamais** de réseau ; les collectes distantes passent uniquement par `collect_source()`.
+Le cache est isolé par identité et par source. Une mise à jour remplace seulement la source ciblée et invalide l’agrégat de l’identité concernée. `search_cached()` et `find_cached()` ne déclenchent **jamais** de réseau ; les collectes distantes passent uniquement par `collect_source()`.
+
+## Lookup local par identifiants
+
+`find_cached()` interroge uniquement l’agrégat déjà en mémoire avec des preuves fortes : ISBN, provider+identifiant source ou URL de notice. Il ne rapproche jamais titre+auteur et borne la réponse. Les enrichissements bibliographiques déjà appliqués restent visibles dans le résultat.
 
 ## Filtres locaux
 

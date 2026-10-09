@@ -590,6 +590,51 @@ class YouthCatalogIndex:
             self._merged[identity] = tuple(merged)
         return self._merged[identity]
 
+    def find(
+        self,
+        identity_id: str,
+        *,
+        isbn: object = "",
+        provider: object = "",
+        source_item_id: object = "",
+        notice_url: object = "",
+        limit: int = 20,
+    ) -> tuple[YouthBook, ...]:
+        identity = self.identity_key(identity_id)
+        wanted_isbn = normalize_isbn(isbn)
+        wanted_provider = _fold(provider)
+        wanted_item = _text(source_item_id)
+        wanted_notice = canonical_url(notice_url)
+        bounded = max(1, min(int(limit), 100))
+
+        if not any((wanted_isbn, wanted_provider and wanted_item, wanted_notice)):
+            return ()
+
+        out: list[YouthBook] = []
+        for book in self.entries(identity):
+            identifiers = dict(book.identifiers or {})
+            matched = False
+            if wanted_isbn and normalize_isbn(identifiers.get("isbn", "")) == wanted_isbn:
+                matched = True
+            elif wanted_provider and wanted_item:
+                if (
+                    _fold(identifiers.get("provider") or book.source_id) == wanted_provider
+                    and _text(identifiers.get("source_item_id") or book.record_id) == wanted_item
+                ):
+                    matched = True
+            if not matched and wanted_notice:
+                urls = {
+                    canonical_url(book.notice_url),
+                    canonical_url(book.friendly_url),
+                }
+                if wanted_notice in urls:
+                    matched = True
+            if matched:
+                out.append(book)
+                if len(out) >= bounded:
+                    break
+        return tuple(out)
+
     def search(
         self,
         identity_id: str,
@@ -660,6 +705,26 @@ class YouthCatalogPlugin:
     def search_cached(self, identity_id: str, query: str = "", **filters: object) -> tuple[YouthBook, ...]:
         """Search cached rows only. Never calls a remote source."""
         return self.index.search(identity_id, query, **filters)
+
+    def find_cached(
+        self,
+        identity_id: str,
+        *,
+        isbn: object = "",
+        provider: object = "",
+        source_item_id: object = "",
+        notice_url: object = "",
+        limit: int = 20,
+    ) -> tuple[YouthBook, ...]:
+        """Find cached rows by strong identifiers only. Never uses title/author or network."""
+        return self.index.find(
+            identity_id,
+            isbn=isbn,
+            provider=provider,
+            source_item_id=source_item_id,
+            notice_url=notice_url,
+            limit=limit,
+        )
 
     def ingest_bibliography(
         self, identity_id: str, source_id: str, isbn: object, rows: Iterable[object],

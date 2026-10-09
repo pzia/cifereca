@@ -24,6 +24,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install simulation contract dependencies
+        run: python -m pip install --disable-pip-version-check "httpx>=0.28.1,<0.29"
+
       - name: Compile dataset tools
         run: python -m compileall -q simulation
 
