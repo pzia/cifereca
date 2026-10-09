@@ -201,3 +201,45 @@ def filter_package_plugins(
         if needle in haystack:
             out.append(status)
     return out
+
+
+def plugin_extension_packages(statuses: Iterable[object]) -> dict[str, tuple[str, tuple[str, ...]]]:
+    """Return child package -> (parent package, declared matching contracts).
+
+    Only public requires_contracts declarations establish a relation: package
+    names, plugin IDs, and a shared prefix cannot prove parentage. A package
+    used by several independent parents stays standalone rather than picking
+    an arbitrary parent. There is deliberately no inference from UI labels.
+    """
+    rows = tuple(statuses)
+    by_package: dict[str, list[object]] = {}
+    for row in rows:
+        descriptor = getattr(row, "descriptor", None)
+        package_id = str(getattr(descriptor, "package_id", "") or "")
+        if package_id:
+            by_package.setdefault(package_id, []).append(descriptor)
+
+    out: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for child_id, members in sorted(by_package.items()):
+        # Never tuck an independently usable feature or UI page beneath
+        # another package merely because it also exports a source.
+        if not members or any(plugin_role(member) not in {"source", "service", "technical"} for member in members):
+            continue
+        categories = {str(getattr(member, "type", "") or "") for member in members}
+        parents: dict[str, set[str]] = {}
+        for parent_id, providers in by_package.items():
+            if child_id == parent_id:
+                continue
+            for parent in providers:
+                # Only a feature/UI consuming a declared category makes
+                # that category an extension of the parent package.
+                if plugin_role(parent) not in {"feature", "ui"}:
+                    continue
+                for requirement in getattr(parent, "requires_contracts", ()) or ():
+                    category = str(getattr(requirement, "category", "") or "")
+                    if category in categories:
+                        parents.setdefault(parent_id, set()).add(category)
+        if len(parents) == 1:
+            parent_id, contracts = next(iter(parents.items()))
+            out[child_id] = (parent_id, tuple(sorted(contracts)))
+    return out
