@@ -14,7 +14,8 @@ from cifereca.plugins.configuration import defaults_for_schema, schema_scope
 from .action_widgets import action_button, AdaptiveActionBar, mirror_sensitivity
 from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
-    filter_package_plugins,
+    PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
+    filter_package_plugins, plugin_role, plugin_dependents, plugin_relationships,
     package_matches_query,
     plugin_summary_counts,
 )
@@ -40,6 +41,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self.on_changed = on_changed or (lambda: None)
         self._view_query = ""
         self._view_filter = "all"
+        self._view_role = "all"
+        self._package_expansion: dict[str, bool] = {}
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -54,6 +57,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         """Open the manager on one plugin without changing its activation."""
         self._view_query = str(plugin_id or "").strip()
         self._view_filter = "all"
+        self._view_role = "all"
         self.refresh()
         if hasattr(self, "plugin_search"):
             self.plugin_search.grab_focus()
@@ -90,7 +94,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
         inventory = self.manager.package_inventory(include_expected=True)
 
-        filters = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        filters = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.plugin_search = Gtk.SearchEntry()
         self.plugin_search.set_placeholder_text("Rechercher un plugin ou un package…")
         self.plugin_search.set_hexpand(True)
@@ -99,6 +103,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         filters.append(self.plugin_search)
 
         filter_labels = [label for _key, label in PLUGIN_VIEW_FILTERS]
+        filter_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.plugin_state_filter = Gtk.DropDown.new_from_strings(filter_labels)
         selected_filter = next(
             (index for index, (key, _label) in enumerate(PLUGIN_VIEW_FILTERS) if key == self._view_filter),
@@ -107,7 +112,20 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self.plugin_state_filter.set_selected(selected_filter)
         self.plugin_state_filter.set_tooltip_text("Filtrer l’inventaire affiché sans modifier l’activation")
         self.plugin_state_filter.connect("notify::selected", self._plugin_filter_changed)
-        filters.append(self.plugin_state_filter)
+        self.plugin_state_filter.set_hexpand(True)
+        filter_strip.append(self.plugin_state_filter)
+        self.plugin_role_filter = Gtk.DropDown.new_from_strings(
+            [label for _key, label in PLUGIN_ROLE_FILTERS],
+        )
+        self.plugin_role_filter.set_hexpand(True)
+        self.plugin_role_filter.set_selected(next(
+            (index for index, (key, _label) in enumerate(PLUGIN_ROLE_FILTERS)
+             if key == self._view_role), 0,
+        ))
+        self.plugin_role_filter.set_tooltip_text("Filtrer par rôle fonctionnel, sans modifier les plugins")
+        self.plugin_role_filter.connect("notify::selected", self._plugin_role_changed)
+        filter_strip.append(self.plugin_role_filter)
+        filters.append(filter_strip)
         self.outer.append(filters)
 
         self.inventory_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -135,6 +153,14 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         if key == self._view_filter:
             return
         self._view_filter = key
+        self._render_inventory()
+
+    def _plugin_role_changed(self, dropdown: Gtk.DropDown, _pspec=None) -> None:
+        index = int(dropdown.get_selected())
+        key = PLUGIN_ROLE_FILTERS[index][0] if 0 <= index < len(PLUGIN_ROLE_FILTERS) else "all"
+        if key == self._view_role:
+            return
+        self._view_role = key
         self._render_inventory()
 
     def _render_inventory(self, *, statuses=None, inventory=None) -> None:
@@ -173,6 +199,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 package_plugins,
                 query=self._view_query,
                 state_filter=self._view_filter,
+                role_filter=self._view_role,
             )
             package_plugins.sort(
                 key=lambda status: (
@@ -184,10 +211,10 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 continue
             visible_plugins += len(package_plugins)
             visible_packages += 1
-            self._append_package(package, package_plugins)
+            self._append_package(package, package_plugins, statuses=statuses)
 
         visible_missing = 0
-        if self._view_filter == "all":
+        if self._view_filter == "all" and self._view_role == "all":
             missing_packages = [
                 package for package in inventory
                 if package.get("freshness_reason") == "not_installed"
@@ -208,7 +235,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                     container.append(missing)
                     visible_missing += 1
 
-        if self._view_query or self._view_filter != "all":
+        if self._view_query or self._view_filter != "all" or self._view_role != "all":
             count = Gtk.Label(
                 label=f"{visible_plugins} plugin(s) affiché(s) dans {visible_packages} package(s)",
                 xalign=0,
@@ -218,10 +245,12 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             container.prepend(count)
 
         if visible_plugins == 0 and visible_missing == 0:
-            if not statuses and not self._view_query and self._view_filter == "all":
+            if not statuses and not self._view_query and self._view_filter == "all" and self._view_role == "all":
                 message = "Aucun plugin installé. Installez un ZIP pour commencer."
             else:
                 filter_label = dict(PLUGIN_VIEW_FILTERS).get(self._view_filter, "Tous")
+                if self._view_role != "all":
+                    filter_label += " · " + PLUGIN_ROLE_LABELS.get(self._view_role, self._view_role)
                 query = self._view_query.strip()
                 if query:
                     message = f"Aucun plugin ne correspond à « {query} » avec le filtre « {filter_label} »."
@@ -232,7 +261,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             empty.add_css_class("dim-label")
             container.append(empty)
 
-    def _append_package(self, package, package_plugins):
+    def _append_package(self, package, package_plugins, *, statuses=()):
         package_id = str(package["package_id"])
         package_name = str(package.get("name") or package_id)
         frame = Gtk.Frame()
@@ -313,22 +342,41 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             freshness.add_css_class("dim-label" if freshness_status == "up_to_date" else "warning")
             box.append(freshness)
 
-        contributions = Gtk.Label(
-            label=f"{len(package_plugins)} contribution(s) fournie(s) par ce package",
-            xalign=0,
+        # Keep failed/degraded state visible even while a long group is folded.
+        needs_attention = sum(
+            status.state in {"blocked", "degraded", "incompatible", "error"}
+            for status in package_plugins
         )
-        contributions.add_css_class("caption"); contributions.add_css_class("dim-label")
-        box.append(contributions)
+        details = Gtk.Expander()
+        heading = f"{len(package_plugins)} contribution(s) · ouvrir les détails"
+        if needs_attention:
+            heading += f" · {needs_attention} à examiner"
+        details.set_label(heading)
+        details.set_tooltip_text("Afficher ou masquer les contributions de ce package")
+        auto_expand = (
+            len(package_plugins) == 1 or needs_attention > 0
+            or bool(self._view_query) or self._view_filter != "all"
+            or self._view_role != "all"
+        )
+        details.set_expanded(self._package_expansion.get(package_id, bool(auto_expand)))
+        details.connect(
+            "notify::expanded",
+            lambda expander, _pspec, pid=package_id:
+                self._package_expansion.__setitem__(pid, bool(expander.get_expanded())),
+        )
+        children = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         for status in package_plugins:
             plugin_frame = Gtk.Frame()
-            plugin_frame.set_child(self._plugin_row(status, package))
-            box.append(plugin_frame)
+            plugin_frame.set_child(self._plugin_row(status, package, statuses=statuses))
+            children.append(plugin_frame)
+        details.set_child(children)
+        box.append(details)
 
         frame.set_child(box)
         target = getattr(self, "inventory_box", self.outer)
         target.append(frame)
 
-    def _plugin_row(self, status: Any, package=None) -> Gtk.Widget:
+    def _plugin_row(self, status: Any, package=None, *, statuses=()) -> Gtk.Widget:
         from cifereca.plugin_help import plugin_help
         d = status.descriptor
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
@@ -377,6 +425,31 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             summary.set_wrap(True); summary.set_hexpand(True)
             summary.add_css_class("caption"); summary.add_css_class("dim-label")
             box.append(summary)
+        role = Gtk.Label(label=f"Rôle · {PLUGIN_ROLE_LABELS[plugin_role(d)]}", xalign=0)
+        role.add_css_class("caption"); role.add_css_class("dim-label")
+        box.append(role)
+        for line in plugin_relationships(status, statuses):
+            relation = Gtk.Label(label=line, xalign=0)
+            relation.set_wrap(True)
+            relation.add_css_class("caption")
+            relation.add_css_class("dim-label")
+            box.append(relation)
+        dependent_rows = tuple(
+            other for other in plugin_dependents(d.id, statuses, transitive=True)
+            if other.enabled
+        )
+        if dependent_rows and status.enabled:
+            impacted = ", ".join(
+                str(other.descriptor.display_name or other.descriptor.id)
+                for other in dependent_rows[:4]
+            )
+            if len(dependent_rows) > 4:
+                impacted += f" (+{len(dependent_rows) - 4})"
+            impact = Gtk.Label(label=f"Désactivation : affectera également {impacted}", xalign=0)
+            impact.set_wrap(True)
+            impact.add_css_class("caption")
+            impact.add_css_class("warning")
+            box.append(impact)
         if status.state in {"blocked", "error", "incompatible", "degraded"}:
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)

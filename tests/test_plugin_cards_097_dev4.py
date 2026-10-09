@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+from cifereca.gui.plugin_view import PLUGIN_ROLE_LABELS, plugin_role, plugin_dependents, plugin_relationships
+
 
 class Widget:
     def __init__(self, **properties):
@@ -13,6 +15,7 @@ class Widget:
     def set_popover(self, child):self.popover=child
     def connect(self, signal, fn):self.handlers[signal]=fn
     def get_active(self):return self.properties.get('active',False)
+    def get_expanded(self):return self.properties.get('expanded',False)
     @classmethod
     def new_with_range(cls,*args):return cls()
     def __getattr__(self,name):
@@ -29,13 +32,15 @@ class CardLayout(unittest.TestCase):
         tree=ast.parse(path.read_text())
         obj=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='PluginManagerPage')
         methods=[n for n in obj.body if isinstance(n,ast.FunctionDef) and n.name in {'_append_package','_plugin_row'}]
-        gtk=NS(**{name:type(name,(Widget,),{}) for name in ['Box','Frame','Label','MenuButton','Popover','Button','SpinButton','Switch','CheckButton']},
+        gtk=NS(**{name:type(name,(Widget,),{}) for name in ['Box','Frame','Label','MenuButton','Popover','Button','SpinButton','Switch','CheckButton','Expander']},
                Orientation=NS(VERTICAL='vertical',HORIZONTAL='horizontal'),Align=NS(CENTER='center'))
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         adaptive=type('AdaptiveActionBar',(Widget,),{})
         def action_button(label, icon_name=None, **properties):
             return gtk.Button(label=label, icon_name=icon_name, **properties)
-        ns={'Gtk':gtk,'_STATE_LABELS':{'ready':'Prêt'},'AdaptiveActionBar':adaptive,'action_button':action_button}
+        ns={'Gtk':gtk,'_STATE_LABELS':{'ready':'Prêt'},'AdaptiveActionBar':adaptive,'action_button':action_button,
+            'PLUGIN_ROLE_LABELS':PLUGIN_ROLE_LABELS,'plugin_role':plugin_role,
+            'plugin_dependents':plugin_dependents,'plugin_relationships':plugin_relationships}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(path),'exec'),ns)
         cls.builder=staticmethod(ns['_plugin_row']);cls.packager=staticmethod(ns['_append_package'])
 
@@ -43,6 +48,8 @@ class CardLayout(unittest.TestCase):
         self.calls=[]
         self.host=NS(
             outer=Widget(),
+            _package_expansion={},
+            _view_query='', _view_filter='all', _view_role='all',
             window=NS(service=NS(identities=[NS(label='Hugues',identity_id='hugues')])),
             manager=NS(enabled_for_identity=lambda *args:True),
             _configure=lambda pid:self.calls.append(('config',pid)),
@@ -61,7 +68,7 @@ class CardLayout(unittest.TestCase):
             'active':'1.2.0','expected_version':'1.2.0','freshness':'up_to_date',
             'freshness_reason':'','previous':'1.1.0','builtin':False,
         }
-        self.host._plugin_row=lambda status,package:self.builder(self.host,status,package)
+        self.host._plugin_row=lambda status,package,*,statuses=():self.builder(self.host,status,package,statuses=statuses)
 
     def card(self):return self.builder(self.host,self.status,self.package)
 
@@ -107,8 +114,11 @@ class CardLayout(unittest.TestCase):
             if type(w).__name__=='Button'
         ]
         self.assertEqual(labels,['Revenir à 1.1.0','Désinstaller le package'])
-        plugin_frames=[child for child in package_box.children if type(child).__name__=='Frame']
+        expanders=[child for child in package_box.children if type(child).__name__=='Expander']
+        self.assertEqual(len(expanders),1)
+        plugin_frames=expanders[0].children[0].children
         self.assertEqual(len(plugin_frames),2)
+        self.assertEqual(expanders[0].properties['expanded'],False)
 
     def test_package_remove_names_scope_and_affected_plugins(self):
         self.packager(self.host,self.package,[self.status])
