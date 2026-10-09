@@ -56,7 +56,13 @@ jobs:
         shell: bash
         run: |
           python -m pip install --no-deps --no-build-isolation .
-          cifereca-update-dev "dist/cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}.zip" --dry-run --json
+          archive="dist/cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}.zip"
+          core_version="$(python -c 'import cifereca; print(cifereca.__version__)')"
+          api_version="$(python -c 'from cifereca.plugin_api.version import PLUGIN_API_VERSION; print(PLUGIN_API_VERSION)')"
+          python -m scripts.package_partial_plugins --verify "$archive" \
+            --target-core-version "$core_version" \
+            --target-plugin-api-version "$api_version"
+          cifereca-update-dev "$archive" --dry-run --json
 
       - name: Upload preview only (not a GitHub Release)
         uses: actions/upload-artifact@v4
