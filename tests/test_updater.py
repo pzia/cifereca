@@ -147,6 +147,61 @@ def test_rollback_repoints_current(tmp_path, monkeypatch):
     assert Path(result["current"]).resolve() == a.resolve()
 
 
+@pytest.mark.parametrize(("managed_current", "managed_target"), [(True, False), (False, True), (True, True)])
+def test_rollback_cannot_claim_success_without_managed_plugin_restoration(
+    tmp_path, monkeypatch, managed_current, managed_target,
+):
+    """No Core pointer may move when either generation declares managed plugins."""
+    root = tmp_path / "runtime"
+    releases = root / "releases"
+    previous = releases / "1.0.0-a"
+    current = releases / "2.0.0-b"
+    for release in (previous, current):
+        (release / ".venv" / "bin").mkdir(parents=True)
+    manifest = '{"schema": 1, "packages": {"org.test": {"version": "0.1.0"}}}\n'
+    for release, managed in ((current, managed_current), (previous, managed_target)):
+        if managed:
+            folder = release / "src" / "cifereca"
+            folder.mkdir(parents=True)
+            (folder / "plugin-release.json").write_text(manifest, encoding="utf-8")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "current").symlink_to(os.path.relpath(current, root))
+    (root / "previous").symlink_to(os.path.relpath(previous, root))
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
+    monkeypatch.setenv("CIFERECA_BIN_DIR", str(tmp_path / "bin"))
+    monkeypatch.setattr(updater, "_smoke", lambda _release: pytest.fail("unsafe rollback reached smoke"))
+    with pytest.raises(updater.UpdateError, match="Rollback Core \\+ plugins indisponible"):
+        updater.rollback()
+    assert updater._symlink_target(root / "current").resolve() == current.resolve()
+    assert updater._symlink_target(root / "previous").resolve() == previous.resolve()
+    assert not (tmp_path / "bin").exists()
+
+
+def test_rollback_cli_reports_error_without_moving_managed_core(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "runtime"
+    a = root / "releases" / "1.0.0-a"
+    b = root / "releases" / "2.0.0-b"
+    for release in (a, b):
+        (release / ".venv" / "bin").mkdir(parents=True)
+    path = b / "src" / "cifereca" / "plugin-release.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"schema": 1, "packages": {"org.test": {"version": "0.1.0"}}}\n',
+        encoding="utf-8",
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "current").symlink_to(os.path.relpath(b, root))
+    (root / "previous").symlink_to(os.path.relpath(a, root))
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
+    monkeypatch.setenv("CIFERECA_BIN_DIR", str(tmp_path / "bin"))
+    assert updater.main(["--rollback", "--json"]) == 1
+    result = updater.json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "update_error"
+    assert "snapshot restaurable" in result["error"]["message"]
+    assert updater._symlink_target(root / "current").resolve() == b.resolve()
+
+
 def test_github_dry_run_resolves_sha_without_mutating_runtime(tmp_path, monkeypatch):
     target = tmp_path / "runtime"
     monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(target))
