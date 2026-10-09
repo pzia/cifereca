@@ -221,7 +221,7 @@ def _installed_target_versions() -> tuple[str, str]:
             raise ValueError("PLUGIN_API_VERSION absent ou ambigu")
         api_version = str(Version(ast.literal_eval(declarations[0])))
         return core_version, api_version
-    except (OSError, ValueError, updater.UpdateError, InvalidVersion) as exc:
+    except (OSError, ValueError, TypeError, SyntaxError, RuntimeError, updater.UpdateError) as exc:
         raise DevUpdateError(
             "runtime Core cible ou version Plugin API illisible ; "
             "installation plugins-only refusée"
