@@ -1,7 +1,12 @@
 # Releases officielles plugins-only — contrat de confiance P0
 
 Une release plugins-only est publiée **uniquement sur ordre explicite**, via
-`.github/workflows/plugins-only-release.yml` déclenché sur `main`.
+`.github/workflows/plugins-only-release.yml` exécuté sur `main`. Deux modalités
+sont acceptées : `workflow_dispatch` manuel (inputs `release_tag` et
+`package_ids`) ou merge après revue d'une modification explicite de
+`.github/plugins-only-release-request.json`. Aucun autre push ne déclenche
+ce workflow de publication. La requête versionnée permet une trace auditée.
+**Ne jamais modifier cette requête hors autorisation de publication.**
 Un snapshot de prévisualisation ou un simple ZIP accompagné de son SHA-256
 **ne prouve pas son origine**.
 
@@ -14,6 +19,12 @@ Avant toute création de brouillon GitHub Release ou upload d'assets, le workflo
 3. exerce l'installation stricte réelle, le refus d'un Core divergent et le rollback ;
 4. signe le ZIP avec `actions/attest@v4` (attestation SLSA) ;
 5. **revérifie l'attestation** des octets exacts avec `gh attestation verify`, en imposant le dépôt, le workflow signataire, `refs/heads/main` et le SHA du commit source.
+
+
+Avant publication finale, la CI **retélécharge le ZIP depuis la GitHub Release
+encore en brouillon**, revérifie son SHA et son attestation, puis rejoue
+l'installation stricte, le refus sur ancien Core et le rollback. Si un de ces
+contrôles échoue, la publication reste bloquée et la release demeure un brouillon.
 
 Une erreur à n'importe quelle étape **interdit la publication**. Le sidecar
 `.sha256` ne constitue pas une signature.

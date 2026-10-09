@@ -153,6 +153,24 @@ class PartialPluginReleaseTests(unittest.TestCase):
             self.assertIn(evidence, verification)
         self.assertNotIn("|| true", verification)
 
+    def test_official_release_request_is_explicit_and_scoped(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/plugins-only-release.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('branches: [main]', workflow)
+        self.assertIn('".github/plugins-only-release-request.json"', workflow)
+        self.assertIn("name: Resolve explicitly authorized release request", workflow)
+        self.assertIn("name: Verify downloaded draft artifact and repeat P0 gates", workflow)
+        release_job = workflow.split("\n  release:\n", 1)[1]
+        self.assertLess(
+            release_job.index("name: Verify downloaded draft artifact and repeat P0 gates"),
+            release_job.index("name: Publish completed plugins-only release"),
+        )
+        self.assertIn('gh release download "$RELEASE_TAG"', release_job)
+        self.assertIn('bash scripts/ci-plugins-only-runtime-gate.sh "$artifact_dir/$RELEASE_TAG.zip"', release_job)
+        self.assertIn('bash scripts/ci-plugins-only-historical-core-gate.sh "$artifact_dir/$RELEASE_TAG.zip"', release_job)
+
     def test_modified_embedded_metadata_is_detected(self) -> None:
         original = self.build("org.cifereca.provider.alpha")
         corrupted = self.root / "tampered.zip"
