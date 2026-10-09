@@ -368,3 +368,39 @@ def test_cache_filter_rejects_ambiguous_labels_without_remote_collection():
                                        row("Attested", age_label="8+")])
     assert [b.title for b in index.search("alice", age=8)] == ["Attested"]
     assert len(index.entries("alice")) == 2
+
+
+def test_fresh_installed_package_exposes_both_contributions_without_enabling_them(tmp_path):
+    """Regression P0 #859: an undeclared custom category hid catalog.youth."""
+    import json
+    from pathlib import Path
+
+    from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
+
+    manifest_path = Path(__file__).resolve().parents[1] / "cifereca-plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    package_id = manifest["package"]["id"]
+    version = manifest["package"]["version"]
+    expected = {row["id"]: row["type"] for row in manifest["plugins"]}
+    assert expected == {"catalog.youth": "catalog.youth", "ui.page.youth": "ui.page"}
+
+    store = PackageStore(tmp_path / "packages")
+    target = store.version_root(package_id, version)
+    target.mkdir(parents=True)
+    (target / "cifereca-plugin.json").write_text(
+        json.dumps(manifest), encoding="utf-8",
+    )
+    store.set_active(package_id, version)
+    manager = PluginManager(
+        package_store=store,
+        state_store=PluginStateStore(tmp_path / "plugins-state.json"),
+    )
+    try:
+        manager.activate()
+        rows = [row for row in manager.diagnostic() if row["package_id"] == package_id]
+        assert {row["plugin_id"]: row["type"] for row in rows} == expected
+        assert all(row["state"] == "disabled" and row["enabled"] is False for row in rows)
+        assert manager.categories.get("catalog.youth").contract_id == "cifereca.youth-catalog"
+        assert store.active_version(package_id) == version
+    finally:
+        manager.close()
