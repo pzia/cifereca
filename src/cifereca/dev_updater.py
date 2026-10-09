@@ -343,25 +343,37 @@ def apply_snapshot(
     dry_run: bool = False,
     restart: bool = False,
     expected_sha256: str | None = None,
+    require_plugins_only: bool = False,
 ) -> dict[str, Any]:
     try:
         archive = resolve_archive(archive)
     except ArchiveNotFoundError as exc:
         raise DevUpdateError(str(exc)) from exc
-    # The digest must come from a separate, trusted release channel: an
-    # adjacent .sha256 file delivered with the ZIP is not an authenticity proof.
-    # Check the complete archive before extracting any of its contents.
+    # An official plugins-only caller must supply its own trusted digest.
+    # A marker *inside* the ZIP, or an adjacent .sha256 file, is not an
+    # authenticity proof. Keep unmarked historical dev snapshots compatible.
+    if require_plugins_only and expected_sha256 is None:
+        raise DevUpdateError(
+            "mode plugins-only strict : --expected-sha256 obtenu d'un canal fiable requis"
+        )
     if expected_sha256 is not None:
         if not isinstance(expected_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
             raise DevUpdateError("empreinte SHA-256 attendue invalide")
-        try:
-            matching = hmac.compare_digest(_sha256(archive), expected_sha256.lower())
-        except OSError as exc:
-            raise DevUpdateError("snapshot illisible pour vérification SHA-256") from exc
-        if not matching:
-            raise DevUpdateError("SHA-256 du snapshot incompatible avec la provenance attendue")
     with tempfile.TemporaryDirectory(prefix="cifereca-dev-update-") as tmp:
-        root, manifest = _extract_snapshot(archive, Path(tmp))
+        # Verify the exact bytes that will be extracted. Hashing the original
+        # and reopening it later would allow a replacement between check and
+        # extraction (TOCTOU), including in the strict official path.
+        snapshot = archive
+        if expected_sha256 is not None:
+            snapshot = Path(tmp) / "verified-snapshot.zip"
+            try:
+                shutil.copyfile(archive, snapshot)
+                matching = hmac.compare_digest(_sha256(snapshot), expected_sha256.lower())
+            except OSError as exc:
+                raise DevUpdateError("snapshot illisible pour vérification SHA-256") from exc
+            if not matching:
+                raise DevUpdateError("SHA-256 du snapshot incompatible avec la provenance attendue")
+        root, manifest = _extract_snapshot(snapshot, Path(tmp) / "contents")
         snapshot_id = str(manifest.get("id") or archive.stem)
         core_rel = str(manifest.get("core") or "")
         core_zip = (root / core_rel).resolve() if core_rel else None
@@ -398,13 +410,19 @@ def apply_snapshot(
         # Indexed partial releases must prove compatibility with the installed
         # Core and API before dry-run, backup, plugin install or Core mutation.
         partial_index = _validate_plugins_only_index(root, manifest, indexed_packages)
+        if require_plugins_only and (manifest.get("scope") != "plugins-only" or partial_index is None):
+            raise DevUpdateError(
+                "mode plugins-only strict : marqueur de portée et index obligatoires"
+            )
         result: dict[str, Any] = {
             "ok": True,
             "snapshot_id": snapshot_id,
             "archive": str(archive),
-            "sha256": _sha256(archive),
+            "sha256": _sha256(snapshot),
             "plugins": package_ids,
             "plugins_only_indexed": partial_index is not None,
+            "trusted_digest_verified": expected_sha256 is not None,
+            "strict_plugins_only": bool(require_plugins_only),
             "dry_run": bool(dry_run),
         }
         if dry_run:
@@ -467,6 +485,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("snapshot", nargs="?", help="ZIP snapshot (core et/ou plugins), dossier courant puis Téléchargements XDG")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--expected-sha256", metavar="HEXADECIMAL", help="Empreinte SHA-256 du ZIP obtenue d'une source de confiance, vérifiée avant extraction")
+    parser.add_argument("--require-plugins-only", action="store_true", help="Exiger le marqueur/index plugins-only et un --expected-sha256 externe fiable, y compris en dry-run")
     parser.add_argument("--restart", action="store_true", help="Lance la nouvelle application après mise à jour")
     parser.add_argument("--keep", type=int, default=3)
     parser.add_argument("--python")
@@ -479,6 +498,7 @@ def main(argv: list[str] | None = None) -> int:
             args.snapshot, python=args.python, keep=args.keep,
             dry_run=args.dry_run, restart=args.restart,
             expected_sha256=args.expected_sha256,
+            require_plugins_only=args.require_plugins_only,
         )
         _print(result, args.json)
         return 0
