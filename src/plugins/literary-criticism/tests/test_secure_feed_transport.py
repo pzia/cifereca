@@ -151,3 +151,51 @@ def test_https_downgrade_redirect_is_refused(monkeypatch):
     with pytest.raises(ValueError, match="HTTPS vers HTTP"):
         feeds.fetch_public("https://news.example/feed")
     assert requests == ["https://news.example/feed"]
+
+
+
+def test_installed_feed_source_default_fetch_rejects_private_dns_before_socket(monkeypatch):
+    created = []
+
+    monkeypatch.setattr(
+        feeds.socket,
+        "getaddrinfo",
+        lambda host, port, **kwargs: [_answer("10.10.10.10")],
+    )
+    monkeypatch.setattr(
+        feeds.socket,
+        "socket",
+        lambda *args: created.append(args) or FakeSocket("10.10.10.10", []),
+    )
+
+    source = feeds.FeedSource("https://news.example/feed")
+    assert source.fetch is feeds.fetch_public
+    with pytest.raises(ValueError, match="non publique"):
+        source.collect()
+
+    # The production FeedSource path rejects the DNS answer before creating TCP.
+    assert created == []
+
+
+def test_installed_feed_source_default_fetch_rejects_unexpected_peer(monkeypatch):
+    created = []
+    sock = FakeSocket("127.0.0.1", [])
+
+    monkeypatch.setattr(
+        feeds.socket,
+        "getaddrinfo",
+        lambda host, port, **kwargs: [_answer(PUBLIC_V4)],
+    )
+    monkeypatch.setattr(
+        feeds.socket,
+        "socket",
+        lambda *args: created.append(args) or sock,
+    )
+
+    source = feeds.FeedSource("https://news.example/feed")
+    assert source.fetch is feeds.fetch_public
+    with pytest.raises(ValueError, match="Socket connecté"):
+        source.collect()
+
+    assert created
+    assert sock.closed
