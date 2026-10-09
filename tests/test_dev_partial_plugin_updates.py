@@ -374,8 +374,8 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         trusted = hashlib.sha256(self.snapshot.read_bytes()).hexdigest()
         changed = self._edited_snapshot(dev_edit=lambda data: data.update(created_at="changed"))
         self.assertNotEqual(hashlib.sha256(changed.read_bytes()).hexdigest(), trusted)
-        with patch.object(dev, "_extract_snapshot") as extract, \\
-             patch.object(dev, "_backup_plugins") as backup, \\
+        with patch.object(dev, "_extract_snapshot") as extract, \
+             patch.object(dev, "_backup_plugins") as backup, \
              patch.object(dev, "_install_plugin_replace") as install:
             with self.assertRaisesRegex(dev.DevUpdateError, "SHA-256 du snapshot"):
                 dev.apply_snapshot(changed, expected_sha256=trusted)
@@ -386,7 +386,7 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         self.assertFalse(self.state.exists())
 
     def test_invalid_trusted_digest_rejected_before_extraction_even_in_dry_run(self) -> None:
-        for digest in ("", "0" * 63, "0" * 65, "gg" * 32, "0" * 64 + "\\n"):
+        for digest in ("", "0" * 63, "0" * 65, "gg" * 32, "0" * 64 + chr(10)):
             with self.subTest(digest=digest), patch.object(dev, "_extract_snapshot") as extract:
                 with self.assertRaisesRegex(dev.DevUpdateError, "empreinte SHA-256 attendue invalide"):
                     dev.apply_snapshot(self.snapshot, dry_run=True, expected_sha256=digest)
@@ -394,7 +394,7 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         self.assertEqual(self._version(ALPHA), "0.9")
 
     def test_cli_expected_sha256_is_checked_before_extracting(self) -> None:
-        with patch.object(dev, "_extract_snapshot") as extract, \\
+        with patch.object(dev, "_extract_snapshot") as extract, \
              patch.object(dev, "_print") as display:
             code = dev.main([str(self.snapshot), "--dry-run", "--expected-sha256", "0" * 64])
         self.assertEqual(code, 1)
