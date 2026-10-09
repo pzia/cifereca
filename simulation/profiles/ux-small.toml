@@ -91,3 +91,9 @@ seed = 20261009
 [services.milan]
 enabled = true
 seed = 20261009
+
+# Faux catalogue public Baen uniquement. Le plugin réel n'est pas activé
+# automatiquement, car son URL officielle ne peut pas être redirigée.
+[services.baen]
+enabled = true
+seed = 20261009

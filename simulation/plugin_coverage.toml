@@ -4,7 +4,7 @@ version = 1
 
 [package.baen]
 data = []
-gap = "Faux catalogue/acquisition Baen et erreurs HTTP absents"
+gap = "Baen : faux catalogue/fiches/EPUB HTTP, sans GUI E2E ni vrais comptes"
 
 [package.constellations]
 data = ["local-library", "specialized-seed"]

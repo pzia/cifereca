@@ -58,3 +58,12 @@ Content-Type invalide et dépassement de taille. Aucun plugin n'est
 automatiquement activé ; ce n'est **pas** un test GUI GTK.
 
 Voir `simulation/milan/README.md` et #816.
+
+## Baen — couverture de contrat
+
+`simulation/baen/pseudo_baen_service.py` sert maintenant les scénarios
+catalogue, recherches, pagination, détails, téléchargements EPUB synthétiques,
+429/503 et absence de lien. Le vrai `provider.baen` est exercé avec un
+`httpx.MockTransport` dirigé uniquement vers le faux serveur loopback :
+`simulation/tests/test_baen_http_service.py`. Le service n'active aucun
+plugin Baen dans Cifereca et ne prouve pas un parcours GUI.
