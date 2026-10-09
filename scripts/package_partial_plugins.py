@@ -64,6 +64,8 @@ def verify_partial_snapshot(
 ) -> dict:
     """Verify that the embedded preview index describes exactly the ZIP payload."""
     dev = validate_dev_snapshot(snapshot)
+    if dev.get("scope") != "plugins-only":
+        raise PackagingError("snapshot plugins-only : marqueur de portée absent ou invalide")
     if dev.get("core"):
         raise PackagingError("snapshot plugins-only contient un Core")
     if not dev["plugins"]:
@@ -136,7 +138,9 @@ def build_partial_snapshot(
 
     selected = [available[package_id] for package_id in sorted(ids)]
     name = snapshot_id or f"cifereca-plugins-only-preview-{git_short_sha()}"
-    archive_path = build_dev_snapshot(selected, output_dir, snapshot_id=name)
+    archive_path = build_dev_snapshot(
+        selected, output_dir, snapshot_id=name, plugins_only=True,
+    )
     with zipfile.ZipFile(archive_path) as archive:
         dev = json.loads(archive.read(f"{name}/cifereca-dev.json"))
         records = _package_records(archive, name, dev)

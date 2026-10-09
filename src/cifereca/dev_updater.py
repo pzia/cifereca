@@ -239,8 +239,15 @@ def _validate_plugins_only_index(
     historical behavior. The published preview index itself is a contract:
     tested Core version is exact, not a range or a forward-compatibility claim.
     """
+    scope = manifest.get("scope")
+    if scope not in (None, "plugins-only"):
+        raise DevUpdateError("portée du snapshot inconnue ou invalide")
     index_file = root / PARTIAL_MANIFEST
     if not index_file.exists():
+        if scope == "plugins-only":
+            raise DevUpdateError(
+                "snapshot plugins-only marqué sans index de provenance : installation refusée"
+            )
         return None
     if not index_file.is_file():
         raise DevUpdateError("index plugins-only invalide")

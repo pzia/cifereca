@@ -76,6 +76,22 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
                 rewritten.writestr(info, payload)
         return output
 
+    def _without_partial_index(self, *, strip_scope: bool = False) -> Path:
+        output = self.root / (
+            "stripped-" + str(len(list(self.root.glob("stripped-*.zip")))) + ".zip"
+        )
+        with zipfile.ZipFile(self.snapshot) as source, zipfile.ZipFile(output, "w") as target:
+            for info in source.infolist():
+                if info.filename.endswith("/cifereca-plugins-only.json"):
+                    continue
+                payload = source.read(info.filename)
+                if strip_scope and info.filename.endswith("/cifereca-dev.json"):
+                    manifest = json.loads(payload)
+                    manifest.pop("scope", None)
+                    payload = json.dumps(manifest).encode("utf-8")
+                target.writestr(info, payload)
+        return output
+
     def _assert_refused_before_mutation(self, archive: Path, reason: str) -> None:
         patches = self._sandbox()
         with (patches[0], patches[1], patches[2],
@@ -250,6 +266,61 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
 
         self._assert_refused_before_mutation(
             self._edited_snapshot(dev_edit=smuggle), "Core interdit",
+        )
+
+    def test_partial_marker_requires_index_before_mutation(self) -> None:
+        with zipfile.ZipFile(self.snapshot) as archive:
+            root = verify_partial_snapshot(self.snapshot)["id"]
+            manifest = json.loads(archive.read(f"{root}/cifereca-dev.json"))
+        self.assertEqual(manifest["scope"], "plugins-only")
+        stripped = self._without_partial_index()
+        self._assert_refused_before_mutation(stripped, "plugins-only.*sans index")
+        # Dry-run must use the exact same safety preflight.
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3] as core_install, patches[4], patches[5]:
+            with self.assertRaisesRegex(dev.DevUpdateError, "plugins-only.*sans index"):
+                dev.apply_snapshot(stripped, dry_run=True)
+        core_install.assert_not_called()
+
+    def test_unknown_scope_rejected_without_backup(self) -> None:
+        def invalid_scope(manifest):
+            manifest["scope"] = "unexpected-runtime-mode"
+        self._assert_refused_before_mutation(
+            self._edited_snapshot(dev_edit=invalid_scope), "portée.*invalide",
+        )
+
+    def test_packager_rejects_partial_index_when_scope_missing(self) -> None:
+        from scripts.plugin_packaging import PackagingError
+        def erase_scope(manifest):
+            manifest.pop("scope", None)
+        with self.assertRaisesRegex(PackagingError, "marqueur de portée"):
+            verify_partial_snapshot(self._edited_snapshot(dev_edit=erase_scope))
+
+    def test_legacy_generic_snapshot_has_no_marker_and_no_index(self) -> None:
+        from scripts.plugin_packaging import build_dev_snapshot
+        generic = build_dev_snapshot(
+            [self.plugins / "alpha"], output_dir=self.root / "dist",
+            snapshot_id="old-generic-without-marker",
+        )
+        with zipfile.ZipFile(generic) as archive:
+            manifest = json.loads(archive.read("old-generic-without-marker/cifereca-dev.json"))
+            self.assertNotIn("scope", manifest)
+            self.assertNotIn(
+                "old-generic-without-marker/cifereca-plugins-only.json", archive.namelist(),
+            )
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            self.assertFalse(dev.apply_snapshot(generic, dry_run=True)["plugins_only_indexed"])
+
+    def test_indexed_legacy_partial_without_marker_still_checked(self) -> None:
+        # Historical preview archives may include a provenance index but not
+        # the new explicit marker. They must still enforce Core/API matching.
+        def erase_scope(manifest):
+            manifest.pop("scope", None)
+        old_indexed = self._edited_snapshot(dev_edit=erase_scope)
+        self._target_runtime("0.0.1")
+        self._assert_refused_before_mutation(
+            old_indexed, "Core cible.*différent du Core testé",
         )
 
     def test_legacy_dev_snapshot_without_index_keeps_old_behavior(self) -> None:

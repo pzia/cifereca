@@ -48,10 +48,16 @@ plus ancien ou plus récent. Chaque package doit accepter la Plugin API
 installée. En cas d'échec, l'opération est refusée, y compris en
 `--dry-run`, avant d'installer quoi que ce soit.
 
-Un index plugins-only interdit explicitement une archive Core. Les anciens
-snapshots de développement **génériques** sans index continuent d'être
-acceptés selon leurs règles historiques ; l'index ne doit donc pas être
-retiré d'une prévisualisation pour contourner la vérification. Le format
-officiel d'une future release partielle nécessitera une convention de
-publication identifiable dans le manifest principal : cette extension
-CI/CD reste à coordonner dans #787 et #577.
+Un index plugins-only interdit explicitement une archive Core. Les nouveaux
+snapshots partiels portent aussi `scope: "plugins-only"` dans le manifest
+principal `cifereca-dev.json`. **Si l'index manque, l'updater refuse le ZIP
+avant toute sauvegarde ou mutation**, même si les archives plugins sont
+valides. Un marqueur de portée inconnu est également refusé.
+
+Les anciens snapshots de développement **génériques** sans index et sans
+marqueur continuent d'être acceptés selon leurs règles historiques. Le
+format ne fournit **pas** de signature cryptographique : un adversaire capable
+de réécrire à la fois le marqueur et l'index doit être contré par la
+vérification de provenance du ZIP et de sa somme SHA-256 depuis une source fiable.
+La publication officielle, les tags et cette authentification restent
+à coordonner dans #787 et #577.
