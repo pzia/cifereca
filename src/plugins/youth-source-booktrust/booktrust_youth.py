@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 import re
 from typing import Iterable, Mapping
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -47,11 +47,14 @@ def _allowed_url(value: object) -> str:
     absolute = urljoin(BASE, raw)
     try:
         parts = urlsplit(absolute)
+        port = parts.port
     except ValueError:
         return ""
     if parts.scheme != "https" or parts.hostname not in {"booktrust.org.uk", "www.booktrust.org.uk"}:
         return ""
-    return absolute.split("#", 1)[0]
+    if parts.username or parts.password or port not in (None, 443):
+        return ""
+    return urlunsplit(("https", "www.booktrust.org.uk", parts.path or "/", parts.query, ""))
 
 
 def age_group_for(age: int) -> str:
@@ -81,15 +84,27 @@ class _SemanticTextParser(HTMLParser):
         self._href = ""
         self._anchor_parts: list[str] = []
         self._tag_stack: list[str] = []
+        self._skip = 0
 
     def handle_starttag(self, tag: str, attrs) -> None:
-        self._tag_stack.append(tag)
-        if tag == "a":
+        name = tag.casefold()
+        self._tag_stack.append(name)
+        if name in {"script", "style", "noscript", "svg"}:
+            self._skip += 1
+            return
+        if name == "a" and not self._skip:
             self._href = dict(attrs).get("href", "")
             self._anchor_parts = []
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._href:
+        name = tag.casefold()
+        if name in {"script", "style", "noscript", "svg"}:
+            if self._skip:
+                self._skip -= 1
+            if self._tag_stack:
+                self._tag_stack.pop()
+            return
+        if name == "a" and self._href and not self._skip:
             label = _text(" ".join(self._anchor_parts))
             self.tokens.append(("link", label, self._href))
             self._href = ""
@@ -98,6 +113,8 @@ class _SemanticTextParser(HTMLParser):
             self._tag_stack.pop()
 
     def handle_data(self, data: str) -> None:
+        if self._skip:
+            return
         value = _text(data)
         if not value:
             return
@@ -243,6 +260,26 @@ def parse_detail(html: str, *, url: str) -> Mapping[str, object]:
     }
 
 
+def next_cursor(html: str, *, current_page: int) -> str:
+    expected = int(current_page) + 1
+    if expected > 100:
+        return ""
+    for kind, _label, href in _tokens(html):
+        if kind != "link":
+            continue
+        url = _allowed_url(href)
+        if not url or urlsplit(url).path.rstrip("/") + "/" != urlsplit(RECOMMENDATIONS).path.rstrip("/") + "/":
+            continue
+        query = parse_qs(urlsplit(url).query)
+        try:
+            page = int((query.get("page") or [""])[0])
+        except (TypeError, ValueError):
+            continue
+        if page == expected:
+            return str(page)
+    return ""
+
+
 def _query_url(*, age: int | None = None, themes: Iterable[str] = (), page: int = 1) -> str:
     params: list[tuple[str, str]] = []
     if age is not None:
@@ -286,7 +323,7 @@ class BookTrustSource:
         if not allowed:
             raise ValueError("BookTrust URL outside allowlist")
         response = self.client.get(allowed)
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             raise RuntimeError(f"BookTrust HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type", ""))
         if content_type and "html" not in content_type:
@@ -305,9 +342,13 @@ class BookTrustSource:
         limit: int = 50,
     ) -> Mapping[str, object]:
         try:
-            page = max(1, int(cursor or "1"))
+            page = int(cursor or "1")
         except (TypeError, ValueError):
-            page = 1
+            raise ValueError("invalid BookTrust page cursor")
+        if not 1 <= page <= 100:
+            raise ValueError("invalid BookTrust page cursor")
+        if age is not None and not age_group_for(int(age)):
+            return {"items": (), "next_cursor": "", "fresh_for_seconds": 86_400}
         bounded = max(1, min(int(limit), 50))
         url = _query_url(age=age, themes=themes, page=page)
         html = self._get_text(url)
@@ -328,7 +369,7 @@ class BookTrustSource:
         ]
         return {
             "items": items,
-            "next_cursor": str(page + 1) if cards else "",
+            "next_cursor": next_cursor(html, current_page=page),
             "fresh_for_seconds": 86_400,
         }
 
