@@ -47,3 +47,12 @@ ni recettées par le harnais E2E GTK. Elles ne simulent pas les
 pages GUI BookTrust/OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, l'ADEPT ni les formats
 PDF/DRM. Lier ces scénarios à des faux services et des tests GUI réels reste
 à faire dans les tickets dédiés.
+
+## Baen — couverture de contrat
+
+`simulation/baen/pseudo_baen_service.py` sert maintenant les scénarios
+catalogue, recherches, pagination, détails, téléchargements EPUB synthétiques,
+429/503 et absence de lien. Le vrai `provider.baen` est exercé avec un
+`httpx.MockTransport` dirigé uniquement vers le faux serveur loopback :
+`simulation/tests/test_baen_http_service.py`. Le service n'active aucun
+plugin Baen dans Cifereca et ne prouve pas un parcours GUI.
