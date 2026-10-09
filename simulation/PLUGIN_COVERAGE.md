@@ -47,3 +47,14 @@ ni recettées par le harnais E2E GTK. Elles ne simulent pas les
 pages GUI BookTrust/OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, l'ADEPT ni les formats
 PDF/DRM. Lier ces scénarios à des faux services et des tests GUI réels reste
 à faire dans les tickets dédiés.
+
+## Éditions Milan — HTTP
+
+Le service `milan` sur 127.0.0.1:8101 sert le catalogue et les fiches HTML
+synthétiques ; `MilanYouthSource` est testé via `httpx.MockTransport`
+injecté, sans aucun accès réseau extérieur. Les scénarios couvrent âges
+attestés ou absents, ISBN valide/invalide, 0/1/N, pagination, 404, 503,
+Content-Type invalide et dépassement de taille. Aucun plugin n'est
+automatiquement activé ; ce n'est **pas** un test GUI GTK.
+
+Voir `simulation/milan/README.md` et #816.
