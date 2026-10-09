@@ -192,6 +192,18 @@ def required_extension_ids(
     }
     if not seeds:
         return frozenset()
+    # A family uses namespaced identifiers (e.g. youth / youth.ext), so a
+    # parent query can directly match both parent and descendants. Only the
+    # highest matching ancestors count as search roots; matched children must
+    # still appear in the extension results.
+    roots = {
+        identifier for identifier in seeds
+        if not any(
+            getattr(dep, "plugin", None) in seeds
+            for dep in (getattr(rows[identifier], "requires", ()) or ())
+            if getattr(dep, "plugin", None) != identifier
+        )
+    } or seeds
     children: dict[str, set[str]] = {}
     for identifier, descriptor in rows.items():
         for dep in getattr(descriptor, "requires", ()) or ():
@@ -205,7 +217,7 @@ def required_extension_ids(
             if child not in found:
                 found.add(child)
                 pending.append(child)
-    return frozenset(found - seeds)
+    return frozenset(found - roots)
 
 
 def filter_package_plugins(
