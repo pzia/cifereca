@@ -7,6 +7,7 @@ import threading
 import unittest
 from pathlib import Path
 from http.server import ThreadingHTTPServer
+from xml.etree import ElementTree as ET
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
@@ -103,8 +104,7 @@ class EditorialHttpServiceTests(unittest.TestCase):
             _, _, empty = server.body("/criticism/empty.xml")
             self.assertEqual(parse_feed(empty, server.root + "/criticism/empty.xml"), [])
             _, _, malformed = server.body("/criticism/invalid.xml")
-            with self.assertRaises(ValueError):
-                # The real parser raises XML ParseError (a ValueError subclass).
+            with self.assertRaises(ET.ParseError):
                 parse_feed(malformed, server.root + "/criticism/invalid.xml")
             for path, status in (
                 ("/criticism/unavailable", 503),
