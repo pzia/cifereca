@@ -29,20 +29,36 @@ jobs:
       - name: Install GTK E2E runtime
         run: bash scripts/ci-install-gtk-e2e-runtime.sh
 
+      - name: Prepare isolated E2E Python with plugin dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/cifereca-e2e-venv"
+          "$RUNNER_TEMP/cifereca-e2e-venv/bin/python" -m pip install --disable-pip-version-check "httpx>=0.28.1,<0.29" "packaging>=24,<26"
+          "$RUNNER_TEMP/cifereca-e2e-venv/bin/python" - <<'PY'
+          import importlib.metadata
+          import gi
+          from packaging.specifiers import SpecifierSet
+          import httpx
+          from gi.repository import Gtk
+          assert importlib.metadata.version("httpx") in SpecifierSet(">=0.28.1,<0.29")
+          assert Gtk is not None and httpx is not None
+          PY
+
       - name: Run reference E2E
         env:
-          CIFERECA_E2E_PYTHON: /usr/bin/python3
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin core
 
       - name: Replay P0 Search filter regression on real GTK
         env:
-          CIFERECA_E2E_PYTHON: /usr/bin/python3
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario search-filter-p0
 
       - name: Replay Jeunesse P1 in a real virtual GTK4 environment
         if: ${{ !cancelled() }}
         env:
-          CIFERECA_E2E_PYTHON: /usr/bin/python3
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth --out e2e-artifacts/youth
 
       - name: Publish E2E summary
