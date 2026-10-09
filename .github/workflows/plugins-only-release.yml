@@ -29,6 +29,11 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       PACKAGE_IDS: ${{ inputs.package_ids }}
+      CIFERECA_INSTALL_ROOT: ${{ runner.temp }}/cifereca-p0/runtime
+      CIFERECA_BIN_DIR: ${{ runner.temp }}/cifereca-p0/bin
+      XDG_DATA_HOME: ${{ runner.temp }}/cifereca-p0/data
+      XDG_STATE_HOME: ${{ runner.temp }}/cifereca-p0/state
+      XDG_CONFIG_HOME: ${{ runner.temp }}/cifereca-p0/config
 
     steps:
       - uses: actions/checkout@v4
@@ -109,13 +114,42 @@ jobs:
             exit 1
           fi
 
-          if ! cifereca-update-dev --help | grep -q -- '--require-plugins-only'; then
+          # Exercise the same immutable Core layout used by the production
+          # updater. A plain pip install is not sufficient: plugins-only
+          # compatibility is intentionally read from runtime/current.
+          mkdir -p dist
+          git archive --format=zip --prefix=cifereca-core/ HEAD > dist/cifereca-core-current.zip
+          cifereca-update dist/cifereca-core-current.zip --keep 3 --json
+
+          runtime_update_dev="$CIFERECA_BIN_DIR/cifereca-update-dev"
+          runtime_cli="$CIFERECA_BIN_DIR/cifereca-cli"
+          if ! "$runtime_update_dev" --help | grep -q -- '--require-plugins-only'; then
             echo "Strict plugins-only updater support is required; merge P0 #849 first." >&2
             exit 1
           fi
 
           digest="$(sha256sum "$archive" | awk '{print $1}')"
-          cifereca-update-dev "$archive"             --require-plugins-only             --expected-sha256 "$digest"             --dry-run             --json
+          "$runtime_update_dev" "$archive"             --require-plugins-only             --expected-sha256 "$digest"             --dry-run             --json
+
+          # Real targeted install in the isolated runtime, not only dry-run.
+          "$runtime_update_dev" "$archive"             --require-plugins-only             --expected-sha256 "$digest"             --json
+          "$runtime_cli" plugin list > dist/plugins-only-runtime-inventory.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          expected = {x.strip() for x in os.environ["PACKAGE_IDS"].split(",") if x.strip()}
+          rows = json.loads(Path("dist/plugins-only-runtime-inventory.json").read_text(encoding="utf-8"))
+          visible = {
+              str(row.get("package_id"))
+              for row in rows
+              if isinstance(row, dict) and row.get("package_id")
+          }
+          missing = sorted(expected - visible)
+          if missing:
+              raise SystemExit("Selected packages missing after real strict install: " + ", ".join(missing))
+          PY
 
       - name: Attest plugins-only artifact provenance
         uses: actions/attest@v4
