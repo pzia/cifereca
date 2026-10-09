@@ -238,13 +238,16 @@ jobs:
           # A mismatched target Core must fail before plugin backup/install.
           runtime="$(readlink -f "$CIFERECA_INSTALL_ROOT/current")"
           cp "$runtime/pyproject.toml" "$runtime/pyproject.toml.p0"
+          cp "$runtime/VERSION" "$runtime/VERSION.p0"
           sed -i 's/^version = ".*"/version = "0.0.1"/' "$runtime/pyproject.toml"
+          printf '0.0.1\n' > "$runtime/VERSION"
           before_incompatible="$(tree_digest "$package_root")"
           set +e
           "$CIFERECA_BIN_DIR/cifereca-update-dev" "$archive"             --require-plugins-only             --expected-sha256 "$digest"             --json > "$RUNNER_TEMP/cifereca-p0/incompatible.json" 2>&1
           incompatible_rc=$?
           set -e
           mv "$runtime/pyproject.toml.p0" "$runtime/pyproject.toml"
+          mv "$runtime/VERSION.p0" "$runtime/VERSION"
           if [[ "$incompatible_rc" -eq 0 ]]; then
             echo "Incompatible installed Core unexpectedly accepted." >&2
             exit 1
