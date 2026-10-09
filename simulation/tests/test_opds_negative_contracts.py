@@ -9,7 +9,9 @@ import tempfile
 import threading
 import unittest
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
+
+import httpx
 
 SIM = Path(__file__).resolve().parents[1]
 ROOT = SIM.parent
@@ -60,28 +62,58 @@ class LocalOPDS:
         self.server.server_close()
         self.thread.join(timeout=3)
 
+    def injected_client(self, fault: str) -> httpx.Client:
+        # Both real providers pass params=... to HTTPX, which replaces query
+        # components on configured URLs. Inject the fault on the outgoing
+        # request instead, strictly inside the test, without touching plugins.
+        def forward(request: httpx.Request) -> httpx.Response:
+            if request.url.scheme != "http" or request.url.host != "127.0.0.1":
+                raise AssertionError("Outbound network blocked in OPDS contract tests")
+            url = request.url
+            if url.path.rstrip("/") in {
+                "/gutenberg/ebooks/search.opds",
+                "/gallica/services/engine/search/opds",
+            }:
+                url = url.copy_set_param("ux_fault", fault)
+            try:
+                with urlopen(Request(str(url)), timeout=4) as response:
+                    status, headers, body = response.status, dict(response.headers), response.read()
+            except HTTPError as exc:
+                status, headers, body = exc.code, dict(exc.headers), exc.read()
+            return httpx.Response(status, headers=headers, content=body, request=request)
+        return httpx.Client(
+            transport=httpx.MockTransport(forward),
+            follow_redirects=True, trust_env=False,
+        )
+
     def gutenberg(self, fault: str) -> GutenbergSession:
-        return GutenbergSession(
+        session = GutenbergSession(
             credential_id="synthetic",
             label="Gutenberg fictif", credentials={},
             options={
                 "contact": "test-opds@example.test",
-                "opds_search_url": self.base + f"/gutenberg/ebooks/search.opds/?ux_fault={fault}",
+                "opds_search_url": self.base + "/gutenberg/ebooks/search.opds/",
             },
             config={}, diagnostics=Diagnostics(),
         )
+        session.client.close()
+        session.client = self.injected_client(fault)
+        return session
 
     def gallica(self, fault: str) -> GallicaSession:
-        return GallicaSession(
+        session = GallicaSession(
             credential_id="synthetic", label="Gallica fictif",
             credentials={},
             options={
                 "opds_url": self.base + "/gallica/opds",
-                "epub_search_url": self.base + f"/gallica/services/engine/search/opds?ux_fault={fault}",
+                "epub_search_url": self.base + "/gallica/services/engine/search/opds",
                 "include_audio": False,
             },
             config={}, diagnostics=Diagnostics(),
         )
+        session.client.close()
+        session.client = self.injected_client(fault)
+        return session
 
 
 class OPDSNegativeCasesTests(unittest.TestCase):
