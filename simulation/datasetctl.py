@@ -417,7 +417,8 @@ def generate_specialized_data(profile: dict, *, rebuild: bool = False) -> Path |
     if not rebuild and manifest_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            valid = (manifest.get("seed") == seed
+            valid = (manifest.get("version") == plugin_scenarios.SCHEMA_VERSION
+                and manifest.get("seed") == seed
                 and isinstance(manifest.get("files"), dict)
                 and bool(manifest["files"])
                 and all(
@@ -910,7 +911,8 @@ def specialized_status(profile: dict) -> dict:
         files = manifest.get("files", {})
         result["files"] = len(files)
         result["complete"] = (
-            manifest.get("seed") == int(config.get("seed", 20261008))
+            manifest.get("version") == __import__("plugin_scenarios").SCHEMA_VERSION
+            and manifest.get("seed") == int(config.get("seed", 20261008))
             and isinstance(files, dict) and bool(files)
             and all(
                 (target / name).is_file()
