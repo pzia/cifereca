@@ -265,3 +265,14 @@ HTTPX local injecté ; **aucun domaine externe n'est reconfiguré**.
 Ce dispositif couvre les ISBN, âges publiés (dont mois), pagination et
 erreurs déterministes, **pas** l'écran GTK ni les caches réels des plugins.
 Voir `simulation/youth_publishers/README.md` et #800.
+
+## Éditions Milan — HTTP
+
+Le service `milan` sur 127.0.0.1:8101 sert le catalogue et les fiches HTML
+synthétiques ; `MilanYouthSource` est testé via `httpx.MockTransport`
+injecté, sans aucun accès réseau extérieur. Les scénarios couvrent âges
+attestés ou absents, ISBN valide/invalide, 0/1/N, pagination, 404, 503,
+Content-Type invalide et dépassement de taille. Aucun plugin n'est
+automatiquement activé ; ce n'est **pas** un test GUI GTK.
+
+Voir `simulation/milan/README.md` et #816.

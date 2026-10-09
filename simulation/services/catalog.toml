@@ -103,3 +103,14 @@ fixture_packages = ["youth-source-usborne", "youth-source-ecole-loisirs"]
 
 [service.youth_publishers.args]
 seed = "--seed"
+
+# Contract fixture only: the real Milan adapter has fixed public HTTPS URLs.
+[service.milan]
+script = "milan/pseudo_milan_service.py"
+default_port = 8101
+health_path = "/health"
+plugins = []
+fixture_packages = ["youth-source-milan"]
+
+[service.milan.args]
+seed = "--seed"
