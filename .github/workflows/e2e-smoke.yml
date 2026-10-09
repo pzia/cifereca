@@ -2,6 +2,12 @@ name: E2E Smoke
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'e2e/**'
+      - 'src/cifereca/gui/**'
+      - '.github/workflows/e2e-smoke.yml'
+      - 'tests/test_e2e_runner_contract.py'
 
 permissions:
   contents: read
@@ -26,6 +32,11 @@ jobs:
         env:
           CIFERECA_E2E_PYTHON: /usr/bin/python3
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin core
+
+      - name: Replay P0 Search filter regression on real GTK
+        env:
+          CIFERECA_E2E_PYTHON: /usr/bin/python3
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario search-filter-p0
 
       - name: Publish E2E summary
         if: always()
