@@ -628,6 +628,20 @@ def rollback(to: str | None = None) -> dict[str, Any]:
             target = next((x for x in candidates if current is None or x.resolve() != current.resolve()), None)
     if not target or not target.is_dir():
         raise UpdateError("Aucune release de rollback disponible")
+
+    # A Core-only symlink switch is not a valid rollback for a release whose
+    # plugin snapshot was installed into the mutable shared plugin store.
+    # Until a durable, restorable package snapshot is linked to the update
+    # transaction, fail closed instead of reporting ok=True for a mixed
+    # generation (older Core, newer plugin bytes/activation).
+    managed_current = _release_plugin_manifest(current) if current and current.is_dir() else {}
+    managed_target = _release_plugin_manifest(target)
+    if managed_current or managed_target:
+        raise UpdateError(
+            "Rollback Core + plugins indisponible : aucun snapshot restaurable "
+            "des packages, empreintes et activations n'est lié à la transaction. "
+            "Aucun lien Core n'a été modifié. Voir le ticket #904."
+        )
     _smoke(target)
     if current and current.is_dir():
         _replace_symlink(root / "previous", current)
