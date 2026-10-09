@@ -135,13 +135,36 @@ def age_badge(age_range: object) -> str:
     return f"{prefix}{bounds} ans"
 
 
+def edition_reference(book: object) -> tuple[str, str, str]:
+    """Bibliographic evidence first; a source-local reference is not an ISBN.
+
+    Labels are explicit so same-title editions stay distinguishable without
+    inferring an edition or merging by author/title.
+    """
+    identifiers = getattr(book, "identifiers", {}) or {}
+    if not isinstance(identifiers, Mapping):
+        identifiers = {}
+    isbn = normalize_isbn(identifiers.get("isbn"))
+    if isbn:
+        return "isbn", "ISBN", isbn
+    source = _text(getattr(book, "source_id", ""))
+    local_id = _text(identifiers.get("source_item_id") or getattr(book, "record_id", ""))
+    if source and local_id:
+        return "source-reference", "Référence source", f"{source}:{local_id}"
+    return "", "", ""
+
+
 def list_entry(book: object) -> UiBookListEntry:
     ranges = tuple(getattr(book, "age_ranges", ()) or ())
     age_summary = " · ".join(age_text(row) for row in ranges[:2])
     language = _text(getattr(book, "language", ""))
     formats = tuple(getattr(book, "formats", ()) or ())
     source = ", ".join(tuple(getattr(book, "provenance", ()) or ())[:3])
-    meta = " · ".join(filter(None, (age_summary, language, ", ".join(formats), source)))
+    _, reference_label, reference_value = edition_reference(book)
+    edition = f"{reference_label} {reference_value}" if reference_value else ""
+    # Lead with edition evidence: the narrow (~440px) GTK master pane
+    # truncates long metadata from the end, not from the beginning.
+    meta = " · ".join(filter(None, (edition, age_summary, language, ", ".join(formats), source)))
     badge = age_badge(ranges[0]) if ranges else "Âge inconnu"
     return UiBookListEntry(
         key=book_key(book),
@@ -162,6 +185,9 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     if not age_fields:
         age_fields = (DetailField("age-empty", "Âge", "Aucune tranche d’âge attestée en cache."),)
     metadata_fields = []
+    reference_id, reference_label, reference_value = edition_reference(book)
+    if reference_value:
+        metadata_fields.append(DetailField(reference_id, reference_label, reference_value))
     source = ", ".join(tuple(getattr(book, "provenance", ()) or ()))
     if source:
         metadata_fields.append(DetailField("sources", "Sources", source))
