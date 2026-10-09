@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+from cifereca.gui.plugin_attention import plugin_section_expanded
 from cifereca.gui.plugin_view import PLUGIN_ROLE_LABELS, plugin_role, plugin_dependents, plugin_relationships
 
 
@@ -40,7 +41,8 @@ class CardLayout(unittest.TestCase):
             return gtk.Button(label=label, icon_name=icon_name, **properties)
         ns={'Gtk':gtk,'_STATE_LABELS':{'ready':'Prêt'},'AdaptiveActionBar':adaptive,'action_button':action_button,
             'PLUGIN_ROLE_LABELS':PLUGIN_ROLE_LABELS,'plugin_role':plugin_role,
-            'plugin_dependents':plugin_dependents,'plugin_relationships':plugin_relationships}
+            'plugin_dependents':plugin_dependents,'plugin_relationships':plugin_relationships,
+            'plugin_section_expanded':plugin_section_expanded}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(path),'exec'),ns)
         cls.builder=staticmethod(ns['_plugin_row']);cls.packager=staticmethod(ns['_append_package'])
 

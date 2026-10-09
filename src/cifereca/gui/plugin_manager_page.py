@@ -12,6 +12,7 @@ from gi.repository import Adw, Gtk, Gio, GLib  # noqa: E402
 
 from cifereca.plugins.configuration import defaults_for_schema, schema_scope
 from .action_widgets import action_button, AdaptiveActionBar, mirror_sensitivity
+from .plugin_attention import plugin_section_expanded
 from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
@@ -295,7 +296,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         overview.set_tooltip_text(
             "Parcourir les dépendances déclarées entre plugins, même dans des packages différents"
         )
-        overview.set_expanded(self._family_navigation_open)
+        overview.set_expanded(plugin_section_expanded(
+            self._family_navigation_open, attention=bool(affected),
+        ))
         overview.connect(
             "notify::expanded",
             lambda expander, _pspec: setattr(
@@ -323,7 +326,10 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 group_label += f" · {issues} à examiner"
             family = Gtk.Expander(label=group_label)
             family.set_tooltip_text(f"Extensions dépendant de {root_name}")
-            family.set_expanded(self._family_expansion.get(descriptor.id, bool(issues)))
+            family.set_expanded(plugin_section_expanded(
+                self._family_expansion.get(descriptor.id),
+                default=bool(issues), attention=bool(issues),
+            ))
             family.connect(
                 "notify::expanded",
                 lambda expander, _pspec, pid=descriptor.id:
@@ -461,12 +467,15 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             heading += f" · {needs_attention} à examiner"
         details.set_label(heading)
         details.set_tooltip_text("Afficher ou masquer les contributions de ce package")
-        auto_expand = (
-            len(package_plugins) == 1 or needs_attention > 0
-            or bool(self._view_query) or self._view_filter != "all"
+        filtered = (
+            bool(self._view_query) or self._view_filter != "all"
             or self._view_role != "all"
         )
-        details.set_expanded(self._package_expansion.get(package_id, bool(auto_expand)))
+        details.set_expanded(plugin_section_expanded(
+            self._package_expansion.get(package_id),
+            default=len(package_plugins) == 1,
+            attention=bool(needs_attention), filtered=filtered,
+        ))
         details.connect(
             "notify::expanded",
             lambda expander, _pspec, pid=package_id:
