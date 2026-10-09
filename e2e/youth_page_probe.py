@@ -562,9 +562,48 @@ def main() -> int:
 
     def editions_two_rows():
         assert_rows("mirror-bt", "mirror-milan-b")
-        assert page.view.master._page.store.get_n_items() == 2
-        assert page.view.master._page.list_stack.get_visible_child_name() == "list"
+        master = page.view.master._page
+        assert master.store.get_n_items() == 2
+        assert master.list_stack.get_visible_child_name() == "list"
         assert not requests, "Offline edits made a remote request"
+        # Verify both real Gtk.ListView rows, not just the catalog/projection.
+        expected = {
+            "mirror-bt": "9780306406157",
+            "mirror-milan-b": "9780140328721",
+        }
+        list_items = {
+            master.store.get_item(i).key: master.store.get_item(i).meta
+            for i in range(master.store.get_n_items())
+        }
+        assert set(list_items) == set(page.view.rows)
+        for key, isbn in expected.items():
+            assert list_items[next(k for k in list_items if page.view.rows[k].record_id == key)].startswith(
+                f"ISBN {isbn}"
+            ), list_items
+
+        def actual_gtk_cells(widget):
+            cells = []
+            if hasattr(widget, "_bound_key") and hasattr(widget, "meta_label"):
+                cells.append(widget)
+            child = widget.get_first_child()
+            while child is not None:
+                cells.extend(actual_gtk_cells(child))
+                child = child.get_next_sibling()
+            return cells
+
+        cells = {
+            cell._bound_key: cell for cell in actual_gtk_cells(master.listview)
+            if cell._bound_key and cell.get_mapped()
+        }
+        assert len(cells) == 2, f"Expected two mapped Gtk.ListView edition rows: {list(cells)!r}"
+        for key, isbn in expected.items():
+            actual_key = next(k for k, book in page.view.rows.items() if book.record_id == key)
+            cell = cells[actual_key]
+            assert cell.meta_label.get_mapped(), f"ISBN label hidden for {key}"
+            assert cell.meta_label.get_text().startswith(f"ISBN {isbn}"), cell.meta_label.get_text()
+        result["gtk_edition_list_metadata"] = {
+            cell._bound_key: cell.meta_label.get_text() for cell in cells.values()
+        }
         capture("00-same-title-two-editions")
         page.view.master._page.selection.set_selected(0)
         later(220, editions_conflict_detail)
@@ -575,6 +614,8 @@ def main() -> int:
         assert set(book.provenance) == {"booktrust", "milan"}
         assert [(row.age_min, row.age_max) for row in book.age_ranges] == [(5, 7), (12, None)]
         shown = detail_rows()
+        assert ("ISBN", "9780306406157") in shown, f"ISBN missing from real first Gtk detail: {shown!r}"
+        assert ("ISBN", "9780140328721") not in shown, f"Incorrect second ISBN leaked: {shown!r}"
         assert any("source booktrust" in sub and "Interest age: 5 to 7" in sub for _, sub in shown), shown
         assert any("source milan" in sub and "À partir de 12 ans" in sub for _, sub in shown), shown
         assert any(title == "Sources" and "booktrust" in sub and "milan" in sub for title, sub in shown), shown
@@ -589,6 +630,8 @@ def main() -> int:
         assert book.identifiers.get("isbn") == "9780140328721"
         assert set(book.provenance) == {"milan"}
         shown = detail_rows()
+        assert ("ISBN", "9780140328721") in shown, f"ISBN missing from second Gtk detail: {shown!r}"
+        assert ("ISBN", "9780306406157") not in shown, f"First ISBN leaked to second edition: {shown!r}"
         assert any("source milan" in sub and "À partir de 8 ans" in sub for _, sub in shown), shown
         assert not any("source booktrust" in sub for _, sub in shown), shown
         result["different_isbn_detail"] = shown
@@ -755,6 +798,10 @@ def main() -> int:
             title == "Âge" and "Aucune tranche d’âge attestée" in subtitle
             for title, subtitle in shown
         ), f"Unknown age not described in GTK detail: {shown!r}"
+        # #891 fallback: if there is no valid ISBN, identify the source
+        # unambiguously without pretending a source-local key is an edition.
+        assert ("Référence source", "booktrust:unknown") in shown, shown
+        assert not any(title == "ISBN" for title, _ in shown), shown
         capture("08-unknown-age-detail")
         result["status"] = "PASS"
         write_report()
