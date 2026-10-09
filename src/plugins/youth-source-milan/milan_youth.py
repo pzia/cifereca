@@ -346,6 +346,16 @@ class MilanYouthSource:
             raise ValueError("invalid Milan page cursor")
         if not 1 <= page <= 100:
             raise ValueError("invalid Milan page cursor")
+        # Validate age before requesting even the listing: an empty page
+        # must never hide a malformed/out-of-range youth filter.
+        wanted_age = None
+        if age is not None:
+            try:
+                wanted_age = int(age)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("age must be an integer") from exc
+            if not 0 <= wanted_age < 18:
+                raise ValueError("age must be between 0 and 17")
         bounded = max(1, min(int(limit), 8))
         listing_html = self._get(listing_url(page=page), kind="listing")
         products = listing_products(listing_html, text_filter=text_filter, limit=36)
@@ -359,15 +369,8 @@ class MilanYouthSource:
             detail = parse_detail(self._get(url, kind="product"), url=url, fallback_title=title)
             if detail is None:
                 continue
-            if age is not None:
-                try:
-                    wanted = int(age)
-                except (TypeError, ValueError):
-                    raise ValueError("age must be an integer")
-                if not 0 <= wanted < 18:
-                    raise ValueError("age must be between 0 and 17")
-                if int(detail["age_ranges"][0]["age_min"]) > wanted:
-                    continue
+            if wanted_age is not None and int(detail["age_ranges"][0]["age_min"]) > wanted_age:
+                continue
             out.append(detail)
 
         return {
