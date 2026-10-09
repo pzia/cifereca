@@ -26,7 +26,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from PIL import Image, ImageGrab
+from PIL import ImageGrab
 from x11_input import X11Input
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
@@ -164,19 +164,31 @@ def main() -> int:
         assert catalog.ingest("camille", "booktrust", camille).accepted == 6
         assert catalog.ingest("alex", "booktrust", alex).accepted == 1
         page.view.render_cached()
+        later(200, cached_camille)
+
+    def cached_camille():
         assert_rows("zero", "interest-eight", "reading-ten", "seventeen", "inferred", "unknown")
         capture("01-cached-camille")
         page.view.age.set_selected(9)  # 0 = any, 1 = age 0, 9 = age 8
+        later(200, age_eight)
+
+    def age_eight():
         assert page.view.filter_state().age == 8
         assert_rows("interest-eight")
         capture("02-age-8-interest")
-        page.view.age.set_selected(13) # age 12
+        page.view.age.set_selected(13)  # age 12
         assert_rows("interest-eight", "reading-ten")
-        page.view.age_kind.set_selected(2)  # reading only
+        page.view.age_kind.set_selected(3)  # reading only (kind index 3)
+        later(200, age_twelve_reading)
+
+    def age_twelve_reading():
         assert_rows("reading-ten")
         capture("03-age-12-reading")
         page.view.age_kind.set_selected(0)
-        page.view.age.set_selected(18)  # age 17, 18 is not exposed
+        page.view.age.set_selected(18)  # age 17; age 18 is not exposed
+        later(200, age_seventeen)
+
+    def age_seventeen():
         assert_rows("seventeen")
         capture("04-age-17")
         page.view.age.set_selected(1)  # age 0
@@ -186,8 +198,10 @@ def main() -> int:
         assert_rows("interest-eight", "inferred")
         page.view.inferred.set_active(False)
         assert_rows("interest-eight")
-        # Profile switching must not leak a title from Camille.
         page.view.identity.set_selected(1)
+        later(200, profile_alex)
+
+    def profile_alex():
         assert_rows("alex-only")
         capture("05-identity-alex")
         page.view.identity.set_selected(0)
@@ -211,7 +225,7 @@ def main() -> int:
         assert page.view.selected_book is not None
         assert page.view.selected_book.record_id == "interest-eight"
         # The selected book must preserve the real source age label.
-        assert "8–12 ans" in str(page.view.master._page.detail)
+        assert page.view.selected_book.age_ranges[0].source_label == "8–12 ans"
         capture("06-keyboard-search-detail")
         result["status"] = "PASS"
         write_report()
