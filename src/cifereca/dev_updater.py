@@ -231,6 +231,9 @@ def _verify_strict_installed_packages(
     reads the selected ZIP and the actual package store; it makes no network
     requests and never modifies the installed files.
     """
+    from .plugins.errors import PackageInstallError
+    from .plugins.packages import PackageInstaller
+
     store = _plugin_store_root()
     for package_id, version, archive, activate in packages:
         package_root = store / package_id
@@ -247,8 +250,6 @@ def _verify_strict_installed_packages(
                 infos = source.infolist()
                 # The package installer validates archive member paths before
                 # extraction. Repeat that check at the verification boundary.
-                from .plugins.packages import PackageInstaller
-                from .plugins.errors import PackageInstallError
                 for info in infos:
                     PackageInstaller._validate_member(info)
                     relative = _safe_member(info)
