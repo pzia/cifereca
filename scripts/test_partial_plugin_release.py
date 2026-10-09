@@ -125,6 +125,34 @@ class PartialPluginReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(PackagingError, "requises ensemble"):
                     verify_partial_snapshot(archive, **kwargs)
 
+    def test_official_release_verifies_signed_source_before_publishing(self) -> None:
+        """Regression #787: sidecar-only publication must not be possible."""
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/plugins-only-release.yml"
+        ).read_text(encoding="utf-8")
+        release_job = workflow.split("\n  release:\n", 1)[1]
+        steps = (
+            "name: Attest plugins-only artifact provenance",
+            "name: Verify signed provenance before publishing",
+            "name: Create or update draft GitHub Release",
+            "name: Publish completed plugins-only release",
+        )
+        positions = [release_job.index(step) for step in steps]
+        self.assertEqual(positions, sorted(positions))
+        verification = release_job[positions[1]:positions[2]]
+        for evidence in (
+            'sha256sum -c "$RELEASE_TAG.zip.sha256"',
+            'gh attestation verify "$archive"',
+            '--repo "$GITHUB_REPOSITORY"',
+            '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml"',
+            '--source-ref "refs/heads/main"',
+            '--source-digest "$GITHUB_SHA"',
+            "set -euo pipefail",
+        ):
+            self.assertIn(evidence, verification)
+        self.assertNotIn("|| true", verification)
+
     def test_modified_embedded_metadata_is_detected(self) -> None:
         original = self.build("org.cifereca.provider.alpha")
         corrupted = self.root / "tampered.zip"
