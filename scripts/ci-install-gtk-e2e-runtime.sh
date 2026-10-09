@@ -11,6 +11,7 @@ required_packages=(
   gir1.2-gtk-4.0
   gir1.2-adw-1
   python3-httpx
+  python3-venv
   python3-packaging
 )
 
