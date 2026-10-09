@@ -25,30 +25,18 @@ def test_source_release_metadata_share_one_version():
     assert builtin["plugins"]
     assert all(plugin["version"] == expected for plugin in builtin["plugins"])
 
-    plugin_release = json.loads(
-        (ROOT / "src" / "cifereca" / "plugin-release.json").read_text(encoding="utf-8")
-    )
-    assert plugin_release["release"] == expected
 
-
-def test_release_inventory_matches_all_source_plugin_manifests():
-    """Prevent an incomplete Core release after adding or updating a plugin."""
-    release = json.loads(
-        (ROOT / "src" / "cifereca" / "plugin-release.json").read_text(encoding="utf-8")
-    )
-    actual = {}
-    for manifest_path in sorted((ROOT / "src" / "plugins").glob("*/cifereca-plugin.json")):
-        package = json.loads(manifest_path.read_text(encoding="utf-8"))["package"]
-        package_id = str(package["id"])
-        assert package_id not in actual, f"Duplicate plugin package: {package_id}"
-        actual[package_id] = {
-            "version": str(package["version"]),
-            "name": str(package["name"]),
-        }
-    assert release["packages"] == actual, (
-        "Core release inventory must include every source package at its actual "
-        "version and name; synchronize plugin-release.json before the next release"
-    )
+def test_source_plugin_manifests_have_unique_ids_and_metadata():
+    """Manifest integrity is independent of the next release snapshot."""
+    seen = set()
+    for path in sorted((ROOT / "src/plugins").glob("*/cifereca-plugin.json")):
+        package = json.loads(path.read_text(encoding="utf-8"))["package"]
+        package_id = package["id"]
+        assert isinstance(package_id, str) and package_id
+        assert package_id not in seen, f"Duplicate plugin package: {package_id}"
+        seen.add(package_id)
+        for key in ("name", "version"):
+            assert isinstance(package[key], str) and package[key], (path, key)
 
 
 def test_core_release_exposes_strict_plugins_only_cli(capsys):

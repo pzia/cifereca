@@ -14,6 +14,7 @@ on:
       - "VERSION"
       - "scripts/ci-run-plugin-tests.sh"
       - "scripts/ci-select-core-tests.py"
+      - "scripts/check_release_inventory.py"
       - "scripts/ci-install-gtk-e2e-runtime.sh"
       - "scripts/ci-smoke-installed-wheel.sh"
       - "scripts/ci-plugins-only-runtime-gate.sh"
@@ -86,7 +87,7 @@ jobs:
           install=false
           dataset=false
 
-          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$)'; then
+          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/check_release_inventory\.py$)'; then
             core=true
           fi
 
