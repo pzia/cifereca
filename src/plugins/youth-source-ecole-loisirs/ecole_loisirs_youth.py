@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
 from html.parser import HTMLParser
+from time import perf_counter
 import re
 from typing import Mapping
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
@@ -292,6 +295,8 @@ def search_url(query: str, *, page: int) -> str:
 class EcoleLoisirsYouthSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
+        self.context = None
+        self._last_diagnostic: dict[str, object] = {}
         self.client = client or httpx.Client(
             timeout=max(1.0, min(float(timeout_seconds), 30.0)),
             follow_redirects=False,
@@ -302,6 +307,25 @@ class EcoleLoisirsYouthSource:
                 "Accept-Language": "fr",
             },
         )
+
+    def activate(self, context):
+        self.context = context
+        return self
+
+    def diagnostic_snapshot(self) -> dict[str, object]:
+        """Last explicit search outcome only; no URL, query, title or HTML."""
+        return dict(self._last_diagnostic)
+
+    def _publish_diagnostic(self, status: str) -> None:
+        if self.context is not None:
+            try:
+                self.context.report_diagnostic(
+                    "Ecole des loisirs youth catalogue collection", status,
+                    detail=self.diagnostic_snapshot(), level="normal",
+                )
+            except Exception:
+                # Diagnostics must never affect a publisher query.
+                pass
 
     def close(self) -> None:
         if self._own_client:
@@ -318,7 +342,14 @@ class EcoleLoisirsYouthSource:
         allowed = _allowed_url(url)
         if not allowed or urlsplit(allowed).path != "/recherche-avancee":
             raise ValueError("only l'école des loisirs advanced search is allowed")
+        self._last_diagnostic["request_count"] = int(self._last_diagnostic.get("request_count", 0)) + 1
         response = self.client.get(allowed)
+        self._last_diagnostic.update({
+            "http_status": response.status_code,
+            "content_type_is_html": "html" in _fold(response.headers.get("content-type")),
+            "html_bytes": len(response.content),
+            "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
+        })
         if response.status_code >= 300:
             raise RuntimeError(f"l'école des loisirs HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type"))
@@ -335,13 +366,54 @@ class EcoleLoisirsYouthSource:
             raise ValueError("invalid l'école des loisirs page cursor")
         if not 1 <= page <= 100:
             raise ValueError("invalid l'école des loisirs page cursor")
-        url = search_url(_text(query), page=page)
-        html = self._get(url)
-        return {
-            "items": parse_listing(html, limit=max(1, min(int(limit), 40))),
-            "next_cursor": next_cursor(html, current_page=page),
-            "fresh_for_seconds": 86400,
+        started = perf_counter()
+        self._last_diagnostic = {
+            "source": "ecole-loisirs",
+            "attempted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "page": page,
+            "requested_limit": max(1, min(int(limit), 40)),
+            "text_filter_present": bool(_text(query)),
+            "phase": "listing",
+            "request_count": 0,
         }
+        try:
+            url = search_url(_text(query), page=page)
+            html = self._get(url)
+            self._last_diagnostic["phase"] = "parsing"
+            rows = parse_listing(html, limit=max(1, min(int(limit), 40)))
+            tokens = _tokens(html)
+            product_urls = {
+                _product_url(href)
+                for kind, label, href in tokens
+                if kind == "link" and _product_url(href)
+                and _fold(label) != "lire la suite"
+            }
+            cursor_out = next_cursor(html, current_page=page)
+            self._last_diagnostic.update({
+                "anchor_count": sum(kind == "link" for kind, _label, _href in tokens),
+                "product_url_count": len(product_urls),
+                "returned_items": len(rows),
+                "qualified_age_count": sum(bool(row.get("age_ranges")) for row in rows),
+                "unqualified_age_count": sum(not row.get("age_ranges") for row in rows),
+                "next_cursor_present": bool(cursor_out),
+                "phase": "complete",
+                "state": "items" if rows else "empty_unverified",
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("ok" if rows else "empty")
+            return {
+                "items": rows,
+                "next_cursor": cursor_out,
+                "fresh_for_seconds": 86400,
+            }
+        except Exception as exc:
+            self._last_diagnostic.update({
+                "state": "error",
+                "error_type": type(exc).__name__,
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("error")
+            raise
 
 
 PLUGIN = EcoleLoisirsYouthSource()

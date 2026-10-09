@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-source-usborne",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "name": "Jeunesse — Usborne",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "youth.source.usborne",
       "type": "youth.source",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "entrypoint": "usborne_youth:PLUGIN",
       "display_name": "Usborne — âges éditeur",
       "description": "Catalogue jeunesse Usborne avec âge minimum explicitement publié par l’éditeur.",

@@ -252,3 +252,96 @@ def test_script_style_and_svg_cannot_inject_age_or_isbn():
       <div>ISBN: 9782211348171</div>
     """
     assert parse_listing(html) == ()
+
+
+def test_ecole_diagnostic_success_keeps_published_and_unknown_ages_separate():
+    import json
+    from types import SimpleNamespace
+
+    sent, requests = [], []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert source.diagnostic_snapshot() == {}
+    source.activate(SimpleNamespace(
+        report_diagnostic=lambda *args, **kwargs: sent.append((args, kwargs))
+    ))
+    result = source.search("loup", limit=4)
+    assert len(result["items"]) == 3
+    d = source.diagnostic_snapshot()
+    assert d["source"] == "ecole-loisirs"
+    assert d["state"] == "items" and d["phase"] == "complete"
+    assert d["http_status"] == 200 and d["request_count"] == 1
+    assert d["content_type_is_html"] is True
+    assert d["html_bytes"] == len(HTML.encode("utf-8"))
+    assert len(d["html_sha256_prefix"]) == 16
+    assert d["anchor_count"] == 5
+    assert d["product_url_count"] == 3
+    assert d["returned_items"] == 3
+    assert d["qualified_age_count"] == 2
+    assert d["unqualified_age_count"] == 1
+    assert d["text_filter_present"] is True and d["next_cursor_present"] is True
+    assert d["duration_ms"] >= 0 and "T" in d["attempted_at_utc"]
+    assert sent[-1][0] == ("Ecole des loisirs youth catalogue collection", "ok")
+    assert sent[-1][1]["detail"] == d
+    assert len(requests) == 1
+    encoded = json.dumps(d)
+    assert "Petit Loup" not in encoded
+    assert "recherche-avancee" not in encoded
+    assert "9782211348171" not in encoded
+
+
+def test_ecole_diagnostic_rejects_http_error_and_timeout_without_raw_details():
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(
+            503, headers={"content-type": "text/html"}, text="private details"
+        )
+    )))
+    with pytest.raises(RuntimeError, match="503"):
+        source.search("private search")
+    d = source.diagnostic_snapshot()
+    assert d["http_status"] == 503 and d["request_count"] == 1
+    assert d["phase"] == "listing" and d["state"] == "error"
+    assert d["error_type"] == "RuntimeError"
+    assert "private search" not in str(d)
+    assert "private details" not in str(d)
+
+    def timeout(req):
+        raise httpx.ReadTimeout("secret url", request=req)
+
+    source.client = httpx.Client(transport=httpx.MockTransport(timeout))
+    with pytest.raises(httpx.ReadTimeout):
+        source.search("private search")
+    d = source.diagnostic_snapshot()
+    assert d["error_type"] == "ReadTimeout"
+    assert "http_status" not in d
+    assert d["request_count"] == 1
+    assert "secret url" not in str(d)
+
+
+def test_ecole_empty_diagnostic_is_not_claimed_as_public_health():
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(
+            200, headers={"content-type": "text/html"}, text="<p>no book</p>"
+        )
+    )))
+    assert source.search("not here")["items"] == ()
+    d = source.diagnostic_snapshot()
+    assert d["state"] == "empty_unverified"
+    assert d["product_url_count"] == 0 and d["returned_items"] == 0
+
+
+def test_ecole_broker_failure_does_not_break_source_query():
+    from types import SimpleNamespace
+
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+    )))
+    source.activate(SimpleNamespace(
+        report_diagnostic=lambda *args, **kwargs: 1 / 0
+    ))
+    assert len(source.search("loup")["items"]) == 3
+    assert source.diagnostic_snapshot()["state"] == "items"
