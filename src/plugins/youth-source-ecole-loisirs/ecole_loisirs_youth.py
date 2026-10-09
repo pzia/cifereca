@@ -15,6 +15,7 @@ _RANGE = re.compile(r"^\s*(\d{1,2})\s*à\s*(\d{1,2})\s*ans\s*$", re.I)
 _FROM = re.compile(r"^\s*à\s+partir\s+de\s+(\d{1,2})\s*ans\s*$", re.I)
 _PLUS = re.compile(r"^\s*(\d{1,2})\s*ans\s+et\s*\+\s*$", re.I)
 _ISBN = re.compile(r"\bISBN\s*:\s*([0-9Xx -]{10,20})\b", re.I)
+_MAX_QUERY_CHARS = 300
 _TYPES = {
     "album": "album",
     "roman": "roman",
@@ -153,8 +154,10 @@ def _tokens(html: str) -> tuple[tuple[str, str, str], ...]:
 
 
 def _nearest_age(tokens, start: int) -> PublishedAge | None:
-    for index in range(start - 1, max(-1, start - 8), -1):
-        kind, value, _ = tokens[index]
+    for index in range(start - 1, max(-1, start - 10), -1):
+        kind, value, href = tokens[index]
+        if kind == "link" and _product_url(href):
+            return None
         if kind != "text":
             continue
         age = parse_age_label(value)
@@ -272,7 +275,7 @@ def next_cursor(html: str, *, current_page: int) -> str:
             page = int((query.get("page") or [""])[0])
         except ValueError:
             continue
-        if current_page < page <= 100:
+        if page == int(current_page) + 1 and page <= 100:
             return str(page)
     return ""
 
@@ -280,7 +283,7 @@ def next_cursor(html: str, *, current_page: int) -> str:
 def search_url(query: str, *, page: int) -> str:
     params = {
         "page": str(max(1, min(int(page), 100))),
-        "search_api_views_fulltext": _text(query),
+        "search_api_views_fulltext": _text(query)[:_MAX_QUERY_CHARS],
         "types": "livre",
     }
     return SEARCH + "?" + urlencode(params)
@@ -316,7 +319,7 @@ class EcoleLoisirsYouthSource:
         if not allowed or urlsplit(allowed).path != "/recherche-avancee":
             raise ValueError("only l'école des loisirs advanced search is allowed")
         response = self.client.get(allowed)
-        if response.status_code >= 400:
+        if response.status_code >= 300:
             raise RuntimeError(f"l'école des loisirs HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type"))
         if content_type and "html" not in content_type:
