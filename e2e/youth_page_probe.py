@@ -58,7 +58,17 @@ def main() -> int:
     page_plugin = core.plugins.service("ui.page.youth")
     if catalog is None or page_plugin is None:
         core.close()
-        raise RuntimeError("Jeunesse doit être activée dans le vrai PluginManager")
+        details = {
+            "package_inventory": core.plugins.packages.all_packages(),
+            "load_errors": core.plugins.errors(),
+            "statuses": [
+                {"plugin": row.descriptor.id, "state": row.state,
+                 "reason": row.reason, "error": row.error}
+                for row in core.plugins.statuses()
+                if "youth" in row.descriptor.id
+            ],
+        }
+        raise RuntimeError("Jeunesse indisponible: " + json.dumps(details, ensure_ascii=False))
 
     synthetic = youth_records()
     books = synthetic["records"]
