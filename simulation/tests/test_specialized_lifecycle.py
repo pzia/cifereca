@@ -50,6 +50,13 @@ class SpecializedLifecycleTests(unittest.TestCase):
             self.assertEqual(len(manifest["files"]), 9)
             self.assertEqual(manifest["version"], plugin_scenarios.SCHEMA_VERSION)
 
+            # A previously complete V1 manifest must not hide newly added JDD.
+            old_manifest = dict(manifest, version=1)
+            (root / "manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
+            self.assertFalse(datasetctl.specialized_status(profile)["complete"])
+            refreshed = datasetctl.prepare(profile, catalog)
+            self.assertEqual(json.loads((refreshed["specialized"] / "manifest.json").read_text()), manifest)
+
             second = datasetctl.prepare(profile, catalog)
             self.assertEqual(json.loads((second["specialized"] / "manifest.json").read_text()), manifest)
             (root / "youth.json").write_text("CORROMPU", encoding="utf-8")
