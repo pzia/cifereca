@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from hashlib import sha256
 import re
 from typing import Mapping
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -91,6 +92,13 @@ class _Parser(HTMLParser):
         self._anchor_fallback = ""
         self._heading = 0
         self._heading_parts: list[str] = []
+        self.listing_stats = {
+            "anchor_count": 0, "milan_catalogue_href_count": 0,
+            "product_href_count": 0, "product_link_text_count": 0,
+            "product_link_accessible_count": 0, "product_link_unnamed_count": 0,
+            "unrecognized_catalogue_href_count": 0,
+        }
+        self._link_is_product = False
 
     def handle_starttag(self, tag: str, attrs) -> None:
         name = tag.casefold()
@@ -102,6 +110,16 @@ class _Parser(HTMLParser):
             attributes = dict(attrs)
             self._href = attributes.get("href", "")
             self._anchor = []
+            self.listing_stats["anchor_count"] += 1
+            allowed = allowed_url(self._href)
+            catalogue_path = urlsplit(allowed).path if allowed else ""
+            if catalogue_path.startswith("/livres/"):
+                self.listing_stats["milan_catalogue_href_count"] += 1
+                if not product_url(self._href):
+                    self.listing_stats["unrecognized_catalogue_href_count"] += 1
+            self._link_is_product = bool(product_url(self._href))
+            if self._link_is_product:
+                self.listing_stats["product_href_count"] += 1
             self._anchor_fallback = _text(
                 attributes.get("aria-label") or attributes.get("title")
             )
@@ -122,6 +140,13 @@ class _Parser(HTMLParser):
         if self._skip:
             return
         if name == "a" and self._href:
+            if self._link_is_product:
+                if _text(" ".join(self._anchor)):
+                    self.listing_stats["product_link_text_count"] += 1
+                elif self._anchor_fallback:
+                    self.listing_stats["product_link_accessible_count"] += 1
+                else:
+                    self.listing_stats["product_link_unnamed_count"] += 1
             label = _text(" ".join(self._anchor)) or self._anchor_fallback
             label = re.sub(r"^couverture\s+(?:de\s+|du\s+|des\s+)", "", label, flags=re.I)
             if label:
@@ -129,6 +154,7 @@ class _Parser(HTMLParser):
             self._href = ""
             self._anchor = []
             self._anchor_fallback = ""
+            self._link_is_product = False
         if name in {"h1", "h2", "h3"} and self._heading:
             label = _text(" ".join(self._heading_parts))
             if label:
@@ -151,13 +177,15 @@ class _Parser(HTMLParser):
         self.tokens.append(("text", value, ""))
 
 
-def tokens(html: object) -> tuple[tuple[str, str, str], ...]:
+def tokens(html: object, *, listing_diagnostic: dict | None = None) -> tuple[tuple[str, str, str], ...]:
     parser = _Parser()
     try:
         parser.feed(str(html or ""))
         parser.close()
     except Exception:
         return ()
+    if listing_diagnostic is not None:
+        listing_diagnostic.update(parser.listing_stats)
     return tuple(parser.tokens)
 
 
@@ -172,10 +200,13 @@ def parse_published_age(value: object) -> PublishedAge | None:
     return PublishedAge(label, age)
 
 
-def listing_products(html: object, *, text_filter: str = "", limit: int = 12) -> tuple[tuple[str, str], ...]:
+def listing_products(
+    html: object, *, text_filter: str = "", limit: int = 12,
+    listing_diagnostic: dict | None = None,
+) -> tuple[tuple[str, str], ...]:
     query = _fold(text_filter)
     found: dict[str, str] = {}
-    for kind, label, href in tokens(html):
+    for kind, label, href in tokens(html, listing_diagnostic=listing_diagnostic):
         if kind != "link":
             continue
         url = product_url(href)
@@ -195,6 +226,8 @@ def listing_products(html: object, *, text_filter: str = "", limit: int = 12) ->
         out.append((title, url))
         if len(out) >= max(1, min(int(limit), 36)):
             break
+    if listing_diagnostic is not None:
+        listing_diagnostic["recognized_product_count"] = len(out)
     return tuple(out)
 
 
@@ -296,6 +329,8 @@ def parse_detail(html: object, *, url: str, fallback_title: str = "") -> Mapping
 class MilanYouthSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
+        self.context = None
+        self._last_diagnostic: dict[str, object] = {}
         self.client = client or httpx.Client(
             timeout=max(1.0, min(float(timeout_seconds), 30.0)),
             follow_redirects=False,
@@ -306,6 +341,26 @@ class MilanYouthSource:
                 "Accept-Language": "fr",
             },
         )
+
+    def activate(self, context):
+        self.context = context
+        return self
+
+    def diagnostic_snapshot(self) -> dict[str, object]:
+        """Last explicit collection summary; no raw HTML, URLs or request headers."""
+        return dict(self._last_diagnostic)
+
+    def _publish_diagnostic(self, status: str) -> None:
+        context = self.context
+        if context is not None:
+            try:
+                context.report_diagnostic(
+                    "Milan catalogue collection", status,
+                    detail=self.diagnostic_snapshot(), level="normal",
+                )
+            except Exception:
+                # Diagnostics must never interfere with collection or its errors.
+                pass
 
     def close(self) -> None:
         if self._own_client:
@@ -332,6 +387,13 @@ class MilanYouthSource:
         else:
             raise ValueError("invalid Milan request kind")
         response = self.client.get(allowed)
+        if kind == "listing":
+            self._last_diagnostic.update({
+                "http_status": response.status_code,
+                "html_bytes": len(response.content),
+                "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
+                "content_type_is_html": "html" in _fold(response.headers.get("content-type", "")),
+            })
         if not 200 <= response.status_code < 300:
             raise RuntimeError(f"Milan HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type"))
@@ -368,31 +430,51 @@ class MilanYouthSource:
             if not 0 <= wanted_age < 18:
                 raise ValueError("age must be between 0 and 17")
         bounded = max(1, min(int(limit), 8))
-        listing_html = self._get(listing_url(page=page), kind="listing")
-        products = listing_products(listing_html, text_filter=text_filter, limit=36)
-        # An unfiltered paginated catalogue with no recognizable cards is a
-        # parser/markup compatibility problem, not a valid empty book result.
-        if not products and not text_filter and next_cursor(listing_html, current_page=page):
-            raise RuntimeError("Milan paginated catalogue has no recognizable book links")
-
-        out = []
-        inspected = 0
-        for title, url in products:
-            if len(out) >= bounded or inspected >= 8:
-                break
-            inspected += 1
-            detail = parse_detail(self._get(url, kind="product"), url=url, fallback_title=title)
-            if detail is None:
-                continue
-            if wanted_age is not None and int(detail["age_ranges"][0]["age_min"]) > wanted_age:
-                continue
-            out.append(detail)
-
-        return {
-            "items": tuple(out),
-            "next_cursor": next_cursor(listing_html, current_page=page),
-            "fresh_for_seconds": 86400,
+        # This snapshot contains only bounded structural counts and a content
+        # digest; never a page body, URL, cookie, user identity or book title.
+        self._last_diagnostic = {
+            "source": "milan", "page": page, "requested_limit": bounded,
+            "age_filter_present": wanted_age is not None,
+            "phase": "listing", "detail_requests": 0,
         }
+        try:
+            listing_html = self._get(listing_url(page=page), kind="listing")
+            products = listing_products(
+                listing_html, text_filter=text_filter, limit=36,
+                listing_diagnostic=self._last_diagnostic,
+            )
+            cursor = next_cursor(listing_html, current_page=page)
+            self._last_diagnostic["next_cursor_present"] = bool(cursor)
+            # This is an incompatibility, not a successful empty catalogue.
+            if not products and not text_filter and cursor:
+                raise RuntimeError("Milan paginated catalogue has no recognizable book links")
+
+            out = []
+            inspected = 0
+            self._last_diagnostic["phase"] = "products"
+            for title, url in products:
+                if len(out) >= bounded or inspected >= 8:
+                    break
+                inspected += 1
+                self._last_diagnostic["detail_requests"] = inspected
+                detail = parse_detail(self._get(url, kind="product"), url=url, fallback_title=title)
+                if detail is None:
+                    continue
+                if wanted_age is not None and int(detail["age_ranges"][0]["age_min"]) > wanted_age:
+                    continue
+                out.append(detail)
+            self._last_diagnostic["qualified_items"] = len(out)
+            self._last_diagnostic["phase"] = "complete"
+            self._publish_diagnostic("ok")
+            return {
+                "items": tuple(out),
+                "next_cursor": cursor,
+                "fresh_for_seconds": 86400,
+            }
+        except Exception as exc:
+            self._last_diagnostic["error_type"] = type(exc).__name__
+            self._publish_diagnostic("error")
+            raise
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 8) -> Mapping[str, object]:
         return self.browse(text_filter=_text(query), cursor=cursor, limit=limit)
