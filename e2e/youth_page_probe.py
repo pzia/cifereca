@@ -394,9 +394,20 @@ def main() -> int:
         assert "4 notice(s) reçue(s) de Éditions Milan" in status, status
         assert "page suivante disponible" in status, status
         assert len(catalog.search_cached("camille")) == 4
+        # Immediate capture documents the actual empty -> list CROSSFADE.
         capture("01-milan-collected-four")
+        later(1100, milan_list_settled)
+
+    def milan_list_settled():
+        # Do not mistake the temporary outgoing "Aucun résultat en cache"
+        # status-page overlay for a lasting UX defect.
+        stack = page.view.master._page.list_stack
+        assert stack.get_visible_child_name() == "list", "Collected rows not made visible"
+        assert not stack.get_transition_running(), "Empty-to-list GTK transition still running"
+        assert len(page.view.rows) == 4
+        capture("01b-milan-list-settled")
         page.view.master._page.selection.set_selected(0)
-        later(200, milan_notice)
+        later(250, milan_notice)
 
     def milan_notice():
         book = page.view.selected_book
