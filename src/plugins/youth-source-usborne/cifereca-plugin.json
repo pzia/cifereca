@@ -1,0 +1,36 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.youth-source-usborne",
+    "version": "0.1.0",
+    "name": "Jeunesse — Usborne",
+    "publisher": "CIFERECA",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "youth.source.usborne",
+      "type": "youth.source",
+      "version": "0.1.0",
+      "entrypoint": "usborne_youth:PLUGIN",
+      "display_name": "Usborne — âges éditeur",
+      "description": "Catalogue jeunesse Usborne avec âge minimum explicitement publié par l’éditeur.",
+      "help_text": "Parcourt uniquement les pages publiques Browse by Age d’Usborne sur action explicite. Chaque résultat conserve le libellé Age publié. Les âges en mois sont projetés prudemment vers l’année entière supérieure et conservent leur valeur source en mois. Aucun crawl complet ni recherche distante libre inventée.",
+      "enabled_by_default": false,
+      "priority": -65,
+      "instantiation": "singleton_public",
+      "capabilities": [
+        "youth.source.search",
+        "youth.source.browse"
+      ],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "httpx",
+          "version": ">=0.28.1,<0.29",
+          "import": "httpx"
+        }
+      ]
+    }
+  ]
+}
