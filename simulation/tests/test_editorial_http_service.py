@@ -55,6 +55,11 @@ class EditorialHttpServiceTests(unittest.TestCase):
         self.assertEqual(service["plugins"], [])
         self.assertEqual(service["fixture_packages"],
                          ["literary-criticism", "youth-catalog", "constellations"])
+        from plugin_coverage import build_report
+        matrix = {r["package"]: r for r in build_report()["packages"]}
+        for package in service["fixture_packages"]:
+            self.assertIn("editorial", matrix[package]["http_fixtures"])
+            self.assertNotIn("editorial", matrix[package]["services"])
         for name in ("ux-small", "ux-all", "ux-errors"):
             _, profile = datasetctl.load_profile(name)
             self.assertIn("editorial", datasetctl.enabled_service_configs(profile))
