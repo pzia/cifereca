@@ -255,9 +255,22 @@ jobs:
               raise SystemExit("Official release must select at least one package")
           rows = json.loads(Path("dist/plugins-only-runtime-inventory.json").read_text(encoding="utf-8"))
           visible = {str(r.get("package_id")) for r in rows if isinstance(r, dict) and r.get("package_id")}
-          missing = sorted(selected - visible)
-          if missing:
-              raise SystemExit("Selected packages missing after real install: " + ", ".join(missing))
+          store = Path(os.environ["XDG_DATA_HOME"]) / "cifereca/plugins/packages"
+          active = set()
+          for package_id in selected:
+              pointer = store / package_id / "current.json"
+              if not pointer.is_file():
+                  raise SystemExit("Selected package missing from installed store: " + package_id)
+              state = json.loads(pointer.read_text(encoding="utf-8"))
+              if state.get("active"):
+                  active.add(package_id)
+          missing_active = sorted(active - visible)
+          if missing_active:
+              raise SystemExit("Active selected packages missing from CLI: " + ", ".join(missing_active))
+          unexpectedly_visible = sorted((selected - active) & visible)
+          if unexpectedly_visible:
+              raise SystemExit("Inactive selected packages unexpectedly visible: " + ", ".join(unexpectedly_visible))
+          print(f"Official inventory: {len(active)} active, {len(selected)-len(active)} inactive")
           PY
 
       - name: Refuse strict update on a historic installed Core
