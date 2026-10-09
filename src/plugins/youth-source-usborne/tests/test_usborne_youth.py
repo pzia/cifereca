@@ -83,7 +83,7 @@ def test_month_age_keeps_raw_months_and_conservative_year_projection():
 def test_requested_age_filters_only_on_published_minimum():
     rows = parse_listing(HTML, age=3)
     assert [row["title"] for row in rows] == ["Why School Matters", "Baby Book"]
-    assert parse_listing(HTML, age=1)[0]["title"] == "Why School Matters" if False else True
+    assert parse_listing(HTML, age=1) == ()
 
 
 def test_invalid_or_external_product_links_are_ignored():
@@ -97,6 +97,7 @@ def test_invalid_or_external_product_links_are_ignored():
 
 def test_next_cursor_requires_explicit_next_page_link():
     assert next_page_cursor(HTML, current_page=1) == "2"
+    assert next_page_cursor("<a href='?p=2'>Next Page</a>", current_page=1) == "2"
     assert next_page_cursor("<a href='?p=1'>Next Page</a>", current_page=1) == ""
     assert next_page_cursor("<p>No next page</p>", current_page=1) == ""
 
