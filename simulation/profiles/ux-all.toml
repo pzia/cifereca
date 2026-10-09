@@ -56,3 +56,8 @@ seed = 20261006
 [specialized]
 enabled = true
 seed = 20261008
+
+# Flux RSS/JSON Feed de critique et autres fixtures éditoriales via localhost.
+[services.editorial]
+enabled = true
+seed = 20261008
