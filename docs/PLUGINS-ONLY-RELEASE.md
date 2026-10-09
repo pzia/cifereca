@@ -7,6 +7,26 @@ auditée, autorisée et fusionnée de
 `.github/plugins-only-release-request.json`. Un push ordinaire ne déclenche pas
 de release. La publication n'installe ni ne publie un nouveau Core.
 
+## Dépendance obligatoire : Core réellement publié
+
+Une release plugins-only ciblant `v<CORE_VERSION>` est **bloquée** tant
+que la release Core officielle `v<CORE_VERSION>` n'existe pas et n'est
+pas publiée. Avant de signer le ZIP, le workflow télécharge depuis la
+GitHub Release le **wheel réellement distribué** et `SHA256SUMS`,
+vérifie l'empreinte SHA-256 côté GitHub et dans le sidecar, recoupe le
+SHA du commit du tag, installe ce wheel isolément et vérifie la présence
+des options strictes de `cifereca-update-dev`.
+
+Les recettes d'installation, de refus et de rollback utilisent ensuite
+les **sources du tag Core publié**, et non les seules sources courantes
+de `main`. Le workflow PR, qui ne publie rien, teste toujours le Core
+de la branche en préparation. Une version textuellement identique ne
+suffit plus à autoriser la publication.
+
+Pour `0.9.44+dev.12` : publier et vérifier explicitement la release
+Core correspondante **avant** toute nouvelle publication plugins-only.
+Ne jamais réécrire le tag ni les assets de `v0.9.44+dev.11`.
+
 ## Signature et confidentialité
 
 Le dépôt `pzia/cifereca` est privé et appartient à un compte GitHub personnel.

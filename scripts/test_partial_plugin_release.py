@@ -176,6 +176,39 @@ class PartialPluginReleaseTests(unittest.TestCase):
         self.assertIn('bash scripts/ci-plugins-only-runtime-gate.sh "$artifact_dir/$RELEASE_TAG.zip"', release_job)
         self.assertIn('bash scripts/ci-plugins-only-historical-core-gate.sh "$artifact_dir/$RELEASE_TAG.zip"', release_job)
 
+    def test_official_publication_requires_an_existing_real_core_release(self) -> None:
+        """P0 #787: same version in main is not proof of a distributed Core."""
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/plugins-only-release.yml").read_text(encoding="utf-8")
+        runtime_gate = (root / "scripts/ci-plugins-only-runtime-gate.sh").read_text(encoding="utf-8")
+        release_job = workflow.split("\n  release:\n", 1)[1]
+        published = release_job.index("name: Require published Core and validate the actual distributed wheel")
+        built = release_job.index("name: Build selected official plugins-only snapshot")
+        exercised = release_job.index("name: Exercise real strict install, incompatible refusal and rollback")
+        signed = release_job.index("name: Sign plugins-only ZIP with Sigstore keyless")
+        drafted = release_job.index("name: Create or update draft GitHub Release")
+        self.assertLess(built, published)
+        self.assertLess(published, exercised)
+        self.assertLess(exercised, signed)
+        self.assertLess(signed, drafted)
+        gate = release_job[published:exercised]
+        for required in (
+            'gh api "repos/$GITHUB_REPOSITORY/releases/tags/$core_tag"',
+            'gh release download "$core_tag"',
+            '--pattern "$wheel" --pattern "SHA256SUMS"',
+            'git archive "$core_tag"',
+            'git merge-base --is-ancestor "$tag_sha" "$GITHUB_SHA"',
+            'assets[0].get("digest") != "sha256:" + digest',
+            'release.get("target_commitish") != commit',
+            '"$core_dir/venv/bin/cifereca-update-dev" --help',
+            "grep -q -- '--require-plugins-only'",
+            "grep -q -- '--expected-sha256'",
+            'echo "CIFERECA_P0_CORE_SOURCE=$core_dir/source" >> "$GITHUB_ENV"',
+        ):
+            self.assertIn(required, gate)
+        self.assertIn('os.environ.get("CIFERECA_P0_CORE_SOURCE")', runtime_gate)
+        self.assertNotIn("|| true", gate)
+
     def test_modified_embedded_metadata_is_detected(self) -> None:
         original = self.build("org.cifereca.provider.alpha")
         corrupted = self.root / "tampered.zip"
