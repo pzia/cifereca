@@ -95,6 +95,7 @@ class YouthSourcesContractTests(unittest.TestCase):
             plugin = BookTrustSource(client=client)
             selected = plugin.browse(age=10, themes=["Adventure"], cursor="1")
             self.assertEqual([i["title"] for i in selected["items"]], ["The Firefly Atlas"])
+            self.assertEqual(selected["next_cursor"], "", "Une unique fiche filtrée ne doit pas inventer une seconde page")
             self.assertIn("ageGroups=9+to+11+years", server.received[0])
             self.assertIn("bookfinderCategories%5B%5D=Adventure", server.received[0])
             page = plugin.browse(cursor="1")
@@ -103,7 +104,10 @@ class YouthSourcesContractTests(unittest.TestCase):
             self.assertEqual(page["next_cursor"], "2")
             two = plugin.browse(cursor=page["next_cursor"])
             self.assertEqual([i["title"] for i in two["items"]], ["The Last Shore"])
-            last = plugin.browse(cursor=two["next_cursor"])
+            self.assertEqual(two["next_cursor"], "", "La dernière page ne doit annoncer aucune suite")
+            # An empty cursor means "first page" for browse(); page 3
+            # is requested explicitly to exercise the terminal empty page.
+            last = plugin.browse(cursor="3")
             self.assertEqual(last["items"], [])
             self.assertEqual(last["next_cursor"], "")
             record = plugin.detail(BOOKFINDER + "atlas-des-lucioles/")
