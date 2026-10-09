@@ -82,8 +82,10 @@ class AdeptProfileSimulationTests(unittest.TestCase):
             mount = Path(tmp) / "fictional-reader"
             mount.mkdir()
             associated = runtime.associate_profile("pret", mount)
-            self.assertTrue(associated["simulated"])
+            # associate_profile() returns a fresh profile show payload,
+            # not the internal CLI associate response with "simulated".
             self.assertEqual(associated["profile"]["name"], "pret")
+            self.assertTrue(associated["profile"]["complete"])
             removed = runtime.remove_profile("pret")
             self.assertFalse(removed["removed"])
             self.assertTrue(removed["simulated"])
