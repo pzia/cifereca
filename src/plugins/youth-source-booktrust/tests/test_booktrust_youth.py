@@ -410,3 +410,20 @@ def test_booktrust_empty_page_is_unverified_not_automatically_live_healthy():
     assert page["items"] == []
     assert source.diagnostic_snapshot()["state"] == "empty_unverified"
     assert source.diagnostic_snapshot()["returned_items"] == 0
+
+
+def test_booktrust_detail_request_does_not_rewrite_last_browse_diagnostic():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        html = DETAIL_HTML if str(request.url).endswith("/press-here/") else LIST_HTML
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    source.browse(age=8)
+    before = source.diagnostic_snapshot()
+    assert before["request_count"] == 1
+    assert source.detail(BOOKFINDER + "press-here/")["interest_age"] == "2+"
+    assert len(calls) == 2
+    assert source.diagnostic_snapshot() == before
