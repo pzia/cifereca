@@ -73,5 +73,43 @@ y compris en `--dry-run`. L'option demeure facultative pour les snapshots
 historiques. Un `.zip.sha256` livré avec le ZIP sur un canal non fiable
 ne constitue pas une preuve d'origine.
 
-La publication officielle, les tags et cette authentification restent
-à coordonner dans #787 et #577.
+## Releases officielles plugins-only
+
+Le workflow manuel `.github/workflows/plugins-only-release.yml` publie une release
+partielle **sans Core** à partir de `main`. Le tag doit suivre
+`plugins-v<CORE_VERSION>-<SERIAL>` et le ZIP embarque l'index
+`cifereca-plugins-only.json` produit par le même packager que la preview.
+
+Le workflow échoue avant publication si le runtime installé ne fournit pas le mode
+strict `--require-plugins-only`, si le Core/API cible n'est pas compatible, si le
+snapshot n'est pas strictement plugins-only ou si les tests updater/rollback ciblés
+échouent.
+
+Le ZIP publié reçoit une attestation SLSA signée par GitHub Actions via
+`actions/attest@v4`. La confiance ne repose donc pas sur le sidecar `.sha256`
+pris isolément : l'utilisateur vérifie d'abord l'attestation et l'identité du
+workflow signataire, puis passe le SHA-256 des octets vérifiés à l'updater.
+
+Exemple :
+
+~~~bash
+gh release download <TAG> -R pzia/cifereca
+gh attestation verify <TAG>.zip \
+  -R pzia/cifereca \
+  --signer-workflow pzia/cifereca/.github/workflows/plugins-only-release.yml \
+  --source-ref refs/heads/main
+sha256sum -c <TAG>.zip.sha256
+digest="$(sha256sum <TAG>.zip | awk '{print $1}')"
+cifereca-update-dev <TAG>.zip \
+  --require-plugins-only \
+  --expected-sha256 "$digest" \
+  --dry-run --json
+cifereca-update-dev <TAG>.zip \
+  --require-plugins-only \
+  --expected-sha256 "$digest" \
+  --json
+~~~
+
+Cette tranche P0 apporte la provenance vérifiable et le refus strict avant mutation.
+Les évolutions plus larges de releases partielles (UI de provenance, compatibilité
+Core multi-version, automatisation de sélection) restent dans #577.
