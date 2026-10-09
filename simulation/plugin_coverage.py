@@ -65,7 +65,7 @@ def build_report(*, matrix_path: Path = MATRIX, packages_dir: Path = PACKAGES,
             "data": data,
             "unit_test_files": len(tests),
             "e2e_gtk_verified": False,
-            "status": "partial" if data else "missing",
+            "status": "partial" if (data or fixture_services) else "missing",
             "gap": config.get("gap", "Non classé"),
         })
     missing = sorted(seen - set(declared))
