@@ -41,3 +41,14 @@ Les URLs produit Usborne contiennent un ISBN-13. Le plugin le valide et le publi
 - proxy d’environnement désactivé ;
 - HTML limité à 2 Mo ;
 - timeout borné.
+
+
+## Durcissements 0.2.0
+
+- curseurs limités strictement à 1–100 ; aucune correction silencieuse de `0` ou `101` ;
+- page suivante acceptée uniquement si le lien **Next Page** pointe vers `current+1` ;
+- réponses HTTP 3xx rejetées ;
+- chemin réseau borné exactement à `/us/books/browse-by-age` et ses sous-chemins, sans simple préfixe ambigu ;
+- filtre texte local borné à 300 caractères ;
+- les doublons de liens/badges ne déplacent plus la frontière de carte lorsque cela ferait perdre l'âge publié ;
+- règles ISBN, âge en mois, HTTPS et absence de recherche distante inventée inchangées.
