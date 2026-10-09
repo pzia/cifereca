@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import shutil
@@ -128,6 +129,40 @@ def main() -> int:
 
     requests = []
     fault = {"unavailable": False}
+    notice_sink_path = out / "local-https-handler.jsonl"
+    if args.milan:
+        # Exercise the real Gtk.LinkButton -> Gio HTTPS handler dispatch while
+        # making an external browser/network request impossible. The runner
+        # supplies a fresh XDG_CONFIG_HOME/XDG_DATA_HOME for every scenario.
+        assert os.environ.get("XDG_DATA_HOME") and os.environ.get("XDG_CONFIG_HOME"), (
+            "Refuse to install fake handler outside isolated XDG fixture"
+        )
+        sink_script = out / "local-https-handler.py"
+        sink_script.write_text(
+            "#!/usr/bin/python3\\n"
+            "import json, sys\\n"
+            "from pathlib import Path\\n"
+            f"target = Path({str(notice_sink_path)!r})\\n"
+            "with target.open('a', encoding='utf-8') as stream:\\n"
+            "    stream.write(json.dumps({'argv': sys.argv[1:]}) + '\\n')\\n",
+            encoding="utf-8",
+        )
+        sink_script.chmod(0o700)
+        handler_name = "Cifereca E2E Offline HTTPS Notice Handler"
+        handler = Gio.AppInfo.create_from_commandline(
+            shlex.quote(str(sink_script)),
+            handler_name,
+            Gio.AppInfoCreateFlags.SUPPORTS_URIS,
+        )
+        assert handler is not None, "Could not create offline URI sink"
+        assert handler.set_as_default_for_type("x-scheme-handler/https"), (
+            "HTTPS scheme not safely mapped to offline URI sink"
+        )
+        default_https = Gio.AppInfo.get_default_for_uri_scheme("https")
+        assert default_https is not None and default_https.get_name() == handler_name, (
+            f"Refuse to click external HTTPS link without isolated safe handler: {default_https!r}"
+        )
+        result["notice_launch_handler"] = handler_name
     if args.milan:
         import httpx
         from milan.pseudo_milan_service import listing, detail
@@ -478,8 +513,30 @@ def main() -> int:
         assert notice[0].get_mapped(), "Notice link not mapped in real GTK detail"
         result["milan_notice_uri"] = expected_uri
         capture("02-milan-notice-link")
-        # A URL is verified at the real GTK link sink. Do not activate a real
-        # browser/portal in the network-isolated E2E environment.
+        # Real XTEST activation with an isolated local HTTPS handler. Its sole
+        # executable records the URI and never touches the Internet.
+        assert not notice_sink_path.exists(), "Notice URL dispatched without explicit click"
+        assert len(requests) == 9, "Detail render unexpectedly fetched HTTP"
+        result["milan_notice_click"] = device.click_widget(notice[0])
+        later(150, milan_notice_dispatched)
+
+    def milan_notice_dispatched():
+        if not notice_sink_path.exists() and monotonic() - start < 33:
+            later(160, milan_notice_dispatched)
+            return
+        assert notice_sink_path.exists(), "GTK LinkButton did not launch isolated HTTPS handler"
+        invocations = [
+            json.loads(line)["argv"]
+            for line in notice_sink_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert invocations == [[result["milan_notice_uri"]]], (
+            f"Unexpected default browser dispatch: {invocations!r}"
+        )
+        assert len(requests) == 9, "Clicking notice must not re-collect via source HTTP"
+        assert len(page.view.rows) == 4, "Clicking notice mutated catalogue cache"
+        result["milan_notice_handler_invocations"] = invocations
+        result["milan_notice_dispatched_via"] = result["notice_launch_handler"]
+        capture("02b-milan-notice-launched-to-offline-browser")
         def find_more(widget):
             if isinstance(widget, Gtk.Button) and widget.get_label() == "Plus de résultats":
                 return widget
