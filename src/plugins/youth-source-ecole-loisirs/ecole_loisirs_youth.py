@@ -163,6 +163,19 @@ def _nearest_age(tokens, start: int) -> PublishedAge | None:
     return None
 
 
+def _card_isbn(tokens, start: int, end: int) -> str:
+    for kind, value, _ in tokens[start + 1:end]:
+        if kind != "text":
+            continue
+        match = _ISBN.search(value)
+        if not match:
+            continue
+        isbn = normalize_isbn13(match.group(1))
+        if isbn:
+            return isbn
+    return ""
+
+
 def _card_type(tokens, start: int, end: int) -> str:
     for kind, value, _ in tokens[start + 1:end]:
         if kind != "text":
@@ -208,14 +221,7 @@ def parse_listing(html: str, *, limit: int = 40) -> tuple[Mapping[str, object], 
         age = _nearest_age(tokens, start)
         if age is None:
             continue
-        segment = " ".join(
-            value for kind, value, _href in tokens[start + 1:end]
-            if kind == "text"
-        )
-        match = _ISBN.search(segment)
-        if not match:
-            continue
-        isbn = normalize_isbn13(match.group(1))
+        isbn = _card_isbn(tokens, start, end)
         if not isbn:
             continue
         item: dict[str, object] = {
