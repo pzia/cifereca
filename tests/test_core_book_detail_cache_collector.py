@@ -145,22 +145,134 @@ def test_only_four_contributors_are_inspected():
 
 def test_cache_subscription_is_unsubscribed_and_errors_are_isolated():
     events = []
+    registered, unsubscribed, refreshed = (
+        threading.Event(), threading.Event(), threading.Event(),
+    )
+
     class Notifier:
         def subscribe_cache(self, callback):
             events.append(("subscribe", callback))
-            return lambda: events.append(("unsubscribe", callback))
+            registered.set()
+
+            def close():
+                events.append(("unsubscribe", callback))
+                unsubscribed.set()
+
+            return close
+
     class Broken:
         def subscribe_cache(self, callback):
             raise ValueError("broken subscription")
-    callback = lambda: events.append(("refresh", None))
+
+    def callback():
+        events.append(("refresh", None))
+        refreshed.set()
     close = subscribe_cached_book_detail_changes([
         _resolved("b", Broken()),
         _resolved("a", Notifier()),
         _resolved("c", object()),
     ], callback)
-    assert len(events) == 1
-    events[0][1]()
-    assert events[-1] == ("refresh", None)
-    close()
+    try:
+        assert registered.wait(timeout=1)
+        # The background registration schedules one refresh to cover the
+        # interval between initial read and listener installation.
+        assert refreshed.wait(timeout=1)
+        refresh_count = sum(event[0] == "refresh" for event in events)
+        events[0][1]()
+        assert sum(event[0] == "refresh" for event in events) == refresh_count + 1
+    finally:
+        close()
+    assert unsubscribed.wait(timeout=1)
     close()
     assert sum(x[0] == "unsubscribe" for x in events) == 1
+    count = sum(event[0] == "refresh" for event in events)
+    events[0][1]()
+    assert sum(event[0] == "refresh" for event in events) == count
+
+
+def test_hung_subscription_never_blocks_gtk_and_late_close_is_honoured():
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    notifications = []
+
+    class Slow:
+        def subscribe_cache(self, callback):
+            entered.set()
+            release.wait(timeout=2)
+
+            def unsubscribe():
+                finished.set()
+
+            callback()  # A late plugin event must be silenced.
+            return unsubscribe
+
+    started = time.monotonic()
+    close = subscribe_cached_book_detail_changes([
+        _resolved("slow", Slow()),
+    ], lambda: notifications.append("refresh"))
+    try:
+        assert time.monotonic() - started < 0.2
+        assert entered.wait(timeout=1)
+        close()
+    finally:
+        release.set()
+    assert finished.wait(timeout=1)
+    assert notifications == []
+
+
+def test_slow_unsubscribe_never_blocks_gtk():
+    registered, closing, release = (
+        threading.Event(), threading.Event(), threading.Event(),
+    )
+
+    class Notifier:
+        def subscribe_cache(self, callback):
+            registered.set()
+
+            def unsubscribe():
+                closing.set()
+                release.wait(timeout=2)
+
+            return unsubscribe
+
+    close = subscribe_cached_book_detail_changes([
+        _resolved("slow-close", Notifier()),
+    ], lambda: None)
+    assert registered.wait(timeout=1)
+    started = time.monotonic()
+    try:
+        close()
+        assert time.monotonic() - started < 0.2
+        assert closing.wait(timeout=1)
+    finally:
+        release.set()
+
+
+def test_registration_thread_count_is_bounded_even_with_hung_plugins():
+    release = threading.Event()
+    entered = []
+    mutex = threading.Lock()
+
+    class Slow:
+        def subscribe_cache(self, callback):
+            with mutex:
+                entered.append(1)
+            release.wait(timeout=2)
+            return lambda: None
+
+    try:
+        started = time.monotonic()
+        close = subscribe_cached_book_detail_changes([
+            _resolved(f"plugin-{index}", Slow()) for index in range(12)
+        ], lambda: None)
+        assert time.monotonic() - started < 0.2
+        # Only four plugins are considered and occupied slots are not queued.
+        for _ in range(100):
+            with mutex:
+                n = len(entered)
+            if n >= 4:
+                break
+            time.sleep(0.002)
+        assert n <= 4
+        close()
+    finally:
+        release.set()
