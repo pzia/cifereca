@@ -265,3 +265,14 @@ HTTPX local injecté ; **aucun domaine externe n'est reconfiguré**.
 Ce dispositif couvre les ISBN, âges publiés (dont mois), pagination et
 erreurs déterministes, **pas** l'écran GTK ni les caches réels des plugins.
 Voir `simulation/youth_publishers/README.md` et #800.
+
+## Baen — catalogue HTML et EPUB publics fictifs
+
+Le service `baen` est démarré sur `127.0.0.1:8100` pour les profils
+`ux-small`, `ux-all` et `ux-errors`. Les tests HTTP valident le vrai
+plugin Baen sur les résultats, les détails publics, le lien EPUB et les
+erreurs 429/503, avec un transport **injecté** et sans réseau externe.
+Le plugin n'est pas activé automatiquement : ses URLs officielles restent
+inchangées. Documentation : `simulation/baen/README.md`.
+
+Cette couverture de contrat n'est **pas une preuve E2E GTK**.
