@@ -68,7 +68,7 @@ gap = "États ADEPT factices et CLI subprocess v8 couverts ; pas de vrai provisi
 
 [package.transport-http]
 data = []
-gap = "Timeout, redirection, annulation, 429, cache HTTP"
+gap = "Faux serveur HTTP 429/503, timeout, redirections, types MIME et tailles avec vrai transport ; pas de GTK ni annulation"
 
 [package.youth-bibliography-openlibrary]
 data = []

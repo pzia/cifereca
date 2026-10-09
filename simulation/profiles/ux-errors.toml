@@ -79,3 +79,8 @@ seed = 20261009
 [services.baen]
 enabled = true
 seed = 20261009
+
+# 429/503, timeouts, redirections, MIME and file-size failures on localhost.
+[services.transport_failures]
+enabled = true
+seed = 20261009
