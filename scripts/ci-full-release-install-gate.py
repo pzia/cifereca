@@ -119,17 +119,27 @@ def run_gate(source: Path) -> None:
             for row in original_rows if isinstance(row, dict)
         }
         count = 0
+        missing_contributions = []
+        broken_contributions = []
         for package_id in packages:
             version = store.active_version(package_id)
             check(version is not None, f"inactive package after full install: {package_id}")
             for descriptor in store.load(package_id, version).manifest.plugins:
+                label = f"{package_id}/{descriptor.id} ({descriptor.type})"
                 row = visible.get((package_id, descriptor.id))
-                check(row is not None, f"missing contribution: {package_id}/{descriptor.id}")
-                check(row.get("package_version") == version,
-                      f"wrong contribution version: {package_id}/{descriptor.id}")
-                check(row.get("state") not in ("error", "incompatible"),
-                      f"broken contribution: {package_id}/{descriptor.id}")
+                if row is None:
+                    missing_contributions.append(label)
+                    continue
+                if row.get("package_version") != version or row.get("state") in ("error", "incompatible"):
+                    broken_contributions.append(f"{label}: {row.get('state')}/{row.get('package_version')}")
                 count += 1
+        if missing_contributions:
+            print("Missing installed contributions: " + "; ".join(missing_contributions), flush=True)
+        if broken_contributions:
+            print("Broken installed contributions: " + "; ".join(broken_contributions), flush=True)
+        check(not missing_contributions and not broken_contributions,
+              f"full release inventory invalid: {len(missing_contributions)} missing, "
+              f"{len(broken_contributions)} broken")
         print(f"Installed inventory OK: {len(packages)} packages / {count} contributions", flush=True)
 
         old_links = {
