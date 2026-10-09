@@ -1,0 +1,79 @@
+name: Qualify youth public HTTPS (manual)
+
+# Public publisher websites are contacted only after a human explicitly opts in.
+# No push, pull_request, schedule or release trigger.
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Public source (one attempt; stop on 403/429/timeout)'
+        required: true
+        type: choice
+        options:
+          - booktrust
+          - milan
+      confirm_live:
+        description: 'I authorize a bounded live HTTPS request to the public publisher site'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: youth-live-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualification:
+    name: One public HTTPS qualification
+    if: ${{ inputs.confirm_live == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install the checked-out Core
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Run bounded real-source qualification
+        env:
+          SOURCE: ${{ inputs.source }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$SOURCE" in
+            booktrust|milan) ;;
+            *) echo 'Invalid public source' >&2; exit 2 ;;
+          esac
+          mkdir -p youth-live-evidence
+          python scripts/qualify-youth-source-live.py \
+            --source "$SOURCE" --age 8 --limit 2 --timeout 6 \
+            --confirm-live > youth-live-evidence/result.json
+      - name: Publish result summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s youth-live-evidence/result.json ]]; then
+            {
+              echo '## Youth source live qualification'
+              echo
+              echo 'This is a manually consented public HTTPS test, not an E2E GTK fixture.'
+              echo
+              echo '~~~json'
+              cat youth-live-evidence/result.json
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No JSON evidence produced (check workflow/setup logs).' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Preserve bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youth-source-live-evidence
+          path: youth-live-evidence/result.json
+          if-no-files-found: warn
+          retention-days: 7
