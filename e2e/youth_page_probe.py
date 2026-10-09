@@ -139,12 +139,12 @@ def main() -> int:
         )
         sink_script = out / "local-https-handler.py"
         sink_script.write_text(
-            "#!/usr/bin/python3\\n"
-            "import json, sys\\n"
-            "from pathlib import Path\\n"
-            f"target = Path({str(notice_sink_path)!r})\\n"
-            "with target.open('a', encoding='utf-8') as stream:\\n"
-            "    stream.write(json.dumps({'argv': sys.argv[1:]}) + '\\n')\\n",
+            "#!/usr/bin/python3\n"
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            f"target = Path({str(notice_sink_path)!r})\n"
+            "with target.open('a', encoding='utf-8') as stream:\n"
+            "    stream.write(json.dumps({'argv': sys.argv[1:]}) + '\\n')\n",
             encoding="utf-8",
         )
         sink_script.chmod(0o700)
