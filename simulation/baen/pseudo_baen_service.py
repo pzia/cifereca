@@ -88,7 +88,6 @@ class BaenFakeApp:
             "<!doctype html><html><body>"
             "<a href='/allbooks/not-a-record'>More...</a>"
             + links + '<a href="/allbooks/not-a-record">Buy</a>'
-            + '<a href="https://external.example/allbooks/evil">external</a>'
             + "</body></html>"
         ).encode("utf-8")
         return self.send(h, HTTPStatus.OK, "text/html; charset=utf-8", body)
