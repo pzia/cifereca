@@ -160,7 +160,7 @@ class YouthWorkflowContractTests(unittest.TestCase):
             first = plugin_scenarios.create(Path(a))
             second = plugin_scenarios.create(Path(b))
             self.assertEqual(first, second)
-            self.assertEqual(len(first["files"]), 9)
+            self.assertEqual(len(first["files"]), 10)
             self.assertTrue(all(first["files"].get(name) for name in (
                 "youth-discovery.json", "youth-enrichment.json")))
 
