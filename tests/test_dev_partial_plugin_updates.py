@@ -403,5 +403,116 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
 
 
 
+
+    def test_strict_mode_refuses_missing_trusted_digest_before_extraction(self) -> None:
+        with patch.object(dev, "_extract_snapshot") as extract, \
+             patch.object(dev, "_backup_plugins") as backup, \
+             patch.object(dev, "_install_plugin_replace") as install:
+            with self.assertRaisesRegex(dev.DevUpdateError, "expected-sha256"):
+                dev.apply_snapshot(self.snapshot, require_plugins_only=True)
+        extract.assert_not_called()
+        backup.assert_not_called()
+        install.assert_not_called()
+        self.assertEqual(self._version(ALPHA), "0.9")
+        self.assertFalse(self.state.exists())
+
+    def test_strict_mode_accepts_verified_selected_packages_and_keeps_disabled_state(self) -> None:
+        digest = hashlib.sha256(self.snapshot.read_bytes()).hexdigest()
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3] as core_install, patches[4] as smoke, patches[5] as install:
+            dry = dev.apply_snapshot(
+                self.snapshot, dry_run=True, expected_sha256=digest,
+                require_plugins_only=True,
+            )
+            assert dry["plugins_only_indexed"] and dry["strict_plugins_only"]
+            assert dry["trusted_digest_verified"]
+            assert dry["core_changed"] is False
+            applied = dev.apply_snapshot(
+                self.snapshot, expected_sha256=digest,
+                require_plugins_only=True,
+            )
+        self.assertEqual(applied["plugins"], [ALPHA, BETA])
+        self.assertFalse(applied["core_changed"])
+        self.assertEqual(self._version(ALPHA), "1.2.3")
+        self.assertFalse(self._active(ALPHA))
+        self.assertEqual(self._version(BETA), "2.0")
+        self.assertEqual(self._version(UNTOUCHED), "4.2")
+        core_install.assert_not_called()
+        self.assertEqual(install.call_count, 2)
+        smoke.assert_called_once_with([ALPHA, BETA])
+
+    def test_strict_mode_cannot_downgrade_to_unmarked_legacy_snapshot(self) -> None:
+        from scripts.plugin_packaging import build_dev_snapshot
+        historical = build_dev_snapshot(
+            [self.plugins / "alpha"], output_dir=self.root / "dist",
+            snapshot_id="generic-legacy-for-strict",
+        )
+        # Even a digest matching the supplied ZIP does not turn a generic
+        # snapshot into an explicitly indexed plugins-only release.
+        digest = hashlib.sha256(historical.read_bytes()).hexdigest()
+        self._assert_strict_refusal(historical, digest, "marqueur de portée et index")
+
+        def erase_scope(manifest):
+            manifest.pop("scope", None)
+
+        unmarked = self._edited_snapshot(dev_edit=erase_scope)
+        digest = hashlib.sha256(unmarked.read_bytes()).hexdigest()
+        self._assert_strict_refusal(unmarked, digest, "marqueur de portée et index")
+
+    def test_strict_mode_refuses_stripped_index_even_with_matching_zip_digest(self) -> None:
+        stripped = self._without_partial_index()
+        digest = hashlib.sha256(stripped.read_bytes()).hexdigest()
+        self._assert_strict_refusal(stripped, digest, "plugins-only.*sans index")
+
+    def _assert_strict_refusal(self, archive: Path, digest: str, message: str) -> None:
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3] as core, \
+             patch.object(dev, "_backup_plugins") as backup, \
+             patches[4] as smoke, patches[5] as install:
+            with self.assertRaisesRegex(dev.DevUpdateError, message):
+                dev.apply_snapshot(
+                    archive, expected_sha256=digest, require_plugins_only=True,
+                )
+        core.assert_not_called()
+        backup.assert_not_called()
+        smoke.assert_not_called()
+        install.assert_not_called()
+        self.assertEqual(self._version(ALPHA), "0.9")
+        self.assertFalse(self.state.exists())
+
+    def test_trusted_zip_is_extracted_from_private_verified_copy(self) -> None:
+        digest = hashlib.sha256(self.snapshot.read_bytes()).hexdigest()
+        original_extract = dev._extract_snapshot
+        extracted_names = []
+
+        def race_original_archive(archive: Path, destination: Path):
+            extracted_names.append(archive.name)
+            self.assertNotEqual(archive, self.snapshot)
+            self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), digest)
+            # Simulate a source archive replaced just after the checksum and
+            # before extraction. The staged copy must remain unaffected.
+            self.snapshot.write_bytes(b"replaced by a different archive")
+            return original_extract(archive, destination)
+
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             patch.object(dev, "_extract_snapshot", side_effect=race_original_archive):
+            dry = dev.apply_snapshot(
+                self.snapshot, expected_sha256=digest,
+                require_plugins_only=True, dry_run=True,
+            )
+        self.assertEqual(extracted_names, ["verified-snapshot.zip"])
+        self.assertTrue(dry["plugins_only_indexed"])
+        self.assertEqual(dry["sha256"], digest)
+        self.assertEqual(self._version(ALPHA), "0.9")
+
+    def test_strict_cli_requires_digest_even_for_dry_run(self) -> None:
+        with patch.object(dev, "_extract_snapshot") as extract, \
+             patch.object(dev, "_print") as display:
+            code = dev.main([str(self.snapshot), "--require-plugins-only", "--dry-run", "--json"])
+        self.assertEqual(code, 1)
+        extract.assert_not_called()
+        self.assertIn("expected-sha256", str(display.call_args))
+
 if __name__ == "__main__":
     unittest.main()
