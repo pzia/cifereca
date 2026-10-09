@@ -141,3 +141,41 @@ class PluginsOnly(unittest.TestCase):
     def test_smoke_allows_expected_blocked_runtime_and_unrelated_error(self):
         response=type('Response',(),{'returncode':0,'stdout':json.dumps([{'package_id':'test.provider','plugin_id':'test.plugin','state':'blocked'},{'package_id':'other','plugin_id':'other','state':'error'}]),'stderr':''})()
         with patch.object(dev.subprocess,'run',return_value=response):self.assertEqual(dev._smoke_plugins(['test.provider'])['plugin_count'],2)
+
+
+    def test_smoke_refuses_successful_install_with_missing_active_package(self):
+        # CLI exits 0, but package discovery silently omitted the active
+        # updated package; this must trigger rollback in apply_snapshot().
+        response = type('Response', (), {
+            'returncode': 0,
+            'stdout': json.dumps([{'package_id': 'unrelated', 'plugin_id': 'other', 'state': 'ready'}]),
+            'stderr': '',
+        })()
+        with patch.object(dev.subprocess, 'run', return_value=response), \
+             patch.object(dev, '_package_is_active', return_value=True):
+            with self.assertRaisesRegex(dev.DevUpdateError, 'packages actifs absents'):
+                dev._smoke_plugins(['test.provider'])
+
+    def test_smoke_refuses_active_package_missing_even_if_cli_list_empty(self):
+        response = type('Response', (), {'returncode': 0, 'stdout': '[]', 'stderr': ''})()
+        with patch.object(dev.subprocess, 'run', return_value=response), \
+             patch.object(dev, '_package_is_active', return_value=None):
+            with self.assertRaisesRegex(dev.DevUpdateError, 'test.provider'):
+                dev._smoke_plugins(['test.provider'])
+
+    def test_smoke_allows_intentionally_inactive_package_not_in_inventory(self):
+        response = type('Response', (), {'returncode': 0, 'stdout': '[]', 'stderr': ''})()
+        with patch.object(dev.subprocess, 'run', return_value=response), \
+             patch.object(dev, '_package_is_active', return_value=False):
+            self.assertEqual(dev._smoke_plugins(['test.provider']), {'plugin_count': 0})
+
+    def test_smoke_requires_every_active_package_in_multi_package_update(self):
+        response = type('Response', (), {
+            'returncode': 0,
+            'stdout': json.dumps([{'package_id': 'test.provider', 'plugin_id': 'test.one', 'state': 'ready'}]),
+            'stderr': '',
+        })()
+        with patch.object(dev.subprocess, 'run', return_value=response), \
+             patch.object(dev, '_package_is_active', return_value=True):
+            with self.assertRaisesRegex(dev.DevUpdateError, 'other.provider'):
+                dev._smoke_plugins(['test.provider', 'other.provider'])
