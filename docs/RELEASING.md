@@ -83,7 +83,9 @@ partielle **sans Core** à partir de `main`. Le tag doit suivre
 Le workflow échoue avant publication si le runtime installé ne fournit pas le mode
 strict `--require-plugins-only`, si le Core/API cible n'est pas compatible, si le
 snapshot n'est pas strictement plugins-only ou si les tests updater/rollback ciblés
-échouent.
+échouent. Il construit en plus un **runtime Core isolé réel** via l'updater normal,
+exécute le précontrôle strict puis l'installation plugins-only effective sur ce
+runtime, et vérifie l'inventaire des packages sélectionnés avant toute publication.
 
 Une release plugins-only déjà **publiée est immuable** : une relance avec le même tag
 est refusée avant remplacement des assets. Seul un brouillon interrompu peut être
