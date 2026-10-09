@@ -40,3 +40,14 @@ Les résultats conservent titre, auteurs, ISBN, langues, sujets, éditeurs, édi
 - aucun crawl, aucun bulk import, aucun appel implicite au simple affichage.
 
 Ces limites suivent les recommandations publiques d'Open Library pour les APIs à faible volume.
+
+
+## Durcissements 0.2.0
+
+- réponses HTTP 3xx rejetées au lieu d'être interprétées comme JSON ;
+- clés de notice limitées strictement à `/works/OL…W` et `/books/OL…M` ;
+- clés Author et incohérences Work/Edition rejetées ;
+- paramètre `language` limité à un code alphabétique de 2 ou 3 caractères ;
+- requête texte normalisée et bornée à 300 caractères ;
+- les langues invalides sont omises et partagent le même cache que l'absence de filtre ;
+- la frontière `bibliographic_only=true`, `age_evidence=none`, `age_ranges=()` reste inchangée.
