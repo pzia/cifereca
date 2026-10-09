@@ -180,9 +180,20 @@ def main() -> int:
         later(200, wait_results)
 
     def wait_results():
-        if monotonic() - started > 20:
-            raise AssertionError("Recherche locale non chargée sous GTK")
         state = snapshot()
+        if monotonic() - started > 12:
+            active = core.library.current_identity
+            result["preflight"] = {
+                "identity": getattr(active, "identity_id", None),
+                "catalogue_rows": len(core.library.catalog_entries()),
+                "search_state": repr(window.search_controls.state()),
+                "loaded_state": state,
+            }
+            raise AssertionError(
+                "Recherche locale non chargée sous GTK : "
+                f"query={state['query']!r} rows={len(state['rows'])} "
+                f"requests={search_requests[0]} route={state['route']!r}"
+            )
         if len(state["rows"]) < 30 or search_requests[0] < 1:
             later(150, wait_results)
             return
@@ -258,6 +269,11 @@ def main() -> int:
     def fail(message):
         result["status"] = "FAIL"
         result["error"] = message
+        if window is not None:
+            try:
+                result["failure_state"] = snapshot()
+            except Exception:
+                pass
         result["duration_seconds"] = round(monotonic() - started, 2)
         if capture is not None:
             shutil.copyfile(capture, output / "screen.png")
