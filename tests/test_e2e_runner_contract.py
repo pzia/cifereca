@@ -111,3 +111,26 @@ def test_search_filter_p0_has_two_identities_and_offline_catalogue():
     assert 'core.storage.catalog_entry_put({' in (
         ROOT / "e2e/search_filter_probe.py"
     ).read_text(encoding="utf-8")
+
+
+def test_youth_p1_real_gtk_scenarios_have_isolated_fixture_and_two_resolutions():
+    runner = _module()
+    names = [name for name, _ in runner.select(None, "org.cifereca.youth-catalog")]
+    assert names == ["youth-page-1024", "youth-page-1366"]
+    assert {runner.SCENARIOS[name]["screen"] for name in names} == {
+        "1024x900x24", "1366x900x24",
+    }
+    for name in names:
+        scenario = runner.SCENARIOS[name]
+        assert scenario["runner"] == "gtk-probe"
+        assert scenario["probe"] == "youth_page_probe.py"
+        assert scenario["fixture"] == "youth-page"
+    import json
+    config = json.loads((ROOT / "e2e/fixtures/youth-page/config.json").read_text())
+    assert [row["id"] for row in config["identities"]] == ["camille", "alex"]
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert 'MainWindow(self, core.config, core.library, core.diagnostics)' in source
+    assert 'PackageInstaller(PackageStore()).install(archive)' in source
+    assert 'device.click_widget(view.query)' in source
+    assert 'device.type_text("Atlas")' in source
+    assert 'catalog.search_cached("camille", age=18)' in source
