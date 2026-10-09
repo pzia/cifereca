@@ -1,0 +1,157 @@
+"""Real MainWindow callback methods under a small headless GTK-free host.
+
+These test the callback guards themselves, not an independent approximation.
+"""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+
+
+def _source(name: str) -> str:
+    module = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(x for x in module.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
+    method = next(x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name == name)
+    return ast.unparse(method)
+
+
+def _host():
+    module = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(x for x in module.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
+    names = {
+        "_search_detail_request_context", "_search_detail_context_current",
+        "_apply_search_detail", "_search_detail_error", "_load_known_detail",
+    }
+    methods = [x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name in names]
+    assert len(methods) == len(names)
+    compiled = ast.fix_missing_locations(ast.Module(
+        body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
+              *methods], type_ignores=[],
+    ))
+    env = {"result_row": lambda item: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1)}
+    exec(compile(compiled, str(MAIN), "exec"), env)
+
+    class Runner:
+        def __init__(self):
+            self.tasks = []
+
+        def submit(self, _title, work, done, error=None, **_kwargs):
+            self.tasks.append(NS(work=work, done=done, error=error))
+
+    class Host:
+        _search_detail_request_context = env["_search_detail_request_context"]
+        _search_detail_context_current = env["_search_detail_context_current"]
+        _apply_search_detail = env["_apply_search_detail"]
+        _search_detail_error = env["_search_detail_error"]
+        _load_known_detail = env["_load_known_detail"]
+
+        def __init__(self):
+            self.events = []
+            self._closed = False
+            self._selected_search_id = "same-id"
+            self._search_detail_request_generation = 4
+            self._identity_context_generation = 2
+            self._search_generation = 8
+            self._last_search_query = "mot"
+            self.service = NS(
+                current_identity=NS(identity_id="alice"),
+                holdings=lambda *args, **kwargs: NS(title="book"),
+            )
+            self.search_controls = object()
+            self.search_page = NS(detail=NS(
+                show_item_detail=lambda *_: self.events.append("render"),
+                show_search=lambda *_, **__: self.events.append("error-render"),
+            ))
+            self.runner = Runner()
+
+        def _add_facets(self, *_):
+            self.events.append("facets")
+
+        def _add_local_book_actions(self, *_):
+            self.events.append("actions")
+
+        def _request_cached_book_details(self, *_):
+            self.events.append("cached")
+
+        def toast(self, *_):
+            self.events.append("toast")
+
+    return Host()
+
+
+def test_only_current_holdings_success_can_replace_book_detail():
+    host = _host()
+    item = NS(id="same-id")
+    original = host._search_detail_request_context()
+    host._apply_search_detail("same-id", item, object(), context=original)
+    assert host.events == ["render", "facets", "actions", "cached"]
+    host.events.clear()
+
+    # Re-selecting the same record can reuse its ID, but is another request.
+    host._search_detail_request_generation += 1
+    host._apply_search_detail("same-id", item, object(), context=original)
+    assert host.events == []
+
+
+def test_identity_a_b_a_does_not_replay_old_holdings():
+    host = _host()
+    before = host._search_detail_request_context()
+    host.service.current_identity = NS(identity_id="bob")
+    host._identity_context_generation += 1
+    host.service.current_identity = NS(identity_id="alice")
+    host._identity_context_generation += 1
+    host._apply_search_detail("same-id", NS(id="same-id"), object(), context=before)
+    assert host.events == []
+
+
+def test_new_query_discards_old_result_even_if_selection_key_unchanged():
+    host = _host()
+    before = host._search_detail_request_context()
+    host._search_generation += 1
+    host._apply_search_detail("same-id", NS(id="same-id"), object(), context=before)
+    assert host.events == []
+
+
+def test_stale_holdings_errors_do_not_toast_or_erase_other_book():
+    host = _host()
+    before = host._search_detail_request_context()
+    host._selected_search_id = "other"
+    host._search_detail_error("same-id", NS(id="same-id"), RuntimeError("late"), context=before)
+    assert host.events == []
+    host._selected_search_id = "same-id"
+    host._closed = True
+    host._search_detail_error("same-id", NS(id="same-id"), RuntimeError("late"), context=before)
+    assert host.events == []
+
+
+def test_current_holdings_error_is_reported_once():
+    host = _host()
+    now = host._search_detail_request_context()
+    host._search_detail_error("same-id", NS(id="same-id"), RuntimeError("current"), context=now)
+    assert host.events == ["error-render", "actions", "cached", "toast"]
+
+
+def test_explicit_known_book_lookup_supersedes_previous_holdings():
+    host = _host()
+    before = host._search_detail_request_context()
+    item = NS(id="known-item")
+    host._load_known_detail(item)
+    assert host._search_detail_request_generation == before[0] + 1
+    task = host.runner.tasks[0]
+    task.done(task.work())
+    assert host.events[0] == "render"
+    host.events.clear()
+    host._apply_search_detail("same-id", item, object(), context=before)
+    assert host.events == []
+
+
+def test_runner_callbacks_capture_generation_and_identity():
+    source = _source("_search_selected")
+    assert "self._search_detail_request_generation += 1" in source
+    assert "context = self._search_detail_request_context()" in source
+    assert "self._apply_search_detail(selected_id, item, detail, context=context)" in source
+    assert "self._search_detail_error(selected_id, item, exc, context=context)" in source
+    assert "self._search_detail_request_generation += 1" in _source("_activate_identity")
