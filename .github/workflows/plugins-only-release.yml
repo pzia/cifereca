@@ -218,6 +218,85 @@ jobs:
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "archive_name=$(basename "$archive")" >> "$GITHUB_OUTPUT"
 
+      - name: Require published Core and validate the actual distributed wheel
+        shell: bash
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          set -euo pipefail
+          core_version="$(tr -d '[:space:]' < VERSION)"
+          core_tag="v$core_version"
+          wheel="cifereca-$core_version-py3-none-any.whl"
+          core_dir="$RUNNER_TEMP/published-core"
+          mkdir -p "$core_dir/source"
+
+          # A source checkout matching VERSION does NOT prove compatibility
+          # with the Core bytes already delivered to end users.
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$core_tag" > "$core_dir/release.json"
+          gh release download "$core_tag" --repo "$GITHUB_REPOSITORY" \
+            --dir "$core_dir" --pattern "$wheel" --pattern "SHA256SUMS"
+          git rev-parse --verify "refs/tags/$core_tag^{commit}" >/dev/null
+          tag_sha="$(git rev-list -n 1 "$core_tag")"
+          git merge-base --is-ancestor "$tag_sha" "$GITHUB_SHA" || {
+            echo "Published Core tag $core_tag is not an ancestor of this plugins release." >&2
+            exit 1
+          }
+
+          # Cross-check GitHub's release digest, downloaded SHA256SUMS and
+          # actual wheel bytes, plus the published tag's immutable source SHA.
+          python - "$core_dir/release.json" "$core_tag" "$tag_sha" \
+            "$core_dir/$wheel" "$core_dir/SHA256SUMS" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          metadata_path, tag, commit, wheel_path, sums_path = sys.argv[1:]
+          release = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+          if release.get("draft") or release.get("tag_name") != tag:
+              raise SystemExit("Core release absent, still draft or wrong tag")
+          if release.get("target_commitish") != commit:
+              raise SystemExit("Core release tag does not match its declared source commit")
+          assets = [a for a in release.get("assets", []) if a.get("name") == Path(wheel_path).name]
+          if len(assets) != 1:
+              raise SystemExit("Expected exactly one official Core wheel")
+          digest = hashlib.sha256(Path(wheel_path).read_bytes()).hexdigest()
+          if assets[0].get("digest") != "sha256:" + digest:
+              raise SystemExit("Official Core wheel disagrees with GitHub asset digest")
+          expected_line = digest + "  " + Path(wheel_path).name
+          if Path(sums_path).read_text(encoding="utf-8").splitlines().count(expected_line) != 1:
+              raise SystemExit("Official Core wheel disagrees with release SHA256SUMS")
+          print(f"Verified published {tag}: source {commit}; wheel SHA-256 {digest}")
+          PY
+
+          # Check a genuine installation of the wheel uploaded to GitHub,
+          # not the development checkout / wheel built in this CI job.
+          python -m venv --system-site-packages "$core_dir/venv"
+          "$core_dir/venv/bin/python" -m pip install --disable-pip-version-check \
+            --no-deps "$core_dir/$wheel"
+          (
+            cd "$RUNNER_TEMP"
+            "$core_dir/venv/bin/python" - "$core_version" <<'PY'
+          import sys
+          from importlib.metadata import version
+          from cifereca.plugin_api.version import PLUGIN_API_VERSION
+
+          installed = version("cifereca")
+          if installed != sys.argv[1]:
+              raise SystemExit(f"Published wheel version {installed} != {sys.argv[1]}")
+          print(f"Verified installed published Core {installed}; Plugin API {PLUGIN_API_VERSION}")
+          PY
+            "$core_dir/venv/bin/cifereca-update-dev" --help > "$core_dir/updater-help.txt"
+            grep -q -- '--require-plugins-only' "$core_dir/updater-help.txt"
+            grep -q -- '--expected-sha256' "$core_dir/updater-help.txt"
+          )
+
+          # Exercise installs and rollback against the exact published tag
+          # in the existing runtime gate, not the current checkout.
+          git archive "$core_tag" | tar -x -C "$core_dir/source"
+          test "$(tr -d '[:space:]' < "$core_dir/source/VERSION")" = "$core_version"
+          echo "CIFERECA_P0_CORE_SOURCE=$core_dir/source" >> "$GITHUB_ENV"
+
       - name: Verify compatibility and strict updater preflight
         shell: bash
         run: |
