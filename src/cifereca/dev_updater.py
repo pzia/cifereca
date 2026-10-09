@@ -14,12 +14,17 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 from . import updater
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
 DEV_MANIFEST = "cifereca-dev.json"
 PLUGIN_MANIFEST = "cifereca-plugin.json"
+PARTIAL_MANIFEST = "cifereca-plugins-only.json"
+PARTIAL_KIND = "cifereca-plugins-only-preview"
 DEV_FORMAT = 1
 MAX_FILES = 30000
 MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
@@ -193,6 +198,112 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
     return {"plugin_count": len(rows)}
 
 
+
+def _installed_target_versions() -> tuple[str, str]:
+    """Read the *target runtime*, not the updater process's import metadata."""
+    current = updater.install_root() / "current"
+    try:
+        release = current.resolve(strict=True)
+        core_version = updater._metadata(release)[1]
+        source = (release / "src" / "cifereca" / "plugin_api" / "version.py").read_text(
+            encoding="utf-8",
+        )
+        match = re.search(
+            r'^PLUGIN_API_VERSION\\s*=\\s*["\\']([^"\\']+)["\\']',
+            source, flags=re.MULTILINE,
+        )
+        if match is None:
+            raise ValueError("PLUGIN_API_VERSION absent")
+        api_version = str(Version(match.group(1)))
+        return core_version, api_version
+    except (OSError, ValueError, updater.UpdateError, InvalidVersion) as exc:
+        raise DevUpdateError(
+            "runtime Core cible ou version Plugin API illisible ; "
+            "installation plugins-only refusée"
+        ) from exc
+
+
+def _validate_plugins_only_index(
+    root: Path,
+    manifest: dict[str, Any],
+    package_files: list[tuple[str, Path]],
+) -> dict[str, Any] | None:
+    """Fail closed on an indexed plugins-only snapshot, before any mutation.
+
+    Existing generic dev snapshots without this optional index keep their
+    historical behavior. The published preview index itself is a contract:
+    tested Core version is exact, not a range or a forward-compatibility claim.
+    """
+    index_file = root / PARTIAL_MANIFEST
+    if not index_file.exists():
+        return None
+    if not index_file.is_file():
+        raise DevUpdateError("index plugins-only invalide")
+    try:
+        index = json.loads(index_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise DevUpdateError("index plugins-only illisible ou invalide") from exc
+    if (not isinstance(index, dict)
+            or type(index.get("format")) is not int or index["format"] != 1
+            or index.get("kind") != PARTIAL_KIND
+            or index.get("id") != manifest.get("id")
+            or not isinstance(index.get("source_git_commit"), str)
+            or not index["source_git_commit"].strip()
+            or not isinstance(index.get("core_version_tested"), str)
+            or not index["core_version_tested"].strip()
+            or not isinstance(index.get("packages"), list)):
+        raise DevUpdateError("index plugins-only : provenance ou format incohérent")
+    if manifest.get("core") or not package_files:
+        raise DevUpdateError("snapshot plugins-only : Core interdit ou sélection vide")
+
+    actual = []
+    for relative_path, archive in package_files:
+        try:
+            with zipfile.ZipFile(archive) as package_zip:
+                raw = json.loads(package_zip.read(PLUGIN_MANIFEST))
+            package = raw["package"]
+            plugins = raw["plugins"]
+            row = {
+                "package_id": package["id"],
+                "version": str(package["version"]),
+                "plugin_api": str(package.get("plugin_api") or ">=1,<2"),
+                "plugins": [
+                    {"id": plugin_id, "version": version}
+                    for plugin_id, version in sorted({
+                        str(plugin["id"]): str(plugin.get("version") or package["version"])
+                        for plugin in plugins
+                    }.items())
+                ],
+                "path": relative_path,
+                "sha256": _sha256(archive),
+            }
+        except (KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile) as exc:
+            raise DevUpdateError("index plugins-only : package illisible") from exc
+        actual.append(row)
+    if index["packages"] != sorted(actual, key=lambda row: row["package_id"]):
+        raise DevUpdateError(
+            "index plugins-only incohérent avec la sélection et les SHA-256 du snapshot"
+        )
+
+    target_core, target_api = _installed_target_versions()
+    if target_core != index["core_version_tested"]:
+        raise DevUpdateError(
+            f"Core cible {target_core!r} différent du Core testé "
+            f"{index['core_version_tested']!r} : installation refusée"
+        )
+    try:
+        api = Version(target_api)
+        for row in actual:
+            if api not in SpecifierSet(row["plugin_api"]):
+                raise DevUpdateError(
+                    f"package {row['package_id']} incompatible avec "
+                    f"Plugin API cible {target_api} ({row['plugin_api']})"
+                )
+    except (InvalidVersion, InvalidSpecifier) as exc:
+        raise DevUpdateError("index plugins-only : contrainte Plugin API invalide") from exc
+    return index
+
+
 def apply_snapshot(
     archive: Path,
     *,
@@ -216,6 +327,7 @@ def apply_snapshot(
         if not isinstance(plugin_items, list):
             raise DevUpdateError("liste plugins invalide")
         plugin_archives: list[tuple[Path, bool]] = []
+        indexed_packages: list[tuple[str, Path]] = []
         package_ids: list[str] = []
         for item in plugin_items:
             rel = str(item.get("path") if isinstance(item, dict) else item)
@@ -233,17 +345,22 @@ def apply_snapshot(
             activate = requested_activate if installed_active is None else installed_active
             package_ids.append(package_id)
             plugin_archives.append((plugin_zip, activate))
+            indexed_packages.append((rel, plugin_zip))
         if core_zip is None and not plugin_archives:
             raise DevUpdateError('snapshot vide: core ou plugins requis')
         core_sha = str(manifest.get("core_sha256") or "")
         if core_sha and (core_zip is None or _sha256(core_zip) != core_sha):
             raise DevUpdateError("SHA-256 du core invalide")
+        # Indexed partial releases must prove compatibility with the installed
+        # Core and API before dry-run, backup, plugin install or Core mutation.
+        partial_index = _validate_plugins_only_index(root, manifest, indexed_packages)
         result: dict[str, Any] = {
             "ok": True,
             "snapshot_id": snapshot_id,
             "archive": str(archive),
             "sha256": _sha256(archive),
             "plugins": package_ids,
+            "plugins_only_indexed": partial_index is not None,
             "dry_run": bool(dry_run),
         }
         if dry_run:
