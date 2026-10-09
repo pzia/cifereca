@@ -53,10 +53,10 @@ def _allowed_url(value: object) -> str:
         return ""
     if parts.scheme.casefold() != "https" or parts.hostname not in {"usborne.com", "www.usborne.com"}:
         return ""
-    if parts.username or parts.password:
+    if parts.username or parts.password or port not in (None, 443):
         return ""
     host = parts.hostname.casefold()
-    netloc = host if port in (None, 443) else f"{host}:{port}"
+    netloc = host
     return urlunsplit(("https", netloc, parts.path or "/", parts.query, ""))
 
 
@@ -261,12 +261,17 @@ def next_page_cursor(html: str, *, current_page: int) -> str:
     for kind, label, href in _tokens(html):
         if kind != "link" or _fold(label) != "next page":
             continue
-        url = _allowed_url(href)
-        if not url or not urlsplit(url).path.startswith("/us/books/browse-by-age"):
-            continue
+        raw = _text(href)
+        if raw.startswith("?"):
+            query = raw[1:]
+        else:
+            url = _allowed_url(raw)
+            if not url or not urlsplit(url).path.startswith("/us/books/browse-by-age"):
+                continue
+            query = urlsplit(url).query
         try:
             params = {}
-            for part in urlsplit(url).query.split("&"):
+            for part in query.split("&"):
                 if "=" in part:
                     key, value = part.split("=", 1)
                     params[key] = value
