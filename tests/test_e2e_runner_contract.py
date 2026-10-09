@@ -111,3 +111,23 @@ def test_search_filter_p0_has_two_identities_and_offline_catalogue():
     assert 'core.storage.catalog_entry_put({' in (
         ROOT / "e2e/search_filter_probe.py"
     ).read_text(encoding="utf-8")
+
+
+def test_youth_booktrust_replay_uses_real_installed_provider_and_offline_http():
+    runner = _module()
+    names = [name for name, _ in runner.select(None, "catalog.youth")]
+    assert names == [
+        "youth-1024", "youth-1366", "youth-booktrust-1024", "youth-booktrust-1366"
+    ]
+    for name in names[2:]:
+        scenario = runner.SCENARIOS[name]
+        assert scenario["runner"] == "gtk-youth"
+        assert scenario["fixture"] == "search-filters"
+        assert scenario["booktrust"] is True
+        assert scenario["width"] in (1024, 1366)
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert '"youth.source.booktrust"' in source
+    assert "httpx.MockTransport(respond)" in source
+    assert 'device.click_widget(collect_button())' in source
+    assert "booktrust_requests_after_outage" in source
+    assert "03-local-empty-distinct-from-outage" in source
