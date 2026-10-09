@@ -125,7 +125,10 @@ def _identifier_mappings(item: Any) -> tuple[Mapping[str, Any], ...]:
 
 
 def _identifier_scalar(value: Any) -> str:
-    return normalize(value).replace(" ", "")
+    raw = _text(value)
+    if not raw:
+        return ""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", raw)).casefold()
 
 
 def identifier_values(item: Any) -> set[str]:
