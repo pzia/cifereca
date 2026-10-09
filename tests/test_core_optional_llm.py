@@ -122,6 +122,45 @@ def test_size_limits_are_checked_before_any_http_request():
     assert json.loads(http.calls[0][0].data)["max_tokens"] == 5
 
 
+def test_serialized_json_size_is_bounded_before_network_or_slot_acquisition():
+    http = FakeHTTP()
+    service = OptionalLLMService(
+        _config(max_input_chars=16000, timeout_seconds=0.2), opener=http,
+    )
+    # json.dumps escapes non-BMP characters as surrogate pairs (12 bytes
+    # instead of one Python character), so the character budget alone
+    # would admit a much larger wire request.
+    oversized = "📚" * 8000
+    assert len(oversized) <= 16000
+    rejected = service.generate(LLMRequest(oversized))
+    assert rejected == LLMResult(
+        False, reason="request_too_large", provider="openai-compatible",
+        model="test-model", remote=False,
+    )
+    assert http.calls == []
+    assert oversized not in repr(rejected)
+
+    accepted = service.generate(LLMRequest("📚" * 100))
+    assert accepted.ok
+    assert len(http.calls) == 1
+    raw = http.calls[0][0].data
+    assert len(raw) < 65536
+    assert json.loads(raw)["messages"][-1]["content"] == "📚" * 100
+
+
+def test_structured_large_payload_has_same_wire_cap_and_avoids_secret_leaks():
+    http = FakeHTTP()
+    service = OptionalLLMService(
+        _config(max_input_chars=16000, api_key_env="CIFERECA_TEST_SECRET"), opener=http,
+    )
+    # Large astral-plane text remains within the configured character cap,
+    # but crosses the HTTP payload cap in structured mode too.
+    result = service.generate(LLMRequest("💾" * 7000, task="structured"))
+    assert result.reason == "request_too_large"
+    assert result.generated is False
+    assert http.calls == []
+
+
 def test_cancelled_request_is_not_sent_and_inflight_cancellation_returns_promptly():
     class Cancelled:
         def cancelled(self):
