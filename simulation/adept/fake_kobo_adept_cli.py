@@ -44,6 +44,10 @@ def command(argv: list[str] | None = None) -> int:
         name = action[2]
         profile = next((row for row in document["profiles"] if row.get("name") == name), None)
         if profile is None:
+            if name in document.get("absent", []):
+                return reply({"ok": False, "error": {
+                    "code": "profile_missing", "message": "Profil absent",
+                }}, code=1)
             if name.startswith("-") or not name.strip():
                 return reply({"ok": False, "error": {"code": "invalid_profile", "message": "Profil invalide"}}, code=2)
             profile = {"name": name, "complete": False, "fetch_capable": False,
