@@ -64,7 +64,6 @@ jobs:
               echo "packaging=true"
               echo "install=true"
               echo "dataset=true"
-              echo "plugins_only_release=true"
               echo "python=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -116,7 +115,8 @@ jobs:
             dataset=true
           fi
 
-          if matches '^(\.github/workflows/plugins-only-release\.yml|scripts/ci-plugins-only-runtime-gate\.sh)
+          # Changes to the P0 release runtime gate require packaging and installed-Core smoke.
+          if matches '^scripts/ci-plugins-only-runtime-gate\\.sh
           if [[ "$plugins" == true && "$plugin_scope_all" != true ]]; then
             plugin_targets="$(
               awk -F/ '/^src\/plugins\/[^/]+\// {print $1 "/" $2 "/" $3}' "$changed_file" |
@@ -156,7 +156,6 @@ jobs:
             echo "packaging=$packaging"
             echo "install=$install"
             echo "dataset=$dataset"
-            echo "plugins_only_release=$plugins_only_release"
             echo "python=$python"
           } >> "$GITHUB_OUTPUT"
 
@@ -216,24 +215,6 @@ jobs:
           python scripts/verify-packaging.py
           python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
 
-      - name: Validate official plugins-only runtime gate
-        if: steps.scope.outputs.plugins_only_release == 'true'
-        shell: bash
-        env:
-          CIFERECA_P0_GATE_ROOT: ${{ runner.temp }}/cifereca-p0-pr-gate
-        run: |
-          set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
-          tag="plugins-v${version}-pr-${{ github.event.pull_request.number || github.run_id }}"
-          python -m scripts.package_partial_plugins \
-            --packages "org.cifereca.ui.page.diagnostics" \
-            --id "$tag" \
-            --out dist
-          archive="dist/$tag.zip"
-          python -m scripts.package_partial_plugins --verify "$archive"
-          (cd dist && sha256sum -c "$tag.zip.sha256")
-          bash scripts/ci-plugins-only-runtime-gate.sh "$archive"
-
       - name: Smoke installed Core wheel
         if: steps.scope.outputs.install == 'true'
         run: |
@@ -255,7 +236,6 @@ jobs:
           python simulation/datasetctl.py config ux-small
 
 ; then
-            plugins_only_release=true
             packaging=true
             install=true
           fi
