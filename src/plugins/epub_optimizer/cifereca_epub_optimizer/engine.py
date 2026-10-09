@@ -5,6 +5,7 @@ import io
 import os
 import posixpath
 import re
+import stat
 import tempfile
 import threading
 import zipfile
@@ -120,6 +121,66 @@ def _safe_entry_name(name: str) -> bool:
         return False
     path = PurePosixPath(name)
     return not path.is_absolute() and ".." not in path.parts
+
+
+def _canonical_entry_name(info: zipfile.ZipInfo) -> str:
+    name = info.filename
+    if not _safe_entry_name(name):
+        return ""
+    normalized = posixpath.normpath(name)
+    if normalized in {"", "."} or normalized.startswith("../") or normalized.startswith("/"):
+        return ""
+    canonical = normalized + "/" if info.is_dir() else normalized
+    return canonical if canonical == name else ""
+
+
+def _unsafe_zip_entry(info: zipfile.ZipInfo) -> str:
+    if not _canonical_entry_name(info):
+        return "chemin non canonique ou dangereux"
+    if info.flag_bits & 0x1:
+        return "entrée ZIP chiffrée"
+    if info.create_system == 3:
+        mode = (info.external_attr >> 16) & 0xFFFF
+        if stat.S_ISLNK(mode):
+            return "lien symbolique ZIP"
+    return ""
+
+
+def _validate_archive_structure(
+    archive: zipfile.ZipFile,
+    infos: list[zipfile.ZipInfo],
+    *,
+    max_uncompressed_mb: int,
+) -> str:
+    if not infos:
+        raise EpubOptimizationError("EPUB vide")
+
+    total_uncompressed = sum(max(0, int(info.file_size)) for info in infos)
+    max_uncompressed = max(1, int(max_uncompressed_mb)) * 1024 * 1024
+    if total_uncompressed > max_uncompressed:
+        raise EpubOptimizationError(
+            f"EPUB décompressé trop volumineux ({total_uncompressed / 1024 / 1024:.0f} Mio > {max_uncompressed_mb} Mio)"
+        )
+
+    canonical_names: list[str] = []
+    for info in infos:
+        reason = _unsafe_zip_entry(info)
+        if reason:
+            raise EpubOptimizationError(f"entrée ZIP refusée ({reason}) : {info.filename}")
+        canonical_names.append(info.filename.casefold())
+    if len(canonical_names) != len(set(canonical_names)):
+        raise EpubOptimizationError("EPUB invalide : chemins ZIP dupliqués")
+
+    names = [info.filename for info in infos]
+    mimetype_name = _find_case_insensitive(names, "mimetype")
+    if mimetype_name is None:
+        raise EpubOptimizationError("EPUB sans entrée mimetype")
+    mimetype_info = next(info for info in infos if info.filename == mimetype_name)
+    if mimetype_info.is_dir() or mimetype_info.file_size > 128:
+        raise EpubOptimizationError("mimetype EPUB invalide")
+    if archive.read(mimetype_info).strip() != b"application/epub+zip":
+        raise EpubOptimizationError("mimetype EPUB invalide")
+    return mimetype_name
 
 
 def _find_case_insensitive(names: list[str], wanted: str) -> str | None:
@@ -459,23 +520,11 @@ def analyze_epub(
 
     with archive as zin:
         infos = zin.infolist()
-        if not infos:
-            raise EpubOptimizationError("EPUB vide")
-        for info in infos:
-            if not _safe_entry_name(info.filename):
-                raise EpubOptimizationError(f"chemin ZIP dangereux : {info.filename}")
-        names = [info.filename for info in infos]
-        canonical_names = [name.casefold() for name in names]
-        if len(canonical_names) != len(set(canonical_names)):
-            raise EpubOptimizationError("EPUB invalide : chemins ZIP dupliqués")
-        mimetype_name = _find_case_insensitive(names, "mimetype")
-        if mimetype_name is None or zin.read(mimetype_name).strip() != b"application/epub+zip":
-            raise EpubOptimizationError("mimetype EPUB invalide")
-        total_uncompressed = sum(info.file_size for info in infos)
-        if total_uncompressed > max_uncompressed_mb * 1024 * 1024:
-            raise EpubOptimizationError(
-                f"EPUB décompressé trop volumineux ({total_uncompressed / 1024 / 1024:.0f} Mio > {max_uncompressed_mb} Mio)"
-            )
+        _validate_archive_structure(
+            zin,
+            infos,
+            max_uncompressed_mb=max_uncompressed_mb,
+        )
         if _has_content_drm(zin):
             raise DrmProtectedError("EPUB chiffré/DRM : optimisation refusée")
 
@@ -591,27 +640,11 @@ def optimize_epub(
     try:
         with archive as zin:
             infos = zin.infolist()
-            if not infos:
-                raise EpubOptimizationError("EPUB vide")
-            for info in infos:
-                if not _safe_entry_name(info.filename):
-                    raise EpubOptimizationError(f"chemin ZIP dangereux : {info.filename}")
-
-            names = [info.filename for info in infos]
-            canonical_names = [name.casefold() for name in names]
-            if len(canonical_names) != len(set(canonical_names)):
-                raise EpubOptimizationError("EPUB invalide : chemins ZIP dupliqués")
-            mimetype_name = _find_case_insensitive(names, "mimetype")
-            if mimetype_name is None:
-                raise EpubOptimizationError("EPUB sans entrée mimetype")
-            if zin.read(mimetype_name).strip() != b"application/epub+zip":
-                raise EpubOptimizationError("mimetype EPUB invalide")
-
-            total_uncompressed = sum(info.file_size for info in infos)
-            if total_uncompressed > max_uncompressed_mb * 1024 * 1024:
-                raise EpubOptimizationError(
-                    f"EPUB décompressé trop volumineux ({total_uncompressed / 1024 / 1024:.0f} Mio > {max_uncompressed_mb} Mio)"
-                )
+            mimetype_name = _validate_archive_structure(
+                zin,
+                infos,
+                max_uncompressed_mb=max_uncompressed_mb,
+            )
 
             if _has_content_drm(zin):
                 raise DrmProtectedError("EPUB chiffré/DRM : optimisation refusée")
