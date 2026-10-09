@@ -117,9 +117,10 @@ def test_youth_booktrust_replay_uses_real_installed_provider_and_offline_http():
     runner = _module()
     names = [name for name, _ in runner.select(None, "catalog.youth")]
     assert names == [
-        "youth-1024", "youth-1366", "youth-booktrust-1024", "youth-booktrust-1366"
+        "youth-1024", "youth-1366", "youth-booktrust-1024", "youth-booktrust-1366",
+        "youth-milan-1024", "youth-milan-1366"
     ]
-    for name in names[2:]:
+    for name in names[2:4]:
         scenario = runner.SCENARIOS[name]
         assert scenario["runner"] == "gtk-youth"
         assert scenario["fixture"] == "search-filters"
@@ -131,3 +132,20 @@ def test_youth_booktrust_replay_uses_real_installed_provider_and_offline_http():
     assert 'device.click_widget(collect_button())' in source
     assert "booktrust_requests_after_outage" in source
     assert "03-local-empty-distinct-from-outage" in source
+
+
+def test_youth_milan_replay_uses_installed_source_and_safe_notice_action():
+    runner = _module()
+    for name in ("youth-milan-1024", "youth-milan-1366"):
+        scenario = runner.SCENARIOS[name]
+        assert scenario["plugin"] == "catalog.youth"
+        assert scenario["runner"] == "gtk-youth"
+        assert scenario["milan"] is True
+        assert scenario["width"] in (1024, 1366)
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert '"youth.source.milan"' in source
+    assert 'httpx.MockTransport(milan_respond)' in source
+    assert 'b.get_uri()' in source
+    assert "milan_page_two" in source
+    assert "milan_outage" in source
+    assert "05-milan-empty-without-request" in source
