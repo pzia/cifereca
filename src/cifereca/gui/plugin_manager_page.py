@@ -691,9 +691,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         if count > 6:
             names.append(f"… et {count - 6} autre(s)")
         body = (
-            f"{count} extension(s) activée(s) requièrent « {name} » :\\n"
-            + "\\n".join(names)
-            + "\\n\\nElles resteront configurées comme activées, mais seront "
+            f"{count} extension(s) activée(s) requièrent « {name} » :\n"
+            + "\n".join(names)
+            + "\n\nElles resteront configurées comme activées, mais seront "
               "bloquées tant que ce plugin principal est désactivé."
         )
         dialog = Adw.MessageDialog.new(
