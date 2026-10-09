@@ -248,9 +248,10 @@ def _verify_strict_installed_packages(
                 # The package installer validates archive member paths before
                 # extraction. Repeat that check at the verification boundary.
                 from .plugins.packages import PackageInstaller
+                from .plugins.errors import PackageInstallError
                 for info in infos:
                     PackageInstaller._validate_member(info)
-                    relative = PurePosixPath(info.filename.replace("\\\\", "/"))
+                    relative = _safe_member(info)
                     target = installed_root.joinpath(*relative.parts)
                     if info.is_dir():
                         if not target.is_dir() or target.is_symlink():
@@ -273,7 +274,7 @@ def _verify_strict_installed_packages(
                 raise ValueError("selected version not active")
             if not activate and active:
                 raise ValueError("disabled package unexpectedly activated")
-        except (OSError, ValueError, TypeError, KeyError, IndexError, zipfile.BadZipFile) as exc:
+        except (OSError, ValueError, TypeError, KeyError, IndexError, zipfile.BadZipFile, PackageInstallError) as exc:
             raise DevUpdateError(
                 f"plugins-only strict : installation non conforme pour {package_id} "
                 f"{version} (intégrité/version/activation) ; rollback requis"
