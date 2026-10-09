@@ -224,6 +224,7 @@ jobs:
         env:
           CIFERECA_DATASET_RUNTIME: /tmp/cifereca-datasets
         run: |
+          python -m pip install --disable-pip-version-check "httpx>=0.28.1,<0.29"
           python -m compileall -q simulation
           python -m unittest discover -s simulation/tests -v
           python simulation/datasetctl.py up ux-small
