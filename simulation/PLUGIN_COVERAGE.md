@@ -13,7 +13,7 @@ La matrice `plugin_coverage.toml` doit classer **chaque package** trouvé dans
 - service simulé réellement relié à un identifiant plugin du manifest ;
 - jeux de données locaux/générés ;
 - validation E2E GTK : **non attestée** par ce rapport.
-Le champ `status=partial` signifie seulement qu'au moins un support existe,
+Le champ `status=partial` signifie seulement qu'au moins un JDD ou serveur de\nfixtures existe,
 jamais « plugin recetté ». Les écarts sont suivis dans #770 à #774.
 
 ## JDD locaux ajoutés (pilote #772 et #773)
@@ -44,6 +44,6 @@ Les flux RSS et JSON Feed de critique sont désormais **servis par HTTP local** 
 Constellations sont consultables comme fixtures, mais ne sont **pas des API
 plugins injectées automatiquement**. Les fichiers ne sont pas injectés dans les caches métier,
 ni recettées par le harnais E2E GTK. Elles ne simulent pas les
-pages BookTrust/OpenLibrary, la découverte distante, l'ADEPT ni les formats
+pages GUI BookTrust/OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, l'ADEPT ni les formats
 PDF/DRM. Lier ces scénarios à des faux services et des tests GUI réels reste
 à faire dans les tickets dédiés.
