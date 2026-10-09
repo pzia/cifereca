@@ -69,13 +69,12 @@ class EditorialFakeApp:
                 },
             })
         if path == "/criticism/index.html":
-            port = handler.server.server_address[1]
             page = (f'<!doctype html><html lang="fr"><head><meta charset="UTF-8">'
                     f'<title>Critiques fictives Cifereca</title>'
                     f'<link rel="alternate" type="application/rss+xml" '
-                    f'href="http://127.0.0.1:{port}/criticism/rss.xml" title="RSS fictif">'
+                    f'href="/criticism/rss.xml" title="RSS fictif">'
                     f'<link rel="alternate" type="application/feed+json" '
-                    f'href="http://127.0.0.1:{port}/criticism/jsonfeed.json" title="JSON Feed fictif">'
+                    f'href="/criticism/jsonfeed.json" title="JSON Feed fictif">'
                     f'</head><body><h1>Critiques fictives pour les tests</h1>'
                     f'<p>Source exclusivement synthétique.</p></body></html>')
             return self.send(handler, page.encode("utf-8"),

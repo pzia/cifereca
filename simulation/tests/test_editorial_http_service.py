@@ -9,6 +9,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer
 from xml.etree import ElementTree as ET
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 SIM = Path(__file__).resolve().parents[1]
@@ -21,6 +22,9 @@ from editorial.pseudo_editorial_service import EditorialFakeApp, Handler
 from criticism_feeds import FeedSource, discover_url, parse_feed
 import datasetctl
 import plugin_scenarios
+
+
+PUBLIC_FEED_BASE = "https://editorial-fixtures.test"
 
 
 class Serving:
@@ -44,8 +48,15 @@ class Serving:
             return response.status, response.headers, response.read()
 
     def fake_fetch(self, url):
-        with urlopen(url, timeout=3) as response:
-            return response.url, response.read()
+        # The real feed plugin rejects localhost by design. Expose a public-
+        # shaped HTTPS URL to the plugin, and route it to this isolated fixture
+        # only inside the explicit test fetch callback (never through DNS).
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or parsed.netloc != "editorial-fixtures.test":
+            raise AssertionError("unapproved simulated feed URL")
+        local = self.root + parsed.path + (("?" + parsed.query) if parsed.query else "")
+        with urlopen(local, timeout=3) as response:
+            return url, response.read()
 
 
 class EditorialHttpServiceTests(unittest.TestCase):
@@ -78,7 +89,7 @@ class EditorialHttpServiceTests(unittest.TestCase):
 
             for suffix in ("/criticism/rss.xml", "/criticism/jsonfeed.json"):
                 with self.subTest(suffix=suffix):
-                    url = server.root + suffix
+                    url = PUBLIC_FEED_BASE + suffix
                     source = FeedSource(url, fetch=server.fake_fetch)
                     self.assertTrue(source.source_info()["source_id"].startswith("feed."))
                     result = source.collect(limit=50)
@@ -86,11 +97,11 @@ class EditorialHttpServiceTests(unittest.TestCase):
                     self.assertEqual(result["items"][0]["book"]["isbns"], [plugin_scenarios.ISBN_A])
                     self.assertGreater(result["fresh_for_seconds"], 0)
 
-            candidates = discover_url(server.root + "/criticism/index.html",
+            candidates = discover_url(PUBLIC_FEED_BASE + "/criticism/index.html",
                                       fetch=server.fake_fetch)
             urls = [item.url for item in candidates]
-            self.assertIn(server.root + "/criticism/rss.xml", urls)
-            self.assertIn(server.root + "/criticism/jsonfeed.json", urls)
+            self.assertIn(PUBLIC_FEED_BASE + "/criticism/rss.xml", urls)
+            self.assertIn(PUBLIC_FEED_BASE + "/criticism/jsonfeed.json", urls)
 
     def test_exposes_bounded_jsons_and_deterministic_error_cases(self):
         with tempfile.TemporaryDirectory() as tmp, Serving(
