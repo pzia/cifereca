@@ -219,6 +219,67 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
 
 
 
+
+def _verify_strict_installed_packages(
+    packages: list[tuple[str, str, Path, bool]],
+) -> None:
+    """Attest the *installed* payload, not merely the plugin-list response.
+
+    An install command returning zero can leave an old version activated or a
+    partial version directory in place. Official plugins-only updates must
+    reject those states and roll back before claiming success. Validation
+    reads the selected ZIP and the actual package store; it makes no network
+    requests and never modifies the installed files.
+    """
+    store = _plugin_store_root()
+    for package_id, version, archive, activate in packages:
+        package_root = store / package_id
+        installed_root = package_root / version
+        metadata_path = installed_root / ".cifereca-install.json"
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            digest = metadata["sha256"]
+            if not isinstance(digest, str) or not hmac.compare_digest(
+                digest.lower(), _sha256(archive)
+            ):
+                raise ValueError("install checksum mismatch")
+            with zipfile.ZipFile(archive) as source:
+                infos = source.infolist()
+                # The package installer validates archive member paths before
+                # extraction. Repeat that check at the verification boundary.
+                from .plugins.packages import PackageInstaller
+                for info in infos:
+                    PackageInstaller._validate_member(info)
+                    relative = PurePosixPath(info.filename.replace("\\\\", "/"))
+                    target = installed_root.joinpath(*relative.parts)
+                    if info.is_dir():
+                        if not target.is_dir() or target.is_symlink():
+                            raise ValueError("missing installed directory")
+                        continue
+                    if not target.is_file() or target.is_symlink():
+                        raise ValueError("missing installed file")
+                    with source.open(info) as expected:
+                        expected_hash = hashlib.sha256()
+                        for chunk in iter(lambda: expected.read(1024 * 1024), b""):
+                            expected_hash.update(chunk)
+                    if not hmac.compare_digest(expected_hash.hexdigest(), _sha256(target)):
+                        raise ValueError("installed file differs from selected archive")
+            pointer_path = package_root / "current.json"
+            pointer = json.loads(pointer_path.read_text(encoding="utf-8")) if pointer_path.is_file() else {}
+            if not isinstance(pointer, dict):
+                raise ValueError("invalid activation pointer")
+            active = pointer.get("active")
+            if activate and active != version:
+                raise ValueError("selected version not active")
+            if not activate and active:
+                raise ValueError("disabled package unexpectedly activated")
+        except (OSError, ValueError, TypeError, KeyError, IndexError, zipfile.BadZipFile) as exc:
+            raise DevUpdateError(
+                f"plugins-only strict : installation non conforme pour {package_id} "
+                f"{version} (intégrité/version/activation) ; rollback requis"
+            ) from exc
+
+
 def _installed_target_versions() -> tuple[str, str]:
     """Read the *target runtime*, not the updater process's import metadata."""
     current = updater.install_root() / "current"
@@ -384,13 +445,14 @@ def apply_snapshot(
             raise DevUpdateError("liste plugins invalide")
         plugin_archives: list[tuple[Path, bool]] = []
         indexed_packages: list[tuple[str, Path]] = []
+        strict_packages: list[tuple[str, str, Path, bool]] = []
         package_ids: list[str] = []
         for item in plugin_items:
             rel = str(item.get("path") if isinstance(item, dict) else item)
             plugin_zip = (root / rel).resolve()
             if not plugin_zip.is_file() or root.resolve() not in plugin_zip.parents:
                 raise DevUpdateError(f"plugin absent ou hors snapshot: {rel}")
-            package_id, _version = _read_plugin_package_id(plugin_zip)
+            package_id, package_version = _read_plugin_package_id(plugin_zip)
             if package_id in package_ids:
                 raise DevUpdateError(f"package plugin dupliqué dans snapshot: {package_id}")
             expected_sha = str(item.get("sha256") or "") if isinstance(item, dict) else ""
@@ -402,6 +464,7 @@ def apply_snapshot(
             package_ids.append(package_id)
             plugin_archives.append((plugin_zip, activate))
             indexed_packages.append((rel, plugin_zip))
+            strict_packages.append((package_id, package_version, plugin_zip, activate))
         if core_zip is None and not plugin_archives:
             raise DevUpdateError('snapshot vide: core ou plugins requis')
         core_sha = str(manifest.get("core_sha256") or "")
@@ -444,6 +507,8 @@ def apply_snapshot(
                 core_installed = True
             for plugin_zip, activate in plugin_archives:
                 _install_plugin_replace(plugin_zip, activate=activate)
+            if require_plugins_only:
+                _verify_strict_installed_packages(strict_packages)
             smoke = _smoke_plugins(package_ids)
         except Exception as exc:
             restoration_errors = []
