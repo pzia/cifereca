@@ -84,3 +84,21 @@ Artefacts : `e2e-artifacts/search-filter-p0/00-before.png`,
 `screen.json` (SHA de commit, mesures et empreintes de captures), et traces
 du runner. En cas d'échec, conserver ces preuves et ouvrir un correctif
 CoreUI ; ce test ne clôt pas à lui seul #660 avant sa recette sur CI.
+
+## Recette P1 #758 / #841 — page Jeunesse réelle
+
+`python e2e/run.py --plugin org.cifereca.youth-catalog` installe le
+package **source** `youth-catalog` avec le vrai `PackageInstaller`, force
+uniquement les contributions `catalog.youth` et `ui.page.youth`, puis
+ouvre la vraie fenêtre `MainWindow` sous Xvfb, en 1024 et 1366 px.
+Les comptes et chemins XDG sont isolés par scénario ; les notices
+synthétiques viennent de `simulation/plugin_scenarios.youth_records`.
+Aucune source réseau n'est installée et aucune collecte distante n'est
+déclenchée. La recette couvre identité vide, filtre d'âge d'intérêt 8 ans,
+âge de lecture 12 ans, borne 17/18, âge inféré sur consentement, saisie
+clavier XTEST, sélection et preuve d'âge dans le détail et âge inconnu.
+
+Chaque écran `00-...` à `07-...` et le rapport `screen.json` sont de
+**vraies captures GTK**, pas des maquettes ; les tests de contrats
+de `simulation/tests/` restent des preuves séparées. L'installation
+locale depuis les sources n'est **pas** une preuve de release publiée.
