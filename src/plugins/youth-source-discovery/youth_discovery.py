@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, urlunsplit
 _WS = re.compile(r"\s+")
 
 _STRONG_PATTERNS = (
+    ("publisher", re.compile(r"\bage\s*:?\s*(\d{1,2})\s*\+(?!\w)", re.I)),
     ("interest", re.compile(r"\binterest\s+age\s*:?\s*(\d{1,2})(?:\s*(?:[-–—]|to)\s*(\d{1,2})|\s*\+)?", re.I)),
     ("reading", re.compile(r"\breading\s+age\s*:?\s*(\d{1,2})(?:\s*(?:[-–—]|to)\s*(\d{1,2})|\s*\+)?", re.I)),
     ("recommended", re.compile(r"\b(?:recommended|recommend(?:ed)?\s+for|for)\s+ages?\s*:?\s*(\d{1,2})(?:\s*(?:[-–—]|to)\s*(\d{1,2})|\s*\+)?", re.I)),
@@ -24,7 +25,7 @@ _STRONG_PATTERNS = (
 
 _GENERIC_AGE = re.compile(r"\b(\d{1,2})\s*(?:\+|ans?\b|years?\s+(?:old|and\s+up)\b)", re.I)
 _MONTH_AGE = re.compile(
-    r"\b(?:age\s*:?\s*|from\s+|à\s+partir\s+de\s+|dès\s+)?"
+    r"\b(?:age\s*:?\s*|from\s+|à\s+partir\s+de\s+|dès\s+)"
     r"(\d{1,3})\s*\+?\s*(?:months?|mois)\b",
     re.I,
 )
