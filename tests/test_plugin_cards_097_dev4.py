@@ -49,6 +49,7 @@ class CardLayout(unittest.TestCase):
         self.host=NS(
             outer=Widget(),
             _package_expansion={},
+            _view_query='', _view_filter='all', _view_role='all',
             window=NS(service=NS(identities=[NS(label='Hugues',identity_id='hugues')])),
             manager=NS(enabled_for_identity=lambda *args:True),
             _configure=lambda pid:self.calls.append(('config',pid)),
