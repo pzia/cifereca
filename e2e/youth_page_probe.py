@@ -936,6 +936,70 @@ def main() -> int:
         assert ("Référence source", "booktrust:unknown") in shown, shown
         assert not any(title == "ISBN" for title, _ in shown), shown
         capture("08-unknown-age-detail")
+        later(180, open_installed_plugin_manager)
+
+    def plugin_states():
+        return {
+            row.descriptor.id: (bool(row.enabled), row.state)
+            for row in core.plugins.statuses()
+        }
+
+    def open_installed_plugin_manager():
+        # The real installed package and UI contribution, not a mock list.
+        statuses = plugin_states()
+        assert statuses.get("catalog.youth", (False, ""))[0], statuses
+        assert statuses.get("ui.page.youth", (False, ""))[0], statuses
+        assert statuses["ui.page.youth"][1] in {"ready", "degraded"}, statuses
+        result["plugin_states_before_manager"] = statuses
+        assert requests == [], "Offline Jeunesse manager must not trigger HTTP"
+        window.navigate("plugins")
+        later(320, plugin_manager_overview)
+
+    def plugin_manager_overview():
+        assert window.view_stack.get_visible_child_name() == "plugins"
+        manager = window.plugins_page
+        assert manager.get_mapped(), "Installed plugin manager not rendered on GTK"
+        assert manager.plugin_search.get_mapped(), "Plugin search not visible"
+        assert manager.plugin_search.get_text() == "", "Unexpected plugin-manager filter"
+        capture("09-real-plugin-manager-installed")
+        # Search with real XTEST keyboard events on the manager, not its API.
+        device.click_widget(manager.plugin_search)
+        device.type_text("youth")
+        later(280, plugin_manager_filtered)
+
+    def plugin_manager_filtered():
+        manager = window.plugins_page
+        assert manager.plugin_search.get_text() == "youth", manager.plugin_search.get_text()
+        assert manager._view_query == "youth", "Real plugin-manager search did not apply"
+        assert manager.inventory_box.get_mapped()
+        def visible_labels(widget):
+            labels = []
+            if isinstance(widget, Gtk.Label) and widget.get_mapped():
+                labels.append(widget.get_text())
+            child = widget.get_first_child()
+            while child is not None:
+                labels.extend(visible_labels(child))
+                child = child.get_next_sibling()
+            return labels
+        texts = visible_labels(manager.inventory_box)
+        assert any("Jeunesse" in label or "youth" in label.lower() for label in texts), texts
+        assert any("Activation · Activé" in label for label in texts), texts
+        assert any(label.startswith("État · ") for label in texts), texts
+        result["plugin_manager_youth_labels"] = texts
+        capture("10-real-plugin-manager-youth-search")
+        assert plugin_states() == result["plugin_states_before_manager"], (
+            "Opening or filtering plugin manager unexpectedly modified activation"
+        )
+        window.navigate("youth")
+        later(320, verify_return_after_plugin_manager)
+
+    def verify_return_after_plugin_manager():
+        assert window.view_stack.get_visible_child_name() == "youth"
+        assert page.view.widget.get_mapped(), "Youth page not restored after plugin manager"
+        assert_rows("unknown")
+        assert not requests, "Plugin manager/navigation performed unsolicited HTTP"
+        assert plugin_states() == result["plugin_states_before_manager"]
+        capture("11-youth-restored-after-plugin-manager")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
