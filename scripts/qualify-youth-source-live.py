@@ -139,8 +139,9 @@ def plugin_diagnostic_for(source: object, source_id: str) -> dict[str, object]:
         value = raw.get(key)
         if type(value) is bool:
             result[key] = value
-    if raw.get("phase") in _MILAN_DIAGNOSTIC_PHASES:
-        result["phase"] = raw["phase"]
+    phase = raw.get("phase")
+    if isinstance(phase, str) and phase in _MILAN_DIAGNOSTIC_PHASES:
+        result["phase"] = phase
     digest = raw.get("html_sha256_prefix")
     if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{16}", digest):
         result["html_sha256_prefix"] = digest
