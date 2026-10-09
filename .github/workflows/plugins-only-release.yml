@@ -100,8 +100,6 @@ jobs:
     permissions:
       contents: write
       id-token: write
-      attestations: write
-      artifact-metadata: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -277,27 +275,39 @@ jobs:
         shell: bash
         run: bash scripts/ci-plugins-only-historical-core-gate.sh "${{ steps.build.outputs.archive }}"
 
-      - name: Attest plugins-only artifact provenance
-        uses: actions/attest@v4
+      - name: Install Cosign for independent keyless provenance
+        uses: sigstore/cosign-installer@v4.1.1
         with:
-          subject-path: ${{ steps.build.outputs.archive }}
+          cosign-release: "v3.0.6"
 
-      # Authenticity is verified before a draft or any public asset is created.
-      # The ZIP sidecar alone proves only integrity, not the signing identity.
+      # Private personal GitHub repositories cannot use GitHub-hosted
+      # Artifact Attestations. Cosign signs exact ZIP bytes with GitHub OIDC.
+      # The public Sigstore transparency log records provenance metadata,
+      # NOT the private archive bytes.
+      - name: Sign plugins-only ZIP with Sigstore keyless
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ steps.build.outputs.archive }}"
+          cosign sign-blob --yes --bundle "$archive.sigstore.json" "$archive"
+          test -s "$archive.sigstore.json"
+
+      # Authenticity is verified before a draft or any release asset is created.
+      # The SHA sidecar alone proves only integrity, not the signing identity.
       - name: Verify signed provenance before publishing
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           archive="${{ steps.build.outputs.archive }}"
           test -s "$archive"
           (cd dist && sha256sum -c "$RELEASE_TAG.zip.sha256")
-          gh attestation verify "$archive" \
-            --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml" \
-            --source-ref "refs/heads/main" \
-            --source-digest "$GITHUB_SHA"
+          cosign verify-blob "$archive" \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref "refs/heads/main" \
+            --certificate-github-workflow-sha "$GITHUB_SHA"
 
       - name: Create or update draft GitHub Release
         env:
@@ -315,7 +325,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$RELEASE_TAG"               --generate-notes               --draft
           fi
-          gh release upload "$RELEASE_TAG"             "${{ steps.build.outputs.archive }}"             "${{ steps.build.outputs.archive }}.sha256"             --repo "$GITHUB_REPOSITORY"             --clobber
+          gh release upload "$RELEASE_TAG"             "${{ steps.build.outputs.archive }}"             "${{ steps.build.outputs.archive }}.sha256"             "${{ steps.build.outputs.archive }}.sigstore.json"             --repo "$GITHUB_REPOSITORY"             --clobber
 
       # Download the GitHub-hosted draft assets, not the local build output.
       # Failure leaves the release as a draft and prevents publication.
@@ -331,14 +341,18 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --dir "$artifact_dir" \
             --pattern "$RELEASE_TAG.zip" \
-            --pattern "$RELEASE_TAG.zip.sha256"
+            --pattern "$RELEASE_TAG.zip.sha256" \
+            --pattern "$RELEASE_TAG.zip.sigstore.json"
           (cd "$artifact_dir" && sha256sum -c "$RELEASE_TAG.zip.sha256")
           cmp "dist/$RELEASE_TAG.zip" "$artifact_dir/$RELEASE_TAG.zip"
-          gh attestation verify "$artifact_dir/$RELEASE_TAG.zip" \
-            --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml" \
-            --source-ref "refs/heads/main" \
-            --source-digest "$GITHUB_SHA"
+          cmp "dist/$RELEASE_TAG.zip.sigstore.json" "$artifact_dir/$RELEASE_TAG.zip.sigstore.json"
+          cosign verify-blob "$artifact_dir/$RELEASE_TAG.zip" \
+            --bundle "$artifact_dir/$RELEASE_TAG.zip.sigstore.json" \
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/plugins-only-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref "refs/heads/main" \
+            --certificate-github-workflow-sha "$GITHUB_SHA"
           export CIFERECA_P0_GATE_ROOT="$RUNNER_TEMP/cifereca-p0-downloaded"
           bash scripts/ci-plugins-only-runtime-gate.sh "$artifact_dir/$RELEASE_TAG.zip"
           bash scripts/ci-plugins-only-historical-core-gate.sh "$artifact_dir/$RELEASE_TAG.zip"
