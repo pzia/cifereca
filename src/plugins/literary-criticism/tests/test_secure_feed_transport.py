@@ -101,6 +101,9 @@ def test_https_preserves_original_name_for_sni_and_certificate(monkeypatch):
         calls.append(("dial", host, port)) or sock
     ))
     class Context:
+        verify_mode = ssl.CERT_REQUIRED
+        check_hostname = True
+
         def wrap_socket(self, transport, *, server_hostname):
             calls.append(("tls", transport, server_hostname))
             return transport
