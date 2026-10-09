@@ -13,6 +13,9 @@ import sys
 from typing import Sequence
 import zipfile
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 from scripts.plugin_packaging import (
     DIST_DIR,
     PLUGINS_DIR,
@@ -55,7 +58,10 @@ def _package_records(archive: zipfile.ZipFile, snapshot_root: str, dev: dict) ->
     return sorted(records, key=lambda record: record["package_id"])
 
 
-def verify_partial_snapshot(snapshot: Path) -> dict:
+def verify_partial_snapshot(
+    snapshot: Path, *, target_core_version: str | None = None,
+    target_plugin_api_version: str | None = None,
+) -> dict:
     """Verify that the embedded preview index describes exactly the ZIP payload."""
     dev = validate_dev_snapshot(snapshot)
     if dev.get("core"):
@@ -78,6 +84,30 @@ def verify_partial_snapshot(snapshot: Path) -> dict:
         or metadata.get("packages") != actual
     ):
         raise PackagingError("manifest plugins-only incohérent avec les packages ZIP")
+    if (target_core_version is None) != (target_plugin_api_version is None):
+        raise PackagingError("versions Core et Plugin API cibles requises ensemble")
+    if target_core_version is not None:
+        # Intentionally fail closed: "tested with Core X" is not a claim of
+        # compatibility with any other Core, even a newer one.
+        if not target_core_version.strip() or metadata["core_version_tested"] != target_core_version.strip():
+            raise PackagingError(
+                f"Core cible {target_core_version!r} différent du Core testé "
+                f"{metadata['core_version_tested']!r}"
+            )
+        try:
+            api = Version(target_plugin_api_version.strip())
+        except InvalidVersion as exc:
+            raise PackagingError("version Plugin API cible invalide") from exc
+        for package in metadata["packages"]:
+            try:
+                compatible = api in SpecifierSet(package["plugin_api"])
+            except InvalidSpecifier as exc:
+                raise PackagingError(f"contrainte Plugin API invalide: {package['package_id']}") from exc
+            if not compatible:
+                raise PackagingError(
+                    f"package {package['package_id']} incompatible avec Plugin API {api} "
+                    f"({package['plugin_api']})"
+                )
     return metadata
 
 
@@ -138,12 +168,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=DIST_DIR)
     parser.add_argument("--id", dest="snapshot_id")
     parser.add_argument("--verify", type=Path, help="Verify an existing preview ZIP instead of building")
+    parser.add_argument("--target-core-version", help="Installed Core version (exact tested version)")
+    parser.add_argument("--target-plugin-api-version", help="Plugin API provided by the target Core")
     args = parser.parse_args(argv)
     try:
         if args.verify:
-            result = verify_partial_snapshot(args.verify)
+            result = verify_partial_snapshot(
+                args.verify,
+                target_core_version=args.target_core_version,
+                target_plugin_api_version=args.target_plugin_api_version,
+            )
             print(f"OK: {result['id']} ({len(result['packages'])} packages)")
             return 0
+        if args.target_core_version is not None or args.target_plugin_api_version is not None:
+            parser.error("--target-* est réservé à --verify")
         if not args.packages:
             parser.error("--packages est requis pour construire un snapshot")
         output = build_partial_snapshot(
