@@ -4,7 +4,7 @@ Plugin prospectif de navigation relationnelle entre livres.
 
 ## Graphe explicable
 
-Le moteur consomme des références de livre structurelles compatibles avec le `BookRef` public et leurs métadonnées. Il déduplique d'abord par identifiant attesté (ISBN, provider + identifiant source), puis seulement par titre + auteur lorsqu'ils sont tous deux présents.
+Le moteur consomme des références de livre structurelles compatibles avec le `BookRef` public et leurs métadonnées. Il déduplique d'abord par identifiant attesté (ISBN, provider + identifiant source). Le repli titre + auteur est limité aux notices **toutes deux opaques** : une notice sans identifiant ne peut jamais être fusionnée silencieusement avec une édition fortement identifiée. Les clés `isbn`, `isbn10`, `isbn_10`, `isbn13` et `isbn_13` sont canonicalisées vers un ISBN-13 valide.
 
 Chaque relation conserve ses raisons et son poids : auteur, série, sujet, période, langue, longueur, format, humeur ou proximité éditoriale. Aucun score opaque n'est utilisé.
 
@@ -23,7 +23,7 @@ L'état d'accès reste explicite : `owned`, `borrowable`, `free` ou `external`.
 
 ## Cache
 
-`ConstellationService` isole son cache par identité. Un `freshness_token` différent reconstruit le graphe ; `invalidate()` permet une invalidation explicite lors d'une notification de fraîcheur.
+`ConstellationService` isole son cache par identité. La réutilisation n'est autorisée que si **l'identité et un `freshness_token` non vide** sont fournis. Sans preuve de fraîcheur, le graphe est reconstruit et un ancien cache de cette identité est écarté. `invalidate()` reste disponible pour l'invalidation explicite.
 
 ## Périmètre
 
@@ -74,3 +74,13 @@ entre les expansions. Les listes d'adjacence sont construites une fois par graph
 et réutilisées ; chaque étape n'effectue plus un scan et un tri de tous les livres.
 Les tests utilisent une tâche à exécution différée et un dispatcher explicites,
 pour distinguer le calcul de l'application UI sans prétendre valider GTK.
+
+
+## Durcissements moteur 0.3.0
+
+- prise en charge canonique des alias ISBN-10/ISBN-13 dans `identifiers` ;
+- aucune fusion titre+auteur entre une notice opaque et une édition à identité forte ;
+- le repli titre+auteur reste possible uniquement entre notices également opaques ;
+- aucun cache réutilisé sans identité **et** jeton de fraîcheur explicites ;
+- une identité vide n'est jamais mise en cache ;
+- les relations, classements, promenades et états de disponibilité restent inchangés.
