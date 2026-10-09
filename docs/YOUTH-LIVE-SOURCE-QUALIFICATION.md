@@ -68,6 +68,28 @@ installé, URLs publiques consultées, décompte des requêtes et des notices,
 titres, ISBN si présent, tranches d'âge explicitement publiées, provenance et
 erreurs éventuelles. Aucun jeton, compte utilisateur ou cache permanent.
 
+### Diagnostic Milan embarqué dans le JSON (depuis le correctif P1)
+
+Le résultat du workflow manuel intègre `plugin_diagnostic` lorsqu'un
+adaptateur Milan instrumenté a réellement exécuté la collecte. L'information
+provient de `MilanYouthSource.diagnostic_snapshot()`, également publiée dans
+la page **Diagnostics** via l'API publique `PluginContext.report_diagnostic`.
+
+Ce diagnostic **reste disponible dans le JSON même si le plugin échoue**,
+car il est collecté dans le bloc `finally` avant suppression du profil
+temporaire. Il indique notamment `http_status`, `html_bytes`,
+`html_sha256_prefix`, `anchor_count`, `milan_catalogue_href_count`,
+`product_href_count`, `product_link_accessible_count`,
+`unrecognized_catalogue_href_count`, `next_cursor_present`,
+`detail_requests` et `phase`. Une liste blanche de types et de champs
+interdit l'inclusion de HTML brut, de cookies, d'URL, de titre ou de secrets.
+
+Si `plugin_diagnostic` est absent, vérifier que le run a été **créé**
+sur le commit actuel de `main`, et non relancé depuis une vieille tentative
+via « Re-run jobs ». Son absence ne prouve rien sur le site.
+Aucun appel HTTP supplémentaire n'est effectué pour constituer ce rapport.
+L'export du diagnostic ne transforme jamais un `BLOCKED` en `PASS`.
+
 - PASS : au moins une requête HTTPS publique observée et au moins une notice
   avec âge et provenance explicites de la source interrogée, après ingestion
   dans le vrai catalogue et lecture du vrai cache.
