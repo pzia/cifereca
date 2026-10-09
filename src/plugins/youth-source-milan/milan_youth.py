@@ -447,7 +447,17 @@ class MilanYouthSource:
             self._last_diagnostic["next_cursor_present"] = bool(cursor)
             # This is an incompatibility, not a successful empty catalogue.
             if not products and not text_filter and cursor:
-                raise RuntimeError("Milan paginated catalogue has no recognizable book links")
+                # The manual qualifier captures exception messages as JSON.
+                # Only bounded counts/digest are included; no HTML or URL.
+                diag = self._last_diagnostic
+                raise RuntimeError(
+                    "Milan paginated catalogue has no recognizable book links: "
+                    f"anchors={diag.get('anchor_count', 0)}, "
+                    f"milan_links={diag.get('milan_catalogue_href_count', 0)}, "
+                    f"product_links={diag.get('product_href_count', 0)}, "
+                    f"unnamed_links={diag.get('product_link_unnamed_count', 0)}, "
+                    f"html_sha256={diag.get('html_sha256_prefix', '')}"
+                )
 
             out = []
             inspected = 0
