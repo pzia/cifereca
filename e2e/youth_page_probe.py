@@ -894,6 +894,8 @@ def main() -> int:
         assert requests == [], "First Enter must never contact a remote source"
         audit["return_status"] = page.view.status.get_text()
         audit["return_visible_feedback"] = audit["return_status"] != audit["status_before"]
+        assert audit["return_visible_feedback"], "First Return must acknowledge the local cache search"
+        assert "Recherche en cache" in audit["return_status"]
         capture("05b-youth-return-gtk-observation")
         keys("KP_Enter")
         later(170, inspect_keypad_enter)
@@ -910,11 +912,13 @@ def main() -> int:
         audit["keypad_visible_feedback"] = (
             audit["keypad_return_status"] != audit["return_status"]
         )
+        assert audit["keypad_visible_feedback"], "Second keypad Enter must explain source selection"
+        assert "Choisissez une source Jeunesse précise" in audit["keypad_return_status"]
         audit["route_after"] = window.view_stack.get_visible_child_name()
         audit["selected_source_after"] = page.view.selected_source_plugin()
         # The acceptance requirement of #910 also includes explicit remote
         # collection with a chosen provider, untested here. Do not auto-close.
-        audit["criterion_910_satisfied"] = False
+        audit["criterion_910_satisfied"] = False  # Remote selected-source path needs an independent GTK fixture.
         audit["missing_no_source_feedback_observed"] = (
             not audit["keypad_visible_feedback"]
         )
