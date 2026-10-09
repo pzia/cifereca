@@ -179,3 +179,29 @@ def test_json_feed_root_must_be_an_object():
             b'[{"version":"https://jsonfeed.org/version/1.1"}]',
             "https://reviews.test/feed",
         )
+
+
+
+def test_injected_fetch_final_destination_is_revalidated():
+    with pytest.raises(ValueError, match="finale non publique"):
+        discover_url(
+            "https://reviews.test/feed",
+            fetch=lambda url: ("http://127.0.0.1/feed", RSS),
+        )
+
+    source = FeedSource(
+        "https://reviews.test/feed",
+        fetch=lambda url: ("http://10.0.0.2/feed", RSS),
+    )
+    with pytest.raises(ValueError, match="finale non publique"):
+        source.collect()
+
+
+def test_json_feed_items_must_be_a_list_and_missing_url_stays_empty():
+    bad = b'{"version":"https://jsonfeed.org/version/1.1","items":{"a":1}}'
+    with pytest.raises(ValueError, match="Liste items JSON Feed"):
+        parse_feed(bad, "https://reviews.test/feed")
+
+    missing = b'{"version":"https://jsonfeed.org/version/1.1","items":[{"title":"A","summary":"Short"}]}'
+    row = parse_feed(missing, "https://reviews.test/feed")[0]
+    assert row["url"] == ""
