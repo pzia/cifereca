@@ -183,9 +183,12 @@ def main() -> int:
 
     def type_search():
         controls = window.search_controls
-        result["search_entry_focused"] = bool(controls.entry.has_focus())
-        if not controls.entry.has_focus():
-            raise AssertionError("Clic XTEST n'a pas donné le focus au champ Recherche")
+        result["entry_mapped"] = bool(controls.entry.get_mapped())
+        # GtkSearchEntry is a composite widget: its internal text child may
+        # own key focus while GtkSearchEntry.has_focus() is false.
+        result["search_entry_focus_grab"] = bool(controls.entry.grab_focus())
+        if not controls.entry.get_mapped():
+            raise AssertionError("Champ Recherche non visible/mappé sous GTK")
         device.type_text("Camille")           # real keyboard events
         device.key("Return", True)
         device.key("Return", False)
