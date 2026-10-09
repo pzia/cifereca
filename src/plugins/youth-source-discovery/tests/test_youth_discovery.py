@@ -4,6 +4,8 @@ from youth_discovery import (
     discover_sources,
     html_visible_text,
     is_public_candidate_url,
+    qualification_dossier,
+    dossier_mapping,
 )
 
 
@@ -153,3 +155,89 @@ def test_private_and_local_urls_are_never_candidates():
 
     report = discover_sources("books", search=search)
     assert [candidate.domain for candidate in report.candidates] == ["books.example"]
+
+
+
+def test_detects_explicit_publisher_age_in_years_and_months():
+    years = detect_age_evidence("A children's book. Age: 10+")
+    assert [(e.kind, e.age_min, e.unit) for e in years] == [("publisher", 10, "years")]
+
+    months = detect_age_evidence("Picture book. Age: 18+ months")
+    assert len(months) == 1
+    evidence = months[0]
+    assert evidence.kind == "publisher"
+    assert evidence.age_min == 2
+    assert evidence.age_max is None
+    assert evidence.unit == "months"
+    assert evidence.age_min_months == 18
+    assert evidence.strength == 90
+
+
+def test_plain_month_duration_is_not_age_evidence():
+    assert detect_age_evidence("Warranty valid for 18 months") == ()
+    assert detect_age_evidence("Publication cycle: 6 months") == ()
+
+
+def test_month_age_over_youth_range_is_rejected():
+    assert detect_age_evidence("Age: 216+ months") == ()
+    assert detect_age_evidence("Age: 205+ months") == ()
+
+
+def test_qualification_dossier_is_deterministic_and_manual_only():
+    def search(query, limit=20):
+        return [
+            {
+                "url": "https://publisher.example/book/one",
+                "title": "Book one",
+                "snippet": "Age: 10+",
+            },
+            {
+                "url": "https://publisher.example/book/two",
+                "title": "Book two",
+                "snippet": "Age: 18+ months",
+            },
+        ]
+
+    report = discover_sources("publisher books", search=search)
+    first = qualification_dossier(report)
+    second = qualification_dossier(report)
+    assert first == second
+    assert first.schema_version == 1
+    assert len(first.candidates) == 1
+    candidate = first.candidates[0]
+    assert candidate.manual_review_required is True
+    assert candidate.fingerprint
+    assert candidate.evidence_kinds == ("publisher",)
+    assert candidate.evidence_origins == ("search",)
+    assert len(candidate.sample_urls) == 2
+
+
+def test_qualification_export_is_json_compatible_and_preserves_months():
+    def search(query, limit=20):
+        return [{
+            "url": "https://publisher.example/book",
+            "title": "Baby book",
+            "snippet": "Age: 18+ months",
+        }]
+
+    report = discover_sources("baby books", search=search)
+    payload = dossier_mapping(qualification_dossier(report))
+    assert payload["schema_version"] == 1
+    assert payload["query"] == "baby books"
+    candidate = payload["candidates"][0]
+    assert candidate["manual_review_required"] is True
+    assert candidate["evidence"][0]["unit"] == "months"
+    assert candidate["evidence"][0]["age_min_months"] == 18
+    assert candidate["evidence"][0]["age_min"] == 2
+
+
+def test_qualification_fingerprint_changes_when_evidence_changes():
+    def search_a(query, limit=20):
+        return [{"url": "https://publisher.example/book", "snippet": "Age: 8+"}]
+
+    def search_b(query, limit=20):
+        return [{"url": "https://publisher.example/book", "snippet": "Age: 10+"}]
+
+    a = qualification_dossier(discover_sources("books", search=search_a))
+    b = qualification_dossier(discover_sources("books", search=search_b))
+    assert a.candidates[0].fingerprint != b.candidates[0].fingerprint
