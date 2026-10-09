@@ -40,6 +40,22 @@ SCENARIOS = {
         "runner": "gtk-youth",
         "width": 1366,
     },
+    "youth-booktrust-1024": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : vrai BookTrust activé, succès HTTP simulé puis panne 503 sans perte de cache (GTK 1024).",
+        "runner": "gtk-youth",
+        "width": 1024,
+        "booktrust": True,
+    },
+    "youth-booktrust-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #758 : vrai BookTrust activé, succès HTTP simulé puis panne 503 sans perte de cache (GTK 1366).",
+        "runner": "gtk-youth",
+        "width": 1366,
+        "booktrust": True,
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -167,6 +183,7 @@ def main() -> int:
                     xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
                     args.python, str(ROOT / "e2e/youth_page_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                    *(["--booktrust"] if scenario.get("booktrust") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
                 command = [
