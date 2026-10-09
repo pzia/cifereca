@@ -18,6 +18,7 @@ from pathlib import Path
 from common.fake_books import FakeBookFactory, epub_bytes
 
 SEED = 20261008
+SCHEMA_VERSION = 2
 ISBN_A = "9780306406157"
 ISBN_B = "9780140328721"
 ISBN_C = "9780553386790"
@@ -296,7 +297,7 @@ def create(out: Path, *, seed: int = SEED) -> dict:
     (out / "optimizer-valid.epub").write_bytes(reproducible_epub(epub_bytes(fake)))
     (out / "optimizer-corrupt.epub").write_bytes(b"this is not a valid EPUB file\n")
     paths = sorted(p for p in out.iterdir() if p.is_file() and p.name != "manifest.json")
-    manifest = {"version": 1, "synthetic": True, "seed": seed,
+    manifest = {"version": SCHEMA_VERSION, "synthetic": True, "seed": seed,
                 "scope": ["jeunesse", "critique-litteraire", "constellations", "epub-optimizer",
                           "youth-discovery", "youth-detail-enrichment"],
                 "files": {p.name: sha256(p.read_bytes()).hexdigest() for p in paths},
