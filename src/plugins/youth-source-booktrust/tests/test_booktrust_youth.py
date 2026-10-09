@@ -277,3 +277,153 @@ def test_booktrust_http_outage_preserves_catalog_cache_then_recovers():
     assert [book.title for book in catalog.search_cached("camille", age=8)] == ["Recovered Quest"]
     assert catalog.search_cached("camille", "Quest")  # result is explicit, after recovery
     assert state["calls"] == calls_before + 3
+
+
+def test_booktrust_explicit_browse_publishes_redacted_cache_only_diagnostic():
+    import json
+    from types import SimpleNamespace
+
+    calls, published = [], []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text=LIST_HTML,
+        )
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    context = SimpleNamespace(report_diagnostic=lambda *args, **kwargs: published.append((args, kwargs)))
+    assert source.activate(context) is source
+    assert source.diagnostic_snapshot() == {}
+    result = source.browse(age=10, cursor="2", limit=1)
+    assert len(result["items"]) == 1 and result["next_cursor"] == "3"
+    assert len(calls) == 1
+
+    diag = source.diagnostic_snapshot()
+    assert diag["source"] == "booktrust"
+    assert diag["phase"] == "complete"
+    assert diag["state"] == "items"
+    assert diag["request_count"] == 1
+    assert diag["http_status"] == 200
+    assert diag["content_type_is_html"] is True
+    assert diag["html_bytes"] == len(LIST_HTML.encode("utf-8"))
+    assert len(diag["html_sha256_prefix"]) == 16
+    assert diag["anchor_count"] == 4
+    assert diag["book_url_count"] == 2
+    assert diag["book_named_link_count"] == 2
+    assert diag["candidate_books_count"] == 2
+    assert diag["returned_items"] == 1
+    assert diag["cards_with_published_age"] == 1
+    assert diag["next_cursor_present"] is True
+    assert diag["age_filter_present"] is True
+    assert "T" in diag["attempted_at_utc"]
+    assert diag["duration_ms"] >= 0
+    assert published[-1][0] == ("BookTrust Bookfinder collection", "ok")
+    assert published[-1][1]["level"] == "normal"
+    assert published[-1][1]["detail"] == diag
+    payload = json.dumps(diag)
+    for forbidden in ("Press Here", "Quest", "Hervé", "bookfinder/", "ageGroups=", "private"):
+        assert forbidden not in payload
+    assert len(calls) == 1  # diagnostics never fetch a page
+
+
+def test_booktrust_browse_errors_preserve_http_and_typed_state_without_url():
+    from types import SimpleNamespace
+
+    published = []
+    def callback(*args, **kwargs):
+        published.append((args, kwargs))
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(
+            429, headers={"content-type": "text/html"},
+            text="retry secret-token",
+        )
+    )))
+    source.activate(SimpleNamespace(report_diagnostic=callback))
+    with pytest.raises(RuntimeError, match="HTTP 429"):
+        source.browse(age=8)
+    diag = source.diagnostic_snapshot()
+    assert diag["source"] == "booktrust"
+    assert diag["request_count"] == 1
+    assert diag["http_status"] == 429
+    assert diag["phase"] == "listing"
+    assert diag["state"] == "error"
+    assert diag["error_type"] == "RuntimeError"
+    assert "secret-token" not in str(diag)
+    assert "bookfinder/" not in str(diag)
+    assert published[-1][0] == ("BookTrust Bookfinder collection", "error")
+
+    def timeout(req):
+        raise httpx.ReadTimeout("sensitive path", request=req)
+
+    source.client = httpx.Client(transport=httpx.MockTransport(timeout))
+    with pytest.raises(httpx.ReadTimeout):
+        source.browse(age=8)
+    diag = source.diagnostic_snapshot()
+    assert diag["error_type"] == "ReadTimeout"
+    assert diag["request_count"] == 1
+    assert "http_status" not in diag
+    assert "sensitive path" not in str(diag)
+
+
+def test_booktrust_unsupported_age_does_not_claim_remote_success_or_issue_request():
+    calls, statuses = [], []
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda r: calls.append(r) or httpx.Response(200, text=LIST_HTML)
+    )))
+    from types import SimpleNamespace
+
+    source.activate(SimpleNamespace(
+        report_diagnostic=lambda message, status, **kwargs: statuses.append(status),
+    ))
+    page = source.browse(age=15)
+    assert page["items"] == ()
+    assert calls == []
+    diag = source.diagnostic_snapshot()
+    assert diag["request_count"] == 0
+    assert diag["phase"] == "not_requested"
+    assert diag["state"] == "unsupported_age_bucket"
+    assert statuses[-1] == "skipped"
+
+
+def test_booktrust_diagnostic_broker_errors_never_break_browse():
+    from types import SimpleNamespace
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+    )))
+    source.activate(SimpleNamespace(
+        report_diagnostic=lambda *args, **kwargs: 1 / 0,
+    ))
+    result = source.browse(age=8, limit=2)
+    assert len(result["items"]) == 2
+    assert source.diagnostic_snapshot()["state"] == "items"
+
+
+def test_booktrust_empty_page_is_unverified_not_automatically_live_healthy():
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, headers={"content-type": "text/html"}, text="<p>No books</p>")
+    )))
+    page = source.browse(age=8)
+    assert page["items"] == []
+    assert source.diagnostic_snapshot()["state"] == "empty_unverified"
+    assert source.diagnostic_snapshot()["returned_items"] == 0
+
+
+def test_booktrust_detail_request_does_not_rewrite_last_browse_diagnostic():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        html = DETAIL_HTML if str(request.url).endswith("/press-here/") else LIST_HTML
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    source.browse(age=8)
+    before = source.diagnostic_snapshot()
+    assert before["request_count"] == 1
+    assert source.detail(BOOKFINDER + "press-here/")["interest_age"] == "2+"
+    assert len(calls) == 2
+    assert source.diagnostic_snapshot() == before

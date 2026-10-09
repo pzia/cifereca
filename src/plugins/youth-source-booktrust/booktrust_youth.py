@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
 from html.parser import HTMLParser
+from time import perf_counter
 import re
 from typing import Iterable, Mapping
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
@@ -85,6 +88,9 @@ class _SemanticTextParser(HTMLParser):
         self._anchor_parts: list[str] = []
         self._tag_stack: list[str] = []
         self._skip = 0
+        self.anchor_count = 0
+        self.book_url_count = 0
+        self.book_named_link_count = 0
 
     def handle_starttag(self, tag: str, attrs) -> None:
         name = tag.casefold()
@@ -93,6 +99,7 @@ class _SemanticTextParser(HTMLParser):
             self._skip += 1
             return
         if name == "a" and not self._skip:
+            self.anchor_count += 1
             self._href = dict(attrs).get("href", "")
             self._anchor_parts = []
 
@@ -106,6 +113,10 @@ class _SemanticTextParser(HTMLParser):
             return
         if name == "a" and self._href and not self._skip:
             label = _text(" ".join(self._anchor_parts))
+            if _is_book_url(self._href):
+                self.book_url_count += 1
+                if label:
+                    self.book_named_link_count += 1
             self.tokens.append(("link", label, self._href))
             self._href = ""
             self._anchor_parts = []
@@ -124,10 +135,18 @@ class _SemanticTextParser(HTMLParser):
         self.tokens.append(("text", value, ""))
 
 
-def _tokens(html: str) -> list[tuple[str, str, str]]:
+def _tokens(
+    html: str, *, listing_diagnostic: dict[str, object] | None = None,
+) -> list[tuple[str, str, str]]:
     parser = _SemanticTextParser()
     parser.feed(html or "")
     parser.close()
+    if listing_diagnostic is not None:
+        listing_diagnostic.update({
+            "anchor_count": parser.anchor_count,
+            "book_url_count": parser.book_url_count,
+            "book_named_link_count": parser.book_named_link_count,
+        })
     return parser.tokens
 
 
@@ -155,8 +174,11 @@ def _age_label(text: str, prefix: str = "For ages") -> str:
     return ""
 
 
-def parse_recommendations(html: str, *, text_filter: str = "", limit: int = 50) -> tuple[BookCard, ...]:
-    tokens = _tokens(html)
+def parse_recommendations(
+    html: str, *, text_filter: str = "", limit: int = 50,
+    listing_diagnostic: dict[str, object] | None = None,
+) -> tuple[BookCard, ...]:
+    tokens = _tokens(html, listing_diagnostic=listing_diagnostic)
     starts: list[tuple[int, str, str]] = []
     seen: set[str] = set()
     for index, (kind, label, href) in enumerate(tokens):
@@ -171,6 +193,8 @@ def parse_recommendations(html: str, *, text_filter: str = "", limit: int = 50) 
         seen.add(url)
         starts.append((index, title, url))
 
+    if listing_diagnostic is not None:
+        listing_diagnostic["candidate_books_count"] = len(starts)
     cards: list[BookCard] = []
     q = _fold(text_filter)
     for pos, (start, title, url) in enumerate(starts):
@@ -204,6 +228,11 @@ def parse_recommendations(html: str, *, text_filter: str = "", limit: int = 50) 
         cards.append(BookCard(title, url, author, year, recommended, tuple(themes[:12])))
         if len(cards) >= max(1, min(int(limit), 100)):
             break
+    if listing_diagnostic is not None:
+        listing_diagnostic["returned_items"] = len(cards)
+        listing_diagnostic["cards_with_published_age"] = sum(
+            bool(card.recommended_age) for card in cards
+        )
     return tuple(cards)
 
 
@@ -298,6 +327,8 @@ def _query_url(*, age: int | None = None, themes: Iterable[str] = (), page: int 
 class BookTrustSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
+        self.context = None
+        self._last_diagnostic: dict[str, object] = {}
         self.client = client or httpx.Client(
             timeout=max(1.0, min(float(timeout_seconds), 30.0)),
             follow_redirects=False,
@@ -307,6 +338,25 @@ class BookTrustSource:
                 "Accept-Language": "en-GB,en;q=0.8",
             },
         )
+
+    def activate(self, context):
+        self.context = context
+        return self
+
+    def diagnostic_snapshot(self) -> dict[str, object]:
+        """Latest explicit browse outcome; contains no body, URL or book title."""
+        return dict(self._last_diagnostic)
+
+    def _publish_diagnostic(self, status: str) -> None:
+        if self.context is not None:
+            try:
+                self.context.report_diagnostic(
+                    "BookTrust Bookfinder collection", status,
+                    detail=self.diagnostic_snapshot(), level="normal",
+                )
+            except Exception:
+                # Failure of the report broker must not change collection results.
+                pass
 
     def source_info(self) -> Mapping[str, str]:
         return {
@@ -319,11 +369,22 @@ class BookTrustSource:
         if self._own_client:
             self.client.close()
 
-    def _get_text(self, url: str) -> str:
+    def _get_text(self, url: str, *, for_listing: bool = False) -> str:
         allowed = _allowed_url(url)
         if not allowed:
             raise ValueError("BookTrust URL outside allowlist")
+        if for_listing:
+            self._last_diagnostic["request_count"] = int(
+                self._last_diagnostic.get("request_count", 0)
+            ) + 1
         response = self.client.get(allowed)
+        if for_listing:
+            self._last_diagnostic.update({
+                "http_status": response.status_code,
+                "content_type_is_html": "html" in _fold(response.headers.get("content-type")),
+                "html_bytes": len(response.content),
+                "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
+            })
         if response.status_code >= 300:
             raise RuntimeError(f"BookTrust HTTP {response.status_code}")
         content_type = _fold(response.headers.get("content-type", ""))
@@ -348,31 +409,69 @@ class BookTrustSource:
             raise ValueError("invalid BookTrust page cursor")
         if not 1 <= page <= 100:
             raise ValueError("invalid BookTrust page cursor")
+        started = perf_counter()
+        self._last_diagnostic = {
+            "source": "booktrust",
+            "page": page,
+            "requested_limit": max(1, min(int(limit), 50)),
+            "attempted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "age_filter_present": age is not None,
+            "phase": "listing",
+            "request_count": 0,
+        }
         if age is not None and not age_group_for(int(age)):
+            self._last_diagnostic.update({
+                "phase": "not_requested",
+                "state": "unsupported_age_bucket",
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+                "returned_items": 0,
+            })
+            self._publish_diagnostic("skipped")
             return {"items": (), "next_cursor": "", "fresh_for_seconds": 86_400}
         bounded = max(1, min(int(limit), 50))
-        url = _query_url(age=age, themes=themes, page=page)
-        html = self._get_text(url)
-        cards = parse_recommendations(html, text_filter=text_filter, limit=bounded)
-        items = [
-            {
-                "record_id": card.url.rstrip("/").split("/")[-1],
-                "title": card.title,
-                "author": card.author,
-                "notice_url": card.url,
-                "friendly_url": card.url,
-                "recommended_age": card.recommended_age,
-                "themes": card.themes,
-                "published_year": card.year,
-                "metadata": {"age_evidence": "booktrust.bookfinder.explicit" if card.recommended_age else ""},
+        try:
+            url = _query_url(age=age, themes=themes, page=page)
+            html = self._get_text(url, for_listing=True)
+            self._last_diagnostic["phase"] = "parsing"
+            cards = parse_recommendations(
+                html, text_filter=text_filter, limit=bounded,
+                listing_diagnostic=self._last_diagnostic,
+            )
+            cursor_out = next_cursor(html, current_page=page)
+            items = [
+                {
+                    "record_id": card.url.rstrip("/").split("/")[-1],
+                    "title": card.title,
+                    "author": card.author,
+                    "notice_url": card.url,
+                    "friendly_url": card.url,
+                    "recommended_age": card.recommended_age,
+                    "themes": card.themes,
+                    "published_year": card.year,
+                    "metadata": {"age_evidence": "booktrust.bookfinder.explicit" if card.recommended_age else ""},
+                }
+                for card in cards
+            ]
+            self._last_diagnostic.update({
+                "next_cursor_present": bool(cursor_out),
+                "phase": "complete",
+                "state": "items" if cards else "empty_unverified",
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("ok" if cards else "empty")
+            return {
+                "items": items,
+                "next_cursor": cursor_out,
+                "fresh_for_seconds": 86_400,
             }
-            for card in cards
-        ]
-        return {
-            "items": items,
-            "next_cursor": next_cursor(html, current_page=page),
-            "fresh_for_seconds": 86_400,
-        }
+        except Exception as exc:
+            self._last_diagnostic.update({
+                "error_type": type(exc).__name__,
+                "state": "error",
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("error")
+            raise
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 50) -> Mapping[str, object]:
         return self.browse(text_filter=_text(query), cursor=cursor, limit=limit)
