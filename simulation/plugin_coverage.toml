@@ -100,4 +100,4 @@ gap = "Fixture HTML Browse by Age testée avec vrai parseur ; aucun parcours GTK
 
 [package.youth-source-milan]
 data = []
-gap = "Tests unitaires de catalogue et fiches produit ; simulateur HTTP dédié et parcours GTK non vérifiés"
+gap = "Faux catalogue et fiches HTML via HTTP loopback ; vrais tests adaptateur ; GTK E2E non vérifié"

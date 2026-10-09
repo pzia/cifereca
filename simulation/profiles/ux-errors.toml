@@ -69,6 +69,11 @@ seed = 20261009
 enabled = true
 seed = 20261009
 
+# Source Éditions Milan simulée, HTTPS officiel inchangé, transport de test injecté.
+[services.milan]
+enabled = true
+seed = 20261009
+
 # Faux catalogue public Baen uniquement. Le plugin réel n'est pas activé
 # automatiquement, car son URL officielle ne peut pas être redirigée.
 [services.baen]
