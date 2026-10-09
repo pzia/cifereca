@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import io
+import stat
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
-from cifereca_epub_optimizer.engine import DrmProtectedError, _effective_target_box, analyze_epub, optimize_epub
+from cifereca_epub_optimizer.engine import (
+    DrmProtectedError,
+    EpubOptimizationError,
+    _canonical_entry_name,
+    _effective_target_box,
+    _unsafe_zip_entry,
+    _validate_archive_structure,
+    analyze_epub,
+    optimize_epub,
+)
 from cifereca_epub_optimizer.builtin_profiles import builtin_profile
 
 
@@ -182,3 +193,74 @@ class EngineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_noncanonical_zip_aliases_are_rejected():
+    for name in ("OEBPS//page.xhtml", "OEBPS/./page.xhtml", "./mimetype"):
+        info = zipfile.ZipInfo(name)
+        assert _canonical_entry_name(info) == ""
+
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.epub"
+        with zipfile.ZipFile(src, "w") as zf:
+            zf.writestr("mimetype", MIMETYPE, compress_type=zipfile.ZIP_STORED)
+            zf.writestr("OEBPS//page.xhtml", XHTML)
+        with pytest.raises(EpubOptimizationError, match="non canonique"):
+            analyze_epub(src, profile=builtin_profile("generic-eink"))
+
+
+def test_zip_symlink_and_encrypted_entries_are_rejected_explicitly():
+    symlink = zipfile.ZipInfo("OEBPS/link")
+    symlink.create_system = 3
+    symlink.external_attr = stat.S_IFLNK << 16
+    assert _unsafe_zip_entry(symlink) == "lien symbolique ZIP"
+
+    encrypted = zipfile.ZipInfo("OEBPS/page.xhtml")
+    encrypted.flag_bits |= 0x1
+    assert _unsafe_zip_entry(encrypted) == "entrée ZIP chiffrée"
+
+
+def test_total_uncompressed_limit_is_checked_before_reading_mimetype():
+    mimetype = zipfile.ZipInfo("mimetype")
+    mimetype.file_size = 2 * 1024 * 1024
+
+    class Archive:
+        def read(self, _info):
+            raise AssertionError("mimetype must not be read before global size validation")
+
+    with pytest.raises(EpubOptimizationError, match="décompressé trop volumineux"):
+        _validate_archive_structure(
+            Archive(),
+            [mimetype],
+            max_uncompressed_mb=1,
+        )
+
+
+def test_oversized_mimetype_entry_is_rejected_before_payload_read():
+    mimetype = zipfile.ZipInfo("mimetype")
+    mimetype.file_size = 129
+
+    class Archive:
+        def read(self, _info):
+            raise AssertionError("oversized mimetype must not be read")
+
+    with pytest.raises(EpubOptimizationError, match="mimetype EPUB invalide"):
+        _validate_archive_structure(
+            Archive(),
+            [mimetype],
+            max_uncompressed_mb=1,
+        )
+
+
+def test_valid_archive_structure_still_accepts_normal_epub():
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "book.epub"
+        make_epub(src, image_bytes("JPEG", size=(64, 64)))
+        with zipfile.ZipFile(src, "r") as archive:
+            name = _validate_archive_structure(
+                archive,
+                archive.infolist(),
+                max_uncompressed_mb=64,
+            )
+        assert name == "mimetype"
