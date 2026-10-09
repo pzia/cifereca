@@ -259,3 +259,46 @@ def test_source_info_and_url_security():
     assert not allowed_url("https://user:pass@www.editionsmilan.com/livres/")
     assert not allowed_url("https://www.editionsmilan.com:444/livres/")
     assert normalize_isbn("978-2-408-02080-4") == "9782408020804"
+
+
+
+def test_detail_inspection_is_hard_bounded_to_eight_pages():
+    links = "".join(
+        f'<a href="/livres/{10000+i}-book-{i}/">Book {i}</a>'
+        for i in range(12)
+    )
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.path == "/livres/":
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=links)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<h1>Book</h1><div>Collection</div><div>9-12 ans</div>",
+        )
+
+    source = MilanYouthSource(
+        client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    result = source.search("", limit=8)
+    assert result["items"] == ()
+    assert len(calls) == 9  # listing + 8 product pages
+
+
+def test_redirect_response_is_rejected_not_followed():
+    source = MilanYouthSource(
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                302,
+                headers={
+                    "content-type": "text/html",
+                    "location": "https://evil.example/",
+                },
+                text="redirect",
+            )
+        ))
+    )
+    with pytest.raises(RuntimeError, match="302"):
+        source.search("x")
