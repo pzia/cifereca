@@ -550,8 +550,14 @@ def test_milan_diagnostic_survives_http_error_and_paginated_parser_failure():
         )
     )))
     empty.activate(context)
-    with pytest.raises(RuntimeError, match="no recognizable book links"):
+    with pytest.raises(RuntimeError, match="no recognizable book links") as error:
         empty.browse(age=8)
+    message = str(error.value)
+    assert "anchors=1" in message
+    assert "milan_links=1" in message
+    assert "product_links=0" in message
+    assert "html_sha256=" in message
+    assert "/livres/" not in message
     detail = empty.diagnostic_snapshot()
     assert detail["anchor_count"] == 1
     assert detail["product_href_count"] == 0
