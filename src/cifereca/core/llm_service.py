@@ -20,6 +20,9 @@ from cifereca.plugin_api.llm import LLMRequest, LLMResult
 # Timed-out calls do not spawn an unbounded number of worker threads.
 _LLM_SLOTS = BoundedSemaphore(2)
 _MAX_RESPONSE_BYTES = 32768
+# max_input_chars is a user-facing character limit, but JSON escaping can
+# expand Unicode text by several times. Bound the actual HTTP request too.
+_MAX_REQUEST_BYTES = 65536
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -117,6 +120,8 @@ class OptionalLLMService:
             if request.task == "structured":
                 payload["response_format"] = {"type": "json_object"}
             raw = json.dumps(payload).encode("utf-8")
+            if len(raw) > _MAX_REQUEST_BYTES:
+                return failed("request_too_large")
             headers = {"Content-Type": "application/json"}
             if api_key:
                 headers["Authorization"] = "Bearer " + api_key
