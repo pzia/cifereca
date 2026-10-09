@@ -27,3 +27,13 @@ La pagination n'est proposée que si la page contient explicitement un lien **Af
 - redirections et proxy d'environnement désactivés ;
 - HTML limité à 2 Mo ;
 - timeout borné.
+
+
+## Durcissements 0.2.0
+
+- une tranche d'âge n'est plus recherchée au-delà de la précédente carte produit : aucune propagation accidentelle entre notices ;
+- la pagination accepte uniquement la page immédiatement suivante publiée par « Afficher plus de résultats » ;
+- requête texte normalisée et bornée à 300 caractères ;
+- réponses HTTP 3xx rejetées ;
+- `script`, `style`, `noscript` et `svg` restent exclus du parsing ;
+- les règles ISBN, hôte HTTPS, ports et absence d'inférence restent inchangées.
