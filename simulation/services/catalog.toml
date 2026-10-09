@@ -103,3 +103,15 @@ fixture_packages = ["youth-source-usborne", "youth-source-ecole-loisirs"]
 
 [service.youth_publishers.args]
 seed = "--seed"
+
+# Baen's production adapter has no configurable base URL: keep plugin
+# autoactivation disabled and inject an HTTPX transport in contract tests.
+[service.baen]
+script = "baen/pseudo_baen_service.py"
+default_port = 8100
+health_path = "/health"
+plugins = []
+fixture_packages = ["baen"]
+
+[service.baen.args]
+seed = "--seed"
