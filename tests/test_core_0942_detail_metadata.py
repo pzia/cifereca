@@ -167,3 +167,14 @@ def test_collapsible_detail_is_marked_before_facet_traversal():
     assert 'isinstance(widget, getattr(Adw, \'ExpanderRow\', ()))' in facet
     assert "widget.get_title() == 'Détail'" in facet
     assert "_cifereca_preserve_bibliographic_rows" not in facet
+
+
+def test_detail_copy_uses_gtk4_content_provider_with_explicit_feedback():
+    """GTK4 bindings on Debian can lack GdkX11Clipboard.set_text."""
+    source = ast.unparse(_method("DetailPanel", "_group"))
+    assert "Gdk.ContentProvider.new_for_value(value)" in source
+    assert "self.window._clipboard_provider = provider" in source
+    assert "display.get_clipboard().set_content(provider)" in source
+    assert 'self.window.toast(\'Copié\')' in source
+    assert 'self.window.toast(\'Copie impossible\')' in source
+    assert "get_clipboard().set_text(" not in source

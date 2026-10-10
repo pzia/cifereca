@@ -513,9 +513,16 @@ class DetailPanel(Gtk.Box):
                 def copy_one(_button, value=safe_value):
                     display = Gdk.Display.get_default()
                     if display is None:
+                        self.window.toast("Presse-papiers indisponible")
                         return
-                    display.get_clipboard().set_text(value)
-                    self.window.toast("Copié")
+                    # Some PyGObject GTK4 bindings lack Clipboard.set_text.
+                    # Keep the provider alive for asynchronous X11/Wayland reads.
+                    provider = Gdk.ContentProvider.new_for_value(value)
+                    self.window._clipboard_provider = provider
+                    if display.get_clipboard().set_content(provider):
+                        self.window.toast("Copié")
+                    else:
+                        self.window.toast("Copie impossible")
                 copy.connect("clicked", copy_one)
                 row.add_suffix(copy)
 
