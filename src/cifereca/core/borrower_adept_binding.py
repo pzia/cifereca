@@ -39,11 +39,13 @@ def read_proof(storage: Any, key: str) -> dict[str, str] | None:
     return row
 
 
-def save_proof(storage: Any, key: str, *, identity_id: str, profile_id: str) -> None:
-    storage.metadata_set(key, json.dumps({
-        "schema": 1, "confirmed": True,
-        "identity_id": identity_id, "profile_id": profile_id,
-    }, sort_keys=True, separators=(",", ":"))
+def save_proof(storage: Any, key: str, *, identity_id: str, profile_id: str,
+               owner_borrower_key: str | None = None) -> None:
+    data = {"schema": 1, "confirmed": True,
+            "identity_id": identity_id, "profile_id": profile_id}
+    if owner_borrower_key:
+        data["owner_borrower_key"] = owner_borrower_key
+    storage.metadata_set(key, json.dumps(data, sort_keys=True, separators=(",", ":")))
 
 
 def conflicting_loan_identities(
