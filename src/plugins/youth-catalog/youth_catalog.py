@@ -1046,6 +1046,40 @@ class YouthCatalogPlugin:
         """
         try:
             info = validate_source_contract(source)
+        except Exception as exc:
+            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
+        bounded = max(1, min(int(limit), 500))
+        started = perf_counter()
+        stage = "search"
+        try:
+            raw = source.search(_text(query), cursor=cursor, limit=bounded)  # type: ignore[attr-defined]
+            stage = "ingest"
+            rows, next_cursor, fresh = _extract_page(raw)
+            report = self.index.ingest(
+                identity_id, info.source_id, rows,
+                replace_source=replace_source, fresh_for_seconds=fresh,
+            )
+            report = replace(report, next_cursor=next_cursor)
+            self.index.record_collection(
+                identity_id, info.source_id,
+                state=(
+                    "items" if report.accepted else
+                    "invalid" if report.rejected else
+                    "empty_unverified"
+                ),
+                stage=stage,
+                accepted=report.accepted, rejected=report.rejected,
+                received_count=report.accepted + report.rejected,
+                requested_limit=bounded,
+                request_count=(
+                    raw.get("collection_request_count") if isinstance(raw, Mapping)
+                    else None
+                ),
+                rejection_categories=safe_ingest_rejection_categories(report.errors),
+                next_cursor_present=bool(next_cursor),
+                duration_ms=max(0, int((perf_counter() - started) * 1000)),
+            )
+            return report
         except InvalidYouthSourcePage:
             # A malformed response must not replace the previous cache or
             # claim a successful empty page. Preserve only an attested count
