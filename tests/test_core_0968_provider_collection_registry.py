@@ -121,7 +121,7 @@ class FakeManager:
     def status(self, plugin_id):
         assert plugin_id == PARENT
         return NS(enabled=True, state="ready",
-                  descriptor=NS(instantiation="multiple"))
+                  descriptor=NS(id=PARENT, instantiation="multiple"))
 
     def enabled_for_identity(self, plugin_id, identity):
         return plugin_id == PARENT
@@ -224,5 +224,35 @@ def test_core_library_attaches_two_public_sources_and_respects_identity(tmp_path
         mgr.live = False
         svc.refresh_virtual_collections()
         assert svc.registry.descriptors() == []
+    finally:
+        svc.close()
+
+
+def test_revision_replaces_adapter_and_retires_old_session(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    coll = Collection(snapshot(child("alpha")))
+    mgr = FakeManager(coll)
+    try:
+        svc.attach_plugin_manager(mgr)
+        svc.connect_configured()
+        old_plugin = svc.registry.get("cifericaopds.alpha")
+        old_session = next(s for s in svc._sessions.values()
+                           if s.provider_id == "cifericaopds.alpha")
+        assert old_session.connected
+        coll.value = snapshot(child("alpha", generation=2), generation=2)
+        svc.refresh_virtual_collections()
+        assert svc.registry.get("cifericaopds.alpha") is old_plugin
+        assert old_session.connected
+        coll.value = snapshot(child("alpha", revision="r2", generation=3), generation=3)
+        svc.refresh_virtual_collections()
+        assert svc.registry.get("cifericaopds.alpha") is not old_plugin
+        assert not old_session.connected
+        assert all(s is not old_session for s in svc._sessions.values())
+        svc.connect_configured()
+        assert any(s.provider_id == "cifericaopds.alpha" and s.connected
+                   for s in svc._sessions.values())
+        with pytest.raises(ValueError, match="reserved"):
+            svc.registry.register(LocalProvider("alpha"), replace=True)
     finally:
         svc.close()

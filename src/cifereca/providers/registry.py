@@ -23,7 +23,11 @@ class ProviderRegistry:
         provider_id = plugin.descriptor.id.strip().lower()
         if not provider_id:
             raise ValueError("provider id is required")
-        if provider_id in self._virtual_owners:
+        if (
+            provider_id in self._virtual_owners
+            or any(provider_id == child.plugin_id
+                   for snap in self._collections.values() for child in snap.children)
+        ):
             raise ValueError(f"provider id reserved by a virtual collection: {provider_id}")
         if provider_id in self._plugins and not replace:
             raise ValueError(f"duplicate provider id: {provider_id}")
@@ -80,7 +84,14 @@ class ProviderRegistry:
             if entry.status != "ready":
                 continue
             old_entry = old_entries.get(entry.plugin_id)
-            reused = self._plugins.get(entry.plugin_id) if old_entry == entry else None
+            reusable = (
+                old_entry is not None
+                and old_entry.status == entry.status == "ready"
+                and old_entry.source_revision == entry.source_revision
+                and old_entry.capabilities == entry.capabilities
+                and old_entry.kind == entry.kind
+            )
+            reused = self._plugins.get(entry.plugin_id) if reusable else None
             plugin = reused if reused is not None else service.create_provider(entry.source_id)
             if not isinstance(plugin, ProviderPlugin):
                 raise ProviderCollectionValidationError("virtual factory must return a ProviderPlugin")

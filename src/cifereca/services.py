@@ -486,6 +486,10 @@ class LibraryService:
             return []
         live_parents: set[str] = set()
         attached: list[str] = []
+        prior_plugins = {
+            provider_id: self.registry.maybe_get(provider_id)
+            for provider_id in self._virtual_parent_by_provider
+        }
         for status in statuses:
             parent_id = status.descriptor.id
             live_parents.add(parent_id)
@@ -507,7 +511,13 @@ class LibraryService:
             for parent in live_parents
             for provider_id in self.registry.virtual_ids(parent)
         }
-        for old_id in set(self._virtual_parent_by_provider) - set(new_mapping):
+        # A revised local adapter must never retain a session bound to its
+        # old implementation. Explicit connect_configured() reconnects it.
+        stale_ids = {
+            pid for pid, old in prior_plugins.items()
+            if pid not in new_mapping or self.registry.maybe_get(pid) is not old
+        }
+        for old_id in stale_ids:
             for key, session in list(self._sessions.items()):
                 if session.provider_id == old_id:
                     self._sessions.pop(key, None)
@@ -515,7 +525,8 @@ class LibraryService:
                         session.close()
                     except Exception:
                         pass
-            self._provider_plugin_ids.pop(old_id, None)
+            if old_id not in new_mapping:
+                self._provider_plugin_ids.pop(old_id, None)
         for provider_id, parent in new_mapping.items():
             self._provider_plugin_ids[provider_id] = parent
         self._virtual_parent_by_provider = new_mapping
