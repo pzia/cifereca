@@ -2373,6 +2373,13 @@ class LibraryService:
             str(account.unique_id or "primary"), str(loan.id),
         )
         source_status, acquisition = self._find_adept_return_source(loan)
+        if acquisition is not None:
+            origin_id = ((acquisition.get("metadata") or {}).get("adept_binding") or {}).get("adept_profile_id")
+            if self.storage.adept_profile_binding_get("identity", identity_id) != origin_id:
+                return {
+                    "status": "adept_return_profile_unproven",
+                    "scope": "adobe_first_paris", "retry": "resolve_identity",
+                }
         if acquisition is None:
             return {
                 "status": source_status, "scope": "adobe_first_paris",
@@ -2455,7 +2462,20 @@ class LibraryService:
         return public_state(record or {"status": status, "adobe_verified": True})
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Nonmutating UI refresh after Adobe return; no duplicate Adobe/PNB."""
+        """No mutation on first inspection; resume only an existing checkpoint."""
+        from .core.return_adept_orchestrator import adept_return_key
+        if loan.source_provider != "paris" or loan.medium != "digital":
+            return {"status": "not_requested", "scope": "adobe_first_paris"}
+        try:
+            account, _identity = self._adept_return_identity(loan)
+        except AttentionRequired as exc:
+            return {"status": "failed", "code": exc.code, "scope": "adobe_first_paris"}
+        key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        if self.storage.loan_return_state(key) is None:
+            return {"status": "not_requested", "scope": "adobe_first_paris"}
         return self.return_loan_prefer_adept(loan)
 
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
