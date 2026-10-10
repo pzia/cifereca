@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock,patch
 from cifereca.core import CiferecaCore
-from cifereca.models import Loan
+from cifereca.models import Account, Loan
 from cifereca.acquisition import Acquisition
 from cifereca.plugin_api import AttentionRequired
 from cifereca.locking import LockBusyError
