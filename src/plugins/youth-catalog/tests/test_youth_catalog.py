@@ -693,9 +693,9 @@ def test_collect_source_runtime_http_failure_is_typed_and_keeps_identity_isolati
     assert now["error_type"] == "RuntimeError"
     assert now["cache_count"] == 1
     assert now["last_success_at_utc"] == old["last_success_at_utc"]
-    bob = {row["source_id"]: row for row in plugin.source_diagnostics("bob")}["youth.test"]
-    assert bob["collection_state"] == "not_tested"
-    assert bob["http_status"] is None
+    bob = {row["source_id"]: row for row in plugin.source_diagnostics("bob")}
+    assert "youth.test" not in bob  # a private new source must not leak across identities
+    assert bob["booktrust"]["collection_state"] == "not_tested"
 
 
 def test_source_diagnostic_stage_is_strictly_whitelisted():
