@@ -186,13 +186,25 @@ def main():
         report["checks"]["initially_collapsed"] = True
         capture("00-search-detail-closed")
         expander.set_expanded(True)
-        later(360, expanded_search)
+        # Le volet droit est scrollable ; expander situé sous les groupes
+        # Essentiel/Bibliothèque, hors écran dans la première capture 1024px.
+        scroller = panel("search").body_scroll
+        adjustment = scroller.get_vadjustment()
+        adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        later(400, expanded_search)
 
     def expanded_search():
         expander, rows = detail_info("search")
         assert expander.get_expanded()
         shown = read_rows(rows)
         report["search_rows"] = shown
+        report["search_row_diagnostics"] = [
+            {"title": str(row.get_title()), "subtitle": str(row.get_subtitle()),
+             "tooltip": str(row.get_tooltip_text() or ""),
+             "mapped": bool(row.get_mapped())}
+            for row in rows
+        ]
+        capture("01-search-detail-expanded-gtk")
         for expected in (
             ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
             ("Sujet", "écologie"), ("Sujet", "nature"),
