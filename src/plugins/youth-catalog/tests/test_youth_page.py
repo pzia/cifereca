@@ -1257,9 +1257,23 @@ def test_detail_does_not_silently_drop_known_multivalued_metadata():
     )
     detail = detail_presentation(book)
     assert len(detail.sections[0].fields) == 10
+    assert detail.sections[1].title == "Détail"
     fields = [field for section in detail.sections for field in section.fields]
     assert [field.value for field in fields if field.label == "Auteur"] == [
         "Autrice A", "Auteur B",
     ]
-    assert "thème 14" in next(field.value for field in fields if field.id == "themes")
-    assert "éditeur 7" in next(field.value for field in fields if field.id == "publishers")
+    assert "thème 14" in [field.value for field in fields if field.kind == "subject"]
+    assert "éditeur 7" in [field.value for field in fields if field.id.startswith("publisher-")]
+
+
+def test_youth_detail_typed_fields_do_not_merge_authors_and_subjects():
+    detail = detail_presentation(youth_book(
+        authors=("Auteur A", "Auteur B"), themes=("nature", "écologie"),
+        formats=("EPUB", "PDF"), provenance=("milan", "openlibrary"),
+    ))
+    fields = detail.sections[1].fields
+    assert len([f for f in fields if f.kind == "author"]) == 2
+    assert [f.value for f in fields if f.kind == "subject"] == ["nature", "écologie"]
+    assert len([f for f in fields if f.id.startswith("format-")]) == 2
+    assert len([f for f in fields if f.id.startswith("source-")]) == 2
+    assert next(f for f in fields if f.id == "isbn").kind == "isbn"
