@@ -682,7 +682,8 @@ class LibraryService:
                     # replace it or erase books if discovery is unavailable.
                     known = self.registry.virtual_snapshot(parent_id)
                     if known is not None:
-                        attached.extend(self.registry.virtual_ids(parent_id))
+                        # No new inventory was accepted: keep existing adapters
+                        # but do not report a publication or a false change.
                         continue
                     if persisted is None:
                         continue
