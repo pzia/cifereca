@@ -285,7 +285,15 @@ def fetch_source_page(
         raise YouthSourceCancelled(0)
     try:
         browse = getattr(service, "browse", None)
-        if callable(browse):
+        cooperative_browse = getattr(service, "browse_with_cancellation", None)
+        if cancelled is not None and callable(cooperative_browse):
+            # Opt-in only: legacy providers keep their existing browse API.
+            result = cooperative_browse(
+                age=age, themes=themes, text_filter=_text(query),
+                cursor=cursor, limit=max(1, min(int(limit), 200)),
+                cancelled=cancelled,
+            )
+        elif callable(browse):
             result = browse(
                 age=age,
                 themes=themes,
@@ -951,7 +959,24 @@ class YouthView:
                 if self.disposed or generation != self.generation or current_token != token:
                     return False
                 self._remote_running_token = None
-                if error or result is None or result is _CANCELLED_BEFORE_REQUEST:
+                # Cancellation can arrive after result() completes but before
+                # this GTK idle callback runs. Never ingest a stale success.
+                control = getattr(handle, "control", None)
+                was_cancelled = getattr(control, "cancelled", None)
+                late_cancelled = callable(was_cancelled) and was_cancelled()
+                if late_cancelled and result is not _CANCELLED_BEFORE_REQUEST:
+                    count = (
+                        failure.get("request_count")
+                        if error or result is None else
+                        result.get("collection_request_count")
+                        if isinstance(result, Mapping) else None
+                    )
+                    failure = {
+                        "state": "cancelled",
+                        "error_type": "YouthSourceCancelled",
+                        "http_status": None, "request_count": count,
+                    }
+                if error or result is None or result is _CANCELLED_BEFORE_REQUEST or late_cancelled:
                     reporter = getattr(self.catalog, "record_collection", None)
                     row = self.selected_source()
                     if callable(reporter) and row is not None:
