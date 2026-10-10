@@ -10,7 +10,7 @@ from youth_detail_enrichment import (
 )
 
 
-def age(lo, hi=None, kind="recommended", source="booktrust", label="", confidence=1.0):
+def age(lo, hi=None, kind="recommended", source="ecole-loisirs", label="", confidence=1.0):
     return NS(
         age_min=lo,
         age_max=hi,
@@ -24,10 +24,10 @@ def age(lo, hi=None, kind="recommended", source="booktrust", label="", confidenc
 def candidate(
     *,
     record_id="42",
-    source_id="booktrust",
+    source_id="ecole-loisirs",
     title="Titre",
     isbn="",
-    provider="booktrust",
+    provider="ecole-loisirs",
     source_item_id="42",
     notice_url="https://example.org/book/42",
     ranges=None,
@@ -97,7 +97,7 @@ def test_provider_and_source_item_match_without_provenance_object():
     book = BookRef(
         "local",
         "Titre",
-        identifiers={"provider": "booktrust", "source_item_id": "42"},
+        identifiers={"provider": "ecole-loisirs", "source_item_id": "42"},
     )
     match = select_candidate(book, (candidate(),))
     assert match is not None
@@ -129,8 +129,8 @@ def test_ambiguous_best_matches_return_none():
 
 def test_cached_detail_reads_only_catalog_cache_and_preserves_provenance():
     rows = [candidate(isbn="9780306406157", ranges=(
-        age(8, 10, "interest", source="booktrust", label="Interest age 8-10", confidence=0.95),
-        age(7, 9, "reading", source="booktrust", label="Reading age 7-9", confidence=1.0),
+        age(8, 10, "interest", source="ecole-loisirs", label="Interest age 8-10", confidence=0.95),
+        age(7, 9, "reading", source="ecole-loisirs", label="Reading age 7-9", confidence=1.0),
     ))]
     catalog = Catalog(rows)
     plugin = YouthDetailEnrichment().activate(Context(catalog))
@@ -145,7 +145,7 @@ def test_cached_detail_reads_only_catalog_cache_and_preserves_provenance():
     assert result.sections[0].title == "Jeunesse"
     assert [field.label for field in result.sections[0].fields[:2]] == ["Âge d’intérêt", "Âge de lecture"]
     assert "Interest age 8-10" in result.sections[0].fields[0].value
-    assert result.sections[0].fields[0].provenance.source_id == "booktrust"
+    assert result.sections[0].fields[0].provenance.source_id == "ecole-loisirs"
     assert result.source.metadata["match"].startswith("isbn:")
     assert result.freshness_token
     assert result.actions[0].uri == "https://example.org/book/42"

@@ -20,11 +20,6 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = {
-    "booktrust": {
-        "package": "youth-source-booktrust", "module": "booktrust_youth.py",
-        "plugin": "youth.source.booktrust", "host": "www.booktrust.org.uk",
-        "max_requests": 1,
-    },
     "milan": {
         "package": "youth-source-milan", "module": "milan_youth.py",
         "plugin": "youth.source.milan", "host": "www.editionsmilan.com",

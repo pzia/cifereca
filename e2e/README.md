@@ -103,34 +103,9 @@ isolation Camille/Alex, recherche clavier XTEST, sélection et provenance.
 
 Chaque rapport `screen.json` inclut le SHA Git, la résolution réellement
 observée et les empreintes des captures. Il s'agit d'un parcours GTK4 réel
-avec fixtures de cache, **pas** d'un test HTTP BookTrust/Milan ni d'un
+avec fixtures de cache, **pas** d'un test HTTP des fournisseurs ni d'un
 parcours réseau. Les scénarios des fournisseurs et le cache offline après
 collecte restent à recetter séparément.
-
-
-### BookTrust activé — succès et panne 503 (UX P1 #758)
-
-La commande suivante sélectionne les **quatre** recettes Jeunesse (les deux tests cache
-et les deux tests BookTrust, sur 1024 et 1366 px) :
-
-```bash
-dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth
-```
-
-Les scénarios `youth-booktrust-1024` et `youth-booktrust-1366` installent le
-**vrai package** `youth-source-booktrust` avec `core.plugins.install()`,
-aux côtés de `youth-catalog`. Ils exécutent la vraie page GTK et cliquent
-sur « Collecter cette source » via XTEST. La réponse HTTP passe par
-`httpx.MockTransport` (HTML provenant du simulateur versionné
-`simulation/youth_sources/`) : **aucun appel au site BookTrust** et aucune
-preuve d'état du site réel ne sont revendiqués.
-
-Les captures/rapports vérifient successivement l'absence d'accès réseau lors
-de l'ouverture/du choix de source, la collecte volontaire de deux notices,
-la panne HTTP 503 sur une seconde collecte volontaire, la conservation du cache
-et le filtre local produisant un résultat vide sans nouvelle requête.
-Cela ne couvre pas encore l'indisponibilité d'une source distante en production,
-ni la navigation effective vers la notice dans le navigateur.
 
 
 ### Milan activé — pagination, notice GTK et panne 503 (UX P1 #758)
@@ -150,8 +125,7 @@ l'ouverture d'un navigateur/portail et l'accès au site réel restent hors
 périmètre. Après HTTP 503 simulé, les cinq notices restent dans le cache,
 un message d'échec est visible et le filtre local ne déclenche aucun HTTP.
 
-Cette recette complète celle de BookTrust. Elle exige le merge préalable
-de la PR BookTrust #879 lorsque la PR Milan est empilée sur sa branche.
+Cette recette vérifie Milan de manière autonome, avec transport HTTP simulé.
 
 
 ### Deux éditions homonymes, ISBN distincts et âges contradictoires (UX P1 #758)
@@ -161,7 +135,7 @@ Les recettes `youth-editions-1024` et `youth-editions-1366` utilisent la
 
 - 3 notices locales synthétiques ont exactement le même titre et la même
   autrice, mais deux ISBN différents ;
-- BookTrust `5–7 ans` (intérêt) et Milan `à partir de 12 ans` (éditeur)
+- Source fictive `5–7 ans` (intérêt) et Milan `à partir de 12 ans` (éditeur)
   partagent le **premier ISBN** : une seule ligne, **deux preuves d'âge
   conservées avec leurs sources** et visibles dans le détail ;
 - un **second ISBN** Milan `à partir de 8 ans`, même titre/autrice, doit
@@ -186,21 +160,17 @@ sans faux ISBN. Les captures aux deux largeurs restent la preuve visuelle.
 
 ### Reprise explicite après panne distante (UX #758)
 
-Les scénarios existants `youth-booktrust-1024/1366` et
-`youth-milan-1024/1366` vérifient désormais toute la séquence
+Les scénarios `youth-milan-1024/1366` vérifient désormais toute la séquence
 **succès → HTTP 503 → cache conservé → filtre local sans requête →
 nouveau clic XTEST après rétablissement → succès**. L'extension réelle
 reste installée ; le simulateur ne remplace que les réponses HTTP.
 
-BookTrust : exactement trois requêtes, une par clic ; les deux notices
-restent visibles et le message d'échec disparaît après reprise.
 Milan : 9 requêtes pour page 1, 3 pour page 2, 1 pour la panne,
 9 après reprise explicite (22 au total). La reprise remplace le cache de
 cinq notices par les quatre notices fraîches de la première page et
 réactive la pagination, sans doublons ni perte silencieuse de provenance.
 
 Les étapes supplémentaires sont capturées dans
-`04-source-recovered-after-503.png` et
 `06-milan-recovered-first-page.png` aux deux résolutions. Ceci ne
 prouve pas la disponibilité des services publics ni la reconnexion
 réseau réelle : l'intégralité des réponses HTTP reste simulée.
@@ -264,22 +234,3 @@ toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
 fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
 sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
-
-
-### Clavier Jeunesse avec source sélectionnée — #910 (recette indépendante)
-
-Dans les scénarios BookTrust déjà présents (`youth-booktrust-1024` et
-`youth-booktrust-1366`), la vraie page GTK4 reçoit la frappe XTEST
-`The` dans son champ de recherche, avec la source `youth.source.booktrust`
-explicitement sélectionnée. Le premier `Return` valide le cache et affiche
-un feedback sans HTTP. Le second `KP_Enter` provoque **une** requête du
-vrai plugin BookTrust, servie exclusivement par `httpx.MockTransport` ;
-deux notices sont ingérées. Un troisième `Return` ne répète pas la collecte.
-
-Le rapport `screen.json > keyboard_selected_source` consigne les
-`gtk_activate_signals`, les statuts, l'identité, le plugin et le nombre de
-requêtes à chaque phase. Les captures
-`00b-booktrust-keyboard-local.png`,
-`00c-booktrust-keyboard-remote.png` et
-`01b-booktrust-keyboard-no-duplicate.png` couvrent les deux largeurs.
-Les tests ne contactent **jamais** le site BookTrust public.

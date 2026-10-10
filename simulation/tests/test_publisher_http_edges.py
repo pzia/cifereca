@@ -36,16 +36,11 @@ class PublisherHTTPEdges(unittest.TestCase):
             return response.status, response.read().decode('utf-8')
 
     def test_infant_labels_and_terminal_pages(self):
-        us = 'usborne/us/books/browse-by-age'
         ecole = 'ecole/recherche-avancee'
-        self.assertIn('18+ months', self.get(us)[1])
-        self.assertIn('6+ months', self.get(us + '?p=2')[1])
         self.assertIn('0 à 3 ans', self.get(ecole + '?page=2')[1])
-        for path in (us + '?p=3', ecole + '?page=3'):
-            with self.subTest(path=path):
-                status, body = self.get(path)
-                self.assertEqual(status, 200)
-                self.assertNotIn('<a ', body)
+        status, body = self.get(ecole + '?page=3')
+        self.assertEqual(status, 200)
+        self.assertNotIn('<a ', body)
 
     def test_search_filters_before_pagination_and_has_no_shared_state(self):
         path = 'ecole/recherche-avancee?search_api_views_fulltext='
@@ -66,15 +61,14 @@ class PublisherHTTPEdges(unittest.TestCase):
         self.assertNotIn('<a ', self.get('ecole/recherche-avancee?types=article')[1])
 
     def test_invalid_pages_are_explicit_errors(self):
-        for path, param in [('usborne/us/books/browse-by-age', 'p'),
-                            ('ecole/recherche-avancee', 'page')]:
+        for path, param in [('ecole/recherche-avancee', 'page')]:
             for value in ('0', '-1', '101', 'bad'):
                 with self.subTest(path=path, value=value):
                     self.assertEqual(self.get(f'{path}?{param}={value}')[0], 400)
             self.assertEqual(self.get(f'{path}?{param}=100')[0], 200)
 
     def test_malformed_payload_is_repeatable(self):
-        for path in ('usborne/us/books/browse-by-age', 'ecole/recherche-avancee'):
+        for path in ('ecole/recherche-avancee',):
             first = self.get(path + '?fault=malformed')
             self.assertEqual(first, (200, '<html><a href="'))
             self.assertEqual(first, self.get(path + '?fault=malformed'))

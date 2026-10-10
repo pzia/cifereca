@@ -1,4 +1,4 @@
-"""Guard path-scoped GTK E2E against silent BookTrust/Milan regressions.
+"""Guard path-scoped GTK E2E against silent Milan/Jeunesse regressions.
 
 The E2E workflow must run on pull requests changing the real youth source
 adapters, their HTML fixtures or their GTK runtime setup; unrelated plugins
@@ -21,12 +21,10 @@ def e2e_pull_request_patterns():
     return tuple(re.findall(r"      - '([^']+)'", block.group(1)))
 
 
-def test_booktrust_milan_and_fixture_changes_trigger_real_gtk_e2e():
+def test_milan_and_fixture_changes_trigger_real_gtk_e2e():
     patterns = e2e_pull_request_patterns()
     included = (
         "src/plugins/youth-catalog/youth_page.py",
-        "src/plugins/youth-source-booktrust/booktrust_youth.py",
-        "src/plugins/youth-source-booktrust/cifereca-plugin.json",
         "src/plugins/youth-source-milan/milan_youth.py",
         "src/plugins/youth-source-milan/cifereca-plugin.json",
         "simulation/youth_sources/pseudo_youth_sources_service.py",

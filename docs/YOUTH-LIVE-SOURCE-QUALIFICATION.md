@@ -25,11 +25,7 @@ Aucune identité ni aucune bibliothèque personnelle ne sont utilisées.
 Sans consentement explicite, le script ne réalise aucune installation
 ni requête et retourne NOT_RUN :
 
-    /tmp/cifereca-youth-check/bin/python scripts/qualify-youth-source-live.py --source booktrust
-
-BookTrust, une seule requête HTTPS maximale :
-
-    /tmp/cifereca-youth-check/bin/python scripts/qualify-youth-source-live.py --source booktrust --age 8 --limit 2 --confirm-live > booktrust-live.json
+    /tmp/cifereca-youth-check/bin/python scripts/qualify-youth-source-live.py --source milan
 
 Milan, jusqu'à une page et huit fiches (neuf requêtes HTTPS maximales) :
 
@@ -60,7 +56,7 @@ est exclusivement `workflow_dispatch` : aucune PR, poussée sur `main` ou
 planification ne déclenche de requête extérieure. Sur le dépôt GitHub :
 
 1. Ouvrir **Actions → Qualify youth public HTTPS (manual) → Run workflow**,
-   en sélectionnant **main** puis une seule source (`booktrust`, `milan` ou `ecole-loisirs`).
+   en sélectionnant **main** puis une seule source (`milan` ou `ecole-loisirs`).
 2. Après décision explicite de contacter ce site public, cocher
    `I authorize a bounded live HTTPS request...`. Sans la case, le job est
    ignoré. Ne pas utiliser ce mode pour tester les fixtures.
@@ -69,7 +65,7 @@ planification ne déclenche de requête extérieure. Sur le dépôt GitHub :
    pertinente à [#741](https://github.com/pzia/cifereca/issues/741).
 
 Le job dispose d'un délai maximal de **4 minutes**, d'un seul fournisseur,
-d'un **maximum de 1 requête BookTrust / École des loisirs ou 9 Milan** via les bornes du script,
+d'un **maximum de 1 requête École des loisirs ou 9 Milan** via les bornes du script,
 sans proxy ni redirection. Un résultat `BLOCKED` ou `NO_VERIFIED_NOTICE`
 ne prouve pas un succès. **Ne pas relancer à répétition**, surtout après
 403/429/timeout : cela consomme le budget Actions et peut solliciter

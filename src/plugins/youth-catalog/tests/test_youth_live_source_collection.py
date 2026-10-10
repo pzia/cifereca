@@ -12,12 +12,11 @@ from types import SimpleNamespace as NS
 import httpx
 
 PLUGINS = Path(__file__).resolve().parents[2]
-for name in ("youth-source-booktrust", "youth-source-milan"):
+for name in ("youth-source-milan",):
     path = str(PLUGINS / name)
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from booktrust_youth import BookTrustSource
 from milan_youth import MilanYouthSource
 from youth_catalog import YouthCatalogPlugin
 from youth_page import FilterState, YouthView, source_info
@@ -141,13 +140,9 @@ def build_view(services):
     return view, catalog, tasks, pending, user, label, picker, master
 
 
-def test_active_booktrust_and_milan_ui_collection_cache_outage_and_recovery():
+def test_active_milan_ui_collection_cache_outage_and_recovery():
     requests = []
     state = {"milan": "ok"}
-    booktrust_list = """
-    <article><h3><a href="/book-recommendations/bookfinder/forest/">
-    Forest</a></h3><p>by Anne 2022</p><p>For ages 8 to 12</p></article>
-    """
     milan_listing = (
         '<a href="/livres/63047-moqueuse/">Moqueuse</a>'
         '<a href="/livres/page/2/">Suivant</a>'
@@ -165,8 +160,6 @@ def test_active_booktrust_and_milan_ui_collection_cache_outage_and_recovery():
 
     def handler(request):
         requests.append((request.url.host, request.url.path))
-        if request.url.host == "www.booktrust.org.uk":
-            return httpx.Response(200, headers={"content-type": "text/html"}, text=booktrust_list)
         assert request.url.host == "www.editionsmilan.com"
         if state["milan"] == "http503":
             return httpx.Response(503, headers={"content-type": "text/html"}, text="down")
@@ -184,30 +177,15 @@ def test_active_booktrust_and_milan_ui_collection_cache_outage_and_recovery():
         raise AssertionError(f"unexpected HTTP URL: {request.url}")
 
     client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
-    booktrust = BookTrustSource(client=client)
     milan = MilanYouthSource(client=client)
-    services = [
-        NS(plugin_id="youth.source.booktrust", service=booktrust),
-        NS(plugin_id="youth.source.milan", service=milan),
-    ]
+    services = [NS(plugin_id="youth.source.milan", service=milan)]
     view, catalog, tasks, pending, user, label, picker, master = build_view(services)
-    assert tuple(picker.model) == ("Toutes les sources", "BookTrust Bookfinder", "Éditions Milan")
+    assert tuple(picker.model) == ("Toutes les sources", "Éditions Milan")
     assert requests == []  # activating services and rendering cache must not fetch
 
     picker.set_selected(1)
     view.filters_changed()
     assert requests == []
-    view.collect()
-    assert requests == []  # an explicit click schedules work, not synchronous HTTP
-    tasks.finish(pending)
-    assert [book.title for book in catalog.search_cached("camille", age=8)] == ["Forest"]
-    assert [row.title for row in master.entries] == ["Forest"]
-    assert catalog.search_cached("alex") == ()
-    assert len(requests) == 1
-
-    picker.set_selected(2)
-    view.filters_changed()
-    assert len(requests) == 1
     view.collect()
     tasks.finish(pending)
     assert view.next_cursor == "2"
@@ -224,7 +202,7 @@ def test_active_booktrust_and_milan_ui_collection_cache_outage_and_recovery():
     assert {book.title for book in catalog.search_cached("camille", source_id="milan")} == {"Moqueuse", "Escargot"}
     snapshot = catalog.search_cached("camille")
     fresh = catalog.index.fresh_until("camille", "milan")
-    assert fresh and len(snapshot) == 3
+    assert fresh and len(snapshot) == 2
     before = len(requests)
     view.render_cached()
     assert len(requests) == before
@@ -242,7 +220,6 @@ def test_active_booktrust_and_milan_ui_collection_cache_outage_and_recovery():
     view.collect()
     tasks.finish(pending)
     assert [b.title for b in catalog.search_cached("camille", source_id="milan")] == ["Moqueuse retrouvée"]
-    assert [b.title for b in catalog.search_cached("camille", source_id="booktrust")] == ["Forest"]
     assert catalog.search_cached("alex") == ()
     assert "notice(s) reçue(s)" in label.value
 
@@ -254,9 +231,9 @@ def test_active_booktrust_and_milan_ui_collection_cache_outage_and_recovery():
 
 def test_unselected_or_deactivated_source_cannot_start_http_collection():
     calls = []
-    source = NS(source_info=lambda: {"source_id": "booktrust", "display_name": "BookTrust"},
+    source = NS(source_info=lambda: {"source_id": "milan", "display_name": "Éditions Milan"},
                 browse=lambda **kwargs: calls.append(kwargs) or {"items": []})
-    services = [NS(plugin_id="youth.source.booktrust", service=source)]
+    services = [NS(plugin_id="youth.source.milan", service=source)]
     view, catalog, tasks, pending, user, label, picker, master = build_view(services)
     view.collect()
     assert label.value == "Choisissez une source Jeunesse avant de collecter."

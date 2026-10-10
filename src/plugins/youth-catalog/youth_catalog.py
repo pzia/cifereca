@@ -15,9 +15,7 @@ AGE_KINDS = {"interest", "reading", "recommended", "publisher", "inferred"}
 
 # Inventory placeholders are intentionally not claims of remote availability.
 KNOWN_AGE_SOURCES = {
-    "booktrust": "BookTrust",
     "milan": "Éditions Milan",
-    "usborne": "Usborne",
     "ecole-loisirs": "L'École des loisirs",
 }
 KNOWN_BIBLIOGRAPHY_PLUGINS = {"youth.bibliography.openlibrary": "Open Library"}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Éditeurs jeunesse fictifs : Usborne et l'école des loisirs, localhost uniquement.
+"""Éditeurs jeunesse fictifs : l'école des loisirs, localhost uniquement.
 
 Les vrais plugins restent verrouillés sur leurs propres domaines HTTPS.
 Les tests injectent un transport httpx.MockTransport sans DNS ni comptes.
@@ -14,32 +14,12 @@ from urllib.parse import parse_qs, quote, urlsplit
 
 PORT = 8099
 SEED = 20261009
-US = [
-    ("award-book-9781805075103", "Why School Matters", "Age: 3+"),
-    ("baby-book-9780140328721", "Baby Book", "Age: 18+ months"),
-    ("older-book-9780306406157", "Older Book", "Age: 10+"),
-    ("infant-book-9782211348171", "Infant Book", "Age: 6+ months"),
-]
 FR = [
     ("histoire-petit-loup", "L'histoire de Petit Loup", "3 à 6 ans", "Sylvie Neeman", "album", "9782211348171"),
     ("roman-ado", "Roman ado", "13 ans et +", "Alice Auteur, Bob Auteur", "roman", "9782211345613"),
     ("sans-age", "Sans âge", "indéterminé", "Auteur inconnu", "album", "9782211324649"),
     ("tout-petit", "Tout petit", "0 à 3 ans", "Camille Exemple", "album", "9782408045074"),
 ]
-
-
-def usborne_html(*, page: int) -> bytes:
-    rows = US[(page - 1) * 2:page * 2]
-    parts = ['<!doctype html><html><body><main>']
-    for slug, title, age in rows:
-        link = "/us/" + slug
-        if slug.startswith("award"):
-            parts.append(f'<a href="{link}">Award Winner</a>')
-        parts.append(f'<a href="{link}">{html.escape(title)}</a><div>{age}</div>')
-    if page == 1:
-        parts.append('<a href="?p=2">Next Page</a>')
-    parts.append("</main></body></html>")
-    return "".join(parts).encode("utf-8")
 
 
 def ecole_html(*, page: int, query: str) -> bytes:
@@ -84,7 +64,7 @@ class FakePublishers:
         path = parsed.path
         if path == "/health":
             return self.json(h, 200, {"ok": True, "synthetic": True, "seed": self.seed,
-                                      "publishers": ["usborne", "ecole-loisirs"]})
+                                      "publishers": ["ecole-loisirs"]})
         if path.startswith("/publishers/"):
             fault = (qs.get("fault") or [""])[0]
             if fault == "malformed":
@@ -95,12 +75,6 @@ class FakePublishers:
                 return self.json(h, 200, {"error": "not HTML"})
             if fault == "oversized":
                 return self.send(h, 200, "text/html", b"x" * 2_000_001)
-        if path == "/publishers/usborne/us/books/browse-by-age" or path.startswith(
-                "/publishers/usborne/us/books/browse-by-age/"):
-            page = int((qs.get("p") or ["1"])[0])
-            if not 1 <= page <= 100:
-                raise ValueError("invalid page")
-            return self.send(h, 200, "text/html; charset=utf-8", usborne_html(page=page))
         if path == "/publishers/ecole/recherche-avancee":
             if (qs.get("types") or ["livre"])[0] != "livre":
                 return self.send(h, 200, "text/html; charset=utf-8", ecole_html(page=3, query=""))

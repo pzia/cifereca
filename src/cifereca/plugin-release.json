@@ -82,10 +82,6 @@
       "version": "0.2.0",
       "name": "Jeunesse — enrichissement des fiches"
     },
-    "org.cifereca.youth-source-booktrust": {
-      "version": "0.2.0",
-      "name": "Jeunesse — BookTrust"
-    },
     "org.cifereca.youth-source-discovery": {
       "version": "0.2.1",
       "name": "Jeunesse — Découverte de sources"
@@ -97,10 +93,6 @@
     "org.cifereca.youth-source-milan": {
       "version": "0.1.0",
       "name": "Jeunesse — Éditions Milan"
-    },
-    "org.cifereca.youth-source-usborne": {
-      "version": "0.2.0",
-      "name": "Jeunesse — Usborne"
     }
   }
 }

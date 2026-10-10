@@ -25,7 +25,7 @@ from cifereca.plugin_api import (
     ("6 ans et moins", None, 6),
 ])
 def test_explicit_source_age_ranges_are_normalized_without_losing_label(label, age_min, age_max):
-    source = Provenance("booktrust", source_id="record-12", observed_at="2026-10-08")
+    source = Provenance("ecole-loisirs", source_id="record-12", observed_at="2026-10-08")
     result = youth_age_from_label(label, age_kind="interest", provenance=source, confidence=0.95)
     assert result == YouthAgeRange(age_min, age_max, "interest", label, source, 0.95)
 
@@ -41,7 +41,7 @@ def test_prose_and_unattested_age_inference_are_never_accepted(label):
 
 
 def test_distinguish_age_interest_and_reading_age_without_collapsing_ranges():
-    source = Provenance("booktrust", source_id="title-123")
+    source = Provenance("ecole-loisirs", source_id="title-123")
     interest = youth_age_from_label("8–12 ans", age_kind="interest", provenance=source)
     reading = youth_age_from_label("10–12 ans", age_kind="reading", provenance=source)
     assert youth_age_matches([interest, reading], 8, age_kind="interest") is True

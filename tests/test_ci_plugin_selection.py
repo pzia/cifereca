@@ -107,12 +107,12 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_expected_audited_closures(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"youth-catalog", "youth-detail-enrichment", "youth-source-booktrust", "youth-source-milan"})
+        self.assertEqual(audited, {"youth-catalog", "youth-detail-enrichment", "youth-source-milan"})
         self.assertTrue({"transport-http", "baen", "ebooksgratuits", "provider-gallica", "provider-gutenberg"} <= set(selector.affected_packages({"transport-http"}, graph)))
         youth = set(selector.affected_packages({"youth-source-milan"}, graph))
-        self.assertTrue({"youth-source-milan", "youth-source-booktrust", "youth-catalog", "youth-detail-enrichment"} <= youth)
+        self.assertTrue({"youth-source-milan", "youth-catalog", "youth-detail-enrichment"} <= youth)
         catalog = set(selector.affected_packages({"youth-catalog"}, graph))
-        self.assertTrue({"youth-catalog", "youth-source-booktrust", "youth-source-milan", "youth-detail-enrichment"} <= catalog)
+        self.assertTrue({"youth-catalog", "youth-source-milan", "youth-detail-enrichment"} <= catalog)
 
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.root), *args], stderr=subprocess.DEVNULL).decode().strip()

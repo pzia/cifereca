@@ -16,7 +16,7 @@ def script_module():
 
 def test_default_never_imports_core_or_attempts_live_https(capsys):
     script = script_module()
-    assert script.main(["--source", "booktrust"]) == 2
+    assert script.main(["--source", "milan"]) == 2
     assert '"result": "NOT_RUN"' in capsys.readouterr().out
 
 
@@ -26,12 +26,11 @@ def test_input_limits_and_hard_request_budget(capsys):
         ["--source", "milan", "--age", "18", "--confirm-live"],
         ["--source", "milan", "--age", "-1", "--confirm-live"],
         ["--source", "milan", "--limit", "4", "--confirm-live"],
-        ["--source", "booktrust", "--timeout", "30", "--confirm-live"],
+        ["--source", "milan", "--timeout", "30", "--confirm-live"],
     ):
         assert script.main(argv) == 2
     assert "INVALID_INPUT" in capsys.readouterr().out
     assert script.plan(script.parser().parse_args(["--source", "milan"]))["request_budget"] == 9
-    assert script.plan(script.parser().parse_args(["--source", "booktrust"]))["request_budget"] == 1
 
 
 def test_evidence_requires_real_source_label_and_origin():
@@ -43,17 +42,11 @@ def test_evidence_requires_real_source_label_and_origin():
                 provenance=("milan",))
     assert len(script.evidence_for((NS(**book),), "milan")) == 1
     assert not script.evidence_for((NS(**(book | {"provenance": ()})),), "milan")
-    assert not script.evidence_for((NS(**(book | {"provenance": ("booktrust",)})),), "milan")
+    assert not script.evidence_for((NS(**(book | {"provenance": ("openlibrary",)})),), "milan")
     assert not script.evidence_for((NS(**(book | {"notice_url": "https://evil.example/"})),), "milan")
     assert not script.evidence_for((NS(**(book | {"identifiers": {}})),), "milan")
     wrong = NS(**(vars(age) | {"source_label": ""}))
     assert not script.evidence_for((NS(**(book | {"age_ranges": (wrong,)})),), "milan")
-    interest = NS(source_id="booktrust", age_kind="interest", source_label="Interest age 7-9",
-                  age_min=7, age_max=9)
-    bt = NS(title="BookTrust title", identifiers={}, age_ranges=(interest,),
-            notice_url="https://www.booktrust.org.uk/book-recommendations/bookfinder/example/",
-            provenance=("booktrust",))
-    assert len(script.evidence_for((bt,), "booktrust")) == 1
 
 
 def test_live_qualification_requires_an_observed_https_request():
@@ -88,7 +81,7 @@ def test_milan_diagnostic_export_whitelists_bounded_fields_and_redacts_raw_data(
         "next_cursor_present": True, "detail_requests": 2,
         "error_type": "RuntimeError",
     }
-    assert script.plugin_diagnostic_for(source, "booktrust") == {}
+    assert script.plugin_diagnostic_for(source, "openlibrary") == {}
     assert script.plugin_diagnostic_for(NS(), "milan") == {}
     assert script.plugin_diagnostic_for(
         NS(diagnostic_snapshot=lambda: 1 / 0), "milan",
@@ -355,13 +348,3 @@ def test_live_evidence_rejects_valid_ean_check_digits_without_isbn_prefix():
             row = NS(**(base | {"identifiers": {"isbn": good}}))
             actual = script.evidence_for((row,), source_id)
             assert len(actual) == 1 and actual[0]["isbn13"] == good
-
-
-def test_booktrust_qualification_remains_age_evidence_based_without_isbn():
-    script = script_module()
-    age = NS(source_id="booktrust", age_kind="interest",
-             source_label="Interest age 7-9", age_min=7, age_max=9)
-    book = NS(title="BookTrust title", identifiers={}, age_ranges=(age,),
-              notice_url="https://www.booktrust.org.uk/book-recommendations/bookfinder/example/",
-              provenance=("booktrust",))
-    assert len(script.evidence_for((book,), "booktrust")) == 1

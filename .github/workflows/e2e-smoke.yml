@@ -7,7 +7,6 @@ on:
       - 'e2e/**'
       - 'src/cifereca/gui/**'
       - 'src/plugins/youth-catalog/**'
-      - 'src/plugins/youth-source-booktrust/**'
       - 'src/plugins/youth-source-milan/**'
       - 'simulation/youth_sources/**'
       - 'simulation/milan/**'

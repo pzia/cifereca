@@ -15,4 +15,4 @@ Audit réalisé pour #741 avant toute modification des providers.
 
 Conclusion : aucun des huit providers audités ne doit être modifié dans ce groupe. Le plugin Jeunesse peut consommer leurs données bibliographiques, mais une tranche d’âge ne doit être ajoutée que lorsqu’un champ amont explicite est qualifié source par source.
 
-Première source spécialisée qualifiée : **BookTrust Bookfinder**, qui publie explicitement des groupes d’âge sur Bookfinder et des champs distincts `Interest age` / `Reading age` sur les fiches livre.
+Les sources éditeur encore prises en charge sont Milan et École des loisirs ; chaque âge conserve son type, sa provenance et son libellé attesté.

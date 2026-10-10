@@ -44,7 +44,7 @@ Les flux RSS et JSON Feed de critique sont désormais **servis par HTTP local** 
 Constellations sont consultables comme fixtures, mais ne sont **pas des API
 plugins injectées automatiquement**. Les fichiers ne sont pas injectés dans les caches métier,
 ni recettées par le harnais E2E GTK. Elles ne simulent pas les
-pages GUI BookTrust/OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, l'ADEPT ni les formats
+pages GUI OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, l'ADEPT ni les formats
 PDF/DRM. Lier ces scénarios à des faux services et des tests GUI réels reste
 à faire dans les tickets dédiés.
 

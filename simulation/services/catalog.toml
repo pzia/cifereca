@@ -89,7 +89,7 @@ script = "youth_sources/pseudo_youth_sources_service.py"
 default_port = 8098
 health_path = "/health"
 plugins = []
-fixture_packages = ["youth-source-booktrust", "youth-bibliography-openlibrary"]
+fixture_packages = ["youth-bibliography-openlibrary"]
 
 [service.youth_sources.args]
 seed = "--seed"
@@ -100,7 +100,7 @@ script = "youth_publishers/pseudo_youth_publishers_service.py"
 default_port = 8099
 health_path = "/health"
 plugins = []
-fixture_packages = ["youth-source-usborne", "youth-source-ecole-loisirs"]
+fixture_packages = ["youth-source-ecole-loisirs"]
 
 [service.youth_publishers.args]
 seed = "--seed"

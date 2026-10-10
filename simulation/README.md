@@ -238,7 +238,7 @@ Des endpoints JSON Jeunesse/Constellations exposent les fixtures comme données
 de test ; cela **n'implique aucune injection dans leurs pages GTK**.
 Documentation et cas négatifs : `simulation/editorial/README.md`.
 
-## Simulateurs jeunesse : BookTrust et OpenLibrary
+## Simulateurs jeunesse : OpenLibrary
 
 Les profils `ux-small`, `ux-all` et `ux-errors` exposent désormais des
 fixtures HTTP de contrats sur `127.0.0.1:8098`.
@@ -255,7 +255,7 @@ pointant explicitement sur la boucle locale (voir
 leurs domaines autorisés. Ce mécanisme **n'injecte pas** automatiquement
 les résultats dans l'écran GTK Jeunesse. Voir `simulation/youth_sources/README.md`.
 
-## Sources jeunesse éditeurs (Usborne, école des loisirs)
+## Sources jeunesse éditeurs (École des loisirs)
 
 Les profils UX complets exposent aussi les contrats HTML des deux éditeurs
 sur `127.0.0.1:8099`. Les vrais parseurs sont vérifiés par

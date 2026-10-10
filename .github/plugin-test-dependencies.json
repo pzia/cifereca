@@ -2,18 +2,13 @@
   "audited_product_packages": [
     "youth-catalog",
     "youth-detail-enrichment",
-    "youth-source-booktrust",
     "youth-source-milan"
   ],
   "dependencies": {
     "youth-catalog": [
-      "youth-source-booktrust",
       "youth-source-milan"
     ],
     "youth-detail-enrichment": [
-      "youth-catalog"
-    ],
-    "youth-source-booktrust": [
       "youth-catalog"
     ],
     "youth-source-milan": [
