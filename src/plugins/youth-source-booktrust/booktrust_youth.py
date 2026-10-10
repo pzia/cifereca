@@ -386,7 +386,9 @@ class BookTrustSource:
                 "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
             })
         if response.status_code >= 300:
-            raise RuntimeError(f"BookTrust HTTP {response.status_code}")
+            error = RuntimeError(f"BookTrust HTTP {response.status_code}")
+            error.http_status = response.status_code
+            raise error
         content_type = _fold(response.headers.get("content-type", ""))
         if content_type and "html" not in content_type:
             raise RuntimeError("BookTrust response is not HTML")
