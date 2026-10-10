@@ -17,7 +17,8 @@ from cifereca.plugin_api import (
     UiBookListEntry,
     UiPageContribution,
 )
-from youth_catalog import (collection_failure_diagnostic, normalize_isbn,
+from youth_catalog import (InvalidYouthSourcePage, _extract_page,
+                           collection_failure_diagnostic, normalize_isbn,
                            safe_ingest_rejection_categories)
 
 
@@ -234,26 +235,12 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
 
 
 def page_parts(value: object) -> tuple[tuple[object, ...], str, int]:
-    if isinstance(value, Mapping):
-        rows = value.get("items") or value.get("results") or ()
-        if isinstance(rows, (str, bytes, Mapping)):
-            rows = ()
-        try:
-            rows = tuple(rows)
-        except TypeError:
-            rows = ()
-        cursor = _text(value.get("next_cursor"))
-        try:
-            freshness = max(0, int(value.get("fresh_for_seconds") or 0))
-        except (TypeError, ValueError):
-            freshness = 0
-        return rows, cursor, freshness
-    if value is None or isinstance(value, (str, bytes, Mapping)):
-        return (), "", 0
+    """Use the catalog's strict structural contract, without silent empties."""
+    rows, cursor, fresh = _extract_page(value)
     try:
-        return tuple(value), "", 0
-    except TypeError:
-        return (), "", 0
+        return tuple(rows), cursor, fresh
+    except (TypeError, ValueError) as exc:
+        raise InvalidYouthSourcePage("invalid items sequence") from exc
 
 
 def source_info(row: object) -> tuple[str, str]:
@@ -955,7 +942,24 @@ class YouthView:
         self, raw, *, source_id, label, append, source_plugin,
         duration_ms=0, requested_limit=None,
     ):
-        rows, cursor, fresh = page_parts(raw)
+        try:
+            rows, cursor, fresh = page_parts(raw)
+        except InvalidYouthSourcePage:
+            # Do not erase an identity's prior notices or pagination when an
+            # upstream HTML/API change produced a malformed page.
+            self.catalog.record_collection(
+                self.identity_id(), source_id, state="invalid",
+                stage="parsing", rejected=1,
+                requested_limit=requested_limit,
+                request_count=(
+                    raw.get("collection_request_count")
+                    if isinstance(raw, Mapping) else None
+                ),
+                duration_ms=duration_ms,
+            )
+            self.status.set_label("Réponse de source invalide. Le cache précédent est conservé.")
+            self.refresh_source_diagnostics()
+            return
         report = self.catalog.ingest(
             self.identity_id(),
             source_id,

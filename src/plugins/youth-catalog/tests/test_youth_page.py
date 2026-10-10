@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace as NS
 
 from cifereca.plugin_api import BookRef
@@ -181,7 +182,10 @@ def test_page_parts_binds_pagination_and_freshness():
     assert rows == ({"title": "A"},)
     assert cursor == "2"
     assert fresh == 60
-    assert page_parts({"items": "bad"}) == ((), "", 0)
+    from youth_catalog import InvalidYouthSourcePage
+
+    with pytest.raises(InvalidYouthSourcePage):
+        page_parts({"items": "bad"})
 
 
 class BrowseSource:
@@ -814,3 +818,61 @@ def test_unexpected_empty_adapter_response_is_invalid_not_cancelled():
     row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
     assert row["collection_state"] == "invalid"
     assert row["request_count"] is None
+
+
+def test_youth_ui_malformed_page_preserves_cached_records_and_pagination():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private book"}])
+    view.identity_id = lambda: "alice"
+    notices, status, refreshed = [], [], []
+    view.render_cached = lambda: notices.append("render")
+    view.refresh_source_diagnostics = lambda: refreshed.append("refresh")
+    view.status = NS(set_label=status.append)
+    view.next_cursor, view.next_source_plugin = "2", "youth.source.booktrust"
+
+    view.collected(
+        {"items": "https://private.example/token", "collection_request_count": 1},
+        source_id="booktrust", label="BookTrust", append=False,
+        source_plugin="youth.source.booktrust", duration_ms=23, requested_limit=8,
+    )
+    diag = {x["source_id"]: x for x in view.catalog.source_diagnostics("alice")}["booktrust"]
+    assert diag["collection_state"] == "invalid"
+    assert diag["collection_stage"] == "parsing"
+    assert diag["request_count"] == 1
+    assert diag["cache_count"] == 1
+    assert diag["received_count"] is None
+    assert view.next_cursor == "2"
+    assert view.next_source_plugin == "youth.source.booktrust"
+    assert len(notices) == 0
+    assert refreshed == ["refresh"]
+    assert "cache précédent est conservé" in status[-1]
+    assert "private.example" not in repr(diag)
+    assert "Previous private book" not in repr(diag)
+    assert {x["source_id"]: x for x in view.catalog.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+
+
+def test_youth_ui_empty_page_is_not_mistaken_for_invalid_structure():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.identity_id = lambda: "alice"
+    statuses = []
+    view.status = NS(set_label=statuses.append)
+    view.render_cached = lambda: None
+    view.refresh_source_diagnostics = lambda: None
+    view.next_cursor = "1"
+    view.next_source_plugin = "youth.source.booktrust"
+    view.collected(
+        {"items": [], "next_cursor": "", "collection_request_count": 1},
+        source_id="booktrust", label="BookTrust", append=False,
+        source_plugin="youth.source.booktrust",
+    )
+    current = {x["source_id"]: x for x in view.catalog.source_diagnostics("alice")}["booktrust"]
+    assert current["collection_state"] == "empty_unverified"
+    assert current["received_count"] == 0
+    assert current["request_count"] == 1
+    assert view.next_cursor == ""
