@@ -40,7 +40,7 @@ def _fold(value: object) -> str:
 
 def normalize_isbn13(value: object) -> str:
     raw = re.sub(r"[^0-9]", "", _text(value))
-    if len(raw) != 13:
+    if len(raw) != 13 or not raw.startswith(("978", "979")):
         return ""
     total = sum(int(d) * (1 if index % 2 == 0 else 3) for index, d in enumerate(raw))
     return raw if total % 10 == 0 else ""
@@ -183,8 +183,10 @@ def parse_listing(
     text_filter: str = "",
     age: int | None = None,
     limit: int = 40,
+    diagnostic: dict[str, object] | None = None,
 ) -> tuple[Mapping[str, object], ...]:
     tokens = _tokens(html)
+    product_link_count = 0
     products: dict[str, tuple[int, str, str]] = {}
     for index, (kind, label, href) in enumerate(tokens):
         if kind != "link":
@@ -192,6 +194,7 @@ def parse_listing(
         url, isbn = _product_url(href)
         if not url:
             continue
+        product_link_count += 1
         cleaned = _text(label)
         prior = products.get(url)
         if prior is None:
@@ -214,10 +217,21 @@ def parse_listing(
     out: list[Mapping[str, object]] = []
     query = _fold(text_filter)
     requested_age = int(age) if age is not None else None
+    examined = 0
+    qualified_age = 0
+    reasons = {"age_unattested": 0, "text_filter_excluded": 0,
+               "age_filter_excluded": 0, "title_missing": 0,
+               "duplicate": max(0, product_link_count - len(products))}
+    truncated = False
 
     for pos, (start, title, url, isbn) in enumerate(ordered):
         if not title or _fold(title) in _BADGES:
+            reasons["title_missing"] += 1
             continue
+        if len(out) >= max(1, min(int(limit), 40)):
+            truncated = True
+            break
+        examined += 1
         end = ordered[pos + 1][0] if pos + 1 < len(ordered) else len(tokens)
         segment = " ".join(
             value for kind, value, _href in tokens[start + 1:end]
@@ -225,10 +239,14 @@ def parse_listing(
         )
         published = parse_published_age(segment)
         if published is None:
+            reasons["age_unattested"] += 1
             continue
+        qualified_age += 1
         if requested_age is not None and published.age_min > requested_age:
+            reasons["age_filter_excluded"] += 1
             continue
         if query and query not in _fold(title):
+            reasons["text_filter_excluded"] += 1
             continue
         metadata: dict[str, object] = {
             "age_evidence": "usborne.catalog.explicit",
@@ -254,8 +272,21 @@ def parse_listing(
             }],
             "metadata": metadata,
         })
-        if len(out) >= max(1, min(int(limit), 40)):
-            break
+    if diagnostic is not None:
+        diagnostic.update({
+            "query_mode": "local",
+            "effective_limit": max(1, min(int(limit), 40)),
+            "anchor_count": sum(kind == "link" for kind, _, _ in tokens),
+            "product_link_count": product_link_count,
+            "candidate_count": len(products),
+            "analyzed_count": examined,
+            "isbn_valid_count": len(products),
+            "age_published_count": qualified_age,
+            "age_qualified_count": qualified_age,
+            "returned_items": len(out),
+            "truncated_by_limit": truncated,
+            "rejection_reasons": {key: value for key, value in reasons.items() if value},
+        })
     return tuple(out)
 
 
@@ -343,7 +374,7 @@ class UsborneYouthSource:
             "homepage_url": BROWSE,
         }
 
-    def _get(self, url: str) -> str:
+    def _get(self, url: str, *, evidence: dict[str, object] | None = None) -> str:
         allowed = _allowed_url(url)
         if not allowed:
             raise ValueError("Usborne URL rejected")
@@ -357,12 +388,15 @@ class UsborneYouthSource:
         if counter is not None:
             self._call_requests.set(counter + 1)
         response = self.client.get(allowed)
-        self._last_diagnostic.update({
+        observed = {
             "http_status": response.status_code,
             "content_type_is_html": "html" in _fold(response.headers.get("content-type")),
             "html_bytes": len(response.content),
             "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
-        })
+        }
+        self._last_diagnostic.update(observed)
+        if evidence is not None:
+            evidence.update(observed)
         if response.status_code >= 300:
             error = RuntimeError(f"Usborne HTTP {response.status_code}")
             error.http_status = response.status_code
@@ -404,16 +438,30 @@ class UsborneYouthSource:
             "request_count": 0,
         }
         request_token = self._call_requests.set(0)
+        pipeline: dict[str, object] = {
+            "query_mode": "local", "effective_limit": max(1, min(int(limit), 40)),
+        }
         try:
             url = _browse_url(age=age, page=page)
-            html = self._get(url)
+            http_started = perf_counter()
+            try:
+                html = self._get(url, evidence=pipeline)
+            finally:
+                pipeline["http_ms"] = max(0, int((perf_counter() - http_started) * 1000))
             self._last_diagnostic["phase"] = "parsing"
-            rows = parse_listing(
-                html,
-                text_filter=_text(text_filter)[:_MAX_FILTER_CHARS],
-                age=age,
-                limit=max(1, min(int(limit), 40)),
-            )
+            parse_started = perf_counter()
+            try:
+                rows = parse_listing(
+                    html, text_filter=_text(text_filter)[:_MAX_FILTER_CHARS],
+                    age=age, limit=max(1, min(int(limit), 40)),
+                    diagnostic=pipeline,
+                )
+            finally:
+                pipeline["parse_ms"] = max(0, int((perf_counter() - parse_started) * 1000))
+            self._last_diagnostic.update({
+                key: value for key, value in pipeline.items()
+                if key not in {"query_mode", "effective_limit", "rejection_reasons"}
+            })
             # A diagnostic-only second parse of the bounded HTML: no network.
             tokens = _tokens(html)
             product_urls = {
@@ -426,6 +474,7 @@ class UsborneYouthSource:
                 raise InvalidCatalogueStructureError(
                     "Usborne paginated catalogue has no recognizable product links"
                 )
+            pipeline["total_ms"] = max(0, int((perf_counter() - started) * 1000))
             self._last_diagnostic.update({
                 "anchor_count": sum(kind == "link" for kind, _label, _href in tokens),
                 "product_url_count": len(product_urls),
@@ -442,8 +491,10 @@ class UsborneYouthSource:
                 "next_cursor": cursor_out,
                 "fresh_for_seconds": 86400,
                 "collection_request_count": self._call_requests.get(),
+                "collection_pipeline": dict(pipeline),
             }
         except Exception as exc:
+            exc.collection_pipeline = dict(pipeline)
             exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic.update({
                 "state": (

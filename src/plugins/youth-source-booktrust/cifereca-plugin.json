@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-source-booktrust",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "name": "Jeunesse — BookTrust",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "youth.source.booktrust",
       "type": "youth.source",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "booktrust_youth:PLUGIN",
       "display_name": "BookTrust Bookfinder",
       "description": "Source jeunesse BookTrust avec âges d’intérêt et de lecture explicites.",

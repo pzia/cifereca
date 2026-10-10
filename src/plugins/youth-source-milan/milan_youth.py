@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from hashlib import sha256
+from time import perf_counter
 import re
 from typing import Mapping
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -44,7 +45,7 @@ def normalize_isbn(value: object) -> str:
         prefix = "978" + raw[:9]
         check = (10 - sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(prefix)) % 10) % 10
         return prefix + str(check)
-    if len(raw) == 13 and raw.isdigit():
+    if len(raw) == 13 and raw.isdigit() and raw.startswith(("978", "979")):
         total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(raw))
         return raw if total % 10 == 0 else ""
     return ""
@@ -232,15 +233,28 @@ def listing_products(
                 or (previous_fallback == fallback and len(clean) > len(previous_title))):
             found[url] = (clean, fallback)
     out = []
-    for url, (title, _fallback) in found.items():
+    text_excluded = 0
+    truncated = False
+    for pos, (url, (title, _fallback)) in enumerate(found.items()):
         if query and query not in _fold(title):
+            text_excluded += 1
             continue
         out.append((title, url))
         if len(out) >= max(1, min(int(limit), 36)):
+            truncated = pos < len(found) - 1
             break
     if listing_diagnostic is not None:
-        listing_diagnostic["recognized_product_count"] = len(out)
-        listing_diagnostic["generic_product_label_count"] = generic_count
+        listing_diagnostic.update({
+            "candidate_count": len(found),
+            "product_link_count": len(found),
+            "recognized_product_count": len(out),
+            "generic_product_label_count": generic_count,
+            "truncated_by_limit": truncated,
+        })
+        if text_excluded:
+            listing_diagnostic.setdefault("rejection_reasons", {})[
+                "text_filter_excluded"
+            ] = text_excluded
     return tuple(out)
 
 
@@ -282,7 +296,10 @@ def _detail_title(rows: tuple[tuple[str, str, str], ...], fallback: str) -> str:
     return _text(fallback)
 
 
-def parse_detail(html: object, *, url: str, fallback_title: str = "") -> Mapping[str, object] | None:
+def parse_detail(
+    html: object, *, url: str, fallback_title: str = "",
+    diagnostic: dict[str, object] | None = None,
+) -> Mapping[str, object] | None:
     notice = product_url(url)
     if not notice:
         return None
@@ -290,6 +307,9 @@ def parse_detail(html: object, *, url: str, fallback_title: str = "") -> Mapping
     age_label = _next_value(rows, {"âge", "age"})
     age = parse_published_age(age_label)
     if age is None:
+        if diagnostic is not None:
+            reasons = diagnostic.setdefault("rejection_reasons", {})
+            reasons["age_unattested"] = reasons.get("age_unattested", 0) + 1
         return None
 
     isbn_raw = _next_value(rows, {"code isbn", "isbn"})
@@ -303,7 +323,14 @@ def parse_detail(html: object, *, url: str, fallback_title: str = "") -> Mapping
                 break
     isbn = normalize_isbn(isbn_raw)
     if not isbn:
+        if diagnostic is not None:
+            reasons = diagnostic.setdefault("rejection_reasons", {})
+            reasons["isbn_invalid"] = reasons.get("isbn_invalid", 0) + 1
         return None
+    if diagnostic is not None:
+        diagnostic["isbn_valid_count"] = diagnostic.get("isbn_valid_count", 0) + 1
+        diagnostic["age_published_count"] = diagnostic.get("age_published_count", 0) + 1
+        diagnostic["age_qualified_count"] = diagnostic.get("age_qualified_count", 0) + 1
 
     authors = ()
     raw_author = _next_value(rows, {"auteur", "auteurs", "auteur-illustrateur", "autrice", "autrices"})
@@ -395,7 +422,10 @@ class MilanYouthSource:
             "homepage_url": CATALOG,
         }
 
-    def _get(self, url: str, *, kind: str) -> str:
+    def _get(
+        self, url: str, *, kind: str,
+        evidence: dict[str, object] | None = None,
+    ) -> str:
         allowed = allowed_url(url)
         if not allowed:
             raise ValueError("Milan URL rejected")
@@ -413,12 +443,15 @@ class MilanYouthSource:
             self._call_requests.set(counter + 1)
         response = self.client.get(allowed)
         if kind == "listing":
-            self._last_diagnostic.update({
+            observed = {
                 "http_status": response.status_code,
                 "html_bytes": len(response.content),
                 "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
                 "content_type_is_html": "html" in _fold(response.headers.get("content-type", "")),
-            })
+            }
+            self._last_diagnostic.update(observed)
+            if evidence is not None:
+                evidence.update(observed)
         if not 200 <= response.status_code < 300:
             error = RuntimeError(f"Milan HTTP {response.status_code}")
             error.http_status = response.status_code
@@ -470,14 +503,44 @@ class MilanYouthSource:
             "phase": "listing", "detail_requests": 0,
         }
         request_token = self._call_requests.set(0)
+        started = perf_counter()
+        pipeline: dict[str, object] = {
+            "query_mode": "local", "effective_limit": bounded,
+            "isbn_valid_count": 0, "age_published_count": 0,
+            "age_qualified_count": 0,
+        }
+        http_elapsed_ms = 0
+        parse_elapsed_ms = 0
+
+        def fetch(url: str, *, kind: str) -> str:
+            nonlocal http_elapsed_ms
+            http_started = perf_counter()
+            try:
+                return self._get(
+                    url, kind=kind,
+                    evidence=pipeline if kind == "listing" else None,
+                )
+            finally:
+                http_elapsed_ms += max(0, int((perf_counter() - http_started) * 1000))
+                pipeline["http_ms"] = http_elapsed_ms
+
         try:
             check_cancelled()  # no network call if already cancelled
-            listing_html = self._get(listing_url(page=page), kind="listing")
+            listing_html = fetch(listing_url(page=page), kind="listing")
             check_cancelled()  # don't parse a cancelled listing
-            products = listing_products(
-                listing_html, text_filter=text_filter, limit=36,
-                listing_diagnostic=self._last_diagnostic,
-            )
+            parse_started = perf_counter()
+            try:
+                products = listing_products(
+                    listing_html, text_filter=text_filter, limit=36,
+                    listing_diagnostic=pipeline,
+                )
+            finally:
+                parse_elapsed_ms += max(0, int((perf_counter() - parse_started) * 1000))
+                pipeline["parse_ms"] = parse_elapsed_ms
+            self._last_diagnostic.update({
+                key: value for key, value in pipeline.items()
+                if key not in {"query_mode", "effective_limit", "rejection_reasons"}
+            })
             cursor = next_cursor(listing_html, current_page=page)
             self._last_diagnostic["next_cursor_present"] = bool(cursor)
             # This is an incompatibility, not a successful empty catalogue.
@@ -503,15 +566,39 @@ class MilanYouthSource:
                     break
                 inspected += 1
                 self._last_diagnostic["detail_requests"] = inspected
-                detail_html = self._get(url, kind="product")
+                detail_html = fetch(url, kind="product")
                 check_cancelled()  # skip expensive parsing after cancellation
-                detail = parse_detail(detail_html, url=url, fallback_title=title)
+                parse_started = perf_counter()
+                try:
+                    detail = parse_detail(
+                        detail_html, url=url, fallback_title=title,
+                        diagnostic=pipeline,
+                    )
+                finally:
+                    parse_elapsed_ms += max(0, int((perf_counter() - parse_started) * 1000))
+                    pipeline["parse_ms"] = parse_elapsed_ms
+                pipeline["analyzed_count"] = inspected
                 if detail is None:
                     continue
                 if wanted_age is not None and int(detail["age_ranges"][0]["age_min"]) > wanted_age:
+                    reasons = pipeline.setdefault("rejection_reasons", {})
+                    reasons["age_filter_excluded"] = reasons.get("age_filter_excluded", 0) + 1
                     continue
                 out.append(detail)
             check_cancelled()  # don't report success after the final detail
+            pipeline.update({
+                "analyzed_count": inspected,
+                "returned_items": len(out),
+                "truncated_by_limit": (
+                    bool(pipeline.get("truncated_by_limit"))
+                    or inspected < len(products)
+                ),
+                "total_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._last_diagnostic.update({
+                key: value for key, value in pipeline.items()
+                if key not in {"query_mode", "effective_limit", "rejection_reasons"}
+            })
             self._last_diagnostic["qualified_items"] = len(out)
             self._last_diagnostic["phase"] = "complete"
             self._publish_diagnostic("ok")
@@ -520,8 +607,10 @@ class MilanYouthSource:
                 "next_cursor": cursor,
                 "fresh_for_seconds": 86400,
                 "collection_request_count": self._call_requests.get(),
+                "collection_pipeline": dict(pipeline),
             }
         except Exception as exc:
+            exc.collection_pipeline = dict(pipeline)
             exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic["error_type"] = type(exc).__name__
             self._last_diagnostic["state"] = (

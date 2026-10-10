@@ -769,3 +769,82 @@ def test_milan_search_and_legacy_browse_contracts_unchanged_by_extension():
     )))
     assert source.search("Moqueuse", limit=1)["collection_request_count"] == 2
     assert source.browse(text_filter="Moqueuse", limit=1)["collection_request_count"] == 2
+
+
+def test_milan_funnel_counts_listing_details_and_local_exclusions():
+    requests = []
+    def handler(req):
+        requests.append(req.url.path)
+        return httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text=LISTING if req.url.path == "/livres/" else MOQUEUSE,
+        )
+
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.browse(text_filter="Moqueuse", limit=1)
+    funnel = result["collection_pipeline"]
+    assert len(result["items"]) == 1
+    assert requests == ["/livres/", "/livres/63047-moqueuse/"]
+    assert result["collection_request_count"] == 2
+    assert funnel["query_mode"] == "local"
+    assert funnel["effective_limit"] == 1
+    assert funnel["http_status"] == 200
+    assert funnel["candidate_count"] == 3
+    assert funnel["product_link_count"] == 3
+    assert funnel["analyzed_count"] == 1
+    assert funnel["isbn_valid_count"] == 1
+    assert funnel["age_qualified_count"] == 1
+    assert funnel["returned_items"] == 1
+    assert funnel["rejection_reasons"] == {"text_filter_excluded": 2}
+    assert funnel["http_ms"] >= 0 and funnel["parse_ms"] >= 0
+    assert funnel["total_ms"] >= funnel["http_ms"]
+    for forbidden in ("Moqueuse", "9782408020804", "/livres/"):
+        assert forbidden not in repr(funnel)
+
+
+def test_milan_funnel_distinguishes_missing_age_and_local_age_filter():
+    requests = []
+    def handler(req):
+        requests.append(req.url.path)
+        if req.url.path == "/livres/":
+            html = LISTING
+        elif req.url.path.endswith("adulte/"):
+            html = ADULT
+        elif req.url.path.endswith("lescargot/"):
+            html = ESCARGOT
+        else:
+            html = MOQUEUSE
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.browse(age=0, limit=8)
+    funnel = result["collection_pipeline"]
+    assert result["items"] == ()
+    assert result["collection_request_count"] == len(requests) == 4
+    assert funnel["candidate_count"] == 3
+    assert funnel["analyzed_count"] == 3
+    assert funnel["isbn_valid_count"] == 2
+    assert funnel["returned_items"] == 0
+    assert funnel["rejection_reasons"] == {
+        "age_unattested": 1, "age_filter_excluded": 2,
+    }
+
+
+def test_milan_cancelled_after_listing_preserves_per_call_funnel_and_zero_details():
+    from milan_youth import MilanCollectionCancelled
+    cancelled = {"value": False}
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: (
+            cancelled.__setitem__("value", True)
+            or httpx.Response(200, headers={"content-type": "text/html"}, text=LISTING)
+        )
+    )))
+    with pytest.raises(MilanCollectionCancelled) as exc:
+        source.browse_with_cancellation(cancelled=lambda: cancelled["value"])
+    assert exc.value.collection_request_count == 1
+    funnel = exc.value.collection_pipeline
+    assert funnel["query_mode"] == "local"
+    assert funnel["effective_limit"] == 8
+    assert funnel["http_status"] == 200
+    assert funnel["http_ms"] >= 0
+    assert "analyzed_count" not in funnel

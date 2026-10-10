@@ -260,7 +260,7 @@ def test_browse_path_prefix_spoof_is_rejected():
 def test_local_filter_is_bounded_to_300_characters(monkeypatch):
     captured = []
 
-    def fake_parse(html, *, text_filter="", age=None, limit=40):
+    def fake_parse(html, *, text_filter="", age=None, limit=40, diagnostic=None):
         captured.append(text_filter)
         return ()
 
@@ -428,3 +428,58 @@ def test_paginated_usborne_layout_without_book_links_is_invalid_not_empty():
     assert page["items"] == ()
     assert page["next_cursor"] == "2"
     assert source.diagnostic_snapshot()["state"] == "empty_unverified"
+
+
+def test_usborne_call_funnel_separates_local_title_age_filters_and_badge_duplicate():
+    requests = []
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: requests.append(req) or httpx.Response(
+            200, headers={"content-type": "text/html"}, text=HTML,
+        )
+    )))
+    result = source.browse(age=3, text_filter="baby", limit=100)
+    funnel = result["collection_pipeline"]
+    assert len(result["items"]) == 1
+    assert result["collection_request_count"] == len(requests) == 1
+    assert funnel["query_mode"] == "local"
+    assert funnel["effective_limit"] == 40
+    assert funnel["http_status"] == 200
+    assert funnel["html_bytes"] == len(HTML.encode("utf-8"))
+    assert funnel["product_link_count"] == 4
+    assert funnel["candidate_count"] == funnel["isbn_valid_count"] == 3
+    assert funnel["analyzed_count"] == 3
+    assert funnel["age_qualified_count"] == 3
+    assert funnel["returned_items"] == 1
+    assert funnel["rejection_reasons"] == {
+        "duplicate": 1, "age_filter_excluded": 1, "text_filter_excluded": 1,
+    }
+    assert funnel["http_ms"] >= 0 and funnel["parse_ms"] >= 0
+    assert funnel["total_ms"] >= funnel["http_ms"]
+    assert "baby" not in repr(funnel)
+    assert "Why School Matters" not in repr(funnel)
+    assert "9781805075103" not in repr(funnel)
+
+    absent = source.browse(text_filter="none-of-these")
+    assert absent["items"] == ()
+    assert absent["collection_pipeline"]["candidate_count"] == 3
+    assert absent["collection_pipeline"]["rejection_reasons"]["text_filter_excluded"] == 3
+
+
+def test_usborne_rejects_nonbook_ean_even_when_checksum_is_correct():
+    # Valid GTIN/EAN checksum is insufficient to assert an ISBN edition.
+    assert normalize_isbn13("4006381333931") == ""
+
+
+def test_usborne_http_403_funnel_keeps_only_typed_current_call_evidence():
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(403, headers={"content-type": "text/html"}, text="private HTML body")
+    )))
+    with pytest.raises(RuntimeError, match="403") as exc:
+        source.search("private search")
+    assert exc.value.collection_request_count == 1
+    funnel = exc.value.collection_pipeline
+    assert funnel["http_status"] == 403
+    assert funnel["effective_limit"] == 40
+    assert funnel["query_mode"] == "local"
+    assert funnel["html_bytes"] == len(b"private HTML body")
+    assert "private" not in repr(funnel)
