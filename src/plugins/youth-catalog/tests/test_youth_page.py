@@ -876,3 +876,159 @@ def test_youth_ui_empty_page_is_not_mistaken_for_invalid_structure():
     assert current["received_count"] == 0
     assert current["request_count"] == 1
     assert view.next_cursor == ""
+
+
+def test_fetch_source_cancellation_after_http_disallows_ingest_and_keeps_exact_count():
+    """A running synchronous request may finish: its result must not be ingested."""
+    from youth_page import YouthSourceCancelled
+    from youth_catalog import collection_failure_diagnostic
+
+    state, calls = {"cancelled": False}, []
+    class Source:
+        def browse(self, **kwargs):
+            calls.append(kwargs)
+            state["cancelled"] = True  # cancellation while source is executing
+            return {
+                "items": [{"title": "private book", "isbn13": "9780306406157"}],
+                "collection_request_count": 2,
+            }
+
+    with pytest.raises(YouthSourceCancelled, match="collection cancelled") as exc:
+        fetch_source_page(
+            Source(), "private-query", age=8, themes=(), cursor=None,
+            cancelled=lambda: state["cancelled"],
+        )
+    assert len(calls) == 1
+    assert exc.value.collection_request_count == 2
+    assert collection_failure_diagnostic(exc.value) == {
+        "state": "cancelled", "error_type": "YouthSourceCancelled",
+        "http_status": None, "request_count": 2,
+    }
+    assert "private-query" not in str(exc.value)
+    assert "private book" not in str(exc.value)
+
+
+def test_fetch_source_cancellation_before_request_has_proven_zero_http():
+    from youth_page import YouthSourceCancelled
+    calls = []
+    class Source:
+        def search(self, query, *, cursor, limit):
+            calls.append(query)
+            return {"items": ()}
+
+    with pytest.raises(YouthSourceCancelled) as exc:
+        fetch_source_page(
+            Source(), "secret query", age=None, themes=(), cursor=None,
+            cancelled=lambda: True,
+        )
+    assert exc.value.collection_request_count == 0
+    assert calls == []
+
+
+def test_fetch_source_cancellation_after_search_without_count_remains_unknown():
+    from youth_page import YouthSourceCancelled
+
+    state, calls = {"cancelled": False}, []
+    class SearchOnly:
+        def search(self, query, *, cursor, limit):
+            calls.append(query)
+            state["cancelled"] = True
+            return {"items": [{"title": "hidden"}]}
+
+    with pytest.raises(YouthSourceCancelled) as exc:
+        fetch_source_page(
+            SearchOnly(), "secret", age=None, themes=(), cursor="2",
+            cancelled=lambda: state["cancelled"],
+        )
+    assert calls == ["secret"]
+    assert exc.value.collection_request_count is None
+
+
+def test_fetch_source_cancellation_during_transport_error_keeps_attested_count():
+    from youth_page import YouthSourceCancelled
+    state = {"cancelled": False}
+    class FailedBrowse:
+        def browse(self, **kwargs):
+            state["cancelled"] = True
+            failure = RuntimeError("private signed URL token")
+            failure.collection_request_count = 1
+            raise failure
+
+    with pytest.raises(YouthSourceCancelled) as exc:
+        fetch_source_page(
+            FailedBrowse(), "query", age=8, themes=(), cursor=None,
+            cancelled=lambda: state["cancelled"],
+        )
+    assert exc.value.collection_request_count == 1
+    assert "signed URL" not in str(exc.value)
+
+
+def test_fetch_source_without_cancellation_preserves_existing_public_contract():
+    class Source:
+        def browse(self, **kwargs):
+            return {"items": [{"title": "Book"}], "collection_request_count": 1}
+
+    answer = fetch_source_page(Source(), "Book", age=8, themes=(), cursor=None)
+    assert answer["collection_request_count"] == 1
+    assert answer["items"][0]["title"] == "Book"
+
+
+def test_youth_ui_cancellation_while_source_is_running_preserves_prior_cache():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private title"}])
+    state, requests, status, dispatch, refreshed = (
+        {"cancelled": False}, [], [], [], [],
+    )
+    tasks = Tasks()
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda cb: dispatch.append(cb))
+    view.status = NS(set_label=status.append)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.filter_state = lambda: FilterState(query="Atlas", age=8, themes=())
+    view.next_cursor = "3"
+    view.next_source_plugin = "youth.source.booktrust"
+    view.refresh_source_diagnostics = lambda: refreshed.append("refresh")
+
+    def browse(**kwargs):
+        requests.append(kwargs)
+        state["cancelled"] = True
+        return {
+            "items": [{"title": "New book must not replace cache"}],
+            "next_cursor": "4",
+            "collection_request_count": 1,
+        }
+    view.selected_source = lambda: NS(
+        plugin_id="youth.source.booktrust",
+        service=NS(
+            source_info=lambda: {
+                "source_id": "booktrust", "display_name": "BookTrust",
+            },
+            browse=browse,
+        ),
+    )
+    view._remote_request("")
+    handle = tasks.handles[0]
+    handle.control = NS(cancelled=lambda: state["cancelled"])
+    handle.finish()
+    assert len(dispatch) == 1
+    dispatch.pop()()
+
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    assert len(requests) == 1
+    assert row["collection_state"] == "cancelled"
+    assert row["error_type"] == "YouthSourceCancelled"
+    assert row["request_count"] == 1
+    assert row["received_count"] is None
+    assert row["cache_count"] == 1
+    assert view.next_cursor == "3"
+    assert view.next_source_plugin == "youth.source.booktrust"
+    assert status[-1] == "Collecte annulée. Le cache précédent est conservé."
+    assert refreshed == ["refresh"]
+    assert "New book must not replace cache" not in repr(row)
+    assert "Previous private title" not in repr(row)
+    assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
