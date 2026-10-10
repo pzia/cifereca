@@ -4317,6 +4317,21 @@ class LibraryService:
         }
         return owners != {identity_id}
 
+    @staticmethod
+    def _cross_identity_loan_conflict(
+        acquisitions: Any, *, provider_loan_id: str, identity_id: str
+    ) -> bool:
+        """A recorded Paris loan transaction under another identity forbids replay."""
+        loan_key = str(provider_loan_id or "").strip()
+        if not loan_key:
+            return True
+        return any(
+            str((row.get("metadata") or {}).get("provider_loan_id") or "").strip() == loan_key
+            and str(row.get("identity_id") or "") != identity_id
+            and str(row.get("strategy") or "") == "loan_auto"
+            for row in acquisitions
+        )
+
     def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Acquire one active digital loan and fulfill ACSM through Kobo-Adept.
 
@@ -4349,6 +4364,19 @@ class LibraryService:
                 "retry": "explicit_only",
             }
         _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
+        if str(loan.source_provider).lower() == "paris" and self._cross_identity_loan_conflict(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_loan_id=loan.id, identity_id=identity.identity_id,
+        ):
+            _TRACE_LOG.warning(
+                "TRACE download loan_auto blocked reason=cross_identity_loan provider=%s",
+                loan.source_provider,
+            )
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_loan_identity_conflict",
+                "reason": "cross_identity_loan", "retry": "explicit_only",
+            }
         entitlement_rows = [
             row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
             if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
