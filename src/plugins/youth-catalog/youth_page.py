@@ -874,7 +874,7 @@ class YouthView:
             ),
             lambda raw: self.collected(
                 raw, source_id=source_id, label=label, append=append,
-                source_plugin=row.plugin_id,
+                source_plugin=row.plugin_id, requested_limit=100,
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),
             ),
             token,
@@ -936,7 +936,10 @@ class YouthView:
             self.GLib.idle_add(apply)
         self.task.add_done_callback(done)
 
-    def collected(self, raw, *, source_id, label, append, source_plugin, duration_ms=0):
+    def collected(
+        self, raw, *, source_id, label, append, source_plugin,
+        duration_ms=0, requested_limit=None,
+    ):
         rows, cursor, fresh = page_parts(raw)
         report = self.catalog.ingest(
             self.identity_id(),
@@ -956,7 +959,7 @@ class YouthView:
                 ),
                 accepted=report.accepted, rejected=report.rejected,
                 received_count=report.accepted + report.rejected,
-                requested_limit=100,
+                requested_limit=requested_limit,
                 rejection_categories=safe_ingest_rejection_categories(report.errors),
                 stage="ingest",
                 duration_ms=duration_ms, next_cursor_present=bool(cursor),
