@@ -1184,7 +1184,7 @@ def test_youth_funnel_presentation_explains_pipeline_without_claiming_100_analyz
     )
     rows = plugin.source_diagnostics("alice")
     summary, lines = source_diagnostic_presentation(rows)
-    line = next(x for x in lines if "l'école des loisirs" in x)
+    line = next(x for x in lines if "École des loisirs" in x)
     assert "requêtes HTTP : 1" in line
     assert "reçues : 20" in line
     assert "limite demandée : 100" in line
