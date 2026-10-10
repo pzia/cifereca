@@ -358,7 +358,10 @@ def main() -> int:
     # cette sonde. Aucune nouvelle CI ni collection de source à l'ouverture.
     def library_search_button():
         def visit(widget):
-            if isinstance(widget, Gtk.Button) and widget.get_label() == "Rechercher en bibliothèque":
+            if isinstance(widget, Gtk.Button) and getattr(widget, "_cifereca_action_id", None) == "search-library":
+                assert getattr(widget, "_cifereca_action_label", "") == "Rechercher en bibliothèque", (
+                    "Le libellé visible du bouton #906 a changé"
+                )
                 return widget
             child = widget.get_first_child()
             while child is not None:
