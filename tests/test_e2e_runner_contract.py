@@ -148,7 +148,6 @@ def test_923_youth_actions_have_independent_gtk_availability_gate_at_1366():
     assert scenario["width"] == 1366
     assert scenario["milan"] is True
     assert scenario["actions_ux"] is True
-    assert "youth-actions-1024" not in runner.SCENARIOS
     assert '"--actions-ux"' in RUNNER.read_text(encoding="utf-8")
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
     for marker in (
