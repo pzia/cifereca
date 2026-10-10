@@ -338,6 +338,10 @@ def parse_detail(html: object, *, url: str, fallback_title: str = "") -> Mapping
     }
 
 
+class InvalidCatalogueStructureError(RuntimeError):
+    """Publisher layout mismatch; never contains source HTML or private data."""
+
+
 class MilanYouthSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
@@ -469,7 +473,7 @@ class MilanYouthSource:
                 # The manual qualifier captures exception messages as JSON.
                 # Only bounded counts/digest are included; no HTML or URL.
                 diag = self._last_diagnostic
-                raise RuntimeError(
+                raise InvalidCatalogueStructureError(
                     "Milan paginated catalogue has no recognizable book links: "
                     f"anchors={diag.get('anchor_count', 0)}, "
                     f"milan_links={diag.get('milan_catalogue_href_count', 0)}, "
@@ -504,6 +508,9 @@ class MilanYouthSource:
         except Exception as exc:
             exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic["error_type"] = type(exc).__name__
+            self._last_diagnostic["state"] = (
+                "invalid" if isinstance(exc, InvalidCatalogueStructureError) else "error"
+            )
             self._publish_diagnostic("error")
             raise
         finally:
