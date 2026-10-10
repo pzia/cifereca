@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import re
+from time import perf_counter
 from urllib.parse import urlsplit
 
 from cifereca.plugin_api import (
@@ -747,12 +748,17 @@ class YouthView:
         source_id, label = source_info(row)
         append = bool(cursor)
         token = (identity, row.plugin_id, state.query, state.age, state.themes)
+        started = perf_counter()
         self.run_remote(
             lambda control: None if control.cancelled() else fetch_source_page(
                 service, state.query, age=state.age, themes=state.themes,
                 cursor=cursor or None, limit=100,
             ),
-            lambda raw: self.collected(raw, source_id=source_id, label=label, append=append, source_plugin=row.plugin_id),
+            lambda raw: self.collected(
+                raw, source_id=source_id, label=label, append=append,
+                source_plugin=row.plugin_id,
+                duration_ms=max(0, int((perf_counter() - started) * 1000)),
+            ),
             token,
         )
 
@@ -778,13 +784,19 @@ class YouthView:
         if self.task:
             self.task.cancel()
         self._remote_running_token = token
+        started = perf_counter()
         self.status.set_label("Collecte explicite en cours…")
         self.task = broker.submit(operation, label="Catalogue Jeunesse", kind="youth")
         def done(handle):
             try:
                 result, error = handle.result(), False
-            except Exception:
+                error_type, http_status = "", None
+            except Exception as exc:
                 result, error = None, True
+                error_type = type(exc).__name__
+                response = getattr(exc, "response", None)
+                status_code = getattr(response, "status_code", None)
+                http_status = status_code if isinstance(status_code, int) else None
             def apply():
                 current = self.filter_state()
                 current_token = (self.identity_id(), self.selected_source_plugin(), current.query, current.age, current.themes)
@@ -792,6 +804,20 @@ class YouthView:
                     return False
                 self._remote_running_token = None
                 if error or result is None:
+                    reporter = getattr(self.catalog, "record_collection", None)
+                    row = self.selected_source()
+                    if callable(reporter) and row is not None:
+                        sid, _label = source_info(row)
+                        state = (
+                            "timeout" if "timeout" in error_type.casefold()
+                            else "http_error" if http_status is not None
+                            else "error"
+                        )
+                        reporter(
+                            token[0], sid, state=state,
+                            duration_ms=max(0, int((perf_counter() - started) * 1000)),
+                            error_type=error_type, http_status=http_status,
+                        )
                     self.status.set_label("Échec de la source. Le cache précédent est conservé.")
                 else:
                     complete(result)
@@ -799,7 +825,7 @@ class YouthView:
             self.GLib.idle_add(apply)
         self.task.add_done_callback(done)
 
-    def collected(self, raw, *, source_id, label, append, source_plugin):
+    def collected(self, raw, *, source_id, label, append, source_plugin, duration_ms=0):
         rows, cursor, fresh = page_parts(raw)
         report = self.catalog.ingest(
             self.identity_id(),
@@ -808,6 +834,18 @@ class YouthView:
             replace_source=not append,
             fresh_for_seconds=fresh,
         )
+        reporter = getattr(self.catalog, "record_collection", None)
+        if callable(reporter):
+            reporter(
+                self.identity_id(), source_id,
+                state=(
+                    "items" if report.accepted
+                    else "invalid" if report.rejected
+                    else "empty_unverified"
+                ),
+                accepted=report.accepted, rejected=report.rejected,
+                duration_ms=duration_ms, next_cursor_present=bool(cursor),
+            )
         self.next_cursor = cursor
         self.next_source_plugin = str(source_plugin) if cursor else ""
         message = f"{report.accepted} notice(s) reçue(s) de {label or source_id}"
