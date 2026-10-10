@@ -32,6 +32,8 @@ PUBLIC_COMMANDS = (
 )
 DEV_COMMAND = "cifereca-update-dev"
 DEFAULT_GITHUB_REPOSITORY = "pzia/cifereca"
+TRANSACTION_FILE = ".cifereca-transaction.json"
+TRANSACTION_SCHEMA = 1
 
 
 class UpdateError(RuntimeError):
@@ -362,6 +364,319 @@ def _release_plugin_manifest(source: Path) -> dict[str, str]:
     return out
 
 
+def _plugin_packages_root() -> Path:
+    return data_dir() / "plugins" / "packages"
+
+
+def _safe_package_id(package_id: str) -> str:
+    value = str(package_id).strip()
+    if not value or value in {".", ".."} or Path(value).name != value or "/" in value or "\\" in value:
+        raise UpdateError(f"Identifiant de package plugin interdit: {package_id}")
+    return value
+
+
+def _package_identity_at(package_id: str, package: Path) -> dict[str, Any]:
+    """Return an exact, deterministic identity for one plugin package directory."""
+    package_id = _safe_package_id(package_id)
+    if not package.exists():
+        return {"exists": False, "active": None, "versions": [], "sha256": None, "files": {}}
+    if not package.is_dir() or package.is_symlink():
+        raise UpdateError(f"Stockage plugin invalide pour {package_id}")
+
+    files: dict[str, str] = {}
+    versions: list[str] = []
+    active: Any = None
+    for path in sorted(package.rglob("*"), key=lambda item: item.relative_to(package).as_posix()):
+        relative = path.relative_to(package).as_posix()
+        if path.is_symlink():
+            raise UpdateError(f"Symlink interdit dans le package plugin {package_id}: {relative}")
+        if path.is_file():
+            files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+        elif not path.is_dir():
+            raise UpdateError(f"Entrée plugin invalide pour {package_id}: {relative}")
+    pointer = package / "current.json"
+    if pointer.is_file():
+        try:
+            raw = json.loads(pointer.read_text(encoding="utf-8"))
+            active = raw.get("active") if isinstance(raw, dict) else None
+        except Exception as exc:
+            raise UpdateError(f"Pointeur d'activation plugin invalide: {package_id}") from exc
+    versions = sorted(
+        path.name for path in package.iterdir()
+        if path.is_dir() and not path.is_symlink() and path.name != "versions"
+    )
+    legacy_versions = package / "versions"
+    if legacy_versions.is_dir():
+        versions.extend(
+            path.name for path in legacy_versions.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        )
+        versions = sorted(set(versions))
+    content = hashlib.sha256()
+    for relative, digest in files.items():
+        content.update(relative.encode("utf-8"))
+        content.update(b"\0")
+        content.update(digest.encode("ascii"))
+        content.update(b"\0")
+    return {
+        "exists": True,
+        "active": active,
+        "versions": versions,
+        "sha256": content.hexdigest(),
+        "files": files,
+    }
+
+
+def _package_identity(package_id: str) -> dict[str, Any]:
+    package_id = _safe_package_id(package_id)
+    return _package_identity_at(package_id, _plugin_packages_root() / package_id)
+
+
+def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+        try:
+            descriptor = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        except OSError:
+            pass
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _core_identity(release: Path | None) -> dict[str, Any] | None:
+    if release is None:
+        return None
+    metadata: dict[str, Any] = {}
+    path = release / ".cifereca-install.json"
+    if path.is_file():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                metadata = raw
+        except Exception:
+            metadata = {}
+    version = str(metadata.get("version") or release.name.split("-", 1)[0])
+    provenance = metadata.get("provenance") if isinstance(metadata.get("provenance"), dict) else {}
+    return {
+        "path": str(release.resolve()),
+        "name": release.name,
+        "version": version,
+        "commit": provenance.get("commit"),
+        "provenance": provenance,
+    }
+
+
+def _transaction_path(root: Path, transaction_id: str) -> Path:
+    return root / "transactions" / transaction_id
+
+
+def _read_transaction(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads((path / "transaction.json").read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise UpdateError(f"Transaction de mise à jour illisible: {path.name}") from exc
+    if not isinstance(value, dict) or value.get("schema") != TRANSACTION_SCHEMA:
+        raise UpdateError(f"Transaction de mise à jour incompatible: {path.name}")
+    return value
+
+
+def _save_transaction(path: Path, transaction: dict[str, Any], state: str) -> None:
+    transaction["state"] = state
+    transaction["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _write_json_atomic(path / "transaction.json", transaction)
+
+
+def _create_update_transaction(
+    root: Path,
+    release: Path,
+    old_current: Path | None,
+    old_previous: Path | None,
+    package_ids: list[str],
+) -> tuple[Path, dict[str, Any]]:
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    token = hashlib.sha256(f"{release}:{time.time_ns()}".encode()).hexdigest()[:12]
+    transaction_id = f"{stamp}-{token}"
+    final = _transaction_path(root, transaction_id)
+    tmp = final.parent / f".{transaction_id}.{os.getpid()}.tmp"
+    packages: dict[str, Any] = {}
+    final.parent.mkdir(parents=True, exist_ok=True)
+    tmp.mkdir(parents=True, exist_ok=False)
+    try:
+        for raw_id in sorted(set(package_ids)):
+            package_id = _safe_package_id(raw_id)
+            identity = _package_identity(package_id)
+            packages[package_id] = {"before": identity, "after": None}
+            source = _plugin_packages_root() / package_id
+            if identity["exists"]:
+                backup = tmp / "plugins" / package_id
+                shutil.copytree(source, backup)
+                if _package_identity_at(package_id, backup) != identity:
+                    raise UpdateError(f"Snapshot plugin incomplet ou incohérent pour {package_id}")
+        transaction: dict[str, Any] = {
+            "schema": TRANSACTION_SCHEMA,
+            "id": transaction_id,
+            "state": "prepared",
+            "created_at": stamp,
+            "core": {
+                "before_current": _core_identity(old_current),
+                "before_previous": _core_identity(old_previous),
+                "after": _core_identity(release),
+            },
+            "packages": packages,
+        }
+        _write_json_atomic(tmp / "transaction.json", transaction)
+        os.replace(tmp, final)
+        _write_json_atomic(release / TRANSACTION_FILE, {"schema": 1, "id": transaction_id})
+        return final, transaction
+    except Exception as exc:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if isinstance(exc, UpdateError):
+            raise
+        raise UpdateError(f"Snapshot transactionnel des plugins impossible: {exc}") from exc
+
+
+def _restore_transaction_packages(path: Path, transaction: dict[str, Any]) -> None:
+    root = _plugin_packages_root()
+    root.mkdir(parents=True, exist_ok=True)
+    for package_id, row in sorted(transaction.get("packages", {}).items()):
+        package_id = _safe_package_id(package_id)
+        destination = root / package_id
+        if destination.is_symlink() or destination.is_file():
+            destination.unlink()
+        elif destination.is_dir():
+            shutil.rmtree(destination)
+        before = row.get("before") if isinstance(row, dict) else None
+        if isinstance(before, dict) and before.get("exists"):
+            backup = path / "plugins" / package_id
+            if not backup.is_dir():
+                raise UpdateError(f"Backup plugin absent pour {package_id}")
+            shutil.copytree(backup, destination)
+            if _package_identity(package_id) != before:
+                raise UpdateError(f"Vérification de restauration échouée pour {package_id}")
+
+
+def _smoke_restored_plugins(release: Path, transaction: dict[str, Any]) -> dict[str, Any]:
+    package_rows = transaction.get("packages", {})
+    if not package_rows:
+        return {"plugin_count": 0, "managed_packages": []}
+    cli = _command_path(release, "cifereca-cli")
+    proc = subprocess.run(
+        [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise UpdateError(f"Validation des plugins restaurés échouée: {detail[-1200:]}")
+    try:
+        rows = json.loads(proc.stdout)
+    except Exception as exc:
+        raise UpdateError("Validation des plugins restaurés: sortie JSON invalide") from exc
+    if not isinstance(rows, list):
+        raise UpdateError("Validation des plugins restaurés: liste JSON attendue")
+    package_ids = set(package_rows)
+    failed = sorted({
+        str(row.get("plugin_id") or row.get("package_id"))
+        for row in rows if isinstance(row, dict)
+        and row.get("package_id") in package_ids
+        and row.get("state") in {"error", "incompatible"}
+    })
+    if failed:
+        raise UpdateError("Plugins restaurés incompatibles ou en erreur: " + ", ".join(failed))
+    visible = {
+        str(row.get("package_id")) for row in rows
+        if isinstance(row, dict) and row.get("package_id")
+    }
+    active = {
+        package_id for package_id, row in package_rows.items()
+        if isinstance(row, dict) and isinstance(row.get("before"), dict)
+        and row["before"].get("exists") and row["before"].get("active")
+    }
+    missing = sorted(active - visible)
+    if missing:
+        raise UpdateError("Plugins actifs restaurés absents de l'inventaire: " + ", ".join(missing))
+    return {"plugin_count": len(rows), "managed_packages": sorted(package_ids)}
+
+
+def _transaction_for_release(root: Path, release: Path) -> tuple[Path, dict[str, Any]] | None:
+    link = release / TRANSACTION_FILE
+    if not link.is_file():
+        return None
+    try:
+        raw = json.loads(link.read_text(encoding="utf-8"))
+        transaction_id = _safe_package_id(str(raw["id"]))
+    except Exception as exc:
+        raise UpdateError(f"Référence de transaction invalide pour {release.name}") from exc
+    path = _transaction_path(root, transaction_id)
+    transaction = _read_transaction(path)
+    if transaction.get("id") != transaction_id:
+        raise UpdateError(f"Identité de transaction incohérente pour {release.name}")
+    return path, transaction
+
+
+def _path_from_identity(value: Any) -> Path | None:
+    if not isinstance(value, dict) or not value.get("path"):
+        return None
+    return Path(str(value["path"]))
+
+
+def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str, Any], state: str) -> None:
+    """Idempotently complete a failed update or an interrupted voluntary rollback."""
+    _save_transaction(path, transaction, state)
+    errors: list[str] = []
+    try:
+        _restore_transaction_packages(path, transaction)
+    except Exception as exc:
+        errors.append(f"plugins: {exc}")
+    core = transaction.get("core") if isinstance(transaction.get("core"), dict) else {}
+    try:
+        _restore_release_links(
+            root,
+            _path_from_identity(core.get("before_current")),
+            _path_from_identity(core.get("before_previous")),
+        )
+        if _path_from_identity(core.get("before_current")) is not None:
+            _write_launchers(root)
+            transaction["restoration"] = _smoke_restored_plugins(
+                _path_from_identity(core["before_current"]), transaction,
+            )
+        else:
+            for command in (*PUBLIC_COMMANDS, DEV_COMMAND):
+                (bin_dir() / command).unlink(missing_ok=True)
+    except Exception as exc:
+        errors.append(f"Core: {exc}")
+    if errors:
+        transaction["restoration_errors"] = errors
+        _save_transaction(path, transaction, "restoration_incomplete")
+        raise UpdateError("Restauration transactionnelle incomplète: " + "; ".join(errors))
+    transaction.pop("restoration_errors", None)
+    _save_transaction(path, transaction, "rolled_back" if state == "rolling_back" else "update_failed_restored")
+
+
+def _recover_incomplete_transactions(root: Path) -> list[str]:
+    recovered: list[str] = []
+    base = root / "transactions"
+    if not base.is_dir():
+        return recovered
+    for path in sorted((item for item in base.iterdir() if item.is_dir()), key=lambda item: item.name):
+        transaction = _read_transaction(path)
+        state = str(transaction.get("state") or "")
+        if state in {"prepared", "applying", "restoring", "rolling_back", "restoration_incomplete"}:
+            mode = "rolling_back" if state == "rolling_back" else "restoring"
+            _complete_transaction_restore(root, path, transaction, mode)
+            recovered.append(str(transaction.get("id") or path.name))
+    return recovered
+
+
 def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | None:
     expected = _release_plugin_manifest(release)
     if not expected:
@@ -444,6 +759,9 @@ def install_source(
         result["provenance"] = dict(provenance)
     if dry_run:
         return result
+    recovered = _recover_incomplete_transactions(root)
+    if recovered:
+        result["recovered_transactions"] = recovered
 
     releases = root / "releases"
     releases.mkdir(parents=True, exist_ok=True)
@@ -452,6 +770,8 @@ def install_source(
     old_current = _symlink_target(root / "current")
     old_previous = _symlink_target(root / "previous")
     plugins_result: dict[str, Any] | None = None
+    transaction_path: Path | None = None
+    transaction: dict[str, Any] | None = None
     switched = False
     try:
         _copy_source(source, release)
@@ -473,6 +793,11 @@ def install_source(
                 json.dumps(install_metadata, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            managed_packages = sorted(_release_plugin_manifest(release))
+            transaction_path, transaction = _create_update_transaction(
+                root, release, old_current, old_previous, managed_packages,
+            )
+            _save_transaction(transaction_path, transaction, "applying")
             if old_current and old_current.is_dir():
                 _replace_symlink(root / "previous", old_current)
             _replace_symlink(root / "current", release)
@@ -481,8 +806,18 @@ def install_source(
             _gc(root, keep)
             if plugin_snapshot is not None:
                 plugins_result = _apply_release_plugin_snapshot(release, plugin_snapshot)
-    except Exception:
-        if switched:
+            for package_id, row in transaction["packages"].items():
+                row["after"] = _package_identity(package_id)
+            _save_transaction(transaction_path, transaction, "applied")
+    except Exception as update_exc:
+        if transaction_path is not None and transaction is not None:
+            try:
+                _complete_transaction_restore(root, transaction_path, transaction, "restoring")
+            except Exception as rollback_exc:
+                raise UpdateError(
+                    f"Mise à jour échouée ({update_exc}) et restauration incomplète: {rollback_exc}"
+                ) from rollback_exc
+        elif switched:
             try:
                 _restore_release_links(root, old_current, old_previous)
             except Exception as rollback_exc:
@@ -492,7 +827,7 @@ def install_source(
         current = _symlink_target(root / "current")
         if current is None or current.resolve() != release.resolve():
             shutil.rmtree(release, ignore_errors=True)
-        raise
+        raise update_exc
     result.update({
         "release": str(release),
         "current": str(_symlink_target(root / "current") or ""),
@@ -503,6 +838,7 @@ def install_source(
         "desktop_error": smoke.get("desktop_error", ""),
         "backup": str(backup) if backup else None,
         "plugins": plugins_result,
+        "transaction": str(transaction_path) if transaction_path else None,
     })
     return result
 
@@ -600,18 +936,52 @@ def install_archive(
 
 def status() -> dict[str, Any]:
     root = install_root()
+    current = _symlink_target(root / "current")
+    current_transaction: dict[str, Any] | None = None
+    if current and current.is_dir():
+        linked = _transaction_for_release(root, current)
+        if linked:
+            path, transaction = linked
+            current_transaction = {
+                "id": transaction.get("id"),
+                "state": transaction.get("state"),
+                "path": str(path),
+                "packages": {
+                    package_id: _package_identity(package_id)
+                    for package_id in sorted(transaction.get("packages", {}))
+                },
+            }
+    incomplete: list[dict[str, str]] = []
+    transaction_root = root / "transactions"
+    if transaction_root.is_dir():
+        for path in sorted(item for item in transaction_root.iterdir() if item.is_dir()):
+            transaction = _read_transaction(path)
+            state = str(transaction.get("state") or "")
+            if state in {"prepared", "applying", "restoring", "rolling_back", "restoration_incomplete"}:
+                incomplete.append({"id": str(transaction.get("id") or path.name), "state": state})
     return {
         "ok": True,
         "install_root": str(root),
-        "current": str(_symlink_target(root / "current") or "") or None,
+        "current": str(current or "") or None,
         "previous": str(_symlink_target(root / "previous") or "") or None,
         "releases": [str(x) for x in _releases(root)],
         "launchers": {x: str(bin_dir() / x) for x in PUBLIC_COMMANDS},
+        "transaction": current_transaction,
+        "incomplete_transactions": incomplete,
     }
 
 
 def rollback(to: str | None = None) -> dict[str, Any]:
     root = install_root()
+    recovered = _recover_incomplete_transactions(root)
+    if recovered:
+        return {
+            "ok": True,
+            "current": str(_symlink_target(root / "current") or "") or None,
+            "previous": str(_symlink_target(root / "previous") or "") or None,
+            "launchers": {x: str(bin_dir() / x) for x in PUBLIC_COMMANDS},
+            "recovered_transactions": recovered,
+        }
     current = _symlink_target(root / "current")
     candidates = _releases(root)
     target: Path | None = None
@@ -629,13 +999,45 @@ def rollback(to: str | None = None) -> dict[str, Any]:
     if not target or not target.is_dir():
         raise UpdateError("Aucune release de rollback disponible")
 
-    # A Core-only symlink switch is not a valid rollback for a release whose
-    # plugin snapshot was installed into the mutable shared plugin store.
-    # Until a durable, restorable package snapshot is linked to the update
-    # transaction, fail closed instead of reporting ok=True for a mixed
-    # generation (older Core, newer plugin bytes/activation).
     managed_current = _release_plugin_manifest(current) if current and current.is_dir() else {}
     managed_target = _release_plugin_manifest(target)
+    linked = _transaction_for_release(root, current) if current and current.is_dir() else None
+    if linked:
+        transaction_path, transaction = linked
+        before = _path_from_identity(transaction.get("core", {}).get("before_current"))
+        if before is None or before.resolve() != target.resolve():
+            raise UpdateError(
+                "Rollback transactionnel refusé: la cible ne correspond pas au Core précédant cette mise à jour"
+            )
+        if transaction.get("state") != "applied":
+            raise UpdateError(f"Rollback transactionnel impossible depuis l'état {transaction.get('state')}")
+        changed: list[str] = []
+        for package_id, row in sorted(transaction.get("packages", {}).items()):
+            after = row.get("after") if isinstance(row, dict) else None
+            if not isinstance(after, dict) or _package_identity(package_id) != after:
+                changed.append(package_id)
+        if changed:
+            raise UpdateError(
+                "Rollback refusé: des plugins gérés ont changé après la mise à jour "
+                f"({', '.join(changed)}). Aucun état n'a été écrasé."
+            )
+        _smoke(target)
+        _complete_transaction_restore(root, transaction_path, transaction, "rolling_back")
+        result = {
+            "ok": True,
+            "current": str(target),
+            "previous": str(_symlink_target(root / "previous") or "") or None,
+            "launchers": {x: str(bin_dir() / x) for x in PUBLIC_COMMANDS},
+            "transaction": str(transaction_path),
+            "plugins_restored": sorted(transaction.get("packages", {})),
+            "plugin_state": {
+                package_id: _package_identity(package_id)
+                for package_id in sorted(transaction.get("packages", {}))
+            },
+        }
+        if recovered:
+            result["recovered_transactions"] = recovered
+        return result
     if managed_current or managed_target:
         raise UpdateError(
             "Rollback Core + plugins indisponible : aucun snapshot restaurable "
@@ -647,7 +1049,10 @@ def rollback(to: str | None = None) -> dict[str, Any]:
         _replace_symlink(root / "previous", current)
     _replace_symlink(root / "current", target)
     launchers = _write_launchers(root)
-    return {"ok": True, "current": str(target), "launchers": launchers}
+    result = {"ok": True, "current": str(target), "launchers": launchers}
+    if recovered:
+        result["recovered_transactions"] = recovered
+    return result
 
 
 def _print(value: dict[str, Any], as_json: bool) -> None:
@@ -699,3 +1104,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
