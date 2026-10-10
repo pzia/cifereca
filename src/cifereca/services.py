@@ -2178,12 +2178,165 @@ class LibraryService:
         self.storage.cache_delete_namespace("account")
         return result
 
-    def return_digital(self, loan: Loan) -> dict[str, Any]:
+    def _return_loan_identity(self, loan: Loan) -> tuple[Account, Any, str]:
+        """Require *exact* Paris borrower provenance before mutating anything."""
+        from .core.loan_return_guard import return_key
+        if not loan.id or loan.source_account_id is None:
+            raise AttentionRequired(
+                "Le compte emprunteur de ce prêt est inconnu. Actualisez les emprunts.",
+                code="loan_return_borrower_unproven",
+            )
         account = self._account_for_loan(loan)
-        session = self._session_for_source(loan.source_provider, loan.source_credential)
-        result = session.return_digital(loan, account)
+        expected = str(loan.source_account_id or "primary")
+        actual = str(account.unique_id or "primary")
+        if (expected != actual or account.provider_id != loan.source_provider
+                or account.credential_id != loan.source_credential):
+            raise AttentionRequired(
+                "Le compte emprunteur de ce prêt ne correspond pas à sa provenance.",
+                code="loan_return_borrower_mismatch",
+            )
+        # Do not let a disconnected session or the first available Paris login
+        # stand in for the exact credential that owns this borrow.
+        key = self._session_key(loan.source_provider, loan.source_credential)
+        session = self._sessions.get(key)
+        if session is None or not session.connected:
+            raise AttentionRequired(
+                "La connexion exacte de l'emprunteur est indisponible.",
+                code="loan_return_source_unavailable",
+            )
+        return account, session, return_key(
+            loan.source_provider, loan.source_credential, expected, str(loan.id),
+        )
+
+    def loan_return_state(self, loan: Loan) -> dict[str, Any] | None:
+        """Persistent status for UI; no verification or provider side effect."""
+        from .core.loan_return_guard import return_key, public_return_state
+        if not loan.id or loan.source_account_id is None:
+            return None
+        key = return_key(
+            loan.source_provider, loan.source_credential,
+            str(loan.source_account_id or "primary"), str(loan.id),
+        )
+        row = self.storage.loan_return_state(key)
+        return public_return_state(row) if row is not None else None
+
+    def verify_return_digital(self, loan: Loan) -> dict[str, Any]:
+        """Re-read the exact borrower with NO cache and NO second POST."""
+        from .core.loan_return_guard import public_return_state, return_ref
+        account, session, key = self._return_loan_identity(loan)
+        checkpoint = self.storage.loan_return_state(key)
+        if checkpoint is None:
+            return {"status": "not_requested", "scope": "provider_pnb_only"}
+        if checkpoint.get("status") == "provider_return_confirmed":
+            return public_return_state(checkpoint)
+        operation_id = str(checkpoint.get("operation_id") or "")
+        if checkpoint.get("status") == "request_sent":
+            # A just-dispatched POST may still be in-flight. Avoid racing its
+            # response with a second verification. After a crash/long stall,
+            # however, permit inventory-only recovery without re-sending POST.
+            from datetime import datetime, timezone
+            try:
+                started = datetime.fromisoformat(str(checkpoint["requested_at"]))
+                age = (datetime.now(timezone.utc) - started).total_seconds()
+            except (KeyError, TypeError, ValueError):
+                age = 0
+            if age < 180:
+                return public_return_state(checkpoint)
+        phase = "inventory_checked"
+        verification = "unavailable"
+        status = "verification_unavailable"
+        error_type = None
+        try:
+            loans = session.loans(account)  # ALWAYS direct provider; bypass cached account reads
+            if not isinstance(loans, list):
+                raise ValueError("provider inventory has no complete list")
+            # Paris can recover from an unrelated SYRACUSE failure; a failed
+            # DILICOM leg NEVER proves absence of a digital loan.
+            upstream_errors = getattr(session, "last_loan_errors", None)
+            if loan.source_provider == "paris" and upstream_errors is None:
+                raise ValueError("Paris session lacks inventory-verification capability")
+            if upstream_errors and any(
+                str(e.get("upstream") or "") == "DILICOM" for e in upstream_errors
+                if isinstance(e, dict)
+            ):
+                raise ValueError("digital-loan inventory was incomplete")
+            match = any(
+                candidate.id == loan.id and candidate.provider == loan.provider
+                for candidate in loans
+            )
+            verification = "still_present" if match else "provider_absent"
+            status = "still_active" if match else "provider_return_confirmed"
+        except Exception as exc:
+            error_type = type(exc).__name__
+        row = self.storage.loan_return_transition(
+            key, operation_id, status=status, verification=verification,
+            error_type=error_type,
+        )
+        _TRACE_LOG.info(
+            "TRACE return core phase=%s outcome=%s ref=%s checked_at=%s",
+            phase, verification, return_ref(key),
+            (row or {}).get("checked_at", ""),
+        )
+        return public_return_state(row or checkpoint)
+
+    def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
+        """PNB provider return with an at-most-once POST until verified.
+
+        An HTTP success only means REQUEST ACCEPTED. No Adobe return is made.
+        If a prior request exists, normal repeated clicks never send POST.
+        An explicit retry may POST only after a fresh read proves still active.
+        """
+        import uuid
+        from .core.loan_return_guard import public_return_state, return_ref
+        if loan.source_provider != "paris":
+            # Preserve legacy non-Paris providers; this guard is Paris-only.
+            account = self._account_for_loan(loan)
+            session = self._session_for_source(loan.source_provider, loan.source_credential)
+            return session.return_digital(loan, account)
+        account, session, key = self._return_loan_identity(loan)
+        prior = self.storage.loan_return_state(key)
+        if prior is not None:
+            if not explicit_retry:
+                return public_return_state(prior)
+            verified = self.verify_return_digital(loan)
+            if verified.get("status") != "still_active":
+                return verified
+        operation_id = uuid.uuid4().hex
+        claimed, state = self.storage.loan_return_claim(
+            key, operation_id, reopen=bool(prior and explicit_retry),
+        )
+        if not claimed:
+            return public_return_state(state)
+        _TRACE_LOG.info("TRACE return core phase=request_sent ref=%s", return_ref(key))
+        try:
+            response = session.return_digital(loan, account)
+            if not isinstance(response, dict) or response.get("success") is not True:
+                raise ValueError("Paris did not attest request acceptance")
+        except Exception as exc:
+            # Network failures are indeterminate: POST may already have been
+            # accepted upstream. Never retry automatically on uncertainty.
+            row = self.storage.loan_return_transition(
+                key, operation_id, status="verification_unavailable",
+                verification="unavailable", error_type=type(exc).__name__,
+            )
+            _TRACE_LOG.warning(
+                "TRACE return core phase=request_uncertain ref=%s error_type=%s",
+                return_ref(key), type(exc).__name__,
+            )
+            return public_return_state(row or state)
+        row = self.storage.loan_return_transition(
+            key, operation_id, status="pending_verification",
+            verification="not_checked", accepted=True,
+        )
+        _TRACE_LOG.info(
+            "TRACE return core phase=request_accepted ref=%s provider_inventory_verified=false",
+            return_ref(key),
+        )
+        # Stale cached loans must not override verification after accepted POST.
         self.storage.cache_delete_namespace("account")
-        return result
+        return self.verify_return_digital(loan)
+
+
 
     def pnb_preferences(self) -> dict[str, Any]:
         return self._session_for_account().digital_preferences(self.current_account)

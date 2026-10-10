@@ -90,6 +90,81 @@ class Storage:
             values[item]=value
             db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(key,json.dumps(values)))
 
+    def loan_return_state(self, key: str) -> dict[str, Any] | None:
+        """Read a bounded operation checkpoint; invalid bytes never authorize POST."""
+        raw = self.metadata_get(key)
+        if not isinstance(raw, str) or not raw or len(raw) > 4096:
+            return None
+        try:
+            row = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        return row if isinstance(row, dict) and row.get("schema") == 1 else None
+
+    def loan_return_claim(self, key: str, operation_id: str, *, reopen: bool = False) -> tuple[bool, dict[str, Any]]:
+        """Atomically reserve the POST even across app instances/processes.
+
+        Reopen is allowed only after explicit verification found the same loan
+        still active. A timed-out POST is NOT safe to replay automatically.
+        """
+        import json as _json
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            try:
+                previous = _json.loads(raw[0]) if raw else None
+            except (TypeError, ValueError):
+                previous = {"schema": 1, "status": "verification_unavailable"}
+            if previous is not None and (
+                not reopen or not isinstance(previous, dict)
+                or previous.get("status") != "still_active"
+            ):
+                return False, previous if isinstance(previous, dict) else {}
+            row = {
+                "schema": 1, "status": "request_sent",
+                "operation_id": operation_id, "requested_at": now,
+                "request_accepted": False, "verification": "not_checked",
+                "checked_at": None,
+            }
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, _json.dumps(row, sort_keys=True, separators=(",", ":"))),
+            )
+            return True, row
+
+    def loan_return_transition(self, key: str, operation_id: str, *,
+                               status: str, verification: str,
+                               accepted: bool | None = None,
+                               error_type: str | None = None) -> dict[str, Any] | None:
+        """CAS update: an obsolete worker may not overwrite a newer attempt."""
+        import json as _json
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            if not raw:
+                return None
+            try:
+                row = _json.loads(raw[0])
+            except (TypeError, ValueError):
+                return None
+            if not isinstance(row, dict) or row.get("operation_id") != operation_id:
+                return None
+            row.update(status=status, verification=verification, checked_at=now)
+            if accepted is not None:
+                row["request_accepted"] = bool(accepted)
+            if error_type is not None:
+                row["error_type"] = error_type[:90]
+            db.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (_json.dumps(row, sort_keys=True, separators=(",", ":")), key),
+            )
+            return row
+
     def metadata_set(self, key: str, value: Any) -> None:
         with self._lock, self._connect() as db:
             db.execute(
