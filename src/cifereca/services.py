@@ -4305,17 +4305,17 @@ class LibraryService:
     def _borrower_identity_conflict(
         accounts: Any, *, provider_id: str, account_id: str, identity_id: str
     ) -> bool:
-        """Reject conflicting owners of the same borrower account."""
+        """Require exactly one matching borrower owner before Paris ADEPT."""
         borrower = str(account_id or "").strip()
         if not borrower:
-            return False
+            return True
         owners = {
             str(account.identity_id)
             for account in accounts
             if str(account.provider_id).lower() == str(provider_id).lower()
             and str(account.unique_id or "").strip() == borrower
         }
-        return len(owners) > 1 or bool(owners and identity_id not in owners)
+        return owners != {identity_id}
 
     def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Acquire one active digital loan and fulfill ACSM through Kobo-Adept.
@@ -4528,7 +4528,7 @@ class LibraryService:
                 # A shared account id with competing Cifereca identities is not
                 # sufficient evidence of which Adobe profile activated the loan.
                 account_id = str(loan.source_account_id or "").strip()
-                if self._borrower_identity_conflict(
+                if str(loan.source_provider).lower() == "paris" and self._borrower_identity_conflict(
                     self.accounts, provider_id=loan.source_provider,
                     account_id=account_id, identity_id=identity.identity_id,
                 ):
