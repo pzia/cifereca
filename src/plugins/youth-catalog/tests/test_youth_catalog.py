@@ -1,3 +1,4 @@
+import pytest
 from youth_catalog import (
     YouthCatalogIndex,
     YouthCatalogPlugin,
@@ -895,3 +896,94 @@ def test_isbn13_978_and_979_and_isbn10_are_unchanged():
     assert normalize_isbn("9791234567896") == "9791234567896"
     assert normalize_isbn("0306406152") == "9780306406157"
     assert normalize_isbn("9780000000000") == ""
+
+
+def test_malformed_page_is_invalid_and_preserves_previous_identity_cache():
+    """Malformed transport structure is not an authoritative empty result."""
+    plugin = YouthCatalogPlugin()
+    seed = GoodSource()
+    assert plugin.collect_source("alice", seed, "Atlas").accepted == 1
+    previous = {
+        row["source_id"]: row
+        for row in plugin.source_diagnostics("alice")
+    }["youth.test"]
+    assert previous["cache_count"] == 1
+
+    malformed = (
+        None,
+        "private=https://example.org/session/token",
+        {"unexpected": []},
+        {"items": None},
+        {"items": "private records"},
+        {"items": {"title": "secret"}},
+        {"items": 3},
+        {"items": [], "next_cursor": {"private": "token"}},
+        {"items": [], "fresh_for_seconds": "private"},
+    )
+    for raw in malformed:
+        class MalformedSource(GoodSource):
+            def search(self, query, *, cursor=None, limit=50):
+                self.calls += 1
+                return raw
+
+        source = MalformedSource()
+        report = plugin.collect_source("alice", source, "Atlas")
+        assert (report.accepted, report.rejected) == (0, 1)
+        assert source.calls == 1
+        current = {
+            row["source_id"]: row for row in plugin.source_diagnostics("alice")
+        }["youth.test"]
+        assert current["collection_state"] == "invalid"
+        assert current["collection_stage"] == "parsing"
+        assert current["cache_count"] == 1
+        assert current["last_success_at_utc"] == previous["last_success_at_utc"]
+        assert current["request_count"] is None
+        assert "private" not in repr(current)
+        assert "token" not in repr(current)
+    assert {row["source_id"]: row for row in plugin.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+
+
+def test_structural_invalidity_retains_only_attested_call_count():
+    plugin = YouthCatalogPlugin()
+
+    class BrokenSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            return {"items": "secret",
+                    "collection_request_count": 2,
+                    "next_cursor": "sensitive"}
+
+    src = BrokenSource()
+    assert plugin.collect_source("alice", src, "x").rejected == 1
+    actual = {x["source_id"]: x for x in plugin.source_diagnostics("alice")}["youth.test"]
+    assert actual["collection_state"] == "invalid"
+    assert actual["request_count"] == 2
+    assert actual["received_count"] is None
+    assert actual["requested_limit"] == 50
+    assert actual["cache_count"] == 0
+    assert "sensitive" not in repr(actual)
+
+
+def test_valid_empty_page_and_legacy_iterable_remain_compatible():
+    from youth_catalog import _extract_page, InvalidYouthSourcePage
+
+    assert _extract_page({"items": [], "next_cursor": "", "fresh_for_seconds": "60"}) == ([], "", 60)
+    assert _extract_page({"results": [{"title": "X"}]})[0] == [{"title": "X"}]
+    assert _extract_page([{"title": "X"}])[0] == [{"title": "X"}]
+    for value in ({"items": [], "fresh_for_seconds": True},
+                  {"items": [], "next_cursor": ["2"]},
+                  {"items": [], "fresh_for_seconds": -1}):
+        with pytest.raises(InvalidYouthSourcePage):
+            _extract_page(value)
+
+    plugin = YouthCatalogPlugin()
+
+    class ValidEmpty(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            return {"items": [], "next_cursor": ""}
+
+    assert plugin.collect_source("alice", ValidEmpty(), "none").accepted == 0
+    result = {x["source_id"]: x for x in plugin.source_diagnostics("alice")}["youth.test"]
+    assert result["collection_state"] == "empty_unverified"
+    assert result["received_count"] == 0
+
