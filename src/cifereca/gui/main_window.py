@@ -25,6 +25,7 @@ from ..language import language_label
 from ..diagnostics import Diagnostics
 from ..descriptions import description_text
 from ..epub_metadata import notice_rows
+from ..book_detail_metadata import detail_metadata_rows
 from ..models import Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from ..services import LibraryService
 from .cover_loader import CoverLoader
@@ -150,6 +151,7 @@ def book_detail_presentation(
     rows: Iterable[tuple[str, object]] = (),
     section_rows: Iterable[tuple[str, Iterable[tuple[str, object]]]] = (),
     links: Iterable[DocumentLink] = (),
+    metadata: object = None,
 ) -> UiBookDetailPresentation:
     """Build the neutral book-detail projection used by Core and plugin views."""
     sections_list: list[DetailSection] = []
@@ -170,6 +172,19 @@ def book_detail_presentation(
         )
         if fields:
             sections_list.append(DetailSection(id="primary", title=group_title, fields=fields, order=0))
+    details = detail_metadata_rows(metadata)
+    if details:
+        already_shown = {(field.label, str(field.value))
+                         for section in sections_list for field in section.fields}
+        extra = tuple(
+            DetailField(id=f"detail-{index}", label=label, value=value)
+            for index, (label, value) in enumerate(details)
+            if (label, value) not in already_shown
+        )
+        if extra:
+            sections_list.append(DetailSection(
+                id="metadata-detail", title="Détail", fields=extra, order=1000,
+            ))
     return UiBookDetailPresentation(
         title=str(title or "Sans titre"),
         subtitle=str(subtitle or ""),
@@ -452,6 +467,29 @@ class DetailPanel(Gtk.Box):
 
 
     def _group(self, title: str, rows: list[tuple[str, str]]) -> None:
+        if title == "Détail":
+            # Shared dense, collapsed metadata section. No I/O on expansion.
+            group = Adw.PreferencesGroup()
+            expander = Adw.ExpanderRow()
+            expander.set_title("Détail")
+            expander.set_subtitle(f"{len(rows)} champ(s) bibliographiques")
+            expander.set_expanded(bool(getattr(self, "_detail_expanded", False)))
+
+            def save_expanded(widget, _pspec):
+                self._detail_expanded = bool(widget.get_expanded())
+
+            expander.connect("notify::expanded", save_expanded)
+            for label, value in rows:
+                row = Adw.ActionRow()
+                display_value, full_value = detail_display_value(label, value)
+                row.set_title(label)
+                row.set_subtitle(display_value)
+                row.set_subtitle_lines(0)
+                row.set_tooltip_text(label + " : " + full_value)
+                expander.add_row(row)
+            group.add(expander)
+            self._append_content(group)
+            return
         group = Adw.PreferencesGroup()
         group.set_title(title)
         grid = None
@@ -872,6 +910,7 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
+            metadata=item.metadata,
         ), description=item.description)
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
@@ -957,6 +996,7 @@ class DetailPanel(Gtk.Box):
                 ]),
             ],
             links=document_links(result_row(item)),
+            metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
         direct_download = self.window.service.can_direct_download(item)
         if direct_download:
@@ -3659,6 +3699,7 @@ class MainWindow(Adw.ApplicationWindow):
                         ("État acquisition", sync_label),
                     ]),
                 ],
+                metadata=item.get('metadata'),
             ), description=description)
             actions = []
             open_library = Gtk.Button(label="Voir dans Bibliothèque")
@@ -4885,6 +4926,7 @@ class MainWindow(Adw.ApplicationWindow):
                 ]),
             ],
             links=document_links(item),
+            metadata=item.get('metadata'),
         ), description=description)
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])
