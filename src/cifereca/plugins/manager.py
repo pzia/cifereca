@@ -21,6 +21,14 @@ from .dependency import DependencyIssue, topological_order, validate_dependencie
 from .errors import DependencyError, ManifestError
 from .loader import load_entrypoint
 from .packages import InstalledPackage, PackageInstaller, PackageStore
+
+# Permanently retired providers. Do not reactivate stale user-installed
+# packages even if an older release left them in the local PackageStore.
+# Keep files/cache intact for user-controlled recovery; do not delete data.
+_RETIRED_YOUTH_SOURCE_PACKAGES = frozenset({
+    "org.cifereca.youth-source-usborne",
+    "org.cifereca.youth-source-booktrust",
+})
 from .requirements import check_system_requirements
 from .python_dependencies import PythonDependencyManager, PythonDependencyTransaction
 from .state import PluginStateStore
@@ -122,6 +130,8 @@ class PluginManager:
         self._load_errors = []
         packages: list[InstalledPackage] = []
         for package_id in sorted(self.packages.all_packages()):
+            if package_id in _RETIRED_YOUTH_SOURCE_PACKAGES:
+                continue
             try:
                 packages.append(self.packages.load(package_id))
             except Exception as exc:
@@ -802,6 +812,8 @@ class PluginManager:
     def install(self, archive: Path, *, activate: bool = True, replace: bool = False) -> InstalledPackage:
         manifest = self.installer.inspect(Path(archive))
         package_id = manifest.package.id
+        if package_id in _RETIRED_YOUTH_SOURCE_PACKAGES:
+            raise ValueError("This retired youth provider can no longer be installed")
         version = manifest.package.version
         old_active = self.packages.active_version(package_id)
         final = self.packages.version_root(package_id, version)

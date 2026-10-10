@@ -37,12 +37,10 @@ from cifereca.gui.query_model import QueryState
 import cifereca.gui.main_window as gui_main
 
 
-def install_real_youth(core: CiferecaCore, work: Path, *, with_booktrust: bool = False, with_milan: bool = False) -> None:
+def install_real_youth(core: CiferecaCore, work: Path, *, with_milan: bool = False) -> None:
     packages = [
         ("youth-catalog", ("cifereca-plugin.json", "youth_catalog.py", "youth_page.py")),
     ]
-    if with_booktrust:
-        packages.append(("youth-source-booktrust", ("cifereca-plugin.json", "booktrust_youth.py")))
     if with_milan:
         packages.append(("youth-source-milan", ("cifereca-plugin.json", "milan_youth.py")))
     for name, files in packages:
@@ -54,8 +52,6 @@ def install_real_youth(core: CiferecaCore, work: Path, *, with_booktrust: bool =
         core.plugins.install(archive)
     statuses = {status.descriptor.id: status for status in core.plugins.statuses()}
     plugins = ("catalog.youth", "ui.page.youth")
-    if with_booktrust:
-        plugins += ("youth.source.booktrust",)
     if with_milan:
         plugins += ("youth.source.milan",)
     for plugin_id in plugins:
@@ -73,7 +69,7 @@ def records():
             "age_ranges": ([] if age is None else [{
                 "age_min": age, "age_max": hi, "age_kind": kind,
                 "source_label": f"{age}–{hi} ans" if hi is not None else f"{age}+",
-                "source_id": "booktrust", "confidence": 0.8,
+                "source_id": "fixture-youth", "confidence": 0.8,
             }]),
         }
     return [
@@ -92,7 +88,6 @@ def main() -> int:
     parser.add_argument("--width", required=True, type=int, choices=(1024, 1366))
     parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
     provider = parser.add_mutually_exclusive_group()
-    provider.add_argument("--booktrust", action="store_true", help="Use installed BookTrust with offline HTTP fixtures")
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
     provider.add_argument("--editions", action="store_true", help="Offline same-title editions and conflicting provenance on real GTK")
     args = parser.parse_args()
@@ -105,7 +100,6 @@ def main() -> int:
         "scenario": "youth-gtk", "git_sha": sha,
         "backend": "GTK4/X11/Xvfb", "screen_width": args.width,
         "real_package": "src/plugins/youth-catalog",
-        "booktrust_source_installed": args.booktrust,
         "milan_source_installed": args.milan,
         "conflicting_editions": args.editions,
         "steps": [], "status": "RUNNING",
@@ -117,15 +111,13 @@ def main() -> int:
     core = CiferecaCore.open(
         no_plugins=False,
         force_plugins=(
-            ("catalog.youth", "ui.page.youth", "youth.source.booktrust")
-            if args.booktrust else
             ("catalog.youth", "ui.page.youth", "youth.source.milan")
             if args.milan else ("catalog.youth", "ui.page.youth")
         ),
         activate_plugins=False,
     )
     work = tempfile.TemporaryDirectory(prefix="youth-gtk-package-")
-    install_real_youth(core, Path(work.name), with_booktrust=args.booktrust, with_milan=args.milan)
+    install_real_youth(core, Path(work.name), with_milan=args.milan)
     catalog = core.plugins.service("catalog.youth")
     page = core.plugins.service("ui.page.youth")
     assert catalog is not None and page is not None
@@ -205,30 +197,6 @@ def main() -> int:
             trust_env=False, follow_redirects=False,
         )
 
-    if args.booktrust:
-        import httpx
-        from youth_sources.pseudo_youth_sources_service import booktrust_listing
-
-        booktrust = core.plugins.service("youth.source.booktrust")
-        assert booktrust is not None, "Installed BookTrust source not available"
-        # Only transport responses are simulated; the installed provider
-        # still validates canonical BookTrust URLs and parses real HTML.
-        def respond(request):
-            assert request.url.host == "www.booktrust.org.uk", request.url
-            requests.append(str(request.url))
-            if fault["unavailable"]:
-                return httpx.Response(503, text="Simulated BookTrust outage", request=request)
-            return httpx.Response(
-                200, content=booktrust_listing(),
-                headers={"content-type": "text/html; charset=utf-8"},
-                request=request,
-            )
-
-        booktrust.client.close()
-        booktrust.client = httpx.Client(
-            transport=httpx.MockTransport(respond), trust_env=False, follow_redirects=False
-        )
-
     def write_report():
         result["duration_seconds"] = round(monotonic() - start, 2)
         (out / "screen.json").write_text(
@@ -306,9 +274,6 @@ def main() -> int:
         if args.library_search:
             library_search_start_ui()
             return
-        if args.booktrust:
-            source_start_ui()
-            return
         if args.milan:
             milan_start_ui()
             return
@@ -319,7 +284,7 @@ def main() -> int:
         assert_rows()
         capture("00-empty-cache")
         camille, alex = records()
-        assert catalog.ingest("camille", "booktrust", camille).accepted == 6
+        assert catalog.ingest("camille", "fixture-youth", camille).accepted == 6
         milan = dict(
             camille[1],
             record_id="milan-forest",
@@ -331,9 +296,9 @@ def main() -> int:
             }],
         )
         assert catalog.ingest("camille", "milan", [milan]).accepted == 1
-        assert catalog.ingest("alex", "booktrust", alex).accepted == 1
+        assert catalog.ingest("alex", "fixture-youth", alex).accepted == 1
         merged = catalog.search_cached("camille", "Forest")
-        assert len(merged) == 1 and set(merged[0].provenance) == {"booktrust", "milan"}
+        assert len(merged) == 1 and set(merged[0].provenance) == {"fixture-youth", "milan"}
         page.view.render_cached()
         later(200, cached_camille)
 
@@ -513,160 +478,6 @@ def main() -> int:
         assert window._search_mode == "local" and not online_attempts
         result["library_search_activations"] = ["clic XTEST", "Entrée XTEST", "Espace XTEST"]
         capture("16-library-search-space")
-        result["status"] = "PASS"
-        write_report()
-        rc[0] = 0
-        app.quit()
-
-
-    def source_start_ui():
-        assert len(page.view.sources) == 1, "Installed BookTrust source missing from real GTK"
-        assert page.view.sources[0].plugin_id == "youth.source.booktrust"
-        assert page.view.source.get_model().get_n_items() == 2
-        assert_rows()
-        assert not requests, "Opening page triggered unsolicited HTTP"
-        capture("00-source-installed-cache-empty")
-        page.view.source.set_selected(1)
-        later(180, source_collect)
-
-    def source_collect():
-        assert page.view.selected_source_plugin() == "youth.source.booktrust"
-        assert not requests, "Selecting source triggered unsolicited HTTP"
-        assert_rows()
-        # #910: exercise the true GTK Entry and installed provider under XTEST.
-        # Both synthetic BookTrust titles contain "The"; the live endpoint is
-        # replaced by the existing HTTP MockTransport for this scenario.
-        device.click_widget(page.view.query)
-        device.type_text("The")
-        later(220, source_keyboard_local)
-
-    def source_keyboard_local():
-        assert page.view.selected_source_plugin() == "youth.source.booktrust"
-        assert page.view.query.get_text() == "The", "Physical keyboard text did not reach GTK"
-        assert not requests, "Typing in Youth must remain cache-only"
-        audit = result["keyboard_selected_source"] = {
-            "source_plugin": page.view.selected_source_plugin(),
-            "query": page.view.query.get_text(),
-            "identity": page.view.identity_id(),
-            "requests_before": len(requests),
-            "gtk_activate_signals": 0,
-        }
-        page.view.query.connect(
-            "activate",
-            lambda _entry: audit.__setitem__(
-                "gtk_activate_signals", audit["gtk_activate_signals"] + 1
-            ),
-        )
-        keys("Return")
-        later(180, source_keyboard_after_return)
-
-    def source_keyboard_after_return():
-        audit = result["keyboard_selected_source"]
-        assert audit["gtk_activate_signals"] == 1, audit
-        assert not requests, "First physical Return must not fetch BookTrust"
-        assert_rows()
-        audit["first_status"] = page.view.status.get_text()
-        assert "Recherche en cache" in audit["first_status"]
-        assert "seconde fois sur Entrée" in audit["first_status"]
-        capture("00b-booktrust-keyboard-local")
-        keys("KP_Enter")
-        later(250, source_keyboard_after_keypad)
-
-    def source_keyboard_after_keypad():
-        audit = result["keyboard_selected_source"]
-        assert audit["gtk_activate_signals"] == 2, audit
-        assert page.view.selected_source_plugin() == audit["source_plugin"]
-        assert page.view.identity_id() == audit["identity"]
-        assert page.view.query.get_text() == audit["query"]
-        assert len(requests) == 1, f"Second physical keypad Enter must issue exactly one mock HTTP request: {requests!r}"
-        audit["requests_after_second"] = len(requests)
-        capture("00c-booktrust-keyboard-remote")
-        later(140, source_success)
-
-    def source_success():
-        if len(page.view.rows) != 2 and monotonic() - start < 16:
-            later(130, source_success)
-            return
-        assert len(requests) == 1, f"Expected one explicit request: {requests!r}"
-        assert requests[0].startswith("https://www.booktrust.org.uk/book-recommendations/bookfinder/")
-        assert {book.record_id for book in page.view.rows.values()} == {
-            "atlas-des-lucioles", "jardin-des-mots"
-        }, f"Unexpected BookTrust results: {page.view.rows!r}"
-        status = page.view.status.get_text()
-        assert "2 notice(s) reçue(s) de BookTrust Bookfinder" in status, status
-        assert len(catalog.search_cached("camille")) == 2
-        capture("01-source-success-cache")
-        result["booktrust_requests_before_outage"] = list(requests)
-        # A third GTK activation for the same identity/filter/source must
-        # never silently repeat a previously requested remote collection.
-        keys("Return")
-        later(180, source_keyboard_no_duplicate)
-
-    def source_keyboard_no_duplicate():
-        audit = result["keyboard_selected_source"]
-        assert audit["gtk_activate_signals"] == 3, audit
-        assert len(requests) == 1, f"Third Enter caused a duplicate source request: {requests!r}"
-        audit["requests_after_third"] = len(requests)
-        audit["third_status"] = page.view.status.get_text()
-        assert "déjà demandée" in audit["third_status"], audit
-        audit["criterion_910_selected_source_satisfied"] = True
-        capture("01b-booktrust-keyboard-no-duplicate")
-        # Restore unfiltered listing for the existing outage/recovery recipe.
-        page.view.query.set_text("")
-        fault["unavailable"] = True
-        device.click_widget(collect_button())
-        later(130, source_failure)
-
-    def source_failure():
-        status = page.view.status.get_text()
-        if "Échec de la source" not in status and monotonic() - start < 23:
-            later(130, source_failure)
-            return
-        assert len(requests) == 2, f"Outage requires second explicit click: {requests!r}"
-        assert "Échec de la source. Le cache précédent est conservé." in status, status
-        assert {book.record_id for book in page.view.rows.values()} == {
-            "atlas-des-lucioles", "jardin-des-mots"
-        }, "Outage destroyed the visible cache"
-        assert len(catalog.search_cached("camille")) == 2
-        result["booktrust_requests_after_outage"] = list(requests)
-        result["outage_message"] = status
-        capture("02-source-unavailable-cache-retained")
-        page.view.age.set_selected(18)  # 17 ans, no matching BookTrust cache
-        later(180, source_local_empty)
-
-    def source_local_empty():
-        assert_rows()
-        assert len(requests) == 2, "Local age filter unexpectedly triggered HTTP"
-        assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
-        capture("03-local-empty-distinct-from-outage")
-        # The same source must recover through a new deliberate click.
-        page.view.age.set_selected(0)
-        later(180, booktrust_retry_after_outage)
-
-    def booktrust_retry_after_outage():
-        assert_rows("atlas-des-lucioles", "jardin-des-mots")
-        assert len(requests) == 2, "Clearing local filter must not fetch remote"
-        assert "Échec de la source" in page.view.status.get_text()
-        fault["unavailable"] = False
-        device.click_widget(collect_button())
-        later(140, booktrust_recovered)
-
-    def booktrust_recovered():
-        if (
-            len(requests) != 3
-            or "2 notice(s) reçue(s) de BookTrust Bookfinder" not in page.view.status.get_text()
-        ) and monotonic() - start < 37:
-            later(140, booktrust_recovered)
-            return
-        assert len(requests) == 3, f"Recovery requires exactly one click: {requests!r}"
-        assert requests[0] == requests[1] == requests[2], "Retry changed canonical BookTrust URL"
-        assert_rows("atlas-des-lucioles", "jardin-des-mots")
-        assert len(catalog.search_cached("camille")) == 2
-        status = page.view.status.get_text()
-        assert "Échec de la source" not in status, status
-        result["booktrust_requests_after_recovery"] = list(requests)
-        result["booktrust_recovery_feedback"] = status
-        capture("04-source-recovered-after-503")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
@@ -870,10 +681,10 @@ def main() -> int:
         bt = dict(
             shared, record_id="mirror-bt", source_item_id="bt-mirror",
             isbn=same_isbn,
-            notice_url="https://www.booktrust.org.uk/book-recommendations/bookfinder/mirror-a/",
+            notice_url="https://www.fixture-youth.org.uk/book-recommendations/bookfinder/mirror-a/",
             age_ranges=[{
                 "age_min": 5, "age_max": 7, "age_kind": "interest",
-                "source_id": "booktrust", "source_label": "Interest age: 5 to 7",
+                "source_id": "fixture-youth", "source_label": "Interest age: 5 to 7",
                 "confidence": 0.85,
             }],
         )
@@ -897,14 +708,14 @@ def main() -> int:
                 "confidence": 1.0,
             }],
         )
-        assert catalog.ingest("camille", "booktrust", [bt]).accepted == 1
+        assert catalog.ingest("camille", "fixture-youth", [bt]).accepted == 1
         assert catalog.ingest("camille", "milan", [milan_same, milan_other]).accepted == 2
         merged = catalog.search_cached("camille", "Livre miroir")
         assert len(merged) == 2, f"Distinct ISBNs were incorrectly collapsed: {merged!r}"
         by_isbn = {book.identifiers.get("isbn"): book for book in merged}
         assert set(by_isbn) == {same_isbn, other_isbn}
         assert len(by_isbn[same_isbn].age_ranges) == 2
-        assert set(by_isbn[same_isbn].provenance) == {"booktrust", "milan"}
+        assert set(by_isbn[same_isbn].provenance) == {"fixture-youth", "milan"}
         assert tuple(by_isbn[other_isbn].provenance) == ("milan",)
         assert catalog.search_cached("alex", "Livre miroir") == ()
         page.view.query.set_text("Livre miroir")
@@ -961,14 +772,14 @@ def main() -> int:
     def editions_conflict_detail():
         book = page.view.selected_book
         assert book and book.record_id == "mirror-bt"
-        assert set(book.provenance) == {"booktrust", "milan"}
+        assert set(book.provenance) == {"fixture-youth", "milan"}
         assert [(row.age_min, row.age_max) for row in book.age_ranges] == [(5, 7), (12, None)]
         shown = detail_rows()
         assert ("ISBN", "9780306406157") in shown, f"ISBN missing from real first Gtk detail: {shown!r}"
         assert ("ISBN", "9780140328721") not in shown, f"Incorrect second ISBN leaked: {shown!r}"
-        assert any("source booktrust" in sub and "Interest age: 5 to 7" in sub for _, sub in shown), shown
+        assert any("source fixture-youth" in sub and "Interest age: 5 to 7" in sub for _, sub in shown), shown
         assert any("source milan" in sub and "À partir de 12 ans" in sub for _, sub in shown), shown
-        assert any(title == "Sources" and "booktrust" in sub and "milan" in sub for title, sub in shown), shown
+        assert any(title == "Sources" and "fixture-youth" in sub and "milan" in sub for title, sub in shown), shown
         result["same_isbn_detail"] = shown
         capture("01-conflicting-age-sources-preserved")
         later(140, editions_first_isbn_in_view)
@@ -994,7 +805,7 @@ def main() -> int:
         assert ("ISBN", "9780140328721") in shown, f"ISBN missing from second Gtk detail: {shown!r}"
         assert ("ISBN", "9780306406157") not in shown, f"First ISBN leaked to second edition: {shown!r}"
         assert any("source milan" in sub and "À partir de 8 ans" in sub for _, sub in shown), shown
-        assert not any("source booktrust" in sub for _, sub in shown), shown
+        assert not any("source fixture-youth" in sub for _, sub in shown), shown
         result["different_isbn_detail"] = shown
         capture("02-second-edition-separated")
         later(140, editions_second_isbn_in_view)
@@ -1008,7 +819,7 @@ def main() -> int:
     def editions_second_isbn_scrolled():
         assert ("ISBN", "9780140328721") in detail_rows()
         capture("02b-second-isbn-visible-after-scroll")
-        page.view.age.set_selected(7)  # âge 6: seulement BookTrust 5-7
+        page.view.age.set_selected(7)  # âge 6: seulement source fictive 5-7
         later(180, editions_age_six)
 
     def editions_age_six():
@@ -1170,18 +981,18 @@ def main() -> int:
         assert page.view.selected_book.record_id == "interest-eight"
         # The selected book must preserve the real source age label.
         assert page.view.selected_book.age_ranges[0].source_label == "8–12 ans"
-        assert set(page.view.selected_book.provenance) == {"booktrust", "milan"}
+        assert set(page.view.selected_book.provenance) == {"fixture-youth", "milan"}
         shown = detail_rows()
         assert any(
-            "source booktrust" in subtitle and "8–12 ans" in subtitle
+            "source fixture-youth" in subtitle and "8–12 ans" in subtitle
             for _, subtitle in shown
-        ), f"BookTrust age not rendered in GTK detail: {shown!r}"
+        ), f"source fictive age not rendered in GTK detail: {shown!r}"
         assert any(
             "source milan" in subtitle and "8–12 ans (Milan)" in subtitle
             for _, subtitle in shown
         ), f"Milan age not rendered in GTK detail: {shown!r}"
         assert any(
-            title == "Sources" and "booktrust" in subtitle and "milan" in subtitle
+            title == "Sources" and "fixture-youth" in subtitle and "milan" in subtitle
             for title, subtitle in shown
         ), f"Multi-source provenance not rendered in GTK detail: {shown!r}"
         result["detail_provenance"] = shown
@@ -1235,7 +1046,7 @@ def main() -> int:
         ), f"Unknown age not described in GTK detail: {shown!r}"
         # #891 fallback: if there is no valid ISBN, identify the source
         # unambiguously without pretending a source-local key is an edition.
-        assert ("Référence source", "booktrust:unknown") in shown, shown
+        assert ("Référence source", "fixture-youth:unknown") in shown, shown
         assert not any(title == "ISBN" for title, _ in shown), shown
         capture("08-unknown-age-detail")
         later(180, open_installed_plugin_manager)
@@ -1333,7 +1144,7 @@ def main() -> int:
         if rc[0]:
             fail("GTK Youth probe timed out (30s)")
         return False
-    GLib.timeout_add_seconds(55 if args.milan else 45 if args.booktrust else 30, timed_out)
+    GLib.timeout_add_seconds(55 if args.milan else 30, timed_out)
     app.run([sys.argv[0]])
     if not (out / "screen.json").exists():
         result.update(status="FAIL", error="GTK closed before probe completed")

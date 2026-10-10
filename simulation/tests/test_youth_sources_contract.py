@@ -15,14 +15,12 @@ from urllib.request import Request, urlopen
 
 SIM = Path(__file__).resolve().parents[1]
 REPO = SIM.parent
-for p in (SIM, REPO / "src/plugins/youth-source-booktrust",
-          REPO / "src/plugins/youth-bibliography-openlibrary"):
+for p in (SIM, REPO / "src/plugins/youth-bibliography-openlibrary"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
 import httpx
 from youth_sources.pseudo_youth_sources_service import Handler, YouthSourcesApp
-from booktrust_youth import BookTrustSource, BOOKFINDER
 from openlibrary_youth import OpenLibraryBibliography
 import datasetctl
 
@@ -52,9 +50,7 @@ class LoopbackServer:
         def adapter(request):
             self.received.append(str(request.url))
             host = request.url.host
-            if host in ("booktrust.org.uk", "www.booktrust.org.uk"):
-                prefix = "/booktrust"
-            elif host == "openlibrary.org":
+            if host == "openlibrary.org":
                 prefix = "/openlibrary"
             else:
                 raise AssertionError(f"Unapproved external host: {host}")
@@ -74,12 +70,11 @@ class YouthSourcesContractTests(unittest.TestCase):
         self.assertEqual(catalog["youth_sources"]["plugins"], [])
         self.assertEqual(
             set(catalog["youth_sources"]["fixture_packages"]),
-            {"youth-source-booktrust", "youth-bibliography-openlibrary"})
+            {"youth-bibliography-openlibrary"})
         for profile_name in ("ux-small", "ux-all", "ux-errors"):
             _, profile = datasetctl.load_profile(profile_name)
             self.assertIn("youth_sources", datasetctl.enabled_service_configs(profile))
             forced = datasetctl.derived_plugins(profile, catalog)
-            self.assertNotIn("youth.source.booktrust", forced)
 
     def test_http_health_and_explicit_empty_404(self):
         with LoopbackServer() as server:
@@ -87,40 +82,8 @@ class YouthSourcesContractTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["books"], 3)
             with self.assertRaises(HTTPError) as raised:
-                server.get("/booktrust/book-recommendations/bookfinder/no-such-book/")
+                server.get("/openlibrary/works/no-such-book.json")
             self.assertEqual(raised.exception.code, 404)
-
-    def test_real_booktrust_search_pagination_age_filters_detail_and_error(self):
-        with LoopbackServer() as server, server.injected_httpx() as client:
-            plugin = BookTrustSource(client=client)
-            selected = plugin.browse(age=10, themes=["Adventure"], cursor="1")
-            self.assertEqual([i["title"] for i in selected["items"]], ["The Firefly Atlas"])
-            self.assertEqual(selected["next_cursor"], "", "Une unique fiche filtrée ne doit pas inventer une seconde page")
-            self.assertIn("ageGroups=9+to+11+years", server.received[0])
-            self.assertIn("bookfinderCategories%5B%5D=Adventure", server.received[0])
-            page = plugin.browse(cursor="1")
-            self.assertEqual([i["title"] for i in page["items"]],
-                             ["The Firefly Atlas", "The Garden of Words"])
-            self.assertEqual(page["next_cursor"], "2")
-            two = plugin.browse(cursor=page["next_cursor"])
-            self.assertEqual([i["title"] for i in two["items"]], ["The Last Shore"])
-            self.assertEqual(two["next_cursor"], "", "La dernière page ne doit annoncer aucune suite")
-            # An empty cursor means "first page" for browse(); page 3
-            # is requested explicitly to exercise the terminal empty page.
-            last = plugin.browse(cursor="3")
-            self.assertEqual(last["items"], [])
-            self.assertEqual(last["next_cursor"], "")
-            record = plugin.detail(BOOKFINDER + "atlas-des-lucioles/")
-            self.assertEqual(record["interest_age"], "8 to 10")
-            self.assertEqual(record["reading_age"], "9 to 11")
-            self.assertEqual(record["metadata"]["age_evidence"], "booktrust.detail.explicit")
-            self.assertEqual([i["title"] for i in plugin.search("garden")["items"]], ["The Garden of Words"])
-            with self.assertRaises(ValueError):
-                plugin.detail("https://example.org/elsewhere")
-            # Passing explicit fault simulates the site's HTTP error; do not
-            # change the real plugin's domain or allowlist to test it.
-            with self.assertRaises(RuntimeError):
-                plugin._get_text(BOOKFINDER + "bookfinder-recommendations/?fault=unavailable")
 
     def test_real_openlibrary_isbn_olid_pagination_cache_rate_limits_and_ages(self):
         with LoopbackServer() as server, server.injected_httpx() as client:

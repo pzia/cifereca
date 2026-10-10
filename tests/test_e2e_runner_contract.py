@@ -113,29 +113,6 @@ def test_search_filter_p0_has_two_identities_and_offline_catalogue():
     ).read_text(encoding="utf-8")
 
 
-def test_youth_booktrust_replay_uses_real_installed_provider_and_offline_http():
-    runner = _module()
-    names = [name for name, _ in runner.select(None, "catalog.youth")]
-    assert names == [
-        "youth-1024", "youth-1366", "youth-booktrust-1024", "youth-booktrust-1366",
-        "youth-milan-1024", "youth-milan-1366",
-        "youth-editions-1024", "youth-editions-1366",
-        "youth-library-search-1024", "youth-library-search-1366",
-    ]
-    for name in names[2:4]:
-        scenario = runner.SCENARIOS[name]
-        assert scenario["runner"] == "gtk-youth"
-        assert scenario["fixture"] == "search-filters"
-        assert scenario["booktrust"] is True
-        assert scenario["width"] in (1024, 1366)
-    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
-    assert '"youth.source.booktrust"' in source
-    assert "httpx.MockTransport(respond)" in source
-    assert 'device.click_widget(collect_button())' in source
-    assert "booktrust_requests_after_outage" in source
-    assert "03-local-empty-distinct-from-outage" in source
-
-
 def test_youth_milan_replay_uses_installed_source_and_safe_notice_action():
     runner = _module()
     for name in ("youth-milan-1024", "youth-milan-1366"):
@@ -161,7 +138,7 @@ def test_youth_conflicting_editions_run_through_existing_real_gtk_runner():
         assert scenario["fixture"] == "search-filters"
         assert scenario["editions"] is True
         assert scenario["width"] in (1024, 1366)
-        assert not scenario.get("booktrust") and not scenario.get("milan")
+        assert not scenario.get("milan")
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
     assert 'same_isbn = "9780306406157"' in source
     assert 'other_isbn = "9780140328721"' in source
@@ -176,15 +153,11 @@ def test_youth_conflicting_editions_run_through_existing_real_gtk_runner():
     assert 'cell.meta_label.get_text().startswith(f"ISBN {isbn}")' in source
     assert '("ISBN", "9780306406157") in shown' in source
     assert '("ISBN", "9780140328721") in shown' in source
-    assert '("Référence source", "booktrust:unknown") in shown' in source
+    assert '("Référence source", "fixture-youth:unknown") in shown' in source
 
 
 def test_youth_active_sources_retry_only_after_explicit_gtk_click():
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
-    assert "def booktrust_retry_after_outage():" in source
-    assert "def booktrust_recovered():" in source
-    assert '"04-source-recovered-after-503"' in source
-    assert 'assert requests[0] == requests[1] == requests[2]' in source
     assert "def milan_retry_after_outage():" in source
     assert "def milan_recovered():" in source
     assert '"06-milan-recovered-first-page"' in source
@@ -232,22 +205,6 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
     assert 'assert audit["keypad_visible_feedback"]' in source
     assert '"05b-youth-return-gtk-observation"' in source
     assert '"05c-youth-keypad-enter-gtk-observation"' in source
-
-
-def test_youth_selected_source_enter_probe_requires_real_gtk_and_single_mock_request():
-    source = (Path(__file__).resolve().parents[1] / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
-    assert 'device.click_widget(page.view.query)' in source
-    assert 'device.type_text("The")' in source
-    assert 'keys("Return")' in source
-    assert 'keys("KP_Enter")' in source
-    assert 'page.view.selected_source_plugin() == "youth.source.booktrust"' in source
-    assert 'assert not requests, "First physical Return must not fetch BookTrust"' in source
-    assert 'assert len(requests) == 1, f"Second physical keypad Enter' in source
-    assert 'assert len(requests) == 1, f"Third Enter caused a duplicate' in source
-    assert 'audit["criterion_910_selected_source_satisfied"] = True' in source
-    assert '"00b-booktrust-keyboard-local"' in source
-    assert '"00c-booktrust-keyboard-remote"' in source
-    assert '"01b-booktrust-keyboard-no-duplicate"' in source
 
 
 def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():

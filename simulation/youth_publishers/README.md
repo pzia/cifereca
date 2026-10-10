@@ -1,4 +1,4 @@
-# Simulateur éditeurs jeunesse — Usborne et l'école des loisirs
+# Simulateur éditeurs jeunesse — l'école des loisirs
 
 Serveur HTTP de données **entièrement fictives**, lié à `datasetctl` et
 disponible uniquement sur l'interface loopback (port 8099 par défaut).
@@ -6,7 +6,6 @@ disponible uniquement sur l'interface loopback (port 8099 par défaut).
 ```bash
 python3 simulation/datasetctl.py up ux-small
 curl 'http://127.0.0.1:8099/health'
-curl 'http://127.0.0.1:8099/publishers/usborne/us/books/browse-by-age/3-5-years'
 curl 'http://127.0.0.1:8099/publishers/ecole/recherche-avancee?types=livre&page=1'
 python3 simulation/datasetctl.py down ux-small
 ```
@@ -15,9 +14,6 @@ Contrats testés contre les **vrais adaptateurs**, par injection explicite
 d'un `httpx.MockTransport` sans modification des URLs HTTPS et
 des restrictions de domaines des plugins :
 
-- **Usborne** : doublons liés à un badge, âge `3+`, `10+` et `18+ months`,
-  ISBN valide, pagination explicite `?p=2`, page finale vide, 503,
-  MIME inattendu et réponse trop volumineuse.
 - **L'école des loisirs** : recherche `types=livre`, âge `3 à 6 ans`,
   `13 ans et +`, `indéterminé`, auteurs, ISBN, lien de pagination,
   résultat vide, 503, MIME inattendu et réponse trop volumineuse.
@@ -30,11 +26,6 @@ et #774.
 
 ## Compléments nourrissons, recherche et erreurs (#800)
 
-La seconde page Usborne contient aussi `Infant Book`, étiqueté
-`Age: 6+ months` ; la première conserve `Age: 18+ months`. Ces libellés
-permettent de recetter la projection conservatrice du vrai adaptateur
-(1 et 2 ans, avec les mois d'origine conservés dans les métadonnées).
-
 L'école des loisirs propose `Tout petit` avec l'âge explicite `0 à 3 ans`
 en seconde page. Le filtre `search_api_views_fulltext` s'applique au titre,
 sans tenir compte de la casse, **avant pagination** (deux résultats par
@@ -43,7 +34,7 @@ sans correspondance retourne une liste vide sans lien suivant. Les filtres
 sont indépendants et ne modifient pas le catalogue. Ce contrat synthétique
 ne prétend pas reproduire le moteur de pertinence du site réel.
 
-Les deux endpoints renvoient 400 pour une page non numérique ou hors
+L'endpoint renvoie 400 pour une page non numérique ou hors
 1–100, au lieu de convertir silencieusement les bornes. `fault=malformed`
 renvoie un HTML tronqué déterministe, en complément des erreurs 503,
 MIME et taille existantes. Aucun de ces tests n'atteste un parcours GTK.

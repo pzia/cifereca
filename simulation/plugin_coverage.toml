@@ -82,10 +82,6 @@ gap = "JSON exposé en HTTP local mais pas consommé par la page Jeunesse ; filt
 data = ["specialized-seed"]
 gap = "Scénarios forts/ambiguës/identités en cache uniquement ; pas de vrais caches GTK ni latences"
 
-[package.youth-source-booktrust]
-data = []
-gap = "Pages HTML et pagination simulées en HTTP local ; écran GTK non recetté"
-
 [package.youth-source-discovery]
 data = ["specialized-seed"]
 gap = "Fixtures métarecherche et dossiers qualification, sans réseau réel ni activation automatique"
@@ -93,10 +89,6 @@ gap = "Fixtures métarecherche et dossiers qualification, sans réseau réel ni 
 [package.youth-source-ecole-loisirs]
 data = []
 gap = "Fixture HTTP avancée testée avec vrai parseur ; aucun parcours GTK complet"
-
-[package.youth-source-usborne]
-data = []
-gap = "Fixture HTML Browse by Age testée avec vrai parseur ; aucun parcours GTK complet"
 
 [package.youth-source-milan]
 data = []

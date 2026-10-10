@@ -27,28 +27,28 @@ from youth_page import (
 def youth_book(**changes):
     values = {
         "record_id": "42",
-        "source_id": "booktrust",
+        "source_id": "ecole-loisirs",
         "title": "Un livre",
         "authors": ("Autrice",),
-        "identifiers": {"isbn": "9780306406157", "provider": "booktrust", "source_item_id": "42"},
+        "identifiers": {"isbn": "9780306406157", "provider": "ecole-loisirs", "source_item_id": "42"},
         "notice_url": "https://example.org/book/42",
         "friendly_url": "https://example.org/book/42",
-        "age_ranges": (YouthAgeRange(8, 10, "interest", "Interest age 8-10", "booktrust", 0.95, ("booktrust",)),),
+        "age_ranges": (YouthAgeRange(8, 10, "interest", "Interest age 8-10", "ecole-loisirs", 0.95, ("ecole-loisirs",)),),
         "language": "fr",
         "formats": ("epub",),
         "book_type": "fiction",
         "themes": ("aventure",),
-        "provenance": ("booktrust",),
+        "provenance": ("ecole-loisirs",),
     }
     values.update(changes)
     return YouthBook(**values)
 
 
 def test_age_text_and_detail_keep_kind_source_label_and_confidence():
-    row = YouthAgeRange(8, 10, "interest", "Interest age 8-10", "booktrust", 0.95, ("booktrust",))
+    row = YouthAgeRange(8, 10, "interest", "Interest age 8-10", "ecole-loisirs", 0.95, ("ecole-loisirs",))
     assert age_text(row) == "Âge d’intérêt · 8–10 ans"
     detail = age_detail(row)
-    assert "source booktrust" in detail
+    assert "source ecole-loisirs" in detail
     assert "Interest age 8-10" in detail
     assert "95 %" in detail
 
@@ -68,7 +68,7 @@ def test_list_and_detail_expose_age_and_public_notice():
     assert detail.title == "Un livre"
     assert detail.links[0].url == "https://example.org/book/42"
     assert detail.sections[0].title == "Âges attestés"
-    assert "booktrust" in detail.sections[0].fields[0].value
+    assert "ecole-loisirs" in detail.sections[0].fields[0].value
 
 
 def test_badges_fit_compact_age_chips_without_hiding_kind():
@@ -90,14 +90,14 @@ def test_badges_fit_compact_age_chips_without_hiding_kind():
 
 def test_compact_list_badge_keeps_full_source_age_and_provenance_in_detail():
     book = youth_book(age_ranges=(
-        YouthAgeRange(10, 12, "reading", "Reading age 10-12", "booktrust", 0.9, ("booktrust",)),
+        YouthAgeRange(10, 12, "reading", "Reading age 10-12", "ecole-loisirs", 0.9, ("ecole-loisirs",)),
     ))
     row = list_entry(book)
     assert row.badge == "Lecture 10–12 ans"
     assert "Âge de lecture · 10–12 ans" in row.meta
     field = detail_presentation(book).sections[0].fields[0].value
     assert "Reading age 10-12" in field
-    assert "source booktrust" in field
+    assert "source ecole-loisirs" in field
     assert "confiance 90 %" in field
     assert list_entry(youth_book(age_ranges=())).badge == "Âge inconnu"
 
@@ -108,10 +108,10 @@ def test_homonymous_editions_display_distinct_verified_isbns_in_list_and_detail(
         **same_title,
         identifiers={"isbn": "0-306-40615-2", "source_item_id": "one"},
         age_ranges=(
-            YouthAgeRange(5, 7, "interest", "5–7 ans", "booktrust"),
+            YouthAgeRange(5, 7, "interest", "5–7 ans", "ecole-loisirs"),
             YouthAgeRange(12, None, "publisher", "À partir de 12 ans", "milan"),
         ),
-        provenance=("booktrust", "milan"),
+        provenance=("ecole-loisirs", "milan"),
     )
     second = youth_book(
         **same_title,
@@ -135,7 +135,7 @@ def test_homonymous_editions_display_distinct_verified_isbns_in_list_and_detail(
     ]
     assert fields[0]["isbn"] == "9780306406157"
     assert fields[1]["isbn"] == "9780140328721"
-    assert fields[0]["sources"] == "booktrust, milan"
+    assert fields[0]["sources"] == "ecole-loisirs, milan"
     assert fields[1]["sources"] == "milan"
     assert len(details[0].sections[0].fields) == 2  # conflicting age attestations preserved
     assert len(details[1].sections[0].fields) == 1
@@ -144,12 +144,12 @@ def test_homonymous_editions_display_distinct_verified_isbns_in_list_and_detail(
 def test_missing_or_invalid_isbn_uses_labeled_source_reference_without_inventing_edition():
     missing = youth_book(
         record_id="source-42", identifiers={"source_item_id": "public-42"},
-        source_id="booktrust",
+        source_id="ecole-loisirs",
     )
     meta = list_entry(missing).meta
-    assert meta.startswith("Référence source booktrust:public-42 ·")
+    assert meta.startswith("Référence source ecole-loisirs:public-42 ·")
     fields = {f.id: f.value for section in detail_presentation(missing).sections for f in section.fields}
-    assert fields["source-reference"] == "booktrust:public-42"
+    assert fields["source-reference"] == "ecole-loisirs:public-42"
     assert "isbn" not in fields
 
     invalid = youth_book(
@@ -341,7 +341,7 @@ def test_bibliographic_metadata_is_visible_without_changing_age_source():
     assert fields["publishers"] == "Open Publisher"
     assert fields["published-year"] == "1999"
     assert fields["bibliography-sources"] == "openlibrary"
-    assert fields["sources"] == "booktrust"
+    assert fields["sources"] == "ecole-loisirs"
 
 
 def test_stale_bibliography_completion_is_dropped_after_selection_change():
@@ -353,7 +353,7 @@ def test_stale_bibliography_completion_is_dropped_after_selection_change():
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
     view.selected_book = youth_book(record_id="one")
-    view.run_bibliography(lambda control: ("ok",), completed.append, ("alice", "booktrust:one"))
+    view.run_bibliography(lambda control: ("ok",), completed.append, ("alice", "ecole-loisirs:one"))
     tasks.handles[0].finish()
     view.selected_book = youth_book(record_id="two")
     dispatch.pop()()
@@ -362,14 +362,14 @@ def test_stale_bibliography_completion_is_dropped_after_selection_change():
 
 def test_enter_sequence_is_cache_first_and_remote_only_after_matching_explicit_selection():
     seq = YouthEnterSequence()
-    token = ("alice", "youth.source.booktrust", FilterState(query="Forest", age=8))
+    token = ("alice", "youth.source.ecole-loisirs", FilterState(query="Forest", age=8))
     assert seq.advance(token=token, query="Forest", source_selected=True) == "local"
     assert seq.advance(token=token, query="Forest", source_selected=True) == "remote"
     assert seq.advance(token=token, query="Forest", source_selected=True) == "already_requested"
 
-    changed_age = ("alice", "youth.source.booktrust", FilterState(query="Forest", age=9))
+    changed_age = ("alice", "youth.source.ecole-loisirs", FilterState(query="Forest", age=9))
     assert seq.advance(token=changed_age, query="Forest", source_selected=True) == "local"
-    changed_profile = ("bob", "youth.source.booktrust", FilterState(query="Forest", age=9))
+    changed_profile = ("bob", "youth.source.ecole-loisirs", FilterState(query="Forest", age=9))
     assert seq.advance(token=changed_profile, query="Forest", source_selected=True) == "local"
     seq.reset()
     assert seq.advance(token=changed_profile, query="Forest", source_selected=True) == "local"
@@ -407,11 +407,11 @@ def test_youth_entry_activate_routes_cache_then_one_selected_source_only():
     assert "source Jeunesse précise" in messages[-1]
     assert fetches == []
 
-    source[0] = "youth.source.booktrust"
+    source[0] = "youth.source.ecole-loisirs"
     view.query_activated()
     assert len(renders) == 2 and fetches == []
     view.query_activated()
-    assert fetches == [("alice", "youth.source.booktrust", "")]
+    assert fetches == [("alice", "youth.source.ecole-loisirs", "")]
     view.query_activated()
     assert len(fetches) == 1
     assert "déjà demandée" in messages[-1]
@@ -438,9 +438,9 @@ def test_youth_remote_submissions_are_idempotent_while_the_same_token_is_pending
     view.status = NS(set_label=messages.append)
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
-    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source_plugin = lambda: "youth.source.ecole-loisirs"
     view.filter_state = lambda: FilterState(query="Forest", age=8, themes=())
-    token = ("alice", "youth.source.booktrust", "Forest", 8, ())
+    token = ("alice", "youth.source.ecole-loisirs", "Forest", 8, ())
     view.run_remote(lambda control: {"items": [1]}, completed.append, token)
     view.run_remote(lambda control: {"items": [2]}, completed.append, token)
     assert len(tasks.handles) == 1
@@ -474,34 +474,34 @@ def test_youth_collected_reports_ingest_outcomes_per_identity_without_leaking_re
     view.collected(
         {"items": [{"title": "Livre Atlas", "isbn": "9780306406157",
                      "age_label": "8+"}], "next_cursor": "2", "fresh_for_seconds": 60},
-        source_id="booktrust", label="BookTrust", append=False,
-        source_plugin="youth.source.booktrust", duration_ms=27, requested_limit=5,
+        source_id="ecole-loisirs", label="École des loisirs", append=False,
+        source_plugin="youth.source.ecole-loisirs", duration_ms=27, requested_limit=5,
     )
     a = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
-    assert a["booktrust"]["collection_state"] == "items"
-    assert a["booktrust"]["cache_count"] == 1
-    assert a["booktrust"]["next_cursor_present"] is True
-    assert a["booktrust"]["duration_ms"] == 27
-    assert a["booktrust"]["received_count"] == 1
-    assert a["booktrust"]["requested_limit"] == 5
+    assert a["ecole-loisirs"]["collection_state"] == "items"
+    assert a["ecole-loisirs"]["cache_count"] == 1
+    assert a["ecole-loisirs"]["next_cursor_present"] is True
+    assert a["ecole-loisirs"]["duration_ms"] == 27
+    assert a["ecole-loisirs"]["received_count"] == 1
+    assert a["ecole-loisirs"]["requested_limit"] == 5
     assert view.next_cursor == "2"
 
     view.collected(
         {"items": [{"title": ""}], "fresh_for_seconds": 30},
-        source_id="booktrust", label="BookTrust", append=False,
-        source_plugin="youth.source.booktrust",
+        source_id="ecole-loisirs", label="École des loisirs", append=False,
+        source_plugin="youth.source.ecole-loisirs",
     )
     a = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
-    assert a["booktrust"]["collection_state"] == "invalid"
-    assert a["booktrust"]["rejected"] == 1
-    assert a["booktrust"]["received_count"] == 1
-    assert a["booktrust"]["requested_limit"] is None
-    assert a["booktrust"]["rejection_categories"] == {"missing_title": 1}
-    assert a["booktrust"]["cache_count"] == 1
-    assert "Livre Atlas" not in repr(a["booktrust"])
+    assert a["ecole-loisirs"]["collection_state"] == "invalid"
+    assert a["ecole-loisirs"]["rejected"] == 1
+    assert a["ecole-loisirs"]["received_count"] == 1
+    assert a["ecole-loisirs"]["requested_limit"] is None
+    assert a["ecole-loisirs"]["rejection_categories"] == {"missing_title": 1}
+    assert a["ecole-loisirs"]["cache_count"] == 1
+    assert "Livre Atlas" not in repr(a["ecole-loisirs"])
     identity[0] = "bob"
     b = {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}
-    assert b["booktrust"]["collection_state"] == "not_tested"
+    assert b["ecole-loisirs"]["collection_state"] == "not_tested"
 
 
 def test_youth_explicit_remote_exception_records_only_typed_failure_and_keeps_cache():
@@ -546,7 +546,7 @@ def test_youth_remote_typed_http_error_preserves_cache_and_renders_http_status()
     view = object.__new__(YouthView)
     tasks, dispatch, messages = Tasks(), [], []
     view.catalog = YouthCatalogPlugin()
-    view.catalog.ingest("alice", "booktrust", [{
+    view.catalog.ingest("alice", "ecole-loisirs", [{
         "title": "Private title", "isbn": "9780306406157",
         "age_label": "8+",
     }])
@@ -555,26 +555,26 @@ def test_youth_remote_typed_http_error_preserves_cache_and_renders_http_status()
     view.status = NS(set_label=messages.append)
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
-    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source_plugin = lambda: "youth.source.ecole-loisirs"
     view.selected_source = lambda: NS(
-        plugin_id="youth.source.booktrust",
+        plugin_id="youth.source.ecole-loisirs",
         service=NS(source_info=lambda: {
-            "source_id": "booktrust", "display_name": "BookTrust",
+            "source_id": "ecole-loisirs", "display_name": "École des loisirs",
         }),
     )
     view.filter_state = lambda: FilterState(query="private", age=8, themes=())
 
     def blocked(control):
-        error = RuntimeError("BookTrust HTTP 503")
+        error = RuntimeError("École des loisirs HTTP 503")
         error.http_status = 503
         raise error
 
-    token = ("alice", "youth.source.booktrust", "private", 8, ())
+    token = ("alice", "youth.source.ecole-loisirs", "private", 8, ())
     view.run_remote(blocked, lambda raw: None, token)
     tasks.handles[0].finish()
     dispatch.pop()()
     rows = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
-    current = rows["booktrust"]
+    current = rows["ecole-loisirs"]
     assert current["collection_state"] == "http_error"
     assert current["http_status"] == 503
     assert current["error_type"] == "RuntimeError"
@@ -584,7 +584,7 @@ def test_youth_remote_typed_http_error_preserves_cache_and_renders_http_status()
     assert "Private title" not in repr(current)
     assert messages[-1] == "Échec de la source. Le cache précédent est conservé."
     bob = {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}
-    assert bob["booktrust"]["collection_state"] == "not_tested"
+    assert bob["ecole-loisirs"]["collection_state"] == "not_tested"
 
 
 def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_collection():
@@ -592,25 +592,20 @@ def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_col
         {"source_id": "milan", "label": "Éditions Milan", "family": "age",
          "plugin_state": "ready", "enabled": True, "collection_state": "not_tested",
          "cache_count": 0},
-        {"source_id": "booktrust", "label": "BookTrust", "family": "age",
+        {"source_id": "ecole-loisirs", "label": "École des loisirs", "family": "age",
          "plugin_state": "ready", "enabled": True, "collection_state": "http_error",
          "http_status": 503, "cache_count": 2, "rejected": 1,
          "collection_stage": "search", "error_type": "HTTPStatusError",
          "attempted_at_utc": "2026-10-10T03:20:00+00:00",
          "fresh_until": "2026-10-11T03:00:00+00:00"},
-        {"source_id": "usborne", "label": "Usborne", "family": "age",
-         "plugin_state": "disabled", "enabled": False, "collection_state": "items",
-         "cache_count": 3},
-        {"source_id": "ecole-loisirs", "label": "École des loisirs", "family": "age",
-         "plugin_state": "not_installed", "enabled": False, "collection_state": "not_tested"},
         {"source_id": "youth.bibliography.openlibrary", "label": "Open Library",
          "family": "bibliography", "plugin_state": "ready", "enabled": True,
          "collection_state": "not_tested"},
     )
     summary, lines = source_diagnostic_presentation(rows)
-    assert "4 source(s) d’âge · 1 bibliographie" in summary
+    assert "2 source(s) d’âge · 1 bibliographie" in summary
     assert "1 dernier(s) essai(s) en échec" in summary
-    assert len(lines) == 5
+    assert len(lines) == 3
     assert "non testée" in lines[0] and "activée" in lines[0]
     assert "erreur HTTP 503" in lines[1]
     assert "étape : search" in lines[1]
@@ -619,9 +614,7 @@ def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_col
     assert "(conservé)" in lines[1]
     assert "essai UTC : 2026-10-10 03:20" in lines[1]
     assert "fraîcheur annoncée" in lines[1] and "1 rejet(s)" in lines[1]
-    assert "désactivée" in lines[2] and "collecte avec notices" in lines[2]
-    assert "non installée" in lines[3] and "non testée" in lines[3]
-    assert "bibliographie uniquement" in lines[4] and "pas de preuve d’âge" in lines[4]
+    assert "bibliographie uniquement" in lines[2] and "pas de preuve d’âge" in lines[2]
     assert "aucun" not in summary.casefold()
     assert source_diagnostic_presentation(())[0] == "Aucun profil actif"
 
@@ -629,7 +622,7 @@ def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_col
 
 def test_youth_diagnostic_presentation_shows_bounded_receipts_and_safe_rejection_reasons():
     row = {
-        "source_id": "booktrust", "label": "BookTrust",
+        "source_id": "ecole-loisirs", "label": "École des loisirs",
         "family": "age", "plugin_state": "ready", "enabled": True,
         "collection_state": "invalid", "cache_count": 2,
         "received_count": 4, "requested_limit": 10,
@@ -684,9 +677,9 @@ def test_youth_view_local_diagnostics_uses_public_inventory_and_keeps_identities
 
     view = object.__new__(YouthView)
     view.catalog = YouthCatalogPlugin()
-    view.catalog.ingest("alice", "booktrust", [{"title": "Secret book", "age_label": "8+"}])
-    view.catalog.record_collection("alice", "booktrust", state="items", accepted=1)
-    view.catalog.record_collection("bob", "booktrust", state="timeout", error_type="ReadTimeout")
+    view.catalog.ingest("alice", "ecole-loisirs", [{"title": "Secret book", "age_label": "8+"}])
+    view.catalog.record_collection("alice", "ecole-loisirs", state="items", accepted=1)
+    view.catalog.record_collection("bob", "ecole-loisirs", state="timeout", error_type="ReadTimeout")
     selected_identity = ["alice"]
     view.identity_id = lambda: selected_identity[0]
     view.Gtk = NS(Label=FakeLabel)
@@ -697,17 +690,17 @@ def test_youth_view_local_diagnostics_uses_public_inventory_and_keeps_identities
         broker_reads.append(name)
         assert name == "diagnostics"
         return NS(inventory=lambda: (
-            {"type": "youth.source", "plugin_id": "youth.source.booktrust",
+            {"type": "youth.source", "plugin_id": "youth.source.ecole-loisirs",
              "state": "ready", "enabled": True},
         ))
     view.plugin = NS(context=NS(broker=broker))
     assert view.refresh_source_diagnostics() is False
     alice_text = " ".join(r.text for r in view.diagnostic_rows_box.children)
-    assert "BookTrust · activée · dernier essai : collecte avec notices" in alice_text
+    assert "École des loisirs · activée · dernier essai : collecte avec notices" in alice_text
     assert "cache : 1 notice(s)" in alice_text
     assert "Secret book" not in alice_text
-    assert len(view.diagnostic_rows_box.children) == 5
-    assert "4 source(s) d’âge" in view.diagnostic_expander.label
+    assert len(view.diagnostic_rows_box.children) == 3
+    assert "2 source(s) d’âge" in view.diagnostic_expander.label
 
     selected_identity[0] = "bob"
     assert view.refresh_source_diagnostics() is False
@@ -716,7 +709,7 @@ def test_youth_view_local_diagnostics_uses_public_inventory_and_keeps_identities
     assert "cache : 1 notice(s)" not in bob_text
     assert "exception : ReadTimeout" in bob_text
     assert "private." not in bob_text
-    assert len(view.diagnostic_rows_box.children) == 5
+    assert len(view.diagnostic_rows_box.children) == 3
     assert broker_reads == ["diagnostics", "diagnostics"]
 
 
@@ -763,16 +756,16 @@ def test_youth_explicit_pre_request_cancel_has_zero_http_and_keeps_cache():
 
     view = object.__new__(YouthView)
     view.catalog = YouthCatalogPlugin()
-    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private title"}])
+    view.catalog.ingest("alice", "ecole-loisirs", [{"title": "Previous private title"}])
     tasks, dispatch, messages, public_requests = Tasks(), [], [], []
     view.plugin = NS(context=NS(broker=lambda name: tasks))
     view.GLib = NS(idle_add=lambda callback: dispatch.append(callback))
     view.status = NS(set_label=messages.append)
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
-    view.selected_source_plugin = lambda: "youth.source.booktrust"
-    view.selected_source = lambda: NS(plugin_id="youth.source.booktrust", service=NS(
-        source_info=lambda: {"source_id": "booktrust", "display_name": "BookTrust"},
+    view.selected_source_plugin = lambda: "youth.source.ecole-loisirs"
+    view.selected_source = lambda: NS(plugin_id="youth.source.ecole-loisirs", service=NS(
+        source_info=lambda: {"source_id": "ecole-loisirs", "display_name": "École des loisirs"},
         browse=lambda **kwargs: public_requests.append(kwargs),
     ))
     view.filter_state = lambda: FilterState(query="Atlas", age=8, themes=())
@@ -785,13 +778,13 @@ def test_youth_explicit_pre_request_cancel_has_zero_http_and_keeps_cache():
     dispatch.pop()()
 
     assert public_requests == []
-    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["ecole-loisirs"]
     assert row["collection_state"] == "cancelled"
     assert row["request_count"] == 0
     assert row["received_count"] is None
     assert row["cache_count"] == 1
     assert "Previous private title" not in repr(row)
-    assert "youth.source.booktrust" not in str(public_requests)
+    assert "youth.source.ecole-loisirs" not in str(public_requests)
 
 
 def test_unexpected_empty_adapter_response_is_invalid_not_cancelled():
@@ -805,17 +798,17 @@ def test_unexpected_empty_adapter_response_is_invalid_not_cancelled():
     view.status = NS(set_label=lambda *_: None)
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
-    view.selected_source_plugin = lambda: "youth.source.booktrust"
-    view.selected_source = lambda: NS(plugin_id="youth.source.booktrust", service=NS(
-        source_info=lambda: {"source_id": "booktrust"},
+    view.selected_source_plugin = lambda: "youth.source.ecole-loisirs"
+    view.selected_source = lambda: NS(plugin_id="youth.source.ecole-loisirs", service=NS(
+        source_info=lambda: {"source_id": "ecole-loisirs"},
     ))
     view.filter_state = lambda: FilterState(query="Atlas", age=8, themes=())
     view.refresh_source_diagnostics = lambda: None
-    token = ("alice", "youth.source.booktrust", "Atlas", 8, ())
+    token = ("alice", "youth.source.ecole-loisirs", "Atlas", 8, ())
     view.run_remote(lambda control: None, lambda raw: 1 / 0, token)
     tasks.handles[0].finish()
     dispatch.pop()()
-    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["ecole-loisirs"]
     assert row["collection_state"] == "invalid"
     assert row["request_count"] is None
 
@@ -825,33 +818,33 @@ def test_youth_ui_malformed_page_preserves_cached_records_and_pagination():
 
     view = object.__new__(YouthView)
     view.catalog = YouthCatalogPlugin()
-    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private book"}])
+    view.catalog.ingest("alice", "ecole-loisirs", [{"title": "Previous private book"}])
     view.identity_id = lambda: "alice"
     notices, status, refreshed = [], [], []
     view.render_cached = lambda: notices.append("render")
     view.refresh_source_diagnostics = lambda: refreshed.append("refresh")
     view.status = NS(set_label=status.append)
-    view.next_cursor, view.next_source_plugin = "2", "youth.source.booktrust"
+    view.next_cursor, view.next_source_plugin = "2", "youth.source.ecole-loisirs"
 
     view.collected(
         {"items": "https://private.example/token", "collection_request_count": 1},
-        source_id="booktrust", label="BookTrust", append=False,
-        source_plugin="youth.source.booktrust", duration_ms=23, requested_limit=8,
+        source_id="ecole-loisirs", label="École des loisirs", append=False,
+        source_plugin="youth.source.ecole-loisirs", duration_ms=23, requested_limit=8,
     )
-    diag = {x["source_id"]: x for x in view.catalog.source_diagnostics("alice")}["booktrust"]
+    diag = {x["source_id"]: x for x in view.catalog.source_diagnostics("alice")}["ecole-loisirs"]
     assert diag["collection_state"] == "invalid"
     assert diag["collection_stage"] == "parsing"
     assert diag["request_count"] == 1
     assert diag["cache_count"] == 1
     assert diag["received_count"] is None
     assert view.next_cursor == "2"
-    assert view.next_source_plugin == "youth.source.booktrust"
+    assert view.next_source_plugin == "youth.source.ecole-loisirs"
     assert len(notices) == 0
     assert refreshed == ["refresh"]
     assert "cache précédent est conservé" in status[-1]
     assert "private.example" not in repr(diag)
     assert "Previous private book" not in repr(diag)
-    assert {x["source_id"]: x for x in view.catalog.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+    assert {x["source_id"]: x for x in view.catalog.source_diagnostics("bob")}["ecole-loisirs"]["collection_state"] == "not_tested"
 
 
 def test_youth_ui_empty_page_is_not_mistaken_for_invalid_structure():
@@ -865,13 +858,13 @@ def test_youth_ui_empty_page_is_not_mistaken_for_invalid_structure():
     view.render_cached = lambda: None
     view.refresh_source_diagnostics = lambda: None
     view.next_cursor = "1"
-    view.next_source_plugin = "youth.source.booktrust"
+    view.next_source_plugin = "youth.source.ecole-loisirs"
     view.collected(
         {"items": [], "next_cursor": "", "collection_request_count": 1},
-        source_id="booktrust", label="BookTrust", append=False,
-        source_plugin="youth.source.booktrust",
+        source_id="ecole-loisirs", label="École des loisirs", append=False,
+        source_plugin="youth.source.ecole-loisirs",
     )
-    current = {x["source_id"]: x for x in view.catalog.source_diagnostics("alice")}["booktrust"]
+    current = {x["source_id"]: x for x in view.catalog.source_diagnostics("alice")}["ecole-loisirs"]
     assert current["collection_state"] == "empty_unverified"
     assert current["received_count"] == 0
     assert current["request_count"] == 1
@@ -978,7 +971,7 @@ def test_youth_ui_cancellation_while_source_is_running_preserves_prior_cache():
 
     view = object.__new__(YouthView)
     view.catalog = YouthCatalogPlugin()
-    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private title"}])
+    view.catalog.ingest("alice", "ecole-loisirs", [{"title": "Previous private title"}])
     state, requests, status, dispatch, refreshed = (
         {"cancelled": False}, [], [], [], [],
     )
@@ -988,10 +981,10 @@ def test_youth_ui_cancellation_while_source_is_running_preserves_prior_cache():
     view.status = NS(set_label=status.append)
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
-    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source_plugin = lambda: "youth.source.ecole-loisirs"
     view.filter_state = lambda: FilterState(query="Atlas", age=8, themes=())
     view.next_cursor = "3"
-    view.next_source_plugin = "youth.source.booktrust"
+    view.next_source_plugin = "youth.source.ecole-loisirs"
     view.refresh_source_diagnostics = lambda: refreshed.append("refresh")
 
     def browse(**kwargs):
@@ -1003,10 +996,10 @@ def test_youth_ui_cancellation_while_source_is_running_preserves_prior_cache():
             "collection_request_count": 1,
         }
     view.selected_source = lambda: NS(
-        plugin_id="youth.source.booktrust",
+        plugin_id="youth.source.ecole-loisirs",
         service=NS(
             source_info=lambda: {
-                "source_id": "booktrust", "display_name": "BookTrust",
+                "source_id": "ecole-loisirs", "display_name": "École des loisirs",
             },
             browse=browse,
         ),
@@ -1018,7 +1011,7 @@ def test_youth_ui_cancellation_while_source_is_running_preserves_prior_cache():
     assert len(dispatch) == 1
     dispatch.pop()()
 
-    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["ecole-loisirs"]
     assert len(requests) == 1
     assert row["collection_state"] == "cancelled"
     assert row["error_type"] == "YouthSourceCancelled"
@@ -1026,12 +1019,12 @@ def test_youth_ui_cancellation_while_source_is_running_preserves_prior_cache():
     assert row["received_count"] is None
     assert row["cache_count"] == 1
     assert view.next_cursor == "3"
-    assert view.next_source_plugin == "youth.source.booktrust"
+    assert view.next_source_plugin == "youth.source.ecole-loisirs"
     assert status[-1] == "Collecte annulée. Le cache précédent est conservé."
     assert refreshed == ["refresh"]
     assert "New book must not replace cache" not in repr(row)
     assert "Previous private title" not in repr(row)
-    assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+    assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["ecole-loisirs"]["collection_state"] == "not_tested"
 
 
 def test_fetch_source_page_prefers_opt_in_cooperative_milan_extension():
@@ -1079,7 +1072,7 @@ def test_youth_gtk_idle_cancellation_discards_already_completed_source_success()
 
     view = object.__new__(YouthView)
     view.catalog = YouthCatalogPlugin()
-    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private title"}])
+    view.catalog.ingest("alice", "ecole-loisirs", [{"title": "Previous private title"}])
     tasks, dispatch, statuses, refreshed = Tasks(), [], [], []
     state = {"cancelled": False}
     view.plugin = NS(context=NS(broker=lambda name: tasks))
@@ -1087,17 +1080,17 @@ def test_youth_gtk_idle_cancellation_discards_already_completed_source_success()
     view.status = NS(set_label=statuses.append)
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
-    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source_plugin = lambda: "youth.source.ecole-loisirs"
     view.filter_state = lambda: FilterState(query="book", age=8, themes=())
     view.selected_source = lambda: NS(
-        plugin_id="youth.source.booktrust", service=NS(
-            source_info=lambda: {"source_id": "booktrust", "display_name": "BookTrust"}
+        plugin_id="youth.source.ecole-loisirs", service=NS(
+            source_info=lambda: {"source_id": "ecole-loisirs", "display_name": "École des loisirs"}
         ),
     )
     view.refresh_source_diagnostics = lambda: refreshed.append("refresh")
-    view.next_cursor, view.next_source_plugin = "2", "youth.source.booktrust"
+    view.next_cursor, view.next_source_plugin = "2", "youth.source.ecole-loisirs"
     received = []
-    token = ("alice", "youth.source.booktrust", "book", 8, ())
+    token = ("alice", "youth.source.ecole-loisirs", "book", 8, ())
     view.run_remote(
         lambda control: {"items": [{"title": "Unwanted"}], "collection_request_count": 2},
         received.append, token,
@@ -1109,18 +1102,18 @@ def test_youth_gtk_idle_cancellation_discards_already_completed_source_success()
     state["cancelled"] = True  # cancellation in the GTK idle queue
     dispatch.pop()()
 
-    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["ecole-loisirs"]
     assert received == []
     assert row["collection_state"] == "cancelled"
     assert row["request_count"] == 2
     assert row["cache_count"] == 1
     assert row["received_count"] is None
     assert view.next_cursor == "2"
-    assert view.next_source_plugin == "youth.source.booktrust"
+    assert view.next_source_plugin == "youth.source.ecole-loisirs"
     assert statuses[-1] == "Collecte annulée. Le cache précédent est conservé."
     assert refreshed == ["refresh"]
     assert "Unwanted" not in repr(row)
-    assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+    assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["ecole-loisirs"]["collection_state"] == "not_tested"
 
 
 def test_youth_gtk_idle_cancellation_overrides_transport_failure_without_secrets():
@@ -1135,15 +1128,15 @@ def test_youth_gtk_idle_cancellation_overrides_transport_failure_without_secrets
     view.status = NS(set_label=statuses.append)
     view.generation, view.task, view.disposed = 0, None, False
     view.identity_id = lambda: "alice"
-    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source_plugin = lambda: "youth.source.ecole-loisirs"
     view.filter_state = lambda: FilterState(query="book", age=8, themes=())
     view.selected_source = lambda: NS(
-        plugin_id="youth.source.booktrust", service=NS(
-            source_info=lambda: {"source_id": "booktrust", "display_name": "BookTrust"}
+        plugin_id="youth.source.ecole-loisirs", service=NS(
+            source_info=lambda: {"source_id": "ecole-loisirs", "display_name": "École des loisirs"}
         ),
     )
     view.refresh_source_diagnostics = lambda: None
-    token = ("alice", "youth.source.booktrust", "book", 8, ())
+    token = ("alice", "youth.source.ecole-loisirs", "book", 8, ())
     def fail(control):
         error = RuntimeError("private https://example.invalid/token")
         error.collection_request_count = 1
@@ -1154,7 +1147,7 @@ def test_youth_gtk_idle_cancellation_overrides_transport_failure_without_secrets
     handle.finish()
     cancelled["value"] = True
     dispatch.pop()()
-    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["ecole-loisirs"]
     assert row["collection_state"] == "cancelled"
     assert row["request_count"] == 1
     assert row["http_status"] is None

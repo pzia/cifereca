@@ -19,7 +19,7 @@ def test_public_https_workflow_is_dispatch_only_and_confirmation_gated():
     assert "type: boolean" in triggers
     assert "if: ${{ inputs.confirm_live == true }}" in source
     assert "SOURCE: ${{ inputs.source }}" in source
-    assert "booktrust|milan|ecole-loisirs) ;;" in source
+    assert "milan|ecole-loisirs) ;;" in source
 
 
 def test_live_workflow_is_bounded_and_keeps_nonpass_evidence():

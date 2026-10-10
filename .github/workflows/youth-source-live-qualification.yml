@@ -10,7 +10,6 @@ on:
         required: true
         type: choice
         options:
-          - booktrust
           - milan
           - ecole-loisirs
       confirm_live:
@@ -46,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$SOURCE" in
-            booktrust|milan|ecole-loisirs) ;;
+            milan|ecole-loisirs) ;;
             *) echo 'Invalid public source' >&2; exit 2 ;;
           esac
           # The publisher's first search page contains age 3–6 evidence.

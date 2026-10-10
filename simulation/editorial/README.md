@@ -23,7 +23,7 @@ python3 simulation/datasetctl.py down ux-small
 | `/criticism/invalid.xml` | Flux XML tronqué pour gestion d'erreur |
 | `/criticism/unavailable` | HTTP 503 déterministe |
 | `/criticism/cases.json` | JDD de rattachement positif, ambigu, négatif |
-| `/youth/records.json` | Fixture Jeunesse, **pas une API BookTrust** |
+| `/youth/records.json` | Fixture Jeunesse, **pas une API d'éditeur tiers** |
 | `/constellations/records.json` | Fixture graphe, **pas une API Constellations** |
 
 Les livres et critiques ne sont **pas réels**. Les URLs sources
@@ -37,7 +37,7 @@ déterministe les mêmes JDD sous `service-cache/editorial/`. Ce sont deux
 copies internes au même environnement isolé.
 
 L'intégration GUI, l'abonnement explicite dans l'écran Critiques, les sources
-HTML BookTrust, OpenLibrary et la simulation Baen demeurent des travaux
+OpenLibrary et la simulation Baen demeurent des travaux
 distincts (#771, #772, #774).
 
 ### Workflows Jeunesse additionnels

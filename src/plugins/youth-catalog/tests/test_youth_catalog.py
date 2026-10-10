@@ -52,13 +52,13 @@ def test_structured_age_range_is_preserved_with_source_label():
             "age_min": 8, "age_max": 10, "age_kind": "reading",
             "source_label": "Reading age 8-10", "confidence": 0.95,
         }]),
-        source_id="booktrust",
+        source_id="ecole-loisirs",
     )
     rng = record.age_ranges[0]
     assert (rng.age_min, rng.age_max, rng.age_kind, rng.source_label, rng.confidence) == (
         8, 10, "reading", "Reading age 8-10", 0.95
     )
-    assert rng.source_id == "booktrust"
+    assert rng.source_id == "ecole-loisirs"
 
 
 def test_isbn_match_is_confirmed_and_title_author_only_is_suggestion():
@@ -141,39 +141,39 @@ def test_cache_is_isolated_by_identity_and_targeted_source_replace():
 
 def test_all_invalid_source_refresh_preserves_last_good_cache_and_freshness():
     index = YouthCatalogIndex()
-    index.ingest("camille", "booktrust", [row("Notice attestée", age_label="8+")], fresh_for_seconds=180)
+    index.ingest("camille", "ecole-loisirs", [row("Notice attestée", age_label="8+")], fresh_for_seconds=180)
     index.ingest("camille", "milan", [row("Autre source", age_label="9+")])
-    index.ingest("alex", "booktrust", [row("Notice Alex", age_label="10+")])
-    previous_freshness = index.fresh_until("camille", "booktrust")
+    index.ingest("alex", "ecole-loisirs", [row("Notice Alex", age_label="10+")])
+    previous_freshness = index.fresh_until("camille", "ecole-loisirs")
     previous = index.entries("camille")
     report = index.ingest(
-        "camille", "booktrust", [{"title": ""}, {"title": None}],
+        "camille", "ecole-loisirs", [{"title": ""}, {"title": None}],
         fresh_for_seconds=300, replace_source=True,
     )
     assert report.accepted == 0 and report.rejected == 2
     assert len(report.errors) == 2
     assert report.fresh_until == previous_freshness
     assert index.entries("camille") == previous
-    assert index.fresh_until("camille", "booktrust") == previous_freshness
+    assert index.fresh_until("camille", "ecole-loisirs") == previous_freshness
     assert [book.title for book in index.entries("alex")] == ["Notice Alex"]
 
 
 def test_empty_valid_source_refresh_clears_only_target_and_obsolete_ttl():
     index = YouthCatalogIndex()
-    index.ingest("camille", "booktrust", [row("Avant", age_label="8+")], fresh_for_seconds=120)
+    index.ingest("camille", "ecole-loisirs", [row("Avant", age_label="8+")], fresh_for_seconds=120)
     index.ingest("camille", "milan", [row("Milan", age_label="9+")])
-    assert index.fresh_until("camille", "booktrust")
-    report = index.ingest("camille", "booktrust", [], replace_source=True)
+    assert index.fresh_until("camille", "ecole-loisirs")
+    report = index.ingest("camille", "ecole-loisirs", [], replace_source=True)
     assert report.accepted == report.rejected == 0
     assert [book.title for book in index.entries("camille")] == ["Milan"]
-    assert index.fresh_until("camille", "booktrust") == ""
+    assert index.fresh_until("camille", "ecole-loisirs") == ""
     assert [book.title for book in index.search("camille", age=9)] == ["Milan"]
 
 
 def test_mixed_valid_and_invalid_refresh_keeps_accepted_records():
     index = YouthCatalogIndex()
-    index.ingest("camille", "booktrust", [row("Avant", age_label="8+")])
-    report = index.ingest("camille", "booktrust", [row("Après", age_label="9+"), {"title": ""}])
+    index.ingest("camille", "ecole-loisirs", [row("Avant", age_label="8+")])
+    report = index.ingest("camille", "ecole-loisirs", [row("Après", age_label="9+"), {"title": ""}])
     assert (report.accepted, report.rejected) == (1, 1)
     assert [book.title for book in index.entries("camille")] == ["Après"]
 
@@ -251,7 +251,7 @@ def test_isbn10_is_canonicalized_to_isbn13_for_cross_source_matching():
 
 def test_bibliography_overlay_enriches_only_exact_isbn_without_age_provenance_pollution():
     index = YouthCatalogIndex()
-    index.ingest("alice", "booktrust", [
+    index.ingest("alice", "ecole-loisirs", [
         row("Livre", isbn10="0306406152", interest_age="8-10", language=""),
     ])
     report = index.ingest_bibliography(
@@ -267,15 +267,15 @@ def test_bibliography_overlay_enriches_only_exact_isbn_without_age_provenance_po
     assert book.published_year == 1999
     assert book.cover_url.endswith("/42-M.jpg")
     assert book.bibliography_sources == ("openlibrary",)
-    assert book.provenance == ("booktrust",)
-    assert [(r.age_kind, r.source_id) for r in book.age_ranges] == [("interest", "booktrust")]
-    assert [b.title for b in index.search("alice", source_id="booktrust")] == ["Livre"]
+    assert book.provenance == ("ecole-loisirs",)
+    assert [(r.age_kind, r.source_id) for r in book.age_ranges] == [("interest", "ecole-loisirs")]
+    assert [b.title for b in index.search("alice", source_id="ecole-loisirs")] == ["Livre"]
     assert index.search("alice", source_id="openlibrary") == ()
 
 
 def test_bibliography_overlay_rejects_wrong_isbn_or_any_age_evidence():
     index = YouthCatalogIndex()
-    index.ingest("alice", "booktrust", [
+    index.ingest("alice", "ecole-loisirs", [
         row("Livre", isbn13="9780306406157", age_label="8+"),
     ])
     wrong = index.ingest_bibliography(
@@ -294,7 +294,7 @@ def test_bibliography_overlay_rejects_wrong_isbn_or_any_age_evidence():
 
 def test_ambiguous_bibliography_results_are_not_applied():
     index = YouthCatalogIndex()
-    index.ingest("alice", "booktrust", [
+    index.ingest("alice", "ecole-loisirs", [
         row("Livre", isbn13="9780306406157", age_label="8+"),
     ])
     report = index.ingest_bibliography(
@@ -309,7 +309,7 @@ def test_ambiguous_bibliography_results_are_not_applied():
 
 def test_clear_identity_clears_bibliography_overlay_too():
     index = YouthCatalogIndex()
-    index.ingest("alice", "booktrust", [
+    index.ingest("alice", "ecole-loisirs", [
         row("Livre", isbn13="9780306406157", age_label="8+"),
     ])
     index.ingest_bibliography("alice", "openlibrary", "9780306406157", [bibliography_row()])
@@ -321,7 +321,7 @@ def test_clear_identity_clears_bibliography_overlay_too():
 
 def test_find_cached_by_isbn_does_not_depend_on_title():
     index = YouthCatalogIndex()
-    index.ingest("alice", "booktrust", [
+    index.ingest("alice", "ecole-loisirs", [
         row("Titre source très différent", isbn10="0306406152", age_label="8+"),
     ])
     found = index.find("alice", isbn="9780306406157")
@@ -358,7 +358,7 @@ def test_find_cached_never_uses_title_author_and_is_identity_scoped():
 
 def test_find_cached_preserves_bibliographic_overlay():
     index = YouthCatalogIndex()
-    index.ingest("alice", "booktrust", [
+    index.ingest("alice", "ecole-loisirs", [
         row("Livre", isbn13="9780306406157", age_label="8+"),
     ])
     index.ingest_bibliography("alice", "openlibrary", "9780306406157", [bibliography_row()])
@@ -449,8 +449,8 @@ def test_fresh_installed_package_exposes_both_contributions_without_enabling_the
 def test_source_diagnostics_list_known_age_sources_and_bibliography_without_network():
     index = YouthCatalogIndex()
     inventory = (
-        {"plugin_id": "youth.source.booktrust", "type": "youth.source",
-         "state": "ready", "enabled": True, "package_id": "org.cifereca.youth-source-booktrust"},
+        {"plugin_id": "youth.source.ecole-loisirs", "type": "youth.source",
+         "state": "ready", "enabled": True, "package_id": "org.cifereca.youth-source-ecole-loisirs"},
         {"plugin_id": "youth.source.milan", "type": "youth.source",
          "state": "disabled", "enabled": False, "package_id": "org.cifereca.youth-source-milan"},
         {"plugin_id": "youth.bibliography.openlibrary", "type": "youth.bibliography",
@@ -458,14 +458,12 @@ def test_source_diagnostics_list_known_age_sources_and_bibliography_without_netw
         {"plugin_id": "other.plugin", "type": "provider", "enabled": True},
     )
     rows = {item["source_id"]: item for item in index.source_diagnostics("alice", inventory)}
-    assert {"booktrust", "milan", "usborne", "ecole-loisirs",
-            "youth.bibliography.openlibrary"}.issubset(rows)
-    assert rows["booktrust"]["enabled"] is True
-    assert rows["booktrust"]["plugin_state"] == "ready"
-    assert rows["booktrust"]["collection_state"] == "not_tested"
+    assert {"ecole-loisirs", "milan", "youth.bibliography.openlibrary"}.issubset(rows)
+    assert rows["ecole-loisirs"]["enabled"] is True
+    assert rows["ecole-loisirs"]["plugin_state"] == "ready"
+    assert rows["ecole-loisirs"]["collection_state"] == "not_tested"
     assert rows["milan"]["plugin_state"] == "disabled"
     assert rows["milan"]["collection_state"] == "not_tested"
-    assert rows["usborne"]["plugin_state"] == "not_installed"
     assert rows["youth.bibliography.openlibrary"]["family"] == "bibliography"
     assert rows["youth.bibliography.openlibrary"]["collection_state"] == "not_tested"
     assert "other.plugin" not in rows
@@ -474,39 +472,39 @@ def test_source_diagnostics_list_known_age_sources_and_bibliography_without_netw
 
 def test_source_collection_state_is_isolated_per_identity_and_old_cache_survives_error():
     index = YouthCatalogIndex()
-    first = index.ingest("alice", "booktrust", [
+    first = index.ingest("alice", "ecole-loisirs", [
         row("Atlas", isbn="9780306406157", age_label="8+")
     ], fresh_for_seconds=180)
     assert first.accepted == 1
-    index.record_collection("alice", "booktrust", state="items",
+    index.record_collection("alice", "ecole-loisirs", state="items",
                             accepted=1, duration_ms=43, next_cursor_present=True)
-    index.record_collection("bob", "booktrust", state="http_error",
+    index.record_collection("bob", "ecole-loisirs", state="http_error",
                             http_status=429, error_type="HTTPStatusError")
     rows_a = {x["source_id"]: x for x in index.source_diagnostics("alice")}
     rows_b = {x["source_id"]: x for x in index.source_diagnostics("bob")}
-    assert rows_a["booktrust"]["collection_state"] == "items"
-    assert rows_a["booktrust"]["accepted"] == 1
-    assert rows_a["booktrust"]["cache_count"] == 1
-    assert rows_a["booktrust"]["duration_ms"] == 43
-    assert rows_a["booktrust"]["next_cursor_present"] is True
-    assert rows_a["booktrust"]["fresh_until"]
-    assert rows_b["booktrust"]["collection_state"] == "http_error"
-    assert rows_b["booktrust"]["http_status"] == 429
-    assert rows_b["booktrust"]["cache_count"] == 0
-    assert rows_b["booktrust"]["last_success_at_utc"] == ""
+    assert rows_a["ecole-loisirs"]["collection_state"] == "items"
+    assert rows_a["ecole-loisirs"]["accepted"] == 1
+    assert rows_a["ecole-loisirs"]["cache_count"] == 1
+    assert rows_a["ecole-loisirs"]["duration_ms"] == 43
+    assert rows_a["ecole-loisirs"]["next_cursor_present"] is True
+    assert rows_a["ecole-loisirs"]["fresh_until"]
+    assert rows_b["ecole-loisirs"]["collection_state"] == "http_error"
+    assert rows_b["ecole-loisirs"]["http_status"] == 429
+    assert rows_b["ecole-loisirs"]["cache_count"] == 0
+    assert rows_b["ecole-loisirs"]["last_success_at_utc"] == ""
 
-    index.record_collection("alice", "booktrust", state="timeout",
+    index.record_collection("alice", "ecole-loisirs", state="timeout",
                             error_type="ReadTimeout")
     after = {x["source_id"]: x for x in index.source_diagnostics("alice")}
-    assert after["booktrust"]["collection_state"] == "timeout"
-    assert after["booktrust"]["last_success_at_utc"] == rows_a["booktrust"]["last_success_at_utc"]
-    assert after["booktrust"]["cache_count"] == 1
+    assert after["ecole-loisirs"]["collection_state"] == "timeout"
+    assert after["ecole-loisirs"]["last_success_at_utc"] == rows_a["ecole-loisirs"]["last_success_at_utc"]
+    assert after["ecole-loisirs"]["cache_count"] == 1
     assert len(index.search("alice", "Atlas")) == 1
     assert index.search("bob") == ()
     index.clear_identity("alice")
     clean = {x["source_id"]: x for x in index.source_diagnostics("alice")}
-    assert clean["booktrust"]["collection_state"] == "not_tested"
-    assert clean["booktrust"]["cache_count"] == 0
+    assert clean["ecole-loisirs"]["collection_state"] == "not_tested"
+    assert clean["ecole-loisirs"]["cache_count"] == 0
 
 
 def test_collection_diagnostics_refuses_raw_exception_text_and_non_terminal_states():
@@ -514,7 +512,7 @@ def test_collection_diagnostics_refuses_raw_exception_text_and_non_terminal_stat
 
     index = YouthCatalogIndex()
     with pytest.raises(ValueError):
-        index.record_collection("alice", "booktrust", state="success_from_activation")
+        index.record_collection("alice", "ecole-loisirs", state="success_from_activation")
     index.record_collection(
         "alice", "milan", state="invalid",
         accepted=-1, rejected=900_000,
@@ -699,7 +697,7 @@ def test_collect_source_runtime_http_failure_is_typed_and_keeps_identity_isolati
     assert now["last_success_at_utc"] == old["last_success_at_utc"]
     bob = {row["source_id"]: row for row in plugin.source_diagnostics("bob")}
     assert "youth.test" not in bob  # a private new source must not leak across identities
-    assert bob["booktrust"]["collection_state"] == "not_tested"
+    assert bob["ecole-loisirs"]["collection_state"] == "not_tested"
 
 
 
@@ -781,24 +779,24 @@ def test_failed_youth_fetch_marks_received_count_unknown_and_preserves_old_cache
 def test_youth_collection_metrics_whitelist_rejection_types_and_values():
     index = YouthCatalogIndex()
     index.record_collection(
-        "alice", "booktrust", state="invalid",
+        "alice", "ecole-loisirs", state="invalid",
         received_count=True, requested_limit="100",
         rejection_categories={
             "missing_title": 200_000, "other": -1,
             "URL=https://private.example/token": 3,
         },
     )
-    result = {x["source_id"]: x for x in index.source_diagnostics("alice")}["booktrust"]
+    result = {x["source_id"]: x for x in index.source_diagnostics("alice")}["ecole-loisirs"]
     assert result["received_count"] is None
     assert result["requested_limit"] is None
     assert result["rejection_categories"] == {"missing_title": 100_000}
     assert "private.example" not in repr(result)
     index.record_collection(
-        "alice", "booktrust", state="items",
+        "alice", "ecole-loisirs", state="items",
         received_count=1, requested_limit=2,
         rejection_categories={"missing_title": True, "other": 1},
     )
-    result = {x["source_id"]: x for x in index.source_diagnostics("alice")}["booktrust"]
+    result = {x["source_id"]: x for x in index.source_diagnostics("alice")}["ecole-loisirs"]
     assert result["received_count"] == 1
     assert result["requested_limit"] == 2
     assert result["rejection_categories"] == {"other": 1}
@@ -822,10 +820,10 @@ def test_youth_per_call_http_counts_are_strict_and_isolated_by_identity():
     plugin = YouthCatalogPlugin()
     index = plugin.index
     for value in (True, -1, "8", 1.5):
-        index.record_collection("alice", "booktrust", state="items", request_count=value)
-        assert {r["source_id"]: r for r in index.source_diagnostics("alice")}["booktrust"]["request_count"] is None
-    index.record_collection("alice", "booktrust", state="items", request_count=900_000)
-    assert {r["source_id"]: r for r in index.source_diagnostics("alice")}["booktrust"]["request_count"] == 100_000
+        index.record_collection("alice", "ecole-loisirs", state="items", request_count=value)
+        assert {r["source_id"]: r for r in index.source_diagnostics("alice")}["ecole-loisirs"]["request_count"] is None
+    index.record_collection("alice", "ecole-loisirs", state="items", request_count=900_000)
+    assert {r["source_id"]: r for r in index.source_diagnostics("alice")}["ecole-loisirs"]["request_count"] == 100_000
 
     class CountedSource(GoodSource):
         def search(self, query, *, cursor=None, limit=50):
@@ -940,7 +938,7 @@ def test_malformed_page_is_invalid_and_preserves_previous_identity_cache():
         assert current["request_count"] is None
         assert "private" not in repr(current)
         assert "token" not in repr(current)
-    assert {row["source_id"]: row for row in plugin.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+    assert {row["source_id"]: row for row in plugin.source_diagnostics("bob")}["ecole-loisirs"]["collection_state"] == "not_tested"
 
 
 def test_structural_invalidity_retains_only_attested_call_count():

@@ -12,14 +12,12 @@ from urllib.request import Request, urlopen
 
 SIM = Path(__file__).resolve().parents[1]
 REPO = SIM.parent
-for p in (SIM, REPO / "src/plugins/youth-source-usborne",
-          REPO / "src/plugins/youth-source-ecole-loisirs"):
+for p in (SIM, REPO / "src/plugins/youth-source-ecole-loisirs"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
 import httpx
 from youth_publishers.pseudo_youth_publishers_service import Handler, FakePublishers
-from usborne_youth import UsborneYouthSource, BROWSE
 from ecole_loisirs_youth import EcoleLoisirsYouthSource, SEARCH
 import datasetctl
 
@@ -44,9 +42,7 @@ class Loopback:
     def httpx_client(self):
         def forward(request):
             self.seen.append(str(request.url))
-            if request.url.host in ("usborne.com", "www.usborne.com"):
-                prefix = "/publishers/usborne"
-            elif request.url.host == "www.ecoledesloisirs.fr":
+            if request.url.host == "www.ecoledesloisirs.fr":
                 prefix = "/publishers/ecole"
             else:
                 raise AssertionError("External host not in test allowlist")
@@ -70,41 +66,12 @@ class PublisherFixturesTests(unittest.TestCase):
         service = catalog["youth_publishers"]
         self.assertEqual(service["plugins"], [])
         self.assertEqual(set(service["fixture_packages"]),
-                         {"youth-source-usborne", "youth-source-ecole-loisirs"})
+                         {"youth-source-ecole-loisirs"})
         for name in ("ux-small", "ux-all", "ux-errors"):
             _, profile = datasetctl.load_profile(name)
             self.assertIn("youth_publishers", datasetctl.enabled_service_configs(profile))
             forced = datasetctl.derived_plugins(profile, catalog)
-            self.assertNotIn("youth.source.usborne", forced)
             self.assertNotIn("youth.source.ecole-loisirs", forced)
-
-    def test_usborne_real_adapter_filters_months_years_and_pagination(self):
-        with Loopback() as server, server.httpx_client() as client:
-            self.assertTrue(server.health()["synthetic"])
-            plugin = UsborneYouthSource(client=client)
-            p1 = plugin.browse(age=3)
-            self.assertEqual([r["title"] for r in p1["items"]],
-                             ["Why School Matters", "Baby Book"])
-            self.assertEqual(p1["next_cursor"], "2")
-            baby = p1["items"][1]
-            self.assertEqual(baby["metadata"]["age_min_months"], 18)
-            self.assertEqual(baby["age_ranges"][0]["age_min"], 2)
-            self.assertEqual(baby["age_ranges"][0]["confidence"], 0.8)
-            self.assertEqual(baby["age_ranges"][0]["source_label"], "Age: 18+ months")
-            self.assertTrue(server.seen[0].startswith(BROWSE + "/3-5-years"))
-            p2 = plugin.browse(cursor=p1["next_cursor"])
-            self.assertEqual([r["title"] for r in p2["items"]], ["Older Book", "Infant Book"])
-            self.assertEqual(p2["next_cursor"], "")
-            self.assertEqual([r["title"] for r in plugin.search("school")["items"]],
-                             ["Why School Matters"])
-            with self.assertRaises(ValueError):
-                plugin.browse(cursor="not-a-page")
-            with self.assertRaisesRegex(RuntimeError, "503"):
-                plugin._get(BROWSE + "?fault=503")
-            with self.assertRaisesRegex(RuntimeError, "not HTML"):
-                plugin._get(BROWSE + "?fault=wrong-type")
-            with self.assertRaisesRegex(RuntimeError, "2 MB"):
-                plugin._get(BROWSE + "?fault=oversized")
 
     def test_ecole_real_adapter_preserves_explicit_unknown_age_and_pagination(self):
         with Loopback() as server, server.httpx_client() as client:

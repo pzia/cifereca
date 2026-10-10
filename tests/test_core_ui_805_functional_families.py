@@ -58,9 +58,9 @@ def test_transitive_extension_attaches_to_primary_not_to_intermediate_package():
     groups = _groups([
         _row("youth", package="main"),
         _row("youth.catalog", package="providers", requires=("youth",)),
-        _row("youth.booktrust", package="enrichers", requires=("youth.catalog",)),
+        _row("youth.adapter", package="enrichers", requires=("youth.catalog",)),
     ])
-    assert groups == {"youth": ["youth.booktrust", "youth.catalog"]}
+    assert groups == {"youth": ["youth.adapter", "youth.catalog"]}
 
 
 def test_multiple_required_parents_choose_stable_root_without_duplicates():

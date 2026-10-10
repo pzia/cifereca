@@ -78,7 +78,7 @@ Une notice Jeunesse sélectionnée peut être enrichie via les services `youth.b
 
 ## Suite
 
-Le moteur, BookTrust, la découverte de sources, Open Library et l’UI spécialisée sont séparés en plugins/incréments. Restent notamment d’autres sources jeunesse qualifiées et la recette UX complète.
+Le moteur, la découverte de sources, Open Library et l’UI spécialisée sont séparés en plugins/incréments. Restent notamment d’autres sources jeunesse qualifiées et la recette UX complète.
 
 ### Filtre d'âge strict (0.4.1)
 

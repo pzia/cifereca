@@ -63,3 +63,21 @@ Voir `docs/TEST-ORGANIZATION.md`.
 ## Catalogues publics
 
 Les évolutions validées de Baen, Ebooks libres et gratuits, Gallica, Project Gutenberg et BnF utilisent les surfaces publiques Core disponibles. Les éventuelles règles réseau, catalogue ou fournisseur spécifiques restent locales à chaque plugin.
+
+
+## Retrait des anciens fournisseurs Jeunesse (#957)
+
+Les plugins éditeur **Usborne** et **BookTrust** sont retirés du code livré :
+leurs adaptateurs, manifests et routes de qualification ne sont plus
+distribués. Les installations existantes peuvent encore contenir leurs
+archives dans le magasin utilisateur, mais `PluginManager` les exclut de la
+découverte et refuse toute nouvelle installation de ces packages.
+
+**Politique de migration frugale :** aucune suppression automatique du
+magasin des plugins ni du cache Jeunesse par identité. Les anciennes notices
+restent consultables localement comme données historiques, avec leur
+provenance d'origine et **sans réactivation de la collecte**. Si l'utilisateur
+souhaite récupérer de l'espace, la suppression manuelle des anciens packages
+et du cache doit être volontaire et distincte d'une mise à jour Core.
+Ce retrait ne supprime pas les autres sources (Milan, École des loisirs,
+Open Library).
