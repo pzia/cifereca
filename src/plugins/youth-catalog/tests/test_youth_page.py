@@ -1032,3 +1032,131 @@ def test_youth_ui_cancellation_while_source_is_running_preserves_prior_cache():
     assert "New book must not replace cache" not in repr(row)
     assert "Previous private title" not in repr(row)
     assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+
+
+def test_fetch_source_page_prefers_opt_in_cooperative_milan_extension():
+    from youth_page import YouthSourceCancelled
+
+    state, calls = {"cancelled": False}, []
+    class Milan:
+        def browse(self, **kwargs):
+            raise AssertionError("must select cancellable browse extension")
+
+        def browse_with_cancellation(self, *, cancelled, **kwargs):
+            calls.append(kwargs)
+            assert not cancelled()
+            state["cancelled"] = True
+            raise YouthSourceCancelled(2)
+
+    with pytest.raises(YouthSourceCancelled) as exc:
+        fetch_source_page(
+            Milan(), "private query", age=8, themes=(), cursor="2",
+            cancelled=lambda: state["cancelled"],
+        )
+    assert exc.value.collection_request_count == 2
+    assert len(calls) == 1
+    assert calls[0]["cursor"] == "2"
+
+
+def test_fetch_source_page_preserves_non_cooperative_browse_contract():
+    calls = []
+    class LegacySource:
+        def browse(self, **kwargs):
+            calls.append(kwargs)
+            return {"items": [{"title": "Legitimate"}], "collection_request_count": 1}
+
+    result = fetch_source_page(
+        LegacySource(), "test", age=9, themes=("mer",), cursor=None,
+        cancelled=lambda: False,
+    )
+    assert len(calls) == 1
+    assert result["collection_request_count"] == 1
+
+
+def test_youth_gtk_idle_cancellation_discards_already_completed_source_success():
+    """Cancel after worker done, before GTK idle_add, must not ingest a stale page."""
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private title"}])
+    tasks, dispatch, statuses, refreshed = Tasks(), [], [], []
+    state = {"cancelled": False}
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda cb: dispatch.append(cb))
+    view.status = NS(set_label=statuses.append)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.filter_state = lambda: FilterState(query="book", age=8, themes=())
+    view.selected_source = lambda: NS(
+        plugin_id="youth.source.booktrust", service=NS(
+            source_info=lambda: {"source_id": "booktrust", "display_name": "BookTrust"}
+        ),
+    )
+    view.refresh_source_diagnostics = lambda: refreshed.append("refresh")
+    view.next_cursor, view.next_source_plugin = "2", "youth.source.booktrust"
+    received = []
+    token = ("alice", "youth.source.booktrust", "book", 8, ())
+    view.run_remote(
+        lambda control: {"items": [{"title": "Unwanted"}], "collection_request_count": 2},
+        received.append, token,
+    )
+    handle = tasks.handles[0]
+    handle.control = NS(cancelled=lambda: state["cancelled"])
+    handle.finish()
+    assert len(dispatch) == 1
+    state["cancelled"] = True  # cancellation in the GTK idle queue
+    dispatch.pop()()
+
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    assert received == []
+    assert row["collection_state"] == "cancelled"
+    assert row["request_count"] == 2
+    assert row["cache_count"] == 1
+    assert row["received_count"] is None
+    assert view.next_cursor == "2"
+    assert view.next_source_plugin == "youth.source.booktrust"
+    assert statuses[-1] == "Collecte annulée. Le cache précédent est conservé."
+    assert refreshed == ["refresh"]
+    assert "Unwanted" not in repr(row)
+    assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["booktrust"]["collection_state"] == "not_tested"
+
+
+def test_youth_gtk_idle_cancellation_overrides_transport_failure_without_secrets():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    tasks, dispatch, statuses = Tasks(), [], []
+    cancelled = {"value": False}
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda cb: dispatch.append(cb))
+    view.status = NS(set_label=statuses.append)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.filter_state = lambda: FilterState(query="book", age=8, themes=())
+    view.selected_source = lambda: NS(
+        plugin_id="youth.source.booktrust", service=NS(
+            source_info=lambda: {"source_id": "booktrust", "display_name": "BookTrust"}
+        ),
+    )
+    view.refresh_source_diagnostics = lambda: None
+    token = ("alice", "youth.source.booktrust", "book", 8, ())
+    def fail(control):
+        error = RuntimeError("private https://example.invalid/token")
+        error.collection_request_count = 1
+        raise error
+    view.run_remote(fail, lambda result: 1 / 0, token)
+    handle = tasks.handles[0]
+    handle.control = NS(cancelled=lambda: cancelled["value"])
+    handle.finish()
+    cancelled["value"] = True
+    dispatch.pop()()
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    assert row["collection_state"] == "cancelled"
+    assert row["request_count"] == 1
+    assert row["http_status"] is None
+    assert "example.invalid" not in repr(row)
+    assert statuses[-1] == "Collecte annulée. Le cache précédent est conservé."
