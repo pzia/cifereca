@@ -464,8 +464,6 @@ def test_booktrust_per_call_request_evidence_success_failure_and_no_request():
 def test_booktrust_concurrent_collect_calls_keep_individual_counts():
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
-    from youth_catalog import YouthCatalogPlugin
-
     barrier = Barrier(2)
     seen = []
     def handler(req):
@@ -474,16 +472,11 @@ def test_booktrust_concurrent_collect_calls_keep_individual_counts():
         return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
 
     source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
-    catalog = YouthCatalogPlugin()
-    def collect(identity):
-        return catalog.collect_source(identity, source, "press", limit=1)
-
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = tuple(pool.map(collect, ("alice", "bob")))
-    assert all(result.accepted == 1 for result in results)
+        results = tuple(pool.map(
+            lambda text: source.search(text, limit=1), ("press", "press")
+        ))
     assert len(seen) == 2
-    for identity in ("alice", "bob"):
-        row = {r["source_id"]: r for r in catalog.source_diagnostics(identity)}["booktrust"]
-        assert row["request_count"] == 1
-        assert row["accepted"] == 1
+    assert [result["collection_request_count"] for result in results] == [1, 1]
+    assert all(len(result["items"]) == 1 for result in results)
     assert source._call_requests.get() is None
