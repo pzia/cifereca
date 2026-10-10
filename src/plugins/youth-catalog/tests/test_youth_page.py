@@ -453,3 +453,76 @@ def test_youth_text_entry_is_connected_to_gtk_activate():
     from pathlib import Path
     source = (Path(__file__).resolve().parents[1] / "youth_page.py").read_text(encoding="utf-8")
     assert 'self.query.connect("activate", lambda *_: self.query_activated())' in source
+
+
+def test_youth_collected_reports_ingest_outcomes_per_identity_without_leaking_rejections():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    identity = ["alice"]
+    messages = []
+    view.identity_id = lambda: identity[0]
+    view.status = NS(set_label=messages.append)
+    view.render_cached = lambda: None
+
+    view.collected(
+        {"items": [{"title": "Livre Atlas", "isbn": "9780306406157",
+                     "age_label": "8+"}], "next_cursor": "2", "fresh_for_seconds": 60},
+        source_id="booktrust", label="BookTrust", append=False,
+        source_plugin="youth.source.booktrust", duration_ms=27,
+    )
+    a = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
+    assert a["booktrust"]["collection_state"] == "items"
+    assert a["booktrust"]["cache_count"] == 1
+    assert a["booktrust"]["next_cursor_present"] is True
+    assert a["booktrust"]["duration_ms"] == 27
+    assert view.next_cursor == "2"
+
+    view.collected(
+        {"items": [{"title": ""}], "fresh_for_seconds": 30},
+        source_id="booktrust", label="BookTrust", append=False,
+        source_plugin="youth.source.booktrust",
+    )
+    a = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
+    assert a["booktrust"]["collection_state"] == "invalid"
+    assert a["booktrust"]["rejected"] == 1
+    assert a["booktrust"]["cache_count"] == 1
+    assert "Livre Atlas" not in repr(a["booktrust"])
+    identity[0] = "bob"
+    b = {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}
+    assert b["booktrust"]["collection_state"] == "not_tested"
+
+
+def test_youth_explicit_remote_exception_records_only_typed_failure_and_keeps_cache():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    tasks, dispatch, messages = Tasks(), [], []
+    view.catalog = YouthCatalogPlugin()
+    view.catalog.ingest("alice", "milan", [{"title": "Atlas ancien", "isbn": "9780306406157"}])
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda callback: dispatch.append(callback))
+    view.status = NS(set_label=messages.append)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.milan"
+    view.selected_source = lambda: NS(plugin_id="youth.source.milan", service=NS(
+        source_info=lambda: {"source_id": "milan", "display_name": "Milan"}
+    ))
+    view.filter_state = lambda: FilterState(query="Atlas", age=8, themes=())
+
+    def broken(control):
+        raise TimeoutError("secret=https://private.example/token")
+
+    token = ("alice", "youth.source.milan", "Atlas", 8, ())
+    view.run_remote(broken, lambda raw: None, token)
+    tasks.handles[0].finish()
+    dispatch.pop()()
+    row = {x["source_id"]: x for x in view.catalog.source_diagnostics("alice")}["milan"]
+    assert row["collection_state"] == "timeout"
+    assert row["error_type"] == "TimeoutError"
+    assert row["cache_count"] == 1
+    assert "private.example" not in repr(row)
+    assert messages[-1] == "Échec de la source. Le cache précédent est conservé."
+    assert {x["source_id"]: x for x in view.catalog.source_diagnostics("bob")}["milan"]["collection_state"] == "not_tested"
