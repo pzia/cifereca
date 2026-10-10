@@ -15,6 +15,7 @@ from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict
 from pathlib import Path, PurePosixPath
+from queue import Queue, Empty, Full
 from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
@@ -38,8 +39,9 @@ from .core.acquisition_decision import decide_artifact_reuse
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
-from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest
+from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
+from .core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
 
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
 
@@ -1874,18 +1876,58 @@ class LibraryService:
             provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
         return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
+    def _search_virtual_stream_session(
+        self, session: ProviderSession, query: str, scope: str, *,
+        field: str, content_types: tuple[str, ...], generation: int,
+        publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool],
+        control: Any,
+    ) -> tuple[list[SearchResult], list[str], str, str]:
+        """Worker-only optional stream. Gaps/errors do not poison the cache."""
+        try:
+            outcome = consume_provider_stream(
+                session.search_stream(
+                    query, scope, field=field, content_types=content_types,
+                    control=control,
+                ),
+                provider_id=session.provider_id, catalog_generation=generation,
+                publish=publish, cancelled=cancelled,
+            )
+            rows = list(outcome.rows)
+            if field in {"title", "author"}:
+                rows = [row for row in rows if self._field_match(field, query, row)]
+            if str(scope or "all").casefold() == "unknown":
+                from .core.search import support_kind
+                rows = [row for row in rows if support_kind(asdict(row)) == "unknown"]
+            return rows, list(outcome.warnings), outcome.error_code, outcome.error_message
+        except SearchStreamCancelled:
+            return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"
+        except SearchStreamFailure as exc:
+            publish(ProviderSearchEvent(
+                session.provider_id, generation, 0, "reset",
+                message="resync after invalid/incomplete stream",
+            ))
+            # Rebuild from a complete catalogue query; do not reuse partial
+            # stream results after a dropped message.
+            return self._search_provider_session(
+                session, query, scope, field=field, content_types=content_types,
+            )
+        except Exception as exc:
+            return [], [f"{session.descriptor.display_name}: stream error"], type(exc).__name__, type(exc).__name__
+
     def search_progressive(
         self, query: str, scope: str = "all", force: bool = False, *,
         provider_id: str = "all", provider_ids: tuple[str, ...] | list[str] | None = None,
         field: str = "all", content_types: tuple[str, ...] | list[str] | None = None,
         on_batch: Callable[[Any], None] | None = None, control: Any = None,
+        on_event: Callable[[ProviderSearchEvent], None] | None = None,
     ):
         """Parallel federated search with provider-scoped progressive batches.
 
         Providers keep their simple synchronous ``search`` contract.  Core owns
         concurrency, partial-failure isolation, cancellation checks, mirroring and
-        final caching.  ``on_batch`` is invoked from the caller/worker thread, never
-        from provider worker threads.
+        final caching. Optional virtual providers emit validated stream events
+        through ``on_event``; callbacks run on the search caller thread, never
+        on provider threads. Existing ``on_batch`` remains compatible.
         """
         from datetime import datetime, timezone
         from .plugin_api import CatalogSearchBatch, CatalogSearchSummary
@@ -1915,7 +1957,12 @@ class LibraryService:
         identity = self.current_identity
         pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
         types = tuple(sorted(content_types or ()))
-        cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}".encode()).hexdigest()
+        virtual_versions = ",".join(
+            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
+            for session in searchable
+            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
+        )
+        cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
         ttl = int(self.config.get("cache.search_seconds", 21600))
 
         def emit(batch):
@@ -1941,28 +1988,83 @@ class LibraryService:
         failed = completed_count = 0
         cancelled = False
         futures = {}
+        streamed: dict[str, int] = {}
+        event_queue: Queue[ProviderSearchEvent] = Queue(maxsize=512)
+
+        def request_cancelled() -> bool:
+            with self._search_generation_lock:
+                if search_generation != self._search_generation:
+                    return True
+            return bool(control is not None and callable(getattr(control, "cancelled", None)) and control.cancelled())
+
+        def publish_from_provider(event: ProviderSearchEvent) -> None:
+            # Bounded queue enforces backpressure on a noisy provider.
+            while not request_cancelled():
+                try:
+                    event_queue.put(event, timeout=0.05)
+                    return
+                except Full:
+                    continue
+
+        def drain_stream_events() -> None:
+            while True:
+                try:
+                    event = event_queue.get_nowait()
+                except Empty:
+                    return
+                if on_event is None or request_cancelled():
+                    continue
+                entry = self.registry.virtual_entry(event.provider_id)
+                if entry is None or entry.catalog_generation != event.catalog_generation:
+                    continue
+                try:
+                    on_event(event)
+                except Exception as exc:
+                    self.diagnostics.add(
+                        "SEARCH", "stream callback", "error",
+                        detail={"provider": event.provider_id, "error": type(exc).__name__},
+                    )
+
         if searchable:
             for session in searchable:
-                futures[_SEARCH_EXECUTOR.submit(self._search_provider_session, session, query, scope, field=field, content_types=tuple(content_types or ()))] = (session, time.monotonic())
+                entry = self.registry.virtual_entry(session.provider_id)
+                if (
+                    entry is not None
+                    and "catalog.search.stream" in entry.capabilities
+                    and isinstance(session, ProviderSearchStream)
+                ):
+                    streamed[session.provider_id] = entry.catalog_generation
+                    future = _SEARCH_EXECUTOR.submit(
+                        self._search_virtual_stream_session, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                        generation=entry.catalog_generation,
+                        publish=publish_from_provider, cancelled=request_cancelled,
+                        control=control,
+                    )
+                else:
+                    future = _SEARCH_EXECUTOR.submit(
+                        self._search_provider_session, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                    )
+                futures[future] = (session, time.monotonic())
             pending = set(futures)
             while pending:
-                with self._search_generation_lock:
-                    superseded = search_generation != self._search_generation
-                if superseded:
+                if request_cancelled():
                     cancelled = True
-                    for future in pending: future.cancel()
+                    for future in pending:
+                        future.cancel()
                     break
                 if control is not None:
                     try:
-                        if callable(getattr(control, "cancelled", None)) and control.cancelled():
-                            cancelled = True
                         check = getattr(control, "check_cancelled", None)
-                        if callable(check): check()
+                        if callable(check):
+                            check()
                     except Exception:
                         cancelled = True
-                    if cancelled:
-                        for future in pending: future.cancel()
+                        for future in pending:
+                            future.cancel()
                         break
+                drain_stream_events()
                 done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
                 if not done:
                     continue
@@ -1973,16 +2075,38 @@ class LibraryService:
                     except Exception as exc:
                         provider_rows, provider_warnings = [], [f"{session.descriptor.display_name}: {exc}"]
                         error_code, error_message = type(exc).__name__, str(exc)
-                    aggregate.extend(provider_rows); warnings.extend(provider_warnings)
+                    # An inventory revision during a search invalidates any
+                    # partial results from the former generation.
+                    expected = streamed.get(session.provider_id)
+                    if expected is not None:
+                        entry = self.registry.virtual_entry(session.provider_id)
+                        if entry is None or entry.catalog_generation != expected:
+                            cancelled = True
+                            provider_rows = []
+                            provider_warnings = []
+                            error_code = "StreamStale"
+                            error_message = "source generation changed"
+                    aggregate.extend(provider_rows)
+                    warnings.extend(provider_warnings)
                     completed_count += 1
-                    if error_code and not provider_rows: failed += 1
-                    emit(CatalogSearchBatch(
-                        session.provider_id, session.descriptor.display_name, tuple(provider_rows), tuple(provider_warnings),
-                        error_code, error_message, False, int((time.monotonic() - provider_started) * 1000),
-                    ))
+                    if error_code and not provider_rows:
+                        failed += 1
+                    if not cancelled:
+                        emit(CatalogSearchBatch(
+                            session.provider_id, session.descriptor.display_name, tuple(provider_rows),
+                            tuple(provider_warnings), error_code, error_message, False,
+                            int((time.monotonic() - provider_started) * 1000),
+                        ))
                     if control is not None and callable(getattr(control, "report", None)):
-                        try: control.report(current=completed_count, total=len(searchable), message=f"Recherche · {session.descriptor.display_name}")
-                        except Exception: pass
+                        try:
+                            control.report(current=completed_count, total=len(searchable),
+                                           message=f"Recherche · {session.descriptor.display_name}")
+                        except Exception:
+                            pass
+            if not cancelled:
+                drain_stream_events()
+        if request_cancelled():
+            cancelled = True
 
         unique: dict[tuple[str, str, str], SearchResult] = {}
         for row in aggregate: unique[(row.source_provider, row.docbase, row.record_id)] = row
