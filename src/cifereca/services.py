@@ -4294,6 +4294,21 @@ class LibraryService:
                         "status": "attention_required", "loan_id": loan.id,
                         "code": "adept_identity_unproven", "retry": "explicit_only",
                     }
+                if str(loan.source_provider).lower() == "paris" and (
+                    self._borrower_identity_conflict(
+                        self.accounts, provider_id=loan.source_provider,
+                        account_id=str(loan.source_account_id or ""),
+                        identity_id=identity.identity_id,
+                    )
+                    or self._cross_identity_loan_conflict(
+                        self.storage.acquisitions(provider_id=loan.source_provider),
+                        provider_loan_id=loan.id, identity_id=identity.identity_id,
+                    )
+                ):
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+                    }
                 previous = [r for r in self.storage.acquisitions(provider_id=loan.source_provider)
                             if r.get("identity_id") == identity.identity_id and r.get("credential_id") == loan.source_credential
                             and str(r.get("account_id") or "") == str(loan.source_account_id or "")
