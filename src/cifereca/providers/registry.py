@@ -59,8 +59,12 @@ class ProviderRegistry:
     def virtual_ids(self, parent_id: str) -> tuple[str, ...]:
         return tuple(sorted(k for k, v in self._virtual_owners.items() if v == parent_id))
 
-    def reconcile_collection(self, parent_id: str, service: ProviderCollection) -> tuple[str, ...]:
-        """Atomically adopt one cached inventory and its locally created providers.
+    def reconcile_collection(
+        self, parent_id: str, service: ProviderCollection, *,
+        snapshot_override: ProviderCollectionSnapshot | None = None,
+        minimum_snapshot: ProviderCollectionSnapshot | None = None,
+    ) -> tuple[str, ...]:
+        """Atomically adopt a cached/fresh inventory and its local providers.
 
         Neither network discovery nor Core registry access is delegated to the
         collection. Any invalid manifest or failing factory retains the last
@@ -69,6 +73,13 @@ class ProviderRegistry:
         if not isinstance(service, ProviderCollection):
             raise ProviderCollectionValidationError("invalid collection service")
         previous = self._collections.get(parent_id)
+        # A persisted checkpoint is a generation floor even after restart.
+        # An upstream stale replay must not roll back the accepted inventory.
+        if minimum_snapshot is not None and (
+            previous is None
+            or minimum_snapshot.discovery_generation > previous.discovery_generation
+        ):
+            previous = minimum_snapshot
         owned = set(self.virtual_ids(parent_id))
         # All previously accepted children remain reserved to their parent,
         # including disabled, removed and temporarily unpublished sources.
@@ -82,7 +93,8 @@ class ProviderRegistry:
         }
         foreign = (set(self._plugins) - owned) | reserved_elsewhere
         snapshot = validate_provider_collection_snapshot(
-            service.snapshot(), parent_plugin_id=parent_id,
+            service.snapshot() if snapshot_override is None else snapshot_override,
+            parent_plugin_id=parent_id,
             existing_provider_ids=foreign, previous=previous,
         )
         old_entries = {c.plugin_id: c for c in previous.children} if previous else {}

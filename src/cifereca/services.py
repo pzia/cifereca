@@ -42,6 +42,7 @@ from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSea
 from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
 from .core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
+from .core.provider_collection_cache import ProviderCollectionSnapshotStore
 
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
 
@@ -90,6 +91,7 @@ class LibraryService:
         self._plugin_manager: Any | None = None
         self._provider_plugin_ids: dict[str, str] = {}
         self._virtual_parent_by_provider: dict[str, str] = {}
+        self._virtual_snapshot_store = ProviderCollectionSnapshotStore(storage)
         # Collection events can originate on any plugin thread. Never read an
         # inventory or connect a provider from an arbitrary caller/GTK thread.
         self._virtual_reconcile_lock = RLock()
@@ -655,15 +657,69 @@ class LibraryService:
                 live_parents.add(parent_id)
                 service = manager.service(parent_id)
                 active_services[parent_id] = service
+                persisted = None
                 try:
-                    children = self.registry.reconcile_collection(parent_id, service)
+                    persisted = self._virtual_snapshot_store.load(parent_id)
+                except Exception as exc:
+                    # Corrupt/tampered disk data must never become providers.
+                    self.diagnostics.add(
+                        "PLUGIN", "saved virtual inventory invalid", "error",
+                        detail={"parent": parent_id, "error_type": type(exc).__name__},
+                        level="detailed",
+                    )
+                try:
+                    children = self.registry.reconcile_collection(
+                        parent_id, service, minimum_snapshot=persisted,
+                    )
                 except Exception as exc:
                     self.diagnostics.add(
                         "PLUGIN", "virtual provider inventory rejected", "error",
                         detail={"parent": parent_id, "error_type": type(exc).__name__},
                         level="detailed",
                     )
-                    continue
+                    # Prefer the latest in-memory valid inventory; otherwise
+                    # recover the last validated SQLite checkpoint. Do not
+                    # replace it or erase books if discovery is unavailable.
+                    known = self.registry.virtual_snapshot(parent_id)
+                    if known is not None:
+                        attached.extend(self.registry.virtual_ids(parent_id))
+                        continue
+                    if persisted is None:
+                        continue
+                    try:
+                        children = self.registry.reconcile_collection(
+                            parent_id, service, snapshot_override=persisted,
+                            minimum_snapshot=persisted,
+                        )
+                    except Exception as offline_exc:
+                        self.diagnostics.add(
+                            "PLUGIN", "virtual inventory restore failed", "error",
+                            detail={"parent": parent_id,
+                                    "error_type": type(offline_exc).__name__},
+                            level="detailed",
+                        )
+                        continue
+                    self.diagnostics.add(
+                        "PLUGIN", "virtual inventory restored from SQLite", "ok",
+                        detail={"parent": parent_id,
+                                "generation": persisted.discovery_generation},
+                        level="detailed",
+                    )
+                else:
+                    accepted = self.registry.virtual_snapshot(parent_id)
+                    # A failed disk write never rolls back a valid in-memory
+                    # publication. SQLite is the durable checkpoint, however,
+                    # so only report success after metadata_set returns.
+                    if accepted is not None and accepted != persisted:
+                        try:
+                            self._virtual_snapshot_store.save(accepted)
+                        except Exception as save_exc:
+                            self.diagnostics.add(
+                                "PLUGIN", "virtual inventory checkpoint failed", "error",
+                                detail={"parent": parent_id,
+                                        "error_type": type(save_exc).__name__},
+                                level="detailed",
+                            )
                 attached.extend(children)
             for parent in set(before.values()) - live_parents:
                 self.registry.retire_collection(parent)

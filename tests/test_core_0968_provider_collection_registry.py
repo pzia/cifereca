@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace as NS
 from threading import Event, current_thread
+from dataclasses import asdict
+import json
+from cifereca.core.provider_collection_cache import ProviderCollectionSnapshotStore
 
 import pytest
 
@@ -555,3 +558,153 @@ def test_synthetic_merged_does_not_mask_unrelated_or_unsupported_sources(tmp_pat
         assert "cifericaopds.merged" in {s.provider_id for s in selected}
     finally:
         svc.close()
+
+
+def test_cached_inventory_restores_after_restart_when_parent_is_offline(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    db_path = tmp_path / "cache.sqlite3"
+    original = Collection(snapshot(
+        child("alpha"), child("beta", revision="r3", generation=7), generation=4,
+    ))
+    first = LibraryService(cfg, Storage(db_path), Diagnostics())
+    try:
+        first.attach_plugin_manager(FakeManager(original))
+        first.connect_configured()
+        saved = ProviderCollectionSnapshotStore(first.storage).load(PARENT)
+        assert saved is not None and saved.discovery_generation == 4
+        assert {x.plugin_id for x in saved.children} == {
+            "cifericaopds.alpha", "cifericaopds.beta",
+        }
+    finally:
+        first.close()
+
+    class OfflineCollection(Collection):
+        def snapshot(self):
+            raise ConnectionError("server unreachable, no cached plugin inventory")
+
+    offline = OfflineCollection(original.value)
+    second = LibraryService(cfg, Storage(db_path), Diagnostics())
+    try:
+        attached = second.attach_plugin_manager(FakeManager(offline))
+        assert set(attached) == {"cifericaopds.alpha", "cifericaopds.beta"}
+        assert offline.calls == [("create", "alpha"), ("create", "beta")]
+        assert second.registry.virtual_snapshot(PARENT) == saved
+        second.connect_configured()
+        rows = second.search("offline", force=True)
+        assert {x.source_provider for x in rows} == set(attached)
+        assert second.storage.metadata_get(ProviderCollectionSnapshotStore.key(PARENT))
+    finally:
+        second.close()
+
+
+def test_saved_checkpoint_rejects_stale_server_replay_without_erasing_it(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    db_path = tmp_path / "cache.sqlite3"
+    first = LibraryService(cfg, Storage(db_path), Diagnostics())
+    try:
+        first.attach_plugin_manager(FakeManager(Collection(snapshot(
+            child("alpha", revision="r5", generation=12),
+            generation=5,
+        ))))
+    finally:
+        first.close()
+
+    stale = Collection(snapshot(
+        child("alpha", revision="r1", generation=1), generation=2,
+    ))
+    second = LibraryService(cfg, Storage(db_path), Diagnostics())
+    try:
+        ids = second.attach_plugin_manager(FakeManager(stale))
+        assert ids == ["cifericaopds.alpha"]
+        recovered = second.registry.virtual_snapshot(PARENT)
+        assert recovered.discovery_generation == 5
+        assert recovered.children[0].source_revision == "r5"
+        assert ProviderCollectionSnapshotStore(second.storage).load(PARENT) == recovered
+
+        # A subsequent higher-generation revision may replace the checkpoint.
+        stale.value = snapshot(child("alpha", revision="r6", generation=13), generation=6)
+        second.refresh_virtual_collections()
+        latest = ProviderCollectionSnapshotStore(second.storage).load(PARENT)
+        assert latest.discovery_generation == 6
+        assert latest.children[0].source_revision == "r6"
+    finally:
+        second.close()
+
+
+def test_corrupted_snapshot_never_materializes_or_overwrites_known_good_data(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    db_path = tmp_path / "cache.sqlite3"
+    storage = Storage(db_path)
+    key = ProviderCollectionSnapshotStore.key(PARENT)
+    storage.metadata_set(key, '{"format":1,"digest":"bad","snapshot":{}}')
+    storage.close()
+
+    class OfflineCollection(Collection):
+        def snapshot(self):
+            raise ConnectionError("offline")
+
+    svc = LibraryService(cfg, Storage(db_path), Diagnostics())
+    try:
+        assert svc.attach_plugin_manager(FakeManager(OfflineCollection(snapshot(child("alpha"))))) == []
+        assert svc.registry.descriptors() == []
+        assert svc.storage.metadata_get(key).startswith('{"format":1')
+        # A new valid inventory heals an invalid or corrupted checkpoint.
+        online = Collection(snapshot(child("alpha"), generation=4))
+        svc.attach_plugin_manager(FakeManager(online))
+        assert svc.registry.maybe_get("cifericaopds.alpha") is not None
+        loaded = ProviderCollectionSnapshotStore(svc.storage).load(PARENT)
+        assert loaded.discovery_generation == 4
+    finally:
+        svc.close()
+
+
+def test_recovery_preserves_disabled_children_and_never_revives_inactive_parent(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    db_path = tmp_path / "cache.sqlite3"
+    initial = snapshot(
+        child("alpha"), child("beta", status="disabled"), generation=3,
+    )
+    first = LibraryService(cfg, Storage(db_path), Diagnostics())
+    try:
+        first.attach_plugin_manager(FakeManager(Collection(initial)))
+    finally:
+        first.close()
+
+    class OfflineCollection(Collection):
+        def snapshot(self):
+            raise ConnectionError("offline")
+
+    second = LibraryService(cfg, Storage(db_path), Diagnostics())
+    manager = FakeManager(OfflineCollection(initial))
+    manager.live = False
+    try:
+        assert second.attach_plugin_manager(manager) == []
+        assert second.registry.descriptors() == []
+        manager.live = True
+        assert second.refresh_virtual_collections() == ["cifericaopds.alpha"]
+        assert second.registry.maybe_get("cifericaopds.beta") is None
+    finally:
+        second.close()
+
+
+def test_saved_inventory_contains_only_validated_snapshot_fields(tmp_path):
+    storage = Storage(tmp_path / "storage.sqlite3")
+    repo = ProviderCollectionSnapshotStore(storage)
+    try:
+        from cifereca.plugin_api.provider_collection import validate_provider_collection_snapshot
+        payload = snapshot(child("alpha"), generation=7)
+        payload["untrusted_secret"] = "should-not-be-persisted"
+        payload["children"][0]["untrusted_secret"] = "also-not-persisted"
+        clean = validate_provider_collection_snapshot(payload, parent_plugin_id=PARENT)
+        repo.save(clean)
+        raw = storage.metadata_get(repo.key(PARENT))
+        assert "should-not-be-persisted" not in raw
+        assert "also-not-persisted" not in raw
+        assert asdict(repo.load(PARENT)) == asdict(clean)
+        record = json.loads(raw)
+        record["snapshot"]["children"][0]["source_revision"] = "tampered"
+        storage.metadata_set(repo.key(PARENT), json.dumps(record))
+        with pytest.raises(ProviderCollectionValidationError, match="checksum"):
+            repo.load(PARENT)
+    finally:
+        storage.close()
