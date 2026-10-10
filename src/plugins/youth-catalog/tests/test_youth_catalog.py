@@ -1028,3 +1028,96 @@ def test_typed_paginated_publisher_layout_failure_preserves_identity_cache():
     assert "youth.test" not in {
         d["source_id"] for d in catalog.source_diagnostics("bob")
     }
+
+
+def test_youth_pipeline_projection_is_strictly_sanitized_and_per_identity():
+    from youth_catalog import YouthCatalogPlugin, sanitize_collection_pipeline
+
+    data = {
+        "query_mode": "remote", "effective_limit": 40,
+        "anchor_count": 22, "candidate_count": 20, "analyzed_count": 20,
+        "isbn_valid_count": 20, "age_qualified_count": 18,
+        "age_unknown_count": 2, "returned_items": 20,
+        "html_bytes": 8322, "http_status": 200,
+        "html_sha256_prefix": "abcdef0123456789",
+        "http_ms": 12, "parse_ms": 3,
+        "rejection_reasons": {"isbn_invalid": 2, "private": "secret"},
+        "raw_html": "<p>Secret cookie</p>",
+        "signed_url": "https://private.example/token",
+        "isbn13": "9782211348171",
+        "title": "Never stored",
+    }
+    sanitized = sanitize_collection_pipeline(data)
+    assert sanitized["query_mode"] == "remote"
+    assert sanitized["candidate_count"] == 20
+    assert sanitized["rejection_reasons"] == {"isbn_invalid": 2}
+    for secret in ("Secret cookie", "private.example", "9782211348171", "Never stored"):
+        assert secret not in repr(sanitized)
+
+    plugin = YouthCatalogPlugin()
+    plugin.record_collection("alice", "ecole-loisirs", state="items", pipeline=data)
+    alice = {
+        row["source_id"]: row for row in plugin.source_diagnostics("alice")
+    }["ecole-loisirs"]
+    assert alice["pipeline"]["candidate_count"] == 20
+    assert alice["pipeline"]["rejection_reasons"] == {"isbn_invalid": 2}
+    assert {row["source_id"]: row for row in plugin.source_diagnostics("bob")}["ecole-loisirs"]["pipeline"] == {}
+    # Returned values are detached; callers cannot overwrite a later snapshot.
+    alice["pipeline"]["rejection_reasons"]["isbn_invalid"] = 999
+    again = {
+        row["source_id"]: row for row in plugin.source_diagnostics("alice")
+    }["ecole-loisirs"]
+    assert again["pipeline"]["rejection_reasons"]["isbn_invalid"] == 2
+    for secret in ("Secret cookie", "private.example", "9782211348171", "Never stored"):
+        assert secret not in repr(again)
+
+
+def test_youth_pipeline_filters_invalid_types_out_before_snapshot():
+    from youth_catalog import sanitize_collection_pipeline
+
+    result = sanitize_collection_pipeline({
+        "query_mode": "private_query",
+        "effective_limit": "40", "anchor_count": True,
+        "candidate_count": -1, "analyzed_count": 100001,
+        "http_status": 999, "html_bytes": 2000001,
+        "html_sha256_prefix": "z" * 16,
+        "http_ms": False, "parse_ms": -1,
+        "truncated_by_limit": "false",
+        "rejection_reasons": {
+            "isbn_invalid": 100001, "duplicate": True,
+            "age_unattested": 2,
+            "raw_html": "<script>private</script>",
+        },
+    })
+    assert result == {"rejection_reasons": {"age_unattested": 2}}
+    assert sanitize_collection_pipeline("private string") == {}
+
+
+def test_explicit_catalog_collect_source_keeps_funnel_from_one_call_only():
+    from youth_catalog import YouthCatalogPlugin
+
+    class Publisher:
+        def source_info(self):
+            return {"source_id": "ecole-loisirs", "display_name": "École"}
+        def search(self, query, *, cursor=None, limit=50):
+            return {
+                "items": [{"title": "One book", "isbn13": "9780306406157"}],
+                "collection_request_count": 1,
+                "collection_pipeline": {
+                    "query_mode": "remote", "effective_limit": 40,
+                    "candidate_count": 3, "analyzed_count": 2,
+                    "isbn_valid_count": 1, "age_qualified_count": 1,
+                    "returned_items": 1,
+                    "rejection_reasons": {"isbn_invalid": 1},
+                },
+            }
+
+    plugin = YouthCatalogPlugin()
+    assert plugin.collect_source("alice", Publisher(), "loup").accepted == 1
+    a = {row["source_id"]: row for row in plugin.source_diagnostics("alice")}["ecole-loisirs"]
+    assert a["request_count"] == 1
+    assert a["pipeline"]["candidate_count"] == 3
+    assert a["pipeline"]["rejection_reasons"] == {"isbn_invalid": 1}
+    assert a["requested_limit"] == 50
+    assert a["pipeline"]["effective_limit"] == 40
+    assert {row["source_id"]: row for row in plugin.source_diagnostics("bob")}["ecole-loisirs"]["collection_state"] == "not_tested"
