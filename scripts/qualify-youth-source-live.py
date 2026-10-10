@@ -63,6 +63,14 @@ def plan(args: argparse.Namespace) -> dict:
             "allowed_host": choice["host"]}
 
 
+def _valid_isbn13(value: str) -> bool:
+    """Only a checksum-valid ISBN Bookland (978/979), not any GTIN/EAN-13."""
+    if not re.fullmatch(r"(?:978|979)[0-9]{10}", value):
+        return False
+    return sum(int(digit) * (1 if index % 2 == 0 else 3)
+               for index, digit in enumerate(value)) % 10 == 0
+
+
 def evidence_for(books: tuple, source_id: str) -> list[dict]:
     evidence = []
     for book in books:
@@ -88,7 +96,10 @@ def evidence_for(books: tuple, source_id: str) -> list[dict]:
         url = str(getattr(book, "notice_url", "") or "")
         if not url.startswith("https://") or urlsplit(url).hostname != SOURCES[source_id]["host"]:
             continue
-        if source_id in {"milan", "ecole-loisirs"} and not (len(isbn) == 13 and isbn.isdigit()):
+        # Publisher HTML can call a toy's valid EAN-13 an "ISBN". The
+        # operator-facing PASS must never accept it, even if an adapter
+        # accidentally passes a non-ISBN through catalogue normalization.
+        if source_id in {"milan", "ecole-loisirs"} and not _valid_isbn13(isbn):
             continue
         evidence.append({"title": str(getattr(book, "title", ""))[:160],
                          "isbn13": isbn, "notice_url": url,
