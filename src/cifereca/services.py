@@ -16,6 +16,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from queue import Queue, Empty, Full
+from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
@@ -39,8 +41,10 @@ from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attenti
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
-from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest
+from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
+from .core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
+from .core.provider_collection_cache import ProviderCollectionSnapshotStore
 
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
 
@@ -88,6 +92,18 @@ class LibraryService:
         self.last_search_warnings: list[str] = []
         self._plugin_manager: Any | None = None
         self._provider_plugin_ids: dict[str, str] = {}
+        self._virtual_parent_by_provider: dict[str, str] = {}
+        self._virtual_snapshot_store = ProviderCollectionSnapshotStore(storage)
+        # Collection events can originate on any plugin thread. Never read an
+        # inventory or connect a provider from an arbitrary caller/GTK thread.
+        self._virtual_reconcile_lock = RLock()
+        self._virtual_schedule_lock = Lock()
+        self._virtual_refresh_pending = False
+        self._virtual_refresh_again = False
+        self._virtual_collection_closed = False
+        self._virtual_manager_unsubscribe: Callable[[], None] | None = None
+        self._virtual_parent_subscriptions: dict[str, tuple[object, Callable[[], None]]] = {}
+        self._virtual_change_callbacks: list[Callable[[], None]] = []
         self._kobo_adept_state_cache: dict[str, Any] | None = None
         self._kobo_adept_state_cache_at = 0.0
         # Search workers are shared across requests. Recreating an executor for
@@ -453,7 +469,10 @@ class LibraryService:
 
     def attach_plugin_manager(self, manager: Any) -> list[str]:
         """Attach Plugin API services, preferring external providers/runtimes when ready."""
-        self._plugin_manager = manager
+        with self._virtual_reconcile_lock:
+            self._unbind_virtual_subscriptions()
+            self._virtual_collection_closed = False
+            self._plugin_manager = manager
         attached: list[str] = []
         try:
             statuses = manager.candidates("provider.library")
@@ -466,8 +485,291 @@ class LibraryService:
                 self.registry.register(service, replace=True)
                 self._provider_plugin_ids[service.descriptor.id] = status.descriptor.id
                 attached.append(service.descriptor.id)
+        attached.extend(self.refresh_virtual_collections())
+        binder = getattr(manager, "subscribe_services", None)
+        if callable(binder):
+            try:
+                unsub = binder("provider.collection", self._queue_virtual_collection_refresh)
+                if callable(unsub):
+                    self._virtual_manager_unsubscribe = unsub
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual service subscription", "error",
+                    detail={"error_type": type(exc).__name__}, level="detailed",
+                )
         if attached:
             self.diagnostics.add("PLUGIN", "external providers attached", "ok", detail={"providers": attached}, level="detailed")
+        return attached
+
+    def _unbind_virtual_subscriptions(self) -> None:
+        """Disconnect previous parent/manager callbacks on replacement or close."""
+        unsubscribers = [
+            *(unsub for _, unsub in self._virtual_parent_subscriptions.values()),
+            self._virtual_manager_unsubscribe,
+        ]
+        self._virtual_parent_subscriptions.clear()
+        self._virtual_manager_unsubscribe = None
+        for unsubscribe in unsubscribers:
+            if callable(unsubscribe):
+                try:
+                    unsubscribe()
+                except Exception:
+                    pass
+
+    def _sync_virtual_subscriptions(self, services: dict[str, object]) -> None:
+        for parent, (old_service, unsubscribe) in list(self._virtual_parent_subscriptions.items()):
+            if services.get(parent) is old_service:
+                continue
+            self._virtual_parent_subscriptions.pop(parent, None)
+            try:
+                unsubscribe()
+            except Exception:
+                pass
+        for parent, service in services.items():
+            if parent in self._virtual_parent_subscriptions:
+                continue
+            subscribe = getattr(service, "subscribe", None)
+            if not callable(subscribe):
+                continue
+            try:
+                unsubscribe = subscribe(self._queue_virtual_collection_refresh)
+                if callable(unsubscribe):
+                    self._virtual_parent_subscriptions[parent] = (service, unsubscribe)
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual inventory subscription", "error",
+                    detail={"parent": parent, "error_type": type(exc).__name__},
+                    level="detailed",
+                )
+
+    def _queue_virtual_collection_refresh(self) -> None:
+        """Coalesce bursts; re-read the latest cached snapshot on a Core worker."""
+        with self._virtual_schedule_lock:
+            if self._virtual_collection_closed:
+                return
+            if self._virtual_refresh_pending:
+                self._virtual_refresh_again = True
+                return
+            self._virtual_refresh_pending = True
+        try:
+            _SEARCH_EXECUTOR.submit(self._drain_virtual_collection_events)
+        except RuntimeError:
+            with self._virtual_schedule_lock:
+                self._virtual_refresh_pending = False
+
+    def _drain_virtual_collection_events(self) -> None:
+        while True:
+            with self._virtual_schedule_lock:
+                if self._virtual_collection_closed:
+                    self._virtual_refresh_pending = False
+                    return
+                self._virtual_refresh_again = False
+            try:
+                self.refresh_virtual_collections(connect_changed=True)
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual notification", "error",
+                    detail={"error_type": type(exc).__name__}, level="detailed",
+                )
+            with self._virtual_schedule_lock:
+                if not self._virtual_refresh_again or self._virtual_collection_closed:
+                    self._virtual_refresh_pending = False
+                    return
+
+    def subscribe_virtual_sources(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Observe accepted inventory changes. Callback runs on the caller/worker.
+
+        GTK consumers must marshal UI changes using GLib.idle_add.
+        Invalid snapshots and duplicate notifications do not emit an update.
+        """
+        with self._virtual_reconcile_lock:
+            if callback not in self._virtual_change_callbacks:
+                self._virtual_change_callbacks.append(callback)
+
+        def unsubscribe() -> None:
+            with self._virtual_reconcile_lock:
+                if callback in self._virtual_change_callbacks:
+                    self._virtual_change_callbacks.remove(callback)
+        return unsubscribe
+
+    def _connect_changed_virtual_provider(self, provider_id: str) -> None:
+        """Connect only one newly published public adapter; keep other sessions."""
+        plugin = self.registry.maybe_get(provider_id)
+        if plugin is None:
+            return
+        key = self._session_key(provider_id, "__public__")
+        if key in self._sessions:
+            return
+        session = None
+        try:
+            session = plugin.create_session(
+                credential_id="__public__", label=plugin.descriptor.display_name,
+                credentials={}, options={}, config=self.config, storage=self.storage,
+                diagnostics=self.diagnostics,
+            )
+            if session.provider_id != provider_id:
+                raise ProviderConfigurationError("virtual session provider mismatch")
+            session.connect()
+            self._sessions[key] = session
+            self._session_errors.pop(key, None)
+        except Exception as exc:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            self._session_errors[key] = type(exc).__name__
+            self.diagnostics.add(
+                "PLUGIN", "virtual provider connection", "error",
+                detail={"provider": provider_id, "error_type": type(exc).__name__},
+                level="detailed",
+            )
+
+    def refresh_virtual_collections(self, *, connect_changed: bool = False) -> list[str]:
+        """Reconcile cached inventories without any implicit discovery HTTP.
+
+        Notifications invoke this on a worker and connect only added/replaced
+        children. An explicit call can defer connections to connect_configured.
+        Unrelated provider sessions and local catalogue/history remain intact.
+        """
+        with self._virtual_reconcile_lock:
+            if self._virtual_collection_closed:
+                return []
+            manager = self._plugin_manager
+            if manager is None:
+                return []
+            try:
+                statuses = manager.candidates("provider.collection")
+            except Exception:
+                return []
+            before = dict(self._virtual_parent_by_provider)
+            previous_plugins = {
+                provider_id: self.registry.maybe_get(provider_id)
+                for provider_id in before
+            }
+            previous_snapshots = {
+                parent: self.registry.virtual_snapshot(parent)
+                for parent in set(before.values())
+            }
+            live_parents: set[str] = set()
+            active_services: dict[str, object] = {}
+            attached: list[str] = []
+            for status in statuses:
+                parent_id = status.descriptor.id
+                live_parents.add(parent_id)
+                service = manager.service(parent_id)
+                active_services[parent_id] = service
+                persisted = None
+                try:
+                    persisted = self._virtual_snapshot_store.load(parent_id)
+                except Exception as exc:
+                    # Corrupt/tampered disk data must never become providers.
+                    self.diagnostics.add(
+                        "PLUGIN", "saved virtual inventory invalid", "error",
+                        detail={"parent": parent_id, "error_type": type(exc).__name__},
+                        level="detailed",
+                    )
+                try:
+                    children = self.registry.reconcile_collection(
+                        parent_id, service, minimum_snapshot=persisted,
+                    )
+                except Exception as exc:
+                    self.diagnostics.add(
+                        "PLUGIN", "virtual provider inventory rejected", "error",
+                        detail={"parent": parent_id, "error_type": type(exc).__name__},
+                        level="detailed",
+                    )
+                    # Prefer the latest in-memory valid inventory; otherwise
+                    # recover the last validated SQLite checkpoint. Do not
+                    # replace it or erase books if discovery is unavailable.
+                    known = self.registry.virtual_snapshot(parent_id)
+                    if known is not None:
+                        # No new inventory was accepted: keep existing adapters
+                        # but do not report a publication or a false change.
+                        continue
+                    if persisted is None:
+                        continue
+                    try:
+                        children = self.registry.reconcile_collection(
+                            parent_id, service, snapshot_override=persisted,
+                            minimum_snapshot=persisted,
+                        )
+                    except Exception as offline_exc:
+                        self.diagnostics.add(
+                            "PLUGIN", "virtual inventory restore failed", "error",
+                            detail={"parent": parent_id,
+                                    "error_type": type(offline_exc).__name__},
+                            level="detailed",
+                        )
+                        continue
+                    self.diagnostics.add(
+                        "PLUGIN", "virtual inventory restored from SQLite", "ok",
+                        detail={"parent": parent_id,
+                                "generation": persisted.discovery_generation},
+                        level="detailed",
+                    )
+                else:
+                    accepted = self.registry.virtual_snapshot(parent_id)
+                    # A failed disk write never rolls back a valid in-memory
+                    # publication. SQLite is the durable checkpoint, however,
+                    # so only report success after metadata_set returns.
+                    if accepted is not None and accepted != persisted:
+                        try:
+                            self._virtual_snapshot_store.save(accepted)
+                        except Exception as save_exc:
+                            self.diagnostics.add(
+                                "PLUGIN", "virtual inventory checkpoint failed", "error",
+                                detail={"parent": parent_id,
+                                        "error_type": type(save_exc).__name__},
+                                level="detailed",
+                            )
+                attached.extend(children)
+            for parent in set(before.values()) - live_parents:
+                self.registry.retire_collection(parent)
+            self._sync_virtual_subscriptions(active_services)
+            new_mapping = {
+                provider_id: parent
+                for parent in live_parents
+                for provider_id in self.registry.virtual_ids(parent)
+            }
+            stale_ids = {
+                pid for pid, old in previous_plugins.items()
+                if pid not in new_mapping or self.registry.maybe_get(pid) is not old
+            }
+            for old_id in stale_ids:
+                for key, session in list(self._sessions.items()):
+                    if session.provider_id == old_id:
+                        self._sessions.pop(key, None)
+                        try:
+                            session.close()
+                        except Exception:
+                            pass
+                if old_id not in new_mapping:
+                    self._provider_plugin_ids.pop(old_id, None)
+            for provider_id, parent in new_mapping.items():
+                self._provider_plugin_ids[provider_id] = parent
+            self._virtual_parent_by_provider = new_mapping
+            if connect_changed:
+                for provider_id in sorted(new_mapping):
+                    if (provider_id in stale_ids
+                            or self._session_key(provider_id, "__public__") not in self._sessions):
+                        self._connect_changed_virtual_provider(provider_id)
+            # A catalog-generation increment invalidates search cache keys even
+            # when the Python adapter itself has not changed.
+            snapshots_changed = any(
+                self.registry.virtual_snapshot(parent) != previous_snapshots.get(parent)
+                for parent in live_parents | set(previous_snapshots)
+            )
+            changed = bool(stale_ids or set(new_mapping) != set(before) or snapshots_changed)
+            listeners = tuple(self._virtual_change_callbacks) if changed else ()
+        for callback in listeners:
+            try:
+                callback()
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual inventory observer", "error",
+                    detail={"error_type": type(exc).__name__}, level="detailed",
+                )
         return attached
 
     @property
@@ -491,11 +793,21 @@ class LibraryService:
             return str(provider_id) not in self._provider_plugin_ids
         if not status.enabled or status.state != "ready":
             return False
-        if getattr(status.descriptor, "instantiation", "multiple") != "singleton_public":
+        if (
+            provider_id not in self._virtual_parent_by_provider
+            and getattr(status.descriptor, "instantiation", "multiple") != "singleton_public"
+        ):
             return True
         identity = identity_id or (self.current_identity.identity_id if self.current_identity else "default")
         try:
-            return bool(self._plugin_manager.enabled_for_identity(status.descriptor.id, identity))
+            if not self._plugin_manager.enabled_for_identity(status.descriptor.id, identity):
+                return False
+            if provider_id in self._virtual_parent_by_provider:
+                state = getattr(self._plugin_manager, "state", None)
+                if state is not None:
+                    override = state.identity_enabled_override(provider_id, identity)
+                    return True if override is None else bool(override)
+            return True
         except Exception:
             return False
 
@@ -515,6 +827,11 @@ class LibraryService:
         }
 
     def close(self) -> None:
+        with self._virtual_schedule_lock:
+            self._virtual_collection_closed = True
+        with self._virtual_reconcile_lock:
+            self._unbind_virtual_subscriptions()
+            self._virtual_change_callbacks.clear()
         seen: set[int] = set()
         for session in list(self._sessions.values()):
             if id(session) in seen:
@@ -569,7 +886,8 @@ class LibraryService:
             descriptor = plugin.descriptor
             provider_id = str(descriptor.id or "").strip().lower()
             plugin_status = self._provider_plugin_status(provider_id)
-            instantiation = getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple")
+            instantiation = ("singleton_public" if provider_id in self._virtual_parent_by_provider else
+                             getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple"))
             if (
                 provider_id
                 and descriptor.state == "ready"
@@ -594,7 +912,8 @@ class LibraryService:
             plugin_status = self._provider_plugin_status(provider_id)
             if (
                 not provider_id or plugin.descriptor.state != "ready" or plugin.descriptor.credential_fields
-                or getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple") != "singleton_public"
+                or (provider_id not in self._virtual_parent_by_provider
+                    and getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple") != "singleton_public")
             ):
                 continue
             credential_id = "__public__"
@@ -1402,7 +1721,39 @@ class LibraryService:
         target = cls._history_fold(row.title if field == "title" else row.author if field == "author" else "")
         return all(token in target for token in tokens)
 
-    def search(self, query: str, scope: str = "all", force: bool = False, *, provider_id: str = "all", field: str = "all", content_types: tuple[str, ...] | list[str] | None = None) -> list[SearchResult]:
+    def _without_redundant_merged(
+        self, sessions: list[ProviderSession], *, field: str, scope: str,
+        include_redundant_merged: bool = False,
+    ) -> list[ProviderSession]:
+        """Prefer original sources over synthetic.merged in a federated query.
+
+        Suppression is scoped to one virtual collection parent: unrelated Core
+        providers are never hidden. A merged provider remains selectable alone
+        (or together via an explicit opt-in). Only origins able to satisfy the
+        requested field/scope suppress their sibling aggregate.
+        """
+        if include_redundant_merged or len(sessions) < 2:
+            return sessions
+        original_parents: set[str] = set()
+        for session in sessions:
+            entry = self.registry.virtual_entry(session.provider_id)
+            if entry is None or entry.kind == "synthetic.merged":
+                continue
+            parent = self.registry.virtual_parent(session.provider_id)
+            if parent and not self._search_contract_warning(session, field, scope):
+                original_parents.add(parent)
+        if not original_parents:
+            return sessions
+        return [
+            session for session in sessions
+            if not (
+                (entry := self.registry.virtual_entry(session.provider_id)) is not None
+                and entry.kind == "synthetic.merged"
+                and self.registry.virtual_parent(session.provider_id) in original_parents
+            )
+        ]
+
+    def search(self, query: str, scope: str = "all", force: bool = False, *, provider_id: str = "all", field: str = "all", content_types: tuple[str, ...] | list[str] | None = None, include_redundant_merged: bool = False) -> list[SearchResult]:
         provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
         # Search is global: one connected session per provider is queried,
         # independently of the reader account currently selected in the GUI.
@@ -1420,12 +1771,24 @@ class LibraryService:
                 continue
             seen_provider.add(session.provider_id)
             searchable.append(session)
+        searchable = self._without_redundant_merged(
+            searchable, field=field, scope=provider_scope,
+            include_redundant_merged=include_redundant_merged,
+        )
         provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
         identity = self.current_identity
         pref_key = ""
         if identity is not None:
             pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
-        cache_key = hashlib.sha256(f"search-v7\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}".encode()).hexdigest()
+        virtual_versions = ",".join(
+            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
+            for session in searchable
+            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
+        )
+        virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
+        cache_key = hashlib.sha256(
+            f"search-v7\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        ).hexdigest()
         ttl = int(self.config.get("cache.search_seconds", 21600))
         if not force:
             cached = self.storage.cache_get("search", cache_key)
@@ -1608,18 +1971,62 @@ class LibraryService:
             provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
         return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
+    def _search_virtual_stream_session(
+        self, session: ProviderSession, query: str, scope: str, *,
+        field: str, content_types: tuple[str, ...], generation: int,
+        publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool],
+        control: Any,
+    ) -> tuple[list[SearchResult], list[str], str, str]:
+        """Worker-only optional stream. Gaps/errors do not poison the cache."""
+        try:
+            outcome = consume_provider_stream(
+                session.search_stream(
+                    query, scope, field=field, content_types=content_types,
+                    control=control,
+                ),
+                provider_id=session.provider_id, catalog_generation=generation,
+                publish=publish, cancelled=cancelled,
+            )
+            rows = list(outcome.rows)
+            if field in {"title", "author"}:
+                rows = [row for row in rows if self._field_match(field, query, row)]
+            if str(scope or "all").casefold() == "unknown":
+                from .core.search import support_kind
+                rows = [row for row in rows if support_kind(asdict(row)) == "unknown"]
+            return rows, list(outcome.warnings), outcome.error_code, outcome.error_message
+        except SearchStreamCancelled:
+            return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"
+        except SearchStreamFailure as exc:
+            publish(ProviderSearchEvent(
+                session.provider_id, generation, 0, "reset",
+                message="resync after invalid/incomplete stream",
+            ))
+            # Rebuild from a complete catalogue query; do not reuse partial
+            # stream results after a dropped message.
+            return self._search_provider_session(
+                session, query, scope, field=field, content_types=content_types,
+            )
+        except Exception as exc:
+            return [], [f"{session.descriptor.display_name}: stream error"], type(exc).__name__, type(exc).__name__
+
     def search_progressive(
         self, query: str, scope: str = "all", force: bool = False, *,
         provider_id: str = "all", provider_ids: tuple[str, ...] | list[str] | None = None,
         field: str = "all", content_types: tuple[str, ...] | list[str] | None = None,
         on_batch: Callable[[Any], None] | None = None, control: Any = None,
+        on_event: Callable[[ProviderSearchEvent], None] | None = None,
+        include_redundant_merged: bool = False,
     ):
         """Parallel federated search with provider-scoped progressive batches.
 
         Providers keep their simple synchronous ``search`` contract.  Core owns
         concurrency, partial-failure isolation, cancellation checks, mirroring and
-        final caching.  ``on_batch`` is invoked from the caller/worker thread, never
-        from provider worker threads.
+        final caching. Optional virtual providers emit validated stream events
+        through ``on_event``; callbacks run on the search caller thread, never
+        on provider threads. Existing ``on_batch`` remains compatible.
+        By default synthetic.merged is skipped when searchable sibling origins
+        are already selected, preventing duplicated remote work. Explicit
+        ``include_redundant_merged=True`` opts in to both.
         """
         from datetime import datetime, timezone
         from .plugin_api import CatalogSearchBatch, CatalogSearchSummary
@@ -1644,12 +2051,21 @@ class LibraryService:
             if session.provider_id in seen_provider:
                 continue
             seen_provider.add(session.provider_id); searchable.append(session)
+        searchable = self._without_redundant_merged(
+            searchable, field=field, scope=scope,
+            include_redundant_merged=include_redundant_merged,
+        )
         searchable.sort(key=lambda row: row.provider_id)
         provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
         identity = self.current_identity
         pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
         types = tuple(sorted(content_types or ()))
-        cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}".encode()).hexdigest()
+        virtual_versions = ",".join(
+            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
+            for session in searchable
+            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
+        )
+        cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
         ttl = int(self.config.get("cache.search_seconds", 21600))
 
         def emit(batch):
@@ -1675,28 +2091,83 @@ class LibraryService:
         failed = completed_count = 0
         cancelled = False
         futures = {}
+        streamed: dict[str, int] = {}
+        event_queue: Queue[ProviderSearchEvent] = Queue(maxsize=512)
+
+        def request_cancelled() -> bool:
+            with self._search_generation_lock:
+                if search_generation != self._search_generation:
+                    return True
+            return bool(control is not None and callable(getattr(control, "cancelled", None)) and control.cancelled())
+
+        def publish_from_provider(event: ProviderSearchEvent) -> None:
+            # Bounded queue enforces backpressure on a noisy provider.
+            while not request_cancelled():
+                try:
+                    event_queue.put(event, timeout=0.05)
+                    return
+                except Full:
+                    continue
+
+        def drain_stream_events() -> None:
+            while True:
+                try:
+                    event = event_queue.get_nowait()
+                except Empty:
+                    return
+                if on_event is None or request_cancelled():
+                    continue
+                entry = self.registry.virtual_entry(event.provider_id)
+                if entry is None or entry.catalog_generation != event.catalog_generation:
+                    continue
+                try:
+                    on_event(event)
+                except Exception as exc:
+                    self.diagnostics.add(
+                        "SEARCH", "stream callback", "error",
+                        detail={"provider": event.provider_id, "error": type(exc).__name__},
+                    )
+
         if searchable:
             for session in searchable:
-                futures[_SEARCH_EXECUTOR.submit(self._search_provider_session, session, query, scope, field=field, content_types=tuple(content_types or ()))] = (session, time.monotonic())
+                entry = self.registry.virtual_entry(session.provider_id)
+                if (
+                    entry is not None
+                    and "catalog.search.stream" in entry.capabilities
+                    and isinstance(session, ProviderSearchStream)
+                ):
+                    streamed[session.provider_id] = entry.catalog_generation
+                    future = _SEARCH_EXECUTOR.submit(
+                        self._search_virtual_stream_session, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                        generation=entry.catalog_generation,
+                        publish=publish_from_provider, cancelled=request_cancelled,
+                        control=control,
+                    )
+                else:
+                    future = _SEARCH_EXECUTOR.submit(
+                        self._search_provider_session, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                    )
+                futures[future] = (session, time.monotonic())
             pending = set(futures)
             while pending:
-                with self._search_generation_lock:
-                    superseded = search_generation != self._search_generation
-                if superseded:
+                if request_cancelled():
                     cancelled = True
-                    for future in pending: future.cancel()
+                    for future in pending:
+                        future.cancel()
                     break
                 if control is not None:
                     try:
-                        if callable(getattr(control, "cancelled", None)) and control.cancelled():
-                            cancelled = True
                         check = getattr(control, "check_cancelled", None)
-                        if callable(check): check()
+                        if callable(check):
+                            check()
                     except Exception:
                         cancelled = True
-                    if cancelled:
-                        for future in pending: future.cancel()
+                        for future in pending:
+                            future.cancel()
                         break
+                drain_stream_events()
                 done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
                 if not done:
                     continue
@@ -1707,16 +2178,38 @@ class LibraryService:
                     except Exception as exc:
                         provider_rows, provider_warnings = [], [f"{session.descriptor.display_name}: {exc}"]
                         error_code, error_message = type(exc).__name__, str(exc)
-                    aggregate.extend(provider_rows); warnings.extend(provider_warnings)
+                    # An inventory revision during a search invalidates any
+                    # partial results from the former generation.
+                    expected = streamed.get(session.provider_id)
+                    if expected is not None:
+                        entry = self.registry.virtual_entry(session.provider_id)
+                        if entry is None or entry.catalog_generation != expected:
+                            cancelled = True
+                            provider_rows = []
+                            provider_warnings = []
+                            error_code = "StreamStale"
+                            error_message = "source generation changed"
+                    aggregate.extend(provider_rows)
+                    warnings.extend(provider_warnings)
                     completed_count += 1
-                    if error_code and not provider_rows: failed += 1
-                    emit(CatalogSearchBatch(
-                        session.provider_id, session.descriptor.display_name, tuple(provider_rows), tuple(provider_warnings),
-                        error_code, error_message, False, int((time.monotonic() - provider_started) * 1000),
-                    ))
+                    if error_code and not provider_rows:
+                        failed += 1
+                    if not cancelled:
+                        emit(CatalogSearchBatch(
+                            session.provider_id, session.descriptor.display_name, tuple(provider_rows),
+                            tuple(provider_warnings), error_code, error_message, False,
+                            int((time.monotonic() - provider_started) * 1000),
+                        ))
                     if control is not None and callable(getattr(control, "report", None)):
-                        try: control.report(current=completed_count, total=len(searchable), message=f"Recherche · {session.descriptor.display_name}")
-                        except Exception: pass
+                        try:
+                            control.report(current=completed_count, total=len(searchable),
+                                           message=f"Recherche · {session.descriptor.display_name}")
+                        except Exception:
+                            pass
+            if not cancelled:
+                drain_stream_events()
+        if request_cancelled():
+            cancelled = True
 
         unique: dict[tuple[str, str, str], SearchResult] = {}
         for row in aggregate: unique[(row.source_provider, row.docbase, row.record_id)] = row

@@ -7,6 +7,8 @@ from typing import Literal, Mapping
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
+from .provider_collection import ProviderCollection
+from .provider_search_stream import ProviderSearchStream
 from .models import CatalogServiceFactory, DiagnosticsCheckProvider, DocumentTransformer, MaintenanceTool, TransportService, BookDetailCacheEnricher, UiPageProvider, UiTitlebarProvider, WidgetCatalog
 
 ContractStatus = Literal["experimental", "stable", "deprecated"]
@@ -34,6 +36,8 @@ class ContractCheck:
 # independently from Plugin API and manifest versions.
 CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
     ContractDefinition("provider.library", "cifereca.provider", "1", capabilities=("catalog.search", "catalog.holdings", "acquisition.borrow", "acquisition.download")),
+    ContractDefinition("provider.collection", "cifereca.provider.collection", "1", protocol_name="ProviderCollection"),
+    ContractDefinition("provider.search.stream", "cifereca.provider.search.stream", "1", protocol_name="ProviderSearchStream"),
     ContractDefinition("catalog.service", "cifereca.catalog.service", "1", protocol_name="CatalogServiceFactory"),
     ContractDefinition("transport", "cifereca.transport", "1", protocol_name="TransportService"),
     ContractDefinition("drm.handler", "cifereca.drm", "1"),
@@ -56,6 +60,8 @@ CONTRACT_REGISTRY: tuple[ContractDefinition, ...] = (
 
 _BY_CATEGORY = {item.category: item for item in CONTRACT_REGISTRY}
 _PROTOCOLS = {
+    "provider.collection": ProviderCollection,
+    "provider.search.stream": ProviderSearchStream,
     "catalog.service": CatalogServiceFactory,
     "transport": TransportService,
     "ui.page": UiPageProvider,
