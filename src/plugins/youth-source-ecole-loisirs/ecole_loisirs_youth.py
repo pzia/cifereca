@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -297,6 +298,7 @@ class EcoleLoisirsYouthSource:
         self._own_client = client is None
         self.context = None
         self._last_diagnostic: dict[str, object] = {}
+        self._call_requests: ContextVar[int | None] = ContextVar("youth_ecole_call_requests", default=None)
         self.client = client or httpx.Client(
             timeout=max(1.0, min(float(timeout_seconds), 30.0)),
             follow_redirects=False,
@@ -343,6 +345,9 @@ class EcoleLoisirsYouthSource:
         if not allowed or urlsplit(allowed).path != "/recherche-avancee":
             raise ValueError("only l'école des loisirs advanced search is allowed")
         self._last_diagnostic["request_count"] = int(self._last_diagnostic.get("request_count", 0)) + 1
+        counter = self._call_requests.get()
+        if counter is not None:
+            self._call_requests.set(counter + 1)
         response = self.client.get(allowed)
         self._last_diagnostic.update({
             "http_status": response.status_code,
@@ -378,6 +383,7 @@ class EcoleLoisirsYouthSource:
             "phase": "listing",
             "request_count": 0,
         }
+        request_token = self._call_requests.set(0)
         try:
             url = search_url(_text(query), page=page)
             html = self._get(url)
@@ -407,8 +413,10 @@ class EcoleLoisirsYouthSource:
                 "items": rows,
                 "next_cursor": cursor_out,
                 "fresh_for_seconds": 86400,
+                "collection_request_count": self._call_requests.get(),
             }
         except Exception as exc:
+            exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic.update({
                 "state": "error",
                 "error_type": type(exc).__name__,
@@ -416,6 +424,8 @@ class EcoleLoisirsYouthSource:
             })
             self._publish_diagnostic("error")
             raise
+        finally:
+            self._call_requests.reset(request_token)
 
 
 PLUGIN = EcoleLoisirsYouthSource()
