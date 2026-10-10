@@ -143,7 +143,9 @@ def normalize_isbn(value: object) -> str:
         prefix = "978" + raw[:9]
         check = (10 - sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(prefix)) % 10) % 10
         return prefix + str(check)
-    if len(raw) == 13 and raw.isdigit():
+    # A valid GTIN/EAN checksum does not make a product identifier an ISBN:
+    # only Bookland 978/979 are ISBN-13 prefixes (e.g. toys use other EANs).
+    if len(raw) == 13 and raw.isdigit() and raw.startswith(("978", "979")):
         total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(raw))
         return raw if total % 10 == 0 else ""
     return ""

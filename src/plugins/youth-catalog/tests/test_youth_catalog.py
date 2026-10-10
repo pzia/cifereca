@@ -810,3 +810,26 @@ def test_source_diagnostic_stage_is_strictly_whitelisted():
     row = {r["source_id"]: r for r in index.source_diagnostics("alice")}["milan"]
     assert row["collection_stage"] == "listing"
     assert row["http_status"] == 429
+
+
+
+def test_nonbook_ean_never_becomes_isbn_or_confirmed_edition_match():
+    for ean in ("3575678940134", "3127020507597"):
+        assert normalize_isbn(ean) == ""
+        a = normalize_record(row("Peluche", isbn13=ean), source_id="ecole-loisirs")
+        b = normalize_record(row("Autre produit", isbn13=ean), source_id="other")
+        assert "isbn" not in a.identifiers
+        assert "isbn" not in b.identifiers
+        assert bibliographic_match(a, b).status != "confirmed"
+
+    index = YouthCatalogIndex()
+    index.ingest("alice", "ecole-loisirs", [row("Produit A", isbn13="3575678940134")])
+    index.ingest("alice", "other", [row("Produit B", isbn13="3575678940134")])
+    assert len(index.entries("alice")) == 2
+
+
+def test_isbn13_978_and_979_and_isbn10_are_unchanged():
+    assert normalize_isbn("9782211309684") == "9782211309684"
+    assert normalize_isbn("9791234567896") == "9791234567896"
+    assert normalize_isbn("0306406152") == "9780306406157"
+    assert normalize_isbn("9780000000000") == ""
