@@ -149,7 +149,14 @@ def main():
 
     def search_initial():
         assert window.service.current_identity.identity_id == "camille"
-        assert window.search_books("Camille", field="title", online=False, identity_id="camille")
+        # La branche #954 précède #955. Utiliser l\x27API locale déjà stable pour
+        # charger une vraie fiche GTK ; le clic loupe est intercepté séparément.
+        from cifereca.gui.query_model import QueryState
+        window.search_controls.set_state(
+            QueryState(text="Camille", field="title", scope="all"), notify=False,
+        )
+        window.navigate("search")
+        window.run_search(False)
         later(180, wait_search)
 
     def wait_search():
