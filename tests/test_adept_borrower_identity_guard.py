@@ -198,3 +198,38 @@ def test_manual_reacquisition_rejects_shared_borrower_before_ledger_update(monke
     result = service.reacquire_digital_loan(loan)
     assert result["status"] == "attention_required"
     assert result["code"] == "adept_borrower_ambiguous"
+
+
+def test_auto_acquisition_missing_loan_id_fails_closed():
+    service = object.__new__(LibraryService)
+    loan = SimpleNamespace(id="", source_provider="paris")
+    result = service._acquire_active_loan_automatically(loan)
+    assert result["status"] == "attention_required"
+    assert result["code"] == "adept_loan_identity_unproven"
+
+
+def test_auto_acquisition_lock_busy_never_enters_fulfillment(monkeypatch):
+    from pathlib import Path
+    import cifereca.services as services
+
+    class BusyLock:
+        def __init__(self, path):
+            self.path = path
+        def __enter__(self):
+            raise services.LockBusyError("busy")
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(services, "InterProcessLock", BusyLock)
+    monkeypatch.setattr(services, "acquisition_lock_file", lambda: Path("/tmp/acquisition.lock"))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("ADEPT fulfillment must not run")
+
+    monkeypatch.setattr(LibraryService, "_acquire_active_loan_automatically_guarded", forbidden)
+    service = object.__new__(LibraryService)
+    result = service._acquire_active_loan_automatically(
+        SimpleNamespace(id="loan-1", source_provider="paris")
+    )
+    assert result["status"] == "attention_required"
+    assert result["code"] == "acquisition_busy"
