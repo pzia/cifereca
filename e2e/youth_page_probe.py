@@ -1004,10 +1004,10 @@ def main() -> int:
             "source milan" in subtitle and "8–12 ans (Milan)" in subtitle
             for _, subtitle in shown
         ), f"Milan age not rendered in GTK detail: {shown!r}"
-        assert any(
-            title == "Sources" and "booktrust" in subtitle and "milan" in subtitle
-            for title, subtitle in shown
-        ), f"Multi-source provenance not rendered in GTK detail: {shown!r}"
+        sources = [subtitle for title, subtitle in shown if title == "Source"]
+        assert "booktrust" in sources and "milan" in sources, (
+            f"Multi-source provenance not rendered as separate GTK fields: {shown!r}"
+        )
         result["detail_provenance"] = shown
         capture("06-keyboard-search-detail")
         later(160, click_collect_without_source)
