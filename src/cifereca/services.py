@@ -1662,7 +1662,39 @@ class LibraryService:
         target = cls._history_fold(row.title if field == "title" else row.author if field == "author" else "")
         return all(token in target for token in tokens)
 
-    def search(self, query: str, scope: str = "all", force: bool = False, *, provider_id: str = "all", field: str = "all", content_types: tuple[str, ...] | list[str] | None = None) -> list[SearchResult]:
+    def _without_redundant_merged(
+        self, sessions: list[ProviderSession], *, field: str, scope: str,
+        include_redundant_merged: bool = False,
+    ) -> list[ProviderSession]:
+        """Prefer original sources over synthetic.merged in a federated query.
+
+        Suppression is scoped to one virtual collection parent: unrelated Core
+        providers are never hidden. A merged provider remains selectable alone
+        (or together via an explicit opt-in). Only origins able to satisfy the
+        requested field/scope suppress their sibling aggregate.
+        """
+        if include_redundant_merged or len(sessions) < 2:
+            return sessions
+        original_parents: set[str] = set()
+        for session in sessions:
+            entry = self.registry.virtual_entry(session.provider_id)
+            if entry is None or entry.kind == "synthetic.merged":
+                continue
+            parent = self.registry.virtual_parent(session.provider_id)
+            if parent and not self._search_contract_warning(session, field, scope):
+                original_parents.add(parent)
+        if not original_parents:
+            return sessions
+        return [
+            session for session in sessions
+            if not (
+                (entry := self.registry.virtual_entry(session.provider_id)) is not None
+                and entry.kind == "synthetic.merged"
+                and self.registry.virtual_parent(session.provider_id) in original_parents
+            )
+        ]
+
+    def search(self, query: str, scope: str = "all", force: bool = False, *, provider_id: str = "all", field: str = "all", content_types: tuple[str, ...] | list[str] | None = None, include_redundant_merged: bool = False) -> list[SearchResult]:
         provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
         # Search is global: one connected session per provider is queried,
         # independently of the reader account currently selected in the GUI.
@@ -1680,6 +1712,10 @@ class LibraryService:
                 continue
             seen_provider.add(session.provider_id)
             searchable.append(session)
+        searchable = self._without_redundant_merged(
+            searchable, field=field, scope=provider_scope,
+            include_redundant_merged=include_redundant_merged,
+        )
         provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
         identity = self.current_identity
         pref_key = ""
@@ -1920,6 +1956,7 @@ class LibraryService:
         field: str = "all", content_types: tuple[str, ...] | list[str] | None = None,
         on_batch: Callable[[Any], None] | None = None, control: Any = None,
         on_event: Callable[[ProviderSearchEvent], None] | None = None,
+        include_redundant_merged: bool = False,
     ):
         """Parallel federated search with provider-scoped progressive batches.
 
@@ -1928,6 +1965,9 @@ class LibraryService:
         final caching. Optional virtual providers emit validated stream events
         through ``on_event``; callbacks run on the search caller thread, never
         on provider threads. Existing ``on_batch`` remains compatible.
+        By default synthetic.merged is skipped when searchable sibling origins
+        are already selected, preventing duplicated remote work. Explicit
+        ``include_redundant_merged=True`` opts in to both.
         """
         from datetime import datetime, timezone
         from .plugin_api import CatalogSearchBatch, CatalogSearchSummary
@@ -1952,6 +1992,10 @@ class LibraryService:
             if session.provider_id in seen_provider:
                 continue
             seen_provider.add(session.provider_id); searchable.append(session)
+        searchable = self._without_redundant_merged(
+            searchable, field=field, scope=scope,
+            include_redundant_merged=include_redundant_merged,
+        )
         searchable.sort(key=lambda row: row.provider_id)
         provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
         identity = self.current_identity

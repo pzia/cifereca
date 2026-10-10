@@ -411,3 +411,143 @@ def test_notification_failure_preserves_last_good_sources_and_no_false_update(tm
         assert svc.registry.virtual_snapshot(PARENT).discovery_generation == 1
     finally:
         svc.close()
+
+
+def test_synthetic_merged_default_search_prefers_origins_and_is_explicitly_selectable(tmp_path):
+    """Global search does not query an aggregate together with its originals."""
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    collection = Collection(snapshot(
+        child("alpha"), child("beta"), child("merged", kind="synthetic.merged"),
+    ))
+    manager = FakeManager(collection)
+    try:
+        svc.attach_plugin_manager(manager)
+        svc.connect_configured()
+        svc._mirror_remote_results = lambda _rows, **kw: 0
+        calls = {}
+        for session in svc._sessions.values():
+            if not session.provider_id.startswith("cifericaopds."):
+                continue
+            original = session.search
+            provider_id = session.provider_id
+            def counted(*args, _original=original, _provider_id=provider_id, **kwargs):
+                calls[_provider_id] = calls.get(_provider_id, 0) + 1
+                return _original(*args, **kwargs)
+            session.search = counted
+
+        # All three remain available as explicit filter options.
+        assert {x for x, _ in svc.searchable_providers()} >= {
+            "cifericaopds.alpha", "cifericaopds.beta", "cifericaopds.merged",
+        }
+        rows = svc.search("search term", force=True)
+        assert {row.source_provider for row in rows} >= {
+            "cifericaopds.alpha", "cifericaopds.beta",
+        }
+        assert "cifericaopds.merged" not in calls
+
+        # Exact selection still makes the aggregate usable.
+        before = calls.copy()
+        rows = svc.search("search term", force=True, provider_id="cifericaopds.merged")
+        assert {r.source_provider for r in rows} == {"cifericaopds.merged"}
+        assert calls["cifericaopds.merged"] > before.get("cifericaopds.merged", 0)
+
+        # Deliberate opt-in includes all three in the same query.
+        before = calls["cifericaopds.merged"]
+        rows = svc.search("search term", force=True, include_redundant_merged=True)
+        assert {r.source_provider for r in rows} >= {
+            "cifericaopds.alpha", "cifericaopds.beta", "cifericaopds.merged",
+        }
+        assert calls["cifericaopds.merged"] > before
+
+        # Losing one original does not suppress the other; losing both
+        # automatically brings back the available merged aggregate.
+        manager.enabled[("cifericaopds.alpha", "default")] = False
+        manager.enabled[("cifericaopds.beta", "default")] = False
+        merged_before = calls["cifericaopds.merged"]
+        rows = svc.search("search term", force=True)
+        assert "cifericaopds.merged" in {r.source_provider for r in rows}
+        assert calls["cifericaopds.merged"] > merged_before
+    finally:
+        svc.close()
+
+
+def test_synthetic_merged_progressive_follows_same_default_and_cache_key(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    collection = Collection(snapshot(
+        child("alpha"), child("merged", kind="synthetic.merged"),
+    ))
+    manager = FakeManager(collection)
+    try:
+        svc.attach_plugin_manager(manager)
+        svc.connect_configured()
+        svc._mirror_remote_results = lambda _rows, **kw: 0
+        batches = []
+        first = svc.search_progressive(
+            "search term", force=False, on_batch=batches.append,
+        )
+        assert first.providers_total >= 1
+        assert "cifericaopds.alpha" in {b.provider_id for b in batches}
+        assert "cifericaopds.merged" not in {b.provider_id for b in batches}
+
+        # Even if provider_ids names the default set, suppress duplication.
+        batches.clear()
+        all_sources = ("cifericaopds.alpha", "cifericaopds.merged")
+        svc.search_progressive(
+            "search term", force=True, provider_ids=all_sources,
+            on_batch=batches.append,
+        )
+        assert "cifericaopds.merged" not in {b.provider_id for b in batches}
+
+        batches.clear()
+        svc.search_progressive(
+            "search term", force=True, provider_ids=("cifericaopds.merged",),
+            on_batch=batches.append,
+        )
+        assert "cifericaopds.merged" in {b.provider_id for b in batches}
+
+        batches.clear()
+        svc.search_progressive(
+            "search term", force=True, provider_ids=all_sources,
+            include_redundant_merged=True, on_batch=batches.append,
+        )
+        assert {b.provider_id for b in batches} >= set(all_sources)
+
+        # After per-Identity suppression of the source, only merged remains.
+        manager.enabled[("cifericaopds.alpha", "default")] = False
+        batches.clear()
+        svc.search_progressive(
+            "search term", force=True, on_batch=batches.append,
+        )
+        assert "cifericaopds.merged" in {b.provider_id for b in batches}
+    finally:
+        svc.close()
+
+
+def test_synthetic_merged_does_not_mask_unrelated_or_unsupported_sources(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    collection = Collection(snapshot(
+        child("alpha"), child("merged", kind="synthetic.merged"),
+    ))
+    try:
+        svc.attach_plugin_manager(FakeManager(collection))
+        svc.connect_configured()
+        originals = [
+            session for session in svc._sessions.values()
+            if session.provider_id in {"cifericaopds.alpha", "cifericaopds.merged"}
+        ]
+        # Both initially in the registry, with the default selector excluding
+        # the synthetic sibling for ordinary queries.
+        assert [s.provider_id for s in svc._without_redundant_merged(
+            originals, field="all", scope="all",
+        )] == ["cifericaopds.alpha"]
+        # If the original cannot support a field but merged can, retain merged.
+        from cifereca.providers import ProviderSearchCapabilities
+        alpha = next(s for s in originals if s.provider_id == "cifericaopds.alpha")
+        alpha.search_capabilities = ProviderSearchCapabilities(fields=("title",))
+        selected = svc._without_redundant_merged(originals, field="isbn", scope="all")
+        assert "cifericaopds.merged" in {s.provider_id for s in selected}
+    finally:
+        svc.close()
