@@ -216,3 +216,51 @@ def test_return_guard_preserves_local_file_and_is_provider_only(tmp_path):
         assert not result.get("adept_return_confirmed")
     finally:
         svc.close()
+
+def test_stale_inflight_post_is_verified_after_restart_without_new_post(tmp_path):
+    """Simulate crash after reservation/dispatch but before HTTP response."""
+    from cifereca.core.loan_return_guard import return_key
+    import json
+
+    loan = _loan()
+    session = Session([])
+    svc = _library(tmp_path, session=session)
+    key = return_key("paris", "paris-a", "linked-b", loan.id)
+    try:
+        claimed, _ = svc.storage.loan_return_claim(key, "inflight-op")
+        assert claimed
+        # Simulate persisted checkpoint from a process that died >3 min ago.
+        record = svc.storage.loan_return_state(key)
+        record["requested_at"] = "2026-01-01T00:00:00+00:00"
+        svc.storage.metadata_set(key, json.dumps(record))
+    finally:
+        svc.close()
+
+    next_session = Session([])
+    reopened = _library(tmp_path, session=next_session)
+    try:
+        # A second button click cannot POST; explicit verification can read.
+        assert reopened.return_digital(loan)["status"] == "request_sent"
+        verified = reopened.verify_return_digital(loan)
+        assert verified["status"] == "provider_return_confirmed"
+        assert verified["verification"] == "provider_absent"
+        assert next_session.posts == []
+        assert next_session.checks == ["linked-b"]
+    finally:
+        reopened.close()
+
+
+def test_recent_inflight_does_not_race_with_first_post(tmp_path):
+    from cifereca.core.loan_return_guard import return_key
+    loan = _loan()
+    session = Session([loan])
+    svc = _library(tmp_path, session=session)
+    try:
+        key = return_key("paris", "paris-a", "linked-b", loan.id)
+        assert svc.storage.loan_return_claim(key, "inflight")[0]
+        result = svc.verify_return_digital(loan)
+        assert result["status"] == "request_sent"
+        assert session.checks == []
+        assert session.posts == []
+    finally:
+        svc.close()

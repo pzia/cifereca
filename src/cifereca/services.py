@@ -2229,7 +2229,17 @@ class LibraryService:
             return public_return_state(checkpoint)
         operation_id = str(checkpoint.get("operation_id") or "")
         if checkpoint.get("status") == "request_sent":
-            return public_return_state(checkpoint)
+            # A just-dispatched POST may still be in-flight. Avoid racing its
+            # response with a second verification. After a crash/long stall,
+            # however, permit inventory-only recovery without re-sending POST.
+            from datetime import datetime, timezone
+            try:
+                started = datetime.fromisoformat(str(checkpoint["requested_at"]))
+                age = (datetime.now(timezone.utc) - started).total_seconds()
+            except (KeyError, TypeError, ValueError):
+                age = 0
+            if age < 180:
+                return public_return_state(checkpoint)
         phase = "inventory_checked"
         verification = "unavailable"
         status = "verification_unavailable"
