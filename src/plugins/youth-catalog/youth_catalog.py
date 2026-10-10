@@ -107,6 +107,7 @@ def sanitize_collection_pipeline(value: object) -> dict[str, object]:
     limits = {
         "effective_limit": 500, "html_bytes": 2_000_000,
         "http_ms": 600_000, "parse_ms": 600_000,
+        "total_ms": 600_000,
     }
     for key, cap in limits.items():
         item = value.get(key)
