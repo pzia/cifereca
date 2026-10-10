@@ -259,6 +259,8 @@ def test_youth_sources_diagnostics_exploratory_gtk_1024_and_1366():
     assert "def assert_gtk_source_diagnostics(" in source
     assert "def click_diagnostic_header():" in source
     assert "device.click_widget(label)" in source
+    assert "arrow_x = round(centre" in source
+    assert "device.click(arrow_x, centre" in source
     assert "click_diagnostic_header()" in source
     assert "expander.get_mapped()" in source
     assert "expander.get_expanded()" in source

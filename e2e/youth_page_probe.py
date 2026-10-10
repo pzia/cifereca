@@ -331,7 +331,13 @@ def main() -> int:
             return None
         label = find_label(expander)
         assert label is not None and label.get_mapped(), "GTK expander header label missing"
-        device.click_widget(label)
+        # GTK4's expander reacts at the arrow, not the centre of its wide
+        # label/expander allocation. Resolve arrow position from the real
+        # rendered Gtk.Label bounds returned by our XTEST coordinate helper.
+        centre = device.click_widget(label)
+        arrow_x = round(centre["x"] - label.get_width() / 2 - 8)
+        assert arrow_x >= 0 and arrow_x < centre["x"], centre
+        device.click(arrow_x, centre["y"])
 
     def detail_rows():
         """Read actual libadwaita detail rows, not only catalog data."""

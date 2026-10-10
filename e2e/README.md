@@ -290,7 +290,7 @@ Les tests ne contactent **jamais** le site BookTrust public.
 Sans ajouter de scénario, `youth-booktrust-1024` et
 `youth-booktrust-1366` vérifient le volet
 **« Diagnostic des sources Jeunesse »** de la vraie page GTK4, ouvert
-au **clic XTEST sur le libellé d'en-tête** (et non au centre de l'allocation complète du conteneur GTK). Chaque étape lit le
+au **clic XTEST sur le chevron d'en-tête**, dont la position est dérivée des bornes réellement allouées au libellé GTK (et non au centre de l'expander). Chaque étape lit le
 `Gtk.Expander` et les `Gtk.Label` réellement rendus.
 
 - **Ouverture** : volet replié par défaut ; clic, cinq entrées
