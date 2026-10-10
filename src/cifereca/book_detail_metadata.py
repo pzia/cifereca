@@ -7,6 +7,7 @@ never passed to the UI.  Filtering is conservative by design.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 
 # These are *public bibliographic facts*, not provider-internal identities.
 _FIELDS = (
@@ -45,6 +46,36 @@ _FIELDS = (
     ("ean", "EAN déclaré"),
     ("price", "Prix éditeur"),
 )
+_FIELD_KIND = {
+    "subtitle": "title", "alternate_titles": "title",
+    "authors": "author", "author": "author", "contributors": "author",
+    "subjects": "subject", "themes": "subject", "genres": "subject",
+    "series": "series", "collection": "collection",
+    "languages": "language", "language": "language",
+    "isbn": "isbn", "isbns": "isbn", "isbn13": "isbn",
+}
+_COPY_ONLY = {"pages", "page_count", "number_of_pages", "publication_year",
+              "dates", "published_at", "publication_date", "price"}
+
+
+def canonical_book_isbn(value: object) -> str:
+    """Canonical Bookland ISBN only (not arbitrary EAN or invalid checksum)."""
+    raw = re.sub(r"[^0-9X]", "", str(value).upper())
+    if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
+        check = sum((10 - i) * int(ch) for i, ch in enumerate(raw[:9]))
+        check += 10 if raw[-1] == "X" else int(raw[-1])
+        if check % 11 != 0:
+            return ""
+        raw = "978" + raw[:9]
+        raw += str((10 - sum(int(ch) * (1 if i % 2 == 0 else 3)
+                             for i, ch in enumerate(raw)) % 10) % 10)
+    if len(raw) != 13 or not raw.startswith(("978", "979")):
+        return ""
+    expected = (10 - sum(int(ch) * (1 if i % 2 == 0 else 3)
+                         for i, ch in enumerate(raw[:12])) % 10) % 10
+    return raw if expected == int(raw[-1]) else ""
+
+
 # Limits are visible when reached, never a silent [:N] truncation.
 _MAX_ROWS = 200
 _MAX_VALUE_LENGTH = 4096
@@ -94,11 +125,11 @@ def _values(raw: object, key: str):
             yield value
 
 
-def detail_metadata_rows(metadata: object) -> tuple[tuple[str, str], ...]:
+def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
     """Return explicit bibliographic facts only; no network, HTML or raw dict."""
     if not isinstance(metadata, Mapping):
         return ()
-    rows: list[tuple[str, str]] = []
+    rows: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str]] = set()
     omitted = 0
     for prefix, data in (
@@ -111,14 +142,28 @@ def detail_metadata_rows(metadata: object) -> tuple[tuple[str, str], ...]:
         for key, label in _FIELDS:
             raw = data.get(key)
             for value in _values(raw, key):
-                row = (prefix + label, value)
-                if row in seen:
+                kind = _FIELD_KIND.get(key, "copy" if key in _COPY_ONLY else "all")
+                actual_label = prefix + label
+                if kind == "isbn":
+                    checked = canonical_book_isbn(value)
+                    if checked:
+                        value = checked
+                    else:
+                        actual_label, kind = prefix + "Identifiant déclaré", "all"
+                row = (actual_label, value, kind)
+                key_for_dedup = (actual_label, value)
+                if key_for_dedup in seen:
                     continue
-                seen.add(row)
+                seen.add(key_for_dedup)
                 if len(rows) < _MAX_ROWS:
                     rows.append(row)
                 else:
                     omitted += 1
     if omitted:
-        rows.append(("Métadonnées", f"{omitted} valeur(s) supplémentaires non affichées (limite de sécurité)"))
+        rows.append(("Métadonnées", f"{omitted} valeur(s) supplémentaires non affichées (limite de sécurité)", "copy"))
     return tuple(rows)
+
+
+def detail_metadata_rows(metadata: object) -> tuple[tuple[str, str], ...]:
+    """Compatibility shape for existing consumers."""
+    return tuple((label, value) for label, value, _kind in detail_metadata_items(metadata))
