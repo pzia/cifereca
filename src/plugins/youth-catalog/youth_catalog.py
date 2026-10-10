@@ -558,16 +558,57 @@ def merge_confirmed(records: Sequence[YouthBook]) -> tuple[YouthBook, ...]:
     return tuple(groups)
 
 
+class InvalidYouthSourcePage(ValueError):
+    """Structural provider response error; no raw payload in its message."""
+
+
 def _extract_page(value: object) -> tuple[Iterable[object], str, int]:
+    """Validate a provider page before replacing its last usable local cache.
+
+    A missing/invalid items field is not an authoritative empty catalogue.
+    Keep the historical iterable shorthand and numeric-string freshness.
+    Never interpolate provider data into errors or diagnostics.
+    """
     if isinstance(value, Mapping):
-        rows = value.get("items") or value.get("results") or ()
-        cursor = _text(value.get("next_cursor"))
+        if "items" in value:
+            rows = value["items"]
+        elif "results" in value:
+            rows = value["results"]
+        else:
+            raise InvalidYouthSourcePage("missing items or results")
+        if rows is None or isinstance(rows, (str, bytes, Mapping)):
+            raise InvalidYouthSourcePage("items must be an iterable of records")
         try:
-            fresh = max(0, int(value.get("fresh_for_seconds") or 0))
-        except (TypeError, ValueError):
+            iter(rows)
+        except TypeError as exc:
+            raise InvalidYouthSourcePage("items must be an iterable of records") from exc
+        cursor_value = value.get("next_cursor", "")
+        if cursor_value is None:
+            cursor = ""
+        elif (isinstance(cursor_value, str) and len(cursor_value) <= 512
+              and all(32 <= ord(ch) < 127 or ord(ch) >= 160 for ch in cursor_value)):
+            cursor = cursor_value
+        else:
+            raise InvalidYouthSourcePage("invalid pagination cursor")
+        freshness = value.get("fresh_for_seconds", 0)
+        if freshness is None or freshness == "":
             fresh = 0
+        elif type(freshness) is int and 0 <= freshness <= 31_536_000:
+            fresh = freshness
+        elif (isinstance(freshness, str) and freshness.isascii()
+              and freshness.isdecimal() and len(freshness) <= 8
+              and int(freshness) <= 31_536_000):
+            fresh = int(freshness)
+        else:
+            raise InvalidYouthSourcePage("invalid freshness metadata")
         return rows, cursor, fresh
-    return value if value is not None else (), "", 0
+    if value is None or isinstance(value, (str, bytes)):
+        raise InvalidYouthSourcePage("invalid source response")
+    try:
+        iter(value)
+    except TypeError as exc:
+        raise InvalidYouthSourcePage("invalid source response") from exc
+    return value, "", 0
 
 
 class YouthCatalogIndex:
@@ -1005,40 +1046,23 @@ class YouthCatalogPlugin:
         """
         try:
             info = validate_source_contract(source)
-        except Exception as exc:
-            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
-        bounded = max(1, min(int(limit), 500))
-        started = perf_counter()
-        stage = "search"
-        try:
-            raw = source.search(_text(query), cursor=cursor, limit=bounded)  # type: ignore[attr-defined]
-            stage = "ingest"
-            rows, next_cursor, fresh = _extract_page(raw)
-            report = self.index.ingest(
-                identity_id, info.source_id, rows,
-                replace_source=replace_source, fresh_for_seconds=fresh,
-            )
-            report = replace(report, next_cursor=next_cursor)
+        except InvalidYouthSourcePage:
+            # A malformed response must not replace the previous cache or
+            # claim a successful empty page. Preserve only an attested count
+            # from this invocation; never read the adapter's shared snapshot.
             self.index.record_collection(
-                identity_id, info.source_id,
-                state=(
-                    "items" if report.accepted else
-                    "invalid" if report.rejected else
-                    "empty_unverified"
-                ),
-                stage=stage,
-                accepted=report.accepted, rejected=report.rejected,
-                received_count=report.accepted + report.rejected,
-                requested_limit=bounded,
+                identity_id, info.source_id, state="invalid",
+                stage="parsing", rejected=1, requested_limit=bounded,
                 request_count=(
                     raw.get("collection_request_count") if isinstance(raw, Mapping)
                     else None
                 ),
-                rejection_categories=safe_ingest_rejection_categories(report.errors),
-                next_cursor_present=bool(next_cursor),
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),
             )
-            return report
+            return IngestReport(
+                self.index.identity_key(identity_id), info.source_id,
+                rejected=1, errors=("invalid source page",),
+            )
         except Exception as exc:
             failure = collection_failure_diagnostic(exc)
             self.index.record_collection(
