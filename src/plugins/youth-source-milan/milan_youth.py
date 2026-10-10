@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from hashlib import sha256
+from time import perf_counter
 import re
 from typing import Mapping
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -502,6 +503,7 @@ class MilanYouthSource:
             "phase": "listing", "detail_requests": 0,
         }
         request_token = self._call_requests.set(0)
+        started = perf_counter()
         pipeline: dict[str, object] = {
             "query_mode": "local", "effective_limit": bounded,
             "isbn_valid_count": 0, "age_published_count": 0,
@@ -591,8 +593,7 @@ class MilanYouthSource:
                     bool(pipeline.get("truncated_by_limit"))
                     or inspected < len(products)
                 ),
-                "total_ms": max(0, int((perf_counter() - started) * 1000))
-                if "started" in locals() else 0,
+                "total_ms": max(0, int((perf_counter() - started) * 1000)),
             })
             self._last_diagnostic.update({
                 key: value for key, value in pipeline.items()
