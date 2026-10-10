@@ -112,17 +112,20 @@ def test_shared_facets_do_not_replace_multivalued_detail_rows():
             self.children.append(widget)
             self._siblings()
 
+    class Expander(Row):
+        pass
+
     method = _method("MainWindow", "_add_facets")
     module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
-    namespace = {"Adw": NS(ActionRow=Row)}
+    namespace = {"Adw": NS(ActionRow=Row, ExpanderRow=Expander)}
     exec(compile(module, str(MAIN), "exec"), namespace)
 
     alice = Row("Auteur", "Alice Exemple")
     bob = Row("Auteur", "Bob Exemple")
     nature = Row("Sujet", "nature")
     maison_b = Row("Éditeur", "Maison B")
-    bibliographic = Row("Détail", "4 champs", (alice, bob, nature, maison_b))
-    bibliographic._cifereca_preserve_bibliographic_rows = True
+    # No Python marker on the Expander: the guard must use native GTK identity.
+    bibliographic = Expander("Détail", "4 champs", (alice, bob, nature, maison_b))
     summary = Row("Auteur", "Alice Exemple")
     detail = NS(content=Node((bibliographic, summary)), _subtitle_label=None)
     calls = []
@@ -160,5 +163,7 @@ def test_shared_facets_do_not_replace_multivalued_detail_rows():
 def test_collapsible_detail_is_marked_before_facet_traversal():
     group = ast.unparse(_method("DetailPanel", "_group"))
     facet = ast.unparse(_method("MainWindow", "_add_facets"))
-    assert "expander._cifereca_preserve_bibliographic_rows = True" in group
-    assert "getattr(widget, '_cifereca_preserve_bibliographic_rows', False)" in facet
+    assert "Adw.ExpanderRow()" in group
+    assert "isinstance(widget, Adw.ExpanderRow)" in facet
+    assert "widget.get_title() == 'Détail'" in facet
+    assert "_cifereca_preserve_bibliographic_rows" not in facet
