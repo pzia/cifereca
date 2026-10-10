@@ -338,10 +338,10 @@ def test_bibliographic_metadata_is_visible_without_changing_age_source():
     detail = detail_presentation(book)
     assert detail.thumbnail_url == "https://covers.openlibrary.org/b/id/42-M.jpg"
     fields = {field.id: field.value for section in detail.sections for field in section.fields}
-    assert fields["publishers"] == "Open Publisher"
+    assert fields["publisher-0"] == "Open Publisher"
     assert fields["published-year"] == "1999"
-    assert fields["bibliography-sources"] == "openlibrary"
-    assert fields["sources"] == "booktrust"
+    assert fields["bibliography-source-0"] == "openlibrary"
+    assert fields["source-0"] == "booktrust"
 
 
 def test_stale_bibliography_completion_is_dropped_after_selection_change():
