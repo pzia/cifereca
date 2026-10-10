@@ -445,10 +445,64 @@ def source_diagnostic_presentation(rows):
             line += f" · requêtes HTTP : {requests}"
         received = row.get("received_count")
         requested = row.get("requested_limit")
+        funnel = row.get("pipeline")
+        funnel = funnel if isinstance(funnel, Mapping) else {}
         if type(received) is int and received >= 0:
             line += f" · reçues : {received}"
             if type(requested) is int and requested > 0:
-                line += f"/{requested} demandées"
+                if funnel:
+                    line += f" · limite demandée : {requested}"
+                else:
+                    line += f"/{requested} demandées"
+        mode = funnel.get("query_mode")
+        if mode == "remote":
+            line += " · recherche distante (une page)"
+        elif mode == "local":
+            line += " · filtre local (catalogue partiel)"
+        source_limit = funnel.get("effective_limit")
+        if type(source_limit) is int and 1 <= source_limit <= 500:
+            line += f" · borne source : {source_limit}"
+        evidence = (
+            ("http_status", "HTTP"),
+            ("html_bytes", "HTML octets"),
+            ("anchor_count", "ancres"),
+            ("product_link_count", "liens produit"),
+            ("candidate_count", "candidats"),
+            ("analyzed_count", "examinés"),
+            ("isbn_valid_count", "ISBN valides"),
+            ("age_qualified_count", "âges attestés"),
+            ("age_unknown_count", "âges inconnus"),
+            ("returned_items", "notices source"),
+        )
+        for key, label in evidence:
+            amount = funnel.get(key)
+            if type(amount) is int and 0 <= amount <= 2_000_000:
+                line += f" · {label} : {amount}"
+        digest = funnel.get("html_sha256_prefix")
+        if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{16}", digest):
+            line += f" · HTML hash : {digest}"
+        for key, label in (("http_ms", "HTTP ms"), ("parse_ms", "parsing ms")):
+            value = funnel.get(key)
+            if type(value) is int and 0 <= value <= 600_000:
+                line += f" · {label} : {value}"
+        if funnel.get("truncated_by_limit") is True:
+            line += " · limite source atteinte"
+        safe_reasons = funnel.get("rejection_reasons")
+        if isinstance(safe_reasons, Mapping):
+            cause_labels = {
+                "age_unattested": "sans âge publié",
+                "isbn_invalid": "ISBN non valide",
+                "unsupported_product_type": "hors livre",
+                "duplicate": "doublons",
+                "text_filter_excluded": "exclus par titre",
+                "age_filter_excluded": "exclus par âge",
+                "unexpected_markup": "structure inconnue",
+                "title_missing": "sans titre",
+            }
+            for key, label in cause_labels.items():
+                n = safe_reasons.get(key)
+                if type(n) is int and 0 < n <= 100_000:
+                    line += f" · {label} : {n}"
         if int(row.get("rejected") or 0) > 0:
             line += f" · {int(row['rejected'])} rejet(s)"
             reasons = row.get("rejection_categories")
@@ -1019,6 +1073,7 @@ class YouthView:
                     raw.get("collection_request_count")
                     if isinstance(raw, Mapping) else None
                 ),
+                pipeline=raw.get("collection_pipeline") if isinstance(raw, Mapping) else None,
                 duration_ms=duration_ms,
             )
             self.status.set_label("Réponse de source invalide. Le cache précédent est conservé.")
@@ -1047,6 +1102,7 @@ class YouthView:
                     raw.get("collection_request_count") if isinstance(raw, Mapping)
                     else None
                 ),
+                pipeline=raw.get("collection_pipeline") if isinstance(raw, Mapping) else None,
                 rejection_categories=safe_ingest_rejection_categories(report.errors),
                 stage="ingest",
                 duration_ms=duration_ms, next_cursor_present=bool(cursor),
