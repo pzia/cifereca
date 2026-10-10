@@ -12,6 +12,20 @@ _WS = re.compile(r"\s+")
 _ISBN_CLEAN = re.compile(r"[^0-9Xx]")
 AGE_KINDS = {"interest", "reading", "recommended", "publisher", "inferred"}
 
+# Inventory placeholders are intentionally not claims of remote availability.
+KNOWN_AGE_SOURCES = {
+    "booktrust": "BookTrust",
+    "milan": "Éditions Milan",
+    "usborne": "Usborne",
+    "ecole-loisirs": "L'École des loisirs",
+}
+KNOWN_BIBLIOGRAPHY_PLUGINS = {"youth.bibliography.openlibrary": "Open Library"}
+COLLECTION_STATES = {
+    "items", "empty_unverified", "invalid", "http_error",
+    "timeout", "error", "cancelled",
+}
+
+
 
 def _text(value: object) -> str:
     return _WS.sub(" ", str(value or "").strip())
@@ -517,6 +531,9 @@ class YouthCatalogIndex:
         self._bibliography: dict[str, dict[str, dict[str, BibliographyEnrichment]]] = {}
         self._merged: dict[str, tuple[YouthBook, ...]] = {}
         self._fresh_until: dict[tuple[str, str], str] = {}
+        # Session-local per-identity collection outcomes. Raw error strings,
+        # notices, URLs and credentials are never stored here.
+        self._collection_health: dict[str, dict[str, dict[str, object]]] = {}
 
     @staticmethod
     def identity_key(identity_id: object) -> str:
@@ -590,6 +607,135 @@ class YouthCatalogIndex:
             self._bibliography.setdefault(identity, {}).setdefault(expected, {})[sid] = next(iter(unique.values()))
             self._merged.pop(identity, None)
         return BibliographyReport(identity, sid, expected, accepted=1 if unique else 0, rejected=len(errors), errors=tuple(errors))
+
+    def record_collection(
+        self,
+        identity_id: str,
+        source_id: str,
+        *,
+        state: str,
+        accepted: int = 0,
+        rejected: int = 0,
+        duration_ms: int = 0,
+        next_cursor_present: bool = False,
+        error_type: str = "",
+        http_status: int | None = None,
+    ) -> None:
+        """Record an explicitly requested collection, without source payloads.
+
+        The per-identity cache and outcome are session-local. The caller must
+        not pass an exception string, title, URL, raw HTML or account detail.
+        """
+        identity = _text(identity_id)
+        sid = _fold(source_id)
+        if not identity or not sid:
+            return
+        if state not in COLLECTION_STATES:
+            raise ValueError("unknown youth collection state")
+        previous = self._collection_health.get(identity, {}).get(sid, {})
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        event: dict[str, object] = {
+            "state": state,
+            "attempted_at_utc": now,
+            "last_success_at_utc": (
+                now if state in {"items", "empty_unverified"}
+                else previous.get("last_success_at_utc", "")
+            ),
+            "accepted": max(0, min(int(accepted), 100_000)),
+            "rejected": max(0, min(int(rejected), 100_000)),
+            "duration_ms": max(0, min(int(duration_ms), 600_000)),
+            "next_cursor_present": bool(next_cursor_present),
+            "error_type": (
+                error_type[:64]
+                if error_type.isidentifier() and len(error_type) <= 64 else ""
+            ),
+            "http_status": (
+                int(http_status)
+                if isinstance(http_status, int) and 100 <= http_status <= 599
+                else None
+            ),
+        }
+        self._collection_health.setdefault(identity, {})[sid] = event
+
+    def source_diagnostics(
+        self,
+        identity_id: str,
+        inventory: Iterable[Mapping[str, object]] = (),
+    ) -> tuple[dict[str, object], ...]:
+        """Read-only, network-free overview, including never-used sources.
+
+        Inventory comes from the public diagnostics broker. A ready/active
+        plugin must still read 'not_tested' until explicit acquisition occurs.
+        Bibliography and age providers are never conflated.
+        """
+        identity = _text(identity_id)
+        if not identity:
+            return ()
+        providers: dict[str, dict[str, object]] = {
+            sid: {
+                "source_id": sid, "plugin_id": f"youth.source.{sid}",
+                "label": label, "family": "age",
+                "plugin_state": "not_installed", "enabled": False,
+                "package_id": "",
+            } for sid, label in KNOWN_AGE_SOURCES.items()
+        }
+        for pid, label in KNOWN_BIBLIOGRAPHY_PLUGINS.items():
+            providers[pid] = {
+                "source_id": pid, "plugin_id": pid, "label": label,
+                "family": "bibliography", "plugin_state": "not_installed",
+                "enabled": False, "package_id": "",
+            }
+        for row in inventory:
+            if not isinstance(row, Mapping):
+                continue
+            typ = _text(row.get("type"))
+            if typ not in {"youth.source", "youth.bibliography"}:
+                continue
+            pid = _text(row.get("plugin_id"))
+            if not pid or len(pid) > 128:
+                continue
+            sid = pid.removeprefix("youth.source.") if typ == "youth.source" else pid
+            if typ == "youth.source" and not pid.startswith("youth.source."):
+                continue
+            if typ == "youth.bibliography" and not pid.startswith("youth.bibliography."):
+                continue
+            record = providers.setdefault(sid, {
+                "source_id": sid, "plugin_id": pid, "label": sid,
+                "family": "age" if typ == "youth.source" else "bibliography",
+            })
+            record.update({
+                "plugin_state": _text(row.get("state"))[:40] or "unknown",
+                "enabled": bool(row.get("enabled")),
+                "package_id": _text(row.get("package_id"))[:128],
+            })
+        cached = self._sources.get(identity, {})
+        recent = self._collection_health.get(identity, {})
+        for sid in set(cached) | set(recent):
+            if sid not in providers:
+                providers[sid] = {
+                    "source_id": sid, "plugin_id": f"youth.source.{sid}",
+                    "label": sid, "family": "age",
+                    "plugin_state": "not_installed", "enabled": False,
+                    "package_id": "",
+                }
+        out = []
+        for sid, entry in sorted(providers.items(), key=lambda pair: (pair[1]["family"], pair[1]["label"])):
+            event = dict(recent.get(sid, {})) if entry["family"] == "age" else {}
+            out.append({
+                **entry,
+                "collection_state": event.get("state", "not_tested"),
+                "attempted_at_utc": event.get("attempted_at_utc", ""),
+                "last_success_at_utc": event.get("last_success_at_utc", ""),
+                "accepted": event.get("accepted", 0),
+                "rejected": event.get("rejected", 0),
+                "duration_ms": event.get("duration_ms", 0),
+                "next_cursor_present": event.get("next_cursor_present", False),
+                "http_status": event.get("http_status"),
+                "error_type": event.get("error_type", ""),
+                "cache_count": len(cached.get(sid, ())) if entry["family"] == "age" else 0,
+                "fresh_until": self.fresh_until(identity, sid) if entry["family"] == "age" else "",
+            })
+        return tuple(out)
 
     def fresh_until(self, identity_id: str, source_id: str) -> str:
         return self._fresh_until.get((self.identity_key(identity_id), _fold(source_id)), "")
@@ -704,6 +850,7 @@ class YouthCatalogIndex:
         self._sources.pop(identity, None)
         self._bibliography.pop(identity, None)
         self._merged.pop(identity, None)
+        self._collection_health.pop(identity, None)
         for key in [key for key in self._fresh_until if key[0] == identity]:
             self._fresh_until.pop(key, None)
 
@@ -725,6 +872,16 @@ class YouthCatalogPlugin:
     def search_cached(self, identity_id: str, query: str = "", **filters: object) -> tuple[YouthBook, ...]:
         """Search cached rows only. Never calls a remote source."""
         return self.index.search(identity_id, query, **filters)
+
+    def record_collection(self, identity_id: str, source_id: str, **result: object) -> None:
+        """Record only sanitized results of an explicit UI collection."""
+        self.index.record_collection(identity_id, source_id, **result)
+
+    def source_diagnostics(
+        self, identity_id: str, inventory: Iterable[Mapping[str, object]] = (),
+    ) -> tuple[dict[str, object], ...]:
+        """Cache-only, identity-scoped snapshot suitable for Diagnostics/Jeunesse."""
+        return self.index.source_diagnostics(identity_id, inventory)
 
     def find_cached(
         self,
