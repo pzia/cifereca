@@ -19,6 +19,7 @@ from youth_page import (
     parse_themes,
     public_url,
     source_info,
+    source_diagnostic_presentation,
 )
 
 
@@ -526,3 +527,119 @@ def test_youth_explicit_remote_exception_records_only_typed_failure_and_keeps_ca
     assert "private.example" not in repr(row)
     assert messages[-1] == "Échec de la source. Le cache précédent est conservé."
     assert {x["source_id"]: x for x in view.catalog.source_diagnostics("bob")}["milan"]["collection_state"] == "not_tested"
+
+
+def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_collection():
+    rows = (
+        {"source_id": "milan", "label": "Éditions Milan", "family": "age",
+         "plugin_state": "ready", "enabled": True, "collection_state": "not_tested",
+         "cache_count": 0},
+        {"source_id": "booktrust", "label": "BookTrust", "family": "age",
+         "plugin_state": "ready", "enabled": True, "collection_state": "http_error",
+         "http_status": 503, "cache_count": 2, "rejected": 1,
+         "attempted_at_utc": "2026-10-10T03:20:00+00:00",
+         "fresh_until": "2026-10-11T03:00:00+00:00"},
+        {"source_id": "usborne", "label": "Usborne", "family": "age",
+         "plugin_state": "disabled", "enabled": False, "collection_state": "items",
+         "cache_count": 3},
+        {"source_id": "ecole-loisirs", "label": "École des loisirs", "family": "age",
+         "plugin_state": "not_installed", "enabled": False, "collection_state": "not_tested"},
+        {"source_id": "youth.bibliography.openlibrary", "label": "Open Library",
+         "family": "bibliography", "plugin_state": "ready", "enabled": True,
+         "collection_state": "not_tested"},
+    )
+    summary, lines = source_diagnostic_presentation(rows)
+    assert "4 source(s) d’âge · 1 bibliographie" in summary
+    assert "1 dernier(s) essai(s) en échec" in summary
+    assert len(lines) == 5
+    assert "non testée" in lines[0] and "activée" in lines[0]
+    assert "erreur HTTP 503" in lines[1]
+    assert "cache : 2 notice(s) (conservé)" in lines[1]
+    assert "essai UTC : 2026-10-10 03:20" in lines[1]
+    assert "fraîcheur annoncée" in lines[1] and "1 rejet(s)" in lines[1]
+    assert "désactivée" in lines[2] and "collecte avec notices" in lines[2]
+    assert "non installée" in lines[3] and "non testée" in lines[3]
+    assert "bibliographie uniquement" in lines[4] and "pas de preuve d’âge" in lines[4]
+    assert "aucun" not in summary.casefold()
+    assert source_diagnostic_presentation(())[0] == "Aucun profil actif"
+
+
+def test_youth_view_local_diagnostics_uses_public_inventory_and_keeps_identities_separate():
+    from youth_catalog import YouthCatalogPlugin
+
+    class FakeLabel:
+        def __init__(self, *, label="", wrap=False, xalign=0):
+            self.text = label
+            self.owner = None
+        def get_next_sibling(self):
+            siblings = self.owner.children
+            pos = siblings.index(self)
+            return siblings[pos + 1] if pos + 1 < len(siblings) else None
+
+    class FakeBox:
+        def __init__(self):
+            self.children = []
+        def get_first_child(self):
+            return self.children[0] if self.children else None
+        def append(self, child):
+            child.owner = self
+            self.children.append(child)
+        def remove(self, child):
+            self.children.remove(child)
+
+    class FakeExpander:
+        def __init__(self):
+            self.label = ""
+        def set_label(self, label):
+            self.label = label
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.catalog.ingest("alice", "booktrust", [{"title": "Secret book", "age_label": "8+"}])
+    view.catalog.record_collection("alice", "booktrust", state="items", accepted=1)
+    view.catalog.record_collection("bob", "booktrust", state="timeout", error_type="ReadTimeout")
+    selected_identity = ["alice"]
+    view.identity_id = lambda: selected_identity[0]
+    view.Gtk = NS(Label=FakeLabel)
+    view.diagnostic_rows_box = FakeBox()
+    view.diagnostic_expander = FakeExpander()
+    broker_reads = []
+    def broker(name):
+        broker_reads.append(name)
+        assert name == "diagnostics"
+        return NS(inventory=lambda: (
+            {"type": "youth.source", "plugin_id": "youth.source.booktrust",
+             "state": "ready", "enabled": True},
+        ))
+    view.plugin = NS(context=NS(broker=broker))
+    assert view.refresh_source_diagnostics() is False
+    alice_text = " ".join(r.text for r in view.diagnostic_rows_box.children)
+    assert "BookTrust · activée · dernier essai : collecte avec notices" in alice_text
+    assert "cache : 1 notice(s)" in alice_text
+    assert "Secret book" not in alice_text
+    assert len(view.diagnostic_rows_box.children) == 5
+    assert "4 source(s) d’âge" in view.diagnostic_expander.label
+
+    selected_identity[0] = "bob"
+    assert view.refresh_source_diagnostics() is False
+    bob_text = " ".join(r.text for r in view.diagnostic_rows_box.children)
+    assert "délai dépassé" in bob_text and "cache : 0 notice(s)" in bob_text
+    assert "cache : 1 notice(s)" not in bob_text
+    assert "ReadTimeout" not in bob_text
+    assert len(view.diagnostic_rows_box.children) == 5
+    assert broker_reads == ["diagnostics", "diagnostics"]
+
+
+def test_source_diagnostics_renderer_handles_missing_optional_broker_without_network():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.identity_id = lambda: "alice"
+    view.Gtk = NS(Label=lambda **kwargs: NS(**kwargs))
+    view.diagnostic_expander = NS(set_label=lambda x: None)
+    view.diagnostic_rows_box = NS(get_first_child=lambda: None, append=lambda x: None)
+    calls = []
+    view.plugin = NS(context=NS(broker=lambda name: (calls.append(name), None)[1]))
+    assert view.refresh_source_diagnostics() is False
+    assert calls == ["diagnostics"]

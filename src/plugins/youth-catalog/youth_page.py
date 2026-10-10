@@ -357,6 +357,61 @@ class YouthEnterSequence:
         return "already_requested"
 
 
+def source_diagnostic_presentation(rows):
+    """Plain-text, network-free status view; no identity or source payloads."""
+    sources = tuple(row for row in rows if isinstance(row, Mapping))
+    if not sources:
+        return "Aucun profil actif", ("Sélectionnez un profil pour consulter son cache Jeunesse.",)
+    age_count = sum(row.get("family") == "age" for row in sources)
+    bibliography_count = sum(row.get("family") == "bibliography" for row in sources)
+    failures = {"invalid", "http_error", "timeout", "error", "cancelled"}
+    error_count = sum(row.get("collection_state") in failures for row in sources)
+    headline = (
+        f"{age_count} source(s) d’âge · {bibliography_count} bibliographie"
+        f" · {error_count} dernier(s) essai(s) en échec"
+    )
+    state_labels = {
+        "not_tested": "non testée",
+        "items": "collecte avec notices",
+        "empty_unverified": "collecte vide (non vérifiée)",
+        "invalid": "réponse/rejets invalides",
+        "http_error": "erreur HTTP",
+        "timeout": "délai dépassé",
+        "error": "erreur de collecte",
+        "cancelled": "collecte annulée",
+    }
+    lines = []
+    for row in sources:
+        name = _text(row.get("label"))[:72] or _text(row.get("source_id"))[:64] or "Source"
+        plugin_state = _text(row.get("plugin_state"))
+        active = (
+            "non installée" if plugin_state == "not_installed"
+            else "désactivée" if not row.get("enabled")
+            else "activée" if plugin_state == "ready"
+            else "dégradée/incompatible"
+        )
+        if row.get("family") == "bibliography":
+            lines.append(f"{name} · bibliographie uniquement (pas de preuve d’âge) · {active}")
+            continue
+        state = str(row.get("collection_state") or "not_tested")
+        outcome = state_labels.get(state, "état inconnu")
+        http_status = row.get("http_status")
+        if state == "http_error" and isinstance(http_status, int) and 100 <= http_status <= 599:
+            outcome += f" {http_status}"
+        count = max(0, int(row.get("cache_count") or 0))
+        line = f"{name} · {active} · dernier essai : {outcome} · cache : {count} notice(s)"
+        if state in failures and count:
+            line += " (conservé)"
+        if row.get("attempted_at_utc"):
+            line += f" · essai UTC : {str(row['attempted_at_utc'])[:16].replace('T', ' ')}"
+        if row.get("fresh_until") and count:
+            line += f" · fraîcheur annoncée jusqu’au {str(row['fresh_until'])[:16].replace('T', ' ')} UTC"
+        if int(row.get("rejected") or 0) > 0:
+            line += f" · {int(row['rejected'])} rejet(s)"
+        lines.append(line)
+    return headline, tuple(lines)
+
+
 class YouthPagePlugin:
     def activate(self, context):
         self.context, self.view, self.pending = context, None, None
@@ -417,7 +472,7 @@ class YouthView:
             for row in self.identities
         ])
         self.identity.set_tooltip_text("Profil de bibliothèque")
-        self.identity.connect("notify::selected", lambda *_: self.filters_changed())
+        self.identity.connect("notify::selected", lambda *_: self.identity_changed())
         self.widget.append(self.identity)
 
         filters = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5)
@@ -447,6 +502,16 @@ class YouthView:
         actions.append(self.button("Enrichir la bibliographie", self.enrich_bibliography))
         actions.append(self.button("Ouvrir la fiche Bibliothèque", self.open_selected))
 
+        # Only local state and the public plugin-inventory broker are read.
+        # Collapse by default to preserve the original 1024px reading viewport.
+        self.diagnostic_expander = Gtk.Expander(label="Diagnostic des sources Jeunesse · cache local")
+        self.diagnostic_expander.set_tooltip_text(
+            "Par profil : état des plugins, dernier essai et cache. Aucune collecte automatique."
+        )
+        self.diagnostic_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.diagnostic_expander.set_child(self.diagnostic_rows_box)
+        self.widget.append(self.diagnostic_expander)
+
         self.master = host.build_book_master_detail(
             title="Catalogue Jeunesse",
             subtitle="Âges et provenance conservés source par source",
@@ -474,6 +539,35 @@ class YouthView:
         button.connect("clicked", clicked)
         return button
 
+    def identity_changed(self):
+        self.filters_changed()
+        self.refresh_source_diagnostics()
+
+    def refresh_source_diagnostics(self):
+        """Render per-identity source status, never testing remote availability."""
+        container = getattr(self, "diagnostic_rows_box", None)
+        if container is None:
+            return False  # Lightweight plugin tests can instantiate a partial view.
+        try:
+            diagnostics = self.plugin.context.broker("diagnostics")
+            inventory_fn = getattr(diagnostics, "inventory", None)
+            inventory = tuple(inventory_fn()) if callable(inventory_fn) else ()
+            getter = getattr(self.catalog, "source_diagnostics", None)
+            rows = getter(self.identity_id(), inventory=inventory) if callable(getter) else ()
+            summary, lines = source_diagnostic_presentation(rows)
+        except Exception:
+            # No exception details or possibly sensitive broker results in the UI.
+            summary, lines = "Indisponible", ("Impossible de lire le diagnostic local.",)
+        self.diagnostic_expander.set_label("Diagnostic des sources Jeunesse · " + summary)
+        child = container.get_first_child()
+        while child is not None:
+            successor = child.get_next_sibling()
+            container.remove(child)
+            child = successor
+        for line in lines:
+            container.append(self.Gtk.Label(label=line, wrap=True, xalign=0))
+        return False
+
     def _identity_rows(self):
         broker = self.plugin.context.broker("identities")
         return list(broker.identities()) if broker is not None and hasattr(broker, "identities") else []
@@ -495,6 +589,7 @@ class YouthView:
         selected = next((index for index, row in enumerate(rows) if str(row.get("identity_id")) == current), 0)
         self.identity.set_selected(selected)
         self.filters_changed()
+        self.refresh_source_diagnostics()
         return False
 
     def reload_sources(self):
@@ -509,6 +604,7 @@ class YouthView:
         selected = next((index + 1 for index, row in enumerate(self.sources) if row.plugin_id == current), 0)
         self.source.set_selected(selected)
         self.filters_changed()
+        self.refresh_source_diagnostics()
         return False
 
     def selected_source(self):
@@ -819,6 +915,7 @@ class YouthView:
                             error_type=error_type, http_status=http_status,
                         )
                     self.status.set_label("Échec de la source. Le cache précédent est conservé.")
+                    self.refresh_source_diagnostics()
                 else:
                     complete(result)
                 return False
@@ -855,6 +952,7 @@ class YouthView:
             message += " · page suivante disponible"
         self.status.set_label(message)
         self.render_cached()
+        self.refresh_source_diagnostics()
 
     def dispose(self):
         self.disposed = True
