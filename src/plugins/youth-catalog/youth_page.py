@@ -17,7 +17,8 @@ from cifereca.plugin_api import (
     UiBookListEntry,
     UiPageContribution,
 )
-from youth_catalog import collection_failure_diagnostic, normalize_isbn
+from youth_catalog import (collection_failure_diagnostic, normalize_isbn,
+                           safe_ingest_rejection_categories)
 
 
 KIND_LABELS = {
@@ -412,8 +413,23 @@ def source_diagnostic_presentation(rows):
             line += f" · essai UTC : {str(row['attempted_at_utc'])[:16].replace('T', ' ')}"
         if row.get("fresh_until") and count:
             line += f" · fraîcheur annoncée jusqu’au {str(row['fresh_until'])[:16].replace('T', ' ')} UTC"
+        received = row.get("received_count")
+        requested = row.get("requested_limit")
+        if type(received) is int and received >= 0:
+            line += f" · reçues : {received}"
+            if type(requested) is int and requested > 0:
+                line += f"/{requested} demandées"
         if int(row.get("rejected") or 0) > 0:
             line += f" · {int(row['rejected'])} rejet(s)"
+            reasons = row.get("rejection_categories")
+            if isinstance(reasons, Mapping):
+                labels = []
+                if type(reasons.get("missing_title")) is int and reasons["missing_title"] > 0:
+                    labels.append(f"{reasons['missing_title']} sans titre")
+                if type(reasons.get("other")) is int and reasons["other"] > 0:
+                    labels.append(f"{reasons['other']} autres")
+                if labels:
+                    line += " (" + ", ".join(labels) + ")"
         lines.append(line)
     return headline, tuple(lines)
 
@@ -909,6 +925,7 @@ class YouthView:
                         sid, _label = source_info(row)
                         reporter(
                             token[0], sid, **failure,
+                            requested_limit=100,
                             duration_ms=max(0, int((perf_counter() - started) * 1000)),
                         )
                     self.status.set_label("Échec de la source. Le cache précédent est conservé.")
@@ -938,6 +955,10 @@ class YouthView:
                     else "empty_unverified"
                 ),
                 accepted=report.accepted, rejected=report.rejected,
+                received_count=report.accepted + report.rejected,
+                requested_limit=100,
+                rejection_categories=safe_ingest_rejection_categories(report.errors),
+                stage="ingest",
                 duration_ms=duration_ms, next_cursor_present=bool(cursor),
             )
         self.next_cursor = cursor
