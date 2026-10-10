@@ -1119,3 +1119,89 @@ def test_explicit_catalog_collect_source_keeps_funnel_from_one_call_only():
     assert a["requested_limit"] == 50
     assert a["pipeline"]["effective_limit"] == 40
     assert {row["source_id"]: row for row in plugin.source_diagnostics("bob")}["ecole-loisirs"]["collection_state"] == "not_tested"
+
+def test_source_publisher_year_and_cover_survive_normalization_and_cache():
+    # Publisher facts from publisher and a publisher's cover are already
+    # available on source records. They must not disappear before GTK.
+    raw = row(
+        "C'est quoi, l'écologie ?", isbn13="9780306406157",
+        publishers=("Éditions Milan", "Bayard Jeunesse"),
+        published_at="2025-08-26",
+        cover_url="https://imagine.bayard.io/edition/couvertures/9780306406157.jpg",
+        age_label="9+",
+    )
+    index = YouthCatalogIndex()
+    report = index.ingest("alice", "milan", (raw,))
+    assert report.accepted == 1
+    book = index.entries("alice")[0]
+    assert book.publishers == ("Éditions Milan", "Bayard Jeunesse")
+    assert book.published_year == 2025
+    assert book.cover_url == raw["cover_url"]
+    assert book.identifiers["isbn"] == "9780306406157"
+    assert index.entries("bob") == ()
+
+
+def test_attested_fixture_youth_fields_survive_without_openlibrary_overlay():
+    record = normalize_record(
+        row("The Moon", publisher="Test Publisher", published_year=2018),
+        source_id="fixture_youth",
+    )
+    assert record.publishers == ("Test Publisher",)
+    assert record.published_year == 2018
+    assert record.bibliography_sources == ()
+
+
+def test_youth_public_cover_and_publication_require_safe_evidence():
+    bad = normalize_record(
+        row(
+            "Un livre",
+            cover_url="https://images.test/cover.jpg?token=secret",
+            publication_date="2024-02-30",
+        ), source_id="milan",
+    )
+    assert bad.cover_url == ""
+    assert bad.published_year is None
+    for value in ("file:///home/user/private.png", "http://images.test/a.jpg",
+                  "https://user:password@images.test/a.jpg"):
+        assert normalize_record(
+            row("Un livre", thumbnail_url=value), source_id="milan",
+        ).cover_url == ""
+    assert normalize_record(
+        row("Un livre", publication_year="2024"), source_id="milan",
+    ).published_year == 2024
+    assert normalize_record(
+        row("Un livre", published_year=True), source_id="milan",
+    ).published_year is None
+
+
+def test_confirmed_same_isbn_merge_retains_rich_facts_from_second_source():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "fixture_youth", [
+        row("The Moon", isbn="9780306406157", authors=["A"]),
+    ])
+    index.ingest("alice", "milan", [
+        row(
+            "The Moon", isbn="9780306406157", authors=["B"],
+            publishers=["Milan"], published_year=2025,
+            cover_url="https://example.org/cover.jpg",
+        ),
+    ])
+    entries = index.entries("alice")
+    assert len(entries) == 1
+    book = entries[0]
+    assert book.authors == ("A", "B")
+    assert book.publishers == ("Milan",)
+    assert book.published_year == 2025
+    assert book.cover_url == "https://example.org/cover.jpg"
+    assert book.provenance == ("fixture_youth", "milan")
+
+
+def test_confirmed_merge_retains_two_distinct_publishers_without_double_counting():
+    index = YouthCatalogIndex()
+    index.ingest("alice", "milan", [
+        row("Livre", isbn="9780306406157", publishers=["Milan", "Bayard"]),
+    ])
+    index.ingest("alice", "second", [
+        row("Livre", isbn="9780306406157", publishers=["Milan", "Autre"]),
+    ])
+    assert index.entries("alice")[0].publishers == ("Milan", "Bayard", "Autre")
