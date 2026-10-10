@@ -25,6 +25,7 @@ from ..language import language_label
 from ..diagnostics import Diagnostics
 from ..descriptions import description_text
 from ..epub_metadata import notice_rows
+from ..book_detail_metadata import detail_metadata_items, canonical_book_isbn, safe_detail_value
 from ..models import Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from ..services import LibraryService
 from .cover_loader import CoverLoader
@@ -150,6 +151,7 @@ def book_detail_presentation(
     rows: Iterable[tuple[str, object]] = (),
     section_rows: Iterable[tuple[str, Iterable[tuple[str, object]]]] = (),
     links: Iterable[DocumentLink] = (),
+    metadata: object = None,
 ) -> UiBookDetailPresentation:
     """Build the neutral book-detail projection used by Core and plugin views."""
     sections_list: list[DetailSection] = []
@@ -170,6 +172,31 @@ def book_detail_presentation(
         )
         if fields:
             sections_list.append(DetailSection(id="primary", title=group_title, fields=fields, order=0))
+    details = list(detail_metadata_items(metadata))
+    # Legacy summaries and loans without bibliographic metadata keep their
+    # original shape: the generic helper must not fabricate a new section.
+    if metadata is not None:
+        primary_title = safe_detail_value(title)
+        if primary_title and not any(label == "Titre" and value == primary_title
+                                     for label, value, _kind in details):
+            details.insert(0, ("Titre", primary_title, "title"))
+        # Avoid merging known individual authors into a synthetic author field.
+        if subtitle and not any(kind == "author" for _label, _value, kind in details):
+            single_author = safe_detail_value(subtitle)
+            if single_author:
+                details.append(("Auteur", single_author, "author"))
+    if details:
+        already_shown = {(field.label, str(field.value))
+                         for section in sections_list for field in section.fields}
+        extra = tuple(
+            DetailField(id=f"detail-{index}", label=label, value=value, kind=kind)
+            for index, (label, value, kind) in enumerate(details)
+            if (label, value) not in already_shown
+        )
+        if extra:
+            sections_list.append(DetailSection(
+                id="metadata-detail", title="Détail", fields=extra, order=1000,
+            ))
     return UiBookDetailPresentation(
         title=str(title or "Sans titre"),
         subtitle=str(subtitle or ""),
@@ -451,7 +478,75 @@ class DetailPanel(Gtk.Box):
         return cover
 
 
-    def _group(self, title: str, rows: list[tuple[str, str]]) -> None:
+    def _group(self, title: str, rows: list[tuple[str, str]], *, fields=()) -> None:
+        if title == "Détail":
+            # Explicit and local-only. Per-element actions; no network on display.
+            group = Adw.PreferencesGroup()
+            expander = Adw.ExpanderRow()
+            expander.set_title("Détail")
+            expander.set_subtitle(f"{len(rows)} champ(s) bibliographiques")
+            expander.set_expanded(bool(getattr(self, "_detail_expanded", False)))
+
+            def save_expanded(widget, _pspec):
+                self._detail_expanded = bool(widget.get_expanded())
+
+            expander.connect("notify::expanded", save_expanded)
+            search = getattr(self.window, "search_books", None)
+            current = getattr(self.window.service, "current_identity", None)
+            identity_id = getattr(current, "identity_id", None)
+            for index, (label, value) in enumerate(rows):
+                safe_value = safe_detail_value(value)
+                if not safe_value:
+                    continue
+                field = fields[index] if index < len(fields) else None
+                kind = getattr(field, "kind", "copy")
+                row = Adw.ActionRow()
+                display_value, full_value = detail_display_value(label, safe_value)
+                row.set_title(label)
+                row.set_subtitle(display_value)
+                row.set_subtitle_lines(0)
+                row.set_tooltip_text(label + " : " + full_value)
+
+                copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+                copy.add_css_class("flat")
+                copy.set_tooltip_text("Copier " + label)
+                def copy_one(_button, value=safe_value):
+                    display = Gdk.Display.get_default()
+                    if display is None:
+                        return
+                    display.get_clipboard().set_text(value)
+                    self.window.toast("Copié")
+                copy.connect("clicked", copy_one)
+                row.add_suffix(copy)
+
+                query_field = kind if kind in {
+                    "title", "author", "subject", "series", "collection",
+                    "language", "isbn", "all",
+                } else ("all" if kind == "text" else "")
+                query_value = safe_value
+                if query_field == "isbn":
+                    query_value = canonical_book_isbn(query_value)
+                    if not query_value:
+                        query_field = "all"  # Never treat an EAN/invalid ID as ISBN
+                if callable(search) and query_field and 2 <= len(query_value) <= 512:
+                    lookup = Gtk.Button.new_from_icon_name("system-search-symbolic")
+                    lookup.add_css_class("flat")
+                    tooltip = ("Rechercher en ligne dans tous les attributs disponibles"
+                               if query_field == "all" else
+                               "Rechercher en ligne : " + label)
+                    lookup.set_tooltip_text(tooltip)
+                    lookup.connect(
+                        "clicked",
+                        lambda _button, value=query_value, field=query_field,
+                        identity=identity_id: search(
+                            value, field=field, online=True, identity_id=identity,
+                        ),
+                    )
+                    row.add_suffix(lookup)
+                expander.add_row(row)
+            group.add(expander)
+            self._append_content(group)
+            return
         group = Adw.PreferencesGroup()
         group.set_title(title)
         grid = None
@@ -616,7 +711,10 @@ class DetailPanel(Gtk.Box):
         for section in sorted(presentation.sections, key=lambda item: item.order):
             rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
             if rows:
-                self._group(section.title, rows)
+                if section.title == "Détail":
+                    self._group(section.title, rows, fields=section.fields)
+                else:
+                    self._group(section.title, rows)
             if section.title == "Essentiel":
                 self._show_description(description)
                 summary_rendered = True
@@ -872,6 +970,7 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
+            metadata=item.metadata,
         ), description=item.description)
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
@@ -957,6 +1056,7 @@ class DetailPanel(Gtk.Box):
                 ]),
             ],
             links=document_links(result_row(item)),
+            metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
         direct_download = self.window.service.can_direct_download(item)
         if direct_download:
@@ -3696,6 +3796,7 @@ class MainWindow(Adw.ApplicationWindow):
                         ("État acquisition", sync_label),
                     ]),
                 ],
+                metadata=item.get('metadata'),
             ), description=description)
             actions = []
             open_library = Gtk.Button(label="Voir dans Bibliothèque")
@@ -4922,6 +5023,7 @@ class MainWindow(Adw.ApplicationWindow):
                 ]),
             ],
             links=document_links(item),
+            metadata=item.get('metadata'),
         ), description=description)
         placements = list(item.get('placements') or [])
         possessions = list(item.get('possessions') or [])
