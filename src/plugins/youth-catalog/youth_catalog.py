@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from time import perf_counter
 import re
 from typing import Iterable, Mapping, Protocol, Sequence
 from urllib.parse import urlsplit, urlunsplit
@@ -620,6 +621,7 @@ class YouthCatalogIndex:
         next_cursor_present: bool = False,
         error_type: str = "",
         http_status: int | None = None,
+        stage: str = "",
     ) -> None:
         """Record an explicitly requested collection, without source payloads.
 
@@ -636,6 +638,7 @@ class YouthCatalogIndex:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         event: dict[str, object] = {
             "state": state,
+            "stage": stage if stage in {"search", "ingest", "listing", "parsing", "products", "complete"} else "",
             "attempted_at_utc": now,
             "last_success_at_utc": (
                 now if state in {"items", "empty_unverified"}
@@ -724,6 +727,7 @@ class YouthCatalogIndex:
             out.append({
                 **entry,
                 "collection_state": event.get("state", "not_tested"),
+                "collection_stage": event.get("stage", ""),
                 "attempted_at_utc": event.get("attempted_at_utc", ""),
                 "last_success_at_utc": event.get("last_success_at_utc", ""),
                 "accepted": event.get("accepted", 0),
@@ -919,21 +923,59 @@ class YouthCatalogPlugin:
         limit: int = 50,
         replace_source: bool = True,
     ) -> IngestReport:
+        """Collect one chosen source and record its outcome for this identity.
+
+        Reading source_diagnostics() never calls search(). Error messages stay
+        in the legacy IngestReport, not the sanitized diagnostic projection.
+        """
         try:
             info = validate_source_contract(source)
         except Exception as exc:
             return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
         bounded = max(1, min(int(limit), 500))
+        started = perf_counter()
+        stage = "search"
         try:
             raw = source.search(_text(query), cursor=cursor, limit=bounded)  # type: ignore[attr-defined]
+            stage = "ingest"
             rows, next_cursor, fresh = _extract_page(raw)
             report = self.index.ingest(
                 identity_id, info.source_id, rows,
                 replace_source=replace_source, fresh_for_seconds=fresh,
             )
-            return replace(report, next_cursor=next_cursor)
+            report = replace(report, next_cursor=next_cursor)
+            self.index.record_collection(
+                identity_id, info.source_id,
+                state=(
+                    "items" if report.accepted else
+                    "invalid" if report.rejected else
+                    "empty_unverified"
+                ),
+                stage=stage,
+                accepted=report.accepted, rejected=report.rejected,
+                next_cursor_present=bool(next_cursor),
+                duration_ms=max(0, int((perf_counter() - started) * 1000)),
+            )
+            return report
         except Exception as exc:
-            return IngestReport(self.index.identity_key(identity_id), info.source_id, rejected=1, errors=(f"search: {exc}",))
-
+            error_type = type(exc).__name__
+            response = getattr(exc, "response", None)
+            code = getattr(response, "status_code", None)
+            http_status = code if type(code) is int and 100 <= code <= 599 else None
+            state = (
+                "timeout" if "timeout" in error_type.casefold() else
+                "http_error" if http_status is not None else
+                "error"
+            )
+            self.index.record_collection(
+                identity_id, info.source_id, state=state,
+                stage=stage, rejected=1,
+                error_type=error_type, http_status=http_status,
+                duration_ms=max(0, int((perf_counter() - started) * 1000)),
+            )
+            return IngestReport(
+                self.index.identity_key(identity_id), info.source_id,
+                rejected=1, errors=(f"search: {exc}",),
+            )
 
 PLUGIN = YouthCatalogPlugin()

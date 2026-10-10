@@ -400,6 +400,12 @@ def source_diagnostic_presentation(rows):
             outcome += f" {http_status}"
         count = max(0, int(row.get("cache_count") or 0))
         line = f"{name} · {active} · dernier essai : {outcome} · cache : {count} notice(s)"
+        stage = row.get("collection_stage")
+        if stage in {"search", "ingest", "listing", "parsing", "products", "complete"}:
+            line += f" · étape : {stage}"
+        error_type = row.get("error_type")
+        if state in failures and isinstance(error_type, str) and error_type.isidentifier() and len(error_type) <= 64:
+            line += f" · exception : {error_type}"
         if state in failures and count:
             line += " (conservé)"
         if row.get("attempted_at_utc"):
