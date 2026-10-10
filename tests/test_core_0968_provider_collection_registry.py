@@ -546,7 +546,11 @@ def test_synthetic_merged_does_not_mask_unrelated_or_unsupported_sources(tmp_pat
         # If the original cannot support a field but merged can, retain merged.
         from cifereca.providers import ProviderSearchCapabilities
         alpha = next(s for s in originals if s.provider_id == "cifericaopds.alpha")
-        alpha.search_capabilities = ProviderSearchCapabilities(fields=("title",))
+        from dataclasses import replace
+        alpha.descriptor = replace(
+            alpha.descriptor,
+            search_capabilities=ProviderSearchCapabilities(fields=("title",)),
+        )
         selected = svc._without_redundant_merged(originals, field="isbn", scope="all")
         assert "cifericaopds.merged" in {s.provider_id for s in selected}
     finally:
