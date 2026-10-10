@@ -169,6 +169,10 @@ def test_unsupported_age_returns_empty_without_unfiltered_network_call():
     assert page == {
         "items": (), "next_cursor": "", "fresh_for_seconds": 86400,
         "collection_request_count": 0,
+        "collection_pipeline": {
+            "query_mode": "local", "effective_limit": 50,
+            "candidate_count": 0, "analyzed_count": 0, "returned_items": 0,
+        },
     }
     assert calls == 0
 
