@@ -43,7 +43,7 @@ def _group():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     panel = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "DetailPanel")
     method = next(x for x in panel.body if isinstance(x, ast.FunctionDef) and x.name == "_group")
-    clipboard = NS(value=None, set=lambda value: setattr(clipboard, "value", value))
+    clipboard = NS(value=None, set_text=lambda value: setattr(clipboard, "value", value))
     display = NS(get_clipboard=lambda: clipboard)
     env = {
         "Adw": NS(PreferencesGroup=Widget, ExpanderRow=Widget, ActionRow=Widget),
