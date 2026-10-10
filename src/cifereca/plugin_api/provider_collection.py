@@ -13,7 +13,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 
 # Match the public capability syntax without a circular import through
 # plugin_api.contracts (which imports this Protocol for service checks).
-_CAPABILITY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$")
+_CAPABILITY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+$")
 
 
 def capability_name_valid(value: str) -> bool:
