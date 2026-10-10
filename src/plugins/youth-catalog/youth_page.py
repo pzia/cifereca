@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import re
 from time import perf_counter
 from urllib.parse import urlsplit
@@ -14,7 +14,6 @@ from cifereca.plugin_api import (
     DocumentLink,
     UiActionContribution,
     UiBookDetailPresentation,
-    UiBookDetailAction,
     UiBookListEntry,
     UiPageContribution,
 )
@@ -853,24 +852,7 @@ class YouthView:
         if self.selected_book is None:
             self.master.empty_detail()
             return
-        presentation = detail_presentation(self.selected_book)
-        search_books = getattr(self.host, "search_books", None)
-        if callable(search_books):
-            title = _text(getattr(self.selected_book, "title", ""))
-            identity = self.identity_id()
-            if len(title) >= 2:
-                presentation = replace(presentation, actions=(
-                    *presentation.actions,
-                    UiBookDetailAction(
-                        id="search-library",
-                        title="Rechercher en bibliothèque",
-                        icon_name="system-search-symbolic",
-                        callback=lambda query=title, identity_id=identity: search_books(
-                            query, field="title", online=False, identity_id=identity_id,
-                        ),
-                    ),
-                ))
-        self.master.show_detail(presentation)
+        self.master.show_detail(detail_presentation(self.selected_book))
 
     def open_selected(self):
         if not self.selected_book:
