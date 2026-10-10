@@ -4336,11 +4336,33 @@ class LibraryService:
         )
 
     def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
-        """Serialize the provenance check and ledger reservation in this process."""
-        with _AUTOMATIC_LOAN_GUARD:
-            return self._acquire_active_loan_automatically_guarded(
-                loan, force_refresh=force_refresh
-            )
+        """Serialize automatic acquisition across threads and processes per loan.
+
+        Do not reuse the global acquisition lock: opening_sync already holds it.
+        The loan-scoped lock also covers other callers running in another process.
+        """
+        loan_id = str(loan.id or "").strip()
+        if not loan_id:
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_loan_identity_unproven", "retry": "explicit_only",
+            }
+        loan_key = hashlib.sha256(
+            (str(loan.source_provider).lower() + "\\0" + loan_id).encode("utf-8")
+        ).hexdigest()[:32]
+        lock_path = acquisition_lock_file().with_name(
+            "cifereca-loan-" + loan_key + ".lock"
+        )
+        try:
+            with _AUTOMATIC_LOAN_GUARD, InterProcessLock(lock_path):
+                return self._acquire_active_loan_automatically_guarded(
+                    loan, force_refresh=force_refresh
+                )
+        except LockBusyError:
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "acquisition_busy", "retry": "explicit_only",
+            }
 
     def _acquire_active_loan_automatically_guarded(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Acquire one active digital loan and fulfill ACSM through Kobo-Adept.
