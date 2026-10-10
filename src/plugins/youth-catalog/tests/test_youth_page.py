@@ -135,8 +135,10 @@ def test_homonymous_editions_display_distinct_verified_isbns_in_list_and_detail(
     ]
     assert fields[0]["isbn"] == "9780306406157"
     assert fields[1]["isbn"] == "9780140328721"
-    assert fields[0]["sources"] == "ecole-loisirs, milan"
-    assert fields[1]["sources"] == "milan"
+    assert [f.value for section in details[0].sections for f in section.fields
+            if f.id.startswith("source-")] == ["ecole-loisirs", "milan"]
+    assert [f.value for section in details[1].sections for f in section.fields
+            if f.id.startswith("source-")] == ["milan"]
     assert len(details[0].sections[0].fields) == 2  # conflicting age attestations preserved
     assert len(details[1].sections[0].fields) == 1
 
@@ -338,10 +340,10 @@ def test_bibliographic_metadata_is_visible_without_changing_age_source():
     detail = detail_presentation(book)
     assert detail.thumbnail_url == "https://covers.openlibrary.org/b/id/42-M.jpg"
     fields = {field.id: field.value for section in detail.sections for field in section.fields}
-    assert fields["publishers"] == "Open Publisher"
+    assert fields["publisher-0"] == "Open Publisher"
     assert fields["published-year"] == "1999"
-    assert fields["bibliography-sources"] == "openlibrary"
-    assert fields["sources"] == "ecole-loisirs"
+    assert fields["bibliography-source-0"] == "openlibrary"
+    assert fields["source-0"] == "ecole-loisirs"
 
 
 def test_stale_bibliography_completion_is_dropped_after_selection_change():
@@ -1320,3 +1322,35 @@ def test_906_same_title_different_editions_do_not_assert_possession():
         (("Deux éditions",), {"field": "title", "online": False, "identity_id": "alice"}),
         (("Deux éditions",), {"field": "title", "online": False, "identity_id": "alice"}),
     ]
+
+
+def test_detail_does_not_silently_drop_known_multivalued_metadata():
+    ages = tuple(YouthAgeRange(age, age + 1) for age in range(1, 11))
+    book = youth_book(
+        authors=("Autrice A", "Auteur B"),
+        age_ranges=ages,
+        themes=tuple(f"thème {i}" for i in range(15)),
+        publishers=tuple(f"éditeur {i}" for i in range(8)),
+    )
+    detail = detail_presentation(book)
+    assert len(detail.sections[0].fields) == 10
+    assert detail.sections[1].title == "Détail"
+    fields = [field for section in detail.sections for field in section.fields]
+    assert [field.value for field in fields if field.label == "Auteur"] == [
+        "Autrice A", "Auteur B",
+    ]
+    assert "thème 14" in [field.value for field in fields if field.kind == "subject"]
+    assert "éditeur 7" in [field.value for field in fields if field.id.startswith("publisher-")]
+
+
+def test_youth_detail_typed_fields_do_not_merge_authors_and_subjects():
+    detail = detail_presentation(youth_book(
+        authors=("Auteur A", "Auteur B"), themes=("nature", "écologie"),
+        formats=("EPUB", "PDF"), provenance=("milan", "openlibrary"),
+    ))
+    fields = detail.sections[1].fields
+    assert len([f for f in fields if f.kind == "author"]) == 2
+    assert [f.value for f in fields if f.kind == "subject"] == ["nature", "écologie"]
+    assert len([f for f in fields if f.id.startswith("format-")]) == 2
+    assert len([f for f in fields if f.id.startswith("source-")]) == 2
+    assert next(f for f in fields if f.id == "isbn").kind == "isbn"

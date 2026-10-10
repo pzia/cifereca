@@ -779,7 +779,8 @@ def main() -> int:
         assert ("ISBN", "9780140328721") not in shown, f"Incorrect second ISBN leaked: {shown!r}"
         assert any("source fixture-youth" in sub and "Interest age: 5 to 7" in sub for _, sub in shown), shown
         assert any("source milan" in sub and "À partir de 12 ans" in sub for _, sub in shown), shown
-        assert any(title == "Sources" and "fixture-youth" in sub and "milan" in sub for title, sub in shown), shown
+        provenance = [sub for title, sub in shown if title == "Source"]
+        assert set(provenance) >= {"fixture-youth", "milan"}, shown
         result["same_isbn_detail"] = shown
         capture("01-conflicting-age-sources-preserved")
         later(140, editions_first_isbn_in_view)
@@ -991,10 +992,10 @@ def main() -> int:
             "source milan" in subtitle and "8–12 ans (Milan)" in subtitle
             for _, subtitle in shown
         ), f"Milan age not rendered in GTK detail: {shown!r}"
-        assert any(
-            title == "Sources" and "fixture-youth" in subtitle and "milan" in subtitle
-            for title, subtitle in shown
-        ), f"Multi-source provenance not rendered in GTK detail: {shown!r}"
+        sources = [subtitle for title, subtitle in shown if title == "Source"]
+        assert "fixture-youth" in sources and "milan" in sources, (
+            f"Multi-source provenance not rendered as separate GTK fields: {shown!r}"
+        )
         result["detail_provenance"] = shown
         capture("06-keyboard-search-detail")
         later(160, click_collect_without_source)
