@@ -537,6 +537,7 @@ def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_col
         {"source_id": "booktrust", "label": "BookTrust", "family": "age",
          "plugin_state": "ready", "enabled": True, "collection_state": "http_error",
          "http_status": 503, "cache_count": 2, "rejected": 1,
+         "collection_stage": "search", "error_type": "HTTPStatusError",
          "attempted_at_utc": "2026-10-10T03:20:00+00:00",
          "fresh_until": "2026-10-11T03:00:00+00:00"},
         {"source_id": "usborne", "label": "Usborne", "family": "age",
@@ -554,6 +555,8 @@ def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_col
     assert len(lines) == 5
     assert "non testée" in lines[0] and "activée" in lines[0]
     assert "erreur HTTP 503" in lines[1]
+    assert "étape : search" in lines[1]
+    assert "exception : HTTPStatusError" in lines[1]
     assert "cache : 2 notice(s) (conservé)" in lines[1]
     assert "essai UTC : 2026-10-10 03:20" in lines[1]
     assert "fraîcheur annoncée" in lines[1] and "1 rejet(s)" in lines[1]
