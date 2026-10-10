@@ -76,3 +76,30 @@ def test_unknown_loan_id_is_not_sufficient_for_adept():
     assert LibraryService._cross_identity_loan_conflict(
         [], provider_loan_id="", identity_id="alice"
     )
+
+
+def test_automatic_acquisitions_are_serialized_in_process(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Lock
+    from time import sleep
+
+    service = object.__new__(LibraryService)
+    counters = {"active": 0, "peak": 0}
+    monitor = Lock()
+
+    def guarded(self, loan, *, force_refresh=False):
+        with monitor:
+            counters["active"] += 1
+            counters["peak"] = max(counters["peak"], counters["active"])
+        sleep(0.02)
+        with monitor:
+            counters["active"] -= 1
+        return {"status": "unchanged"}
+
+    monkeypatch.setattr(LibraryService, "_acquire_active_loan_automatically_guarded", guarded)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(
+            service._acquire_active_loan_automatically, range(6)
+        ))
+    assert len(results) == 6
+    assert counters["peak"] == 1
