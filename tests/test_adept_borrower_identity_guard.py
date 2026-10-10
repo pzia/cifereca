@@ -34,5 +34,13 @@ def test_separate_borrower_or_provider_does_not_create_false_conflict():
                          account("bob", "borrower-a", "kobo")])
 
 
-def test_empty_borrower_identifier_requires_independent_provenance():
-    assert not conflict([account("alice", "borrower-a")], borrower="")
+def test_empty_borrower_identifier_is_blocked():
+    assert conflict([account("alice", "borrower-a")], borrower="")
+
+
+def test_missing_borrower_ownership_is_blocked():
+    assert conflict([], borrower="borrower-a")
+
+
+def test_unrelated_account_does_not_prove_borrower_identity():
+    assert conflict([account("alice", "borrower-other")])
