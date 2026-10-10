@@ -497,7 +497,7 @@ class BookTrustSource:
                 if key not in {"query_mode", "effective_limit", "rejection_reasons"}
             })
             cursor_out = next_cursor(html, current_page=page)
-            if cursor_out and not self._last_diagnostic.get("candidate_books_count"):
+            if cursor_out and not pipeline.get("candidate_books_count"):
                 # Pagination proves a navigable catalogue page existed; zero
                 # recognizable book links is not a verified empty result.
                 raise InvalidCatalogueStructureError(
