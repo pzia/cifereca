@@ -357,8 +357,55 @@ def main() -> int:
         assert page.view.selected_source_plugin() == "youth.source.booktrust"
         assert not requests, "Selecting source triggered unsolicited HTTP"
         assert_rows()
-        device.click_widget(collect_button())
-        later(120, source_success)
+        # #910: exercise the true GTK Entry and installed provider under XTEST.
+        # Both synthetic BookTrust titles contain "des"; the live endpoint is
+        # replaced by the existing HTTP MockTransport for this scenario.
+        device.click_widget(page.view.query)
+        device.type_text("des")
+        later(220, source_keyboard_local)
+
+    def source_keyboard_local():
+        assert page.view.selected_source_plugin() == "youth.source.booktrust"
+        assert page.view.query.get_text() == "des", "Physical keyboard text did not reach GTK"
+        assert not requests, "Typing in Youth must remain cache-only"
+        audit = result["keyboard_selected_source"] = {
+            "source_plugin": page.view.selected_source_plugin(),
+            "query": page.view.query.get_text(),
+            "identity": page.view.identity_id(),
+            "requests_before": len(requests),
+            "gtk_activate_signals": 0,
+        }
+        page.view.query.connect(
+            "activate",
+            lambda _entry: audit.__setitem__(
+                "gtk_activate_signals", audit["gtk_activate_signals"] + 1
+            ),
+        )
+        keys("Return")
+        later(180, source_keyboard_after_return)
+
+    def source_keyboard_after_return():
+        audit = result["keyboard_selected_source"]
+        assert audit["gtk_activate_signals"] == 1, audit
+        assert not requests, "First physical Return must not fetch BookTrust"
+        assert_rows()
+        audit["first_status"] = page.view.status.get_text()
+        assert "Recherche en cache" in audit["first_status"]
+        assert "seconde fois sur Entrée" in audit["first_status"]
+        capture("00b-booktrust-keyboard-local")
+        keys("KP_Enter")
+        later(250, source_keyboard_after_keypad)
+
+    def source_keyboard_after_keypad():
+        audit = result["keyboard_selected_source"]
+        assert audit["gtk_activate_signals"] == 2, audit
+        assert page.view.selected_source_plugin() == audit["source_plugin"]
+        assert page.view.identity_id() == audit["identity"]
+        assert page.view.query.get_text() == audit["query"]
+        assert len(requests) == 1, f"Second physical keypad Enter must issue exactly one mock HTTP request: {requests!r}"
+        audit["requests_after_second"] = len(requests)
+        capture("00c-booktrust-keyboard-remote")
+        later(140, source_success)
 
     def source_success():
         if len(page.view.rows) != 2 and monotonic() - start < 16:
@@ -374,6 +421,22 @@ def main() -> int:
         assert len(catalog.search_cached("camille")) == 2
         capture("01-source-success-cache")
         result["booktrust_requests_before_outage"] = list(requests)
+        # A third GTK activation for the same identity/filter/source must
+        # never silently repeat a previously requested remote collection.
+        keys("Return")
+        later(180, source_keyboard_no_duplicate)
+
+    def source_keyboard_no_duplicate():
+        audit = result["keyboard_selected_source"]
+        assert audit["gtk_activate_signals"] == 3, audit
+        assert len(requests) == 1, f"Third Enter caused a duplicate source request: {requests!r}"
+        audit["requests_after_third"] = len(requests)
+        audit["third_status"] = page.view.status.get_text()
+        assert "déjà demandée" in audit["third_status"], audit
+        audit["criterion_910_selected_source_satisfied"] = True
+        capture("01b-booktrust-keyboard-no-duplicate")
+        # Restore unfiltered listing for the existing outage/recovery recipe.
+        page.view.query.set_text("")
         fault["unavailable"] = True
         device.click_widget(collect_button())
         later(130, source_failure)
