@@ -4313,7 +4313,25 @@ class LibraryService:
             "TRACE download loan_auto begin loan_id=%s item_id=%s title=%r provider=%s credential=%s account=%s direct_url_present=%s",
             loan.id, loan.record_id, loan.title, loan.source_provider, loan.source_credential, loan.source_account_id, bool(loan.ebook_url),
         )
-        identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+        # DRM must never inherit the currently selected identity when a provider
+        # connection has no persisted owner. Keep this fail-closed at the
+        # automatic acquisition boundary; unrelated UI navigation may still
+        # use the historical identity_for_connection fallback.
+        bound_identity_id = self.storage.identity_for_connection(
+            loan.source_provider, loan.source_credential
+        )
+        identity = self.identity_by_id(bound_identity_id)
+        if identity is None:
+            _TRACE_LOG.warning(
+                "TRACE download loan_auto blocked reason=unbound_connection_identity provider=%s",
+                loan.source_provider,
+            )
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_identity_unproven",
+                "reason": "unbound_connection_identity",
+                "retry": "explicit_only",
+            }
         _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
         entitlement_rows = [
             row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
@@ -4490,6 +4508,35 @@ class LibraryService:
             if acquisition.kind == "acsm" and acquisition.acsm_path is not None:
                 retained_acsm = acquisition.acsm_path
                 failure_executor = "kobo-adept"
+                # A linked Paris account can be exposed by multiple credentials.
+                # A shared account id with competing Cifereca identities is not
+                # sufficient evidence of which Adobe profile activated the loan.
+                account_id = str(loan.source_account_id or "").strip()
+                matching_owners = {
+                    str(a.identity_id)
+                    for a in self.accounts
+                    if str(a.provider_id).lower() == str(loan.source_provider).lower()
+                    and str(a.unique_id or "").strip() == account_id
+                } if account_id else set()
+                if account_id and (len(matching_owners) > 1 or (
+                    matching_owners and identity.identity_id not in matching_owners
+                )):
+                    code = "adept_borrower_ambiguous"
+                    self.storage.acquisition_put({
+                        **ledger_base, "status": "attention_required",
+                        "strategy": "loan_auto", "executor": "kobo-adept",
+                        "attention_code": code,
+                        "metadata": {**previous_meta, "provider_loan_id": loan.id,
+                                     "acsm_staging_path": str(retained_acsm)},
+                    })
+                    _TRACE_LOG.warning(
+                        "TRACE download loan_auto blocked reason=ambiguous_borrower_account provider=%s",
+                        loan.source_provider,
+                    )
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": code, "retry": "explicit_only",
+                    }
                 try:
                     profile_name, profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
                 except AdeptProfileResolutionError as exc:
