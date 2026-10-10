@@ -9,6 +9,7 @@ from .errors import ManifestError
 
 CORE_CATEGORIES: tuple[CategoryDefinition, ...] = (
     CategoryDefinition("provider.library", "Fournisseur de bibliothèque", "cifereca.provider/1", "all"),
+    CategoryDefinition("provider.collection", "Collection de fournisseurs virtuels", "cifereca.provider.collection/1", "all"),
     CategoryDefinition(
         "catalog.service",
         "Service de catalogue",
