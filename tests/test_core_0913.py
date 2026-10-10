@@ -92,9 +92,12 @@ class Core0913(unittest.TestCase):
         self.service._persist_active_loans('default',[self.loan])
         for _ in range(2):
             result=self.service._acquire_active_loan_automatically(self.loan)
-            self.assertEqual(result['status'],'attention_required'); self.assertEqual(result['code'],'adept_profile_ambiguous')
+            self.assertEqual(result['status'],'attention_required'); self.assertEqual(result['code'],'adept_borrower_binding_required')
         self.session.download_digital.assert_called_once(); self.service.execute_acquisition_request.assert_not_called()
         self.service.storage.adept_profile_binding_set('identity','default','stable-hb')
+        self.service.confirm_adept_borrower(
+            provider_id='paris',credential_id='test',account_id='reader',
+            identity_id='default',profile_id='stable-hb',confirmed=True)
         def execute(request):
             self.assertEqual(request['profile'],'hb')
             dest=Path(request['destination']); dest.parent.mkdir(parents=True,exist_ok=True)
@@ -188,5 +191,5 @@ class Core0913(unittest.TestCase):
             summary=self.service.opening_sync()
             row=next(row for row in summary['identities'] if row['identity_id']=='default')
             self.assertEqual(row['attention_required'],1)
-            self.assertEqual(self.service.storage.latest_sync_run('default')['detail']['acquisition_errors'][0]['code'],'adept_profile_ambiguous')
+            self.assertEqual(self.service.storage.latest_sync_run('default')['detail']['acquisition_errors'][0]['code'],'adept_borrower_binding_required')
         self.session.download_digital.assert_called_once();self.service.execute_acquisition_request.assert_not_called()
