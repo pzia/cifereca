@@ -2092,6 +2092,13 @@ class MainWindow(Adw.ApplicationWindow):
             self.window.navigate(route)
         def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool:
             return self.window.open_book_detail(book, identity_id=identity_id)
+        def search_books(
+            self, query: str, *, field: str = "title",
+            online: bool = False, identity_id: str | None = None,
+        ) -> bool:
+            return self.window.search_books(
+                query, field=field, online=online, identity_id=identity_id,
+            )
         def build_action_bar(self, actions):
             bar = AdaptiveActionBar()
             for action in actions:
@@ -3440,6 +3447,36 @@ class MainWindow(Adw.ApplicationWindow):
         self._search_generation = getattr(self, "_search_generation", 0) + 1
         self._remote_search_results = []
         return page
+
+    def search_books(
+        self, query: str, *, field: str = "title",
+        online: bool = False, identity_id: str | None = None,
+    ) -> bool:
+        """Search from a trusted book detail; exactly one explicit query.
+
+        This API is public through UiSearchNavigationHost. No credentials,
+        selected identity or old filters are copied into a new search.
+        """
+        from .query_model import FIELDS, QueryState
+
+        if not isinstance(query, str) or not 2 <= len(query.strip()) <= 512:
+            return False
+        if field not in FIELDS or type(online) is not bool:
+            return False
+        current = getattr(self.service, "current_identity", None)
+        current_id = getattr(current, "identity_id", None)
+        if identity_id is not None and (not current_id or identity_id != current_id):
+            return False
+        controls = getattr(self, "search_controls", None)
+        if controls is None:
+            return False
+        controls.set_state(
+            QueryState(text=query.strip(), field=field, scope="all"), notify=False,
+        )
+        self.navigate("search")
+        # Local by default for #906; online only on an explicit loupe click.
+        self.run_search(online)
+        return True
 
     def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
         if not keyboard:
