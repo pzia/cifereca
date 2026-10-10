@@ -257,3 +257,31 @@ def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():
         'assert window._search_mode == "local" and not online_attempts',
     ):
         assert required in source
+
+
+def test_962_keyboard_focus_return_is_a_separate_real_gtk_1366_gate():
+    runner = _module()
+    scenario = runner.SCENARIOS["youth-focus-return-1366"]
+    assert scenario["plugin"] == "catalog.youth"
+    assert scenario["runner"] == "gtk-youth"
+    assert scenario["fixture"] == "search-filters"
+    assert scenario["width"] == 1366
+    assert scenario["library_search"] is True
+    assert scenario["focus_return"] is True
+    assert "youth-focus-return-1024" not in runner.SCENARIOS
+    command = RUNNER.read_text(encoding="utf-8")
+    assert '"--focus-return"' in command
+    script = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    for needle in (
+        'if args.focus_return:',
+        'result["library_search_action_focus_restored"]',
+        'assert result["library_search_action_focus_restored"]',
+        'capture("14-library-search-return")',
+        'device.click_widget(action)',
+        'window.get_focus()',
+        'return\n        assert action.grab_focus() is not False',
+        'assert not online_attempts and not requests',
+    ):
+        assert needle in script
+
+

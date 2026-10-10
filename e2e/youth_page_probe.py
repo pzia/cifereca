@@ -87,10 +87,13 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1366,))
     parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
+    parser.add_argument("--focus-return", action="store_true", help="UX P2 #962: arrêt et assertion stricts après Retour")
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
     provider.add_argument("--editions", action="store_true", help="Offline same-title editions and conflicting provenance on real GTK")
     args = parser.parse_args()
+    if args.focus_return and (not args.library_search or args.milan or args.editions):
+        parser.error("--focus-return exige --library-search seul")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
@@ -443,6 +446,30 @@ def main() -> int:
                 "Le focus ne revient pas au bouton initial ; à traiter séparément en UX"
             )
         capture("14-library-search-return")
+        if args.focus_return:
+            # #962 : ne pas « réparer » artificiellement le focus dans la sonde.
+            # L'ancienne recette #906 appelle grab_focus() pour tester Entrée/Espace ;
+            # celle-ci doit constater le focus rendu par la navigation elle-même.
+            result["focus_return_action_mapped"] = bool(action.get_mapped())
+            result["focus_return_widget"] = (
+                type(focus).__name__ if focus is not None else None
+            )
+            result["focus_return_expected_action"] = str(
+                getattr(action, "_cifereca_action_label", "") or "Rechercher en bibliothèque"
+            )
+            assert result["library_search_action_focus_restored"], (
+                "UX #962 : après Retour, le focus clavier doit revenir à l'action "
+                "Rechercher en bibliothèque du livre toujours sélectionné ; "
+                f"focus observé={result['focus_return_widget']!r}"
+            )
+            assert not online_attempts and not requests, (
+                "Retour clavier : aucune recherche ou collecte réseau implicite"
+            )
+            result["status"] = "PASS"
+            write_report()
+            rc[0] = 0
+            app.quit()
+            return
         assert action.grab_focus() is not False
         keys("Return")
         later(280, library_search_verify_enter)

@@ -64,6 +64,15 @@ SCENARIOS = {
         "width": 1366,
         "library_search": True,
     },
+    "youth-focus-return-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "UX P2 #962 : restaurer le focus du bouton Jeunesse après Retour depuis Recherche (GTK/XTEST 1366).",
+        "runner": "gtk-youth",
+        "width": 1366,
+        "library_search": True,
+        "focus_return": True,
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -194,6 +203,7 @@ def main() -> int:
                     *(["--milan"] if scenario.get("milan") else []),
                     *(["--editions"] if scenario.get("editions") else []),
                     *(["--library-search"] if scenario.get("library_search") else []),
+                    *(["--focus-return"] if scenario.get("focus_return") else []),
                 ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]
