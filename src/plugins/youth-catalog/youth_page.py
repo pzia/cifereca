@@ -31,6 +31,8 @@ KIND_LABELS = {
 }
 KIND_VALUES = tuple(KIND_LABELS)
 _SPLIT = re.compile(r"[,;]")
+# Returned only if the explicit source task was cancelled before HTTP.
+_CANCELLED_BEFORE_REQUEST = object()
 
 
 def _text(value: object) -> str:
@@ -413,6 +415,9 @@ def source_diagnostic_presentation(rows):
             line += f" · essai UTC : {str(row['attempted_at_utc'])[:16].replace('T', ' ')}"
         if row.get("fresh_until") and count:
             line += f" · fraîcheur annoncée jusqu’au {str(row['fresh_until'])[:16].replace('T', ' ')} UTC"
+        requests = row.get("request_count")
+        if type(requests) is int and requests >= 0:
+            line += f" · requêtes HTTP : {requests}"
         received = row.get("received_count")
         requested = row.get("requested_limit")
         if type(received) is int and received >= 0:
@@ -868,7 +873,7 @@ class YouthView:
         token = (identity, row.plugin_id, state.query, state.age, state.themes)
         started = perf_counter()
         self.run_remote(
-            lambda control: None if control.cancelled() else fetch_source_page(
+            lambda control: _CANCELLED_BEFORE_REQUEST if control.cancelled() else fetch_source_page(
                 service, state.query, age=state.age, themes=state.themes,
                 cursor=cursor or None, limit=100,
             ),
@@ -908,7 +913,17 @@ class YouthView:
         def done(handle):
             try:
                 result, error = handle.result(), False
-                error_type, http_status = "", None
+                if result is _CANCELLED_BEFORE_REQUEST:
+                    failure = {
+                        "state": "cancelled", "error_type": "",
+                        "http_status": None, "request_count": 0,
+                    }
+                elif result is None:
+                    # A malformed None response is not proof of cancellation.
+                    failure = {
+                        "state": "invalid", "error_type": "",
+                        "http_status": None, "request_count": None,
+                    }
             except Exception as exc:
                 result, error = None, True
                 failure = collection_failure_diagnostic(exc)
@@ -918,7 +933,7 @@ class YouthView:
                 if self.disposed or generation != self.generation or current_token != token:
                     return False
                 self._remote_running_token = None
-                if error or result is None:
+                if error or result is None or result is _CANCELLED_BEFORE_REQUEST:
                     reporter = getattr(self.catalog, "record_collection", None)
                     row = self.selected_source()
                     if callable(reporter) and row is not None:
@@ -960,6 +975,10 @@ class YouthView:
                 accepted=report.accepted, rejected=report.rejected,
                 received_count=report.accepted + report.rejected,
                 requested_limit=requested_limit,
+                request_count=(
+                    raw.get("collection_request_count") if isinstance(raw, Mapping)
+                    else None
+                ),
                 rejection_categories=safe_ingest_rejection_categories(report.errors),
                 stage="ingest",
                 duration_ms=duration_ms, next_cursor_present=bool(cursor),
