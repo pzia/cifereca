@@ -248,7 +248,6 @@ def parse_listing(
         if url in seen:
             reasons["duplicate"] += 1
             continue
-        seen.add(url)
         if len(out) >= bounded:
             truncated = True
             break
@@ -296,6 +295,7 @@ def parse_listing(
             item["age_ranges"] = []
             age_unknown += 1
         out.append(item)
+        seen.add(url)
 
     if diagnostic is not None:
         diagnostic.update({
