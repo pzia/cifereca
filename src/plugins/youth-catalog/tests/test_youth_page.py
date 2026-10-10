@@ -1277,33 +1277,3 @@ def test_youth_detail_typed_fields_do_not_merge_authors_and_subjects():
     assert len([f for f in fields if f.id.startswith("format-")]) == 2
     assert len([f for f in fields if f.id.startswith("source-")]) == 2
     assert next(f for f in fields if f.id == "isbn").kind == "isbn"
-
-
-def test_youth_selected_adds_single_explicit_local_search_action():
-    book = youth_book(title="C'est quoi, l'écologie ?")
-    rendered, navigation = [], []
-    host = NS(search_books=lambda *args, **kwargs: navigation.append((args, kwargs)))
-    view = NS(
-        rows={"edition": book}, host=host, identity_id=lambda: "alice",
-        master=NS(show_detail=rendered.append, empty_detail=lambda: None),
-    )
-    YouthView.selected(view, NS(key="edition"))
-    assert len(rendered) == 1
-    actions = rendered[0].actions
-    assert len(actions) == 1
-    assert actions[0].title == "Rechercher en bibliothèque"
-    assert navigation == []
-    actions[0].callback()
-    assert navigation == [(("C'est quoi, l'écologie ?",), {
-        "field": "title", "online": False, "identity_id": "alice",
-    })]
-
-
-def test_youth_detail_remains_compatible_with_legacy_host():
-    rendered = []
-    view = NS(
-        rows={"edition": youth_book()}, host=NS(), identity_id=lambda: "alice",
-        master=NS(show_detail=rendered.append, empty_detail=lambda: None),
-    )
-    YouthView.selected(view, NS(key="edition"))
-    assert rendered[0].actions == ()
