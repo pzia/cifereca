@@ -481,7 +481,10 @@ def source_diagnostic_presentation(rows):
         digest = funnel.get("html_sha256_prefix")
         if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{16}", digest):
             line += f" · HTML hash : {digest}"
-        for key, label in (("http_ms", "HTTP ms"), ("parse_ms", "parsing ms")):
+        for key, label in (
+            ("http_ms", "HTTP ms"), ("parse_ms", "parsing ms"),
+            ("total_ms", "source ms"),
+        ):
             value = funnel.get(key)
             if type(value) is int and 0 <= value <= 600_000:
                 line += f" · {label} : {value}"
