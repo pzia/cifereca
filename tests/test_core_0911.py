@@ -106,7 +106,9 @@ class Core0911(unittest.TestCase):
         self.assertEqual(self.core.storage.acquisitions(provider_id='paris')[0]['executor'],'kobo-adept')
     def test_json_failure_after_artifact_never_claims_success(self):
         result,acsm=self.failed_runtime(artifact=True)
-        self.assertEqual(result['status'],'attention_required');self.assertTrue(result['process']['artifact_present']);self.assertTrue(acsm.exists())
+        # Runtime JSON corruption is recoverable; it must not claim the
+        # artifact was validated or label a definitive Adobe license refusal.
+        self.assertEqual(result['status'],'retryable_error');self.assertTrue(result['process']['artifact_present']);self.assertTrue(acsm.exists())
         self.assertGreater(result['process']['artifact_bytes'],0)
 
     def test_gui_diagnostic_change_saves_without_global_save(self):
