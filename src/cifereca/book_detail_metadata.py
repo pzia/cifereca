@@ -167,3 +167,11 @@ def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
 def detail_metadata_rows(metadata: object) -> tuple[tuple[str, str], ...]:
     """Compatibility shape for existing consumers."""
     return tuple((label, value) for label, value, _kind in detail_metadata_items(metadata))
+
+
+def safe_detail_value(value: object) -> str:
+    """UI boundary for copying/searching a single known public detail value."""
+    result = _safe_text(value)
+    if result.startswith("Valeur trop longue ("):
+        return ""
+    return result
