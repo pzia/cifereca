@@ -70,7 +70,17 @@ class ProviderRegistry:
             raise ProviderCollectionValidationError("invalid collection service")
         previous = self._collections.get(parent_id)
         owned = set(self.virtual_ids(parent_id))
-        foreign = set(self._plugins) - owned
+        # All previously accepted children remain reserved to their parent,
+        # including disabled, removed and temporarily unpublished sources.
+        # Otherwise a second collection could impersonate a retired source
+        # and inherit its identity-scoped settings or bibliographic history.
+        reserved_elsewhere = {
+            child.plugin_id
+            for owner, known in self._collections.items()
+            if owner != parent_id
+            for child in known.children
+        }
+        foreign = (set(self._plugins) - owned) | reserved_elsewhere
         snapshot = validate_provider_collection_snapshot(
             service.snapshot(), parent_plugin_id=parent_id,
             existing_provider_ids=foreign, previous=previous,

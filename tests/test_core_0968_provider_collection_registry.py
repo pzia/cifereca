@@ -256,3 +256,35 @@ def test_revision_replaces_adapter_and_retires_old_session(tmp_path):
             svc.registry.register(LocalProvider("alpha"), replace=True)
     finally:
         svc.close()
+
+
+def test_disabled_or_retired_ids_cannot_be_claimed_by_another_parent():
+    """A vanished public provider must retain its owner to protect history."""
+    reg = ProviderRegistry()
+    original = Collection(snapshot(child("alpha")))
+    reg.reconcile_collection(PARENT, original)
+
+    # The child is absent from the live plugin registry, but the accepted
+    # inventory must still reserve its stable provider ID to this parent.
+    original.value = snapshot(child("alpha", status="disabled"), generation=2)
+    assert reg.reconcile_collection(PARENT, original) == ()
+    assert reg.maybe_get("cifericaopds.alpha") is None
+
+    other_parent = "org.cifereca.integration.other"
+    other_snapshot = snapshot(child("alpha"))
+    other_snapshot["parent_plugin_id"] = other_parent
+    other_snapshot["children"][0]["parent_plugin_id"] = other_parent
+    other = Collection(other_snapshot)
+    with pytest.raises(ProviderCollectionValidationError, match="collision"):
+        reg.reconcile_collection(other_parent, other)
+    assert reg.virtual_snapshot(other_parent) is None
+
+    # Disabling/removing the parent must not free its historic namespace.
+    assert reg.retire_collection(PARENT) == ()
+    with pytest.raises(ProviderCollectionValidationError, match="collision"):
+        reg.reconcile_collection(other_parent, other)
+
+    # Only the original owner can bring its source back under the same ID.
+    original.value = snapshot(child("alpha", revision="r2", generation=3), generation=3)
+    assert reg.reconcile_collection(PARENT, original) == ("cifericaopds.alpha",)
+    assert reg.get("cifericaopds.alpha").descriptor.display_name.endswith("(r2)")
