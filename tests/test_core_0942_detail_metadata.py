@@ -81,6 +81,9 @@ def test_shared_facets_do_not_replace_multivalued_detail_rows():
         def set_tooltip_text(self, text):
             self.tooltip = text
 
+        def set_visible(self, visible):
+            self.visible = visible
+
         def add_css_class(self, _class):
             pass
 
