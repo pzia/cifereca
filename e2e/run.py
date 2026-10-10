@@ -27,14 +27,14 @@ SCENARIOS = {
         "runner": "gtk-probe",
     },
     "book-detail-1024": {
-        "plugin": "detail",
+        "plugin": "core",
         "fixture": "search-filters",
         "description": "P1 #942 : vrai Détail bibliographique repliable Recherche/Bibliothèque GTK 1024.",
         "runner": "gtk-detail",
         "width": 1024,
     },
     "book-detail-1366": {
-        "plugin": "detail",
+        "plugin": "core",
         "fixture": "search-filters",
         "description": "P1 #942 : vrai Détail bibliographique repliable Recherche/Bibliothèque GTK 1366.",
         "runner": "gtk-detail",
