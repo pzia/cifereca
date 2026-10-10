@@ -33,6 +33,8 @@ from PIL import ImageGrab
 from x11_input import X11Input
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
+from cifereca.gui.query_model import QueryState
+import cifereca.gui.main_window as gui_main
 
 
 def install_real_youth(core: CiferecaCore, work: Path, *, with_booktrust: bool = False, with_milan: bool = False) -> None:
@@ -88,6 +90,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1024, 1366))
+    parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--booktrust", action="store_true", help="Use installed BookTrust with offline HTTP fixtures")
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
@@ -128,6 +131,10 @@ def main() -> int:
     assert catalog is not None and page is not None
 
     requests = []
+    library_search_calls = []
+    original_library_search = [None]
+    original_online_search = [None]
+    online_attempts = []
     fault = {"unavailable": False}
     notice_sink_path = out / "local-https-handler.jsonl"
     if args.milan:
@@ -296,6 +303,9 @@ def main() -> int:
         assert window.get_width() <= args.width, "Youth window overflows Xvfb viewport"
         assert page.view.identity.get_model().get_n_items() == 2
         assert page.view.age.get_model().get_n_items() == 19, "Only 0..17 are selectable, not 18"
+        if args.library_search:
+            library_search_start_ui()
+            return
         if args.booktrust:
             source_start_ui()
             return
@@ -342,6 +352,169 @@ def main() -> int:
         button = walk(page.view.widget)
         assert button is not None and button.get_mapped(), "Collect action not mapped"
         return button
+
+
+    # #906 : réutilise le véritable package, la vraie fenêtre et le XTEST de
+    # cette sonde. Aucune nouvelle CI ni collection de source à l'ouverture.
+    def library_search_button():
+        def visit(widget):
+            if isinstance(widget, Gtk.Button) and widget.get_label() == "Rechercher en bibliothèque":
+                return widget
+            child = widget.get_first_child()
+            while child is not None:
+                found = visit(child)
+                if found is not None:
+                    return found
+                child = child.get_next_sibling()
+            return None
+        return visit(page.view.widget)
+
+    def library_search_start_ui():
+        assert not requests, "Visiter Jeunesse ne doit pas collecter à distance"
+        identity = page.view.identity_id()
+        title = "C'est quoi, l'écologie ?"
+        assert identity == "camille", identity
+        from copy import deepcopy
+        a = dict(records()[0][1], record_id="ux906-a", source_item_id="ux906-a", title=title)
+        b = dict(deepcopy(a), record_id="ux906-b", source_item_id="ux906-b", isbn="9780140328721")
+        assert catalog.ingest(identity, "milan", [a, b]).accepted == 2
+        assert len(catalog.search_cached(identity, title)) == 2, "Éditions ISBN distinctes fusionnées"
+        core.storage.catalog_entry_put({
+            "catalog_entry_id": "ux906-known", "title": title, "author": "Autrice UX",
+            "identity_id": identity, "provider_id": "local", "item_id": "ux906-known",
+            "local_state": "remote_catalog", "media_format": "epub",
+            "metadata": {"medium": "digital", "language": "fr"},
+        })
+        original_library_search[0] = core.library.search_known_catalog
+        def observed_local(*args, **kwargs):
+            library_search_calls.append({
+                "query": args[0], "scope": args[1],
+                "field": kwargs.get("field"), "identity_id": kwargs.get("identity_id"),
+            })
+            return original_library_search[0](*args, **kwargs)
+        core.library.search_known_catalog = observed_local
+
+        original_online_search[0] = gui_main.progressive_online_search
+        def forbid_online(*_args, **_kwargs):
+            online_attempts.append("unexpected-online")
+            raise AssertionError("Aucun HTTP attendu du MVP local #906")
+        gui_main.progressive_online_search = forbid_online
+        result["library_search_title"] = title
+        result["library_search_identity"] = identity
+        page.view.query.set_text(title)
+        later(240, library_search_select)
+
+    def library_search_select():
+        master = page.view.master._page
+        assert master.store.get_n_items() == 2, "Les deux éditions attendues ne sont pas affichées"
+        assert library_search_button() is None, "Action présente sans sélection"
+        master.selection.set_selected(0)
+        later(220, library_search_first_click)
+
+    def library_search_first_click():
+        action = library_search_button()
+        assert action is not None and action.get_mapped(), "Bouton P0 #906 absent de GTK"
+        assert not library_search_calls and not online_attempts
+        master = page.view.master._page
+        selected = master.selection.get_selected_item()
+        assert selected is not None
+        result["library_search_initial_selection"] = selected.key
+        result["library_search_initial_filter"] = page.view.query.get_text()
+        # Filtres préexistants contraignants : le routeur doit les neutraliser.
+        window.search_controls.set_state(QueryState(
+            text="ancien filtre", field="author", scope="digital",
+            providers=("local",), languages=("en",),
+        ), notify=False)
+        capture("12-library-search-action-visible")
+        device.click_widget(action)
+        later(300, library_search_verify_local)
+
+    def library_search_verify_local():
+        assert window.view_stack.get_visible_child_name() == "search", "Bouton n'a pas navigué vers Recherche"
+        expected = QueryState(text=result["library_search_title"], field="title", scope="all")
+        assert window.search_controls.state() == expected, window.search_controls.state()
+        assert core.library.current_identity.identity_id == result["library_search_identity"]
+        assert len(library_search_calls) <= 1, library_search_calls
+        if (not library_search_calls or window.search_page.store.get_n_items() < 1) and monotonic() - start < 16:
+            later(150, library_search_verify_local)
+            return
+        assert library_search_calls == [{
+            "query": result["library_search_title"], "scope": "all",
+            "field": "title", "identity_id": result["library_search_identity"],
+        }], library_search_calls
+        assert window.search_page.store.get_n_items() >= 1, "Aucun résultat dans la liste GTK connue"
+        assert window._search_mode == "local" and not online_attempts, online_attempts
+        result["library_search_local_call_count"] = len(library_search_calls)
+        capture("13-library-search-known-results")
+        assert window.can_go_back(), "Retour indisponible après recherche"
+        back = getattr(window, "back_button", None)
+        if back is not None and back.get_mapped():
+            device.click_widget(back)
+            result["library_search_back"] = "XTEST"
+        else:
+            window.go_back()
+            result["library_search_back"] = "GTK navigation API"
+        later(260, library_search_verify_return)
+
+    def library_search_verify_return():
+        assert window.view_stack.get_visible_child_name() == "youth"
+        assert page.view.identity_id() == result["library_search_identity"]
+        assert page.view.query.get_text() == result["library_search_initial_filter"]
+        selected = page.view.master._page.selection.get_selected_item()
+        assert selected is not None and selected.key == result["library_search_initial_selection"], (
+            "Sélection de Jeunesse perdue après Retour"
+        )
+        action = library_search_button()
+        assert action is not None and action.get_mapped()
+        focus = window.get_focus()
+        result["library_search_action_focus_restored"] = (
+            focus is action or (focus is not None and action.is_ancestor(focus))
+        )
+        if not result["library_search_action_focus_restored"]:
+            result["library_search_ux_observation"] = (
+                "Le focus ne revient pas au bouton initial ; à traiter séparément en UX"
+            )
+        capture("14-library-search-return")
+        assert action.grab_focus() is not False
+        keys("Return")
+        later(280, library_search_verify_enter)
+
+    def library_search_verify_enter():
+        assert window.view_stack.get_visible_child_name() == "search", "Entrée n'active pas le bouton"
+        if len(library_search_calls) < 2 and monotonic() - start < 22:
+            later(150, library_search_verify_enter)
+            return
+        assert len(library_search_calls) == 2 and library_search_calls[1] == library_search_calls[0]
+        assert window._search_mode == "local" and not online_attempts
+        capture("15-library-search-enter")
+        window.go_back()
+        later(240, library_search_press_space)
+
+    def library_search_press_space():
+        assert window.view_stack.get_visible_child_name() == "youth"
+        assert page.view.master._page.selection.get_selected_item() is not None
+        action = library_search_button()
+        assert action is not None and action.get_mapped()
+        assert action.grab_focus() is not False
+        keys("space")
+        later(280, library_search_verify_space)
+
+    def library_search_verify_space():
+        assert window.view_stack.get_visible_child_name() == "search", "Espace n'active pas le bouton"
+        if len(library_search_calls) < 3 and monotonic() - start < 27:
+            later(120, library_search_verify_space)
+            return
+        assert len(library_search_calls) == 3 and all(
+            call == library_search_calls[0] for call in library_search_calls
+        ), library_search_calls
+        assert window._search_mode == "local" and not online_attempts
+        result["library_search_activations"] = ["clic XTEST", "Entrée XTEST", "Espace XTEST"]
+        capture("16-library-search-space")
+        result["status"] = "PASS"
+        write_report()
+        rc[0] = 0
+        app.quit()
+
 
     def source_start_ui():
         assert len(page.view.sources) == 1, "Installed BookTrust source missing from real GTK"
@@ -1144,6 +1317,10 @@ def main() -> int:
         def do_shutdown(self):
             if device:
                 device.close()
+            if original_library_search[0] is not None:
+                core.library.search_known_catalog = original_library_search[0]
+            if original_online_search[0] is not None:
+                gui_main.progressive_online_search = original_online_search[0]
             core.close()
             work.cleanup()
             Gio.Application.do_shutdown(self)
