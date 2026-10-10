@@ -646,10 +646,12 @@ def test_collection_failure_diagnostic_uses_explicit_http_status_not_exception_t
     # Never classify a response by scraping potentially sensitive error text.
     assert collection_failure_diagnostic(error) == {
         "state": "error", "error_type": "RuntimeError", "http_status": None,
+        "request_count": None,
     }
     error.http_status = 503
     assert collection_failure_diagnostic(error) == {
         "state": "http_error", "error_type": "RuntimeError", "http_status": 503,
+        "request_count": None,
     }
     error.http_status = True  # bool is not a valid HTTP status
     assert collection_failure_diagnostic(error)["state"] == "error"
@@ -664,6 +666,7 @@ def test_collection_failure_diagnostic_uses_explicit_http_status_not_exception_t
 
     assert collection_failure_diagnostic(ResponseError()) == {
         "state": "http_error", "error_type": "ResponseError", "http_status": 429,
+        "request_count": None,
     }
     timeout = TimeoutError("private location")
     timeout.http_status = 503
