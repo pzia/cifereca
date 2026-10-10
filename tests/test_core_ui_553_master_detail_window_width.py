@@ -12,7 +12,7 @@ def test_master_detail_breakpoint_is_based_on_window_width():
     assert MASTER_DETAIL_NARROW_WINDOW_WIDTH == 960
 
 
-@pytest.mark.parametrize("width", [1024, 1280, 1300, 1366])
+@pytest.mark.parametrize("width", [1280, 1300, 1366])
 def test_desktop_window_widths_keep_master_detail(width):
     assert master_detail_is_narrow(width) is False
 

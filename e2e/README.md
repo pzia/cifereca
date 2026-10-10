@@ -96,7 +96,7 @@ alimenté directement avec des notices déterministes par identité.
 dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth
 ```
 
-Deux écrans Xvfb **1024×900** et **1366×900** sont exercés. Les captures
+Un écran Xvfb **1366×900** est exercé. Les captures
 `00-empty-cache` à `06-keyboard-search-detail` prouvent les états vides,
 tranches 0/8/12/17 (18 non proposé), âges d'intérêt/lecture/inféré,
 isolation Camille/Alex, recherche clavier XTEST, sélection et provenance.
@@ -110,7 +110,7 @@ collecte restent à recetter séparément.
 
 ### Milan activé — pagination, notice GTK et panne 503 (UX P1 #758)
 
-Les scénarios `youth-milan-1024` et `youth-milan-1366` installent la **vraie
+Le scénario `youth-milan-1366` installent la **vraie
 extension** `youth-source-milan` dans le store isolé, puis simulent uniquement
 ses réponses HTTP avec `httpx.MockTransport` et les pages HTML versionnées
 de `simulation/milan/pseudo_milan_service.py`. Aucun trafic vers Milan
@@ -130,7 +130,7 @@ Cette recette vérifie Milan de manière autonome, avec transport HTTP simulé.
 
 ### Deux éditions homonymes, ISBN distincts et âges contradictoires (UX P1 #758)
 
-Les recettes `youth-editions-1024` et `youth-editions-1366` utilisent la
+La recette `youth-editions-1366` utilisent la
 **vraie interface GTK4/Xvfb**, sans plugin distant ni réseau :
 
 - 3 notices locales synthétiques ont exactement le même titre et la même
@@ -143,7 +143,7 @@ Les recettes `youth-editions-1024` et `youth-editions-1366` utilisent la
 - filtres 6, 9 et 12 ans, nature d'âge intérêt/éditeur, et identité Alex
   sans entrée, sont vérifiés sur la vraie liste/détail GTK.
 
-8 captures par largeur permettent d'inspecter la distinction des éditions
+8 captures permettent d'inspecter la distinction des éditions
 et la provenance. Aucun rapprochement automatique par titre/autrice ne doit
 faire fusionner des ISBN différents. Les fiches et ISBN sont fictifs ou
 utilisés uniquement comme données de test structurées ; aucune disponibilité
@@ -152,15 +152,15 @@ utilisés uniquement comme données de test structurées ; aucune disponibilité
 #### Visibilité des identifiants d'édition (UX #891, correctif produit #894)
 
 Cette recette vérifie maintenant **l'affichage réel** des deux ISBN dans
-les cellules `Gtk.ListView` mappées (`meta_label`, y compris à 1024 px),
+les cellules `Gtk.ListView` mappées (`meta_label`, à 1366 px),
 ainsi que les `Adw.ActionRow` de chacune des deux fiches sélectionnées.
 Les ISBN sont distincts et ne fuient pas d'une fiche à l'autre. Le scénario
 sans ISBN du cache local vérifie la mention **Référence source** dans la fiche,
-sans faux ISBN. Les captures aux deux largeurs restent la preuve visuelle.
+sans faux ISBN. Les captures à 1366 px restent la preuve visuelle.
 
 ### Reprise explicite après panne distante (UX #758)
 
-Les scénarios `youth-milan-1024/1366` vérifient désormais toute la séquence
+Le scénario `youth-milan-1366` vérifient désormais toute la séquence
 **succès → HTTP 503 → cache conservé → filtre local sans requête →
 nouveau clic XTEST après rétablissement → succès**. L'extension réelle
 reste installée ; le simulateur ne remplace que les réponses HTTP.
@@ -171,13 +171,13 @@ cinq notices par les quatre notices fraîches de la première page et
 réactive la pagination, sans doublons ni perte silencieuse de provenance.
 
 Les étapes supplémentaires sont capturées dans
-`06-milan-recovered-first-page.png` aux deux résolutions. Ceci ne
+`06-milan-recovered-first-page.png` à 1366 px. Ceci ne
 prouve pas la disponibilité des services publics ni la reconnexion
 réseau réelle : l'intégralité des réponses HTTP reste simulée.
 
 ### Notice publique : lancement réel sans trafic Internet (UX P1 #758)
 
-Les deux scénarios `youth-milan-1024` et `youth-milan-1366` valident
+Le scénario `youth-milan-1366` valident
 désormais la **navigation GTK réelle** : après une collecte volontaire avec
 le vrai adaptateur Milan et un transport HTTP simulé, un clic de souris XTEST
 sur le vrai `Gtk.LinkButton « Voir la notice publique »` est envoyé.
@@ -197,7 +197,7 @@ pas qu'un navigateur externe réel est installé ni la disponibilité du site
 
 ### Activation : preuve GTK du gestionnaire de plugins (UX #758)
 
-Les parcours locaux `youth-1024` et `youth-1366` se terminent
+Le parcours local `youth-1366` se terminent
 désormais par la **vraie page Plugins** de Cifereca, après l'installation
 et l'activation du vrai package Jeunesse. L'utilisateur recherche
 `youth` dans la zone GTK du gestionnaire par **saisie clavier XTEST**.
@@ -208,13 +208,13 @@ Les captures `09-real-plugin-manager-installed.png`,
 `10-real-plugin-manager-youth-search.png` et
 `11-youth-restored-after-plugin-manager.png` documentent le parcours
 **Jeunesse → Plugins → recherche jeunesse → retour Jeunesse**, aux
-largeurs 1024 et 1366 px. Cette recette ne désinstalle pas de package
+largeur 1366 px. Cette recette ne désinstalle pas de package
 et ne prétend pas recetter une première installation manuelle par la
 boîte de dialogue du sélecteur de fichiers.
 
 ### Observation clavier Entrée — écart UX P1 #910 (non bloquante)
 
-Sur les deux scénarios locaux `youth-1024` et `youth-1366`,
+Sur le scénario local `youth-1366`,
 après une recherche `Forest` saisie **physiquement par XTEST**
 dans le vrai `Gtk.Entry`, le banc émet `Return` puis `KP_Enter`.
 Il compte les émissions du signal GTK `activate`, capture les statuts
@@ -222,7 +222,7 @@ visibles avant/après, la route et les notices affichées, et garantit
 **zéro accès distant** sans source précise sélectionnée.
 
 Nouvelles preuves : `05b-youth-return-gtk-observation.png` et
-`05c-youth-keypad-enter-gtk-observation.png` à chaque largeur, avec
+`05c-youth-keypad-enter-gtk-observation.png` à 1366 px, avec
 `screen.json > keyboard_enter_observation` (deux signaux GTK, changement
 ou non du retour utilisateur). La capture `06-keyboard-search-detail.png`
 reste le parcours suivant.

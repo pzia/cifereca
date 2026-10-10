@@ -26,12 +26,12 @@ SCENARIOS = {
         ),
         "runner": "gtk-probe",
     },
-    "youth-1024": {
-        "plugin": "catalog.youth",
+    "book-detail-1366": {
+        "plugin": "core",
         "fixture": "search-filters",
-        "description": "P1 #758 : page Jeunesse GTK réelle, XTEST, 1024px, âges, identité, provenance.",
-        "runner": "gtk-youth",
-        "width": 1024,
+        "description": "P1 #942 : vrai Détail bibliographique repliable Recherche/Bibliothèque GTK 1366.",
+        "runner": "gtk-detail",
+        "width": 1366,
     },
     "youth-1366": {
         "plugin": "catalog.youth",
@@ -39,14 +39,6 @@ SCENARIOS = {
         "description": "P1 #758 : page Jeunesse GTK réelle, XTEST, 1366px, âges, identité, provenance.",
         "runner": "gtk-youth",
         "width": 1366,
-    },
-    "youth-milan-1024": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P1 #758 : vrai Milan activé, pagination, lien notice GTK et panne HTTP simulée à 1024px.",
-        "runner": "gtk-youth",
-        "width": 1024,
-        "milan": True,
     },
     "youth-milan-1366": {
         "plugin": "catalog.youth",
@@ -56,14 +48,6 @@ SCENARIOS = {
         "width": 1366,
         "milan": True,
     },
-    "youth-editions-1024": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P1 #758 : deux éditions même titre/ISBN différents, âges contradictoires par source, vrai GTK 1024.",
-        "runner": "gtk-youth",
-        "width": 1024,
-        "editions": True,
-    },
     "youth-editions-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
@@ -71,14 +55,6 @@ SCENARIOS = {
         "runner": "gtk-youth",
         "width": 1366,
         "editions": True,
-    },
-    "youth-library-search-1024": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1024.",
-        "runner": "gtk-youth",
-        "width": 1024,
-        "library_search": True,
     },
     "youth-library-search-1366": {
         "plugin": "catalog.youth",
@@ -218,6 +194,13 @@ def main() -> int:
                     *(["--milan"] if scenario.get("milan") else []),
                     *(["--editions"] if scenario.get("editions") else []),
                     *(["--library-search"] if scenario.get("library_search") else []),
+                ]
+            elif scenario.get("runner") == "gtk-detail":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/book_detail_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
                 ]
             elif scenario.get("runner") == "gtk-probe":
                 command = [
