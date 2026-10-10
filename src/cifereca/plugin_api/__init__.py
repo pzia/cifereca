@@ -27,7 +27,7 @@ from .models import (
     StorageResult,
     StorageTarget,
     SystemRequirement,
-    UiActionContribution, UiPageContribution, UiPageHost, UiIdentityHost, UiIdentityViewHost, UiMasterDetailHost, UiBookMasterDetailView, UiBookListEntry, UiBookDetailAction, DocumentLink, UiBookDetailPresentation, UiPageActionHost, UiPageProvider, UiTitlebarProvider, WidgetCatalog,
+    UiActionContribution, UiPageContribution, UiPageHost, UiSearchNavigationHost, UiIdentityHost, UiIdentityViewHost, UiMasterDetailHost, UiBookMasterDetailView, UiBookListEntry, UiBookDetailAction, DocumentLink, UiBookDetailPresentation, UiPageActionHost, UiPageProvider, UiTitlebarProvider, WidgetCatalog,
     ResolvedPluginService, Provenance, YouthAgeKind, YouthAgeRange, BookRef, BookReferenceRecommendationService, DetailField, DetailSection, CachedBookDetail, BookDetailCacheEnricher, BookDetailCacheNotifier, FacetTag, ArtifactFormat, ArtifactRef, ArtifactVariant,
     ArtifactPlacementRef, ArtifactPossessionRef, LogicalBookArtifacts, LibraryMutationOperation, LibraryMutationRequest, LibraryMutationPlan, LibraryMutationResult,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncSourceRef, AdeptProfileRef, RuntimeAcquisitionCapabilities,
