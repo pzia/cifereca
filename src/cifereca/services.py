@@ -50,6 +50,9 @@ SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀ�
 
 _TRACE_LOG = logging.getLogger("cifereca")
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cifereca-search")
+# Serialize automatic loan check-and-record within this process. Opening sync
+# additionally holds the existing cross-process acquisition lock.
+_AUTOMATIC_LOAN_GUARD = Lock()
 
 class LibraryService:
     """Application service orchestrating provider plugins.
@@ -4333,6 +4336,13 @@ class LibraryService:
         )
 
     def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
+        """Serialize the provenance check and ledger reservation in this process."""
+        with _AUTOMATIC_LOAN_GUARD:
+            return self._acquire_active_loan_automatically_guarded(
+                loan, force_refresh=force_refresh
+            )
+
+    def _acquire_active_loan_automatically_guarded(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Acquire one active digital loan and fulfill ACSM through Kobo-Adept.
 
         Provider download remains responsible for obtaining the ACSM. Paris owns
