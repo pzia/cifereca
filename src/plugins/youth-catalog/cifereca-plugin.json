@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-catalog",
-    "version": "0.4.6",
+    "version": "0.4.7",
     "name": "Jeunesse",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -27,7 +27,7 @@
     {
       "id": "catalog.youth",
       "type": "catalog.youth",
-      "version": "0.4.6",
+      "version": "0.4.7",
       "entrypoint": "youth_catalog:PLUGIN",
       "display_name": "Jeunesse",
       "description": "Catalogue jeunesse multi-source filtrable par âge et type d’âge.",
@@ -46,7 +46,7 @@
     {
       "id": "ui.page.youth",
       "type": "ui.page",
-      "version": "0.4.6",
+      "version": "0.4.7",
       "entrypoint": "youth_page:PLUGIN",
       "display_name": "Jeunesse — recherche",
       "description": "Recherche spécialisée par âge sur le cache Jeunesse et collecte explicite des sources activées.",
