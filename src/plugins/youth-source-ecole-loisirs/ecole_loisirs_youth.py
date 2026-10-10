@@ -472,6 +472,7 @@ class EcoleLoisirsYouthSource:
                 raise InvalidCatalogueStructureError(
                     "Ecole des loisirs paginated catalogue has no recognizable book links"
                 )
+            pipeline["total_ms"] = max(0, int((perf_counter() - started) * 1000))
             self._last_diagnostic.update({
                 "anchor_count": sum(kind == "link" for kind, _label, _href in tokens),
                 "product_url_count": len(product_urls),
