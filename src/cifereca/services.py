@@ -518,6 +518,9 @@ class LibraryService:
         save_proof(
             self.storage, loan_owner_key(loan.source_provider, loan.id, str(loan.record_id or loan.id)),
             identity_id=identity_id, profile_id=binding["profile_id"],
+            owner_borrower_key=borrower_key(
+                loan.source_provider, loan.source_credential, borrower,
+            ),
         )
 
     def _adept_borrower_proof(self, loan: Loan) -> tuple[str, str] | None:
@@ -585,7 +588,10 @@ class LibraryService:
         )
         if len(all_connections) > 1 or len(identities) > 1 or current_proof is not None:
             if (current_proof is None or current_proof["identity_id"] != identity_id
-                    or current_proof["profile_id"] != profile_ref):
+                    or current_proof["profile_id"] != profile_ref
+                    or current_proof.get("owner_borrower_key") != borrower_key(
+                        loan.source_provider, loan.source_credential, borrower,
+                    )):
                 raise AdeptProfileResolutionError(
                     "Prêt présent sur plusieurs comptes : propriétaire ADEPT à confirmer",
                     code="adept_loan_owner_ambiguous",
