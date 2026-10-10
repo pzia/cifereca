@@ -154,7 +154,14 @@ class Core0913(unittest.TestCase):
         self.path.write_bytes('<!DOCTYPE x [<!ENTITY a "x">]><fulfillmentToken/>'.encode('utf-16'));self.assertFalse(self.remember())
     def test_runtime_failure_keeps_reusable_input(self):
         from cifereca.kobo.errors import KoboAdeptError
-        self.connect_provider();self.service.kobo_profiles=Mock(return_value=[{'name':'hb','fetch_capable':True}])
+        self.connect_provider()
+        self.service.storage.adept_profile_binding_set('identity','default','stable-hb')
+        self.service.kobo_profiles=Mock(return_value=[{
+            'profile_id':'stable-hb','name':'hb','fetch_capable':True,
+        }])
+        self.service.confirm_adept_borrower(
+            provider_id='paris',credential_id='test',account_id='reader',
+            identity_id='default',profile_id='stable-hb',confirmed=True)
         self.service.execute_acquisition_request=Mock(side_effect=KoboAdeptError('failure',code='kobo_adept_invalid_json'))
         for _ in range(2):
             # Malformed runtime JSON is a recoverable protocol failure rather

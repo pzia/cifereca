@@ -3861,7 +3861,10 @@ class LibraryService:
         )
         entitlement_rows = [
             row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
-            if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
+            if row.get("loan_id") == loan.id
+            and row.get("credential_id") == loan.source_credential
+            and str(row.get("account_id") or "primary") == str(loan.source_account_id or "primary")
+            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
         ]
         entitlement_id = entitlement_rows[0]["entitlement_id"] if entitlement_rows else None
         existing = [

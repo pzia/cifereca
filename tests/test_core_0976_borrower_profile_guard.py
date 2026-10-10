@@ -155,6 +155,14 @@ def test_duplicate_transaction_blocked_both_orders_until_owner_confirmed(tmp_pat
         assert lib._acquire_active_loan_automatically(b)["status"] == "attention_required"
         assert lib._acquire_active_loan_automatically(a)["status"] == "attention_required"
         assert called  # explicitly confirmed owner may attempt provider
+        recorded = next(row for row in lib.storage.acquisitions(provider_id="paris")
+                        if row["credential_id"] == "paris-a")
+        source_right = next(r for r in lib.storage.entitlements(provider_id="paris")
+                            if r["credential_id"] == "paris-a" and r["loan_id"] == "tx-1")
+        # ADEPT target identity may differ from the login identity, but
+        # entitlements always belong to the exact provider/borrower source.
+        assert recorded["identity_id"] == "alex"
+        assert recorded["entitlement_id"] == source_right["entitlement_id"]
     finally:
         lib.close()
 
