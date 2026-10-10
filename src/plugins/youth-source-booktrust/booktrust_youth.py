@@ -196,7 +196,13 @@ def parse_recommendations(
 
     if listing_diagnostic is not None:
         listing_diagnostic["candidate_books_count"] = len(starts)
+        listing_diagnostic["product_link_count"] = len(starts)
+        listing_diagnostic["candidate_count"] = len(starts)
     cards: list[BookCard] = []
+    analyzed = 0
+    age_published = 0
+    excluded_text = 0
+    truncated = False
     q = _fold(text_filter)
     for pos, (start, title, url) in enumerate(starts):
         end = starts[pos + 1][0] if pos + 1 < len(starts) else len(tokens)
@@ -211,6 +217,9 @@ def parse_recommendations(
         year_match = YEAR_RE.search(blob)
         year = int(year_match.group(0)) if year_match else None
         recommended = _age_label(blob, "For ages") or _age_label(blob, "For age")
+        analyzed += 1
+        if recommended:
+            age_published += 1
         themes: list[str] = []
         for value in segment:
             low = _fold(value)
@@ -225,11 +234,22 @@ def parse_recommendations(
                 themes.append(value)
         haystack = " ".join((title, author, *themes)).casefold()
         if q and q not in haystack:
+            excluded_text += 1
             continue
         cards.append(BookCard(title, url, author, year, recommended, tuple(themes[:12])))
         if len(cards) >= max(1, min(int(limit), 100)):
+            truncated = pos < len(starts) - 1
             break
     if listing_diagnostic is not None:
+        listing_diagnostic.update({
+            "analyzed_count": analyzed,
+            "age_published_count": age_published,
+            "age_qualified_count": age_published,
+            "truncated_by_limit": truncated,
+            "rejection_reasons": (
+                {"text_filter_excluded": excluded_text} if excluded_text else {}
+            ),
+        })
         listing_diagnostic["returned_items"] = len(cards)
         listing_diagnostic["cards_with_published_age"] = sum(
             bool(card.recommended_age) for card in cards
@@ -375,7 +395,10 @@ class BookTrustSource:
         if self._own_client:
             self.client.close()
 
-    def _get_text(self, url: str, *, for_listing: bool = False) -> str:
+    def _get_text(
+        self, url: str, *, for_listing: bool = False,
+        evidence: dict[str, object] | None = None,
+    ) -> str:
         allowed = _allowed_url(url)
         if not allowed:
             raise ValueError("BookTrust URL outside allowlist")
@@ -388,12 +411,15 @@ class BookTrustSource:
             ) + 1
         response = self.client.get(allowed)
         if for_listing:
-            self._last_diagnostic.update({
+            observed = {
                 "http_status": response.status_code,
                 "content_type_is_html": "html" in _fold(response.headers.get("content-type")),
                 "html_bytes": len(response.content),
                 "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
-            })
+            }
+            self._last_diagnostic.update(observed)
+            if evidence is not None:
+                evidence.update(observed)
         if response.status_code >= 300:
             error = RuntimeError(f"BookTrust HTTP {response.status_code}")
             error.http_status = response.status_code
@@ -421,6 +447,10 @@ class BookTrustSource:
         if not 1 <= page <= 100:
             raise ValueError("invalid BookTrust page cursor")
         started = perf_counter()
+        bounded = max(1, min(int(limit), 50))
+        pipeline: dict[str, object] = {
+            "query_mode": "local", "effective_limit": bounded,
+        }
         self._last_diagnostic = {
             "source": "booktrust",
             "page": page,
@@ -438,17 +468,34 @@ class BookTrustSource:
                 "returned_items": 0,
             })
             self._publish_diagnostic("skipped")
-            return {"items": (), "next_cursor": "", "fresh_for_seconds": 86_400, "collection_request_count": 0}
-        bounded = max(1, min(int(limit), 50))
+            pipeline.update({
+                "candidate_count": 0, "analyzed_count": 0, "returned_items": 0,
+            })
+            return {
+                "items": (), "next_cursor": "", "fresh_for_seconds": 86_400,
+                "collection_request_count": 0, "collection_pipeline": pipeline,
+            }
         request_token = self._call_requests.set(0)
         try:
             url = _query_url(age=age, themes=themes, page=page)
-            html = self._get_text(url, for_listing=True)
+            http_started = perf_counter()
+            try:
+                html = self._get_text(url, for_listing=True, evidence=pipeline)
+            finally:
+                pipeline["http_ms"] = max(0, int((perf_counter() - http_started) * 1000))
             self._last_diagnostic["phase"] = "parsing"
-            cards = parse_recommendations(
-                html, text_filter=text_filter, limit=bounded,
-                listing_diagnostic=self._last_diagnostic,
-            )
+            parse_started = perf_counter()
+            try:
+                cards = parse_recommendations(
+                    html, text_filter=text_filter, limit=bounded,
+                    listing_diagnostic=pipeline,
+                )
+            finally:
+                pipeline["parse_ms"] = max(0, int((perf_counter() - parse_started) * 1000))
+            self._last_diagnostic.update({
+                key: value for key, value in pipeline.items()
+                if key not in {"query_mode", "effective_limit", "rejection_reasons"}
+            })
             cursor_out = next_cursor(html, current_page=page)
             if cursor_out and not self._last_diagnostic.get("candidate_books_count"):
                 # Pagination proves a navigable catalogue page existed; zero
@@ -470,6 +517,7 @@ class BookTrustSource:
                 }
                 for card in cards
             ]
+            pipeline["total_ms"] = max(0, int((perf_counter() - started) * 1000))
             self._last_diagnostic.update({
                 "next_cursor_present": bool(cursor_out),
                 "phase": "complete",
@@ -482,8 +530,10 @@ class BookTrustSource:
                 "next_cursor": cursor_out,
                 "fresh_for_seconds": 86_400,
                 "collection_request_count": self._call_requests.get(),
+                "collection_pipeline": dict(pipeline),
             }
         except Exception as exc:
+            exc.collection_pipeline = dict(pipeline)
             exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic.update({
                 "error_type": type(exc).__name__,
