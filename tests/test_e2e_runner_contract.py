@@ -236,7 +236,7 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
 def test_youth_selected_source_enter_probe_requires_real_gtk_and_single_mock_request():
     source = (Path(__file__).resolve().parents[1] / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
     assert 'device.click_widget(page.view.query)' in source
-    assert 'device.type_text("des")' in source
+    assert 'device.type_text("The")' in source
     assert 'keys("Return")' in source
     assert 'keys("KP_Enter")' in source
     assert 'page.view.selected_source_plugin() == "youth.source.booktrust"' in source
