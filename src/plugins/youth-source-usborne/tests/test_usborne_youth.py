@@ -364,3 +364,17 @@ def test_usborne_diagnostic_broker_failure_does_not_change_collection():
     ))
     assert len(source.browse(age=3)["items"]) == 2
     assert source.diagnostic_snapshot()["state"] == "items"
+
+
+def test_http_error_preserves_typed_status_for_youth_diagnostics():
+    """A single mocked HTTP request; no remote publisher contacted."""
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            503, headers={"content-type": "text/html"}, text="private body",
+        )
+    )))
+    with pytest.raises(RuntimeError, match="HTTP 503") as raised:
+        source.browse(age=8)
+    assert raised.value.http_status == 503
+
+

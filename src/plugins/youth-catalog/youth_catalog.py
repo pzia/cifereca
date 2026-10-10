@@ -36,6 +36,27 @@ def _fold(value: object) -> str:
     return _text(value).casefold()
 
 
+def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
+    """Safe, typed classification of one failed explicit youth collection.
+
+    Provider adapters attach an HTTP status to their RuntimeError without
+    changing the public exception contract. Never parse exception messages:
+    they may contain URLs, credentials or user data.
+    """
+    response = getattr(exc, "response", None)
+    code = getattr(response, "status_code", None)
+    if type(code) is not int or not 100 <= code <= 599:
+        code = getattr(exc, "http_status", None)
+    status = code if type(code) is int and 100 <= code <= 599 else None
+    error_type = type(exc).__name__
+    state = (
+        "timeout" if "timeout" in error_type.casefold()
+        else "http_error" if status is not None
+        else "error"
+    )
+    return {"state": state, "error_type": error_type, "http_status": status}
+
+
 def _field(value: object, name: str, default: object = "") -> object:
     if isinstance(value, Mapping):
         return value.get(name, default)
@@ -958,19 +979,10 @@ class YouthCatalogPlugin:
             )
             return report
         except Exception as exc:
-            error_type = type(exc).__name__
-            response = getattr(exc, "response", None)
-            code = getattr(response, "status_code", None)
-            http_status = code if type(code) is int and 100 <= code <= 599 else None
-            state = (
-                "timeout" if "timeout" in error_type.casefold() else
-                "http_error" if http_status is not None else
-                "error"
-            )
+            failure = collection_failure_diagnostic(exc)
             self.index.record_collection(
-                identity_id, info.source_id, state=state,
+                identity_id, info.source_id, **failure,
                 stage=stage, rejected=1,
-                error_type=error_type, http_status=http_status,
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),
             )
             return IngestReport(

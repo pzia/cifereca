@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-source-milan",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "name": "Jeunesse — Éditions Milan",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "youth.source.milan",
       "type": "youth.source",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "entrypoint": "milan_youth:PLUGIN",
       "display_name": "Éditions Milan — âges éditeur",
       "description": "Catalogue public Milan avec âge minimum et ISBN publiés sur les fiches produit.",

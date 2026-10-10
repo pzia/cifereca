@@ -351,7 +351,9 @@ class EcoleLoisirsYouthSource:
             "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
         })
         if response.status_code >= 300:
-            raise RuntimeError(f"l'école des loisirs HTTP {response.status_code}")
+            error = RuntimeError(f"l'école des loisirs HTTP {response.status_code}")
+            error.http_status = response.status_code
+            raise error
         content_type = _fold(response.headers.get("content-type"))
         if content_type and "html" not in content_type:
             raise RuntimeError("l'école des loisirs response is not HTML")

@@ -345,3 +345,17 @@ def test_ecole_broker_failure_does_not_break_source_query():
     ))
     assert len(source.search("loup")["items"]) == 3
     assert source.diagnostic_snapshot()["state"] == "items"
+
+
+def test_http_error_preserves_typed_status_for_youth_diagnostics():
+    """A single mocked HTTP request; no remote publisher contacted."""
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            429, headers={"content-type": "text/html"}, text="private body",
+        )
+    )))
+    with pytest.raises(RuntimeError, match="HTTP 429") as raised:
+        source.search("chat")
+    assert raised.value.http_status == 429
+
+

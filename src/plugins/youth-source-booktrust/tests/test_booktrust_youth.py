@@ -427,3 +427,17 @@ def test_booktrust_detail_request_does_not_rewrite_last_browse_diagnostic():
     assert source.detail(BOOKFINDER + "press-here/")["interest_age"] == "2+"
     assert len(calls) == 2
     assert source.diagnostic_snapshot() == before
+
+
+def test_http_error_preserves_typed_status_for_youth_diagnostics():
+    """A single mocked HTTP request; no remote publisher contacted."""
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            503, headers={"content-type": "text/html"}, text="private body",
+        )
+    )))
+    with pytest.raises(RuntimeError, match="HTTP 503") as raised:
+        source.browse(age=8)
+    assert raised.value.http_status == 503
+
+

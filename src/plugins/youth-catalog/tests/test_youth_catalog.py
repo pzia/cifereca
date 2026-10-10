@@ -637,6 +637,67 @@ def test_catalog_collect_source_rejections_timeout_and_empty_are_distinct():
     assert carol["last_success_at_utc"]
 
 
+
+def test_collection_failure_diagnostic_uses_explicit_http_status_not_exception_text():
+    from types import SimpleNamespace
+    from youth_catalog import collection_failure_diagnostic
+
+    error = RuntimeError("private=https://session.example/ HTTP 503")
+    # Never classify a response by scraping potentially sensitive error text.
+    assert collection_failure_diagnostic(error) == {
+        "state": "error", "error_type": "RuntimeError", "http_status": None,
+    }
+    error.http_status = 503
+    assert collection_failure_diagnostic(error) == {
+        "state": "http_error", "error_type": "RuntimeError", "http_status": 503,
+    }
+    error.http_status = True  # bool is not a valid HTTP status
+    assert collection_failure_diagnostic(error)["state"] == "error"
+    error.http_status = 900
+    assert collection_failure_diagnostic(error)["state"] == "error"
+
+    class ResponseError(RuntimeError):
+        def __init__(self):
+            super().__init__("sensitive URL")
+            self.http_status = 401
+            self.response = SimpleNamespace(status_code=429)
+
+    assert collection_failure_diagnostic(ResponseError()) == {
+        "state": "http_error", "error_type": "ResponseError", "http_status": 429,
+    }
+    timeout = TimeoutError("private location")
+    timeout.http_status = 503
+    assert collection_failure_diagnostic(timeout)["state"] == "timeout"
+
+
+def test_collect_source_runtime_http_failure_is_typed_and_keeps_identity_isolation():
+    from youth_catalog import YouthCatalogPlugin
+    plugin = YouthCatalogPlugin()
+    source = GoodSource()
+    assert plugin.collect_source("alice", source, "some").accepted == 1
+    old = {row["source_id"]: row for row in plugin.source_diagnostics("alice")}["youth.test"]
+    assert old["cache_count"] == 1
+
+    class PublisherHTTP(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            failure = RuntimeError("Publisher HTTP 503")
+            failure.http_status = 503
+            raise failure
+
+    report = plugin.collect_source("alice", PublisherHTTP(), "query")
+    assert report.rejected == 1
+    now = {row["source_id"]: row for row in plugin.source_diagnostics("alice")}["youth.test"]
+    assert now["collection_state"] == "http_error"
+    assert now["http_status"] == 503
+    assert now["error_type"] == "RuntimeError"
+    assert now["cache_count"] == 1
+    assert now["last_success_at_utc"] == old["last_success_at_utc"]
+    bob = {row["source_id"]: row for row in plugin.source_diagnostics("bob")}
+    assert "youth.test" not in bob  # a private new source must not leak across identities
+    assert bob["booktrust"]["collection_state"] == "not_tested"
+
+
 def test_source_diagnostic_stage_is_strictly_whitelisted():
     index = YouthCatalogIndex()
     index.record_collection("alice", "milan", state="error", stage="fetch?token=SECRET")

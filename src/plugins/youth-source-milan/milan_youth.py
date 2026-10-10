@@ -406,7 +406,9 @@ class MilanYouthSource:
                 "content_type_is_html": "html" in _fold(response.headers.get("content-type", "")),
             })
         if not 200 <= response.status_code < 300:
-            raise RuntimeError(f"Milan HTTP {response.status_code}")
+            error = RuntimeError(f"Milan HTTP {response.status_code}")
+            error.http_status = response.status_code
+            raise error
         content_type = _fold(response.headers.get("content-type"))
         if content_type and "html" not in content_type:
             raise RuntimeError("Milan response is not HTML")
