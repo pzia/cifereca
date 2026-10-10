@@ -119,14 +119,27 @@ _MILAN_DIAGNOSTIC_FLAGS = frozenset({
 })
 _MILAN_DIAGNOSTIC_PHASES = frozenset({"listing", "products", "complete"})
 
+# Only metrics already emitted by the public l'école des loisirs plugin.
+# Never export raw HTML, search terms, URLs, titles, cookies or headers.
+_ECOLE_DIAGNOSTIC_COUNTS = frozenset({
+    "page", "requested_limit", "request_count", "http_status",
+    "html_bytes", "anchor_count", "product_url_count", "returned_items",
+    "qualified_age_count", "unqualified_age_count", "duration_ms",
+})
+_ECOLE_DIAGNOSTIC_FLAGS = frozenset({
+    "text_filter_present", "content_type_is_html", "next_cursor_present",
+})
+_ECOLE_DIAGNOSTIC_PHASES = frozenset({"listing", "parsing", "complete"})
+_ECOLE_DIAGNOSTIC_STATES = frozenset({"items", "empty_unverified", "error"})
+
 
 def plugin_diagnostic_for(source: object, source_id: str) -> dict[str, object]:
-    """Return the plugin's last *sanitized* local diagnostics on success/failure.
+    """Return only whitelisted local diagnostics; no extra HTTP requests.
 
-    This is a read-only snapshot; it does not trigger another HTTP request.
-    BookTrust has no corresponding diagnostic contract yet.
+    The snapshot may describe a failed call. Neither an HTTP 200 nor a
+    populated diagnostic can convert BLOCKED/NO_VERIFIED_NOTICE to PASS.
     """
-    if source_id != "milan":
+    if source_id not in {"milan", "ecole-loisirs"}:
         return {}
     snapshot = getattr(source, "diagnostic_snapshot", None)
     if not callable(snapshot):
@@ -135,9 +148,31 @@ def plugin_diagnostic_for(source: object, source_id: str) -> dict[str, object]:
         raw = snapshot()
     except Exception:
         return {}
-    if not isinstance(raw, Mapping) or raw.get("source") != "milan":
+    if not isinstance(raw, Mapping) or raw.get("source") != source_id:
         return {}
-    result: dict[str, object] = {"source": "milan"}
+    result: dict[str, object] = {"source": source_id}
+    if source_id == "ecole-loisirs":
+        for key in _ECOLE_DIAGNOSTIC_COUNTS:
+            value = raw.get(key)
+            if type(value) is int and 0 <= value <= 100_000_000:
+                result[key] = value
+        for key in _ECOLE_DIAGNOSTIC_FLAGS:
+            value = raw.get(key)
+            if type(value) is bool:
+                result[key] = value
+        phase = raw.get("phase")
+        if isinstance(phase, str) and phase in _ECOLE_DIAGNOSTIC_PHASES:
+            result["phase"] = phase
+        state = raw.get("state")
+        if isinstance(state, str) and state in _ECOLE_DIAGNOSTIC_STATES:
+            result["state"] = state
+        digest = raw.get("html_sha256_prefix")
+        if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{16}", digest):
+            result["html_sha256_prefix"] = digest
+        error_type = raw.get("error_type")
+        if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z][A-Za-z_0-9]{0,49}", error_type):
+            result["error_type"] = error_type
+        return result
     for key in _MILAN_DIAGNOSTIC_COUNTS:
         value = raw.get(key)
         if type(value) is int and 0 <= value <= 100_000_000:
