@@ -139,6 +139,31 @@ def test_search_filter_p0_has_two_identities_and_offline_catalogue():
     ).read_text(encoding="utf-8")
 
 
+def test_923_youth_actions_have_independent_gtk_availability_gate_at_1366():
+    runner = _module()
+    scenario = runner.SCENARIOS["youth-actions-1366"]
+    assert scenario["plugin"] == "catalog.youth"
+    assert scenario["runner"] == "gtk-youth"
+    assert scenario["fixture"] == "search-filters"
+    assert scenario["width"] == 1366
+    assert scenario["milan"] is True
+    assert scenario["actions_ux"] is True
+    assert "youth-actions-1024" not in runner.SCENARIOS
+    assert '"--actions-ux"' in RUNNER.read_text(encoding="utf-8")
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "def action_availability_buttons():",
+        "def action_availability_snapshot():",
+        "def action_start_ui():",
+        "def action_after_source():",
+        'page.view.source.set_selected(1)',
+        'result["action_no_remote_requests"] = True',
+        'result["action_availability_mismatches"] = mismatch',
+        "assert not mismatch",
+    ):
+        assert marker in source
+
+
 def test_youth_milan_replay_uses_installed_source_and_safe_notice_action():
     runner = _module()
     for name in ("youth-milan-1366",):

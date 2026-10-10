@@ -40,6 +40,15 @@ SCENARIOS = {
         "runner": "gtk-youth",
         "width": 1366,
     },
+    "youth-actions-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "UX #923 : quatre commandes Jeunesse, vraie GTK 1366, sans source puis Milan, aucune collecte implicite.",
+        "runner": "gtk-youth",
+        "width": 1366,
+        "milan": True,
+        "actions_ux": True,
+    },
     "youth-milan-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
@@ -194,6 +203,7 @@ def main() -> int:
                     *(["--milan"] if scenario.get("milan") else []),
                     *(["--editions"] if scenario.get("editions") else []),
                     *(["--library-search"] if scenario.get("library_search") else []),
+                    *(["--actions-ux"] if scenario.get("actions_ux") else []),
                 ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]

@@ -87,6 +87,7 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1366,))
     parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
+    parser.add_argument("--actions-ux", action="store_true", help="UX #923: tester les quatre états des commandes sans accès distant")
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
     provider.add_argument("--editions", action="store_true", help="Offline same-title editions and conflicting provenance on real GTK")
@@ -264,6 +265,107 @@ def main() -> int:
         visit(page.view.master._page.detail)
         return found
 
+    def action_availability_buttons():
+        """Real GTK controls: never infer sensitivity from a screenshot."""
+        expected = (
+            "Collecter cette source", "Plus de résultats",
+            "Enrichir la bibliographie", "Ouvrir la fiche Bibliothèque",
+        )
+        found = {}
+        def visit(widget):
+            if isinstance(widget, Gtk.Button):
+                title = str(widget.get_label() or "")
+                if title in expected:
+                    assert title not in found, f"Commande Jeunesse dupliquée : {title}"
+                    found[title] = widget
+            child = widget.get_first_child()
+            while child is not None:
+                visit(child)
+                child = child.get_next_sibling()
+        visit(page.view.widget)
+        assert set(found) == set(expected), f"Commandes manquantes : {set(expected) - set(found)}"
+        assert all(button.get_mapped() for button in found.values()), (
+            "Les quatre commandes doivent être inspectées dans une vraie fenêtre GTK visible"
+        )
+        return found
+
+    def action_availability_snapshot():
+        actions = {
+            label: {
+                "sensitive": bool(button.get_sensitive()),
+                "tooltip": str(button.get_tooltip_text() or ""),
+                "mapped": bool(button.get_mapped()),
+            }
+            for label, button in action_availability_buttons().items()
+        }
+        return {
+            "selected_source": page.view.selected_source_plugin(),
+            "selected_book": (
+                str(page.view.selected_book.record_id) if page.view.selected_book else None
+            ),
+            "next_cursor": str(page.view.next_cursor or ""),
+            "remote_requests": len(requests),
+            "actions": actions,
+        }
+
+    def action_start_ui():
+        """P2 #923: empty cache, no source/book/cursor, all four actions unavailable."""
+        assert args.milan, "La recette des états inclut la source Milan réelle avec HTTP simulé"
+        assert not args.editions and not args.library_search
+        assert len(page.view.sources) == 1, "Source Milan du vrai plugin non installée"
+        assert page.view.selected_source_plugin() == ""
+        assert page.view.selected_book is None
+        assert not page.view.next_cursor
+        result["action_empty"] = action_availability_snapshot()
+        capture("00-actions-sans-source-1366")
+        assert requests == [], "L'affichage des actions a déclenché un HTTP implicite"
+        # Transition réelle du Gtk.DropDown ; n'exécute aucune collecte.
+        page.view.source.set_selected(1)
+        later(230, action_after_source)
+
+    def action_after_source():
+        assert page.view.selected_source_plugin() == "youth.source.milan"
+        assert page.view.selected_book is None and not page.view.next_cursor
+        assert requests == [], "Le choix d'une source ne doit pas collecter"
+        result["action_source_selected"] = action_availability_snapshot()
+        capture("01-actions-source-milan-sans-livre-1366")
+        empty = result["action_empty"]["actions"]
+        chosen = result["action_source_selected"]["actions"]
+        expected_empty = {label: False for label in empty}
+        expected_source = {
+            "Collecter cette source": True,
+            "Plus de résultats": False,
+            "Enrichir la bibliographie": False,
+            "Ouvrir la fiche Bibliothèque": False,
+        }
+        result["action_expected_empty"] = expected_empty
+        result["action_expected_source"] = expected_source
+        result["action_missing_explanations"] = [
+            label for label, state in chosen.items()
+            if not state["sensitive"] and len(state["tooltip"]) < 12
+        ]
+        mismatch = {
+            "empty": {
+                key: state["sensitive"] for key, state in empty.items()
+                if state["sensitive"] != expected_empty[key]
+            },
+            "source_selected": {
+                key: state["sensitive"] for key, state in chosen.items()
+                if state["sensitive"] != expected_source[key]
+            },
+        }
+        result["action_availability_mismatches"] = mismatch
+        result["action_no_remote_requests"] = True
+        assert not mismatch["empty"] and not mismatch["source_selected"], (
+            f"UX #923: fausses commandes actives sans préconditions : {mismatch!r}"
+        )
+        # Les raisons d'indisponibilité doivent ensuite faire l'objet d'une
+        # recette clavier/a11y ; ce premier scénario n'en déduit pas un PASS.
+        result["status"] = "PASS"
+        write_report()
+        rc[0] = 0
+        app.quit()
+
     def start_ui():
         assert window.view_stack.get_visible_child_name() == "youth"
         assert page.view is not None, "Real ui.page.youth factory not called"
@@ -271,6 +373,9 @@ def main() -> int:
         assert window.get_width() <= args.width, "Youth window overflows Xvfb viewport"
         assert page.view.identity.get_model().get_n_items() == 2
         assert page.view.age.get_model().get_n_items() == 19, "Only 0..17 are selectable, not 18"
+        if args.actions_ux:
+            action_start_ui()
+            return
         if args.library_search:
             library_search_start_ui()
             return
