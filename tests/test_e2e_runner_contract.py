@@ -20,7 +20,8 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     runner = _module()
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
-        "search-filter-p0", "startup", "core-navigation",
+        "search-filter-p0", "book-detail-1024", "book-detail-1366",
+        "startup", "core-navigation",
     ]
 
 
@@ -28,12 +29,12 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
     runner = _module()
     for width in (1024, 1366):
         scenario = runner.SCENARIOS[f"book-detail-{width}"]
-        assert scenario["plugin"] == "detail"
+        assert scenario["plugin"] == "core"
         assert scenario["fixture"] == "search-filters"
         assert scenario["runner"] == "gtk-detail"
         assert scenario["width"] == width
-    assert [n for n, _ in runner.select(None, "detail")] == [
-        "book-detail-1024", "book-detail-1366",
+    assert [n for n, _ in runner.select(None, "core")][:3] == [
+        "search-filter-p0", "book-detail-1024", "book-detail-1366",
     ]
     source = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
     for marker in (
