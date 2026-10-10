@@ -270,7 +270,7 @@ Aucun nouveau scénario ni workflow CI n'a été créé.
 
 Dans les scénarios BookTrust déjà présents (`youth-booktrust-1024` et
 `youth-booktrust-1366`), la vraie page GTK4 reçoit la frappe XTEST
-`des` dans son champ de recherche, avec la source `youth.source.booktrust`
+`The` dans son champ de recherche, avec la source `youth.source.booktrust`
 explicitement sélectionnée. Le premier `Return` valide le cache et affiche
 un feedback sans HTTP. Le second `KP_Enter` provoque **une** requête du
 vrai plugin BookTrust, servie exclusivement par `httpx.MockTransport` ;
