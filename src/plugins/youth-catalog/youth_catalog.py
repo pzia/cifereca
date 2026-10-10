@@ -53,6 +53,7 @@ def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
         "cancelled" if "cancel" in error_type.casefold()
         else "timeout" if "timeout" in error_type.casefold()
         else "http_error" if status is not None
+        else "invalid" if error_type == "InvalidCatalogueStructureError"
         else "error"
     )
     # Only a directly attached per-call integer is authoritative; never read

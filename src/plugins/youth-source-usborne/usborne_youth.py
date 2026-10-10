@@ -292,6 +292,10 @@ def next_page_cursor(html: str, *, current_page: int) -> str:
     return ""
 
 
+class InvalidCatalogueStructureError(RuntimeError):
+    """Publisher layout mismatch; never contains source HTML or private data."""
+
+
 class UsborneYouthSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
@@ -418,6 +422,10 @@ class UsborneYouthSource:
                 for product_url, _isbn in (_product_url(href),) if product_url
             }
             cursor_out = next_page_cursor(html, current_page=page)
+            if cursor_out and not product_urls:
+                raise InvalidCatalogueStructureError(
+                    "Usborne paginated catalogue has no recognizable product links"
+                )
             self._last_diagnostic.update({
                 "anchor_count": sum(kind == "link" for kind, _label, _href in tokens),
                 "product_url_count": len(product_urls),
@@ -438,7 +446,10 @@ class UsborneYouthSource:
         except Exception as exc:
             exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic.update({
-                "state": "error",
+                "state": (
+                    "invalid" if isinstance(exc, InvalidCatalogueStructureError)
+                    else "error"
+                ),
                 "error_type": type(exc).__name__,
                 "duration_ms": max(0, int((perf_counter() - started) * 1000)),
             })

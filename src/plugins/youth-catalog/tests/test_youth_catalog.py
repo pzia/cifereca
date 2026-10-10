@@ -987,3 +987,44 @@ def test_valid_empty_page_and_legacy_iterable_remain_compatible():
     assert result["collection_state"] == "empty_unverified"
     assert result["received_count"] == 0
 
+
+
+def test_typed_paginated_publisher_layout_failure_preserves_identity_cache():
+    from youth_catalog import YouthCatalogPlugin, collection_failure_diagnostic
+
+    class InvalidCatalogueStructureError(RuntimeError):
+        pass
+
+    error = InvalidCatalogueStructureError(
+        "private title https://private.example/?token=secret"
+    )
+    error.collection_request_count = 1
+    assert collection_failure_diagnostic(error) == {
+        "state": "invalid", "error_type": "InvalidCatalogueStructureError",
+        "http_status": None, "request_count": 1,
+    }
+
+    catalog = YouthCatalogPlugin()
+    assert catalog.collect_source("alice", GoodSource(), "test").accepted == 1
+    previous = {d["source_id"]: d for d in catalog.source_diagnostics("alice")}["youth.test"]
+
+    class ChangedHtmlSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            raise error
+
+    source = ChangedHtmlSource()
+    failure = catalog.collect_source("alice", source, "test")
+    assert failure.rejected == 1
+    current = {d["source_id"]: d for d in catalog.source_diagnostics("alice")}["youth.test"]
+    assert current["collection_state"] == "invalid"
+    assert current["collection_stage"] == "search"
+    assert current["request_count"] == 1
+    assert current["cache_count"] == previous["cache_count"] == 1
+    assert current["last_success_at_utc"] == previous["last_success_at_utc"]
+    assert "private.example" not in repr(current)
+    assert "token=secret" not in repr(current)
+    assert source.calls == 1
+    assert "youth.test" not in {
+        d["source_id"] for d in catalog.source_diagnostics("bob")
+    }

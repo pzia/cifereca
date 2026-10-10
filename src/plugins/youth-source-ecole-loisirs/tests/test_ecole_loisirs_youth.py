@@ -409,3 +409,42 @@ def test_ecole_listing_excludes_games_and_nonbook_ean_while_keeps_real_book():
     assert rows[0]["isbn13"] == "9782211309684"
     assert rows[0]["book_type"] == "album"
     assert rows[0]["age_ranges"][0]["source_label"] == "3 à 6 ans"
+
+
+def test_ecole_paginated_changed_markup_is_invalid_and_does_not_expose_body():
+    from ecole_loisirs_youth import InvalidCatalogueStructureError
+    from types import SimpleNamespace
+
+    sent, requests = [], []
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: requests.append(req) or httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<div>Changed markup</div>'
+                 '<a href="?page=2">Afficher plus de résultats</a>',
+        )
+    )))
+    source.activate(SimpleNamespace(report_diagnostic=lambda *a, **kw: sent.append((a, kw))))
+    with pytest.raises(InvalidCatalogueStructureError, match="no recognizable book links") as raised:
+        source.search("loup")
+    assert raised.value.collection_request_count == 1
+    assert len(requests) == 1
+    snapshot = source.diagnostic_snapshot()
+    assert snapshot["state"] == "invalid"
+    assert snapshot["phase"] == "parsing"
+    assert snapshot["error_type"] == "InvalidCatalogueStructureError"
+    assert snapshot["http_status"] == 200
+    assert "Changed markup" not in repr(snapshot)
+    assert sent[-1][0][-1] == "error"
+
+    # All results being non-books/non-qualifying remains an unverified empty.
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<a href="/livre/missing-isbn">Unqualified</a>'
+                 '<a href="?page=2">Afficher plus de résultats</a>',
+        )
+    ))
+    response = source.search("loup")
+    assert response["items"] == ()
+    assert response["next_cursor"] == "2"
+    assert source.diagnostic_snapshot()["state"] == "empty_unverified"

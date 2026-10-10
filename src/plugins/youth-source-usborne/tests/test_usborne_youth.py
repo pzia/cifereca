@@ -395,3 +395,36 @@ def test_usborne_per_collection_request_evidence_is_exact_on_success_and_error()
         source.browse(age=3)
     assert exc.value.collection_request_count == 1
     assert source._call_requests.get() is None
+
+
+def test_paginated_usborne_layout_without_book_links_is_invalid_not_empty():
+    from usborne_youth import InvalidCatalogueStructureError
+    from types import SimpleNamespace
+
+    sent, requests = [], []
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: requests.append(req) or httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<main><p>Layout changed</p><a href="?p=2">Next Page</a></main>',
+        )
+    )))
+    source.activate(SimpleNamespace(report_diagnostic=lambda *a, **kw: sent.append((a, kw))))
+    with pytest.raises(InvalidCatalogueStructureError, match="no recognizable product links") as raised:
+        source.browse(age=3)
+    assert raised.value.collection_request_count == 1
+    assert len(requests) == 1
+    snapshot = source.diagnostic_snapshot()
+    assert snapshot["phase"] == "parsing"
+    assert snapshot["state"] == "invalid"
+    assert snapshot["error_type"] == "InvalidCatalogueStructureError"
+    assert "Layout changed" not in repr(snapshot)
+    assert sent[-1][0][-1] == "error"
+
+    # A legitimate local filter still can produce a zero-row page.
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+    ))
+    page = source.browse(text_filter="missing query")
+    assert page["items"] == ()
+    assert page["next_cursor"] == "2"
+    assert source.diagnostic_snapshot()["state"] == "empty_unverified"

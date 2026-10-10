@@ -616,7 +616,9 @@ def test_milan_diagnostic_survives_http_error_and_paginated_parser_failure():
     assert detail["product_href_count"] == 0
     assert detail["next_cursor_present"] is True
     assert detail["detail_requests"] == 0
-    assert detail["error_type"] == "RuntimeError"
+    assert detail["error_type"] == "InvalidCatalogueStructureError"
+    assert detail["state"] == "invalid"
+    assert error.value.collection_request_count == 1
     assert sent[-1][0] == ("Milan catalogue collection", "error")
 
 

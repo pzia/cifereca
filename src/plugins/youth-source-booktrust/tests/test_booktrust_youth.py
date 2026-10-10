@@ -483,3 +483,41 @@ def test_booktrust_concurrent_collect_calls_keep_individual_counts():
     assert [result["collection_request_count"] for result in results] == [1, 1]
     assert all(len(result["items"]) == 1 for result in results)
     assert source._call_requests.get() is None
+
+
+def test_paginated_booktrust_html_without_book_links_is_structurally_invalid():
+    """A site layout change is not an empty verified book catalogue."""
+    from booktrust_youth import InvalidCatalogueStructureError
+    from types import SimpleNamespace
+
+    sent, requests = [], []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<nav><a href="?page=2">Next</a></nav><main><p>New layout</p></main>',
+        )
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    source.activate(SimpleNamespace(report_diagnostic=lambda *a, **kw: sent.append((a, kw))))
+    with pytest.raises(InvalidCatalogueStructureError, match="no recognizable book links") as raised:
+        source.browse(age=8)
+    assert raised.value.collection_request_count == 1
+    assert len(requests) == 1
+    snapshot = source.diagnostic_snapshot()
+    assert snapshot["state"] == "invalid"
+    assert snapshot["phase"] == "parsing"
+    assert snapshot["candidate_books_count"] == 0
+    assert snapshot["http_status"] == 200
+    assert snapshot["error_type"] == "InvalidCatalogueStructureError"
+    assert sent[-1][0][-1] == "error"
+    assert "New layout" not in repr(snapshot)
+
+    # Local filtering can return zero books on an otherwise normal page:
+    # candidate recognition (before filtering) prevents false positives.
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+    ))
+    valid = source.browse(cursor="2", text_filter="absent-local-query")
+    assert valid["items"] == []
+    assert valid["next_cursor"] == "3"
+    assert source.diagnostic_snapshot()["state"] == "empty_unverified"

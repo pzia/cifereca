@@ -325,6 +325,10 @@ def _query_url(*, age: int | None = None, themes: Iterable[str] = (), page: int 
     return RECOMMENDATIONS + "?" + urlencode(params)
 
 
+class InvalidCatalogueStructureError(RuntimeError):
+    """Publisher layout mismatch; never contains source HTML or private data."""
+
+
 class BookTrustSource:
     def __init__(self, *, client: httpx.Client | None = None, timeout_seconds: float = 12.0) -> None:
         self._own_client = client is None
@@ -446,6 +450,12 @@ class BookTrustSource:
                 listing_diagnostic=self._last_diagnostic,
             )
             cursor_out = next_cursor(html, current_page=page)
+            if cursor_out and not self._last_diagnostic.get("candidate_books_count"):
+                # Pagination proves a navigable catalogue page existed; zero
+                # recognizable book links is not a verified empty result.
+                raise InvalidCatalogueStructureError(
+                    "BookTrust paginated catalogue has no recognizable book links"
+                )
             items = [
                 {
                     "record_id": card.url.rstrip("/").split("/")[-1],
@@ -477,7 +487,10 @@ class BookTrustSource:
             exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic.update({
                 "error_type": type(exc).__name__,
-                "state": "error",
+                "state": (
+                    "invalid" if isinstance(exc, InvalidCatalogueStructureError)
+                    else "error"
+                ),
                 "duration_ms": max(0, int((perf_counter() - started) * 1000)),
             })
             self._publish_diagnostic("error")
