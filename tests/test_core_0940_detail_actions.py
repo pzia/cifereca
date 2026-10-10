@@ -43,12 +43,14 @@ def _group():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     panel = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "DetailPanel")
     method = next(x for x in panel.body if isinstance(x, ast.FunctionDef) and x.name == "_group")
-    clipboard = NS(value=None, set_text=lambda value: setattr(clipboard, "value", value))
+    clipboard = NS(value=None)
+    clipboard.set_content = lambda provider: (setattr(clipboard, "value", provider), True)[1]
     display = NS(get_clipboard=lambda: clipboard)
     env = {
         "Adw": NS(PreferencesGroup=Widget, ExpanderRow=Widget, ActionRow=Widget),
         "Gtk": NS(Button=Button),
-        "Gdk": NS(Display=NS(get_default=lambda: display)),
+        "Gdk": NS(Display=NS(get_default=lambda: display),
+                  ContentProvider=NS(new_for_value=lambda text: text)),
         "detail_display_value": lambda _label, value: (value, value),
         "canonical_book_isbn": canonical_book_isbn,
         "safe_detail_value": safe_detail_value,
@@ -81,6 +83,7 @@ def test_copy_is_independent_and_search_is_explicit_and_typed():
     assert len(buttons[2]) == 1  # Date is copy-only
     buttons[0][0].click()
     assert clipboard.value == "Éloïse"
+    assert window._clipboard_provider == "Éloïse"
     assert events == [("toast", "Copié")]
     buttons[1][1].click()
     assert events[-1] == ("search", ("9780306406157",), {
