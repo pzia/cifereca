@@ -172,7 +172,16 @@ def book_detail_presentation(
         )
         if fields:
             sections_list.append(DetailSection(id="primary", title=group_title, fields=fields, order=0))
-    details = detail_metadata_items(metadata)
+    details = list(detail_metadata_items(metadata))
+    primary_title = safe_detail_value(title)
+    if primary_title and not any(label == "Titre" and value == primary_title
+                                 for label, value, _kind in details):
+        details.insert(0, ("Titre", primary_title, "title"))
+    # Avoid a comma-joined synthetic author when individual authors are known.
+    if subtitle and not any(kind == "author" for _label, _value, kind in details):
+        single_author = safe_detail_value(subtitle)
+        if single_author:
+            details.append(("Auteur", single_author, "author"))
     if details:
         already_shown = {(field.label, str(field.value))
                          for section in sections_list for field in section.fields}
