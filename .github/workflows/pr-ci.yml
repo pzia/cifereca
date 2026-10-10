@@ -15,6 +15,7 @@ on:
       - "scripts/ci-run-plugin-tests.sh"
       - "scripts/ci-select-core-tests.py"
       - "scripts/ci_select_plugin_tests.py"
+      - ".github/plugin-test-dependencies.json"
       - "scripts/check_release_inventory.py"
       - "scripts/ci-install-gtk-e2e-runtime.sh"
       - "scripts/ci-smoke-installed-wheel.sh"
@@ -95,7 +96,7 @@ jobs:
           if matches '^src/plugins/'; then
             plugins=true
           fi
-          if matches '^(scripts/ci-run-plugin-tests\.sh$|pyproject\.toml$)'; then
+          if matches '^(scripts/ci-run-plugin-tests\.sh$|scripts/ci_select_plugin_tests\.py$|\.github/plugin-test-dependencies\.json$|pyproject\.toml$)'; then
             plugins=true
             plugin_scope_all=true
           fi
