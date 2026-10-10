@@ -88,6 +88,22 @@ SCENARIOS = {
         "width": 1366,
         "editions": True,
     },
+    "youth-library-search-1024": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1024.",
+        "runner": "gtk-youth",
+        "width": 1024,
+        "library_search": True,
+    },
+    "youth-library-search-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1366.",
+        "runner": "gtk-youth",
+        "width": 1366,
+        "library_search": True,
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -218,6 +234,7 @@ def main() -> int:
                     *(["--booktrust"] if scenario.get("booktrust") else []),
                     *(["--milan"] if scenario.get("milan") else []),
                     *(["--editions"] if scenario.get("editions") else []),
+                    *(["--library-search"] if scenario.get("library_search") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
                 command = [
