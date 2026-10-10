@@ -4285,7 +4285,15 @@ class LibraryService:
             raise ProviderConfigurationError("Ce prêt ne permet pas une acquisition numérique")
         try:
             with InterProcessLock(acquisition_lock_file()):
-                identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+                bound_identity_id = self.storage.identity_for_connection(
+                    loan.source_provider, loan.source_credential
+                )
+                identity = self.identity_by_id(bound_identity_id)
+                if identity is None:
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": "adept_identity_unproven", "retry": "explicit_only",
+                    }
                 previous = [r for r in self.storage.acquisitions(provider_id=loan.source_provider)
                             if r.get("identity_id") == identity.identity_id and r.get("credential_id") == loan.source_credential
                             and str(r.get("account_id") or "") == str(loan.source_account_id or "")
