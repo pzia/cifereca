@@ -148,3 +148,53 @@ def test_automatic_acquisition_lock_uses_same_path_for_shared_loan(monkeypatch):
     assert len(paths) == 2
     assert paths[0] == paths[1]
     assert "shared-123" not in paths[0].name
+
+
+def test_manual_reacquisition_rejects_unbound_connection_without_mutation(monkeypatch):
+    from pathlib import Path
+    import cifereca.services as services
+
+    class FakeLock:
+        def __init__(self, path):
+            self.path = path
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(services, "InterProcessLock", FakeLock)
+    monkeypatch.setattr(services, "acquisition_lock_file", lambda: Path("/tmp/acquisition.lock"))
+    service = object.__new__(LibraryService)
+    service.can_download_loan = lambda loan: True
+    service.storage = SimpleNamespace(identity_for_connection=lambda *args: None)
+    service.identity_by_id = lambda identity_id: None
+    loan = SimpleNamespace(id="loan-1", source_provider="paris", source_credential="paris-a")
+    result = service.reacquire_digital_loan(loan)
+    assert result["status"] == "attention_required"
+    assert result["code"] == "adept_identity_unproven"
+
+
+def test_manual_reacquisition_rejects_shared_borrower_before_ledger_update(monkeypatch):
+    from pathlib import Path
+    import cifereca.services as services
+
+    class FakeLock:
+        def __init__(self, path):
+            self.path = path
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(services, "InterProcessLock", FakeLock)
+    monkeypatch.setattr(services, "acquisition_lock_file", lambda: Path("/tmp/acquisition.lock"))
+    service = object.__new__(LibraryService)
+    service.can_download_loan = lambda loan: True
+    service.storage = SimpleNamespace(identity_for_connection=lambda *args: "alice")
+    service.identity_by_id = lambda identity_id: SimpleNamespace(identity_id=identity_id)
+    service.accounts = [account("alice", "borrower-a"), account("bob", "borrower-a")]
+    loan = SimpleNamespace(id="loan-1", source_provider="paris",
+                           source_credential="paris-a", source_account_id="borrower-a")
+    result = service.reacquire_digital_loan(loan)
+    assert result["status"] == "attention_required"
+    assert result["code"] == "adept_borrower_ambiguous"
