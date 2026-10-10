@@ -424,14 +424,28 @@ class LibraryService:
         account_id: str | None = None,
         explicit_profile: str | None = None,
     ) -> tuple[str, str]:
-        """Resolve ADE at Paris-identity scope.
-
-        ``account_id`` remains in the call contract for compatibility, but 0.8.1
-        deliberately no longer binds ADE profiles to provider sub-accounts.
-        """
-        identity = self.identity_for_connection(provider_id, credential_id)
+        """Public resolver: Paris borrower has priority over login/UI identity."""
+        identity = self._drm_identity_for_connection(provider_id, credential_id)
+        if provider_id == "paris":
+            borrower = self._borrower_id(account_id)
+            proof = read_proof(self.storage, borrower_key(
+                provider_id, credential_id, borrower,
+            ))
+            if proof is None:
+                raise AdeptProfileResolutionError(
+                    "Emprunteur non associé explicitement à un profil ADEPT",
+                    code="adept_borrower_binding_required",
+                )
+            if (not self.identity_by_id(proof["identity_id"])
+                    or self.storage.adept_profile_binding_get("identity", proof["identity_id"])
+                    != proof["profile_id"]):
+                raise AdeptProfileResolutionError(
+                    "Liaison emprunteur/profil ADEPT périmée",
+                    code="adept_borrower_profile_unproven",
+                )
+            identity = self.identity_by_id(proof["identity_id"])
         return self.resolve_adept_profile_for_identity(
-            identity.identity_id, explicit_profile=explicit_profile
+            identity.identity_id, explicit_profile=explicit_profile,
         )
 
     def _drm_identity_for_connection(self, provider_id: str, credential_id: str) -> Identity:
@@ -3812,11 +3826,33 @@ class LibraryService:
             loan.id, loan.record_id, loan.title, loan.source_provider, loan.source_credential, loan.source_account_id, bool(loan.ebook_url),
         )
         try:
-            identity = self._drm_identity_for_connection(loan.source_provider, loan.source_credential)
+            identity = (self._drm_identity_for_connection(
+                loan.source_provider, loan.source_credential,
+            ) if loan.source_provider == "paris" else self.identity_for_connection(
+                loan.source_provider, loan.source_credential,
+            ))
+            if loan.source_provider == "paris" and loan.source_account_id is not None:
+                binding = read_proof(
+                    self.storage, borrower_key(
+                        loan.source_provider, loan.source_credential,
+                        self._borrower_id(loan.source_account_id),
+                    ),
+                )
+                paris_identities = {
+                    r["identity_id"] for r in self.storage.provider_connections()
+                    if r.get("provider_id") == "paris" and r.get("enabled")
+                    and r.get("identity_id")
+                }
+                if binding or len(paris_identities) > 1:
+                    borrower_identity, _profile_ref = self._adept_borrower_proof(loan)
+                    identity = self.identity_by_id(borrower_identity)
         except AdeptProfileResolutionError as exc:
             return {"status": "attention_required", "loan_id": loan.id,
                     "code": exc.code, "error": str(exc)}
-        _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
+        _TRACE_LOG.info(
+            "TRACE download identity resolved loan_id=%s identity=%s",
+            loan.id, identity.identity_id,
+        )
         entitlement_rows = [
             row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
             if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
@@ -5467,7 +5503,18 @@ class LibraryService:
         )
         # Digital provider payloads are staged outside ~/EBooks. In particular,
         # ACSM files are transient inputs and must not become user-library items.
-        identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+        identity = (self._drm_identity_for_connection(
+            loan.source_provider, loan.source_credential,
+        ) if loan.source_provider == "paris" else self.identity_for_connection(
+            loan.source_provider, loan.source_credential,
+        ))
+        if loan.source_provider == "paris" and loan.source_account_id is not None:
+            borrower = self._borrower_id(loan.source_account_id)
+            proof = read_proof(self.storage, borrower_key(
+                loan.source_provider, loan.source_credential, borrower,
+            ))
+            if proof and self.identity_by_id(proof["identity_id"]):
+                identity = self.identity_by_id(proof["identity_id"])
         library_target_dir = self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
         target_dir = self._acquisition_work_dir(identity.identity_id, loan.source_provider, loan.id)
         cached = None if force_refresh else acsm_cache.reuse(target_dir, loan, identity.identity_id, account_key)
