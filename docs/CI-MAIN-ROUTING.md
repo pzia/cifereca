@@ -55,14 +55,28 @@ pour valider le SHA de `main` lors d'un incident ou avant une release.
 ## Sélection prudente des packages de tests (P0 #856)
 
 PR et push Plugins partagent `scripts/ci_select_plugin_tests.py`.
-Seuls des ajouts/modifications de modules `src/plugins/<package>/tests/test_*.py`
-(éventuellement accompagnés de docs) sélectionnent les packages concernés.
-Code produit, manifeste, helper/conftest, suppression ou renommage imposent
-la suite complète : les dépendances entre plugins ne sont pas encore modélisées.
-Cette tranche ne prétend donc pas cibler un changement produit isolé.
+Les ajouts/modifications de modules `src/plugins/<package>/tests/test_*.py`
+(éventuellement accompagnés de docs) sélectionnent directement leurs packages.
+Un changement de code produit sélectionne le package et tous ses consommateurs
+transitifs **uniquement** si le package figure dans l'allowlist auditée de
+`.github/plugin-test-dependencies.json`. Les autres packages gardent la suite
+complète. Le graphe combine `requires`, les fournisseurs de chaque
+`requires_contracts` et les liens runtime/tests audités dans ce même fichier.
+Les cycles convergent par ensemble.
+
+Une modification de manifeste, helper/conftest, suppression ou renommage
+impose la suite complète, car le graphe avant modification peut différer du
+checkout courant. Le graphe invalide, un ID requis inconnu, un package sans
+tests ou une dépendance explicite inconnue provoquent également ce repli.
 
 Push : diff `before..sha`, historique complet et vérification du checkout.
 PR : diff merge-base vers head, compatible avec le checkout de merge GitHub.
 SHA absent/zéro, diff inaccessible, historique divergent ou dispatch manuel :
 repli complet explicite, avec raison JSON dans les logs. Aucun skip silencieux.
 Le runner existant reçoit les répertoires comme arguments Bash séparés.
+
+Ajouter un package à l'allowlist ou un lien à `plugin-test-dependencies.json`
+seulement après vérification du code et des tests du cluster concerné. Une
+dépendance optionnelle compte : modifier son fournisseur peut casser les tests
+du consommateur. Toute évolution du graphe, du sélecteur ou de ses tests
+déclenche Core et Plugins une fois sur la PR.
