@@ -5,7 +5,7 @@ from pathlib import Path
 from cifereca.acquisition import Acquisition
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.models import Loan
+from cifereca.models import Account, Loan
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -42,6 +42,10 @@ def test_bound_profile_explicitly_not_fetch_ready_blocks_before_adept(tmp_path: 
             "alex",
             "profile-stable-alex",
         )
+        service.accounts = [
+            Account(display_name="Primary Alex", unique_id="", is_primary=True,
+                    provider_id="paris", credential_id="alex-paris", identity_id="alex"),
+        ]
         monkeypatch.setattr(
             service,
             "kobo_profiles",
