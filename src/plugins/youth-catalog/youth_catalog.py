@@ -50,7 +50,8 @@ def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
     status = code if type(code) is int and 100 <= code <= 599 else None
     error_type = type(exc).__name__
     state = (
-        "timeout" if "timeout" in error_type.casefold()
+        "cancelled" if "cancel" in error_type.casefold()
+        else "timeout" if "timeout" in error_type.casefold()
         else "http_error" if status is not None
         else "error"
     )
