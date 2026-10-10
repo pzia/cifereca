@@ -231,3 +231,19 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
     assert 'assert audit["keypad_visible_feedback"]' in source
     assert '"05b-youth-return-gtk-observation"' in source
     assert '"05c-youth-keypad-enter-gtk-observation"' in source
+
+
+def test_youth_selected_source_enter_probe_requires_real_gtk_and_single_mock_request():
+    source = (Path(__file__).resolve().parents[1] / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert 'device.click_widget(page.view.query)' in source
+    assert 'device.type_text("The")' in source
+    assert 'keys("Return")' in source
+    assert 'keys("KP_Enter")' in source
+    assert 'page.view.selected_source_plugin() == "youth.source.booktrust"' in source
+    assert 'assert not requests, "First physical Return must not fetch BookTrust"' in source
+    assert 'assert len(requests) == 1, f"Second physical keypad Enter' in source
+    assert 'assert len(requests) == 1, f"Third Enter caused a duplicate' in source
+    assert 'audit["criterion_910_selected_source_satisfied"] = True' in source
+    assert '"00b-booktrust-keyboard-local"' in source
+    assert '"00c-booktrust-keyboard-remote"' in source
+    assert '"01b-booktrust-keyboard-no-duplicate"' in source

@@ -264,3 +264,22 @@ toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
 fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
 sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
+
+
+### Clavier Jeunesse avec source sélectionnée — #910 (recette indépendante)
+
+Dans les scénarios BookTrust déjà présents (`youth-booktrust-1024` et
+`youth-booktrust-1366`), la vraie page GTK4 reçoit la frappe XTEST
+`The` dans son champ de recherche, avec la source `youth.source.booktrust`
+explicitement sélectionnée. Le premier `Return` valide le cache et affiche
+un feedback sans HTTP. Le second `KP_Enter` provoque **une** requête du
+vrai plugin BookTrust, servie exclusivement par `httpx.MockTransport` ;
+deux notices sont ingérées. Un troisième `Return` ne répète pas la collecte.
+
+Le rapport `screen.json > keyboard_selected_source` consigne les
+`gtk_activate_signals`, les statuts, l'identité, le plugin et le nombre de
+requêtes à chaque phase. Les captures
+`00b-booktrust-keyboard-local.png`,
+`00c-booktrust-keyboard-remote.png` et
+`01b-booktrust-keyboard-no-duplicate.png` couvrent les deux largeurs.
+Les tests ne contactent **jamais** le site BookTrust public.
