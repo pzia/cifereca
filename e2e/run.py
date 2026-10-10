@@ -56,14 +56,6 @@ SCENARIOS = {
         "width": 1366,
         "editions": True,
     },
-    "youth-library-search-1366": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1366.",
-        "runner": "gtk-youth",
-        "width": 1366,
-        "library_search": True,
-    },
     "youth-focus-return-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
@@ -72,6 +64,14 @@ SCENARIOS = {
         "width": 1366,
         "library_search": True,
         "focus_return": True,
+    },
+    "youth-library-search-1366": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1366.",
+        "runner": "gtk-youth",
+        "width": 1366,
+        "library_search": True,
     },
     "startup": {
         "plugin": "core",
