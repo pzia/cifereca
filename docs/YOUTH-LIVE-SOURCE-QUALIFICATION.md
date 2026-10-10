@@ -99,6 +99,22 @@ temporaire. Il indique notamment `http_status`, `html_bytes`,
 `detail_requests` et `phase`. Une liste blanche de types et de champs
 interdit l'inclusion de HTML brut, de cookies, d'URL, de titre ou de secrets.
 
+### Diagnostic École des loisirs dans le JSON
+
+À partir de cette recette, la source `ecole-loisirs` exporte aussi dans
+`plugin_diagnostic` son **dernier état local** (`diagnostic_snapshot()`)
+sans aucun appel HTTPS supplémentaire, y compris si `search()` échoue.
+Seuls les compteurs bornés (`http_status`, `html_bytes`,
+`request_count`, `anchor_count`, `product_url_count`,
+`returned_items`, `qualified_age_count`,
+`unqualified_age_count`, `duration_ms`), les indicateurs booléens
+(`content_type_is_html`, `text_filter_present`,
+`next_cursor_present`), les états explicitement connus,
+l'empreinte HTML SHA256 tronquée et un type d'exception neutre sont admis.
+Aucun terme recherché, URL supplémentaire, titre, en-tête, cookie ou HTML
+brut n'est exporté. `http_status=200` avec zéro notice ne vaut **pas**
+`PASS` : le verdict conserve les règles strictes du catalogue.
+
 Si `plugin_diagnostic` est absent, vérifier que le run a été **créé**
 sur le commit actuel de `main`, et non relancé depuis une vieille tentative
 via « Re-run jobs ». Son absence ne prouve rien sur le site.

@@ -204,3 +204,120 @@ def test_ecole_loisirs_routes_only_one_explicit_search_page_not_browse():
     assert '"age": args.age' in source  # local cache filter, never HTTP age parameter
     assert 'report["public_query"] = "loup"' in source
     assert '"max_requests": 1' in source
+
+
+
+def test_ecole_diagnostic_export_whitelists_fields_and_redacts_private_values():
+    script = script_module()
+    source = NS(diagnostic_snapshot=lambda: {
+        "source": "ecole-loisirs", "phase": "complete", "state": "items",
+        "http_status": 200, "request_count": 1, "html_bytes": 19832,
+        "page": 1, "requested_limit": 40, "product_url_count": 8,
+        "anchor_count": 29, "returned_items": 5,
+        "qualified_age_count": 4, "unqualified_age_count": 1,
+        "duration_ms": 132, "text_filter_present": True,
+        "content_type_is_html": True, "next_cursor_present": False,
+        "html_sha256_prefix": "f" * 16,
+        # Not part of the diagnostic contract: do not leak any of these.
+        "raw_html": "<html>private</html>", "query": "a private query",
+        "title": "PRIVATE", "url": "https://www.ecoledesloisirs.fr/?token=secret",
+        "headers": {"Cookie": "secret"}, "cookies": ["private"],
+    })
+    report = script.plugin_diagnostic_for(source, "ecole-loisirs")
+    assert report == {
+        "source": "ecole-loisirs", "phase": "complete", "state": "items",
+        "http_status": 200, "request_count": 1, "html_bytes": 19832,
+        "page": 1, "requested_limit": 40, "product_url_count": 8,
+        "anchor_count": 29, "returned_items": 5,
+        "qualified_age_count": 4, "unqualified_age_count": 1,
+        "duration_ms": 132, "text_filter_present": True,
+        "content_type_is_html": True, "next_cursor_present": False,
+        "html_sha256_prefix": "f" * 16,
+    }
+    assert script.plugin_diagnostic_for(source, "milan") == {}
+    assert script.plugin_diagnostic_for(NS(), "ecole-loisirs") == {}
+
+
+def test_ecole_diagnostic_export_rejects_malformed_and_unbounded_data():
+    script = script_module()
+    source = NS(diagnostic_snapshot=lambda: {
+        "source": "ecole-loisirs", "phase": "download",
+        "state": "unverified", "page": True,
+        "html_bytes": -3, "request_count": 10**20,
+        "duration_ms": "secret", "text_filter_present": 1,
+        "html_sha256_prefix": "NOT_A_HASH",
+        "error_type": "RuntimeError: private https://example.com",
+        "qualified_age_count": 2,
+    })
+    assert script.plugin_diagnostic_for(source, "ecole-loisirs") == {
+        "source": "ecole-loisirs", "qualified_age_count": 2,
+    }
+    assert script.plugin_diagnostic_for(
+        NS(diagnostic_snapshot=lambda: 1 / 0), "ecole-loisirs",
+    ) == {}
+
+
+def test_failed_ecole_qualification_retains_safe_snapshot_without_extra_http(
+    tmp_path, monkeypatch,
+):
+    import httpx
+    import pytest
+    from cifereca.core import CiferecaCore
+
+    script = script_module()
+
+    class FakeSource:
+        def __init__(self):
+            self.client = NS(close=lambda: None)
+            self.calls = 0
+
+        def diagnostic_snapshot(self):
+            return {
+                "source": "ecole-loisirs", "state": "error",
+                "phase": "listing", "http_status": 503,
+                "request_count": 1, "html_bytes": 1970,
+                "error_type": "RuntimeError",
+                "html": "<html>must never be returned</html>",
+            }
+
+        def search(self, query, *, cursor=None, limit=40):
+            assert query == "loup" and cursor is None and limit == 40
+            self.calls += 1
+            self.client.event_hooks["request"][0](
+                httpx.Request(
+                    "GET",
+                    "https://www.ecoledesloisirs.fr/recherche-avancee"
+                    "?page=1&search_api_views_fulltext=loup&types=livre",
+                )
+            )
+            raise RuntimeError("l'école des loisirs HTTP 503")
+
+    source = FakeSource()
+
+    class FakePlugins:
+        def install(self, _archive):
+            return None
+
+        def service(self, plugin_id):
+            if plugin_id == "catalog.youth":
+                return NS()
+            if plugin_id == "youth.source.ecole-loisirs":
+                return source
+            return None
+
+    monkeypatch.setattr(CiferecaCore, "open", lambda **kwargs: NS(plugins=FakePlugins()))
+    monkeypatch.setattr(script, "bundle", lambda *_: tmp_path / "fake.zip")
+    monkeypatch.setattr(script.os, "environ", dict(script.os.environ))
+    args = script.parser().parse_args(["--source", "ecole-loisirs", "--confirm-live"])
+    report = {}
+    with pytest.raises(RuntimeError, match="HTTP 503"):
+        script.qualify(args, report)
+    assert source.calls == 1
+    assert report["requests_count"] == 1
+    assert report["plugin_diagnostic"] == {
+        "source": "ecole-loisirs", "state": "error",
+        "phase": "listing", "http_status": 503,
+        "request_count": 1, "html_bytes": 1970,
+        "error_type": "RuntimeError",
+    }
+    assert "<html>" not in str(report)
