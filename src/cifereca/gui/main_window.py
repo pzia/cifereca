@@ -511,7 +511,7 @@ class DetailPanel(Gtk.Box):
                     display = Gdk.Display.get_default()
                     if display is None:
                         return
-                    display.get_clipboard().set(value)
+                    display.get_clipboard().set_text(value)
                     self.window.toast("Copié")
                 copy.connect("clicked", copy_one)
                 row.add_suffix(copy)
