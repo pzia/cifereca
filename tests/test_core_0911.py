@@ -5,7 +5,7 @@ from unittest.mock import Mock,patch
 from cifereca.core import CiferecaCore
 from cifereca.gui.facet_text import author_search_text
 from cifereca.plugin_api import AttentionRequired
-from cifereca.models import Loan
+from cifereca.models import Account, Loan
 from cifereca.kobo.errors import KoboAdeptError
 from cifereca.acquisition import Acquisition
 
@@ -17,6 +17,11 @@ class Core0911(unittest.TestCase):
         self.service=self.core.library
         self.core.config.set('providers.accounts',[])
         self.core.config.set('library.directory',str(self.root/'EBooks'))
+        self.service.storage.provider_connection_put({
+            'identity_id':'default','provider_id':'paris',
+            'credential_id':'test','label':'Paris'})
+        self.service.accounts=[Account(display_name='Primary',unique_id='',is_primary=True,
+            provider_id='paris',credential_id='test',identity_id='default')]
     def tearDown(self):
         from cifereca.logging_utils import set_diagnostics_level
         set_diagnostics_level("normal")
@@ -71,7 +76,7 @@ class Core0911(unittest.TestCase):
         state=window.search_controls.set_state.call_args.args[0]
         self.assertEqual((state.text,state.field),('Harari Yuval Noah','author'))
         window.run_search.assert_called_once_with(False)
-    def loan(self):return Loan(id='loan',provider='DILICOM',medium='digital',record_id='123',title='Livre',source_provider='paris',source_credential='test',identity_id='default')
+    def loan(self):return Loan(id='loan',provider='DILICOM',medium='digital',record_id='123',title='Livre',source_provider='paris',source_credential='test',source_account_id='primary',identity_id='default')
     def test_loan_download_requires_capability_and_connection(self):
         loan=self.loan();session=NS(connected=True,capabilities=NS(digital_download=True))
         with patch.object(self.service,'_session_for_source',return_value=session):

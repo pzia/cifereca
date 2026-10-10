@@ -5509,11 +5509,9 @@ class LibraryService:
         )
         # Digital provider payloads are staged outside ~/EBooks. In particular,
         # ACSM files are transient inputs and must not become user-library items.
-        identity = (self._drm_identity_for_connection(
-            loan.source_provider, loan.source_credential,
-        ) if loan.source_provider == "paris" else self.identity_for_connection(
-            loan.source_provider, loan.source_credential,
-        ))
+        # Provider-only staging is not an Adobe DRM mutation: allow it without
+        # a borrower profile, while later fulfillment still requires proof.
+        identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
         if loan.source_provider == "paris" and loan.source_account_id is not None:
             borrower = self._borrower_id(loan.source_account_id)
             proof = read_proof(self.storage, borrower_key(

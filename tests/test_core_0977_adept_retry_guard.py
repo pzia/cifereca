@@ -9,7 +9,7 @@ from cifereca.acquisition import Acquisition
 from cifereca.config import Config
 from cifereca.core.adept_retry_guard import adept_attention_code, blocked_automatic_adept_retry
 from cifereca.diagnostics import Diagnostics
-from cifereca.models import Loan
+from cifereca.models import Account, Loan
 from cifereca.plugin_api import UserFacingError
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
@@ -28,6 +28,10 @@ def _service(tmp_path: Path) -> LibraryService:
         "identity_id": "alex", "provider_id": "paris", "credential_id": "alex-paris",
         "label": "Paris Alex",
     })
+    service.accounts = [
+        Account(display_name="Primary Alex", unique_id="", is_primary=True,
+                provider_id="paris", credential_id="alex-paris", identity_id="alex"),
+    ]
     return service
 
 
