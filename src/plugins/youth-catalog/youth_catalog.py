@@ -460,6 +460,40 @@ def _extract_age_ranges(raw: object, source_id: str) -> tuple[YouthAgeRange, ...
     return tuple(rows)
 
 
+def _public_cover_url(value: object) -> str:
+    """Covers are public HTTPS images, never signed/session URLs."""
+    url = canonical_url(value)
+    if not url:
+        return ""
+    parts = urlsplit(url)
+    # Query strings may carry expiring tokens or user identifiers. The current
+    # catalogue contract cannot prove which parameters are harmless.
+    return url if parts.scheme == "https" and not parts.query else ""
+
+
+def _publication_year(raw: object) -> int | None:
+    """An attested source year/date only; no guesses from text or URL."""
+    for name in ("published_year", "publication_year", "first_publish_year",
+                 "publication_date", "published_at"):
+        raw_value = _field(raw, name, None)
+        if raw_value is None or isinstance(raw_value, bool):
+            continue
+        value = _text(raw_value)
+        if re.fullmatch(r"[12][0-9]{3}", value):
+            year = int(value)
+        elif re.fullmatch(r"[12][0-9]{3}-[0-9]{2}-[0-9]{2}", value):
+            try:
+                from datetime import date
+                year = date.fromisoformat(value).year
+            except ValueError:
+                continue
+        else:
+            continue
+        if 1450 <= year <= 2100:
+            return year
+    return None
+
+
 def normalize_record(raw: object, *, source_id: str) -> YouthBook:
     title = _text(_field(raw, "title"))
     if not title:
@@ -499,6 +533,9 @@ def normalize_record(raw: object, *, source_id: str) -> YouthBook:
         book_type=_fold(_field(raw, "book_type") or _field(raw, "type")),
         themes=_tokens(_field(raw, "themes") or _field(raw, "subjects") or _field(raw, "subject")),
         provenance=(sid,),
+        publishers=_names(_field(raw, "publishers") or _field(raw, "publisher")),
+        published_year=_publication_year(raw),
+        cover_url=_public_cover_url(_field(raw, "cover_url") or _field(raw, "thumbnail_url")),
     )
 
 
@@ -600,6 +637,14 @@ def _merge(left: YouthBook, right: YouthBook) -> YouthBook:
         book_type=left.book_type or right.book_type,
         themes=tuple(dict.fromkeys(left.themes + right.themes)),
         provenance=tuple(dict.fromkeys(left.provenance + right.provenance)),
+        # A matching ISBN is a confirmed edition, but empty fields in the
+        # first provider must not hide bibliographic facts from the second.
+        publishers=tuple(dict.fromkeys(left.publishers + right.publishers)),
+        published_year=left.published_year or right.published_year,
+        cover_url=left.cover_url or right.cover_url,
+        bibliography_sources=tuple(dict.fromkeys(
+            left.bibliography_sources + right.bibliography_sources
+        )),
     )
 
 
