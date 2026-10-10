@@ -264,3 +264,33 @@ toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
 fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
 sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
+
+### Entrée : collecte volontaire avec BookTrust sélectionné (UX P1 #910)
+
+Les scénarios existants `youth-booktrust-1024` et
+`youth-booktrust-1366` exercent maintenant les **deux vrais chemins
+clavier sur `Gtk.Entry`**, sans inventer de fournisseur et sans changer le
+transport HTTP de test :
+
+- Le plugin BookTrust réel est installé, sa source explicitement choisie.
+  Le texte `des` est saisi **physiquement par XTEST** et correspond aux
+  deux notices synthétiques existantes. Sans Entrée, zéro HTTP.
+- **Return** : validation locale, `0 résultat(s)` et indication de la
+  seconde Entrée, **zéro HTTP** ; capture `00b-booktrust-return-local-no-http`.
+- **KP_Enter** : le même champ émet son second `activate`, **une seule
+  collecte explicite** (une requête `https://www.booktrust.org.uk/...` dont
+  la réponse provient de `httpx.MockTransport`), deux notices en cache ;
+  capture existante `01-source-success-cache`.
+- **Troisième Return**, même filtre/identité/source : aucun doublon
+  HTTP, message visible d'une collecte déjà demandée ; capture
+  `01b-booktrust-third-enter-no-duplicate`. Le clic suivant sur le
+  bouton Collecter conserve les tests existants de panne HTTP 503,
+  cache et reprise explicite (trois requêtes au total).
+
+Le rapport `screen.json` inclut les activations GTK, les messages de
+chaque étape et la liste bornée des requêtes. La recette n'utilise **aucun
+réseau public** et ne prouve pas la disponibilité de BookTrust. Elle
+complète les deux premiers scénarios `youth-1024/1366` déjà validés
+pour Return puis KP_Enter **sans source précise**.
+
+Aucun scénario supplémentaire, aucune règle CI ajoutée.

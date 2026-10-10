@@ -357,14 +357,48 @@ def main() -> int:
         assert page.view.selected_source_plugin() == "youth.source.booktrust"
         assert not requests, "Selecting source triggered unsolicited HTTP"
         assert_rows()
-        device.click_widget(collect_button())
-        later(120, source_success)
+        # #910: real keyboard, real installed BookTrust plugin. "des"
+        # matches both offline notices and is long enough for extension.
+        device.click_widget(page.view.query)
+        assert page.view.query.get_mapped(), "BookTrust query entry is not mapped"
+        device.type_text("des")
+        page.view.query.connect(
+            "activate", lambda _entry: result.__setitem__(
+                "booktrust_enter_gtk_activations",
+                result.get("booktrust_enter_gtk_activations", 0) + 1,
+            ),
+        )
+        later(190, source_enter_first)
+
+    def source_enter_first():
+        assert page.view.query.get_text() == "des"
+        assert page.view.selected_source_plugin() == "youth.source.booktrust"
+        assert_rows()
+        assert requests == [], "Typing without Return must not launch HTTP"
+        keys("Return")
+        later(190, source_enter_local_feedback)
+
+    def source_enter_local_feedback():
+        assert result.get("booktrust_enter_gtk_activations") == 1, (
+            "Physical Return did not activate the real source-selected GTK field"
+        )
+        status = page.view.status.get_text()
+        assert "Recherche en cache : 0 résultat(s)" in status, status
+        assert "Appuyez une seconde fois sur Entrée" in status, status
+        assert requests == [], "First Return triggered unsolicited HTTP"
+        result["booktrust_first_enter_feedback"] = status
+        capture("00b-booktrust-return-local-no-http")
+        keys("KP_Enter")
+        later(150, source_success)
 
     def source_success():
         if len(page.view.rows) != 2 and monotonic() - start < 16:
             later(130, source_success)
             return
-        assert len(requests) == 1, f"Expected one explicit request: {requests!r}"
+        assert result.get("booktrust_enter_gtk_activations") == 2, (
+            "KP_Enter did not activate GTK entry after first Return"
+        )
+        assert len(requests) == 1, f"Two Enter keys must trigger exactly one HTTP collect: {requests!r}"
         assert requests[0].startswith("https://www.booktrust.org.uk/book-recommendations/bookfinder/")
         assert {book.record_id for book in page.view.rows.values()} == {
             "atlas-des-lucioles", "jardin-des-mots"
@@ -374,6 +408,22 @@ def main() -> int:
         assert len(catalog.search_cached("camille")) == 2
         capture("01-source-success-cache")
         result["booktrust_requests_before_outage"] = list(requests)
+        # A third Enter on the same query/source cannot start a duplicate
+        # remote collection; a later button click remains an explicit retry.
+        keys("Return")
+        later(190, source_enter_duplicate_blocked)
+
+    def source_enter_duplicate_blocked():
+        assert result.get("booktrust_enter_gtk_activations") == 3, (
+            "Repeated Return lost the real GTK keyboard activation"
+        )
+        assert len(requests) == 1, "Third consecutive Enter unexpectedly repeated HTTP"
+        status = page.view.status.get_text()
+        assert "Collecte déjà demandée" in status, status
+        assert_rows("atlas-des-lucioles", "jardin-des-mots")
+        result["booktrust_duplicate_enter_feedback"] = status
+        result["booktrust_enter_remote_requests"] = list(requests)
+        capture("01b-booktrust-third-enter-no-duplicate")
         fault["unavailable"] = True
         device.click_widget(collect_button())
         later(130, source_failure)

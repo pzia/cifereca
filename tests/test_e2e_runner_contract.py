@@ -231,3 +231,22 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
     assert 'assert audit["keypad_visible_feedback"]' in source
     assert '"05b-youth-return-gtk-observation"' in source
     assert '"05c-youth-keypad-enter-gtk-observation"' in source
+
+
+def test_youth_booktrust_two_enter_keys_prove_one_remote_collection_in_real_gtk():
+    # #910: the actual XTEST/Gtk.Entry path and source-scoped HTTP
+    # acknowledgement are asserted, not just the signal/manifest.
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert 'device.click_widget(page.view.query)' in source
+    assert 'device.type_text("des")' in source
+    assert "def source_enter_first():" in source
+    assert "def source_enter_local_feedback():" in source
+    assert 'keys("Return")' in source
+    assert 'keys("KP_Enter")' in source
+    assert '"Recherche en cache : 0 résultat(s)"' in source
+    assert 'assert requests == [], "First Return triggered unsolicited HTTP"' in source
+    assert 'result.get("booktrust_enter_gtk_activations") == 2' in source
+    assert '"00b-booktrust-return-local-no-http"' in source
+    assert '"01b-booktrust-third-enter-no-duplicate"' in source
+    assert 'assert len(requests) == 1, "Third consecutive Enter unexpectedly repeated HTTP"' in source
+    assert 'assert len(requests) == 3, f"Recovery requires exactly one click' in source
