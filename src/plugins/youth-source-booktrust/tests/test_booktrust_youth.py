@@ -166,7 +166,10 @@ def test_unsupported_age_returns_empty_without_unfiltered_network_call():
         client=httpx.Client(transport=httpx.MockTransport(handler))
     )
     page = source.browse(age=15)
-    assert page == {"items": (), "next_cursor": "", "fresh_for_seconds": 86400}
+    assert page == {
+        "items": (), "next_cursor": "", "fresh_for_seconds": 86400,
+        "collection_request_count": 0,
+    }
     assert calls == 0
 
 
