@@ -57,6 +57,21 @@ def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
     return {"state": state, "error_type": error_type, "http_status": status}
 
 
+def safe_ingest_rejection_categories(errors: Iterable[str]) -> dict[str, int]:
+    """Aggregate ingestion failures into fixed public labels, not raw messages.
+
+    A source record or plugin exception may contain private query parameters.
+    Unknown failures are counted, never published or interpreted.
+    """
+    counts = {"missing_title": 0, "other": 0}
+    for raw in errors:
+        label = "missing_title" if isinstance(raw, str) and re.fullmatch(
+            r"item\[\d+\]: title is required", raw
+        ) else "other"
+        counts[label] = min(100_000, counts[label] + 1)
+    return counts
+
+
 def _field(value: object, name: str, default: object = "") -> object:
     if isinstance(value, Mapping):
         return value.get(name, default)
@@ -638,6 +653,9 @@ class YouthCatalogIndex:
         state: str,
         accepted: int = 0,
         rejected: int = 0,
+        received_count: int | None = None,
+        requested_limit: int | None = None,
+        rejection_categories: Mapping[str, object] | None = None,
         duration_ms: int = 0,
         next_cursor_present: bool = False,
         error_type: str = "",
@@ -667,6 +685,25 @@ class YouthCatalogIndex:
             ),
             "accepted": max(0, min(int(accepted), 100_000)),
             "rejected": max(0, min(int(rejected), 100_000)),
+            # None means unknown, never silently claim that zero rows or zero
+            # network requests were observed after a transport failure.
+            "received_count": (
+                max(0, min(received_count, 100_000))
+                if type(received_count) is int else None
+            ),
+            "requested_limit": (
+                max(1, min(requested_limit, 500))
+                if type(requested_limit) is int else None
+            ),
+            "rejection_categories": {
+                key: max(0, min(value, 100_000))
+                for key in ("missing_title", "other")
+                for value in (
+                    (rejection_categories or {}).get(key, 0)
+                    if isinstance(rejection_categories, Mapping) else 0,
+                )
+                if type(value) is int and value > 0
+            },
             "duration_ms": max(0, min(int(duration_ms), 600_000)),
             "next_cursor_present": bool(next_cursor_present),
             "error_type": (
@@ -753,6 +790,9 @@ class YouthCatalogIndex:
                 "last_success_at_utc": event.get("last_success_at_utc", ""),
                 "accepted": event.get("accepted", 0),
                 "rejected": event.get("rejected", 0),
+                "received_count": event.get("received_count"),
+                "requested_limit": event.get("requested_limit"),
+                "rejection_categories": dict(event.get("rejection_categories", {})),
                 "duration_ms": event.get("duration_ms", 0),
                 "next_cursor_present": event.get("next_cursor_present", False),
                 "http_status": event.get("http_status"),
@@ -974,6 +1014,9 @@ class YouthCatalogPlugin:
                 ),
                 stage=stage,
                 accepted=report.accepted, rejected=report.rejected,
+                received_count=report.accepted + report.rejected,
+                requested_limit=bounded,
+                rejection_categories=safe_ingest_rejection_categories(report.errors),
                 next_cursor_present=bool(next_cursor),
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),
             )
@@ -982,7 +1025,7 @@ class YouthCatalogPlugin:
             failure = collection_failure_diagnostic(exc)
             self.index.record_collection(
                 identity_id, info.source_id, **failure,
-                stage=stage, rejected=1,
+                stage=stage, rejected=1, requested_limit=bounded,
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),
             )
             return IngestReport(
