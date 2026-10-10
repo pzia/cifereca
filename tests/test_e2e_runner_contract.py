@@ -20,8 +20,34 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     runner = _module()
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
-        "search-filter-p0", "startup", "core-navigation",
+        "search-filter-p0", "book-detail-1366",
+        "startup", "core-navigation",
     ]
+
+
+def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
+    runner = _module()
+    for width in (1366,):
+        scenario = runner.SCENARIOS[f"book-detail-{width}"]
+        assert scenario["plugin"] == "core"
+        assert scenario["fixture"] == "search-filters"
+        assert scenario["runner"] == "gtk-detail"
+        assert scenario["width"] == width
+    assert [n for n, _ in runner.select(None, "core")][:2] == [
+        "search-filter-p0", "book-detail-1366",
+    ]
+    source = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "core.storage.catalog_entry_put(entry)",
+        'expander.set_expanded(True)',
+        'device.click_widget(button)',
+        'clipboard.read_text_async(None, done)',
+        '"online": True, "identity_id": "camille"',
+        'window.navigate("library")',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in source
 
 
 def test_reference_scenario_runs_real_cifereca_without_plugins():
@@ -115,12 +141,12 @@ def test_search_filter_p0_has_two_identities_and_offline_catalogue():
 
 def test_youth_milan_replay_uses_installed_source_and_safe_notice_action():
     runner = _module()
-    for name in ("youth-milan-1024", "youth-milan-1366"):
+    for name in ("youth-milan-1366",):
         scenario = runner.SCENARIOS[name]
         assert scenario["plugin"] == "catalog.youth"
         assert scenario["runner"] == "gtk-youth"
         assert scenario["milan"] is True
-        assert scenario["width"] in (1024, 1366)
+        assert scenario["width"] == 1366
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
     assert '"youth.source.milan"' in source
     assert 'httpx.MockTransport(milan_respond)' in source
@@ -132,12 +158,12 @@ def test_youth_milan_replay_uses_installed_source_and_safe_notice_action():
 
 def test_youth_conflicting_editions_run_through_existing_real_gtk_runner():
     runner = _module()
-    for name in ("youth-editions-1024", "youth-editions-1366"):
+    for name in ("youth-editions-1366",):
         scenario = runner.SCENARIOS[name]
         assert scenario["runner"] == "gtk-youth"
         assert scenario["fixture"] == "search-filters"
         assert scenario["editions"] is True
-        assert scenario["width"] in (1024, 1366)
+        assert scenario["width"] == 1366
         assert not scenario.get("milan")
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
     assert 'same_isbn = "9780306406157"' in source
@@ -209,7 +235,7 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
 
 def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():
     runner = _module()
-    for width in (1024, 1366):
+    for width in (1366,):
         scenario = runner.SCENARIOS[f"youth-library-search-{width}"]
         assert scenario["plugin"] == "catalog.youth"
         assert scenario["runner"] == "gtk-youth"

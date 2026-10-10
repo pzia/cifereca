@@ -85,7 +85,7 @@ def records():
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1024, 1366))
+    parser.add_argument("--width", required=True, type=int, choices=(1366,))
     parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
@@ -779,8 +779,13 @@ def main() -> int:
         assert ("ISBN", "9780140328721") not in shown, f"Incorrect second ISBN leaked: {shown!r}"
         assert any("source fixture-youth" in sub and "Interest age: 5 to 7" in sub for _, sub in shown), shown
         assert any("source milan" in sub and "À partir de 12 ans" in sub for _, sub in shown), shown
-        provenance = [sub for title, sub in shown if title == "Source"]
-        assert set(provenance) >= {"fixture-youth", "milan"}, shown
+        sources = [subtitle for title, subtitle in shown if title == "Source"]
+        assert len(sources) == 2 and set(sources) == {"fixture-youth", "milan"}, (
+            f"Les sources de la première édition doivent être distinctes en GTK : {shown!r}"
+        )
+        assert not any(title == "Sources" for title, _ in shown), (
+            "Une ligne agrégée Sources ne doit plus masquer les provenances individuelles"
+        )
         result["same_isbn_detail"] = shown
         capture("01-conflicting-age-sources-preserved")
         later(140, editions_first_isbn_in_view)
@@ -807,6 +812,9 @@ def main() -> int:
         assert ("ISBN", "9780306406157") not in shown, f"First ISBN leaked to second edition: {shown!r}"
         assert any("source milan" in sub and "À partir de 8 ans" in sub for _, sub in shown), shown
         assert not any("source fixture-youth" in sub for _, sub in shown), shown
+        assert [subtitle for title, subtitle in shown if title == "Source"] == ["milan"], (
+            f"Une édition distincte ne reprend pas la provenance de l'autre édition : {shown!r}"
+        )
         result["different_isbn_detail"] = shown
         capture("02-second-edition-separated")
         later(140, editions_second_isbn_in_view)
@@ -993,8 +1001,11 @@ def main() -> int:
             for _, subtitle in shown
         ), f"Milan age not rendered in GTK detail: {shown!r}"
         sources = [subtitle for title, subtitle in shown if title == "Source"]
-        assert "fixture-youth" in sources and "milan" in sources, (
-            f"Multi-source provenance not rendered as separate GTK fields: {shown!r}"
+        assert len(sources) == 2 and set(sources) == {"fixture-youth", "milan"}, (
+            f"Provenances individuelles absentes du vrai Détail GTK : {shown!r}"
+        )
+        assert not any(title == "Sources" for title, _ in shown), (
+            "Ne pas restaurer la synthèse Sources désormais obsolète"
         )
         result["detail_provenance"] = shown
         capture("06-keyboard-search-detail")

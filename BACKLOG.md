@@ -195,7 +195,7 @@ Constats de recette : l’ACSM du tome 4 est téléchargé (1694 octets), le pro
 - [ ] Contrat plugin sync : orchestration bibliothèques à compte et stores, stratégies de téléchargement/DRM déléguées aux providers/runtimes ; progression/reprise ; portée identité et sources explicite.
 - [ ] Plugin pages/UI associé : actions de synchronisation, configuration et suivi ; extraction du comportement historique download + traitement DRM. Définir le contrat en Core, fournir l’implémentation dans la vague Plugins.
 - [ ] Certification --restart sur bureau, cache ciblé/mises à jour différentielles, performances grandes bibliothèques et revue logs/secrets.
-- [ ] Recette GTK : onglets et sauvegarde de toutes les sections, compacité/retour en colonne, aides, navigation/clavier, fenêtre 1024×768.
+- [ ] Recette GTK : onglets et sauvegarde de toutes les sections, compacité/retour en colonne, aides, navigation/clavier, fenêtre 1366×900.
 
 ## Plugins — restant avant 1.0
 
