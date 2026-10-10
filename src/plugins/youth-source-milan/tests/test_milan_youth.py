@@ -629,3 +629,17 @@ def test_milan_diagnostic_callback_failure_does_not_block_collecting():
     source.activate(SimpleNamespace(report_diagnostic=lambda *args, **kwargs: 1 / 0))
     assert source.browse(age=8)["items"] == ()
     assert source.diagnostic_snapshot()["phase"] == "complete"
+
+
+def test_http_error_preserves_typed_status_for_youth_diagnostics():
+    """A single mocked HTTP request; no remote publisher contacted."""
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            429, headers={"content-type": "text/html"}, text="private body",
+        )
+    )))
+    with pytest.raises(RuntimeError, match="HTTP 429") as raised:
+        source.browse(age=8)
+    assert raised.value.http_status == 429
+
+
