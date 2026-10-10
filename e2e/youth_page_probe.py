@@ -274,6 +274,48 @@ def main() -> int:
         actual = {book.record_id for book in page.view.rows.values()}
         assert actual == set(expected), f"expected {expected}, observed {actual}"
 
+    def assert_gtk_source_diagnostics(stage, *, outcome, cache_count, request_count):
+        """#907: inspect actual Gtk.Expander + child labels, not the model alone."""
+        expander = page.view.diagnostic_expander
+        assert expander.get_mapped(), "Real Youth diagnostics expander is not mapped"
+        assert expander.get_expanded(), "Diagnostics must be opened by XTEST"
+        summary = expander.get_label()
+        assert "4 source(s) d’âge" in summary, summary
+        assert "1 bibliographie" in summary, summary
+        labels = []
+        child = page.view.diagnostic_rows_box.get_first_child()
+        while child is not None:
+            assert isinstance(child, Gtk.Label), type(child).__name__
+            labels.append(child.get_text())
+            child = child.get_next_sibling()
+        assert len(labels) >= 5, f"Missing sources from GTK diagnostics: {labels!r}"
+        for name in ("BookTrust", "Éditions Milan", "Usborne", "L'École des loisirs", "Open Library"):
+            assert any(name in line for line in labels), (name, labels)
+        booktrust = next(line for line in labels if line.startswith("BookTrust ·"))
+        assert outcome in booktrust, (stage, outcome, booktrust)
+        assert f"cache : {cache_count} notice(s)" in booktrust, (stage, booktrust)
+        assert any("non installée" in line for line in labels), labels
+        assert any("bibliographie uniquement" in line and "pas de preuve d’âge" in line
+                   for line in labels), labels
+        if stage == "after_503":
+            assert "erreur HTTP 503" in booktrust, booktrust
+            assert "conservé" in booktrust, booktrust
+            assert "1 dernier(s) essai(s) en échec" in summary, summary
+        assert len(requests) == request_count, (
+            f"Reading diagnosis triggered HTTP during {stage}: {requests!r}"
+        )
+        assert "Indisponible" not in summary
+        # Metadata, not provider raw responses nor an identity-sensitive title.
+        text = " ".join(labels)
+        assert "The Firefly Atlas" not in text and "The Garden of Words" not in text
+        result.setdefault("source_diagnostics_gtk", {})[stage] = {
+            "identity_id": page.view.identity_id(),
+            "summary": summary,
+            "lines": labels,
+            "booktrust_status": booktrust,
+            "request_count": len(requests),
+        }
+
     def detail_rows():
         """Read actual libadwaita detail rows, not only catalog data."""
         found = []
@@ -350,6 +392,16 @@ def main() -> int:
         assert_rows()
         assert not requests, "Opening page triggered unsolicited HTTP"
         capture("00-source-installed-cache-empty")
+        assert not page.view.diagnostic_expander.get_expanded(), (
+            "GTK diagnostic must start collapsed to preserve the viewport"
+        )
+        device.click_widget(page.view.diagnostic_expander)
+        later(190, source_diagnostic_initial)
+
+    def source_diagnostic_initial():
+        assert_gtk_source_diagnostics("initial", outcome="non testée", cache_count=0, request_count=0)
+        capture("00a-booktrust-diagnostic-not-tested")
+        device.click_widget(page.view.diagnostic_expander)
         page.view.source.set_selected(1)
         later(180, source_collect)
 
@@ -435,6 +487,15 @@ def main() -> int:
         assert "déjà demandée" in audit["third_status"], audit
         audit["criterion_910_selected_source_satisfied"] = True
         capture("01b-booktrust-keyboard-no-duplicate")
+        device.click_widget(page.view.diagnostic_expander)
+        later(190, source_diagnostic_success)
+
+    def source_diagnostic_success():
+        assert_gtk_source_diagnostics(
+            "success", outcome="collecte avec notices", cache_count=2, request_count=1,
+        )
+        capture("01c-booktrust-diagnostic-success")
+        device.click_widget(page.view.diagnostic_expander)
         # Restore unfiltered listing for the existing outage/recovery recipe.
         page.view.query.set_text("")
         fault["unavailable"] = True
@@ -455,6 +516,36 @@ def main() -> int:
         result["booktrust_requests_after_outage"] = list(requests)
         result["outage_message"] = status
         capture("02-source-unavailable-cache-retained")
+        device.click_widget(page.view.diagnostic_expander)
+        later(190, source_diagnostic_after_outage)
+
+    def source_diagnostic_after_outage():
+        assert_gtk_source_diagnostics(
+            "after_503", outcome="erreur HTTP", cache_count=2, request_count=2,
+        )
+        capture("02a-booktrust-diagnostic-http503-cache-retained")
+        page.view.identity.set_selected(1)  # alex, isolated from camille
+        later(190, source_diagnostic_other_identity)
+
+    def source_diagnostic_other_identity():
+        assert page.view.identity_id() == "alex", page.view.identity_id()
+        assert_rows()
+        assert_gtk_source_diagnostics(
+            "alex", outcome="non testée", cache_count=0, request_count=2,
+        )
+        assert "0 dernier(s) essai(s) en échec" in page.view.diagnostic_expander.get_label()
+        capture("02b-booktrust-diagnostic-alex-isolated")
+        page.view.identity.set_selected(0)
+        later(190, source_diagnostic_restored_identity)
+
+    def source_diagnostic_restored_identity():
+        assert page.view.identity_id() == "camille"
+        assert_rows("atlas-des-lucioles", "jardin-des-mots")
+        assert_gtk_source_diagnostics(
+            "camille_restored", outcome="erreur HTTP", cache_count=2, request_count=2,
+        )
+        capture("02c-booktrust-diagnostic-camille-restored")
+        device.click_widget(page.view.diagnostic_expander)
         page.view.age.set_selected(18)  # 17 ans, no matching BookTrust cache
         later(180, source_local_empty)
 

@@ -283,3 +283,42 @@ requêtes à chaque phase. Les captures
 `00c-booktrust-keyboard-remote.png` et
 `01b-booktrust-keyboard-no-duplicate.png` couvrent les deux largeurs.
 Les tests ne contactent **jamais** le site BookTrust public.
+
+
+### Diagnostic des sources : recette GTK réelle indépendante (#907 / #924)
+
+Sans ajouter de scénario, `youth-booktrust-1024` et
+`youth-booktrust-1366` vérifient le volet
+**« Diagnostic des sources Jeunesse »** de la vraie page GTK4, ouvert
+au **clic XTEST** (pas un tableau artificiel). Chaque étape lit le
+`Gtk.Expander` et les `Gtk.Label` réellement rendus.
+
+- **Ouverture** : volet replié par défaut ; clic, cinq entrées
+  (BookTrust, Milan, Usborne, École des loisirs, Open Library),
+  BookTrust « non testée », autres sources non installées et
+  bibliographie distincte ; **0 requête HTTP**.
+- **Succès BookTrust** : après la deuxième Entrée réelle, exactement
+  **1 collecte mockée**, deux notices en cache et ligne
+  « collecte avec notices ».
+- **HTTP 503** : après la deuxième action de collecte explicite,
+  erreur HTTP 503, cache **2 notices (conservé)**, et compteur
+  d'échecs visible ; **2 requêtes cumulées**.
+- **Deux profils** : depuis le volet ouvert, sélectionner `alex`
+  fait disparaître l'historique de `camille` sans appel réseau ;
+  retour `camille` restitue le 503 et son cache inchangé.
+- Le volet est refermé avant les étapes existantes de filtre 17 ans,
+  reprise HTTP, captures et contrôles de la liste. Les tests
+  antérieurs ne sont ni contournés ni remplacés.
+
+Nouvelles captures : `00a-booktrust-diagnostic-not-tested.png`,
+`01c-booktrust-diagnostic-success.png`,
+`02a-booktrust-diagnostic-http503-cache-retained.png`,
+`02b-booktrust-diagnostic-alex-isolated.png`,
+`02c-booktrust-diagnostic-camille-restored.png`, chacune aux deux
+largeurs ; JSON `screen.json > source_diagnostics_gtk` incluant
+résumé, lignes visibles et compteur de requêtes par étape.
+
+**Limites** : provider réel BookTrust avec réponses fournies par
+`httpx.MockTransport` ; ce test **ne qualifie pas le site public**,
+les autres sites, ni un bouton d'export Diagnostic général. Aucune
+nouvelle gate ou workflow GitHub Actions.

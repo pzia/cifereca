@@ -247,3 +247,27 @@ def test_youth_selected_source_enter_probe_requires_real_gtk_and_single_mock_req
     assert '"00b-booktrust-keyboard-local"' in source
     assert '"00c-booktrust-keyboard-remote"' in source
     assert '"01b-booktrust-keyboard-no-duplicate"' in source
+
+
+def test_youth_sources_diagnostics_exploratory_gtk_1024_and_1366():
+    # #907/#924: assert that the real XTEST click opened a GTK expander,
+    # the real GTK child labels were read, and reading never fetched remote.
+    runner = _module()
+    for name in ("youth-booktrust-1024", "youth-booktrust-1366"):
+        assert runner.SCENARIOS[name]["runner"] == "gtk-youth"
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert "def assert_gtk_source_diagnostics(" in source
+    assert 'device.click_widget(page.view.diagnostic_expander)' in source
+    assert "expander.get_mapped()" in source
+    assert "expander.get_expanded()" in source
+    assert "page.view.diagnostic_rows_box.get_first_child()" in source
+    assert '"00a-booktrust-diagnostic-not-tested"' in source
+    assert '"01c-booktrust-diagnostic-success"' in source
+    assert '"02a-booktrust-diagnostic-http503-cache-retained"' in source
+    assert '"02b-booktrust-diagnostic-alex-isolated"' in source
+    assert '"02c-booktrust-diagnostic-camille-restored"' in source
+    assert '"erreur HTTP 503"' in source
+    assert '"conservé"' in source
+    assert '"1 dernier(s) essai(s) en échec"' in source
+    assert 'assert len(requests) == request_count' in source
+    assert '"source_diagnostics_gtk"' in source
