@@ -15,6 +15,7 @@ from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict
 from pathlib import Path, PurePosixPath
+from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
@@ -87,6 +88,16 @@ class LibraryService:
         self._plugin_manager: Any | None = None
         self._provider_plugin_ids: dict[str, str] = {}
         self._virtual_parent_by_provider: dict[str, str] = {}
+        # Collection events can originate on any plugin thread. Never read an
+        # inventory or connect a provider from an arbitrary caller/GTK thread.
+        self._virtual_reconcile_lock = RLock()
+        self._virtual_schedule_lock = Lock()
+        self._virtual_refresh_pending = False
+        self._virtual_refresh_again = False
+        self._virtual_collection_closed = False
+        self._virtual_manager_unsubscribe: Callable[[], None] | None = None
+        self._virtual_parent_subscriptions: dict[str, tuple[object, Callable[[], None]]] = {}
+        self._virtual_change_callbacks: list[Callable[[], None]] = []
         self._kobo_adept_state_cache: dict[str, Any] | None = None
         self._kobo_adept_state_cache_at = 0.0
         # Search workers are shared across requests. Recreating an executor for
@@ -452,7 +463,10 @@ class LibraryService:
 
     def attach_plugin_manager(self, manager: Any) -> list[str]:
         """Attach Plugin API services, preferring external providers/runtimes when ready."""
-        self._plugin_manager = manager
+        with self._virtual_reconcile_lock:
+            self._unbind_virtual_subscriptions()
+            self._virtual_collection_closed = False
+            self._plugin_manager = manager
         attached: list[str] = []
         try:
             statuses = manager.candidates("provider.library")
@@ -466,70 +480,235 @@ class LibraryService:
                 self._provider_plugin_ids[service.descriptor.id] = status.descriptor.id
                 attached.append(service.descriptor.id)
         attached.extend(self.refresh_virtual_collections())
+        binder = getattr(manager, "subscribe_services", None)
+        if callable(binder):
+            try:
+                unsub = binder("provider.collection", self._queue_virtual_collection_refresh)
+                if callable(unsub):
+                    self._virtual_manager_unsubscribe = unsub
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual service subscription", "error",
+                    detail={"error_type": type(exc).__name__}, level="detailed",
+                )
         if attached:
             self.diagnostics.add("PLUGIN", "external providers attached", "ok", detail={"providers": attached}, level="detailed")
         return attached
 
-    def refresh_virtual_collections(self) -> list[str]:
-        """Publish cached collections into the Core-owned provider registry.
+    def _unbind_virtual_subscriptions(self) -> None:
+        """Disconnect previous parent/manager callbacks on replacement or close."""
+        unsubscribers = [
+            *(unsub for _, unsub in self._virtual_parent_subscriptions.values()),
+            self._virtual_manager_unsubscribe,
+        ]
+        self._virtual_parent_subscriptions.clear()
+        self._virtual_manager_unsubscribe = None
+        for unsubscribe in unsubscribers:
+            if callable(unsubscribe):
+                try:
+                    unsubscribe()
+                except Exception:
+                    pass
 
-        Explicit Core operation: no discovery HTTP request, no plugin access to
-        registry internals and no implicit provider session connections. Call
-        connect_configured() outside the GTK thread after an inventory change.
-        """
-        manager = self._plugin_manager
-        if manager is None:
-            return []
-        try:
-            statuses = manager.candidates("provider.collection")
-        except Exception:
-            return []
-        live_parents: set[str] = set()
-        attached: list[str] = []
-        prior_plugins = {
-            provider_id: self.registry.maybe_get(provider_id)
-            for provider_id in self._virtual_parent_by_provider
-        }
-        for status in statuses:
-            parent_id = status.descriptor.id
-            live_parents.add(parent_id)
-            service = manager.service(parent_id)
+    def _sync_virtual_subscriptions(self, services: dict[str, object]) -> None:
+        for parent, (old_service, unsubscribe) in list(self._virtual_parent_subscriptions.items()):
+            if services.get(parent) is old_service:
+                continue
+            self._virtual_parent_subscriptions.pop(parent, None)
             try:
-                children = self.registry.reconcile_collection(parent_id, service)
+                unsubscribe()
+            except Exception:
+                pass
+        for parent, service in services.items():
+            if parent in self._virtual_parent_subscriptions:
+                continue
+            subscribe = getattr(service, "subscribe", None)
+            if not callable(subscribe):
+                continue
+            try:
+                unsubscribe = subscribe(self._queue_virtual_collection_refresh)
+                if callable(unsubscribe):
+                    self._virtual_parent_subscriptions[parent] = (service, unsubscribe)
             except Exception as exc:
                 self.diagnostics.add(
-                    "PLUGIN", "virtual provider inventory rejected", "error",
-                    detail={"parent": parent_id, "error_type": type(exc).__name__},
+                    "PLUGIN", "virtual inventory subscription", "error",
+                    detail={"parent": parent, "error_type": type(exc).__name__},
                     level="detailed",
                 )
-                continue
-            attached.extend(children)
-        for parent in set(self._virtual_parent_by_provider.values()) - live_parents:
-            self.registry.retire_collection(parent)
-        new_mapping = {
-            provider_id: parent
-            for parent in live_parents
-            for provider_id in self.registry.virtual_ids(parent)
-        }
-        # A revised local adapter must never retain a session bound to its
-        # old implementation. Explicit connect_configured() reconnects it.
-        stale_ids = {
-            pid for pid, old in prior_plugins.items()
-            if pid not in new_mapping or self.registry.maybe_get(pid) is not old
-        }
-        for old_id in stale_ids:
-            for key, session in list(self._sessions.items()):
-                if session.provider_id == old_id:
-                    self._sessions.pop(key, None)
-                    try:
-                        session.close()
-                    except Exception:
-                        pass
-            if old_id not in new_mapping:
-                self._provider_plugin_ids.pop(old_id, None)
-        for provider_id, parent in new_mapping.items():
-            self._provider_plugin_ids[provider_id] = parent
-        self._virtual_parent_by_provider = new_mapping
+
+    def _queue_virtual_collection_refresh(self) -> None:
+        """Coalesce bursts; re-read the latest cached snapshot on a Core worker."""
+        with self._virtual_schedule_lock:
+            if self._virtual_collection_closed:
+                return
+            if self._virtual_refresh_pending:
+                self._virtual_refresh_again = True
+                return
+            self._virtual_refresh_pending = True
+        try:
+            _SEARCH_EXECUTOR.submit(self._drain_virtual_collection_events)
+        except RuntimeError:
+            with self._virtual_schedule_lock:
+                self._virtual_refresh_pending = False
+
+    def _drain_virtual_collection_events(self) -> None:
+        while True:
+            with self._virtual_schedule_lock:
+                if self._virtual_collection_closed:
+                    self._virtual_refresh_pending = False
+                    return
+                self._virtual_refresh_again = False
+            try:
+                self.refresh_virtual_collections(connect_changed=True)
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual notification", "error",
+                    detail={"error_type": type(exc).__name__}, level="detailed",
+                )
+            with self._virtual_schedule_lock:
+                if not self._virtual_refresh_again or self._virtual_collection_closed:
+                    self._virtual_refresh_pending = False
+                    return
+
+    def subscribe_virtual_sources(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Observe accepted inventory changes. Callback runs on the caller/worker.
+
+        GTK consumers must marshal UI changes using GLib.idle_add.
+        Invalid snapshots and duplicate notifications do not emit an update.
+        """
+        with self._virtual_reconcile_lock:
+            if callback not in self._virtual_change_callbacks:
+                self._virtual_change_callbacks.append(callback)
+
+        def unsubscribe() -> None:
+            with self._virtual_reconcile_lock:
+                if callback in self._virtual_change_callbacks:
+                    self._virtual_change_callbacks.remove(callback)
+        return unsubscribe
+
+    def _connect_changed_virtual_provider(self, provider_id: str) -> None:
+        """Connect only one newly published public adapter; keep other sessions."""
+        plugin = self.registry.maybe_get(provider_id)
+        if plugin is None:
+            return
+        key = self._session_key(provider_id, "__public__")
+        if key in self._sessions:
+            return
+        session = None
+        try:
+            session = plugin.create_session(
+                credential_id="__public__", label=plugin.descriptor.display_name,
+                credentials={}, options={}, config=self.config, storage=self.storage,
+                diagnostics=self.diagnostics,
+            )
+            if session.provider_id != provider_id:
+                raise ProviderConfigurationError("virtual session provider mismatch")
+            session.connect()
+            self._sessions[key] = session
+            self._session_errors.pop(key, None)
+        except Exception as exc:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            self._session_errors[key] = type(exc).__name__
+            self.diagnostics.add(
+                "PLUGIN", "virtual provider connection", "error",
+                detail={"provider": provider_id, "error_type": type(exc).__name__},
+                level="detailed",
+            )
+
+    def refresh_virtual_collections(self, *, connect_changed: bool = False) -> list[str]:
+        """Reconcile cached inventories without any implicit discovery HTTP.
+
+        Notifications invoke this on a worker and connect only added/replaced
+        children. An explicit call can defer connections to connect_configured.
+        Unrelated provider sessions and local catalogue/history remain intact.
+        """
+        with self._virtual_reconcile_lock:
+            if self._virtual_collection_closed:
+                return []
+            manager = self._plugin_manager
+            if manager is None:
+                return []
+            try:
+                statuses = manager.candidates("provider.collection")
+            except Exception:
+                return []
+            before = dict(self._virtual_parent_by_provider)
+            previous_plugins = {
+                provider_id: self.registry.maybe_get(provider_id)
+                for provider_id in before
+            }
+            previous_snapshots = {
+                parent: self.registry.virtual_snapshot(parent)
+                for parent in set(before.values())
+            }
+            live_parents: set[str] = set()
+            active_services: dict[str, object] = {}
+            attached: list[str] = []
+            for status in statuses:
+                parent_id = status.descriptor.id
+                live_parents.add(parent_id)
+                service = manager.service(parent_id)
+                active_services[parent_id] = service
+                try:
+                    children = self.registry.reconcile_collection(parent_id, service)
+                except Exception as exc:
+                    self.diagnostics.add(
+                        "PLUGIN", "virtual provider inventory rejected", "error",
+                        detail={"parent": parent_id, "error_type": type(exc).__name__},
+                        level="detailed",
+                    )
+                    continue
+                attached.extend(children)
+            for parent in set(before.values()) - live_parents:
+                self.registry.retire_collection(parent)
+            self._sync_virtual_subscriptions(active_services)
+            new_mapping = {
+                provider_id: parent
+                for parent in live_parents
+                for provider_id in self.registry.virtual_ids(parent)
+            }
+            stale_ids = {
+                pid for pid, old in previous_plugins.items()
+                if pid not in new_mapping or self.registry.maybe_get(pid) is not old
+            }
+            for old_id in stale_ids:
+                for key, session in list(self._sessions.items()):
+                    if session.provider_id == old_id:
+                        self._sessions.pop(key, None)
+                        try:
+                            session.close()
+                        except Exception:
+                            pass
+                if old_id not in new_mapping:
+                    self._provider_plugin_ids.pop(old_id, None)
+            for provider_id, parent in new_mapping.items():
+                self._provider_plugin_ids[provider_id] = parent
+            self._virtual_parent_by_provider = new_mapping
+            if connect_changed:
+                for provider_id in sorted(new_mapping):
+                    if (provider_id in stale_ids
+                            or self._session_key(provider_id, "__public__") not in self._sessions):
+                        self._connect_changed_virtual_provider(provider_id)
+            # A catalog-generation increment invalidates search cache keys even
+            # when the Python adapter itself has not changed.
+            snapshots_changed = any(
+                self.registry.virtual_snapshot(parent) != previous_snapshots.get(parent)
+                for parent in live_parents | set(previous_snapshots)
+            )
+            changed = bool(stale_ids or set(new_mapping) != set(before) or snapshots_changed)
+            listeners = tuple(self._virtual_change_callbacks) if changed else ()
+        for callback in listeners:
+            try:
+                callback()
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual inventory observer", "error",
+                    detail={"error_type": type(exc).__name__}, level="detailed",
+                )
         return attached
 
     @property
@@ -587,6 +766,11 @@ class LibraryService:
         }
 
     def close(self) -> None:
+        with self._virtual_schedule_lock:
+            self._virtual_collection_closed = True
+        with self._virtual_reconcile_lock:
+            self._unbind_virtual_subscriptions()
+            self._virtual_change_callbacks.clear()
         seen: set[int] = set()
         for session in list(self._sessions.values()):
             if id(session) in seen:
@@ -1499,7 +1683,15 @@ class LibraryService:
         pref_key = ""
         if identity is not None:
             pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
-        cache_key = hashlib.sha256(f"search-v7\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}".encode()).hexdigest()
+        virtual_versions = ",".join(
+            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
+            for session in searchable
+            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
+        )
+        virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
+        cache_key = hashlib.sha256(
+            f"search-v7\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        ).hexdigest()
         ttl = int(self.config.get("cache.search_seconds", 21600))
         if not force:
             cached = self.storage.cache_get("search", cache_key)

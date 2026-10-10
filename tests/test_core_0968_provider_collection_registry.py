@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace as NS
+from threading import Event, current_thread
 
 import pytest
 
@@ -84,6 +85,7 @@ class Collection:
     def __init__(self, value):
         self.value = value
         self.calls = []
+        self.callbacks = []
 
     def snapshot(self):
         self.calls.append("snapshot")
@@ -98,7 +100,15 @@ class Collection:
         return LocalProvider(source_id, entry["source_revision"])
 
     def subscribe(self, callback):
-        return lambda: None
+        self.callbacks.append(callback)
+        def unsubscribe():
+            if callback in self.callbacks:
+                self.callbacks.remove(callback)
+        return unsubscribe
+
+    def notify(self):
+        for callback in tuple(self.callbacks):
+            callback()
 
 
 class FakeManager:
@@ -106,6 +116,7 @@ class FakeManager:
         self.collection = collection
         self.live = True
         self.enabled = {}
+        self.callbacks = []
         self.state = NS(identity_enabled_override=lambda plugin_id, identity:
                         self.enabled.get((plugin_id, identity)))
 
@@ -125,6 +136,18 @@ class FakeManager:
 
     def enabled_for_identity(self, plugin_id, identity):
         return plugin_id == PARENT
+
+    def subscribe_services(self, category, callback):
+        assert category == "provider.collection"
+        self.callbacks.append(callback)
+        def unsubscribe():
+            if callback in self.callbacks:
+                self.callbacks.remove(callback)
+        return unsubscribe
+
+    def notify_services(self):
+        for callback in tuple(self.callbacks):
+            callback()
 
 
 def test_atomic_two_source_publication_and_reuse():
@@ -288,3 +311,98 @@ def test_disabled_or_retired_ids_cannot_be_claimed_by_another_parent():
     original.value = snapshot(child("alpha", revision="r2", generation=3), generation=3)
     assert reg.reconcile_collection(PARENT, original) == ("cifericaopds.alpha",)
     assert reg.get("cifericaopds.alpha").descriptor.display_name.endswith("(r2)")
+
+
+def test_inventory_notification_connects_delta_without_restarting_other_sources(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    coll = Collection(snapshot(child("alpha")))
+    mgr = FakeManager(coll)
+    notifications = []
+    done = Event()
+    unsubscribe = svc.subscribe_virtual_sources(
+        lambda: (notifications.append(current_thread().name), done.set())
+    )
+    try:
+        svc.attach_plugin_manager(mgr)
+        svc.connect_configured()
+        original = svc._sessions["cifericaopds.alpha::__public__"]
+        assert original.connected and len(coll.callbacks) == 1
+        assert len(mgr.callbacks) == 1
+        # A plugin-local cache update, never a Core HTTP discovery request.
+        coll.value = snapshot(child("alpha"), child("beta"), generation=2)
+        coll.notify()
+        assert done.wait(5), "worker did not deliver the inventory change"
+        assert svc._sessions["cifericaopds.alpha::__public__"] is original
+        beta = svc._sessions["cifericaopds.beta::__public__"]
+        assert beta.connected
+        assert all("cifereca-search" in name for name in notifications)
+        done.clear()
+        coll.value = snapshot(child("alpha"), child("beta", status="disabled"), generation=3)
+        coll.notify()
+        assert done.wait(5)
+        assert not beta.connected
+        assert svc.registry.maybe_get("cifericaopds.beta") is None
+        assert svc._sessions["cifericaopds.alpha::__public__"] is original
+        # No duplicate change notifications for an identical snapshot.
+        done.clear()
+        count = len(notifications)
+        svc.refresh_virtual_collections()
+        assert len(notifications) == count
+        assert not done.is_set()
+        # Refreshing the provider-category list retires a missing parent.
+        done.clear()
+        mgr.live = False
+        mgr.notify_services()
+        assert done.wait(5)
+        assert not original.connected
+        assert svc.registry.descriptors() == []
+        assert coll.callbacks == []
+    finally:
+        unsubscribe()
+        svc.close()
+    assert not mgr.callbacks
+
+
+def test_search_cache_is_versioned_by_virtual_catalog_generation(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    coll = Collection(snapshot(child("alpha")))
+    try:
+        svc.attach_plugin_manager(FakeManager(coll))
+        svc.connect_configured()
+        session = svc._sessions["cifericaopds.alpha::__public__"]
+        queries = []
+        original = session.search
+        session.search = lambda *args, **kw: (queries.append(args), original(*args, **kw))[1]
+        svc.search("catalog", force=False)
+        count = len(queries)
+        assert count > 0
+        svc.search("catalog", force=False)
+        assert len(queries) == count
+        coll.value = snapshot(child("alpha", generation=2), generation=2)
+        svc.refresh_virtual_collections()
+        assert svc._sessions["cifericaopds.alpha::__public__"] is session
+        svc.search("catalog", force=False)
+        assert len(queries) > count
+    finally:
+        svc.close()
+
+
+def test_notification_failure_preserves_last_good_sources_and_no_false_update(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    coll = Collection(snapshot(child("alpha")))
+    mgr = FakeManager(coll)
+    seen = []
+    svc.subscribe_virtual_sources(lambda: seen.append("changed"))
+    try:
+        svc.attach_plugin_manager(mgr)
+        assert seen == ["changed"]
+        coll.value = snapshot(child("alpha"), child("alpha"), generation=2)
+        assert svc.refresh_virtual_collections() == []
+        assert seen == ["changed"]
+        assert svc.registry.maybe_get("cifericaopds.alpha") is not None
+        assert svc.registry.virtual_snapshot(PARENT).discovery_generation == 1
+    finally:
+        svc.close()
