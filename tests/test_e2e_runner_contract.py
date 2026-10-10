@@ -257,7 +257,9 @@ def test_youth_sources_diagnostics_exploratory_gtk_1024_and_1366():
         assert runner.SCENARIOS[name]["runner"] == "gtk-youth"
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
     assert "def assert_gtk_source_diagnostics(" in source
-    assert 'device.click_widget(page.view.diagnostic_expander)' in source
+    assert "def click_diagnostic_header():" in source
+    assert "device.click_widget(label)" in source
+    assert "click_diagnostic_header()" in source
     assert "expander.get_mapped()" in source
     assert "expander.get_expanded()" in source
     assert "page.view.diagnostic_rows_box.get_first_child()" in source

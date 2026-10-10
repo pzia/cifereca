@@ -316,6 +316,23 @@ def main() -> int:
             "request_count": len(requests),
         }
 
+    def click_diagnostic_header():
+        """XTEST on actual Gtk.Expander title, not its full-width allocation."""
+        expander = page.view.diagnostic_expander
+        def find_label(widget):
+            if isinstance(widget, Gtk.Label) and "Diagnostic des sources Jeunesse" in widget.get_text():
+                return widget
+            child = widget.get_first_child()
+            while child is not None:
+                found = find_label(child)
+                if found is not None:
+                    return found
+                child = child.get_next_sibling()
+            return None
+        label = find_label(expander)
+        assert label is not None and label.get_mapped(), "GTK expander header label missing"
+        device.click_widget(label)
+
     def detail_rows():
         """Read actual libadwaita detail rows, not only catalog data."""
         found = []
@@ -395,13 +412,13 @@ def main() -> int:
         assert not page.view.diagnostic_expander.get_expanded(), (
             "GTK diagnostic must start collapsed to preserve the viewport"
         )
-        device.click_widget(page.view.diagnostic_expander)
+        click_diagnostic_header()
         later(190, source_diagnostic_initial)
 
     def source_diagnostic_initial():
         assert_gtk_source_diagnostics("initial", outcome="non testée", cache_count=0, request_count=0)
         capture("00a-booktrust-diagnostic-not-tested")
-        device.click_widget(page.view.diagnostic_expander)
+        click_diagnostic_header()
         page.view.source.set_selected(1)
         later(180, source_collect)
 
@@ -487,7 +504,7 @@ def main() -> int:
         assert "déjà demandée" in audit["third_status"], audit
         audit["criterion_910_selected_source_satisfied"] = True
         capture("01b-booktrust-keyboard-no-duplicate")
-        device.click_widget(page.view.diagnostic_expander)
+        click_diagnostic_header()
         later(190, source_diagnostic_success)
 
     def source_diagnostic_success():
@@ -495,7 +512,7 @@ def main() -> int:
             "success", outcome="collecte avec notices", cache_count=2, request_count=1,
         )
         capture("01c-booktrust-diagnostic-success")
-        device.click_widget(page.view.diagnostic_expander)
+        click_diagnostic_header()
         # Restore unfiltered listing for the existing outage/recovery recipe.
         page.view.query.set_text("")
         fault["unavailable"] = True
@@ -516,7 +533,7 @@ def main() -> int:
         result["booktrust_requests_after_outage"] = list(requests)
         result["outage_message"] = status
         capture("02-source-unavailable-cache-retained")
-        device.click_widget(page.view.diagnostic_expander)
+        click_diagnostic_header()
         later(190, source_diagnostic_after_outage)
 
     def source_diagnostic_after_outage():
@@ -545,7 +562,7 @@ def main() -> int:
             "camille_restored", outcome="erreur HTTP", cache_count=2, request_count=2,
         )
         capture("02c-booktrust-diagnostic-camille-restored")
-        device.click_widget(page.view.diagnostic_expander)
+        click_diagnostic_header()
         page.view.age.set_selected(18)  # 17 ans, no matching BookTrust cache
         later(180, source_local_empty)
 
