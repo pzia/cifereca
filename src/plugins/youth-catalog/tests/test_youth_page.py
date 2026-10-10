@@ -135,8 +135,13 @@ def test_homonymous_editions_display_distinct_verified_isbns_in_list_and_detail(
     ]
     assert fields[0]["isbn"] == "9780306406157"
     assert fields[1]["isbn"] == "9780140328721"
-    assert fields[0]["sources"] == "booktrust, milan"
-    assert fields[1]["sources"] == "milan"
+    # Sources are separate, copyable values in the enriched detail.
+    assert [field.value for section in details[0].sections
+            for field in section.fields if field.id.startswith("source-")] == [
+        "booktrust", "milan",
+    ]
+    assert [field.value for section in details[1].sections
+            for field in section.fields if field.id.startswith("source-")] == ["milan"]
     assert len(details[0].sections[0].fields) == 2  # conflicting age attestations preserved
     assert len(details[1].sections[0].fields) == 1
 
