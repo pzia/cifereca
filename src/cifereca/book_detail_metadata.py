@@ -27,8 +27,10 @@ _FIELDS = (
     ("series", "Série"),
     ("collection", "Collection"),
     ("volume", "Tome"),
-    ("subjects", "Sujet"),
+    # Keep short editorial themes visible even when a provider supplies
+    # hundreds of subject headings; the overall projection remains bounded.
     ("themes", "Thème"),
+    ("subjects", "Sujet"),
     ("genres", "Genre"),
     ("languages", "Langue"),
     ("language", "Langue"),
