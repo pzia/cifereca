@@ -58,11 +58,15 @@ def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
     )
     # Only a directly attached per-call integer is authoritative; never read
     # a provider's shared last diagnostic (it may belong to another identity).
-    return {
+    result = {
         "state": state, "error_type": error_type, "http_status": status,
         "request_count": getattr(exc, "collection_request_count", None),
-        "pipeline": getattr(exc, "collection_pipeline", None),
     }
+    # Preserve the existing exception projection when no funnel exists.
+    pipeline = getattr(exc, "collection_pipeline", None)
+    if isinstance(pipeline, Mapping):
+        result["pipeline"] = pipeline
+    return result
 
 
 def safe_ingest_rejection_categories(errors: Iterable[str]) -> dict[str, int]:
