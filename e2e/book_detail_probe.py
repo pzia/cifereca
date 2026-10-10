@@ -179,6 +179,18 @@ def main():
 
     def search_detail():
         expander, rows = detail_info("search")
+        assert not expander.get_expanded(), "Détail doit être replié initialement"
+        assert report["online_calls"] == [], "Recherche déclenchée par affichage"
+        # Les sous-titres des Adw.ActionRows repliées ne sont pas encore
+        # matérialisés en GTK : tester les valeurs *après* ouverture.
+        report["checks"]["initially_collapsed"] = True
+        capture("00-search-detail-closed")
+        expander.set_expanded(True)
+        later(360, expanded_search)
+
+    def expanded_search():
+        expander, rows = detail_info("search")
+        assert expander.get_expanded()
         shown = read_rows(rows)
         report["search_rows"] = shown
         for expected in (
@@ -188,18 +200,10 @@ def main():
             ("EAN déclaré", "4006381333931"),
             ("Catalogue · Éditeur", "Maison B"),
         ):
-            assert expected in shown, f"Champ {expected!r} absent du véritable panneau GTK : {shown!r}"
+            assert expected in shown, f"Champ {expected!r} absent du véritable panneau GTK déplié : {shown!r}"
         assert not any("SECRET_NE_JAMAIS_AFFICHER" in v for _, v in shown)
-        assert not expander.get_expanded(), "Détail doit être replié initialement"
-        assert report["online_calls"] == [], "Recherche déclenchée par affichage"
+        assert report["online_calls"] == [], "Recherche déclenchée par ouverture du détail"
         report["checks"]["search_metadata"] = True
-        capture("00-search-detail-closed")
-        expander.set_expanded(True)
-        later(280, expanded_search)
-
-    def expanded_search():
-        expander, rows = detail_info("search")
-        assert expander.get_expanded()
         authors = [x for x in rows if x.get_title() == "Auteur"]
         assert len(authors) == 2
         report["author_copy_tooltips"] = [
