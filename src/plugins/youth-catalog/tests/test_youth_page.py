@@ -529,6 +529,55 @@ def test_youth_explicit_remote_exception_records_only_typed_failure_and_keeps_ca
     assert {x["source_id"]: x for x in view.catalog.source_diagnostics("bob")}["milan"]["collection_state"] == "not_tested"
 
 
+
+def test_youth_remote_typed_http_error_preserves_cache_and_renders_http_status():
+    """Publisher RuntimeError.http_status is honored, never parsed as raw text."""
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    tasks, dispatch, messages = Tasks(), [], []
+    view.catalog = YouthCatalogPlugin()
+    view.catalog.ingest("alice", "booktrust", [{
+        "title": "Private title", "isbn": "9780306406157",
+        "age_label": "8+",
+    }])
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda callback: dispatch.append(callback))
+    view.status = NS(set_label=messages.append)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source = lambda: NS(
+        plugin_id="youth.source.booktrust",
+        service=NS(source_info=lambda: {
+            "source_id": "booktrust", "display_name": "BookTrust",
+        }),
+    )
+    view.filter_state = lambda: FilterState(query="private", age=8, themes=())
+
+    def blocked(control):
+        error = RuntimeError("BookTrust HTTP 503")
+        error.http_status = 503
+        raise error
+
+    token = ("alice", "youth.source.booktrust", "private", 8, ())
+    view.run_remote(blocked, lambda raw: None, token)
+    tasks.handles[0].finish()
+    dispatch.pop()()
+    rows = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
+    current = rows["booktrust"]
+    assert current["collection_state"] == "http_error"
+    assert current["http_status"] == 503
+    assert current["error_type"] == "RuntimeError"
+    assert current["cache_count"] == 1
+    summary, lines = source_diagnostic_presentation(tuple(rows.values()))
+    assert any("erreur HTTP 503" in line for line in lines)
+    assert "Private title" not in repr(current)
+    assert messages[-1] == "Échec de la source. Le cache précédent est conservé."
+    bob = {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}
+    assert bob["booktrust"]["collection_state"] == "not_tested"
+
+
 def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_collection():
     rows = (
         {"source_id": "milan", "label": "Éditions Milan", "family": "age",
