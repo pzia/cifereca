@@ -329,6 +329,7 @@ def test_standard_update_applies_release_plugins_after_core_switch(tmp_path, mon
 
     monkeypatch.setattr(updater, "_create_venv", fake_venv)
     monkeypatch.setattr(updater, "_smoke", lambda release: {})
+    monkeypatch.setattr(updater, "_smoke_restored_plugins", lambda release, transaction: {"plugin_count": 0})
     snapshot = tmp_path / "snapshot.zip"
 
     def fake_build(release, destination):
@@ -359,6 +360,55 @@ def test_plugin_upgrade_failure_restores_previous_core(tmp_path, monkeypatch):
     source = _release_with_plugin_manifest(tmp_path / "source", "2.0.0")
     monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
     monkeypatch.setenv("CIFERECA_BIN_DIR", str(tmp_path / "bin"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
+    packages = updater._plugin_packages_root()
+    _write_plugin_package(packages, "org.test", "1.0.0", b"before failure", None)
+
+    def fake_venv(release, python):
+        bindir = release / ".venv" / "bin"
+        bindir.mkdir(parents=True)
+        for name in (*updater.PUBLIC_COMMANDS, updater.DEV_COMMAND):
+            path = bindir / name
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(0o755)
+        (bindir / "python").write_text("", encoding="utf-8")
+        return release / ".venv"
+
+    monkeypatch.setattr(updater, "_create_venv", fake_venv)
+    monkeypatch.setattr(updater, "_smoke", lambda release: {})
+    monkeypatch.setattr(updater, "_smoke_restored_plugins", lambda release, transaction: {"plugin_count": 0})
+    monkeypatch.setattr(updater, "_build_release_plugin_snapshot", lambda release, dest: tmp_path / "snapshot.zip")
+
+    def fail_after_mutation(*_):
+        updater.shutil.rmtree(packages / "org.test")
+        _write_plugin_package(packages, "org.test", "1.0.0", b"partial mutation", "1.0.0")
+        raise updater.UpdateError("plugin failed")
+
+    monkeypatch.setattr(updater, "_apply_release_plugin_snapshot", fail_after_mutation)
+
+    with pytest.raises(updater.UpdateError, match="plugin failed"):
+        updater.install_source(source)
+    assert updater._symlink_target(root / "current").resolve() == old.resolve()
+    assert (packages / "org.test" / "1.0.0" / "payload.bin").read_bytes() == b"before failure"
+    assert updater.json.loads((packages / "org.test" / "current.json").read_text())["active"] is None
+
+
+def test_release_without_plugin_manifest_keeps_core_only_update_contract(tmp_path):
+    source = _mini_project(tmp_path / "source")
+    assert updater._release_plugin_manifest(source) == {}
+
+
+def _write_plugin_package(root: Path, package_id: str, version: str, payload: bytes, active):
+    package = root / package_id
+    (package / version).mkdir(parents=True, exist_ok=True)
+    (package / version / "payload.bin").write_bytes(payload)
+    (package / "current.json").write_text(
+        updater.json.dumps({"active": active}) + "\n", encoding="utf-8",
+    )
+
+
+def _patch_fake_runtime(monkeypatch):
     monkeypatch.setattr(updater, "select_python", lambda explicit=None: os.sys.executable)
 
     def fake_venv(release, python):
@@ -373,18 +423,130 @@ def test_plugin_upgrade_failure_restores_previous_core(tmp_path, monkeypatch):
 
     monkeypatch.setattr(updater, "_create_venv", fake_venv)
     monkeypatch.setattr(updater, "_smoke", lambda release: {})
-    monkeypatch.setattr(updater, "_build_release_plugin_snapshot", lambda release, dest: tmp_path / "snapshot.zip")
+    monkeypatch.setattr(updater, "_smoke_restored_plugins", lambda release, transaction: {"plugin_count": 0})
     monkeypatch.setattr(
         updater,
-        "_apply_release_plugin_snapshot",
-        lambda *_: (_ for _ in ()).throw(updater.UpdateError("plugin failed")),
+        "_build_release_plugin_snapshot",
+        lambda release, destination: destination / "snapshot.zip",
     )
 
-    with pytest.raises(updater.UpdateError, match="plugin failed"):
-        updater.install_source(source)
+
+def _transactional_update_fixture(tmp_path, monkeypatch):
+    root = tmp_path / "runtime"
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
+    monkeypatch.setenv("CIFERECA_BIN_DIR", str(tmp_path / "bin"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    _patch_fake_runtime(monkeypatch)
+
+    old = root / "releases" / "1.0.0-old"
+    (old / ".venv" / "bin").mkdir(parents=True)
+    manifest_dir = old / "src" / "cifereca"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "plugin-release.json").write_text(
+        '{"schema":1,"packages":{"org.test":{"version":"1.0.0"}}}\n', encoding="utf-8",
+    )
+    (old / ".cifereca-install.json").write_text(
+        '{"version":"1.0.0","provenance":{"commit":"old-sha"}}\n', encoding="utf-8",
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "current").symlink_to(os.path.relpath(old, root))
+
+    packages = updater._plugin_packages_root()
+    _write_plugin_package(packages, "org.test", "1.0.0", b"A bytes", None)
+    _write_plugin_package(packages, "org.third-party", "7.0.0", b"independent", "7.0.0")
+
+    source = _release_with_plugin_manifest(tmp_path / "source", "2.0.0")
+    manifest = source / "src" / "cifereca" / "plugin-release.json"
+    manifest.write_text(
+        '{"schema":1,"packages":{'
+        '"org.test":{"version":"1.0.0"},'
+        '"org.only-b":{"version":"2.0.0"}'
+        '}}\n',
+        encoding="utf-8",
+    )
+
+    def apply_plugins(release, snapshot):
+        for package_id in ("org.test", "org.only-b"):
+            target = packages / package_id
+            if target.is_dir():
+                updater.shutil.rmtree(target)
+        _write_plugin_package(packages, "org.test", "1.0.0", b"B bytes", "1.0.0")
+        _write_plugin_package(packages, "org.only-b", "2.0.0", b"only B", "2.0.0")
+        return {"ok": True, "plugins": ["org.test", "org.only-b"]}
+
+    monkeypatch.setattr(updater, "_apply_release_plugin_snapshot", apply_plugins)
+    result = updater.install_source(
+        source,
+        provenance={"type": "github", "commit": "new-sha"},
+    )
+    return root, old, packages, result
+
+
+def test_transactional_rollback_restores_exact_plugins_and_preserves_unrelated_state(tmp_path, monkeypatch):
+    root, old, packages, update = _transactional_update_fixture(tmp_path, monkeypatch)
+    config = updater.config_dir() / "config.json"
+    config.write_text('{"changed_after_update":true}\n', encoding="utf-8")
+    third_party_before = updater._package_identity("org.third-party")
+
+    result = updater.rollback()
+
+    assert Path(result["current"]).resolve() == old.resolve()
+    assert (packages / "org.test" / "1.0.0" / "payload.bin").read_bytes() == b"A bytes"
+    assert updater.json.loads((packages / "org.test" / "current.json").read_text())["active"] is None
+    assert not (packages / "org.only-b").exists()
+    assert updater._package_identity("org.third-party") == third_party_before
+    assert updater.json.loads(config.read_text())["changed_after_update"] is True
+    transaction = updater._read_transaction(Path(update["transaction"]))
+    assert transaction["state"] == "rolled_back"
+    assert transaction["core"]["before_current"]["commit"] == "old-sha"
+    assert transaction["core"]["after"]["commit"] == "new-sha"
+    assert transaction["packages"]["org.test"]["before"]["files"] != transaction["packages"]["org.test"]["after"]["files"]
+
+
+def test_transactional_rollback_refuses_post_update_plugin_change(tmp_path, monkeypatch):
+    root, old, packages, update = _transactional_update_fixture(tmp_path, monkeypatch)
+    current = updater._symlink_target(root / "current")
+    (packages / "org.test" / "1.0.0" / "payload.bin").write_bytes(b"changed later")
+
+    with pytest.raises(updater.UpdateError, match="ont changé après"):
+        updater.rollback()
+
+    assert updater._symlink_target(root / "current").resolve() == current.resolve()
+    assert (packages / "org.test" / "1.0.0" / "payload.bin").read_bytes() == b"changed later"
+    assert updater._read_transaction(Path(update["transaction"]))["state"] == "applied"
+
+
+def test_interrupted_rollback_is_completed_idempotently(tmp_path, monkeypatch):
+    root, old, packages, update = _transactional_update_fixture(tmp_path, monkeypatch)
+    transaction_path = Path(update["transaction"])
+    transaction = updater._read_transaction(transaction_path)
+    updater._save_transaction(transaction_path, transaction, "rolling_back")
+    updater.shutil.rmtree(packages / "org.test")
+
+    result = updater.rollback()
+
+    assert result["recovered_transactions"] == [transaction["id"]]
     assert updater._symlink_target(root / "current").resolve() == old.resolve()
+    assert (packages / "org.test" / "1.0.0" / "payload.bin").read_bytes() == b"A bytes"
+    assert not (packages / "org.only-b").exists()
+    assert updater._read_transaction(transaction_path)["state"] == "rolled_back"
 
 
-def test_release_without_plugin_manifest_keeps_core_only_update_contract(tmp_path):
-    source = _mini_project(tmp_path / "source")
-    assert updater._release_plugin_manifest(source) == {}
+def test_status_and_cli_expose_transactional_plugin_restoration(tmp_path, monkeypatch, capsys):
+    root, old, packages, update = _transactional_update_fixture(tmp_path, monkeypatch)
+
+    status = updater.status()
+    assert status["transaction"]["state"] == "applied"
+    assert status["transaction"]["packages"]["org.test"]["versions"] == ["1.0.0"]
+    assert len(status["transaction"]["packages"]["org.test"]["sha256"]) == 64
+    assert status["incomplete_transactions"] == []
+
+    assert updater.main(["--rollback", "--json"]) == 0
+    result = updater.json.loads(capsys.readouterr().out)
+    assert Path(result["current"]).resolve() == old.resolve()
+    assert result["plugins_restored"] == ["org.only-b", "org.test"]
+    assert result["plugin_state"]["org.test"]["active"] is None
+    assert (packages / "org.test" / "1.0.0" / "payload.bin").read_bytes() == b"A bytes"
+
