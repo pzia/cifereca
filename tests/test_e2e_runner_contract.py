@@ -120,6 +120,7 @@ def test_youth_booktrust_replay_uses_real_installed_provider_and_offline_http():
         "youth-1024", "youth-1366", "youth-booktrust-1024", "youth-booktrust-1366",
         "youth-milan-1024", "youth-milan-1366",
         "youth-editions-1024", "youth-editions-1366",
+        "youth-library-search-1024", "youth-library-search-1366",
     ]
     for name in names[2:4]:
         scenario = runner.SCENARIOS[name]
@@ -247,3 +248,29 @@ def test_youth_selected_source_enter_probe_requires_real_gtk_and_single_mock_req
     assert '"00b-booktrust-keyboard-local"' in source
     assert '"00c-booktrust-keyboard-remote"' in source
     assert '"01b-booktrust-keyboard-no-duplicate"' in source
+
+
+def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():
+    runner = _module()
+    for width in (1024, 1366):
+        scenario = runner.SCENARIOS[f"youth-library-search-{width}"]
+        assert scenario["plugin"] == "catalog.youth"
+        assert scenario["runner"] == "gtk-youth"
+        assert scenario["library_search"] is True
+        assert scenario["width"] == width
+        assert scenario["fixture"] == "search-filters"
+    runner_source = RUNNER.read_text(encoding="utf-8")
+    assert '"--library-search"' in runner_source
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    for required in (
+        'def library_search_start_ui():',
+        'def library_search_verify_local():',
+        'def library_search_verify_return():',
+        'def library_search_verify_enter():',
+        'def library_search_verify_space():',
+        'device.click_widget(action)',
+        'keys("Return")',
+        'keys("space")',
+        'assert window._search_mode == "local" and not online_attempts',
+    ):
+        assert required in source
