@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from hashlib import sha256
@@ -342,6 +343,7 @@ class MilanYouthSource:
         self._own_client = client is None
         self.context = None
         self._last_diagnostic: dict[str, object] = {}
+        self._call_requests: ContextVar[int | None] = ContextVar("youth_milan_call_requests", default=None)
         self.client = client or httpx.Client(
             timeout=max(1.0, min(float(timeout_seconds), 30.0)),
             follow_redirects=False,
@@ -397,6 +399,9 @@ class MilanYouthSource:
                 raise ValueError("only Milan product pages are allowed")
         else:
             raise ValueError("invalid Milan request kind")
+        counter = self._call_requests.get()
+        if counter is not None:
+            self._call_requests.set(counter + 1)
         response = self.client.get(allowed)
         if kind == "listing":
             self._last_diagnostic.update({
@@ -450,6 +455,7 @@ class MilanYouthSource:
             "age_filter_present": wanted_age is not None,
             "phase": "listing", "detail_requests": 0,
         }
+        request_token = self._call_requests.set(0)
         try:
             listing_html = self._get(listing_url(page=page), kind="listing")
             products = listing_products(
@@ -493,11 +499,15 @@ class MilanYouthSource:
                 "items": tuple(out),
                 "next_cursor": cursor,
                 "fresh_for_seconds": 86400,
+                "collection_request_count": self._call_requests.get(),
             }
         except Exception as exc:
+            exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic["error_type"] = type(exc).__name__
             self._publish_diagnostic("error")
             raise
+        finally:
+            self._call_requests.reset(request_token)
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 8) -> Mapping[str, object]:
         return self.browse(text_filter=_text(query), cursor=cursor, limit=limit)

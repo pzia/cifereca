@@ -359,3 +359,20 @@ def test_http_error_preserves_typed_status_for_youth_diagnostics():
     assert raised.value.http_status == 429
 
 
+
+
+def test_ecole_per_collection_request_evidence_survives_http_failure():
+    requests = []
+    def handler(req):
+        requests.append(req)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert source.search("loup")["collection_request_count"] == 1
+    assert len(requests) == 1
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(401, headers={"content-type": "text/html"}, text="private")
+    ))
+    with pytest.raises(RuntimeError, match="401") as exc:
+        source.search("loup")
+    assert exc.value.collection_request_count == 1
+    assert source._call_requests.get() is None

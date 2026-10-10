@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -329,6 +330,7 @@ class BookTrustSource:
         self._own_client = client is None
         self.context = None
         self._last_diagnostic: dict[str, object] = {}
+        self._call_requests: ContextVar[int | None] = ContextVar("youth_booktrust_call_requests", default=None)
         self.client = client or httpx.Client(
             timeout=max(1.0, min(float(timeout_seconds), 30.0)),
             follow_redirects=False,
@@ -374,6 +376,9 @@ class BookTrustSource:
         if not allowed:
             raise ValueError("BookTrust URL outside allowlist")
         if for_listing:
+            counter = self._call_requests.get()
+            if counter is not None:
+                self._call_requests.set(counter + 1)
             self._last_diagnostic["request_count"] = int(
                 self._last_diagnostic.get("request_count", 0)
             ) + 1
@@ -429,8 +434,9 @@ class BookTrustSource:
                 "returned_items": 0,
             })
             self._publish_diagnostic("skipped")
-            return {"items": (), "next_cursor": "", "fresh_for_seconds": 86_400}
+            return {"items": (), "next_cursor": "", "fresh_for_seconds": 86_400, "collection_request_count": 0}
         bounded = max(1, min(int(limit), 50))
+        request_token = self._call_requests.set(0)
         try:
             url = _query_url(age=age, themes=themes, page=page)
             html = self._get_text(url, for_listing=True)
@@ -465,8 +471,10 @@ class BookTrustSource:
                 "items": items,
                 "next_cursor": cursor_out,
                 "fresh_for_seconds": 86_400,
+                "collection_request_count": self._call_requests.get(),
             }
         except Exception as exc:
+            exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic.update({
                 "error_type": type(exc).__name__,
                 "state": "error",
@@ -474,6 +482,8 @@ class BookTrustSource:
             })
             self._publish_diagnostic("error")
             raise
+        finally:
+            self._call_requests.reset(request_token)
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 50) -> Mapping[str, object]:
         return self.browse(text_filter=_text(query), cursor=cursor, limit=limit)
