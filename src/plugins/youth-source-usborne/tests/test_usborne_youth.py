@@ -378,3 +378,20 @@ def test_http_error_preserves_typed_status_for_youth_diagnostics():
     assert raised.value.http_status == 503
 
 
+
+
+def test_usborne_per_collection_request_evidence_is_exact_on_success_and_error():
+    requests = []
+    def handler(req):
+        requests.append(req)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=HTML)
+    source = UsborneYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert source.browse(age=3)["collection_request_count"] == 1
+    assert len(requests) == 1
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(429, headers={"content-type": "text/html"}, text="private")
+    ))
+    with pytest.raises(RuntimeError, match="429") as exc:
+        source.browse(age=3)
+    assert exc.value.collection_request_count == 1
+    assert source._call_requests.get() is None

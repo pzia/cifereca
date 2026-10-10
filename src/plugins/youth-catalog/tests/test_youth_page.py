@@ -729,3 +729,88 @@ def test_source_diagnostics_renderer_handles_missing_optional_broker_without_net
     view.plugin = NS(context=NS(broker=lambda name: (calls.append(name), None)[1]))
     assert view.refresh_source_diagnostics() is False
     assert calls == ["diagnostics"]
+
+
+def test_youth_ui_records_per_call_http_count_without_consulting_shared_snapshot():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.identity_id = lambda: "alice"
+    view.status = NS(set_label=lambda *_: None)
+    view.render_cached = lambda: None
+    view.refresh_source_diagnostics = lambda: None
+    view.collected(
+        {"items": [{"title": "Private book"}], "collection_request_count": 4},
+        source_id="milan", label="Milan", append=False,
+        source_plugin="youth.source.milan", requested_limit=8,
+    )
+    alice = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
+    assert alice["milan"]["request_count"] == 4
+    assert alice["milan"]["requested_limit"] == 8
+    summary, lines = source_diagnostic_presentation(tuple(alice.values()))
+    assert "requêtes HTTP : 4" in " ".join(lines)
+    assert "Private book" not in repr(alice)
+    assert {r["source_id"]: r for r in view.catalog.source_diagnostics("bob")}["milan"]["request_count"] is None
+
+
+def test_youth_explicit_pre_request_cancel_has_zero_http_and_keeps_cache():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    view.catalog.ingest("alice", "booktrust", [{"title": "Previous private title"}])
+    tasks, dispatch, messages, public_requests = Tasks(), [], [], []
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda callback: dispatch.append(callback))
+    view.status = NS(set_label=messages.append)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source = lambda: NS(plugin_id="youth.source.booktrust", service=NS(
+        source_info=lambda: {"source_id": "booktrust", "display_name": "BookTrust"},
+        browse=lambda **kwargs: public_requests.append(kwargs),
+    ))
+    view.filter_state = lambda: FilterState(query="Atlas", age=8, themes=())
+    view.refresh_source_diagnostics = lambda: None
+
+    view._remote_request("")
+    assert len(tasks.handles) == 1
+    tasks.handles[0].control = NS(cancelled=lambda: True)
+    tasks.handles[0].finish()
+    dispatch.pop()()
+
+    assert public_requests == []
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    assert row["collection_state"] == "cancelled"
+    assert row["request_count"] == 0
+    assert row["received_count"] is None
+    assert row["cache_count"] == 1
+    assert "Previous private title" not in repr(row)
+    assert "youth.source.booktrust" not in str(public_requests)
+
+
+def test_unexpected_empty_adapter_response_is_invalid_not_cancelled():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    tasks, dispatch = Tasks(), []
+    view.plugin = NS(context=NS(broker=lambda name: tasks))
+    view.GLib = NS(idle_add=lambda callback: dispatch.append(callback))
+    view.status = NS(set_label=lambda *_: None)
+    view.generation, view.task, view.disposed = 0, None, False
+    view.identity_id = lambda: "alice"
+    view.selected_source_plugin = lambda: "youth.source.booktrust"
+    view.selected_source = lambda: NS(plugin_id="youth.source.booktrust", service=NS(
+        source_info=lambda: {"source_id": "booktrust"},
+    ))
+    view.filter_state = lambda: FilterState(query="Atlas", age=8, themes=())
+    view.refresh_source_diagnostics = lambda: None
+    token = ("alice", "youth.source.booktrust", "Atlas", 8, ())
+    view.run_remote(lambda control: None, lambda raw: 1 / 0, token)
+    tasks.handles[0].finish()
+    dispatch.pop()()
+    row = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}["booktrust"]
+    assert row["collection_state"] == "invalid"
+    assert row["request_count"] is None

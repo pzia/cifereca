@@ -50,11 +50,17 @@ def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
     status = code if type(code) is int and 100 <= code <= 599 else None
     error_type = type(exc).__name__
     state = (
-        "timeout" if "timeout" in error_type.casefold()
+        "cancelled" if "cancel" in error_type.casefold()
+        else "timeout" if "timeout" in error_type.casefold()
         else "http_error" if status is not None
         else "error"
     )
-    return {"state": state, "error_type": error_type, "http_status": status}
+    # Only a directly attached per-call integer is authoritative; never read
+    # a provider's shared last diagnostic (it may belong to another identity).
+    return {
+        "state": state, "error_type": error_type, "http_status": status,
+        "request_count": getattr(exc, "collection_request_count", None),
+    }
 
 
 def safe_ingest_rejection_categories(errors: Iterable[str]) -> dict[str, int]:
@@ -657,6 +663,7 @@ class YouthCatalogIndex:
         rejected: int = 0,
         received_count: int | None = None,
         requested_limit: int | None = None,
+        request_count: int | None = None,
         rejection_categories: Mapping[str, object] | None = None,
         duration_ms: int = 0,
         next_cursor_present: bool = False,
@@ -696,6 +703,10 @@ class YouthCatalogIndex:
             "requested_limit": (
                 max(1, min(requested_limit, 500))
                 if type(requested_limit) is int else None
+            ),
+            "request_count": (
+                max(0, min(request_count, 100_000))
+                if type(request_count) is int and request_count >= 0 else None
             ),
             "rejection_categories": {
                 key: max(0, min(value, 100_000))
@@ -794,6 +805,7 @@ class YouthCatalogIndex:
                 "rejected": event.get("rejected", 0),
                 "received_count": event.get("received_count"),
                 "requested_limit": event.get("requested_limit"),
+                "request_count": event.get("request_count"),
                 "rejection_categories": dict(event.get("rejection_categories", {})),
                 "duration_ms": event.get("duration_ms", 0),
                 "next_cursor_present": event.get("next_cursor_present", False),
@@ -1018,6 +1030,10 @@ class YouthCatalogPlugin:
                 accepted=report.accepted, rejected=report.rejected,
                 received_count=report.accepted + report.rejected,
                 requested_limit=bounded,
+                request_count=(
+                    raw.get("collection_request_count") if isinstance(raw, Mapping)
+                    else None
+                ),
                 rejection_categories=safe_ingest_rejection_categories(report.errors),
                 next_cursor_present=bool(next_cursor),
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),

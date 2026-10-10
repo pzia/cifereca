@@ -166,7 +166,10 @@ def test_unsupported_age_returns_empty_without_unfiltered_network_call():
         client=httpx.Client(transport=httpx.MockTransport(handler))
     )
     page = source.browse(age=15)
-    assert page == {"items": (), "next_cursor": "", "fresh_for_seconds": 86400}
+    assert page == {
+        "items": (), "next_cursor": "", "fresh_for_seconds": 86400,
+        "collection_request_count": 0,
+    }
     assert calls == 0
 
 
@@ -441,3 +444,42 @@ def test_http_error_preserves_typed_status_for_youth_diagnostics():
     assert raised.value.http_status == 503
 
 
+
+
+def test_booktrust_per_call_request_evidence_success_failure_and_no_request():
+    seen = []
+    def ok(req):
+        seen.append(req)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(ok)))
+    assert source.browse(age=8)["collection_request_count"] == 1
+    assert len(seen) == 1
+    assert source.browse(age=15)["collection_request_count"] == 0
+    assert len(seen) == 1
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(503, headers={"content-type": "text/html"}, text="private")
+    ))
+    with pytest.raises(RuntimeError, match="503") as failed:
+        source.browse(age=8)
+    assert failed.value.collection_request_count == 1
+
+
+def test_booktrust_concurrent_collect_calls_keep_individual_counts():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    barrier = Barrier(2)
+    seen = []
+    def handler(req):
+        seen.append(req)
+        barrier.wait(timeout=8)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(pool.map(
+            lambda text: source.search(text, limit=1), ("press", "press")
+        ))
+    assert len(seen) == 2
+    assert [result["collection_request_count"] for result in results] == [1, 1]
+    assert all(len(result["items"]) == 1 for result in results)
+    assert source._call_requests.get() is None
