@@ -329,6 +329,11 @@ def test_inventory_notification_connects_delta_without_restarting_other_sources(
         original = svc._sessions["cifericaopds.alpha::__public__"]
         assert original.connected and len(coll.callbacks) == 1
         assert len(mgr.callbacks) == 1
+        # Initial attachment publishes an inventory synchronously. Reset the
+        # event so only the *next* asynchronous notification can unblock wait().
+        assert done.is_set()
+        notifications.clear()
+        done.clear()
         # A plugin-local cache update, never a Core HTTP discovery request.
         coll.value = snapshot(child("alpha"), child("beta"), generation=2)
         coll.notify()
