@@ -26,6 +26,20 @@ SCENARIOS = {
         ),
         "runner": "gtk-probe",
     },
+    "book-detail-1024": {
+        "plugin": "detail",
+        "fixture": "search-filters",
+        "description": "P1 #942 : vrai Détail bibliographique repliable Recherche/Bibliothèque GTK 1024.",
+        "runner": "gtk-detail",
+        "width": 1024,
+    },
+    "book-detail-1366": {
+        "plugin": "detail",
+        "fixture": "search-filters",
+        "description": "P1 #942 : vrai Détail bibliographique repliable Recherche/Bibliothèque GTK 1366.",
+        "runner": "gtk-detail",
+        "width": 1366,
+    },
     "youth-1024": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
@@ -219,6 +233,13 @@ def main() -> int:
                     *(["--milan"] if scenario.get("milan") else []),
                     *(["--editions"] if scenario.get("editions") else []),
                 ]
+            elif scenario.get("runner") == "gtk-detail":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/book_detail_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
             elif scenario.get("runner") == "gtk-probe":
                 command = [
                     xvfb, "-a", "-s", "-screen 0 1280x1024x24",
@@ -252,7 +273,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-youth"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-detail"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
