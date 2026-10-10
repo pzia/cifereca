@@ -1,7 +1,7 @@
 """Specialized Youth search page. Rendering reads the local youth cache only."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import re
 from time import perf_counter
@@ -257,6 +257,14 @@ def source_info(row: object) -> tuple[str, str]:
     return source_id, label
 
 
+class YouthSourceCancelled(RuntimeError):
+    """User-cancelled explicit collection; no raw source data in diagnostics."""
+
+    def __init__(self, request_count: object = None):
+        super().__init__("Youth source collection cancelled")
+        self.collection_request_count = request_count
+
+
 def fetch_source_page(
     service: object,
     query: str,
@@ -265,21 +273,43 @@ def fetch_source_page(
     themes: tuple[str, ...],
     cursor: str | None,
     limit: int = 100,
+    cancelled: Callable[[], bool] | None = None,
 ) -> object:
-    """Explicit remote call. Prefer an optional age-aware browse extension when present."""
-    browse = getattr(service, "browse", None)
-    if callable(browse):
-        return browse(
-            age=age,
-            themes=themes,
-            text_filter=_text(query),
-            cursor=cursor,
-            limit=max(1, min(int(limit), 200)),
+    """Explicit source call with cooperative cancellation at network boundaries.
+
+    Synchronous HTTPX cannot abort an already-running GET here. If cancellation
+    happens while it runs, discard its returned rows *before* ingestion. Only
+    keep an HTTP count attested by this exact return value or raised exception.
+    """
+    if cancelled is not None and cancelled():
+        raise YouthSourceCancelled(0)
+    try:
+        browse = getattr(service, "browse", None)
+        if callable(browse):
+            result = browse(
+                age=age,
+                themes=themes,
+                text_filter=_text(query),
+                cursor=cursor,
+                limit=max(1, min(int(limit), 200)),
+            )
+        else:
+            search = getattr(service, "search", None)
+            if not callable(search):
+                raise TypeError("source jeunesse incompatible : search() absent")
+            result = search(_text(query), cursor=cursor, limit=max(1, min(int(limit), 200)))
+    except Exception as exc:
+        if cancelled is not None and cancelled():
+            raise YouthSourceCancelled(
+                getattr(exc, "collection_request_count", None)
+            ) from None
+        raise
+    if cancelled is not None and cancelled():
+        raise YouthSourceCancelled(
+            result.get("collection_request_count") if isinstance(result, Mapping)
+            else None
         )
-    search = getattr(service, "search", None)
-    if not callable(search):
-        raise TypeError("source jeunesse incompatible : search() absent")
-    return search(_text(query), cursor=cursor, limit=max(1, min(int(limit), 200)))
+    return result
 
 
 def fetch_bibliography(service: object, isbn: object) -> tuple[object, ...]:
@@ -863,6 +893,7 @@ class YouthView:
             lambda control: _CANCELLED_BEFORE_REQUEST if control.cancelled() else fetch_source_page(
                 service, state.query, age=state.age, themes=state.themes,
                 cursor=cursor or None, limit=100,
+                cancelled=control.cancelled,
             ),
             lambda raw: self.collected(
                 raw, source_id=source_id, label=label, append=append,
@@ -930,7 +961,11 @@ class YouthView:
                             requested_limit=100,
                             duration_ms=max(0, int((perf_counter() - started) * 1000)),
                         )
-                    self.status.set_label("Échec de la source. Le cache précédent est conservé.")
+                    self.status.set_label(
+                        "Collecte annulée. Le cache précédent est conservé."
+                        if failure["state"] == "cancelled"
+                        else "Échec de la source. Le cache précédent est conservé."
+                    )
                     self.refresh_source_diagnostics()
                 else:
                     complete(result)
