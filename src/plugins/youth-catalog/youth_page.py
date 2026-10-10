@@ -403,9 +403,9 @@ def source_diagnostic_presentation(rows):
         if state in failures and count:
             line += " (conservé)"
         if row.get("attempted_at_utc"):
-            line += f" · essai UTC : {str(row['attempted_at_utc'])[:16]}"
+            line += f" · essai UTC : {str(row['attempted_at_utc'])[:16].replace('T', ' ')}"
         if row.get("fresh_until") and count:
-            line += f" · fraîcheur annoncée jusqu’au {str(row['fresh_until'])[:16]} UTC"
+            line += f" · fraîcheur annoncée jusqu’au {str(row['fresh_until'])[:16].replace('T', ' ')} UTC"
         if int(row.get("rejected") or 0) > 0:
             line += f" · {int(row['rejected'])} rejet(s)"
         lines.append(line)
