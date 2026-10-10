@@ -90,6 +90,7 @@ def main() -> int:
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
     provider.add_argument("--editions", action="store_true", help="Offline same-title editions and conflicting provenance on real GTK")
+    provider.add_argument("--filters-ux", action="store_true", help="UX #922: strict GTK audit of visible labels and tooltips")
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -264,6 +265,110 @@ def main() -> int:
         visit(page.view.master._page.detail)
         return found
 
+
+    def filter_help_widgets():
+        """Collect GTK widgets and *explicit* bound, mapped mnemonic labels."""
+        view = page.view
+        return {
+            "Profil": view.identity,
+            "Recherche": view.query,
+            "Âge": view.age,
+            "Type d’âge": view.age_kind,
+            "Source": view.source,
+            "Langue": view.language,
+            "Format": view.format,
+            "Type de livre": view.book_type,
+            "Thèmes": view.themes,
+            "Âges inférés": view.inferred,
+        }
+
+    def filter_help_snapshot():
+        controls = filter_help_widgets()
+        bound_labels = []
+        def visit(widget):
+            if isinstance(widget, Gtk.Label) and widget.get_mapped():
+                bound = widget.get_mnemonic_widget()
+                if bound is not None:
+                    bound_labels.append((bound, str(widget.get_text() or "")))
+            child = widget.get_first_child()
+            while child is not None:
+                visit(child)
+                child = child.get_next_sibling()
+        visit(page.view.widget)
+
+        rows = {}
+        for name, widget in controls.items():
+            labels = [label for target, label in bound_labels if target == widget]
+            own_label = ""
+            if isinstance(widget, Gtk.CheckButton):
+                own_label = str(widget.get_label() or "")
+                if own_label and widget.get_mapped():
+                    labels.append(own_label)
+            rows[name] = {
+                "visible": bool(widget.get_mapped()),
+                "permanent_labels": labels,
+                "tooltip": str(widget.get_tooltip_text() or ""),
+                "widget_type": type(widget).__name__,
+            }
+        return rows
+
+    def filter_help_start_ui():
+        """P1 #922: audit before and after real keyboard input, local-only."""
+        assert not args.milan and not args.editions and not args.library_search
+        assert page.view.selected_source_plugin() == "", "Aucune collecte distante implicite"
+        result["filter_help_before"] = filter_help_snapshot()
+        assert len(result["filter_help_before"]) == 10
+        capture("00-jeunesse-controles-1366")
+        result["filter_help_query_click"] = device.click_widget(page.view.query)
+        device.type_text("Forest")
+        later(250, filter_help_after_input)
+
+    def filter_help_after_input():
+        assert page.view.query.get_text() == "Forest", "Saisie XTEST non appliquée"
+        assert not requests, "Aucun HTTP ne doit être émis pour saisir un filtre local"
+        assert page.view.selected_source_plugin() == "", "La source ne change pas implicitement"
+        after = filter_help_snapshot()
+        result["filter_help_after_input"] = after
+        capture("01-jeunesse-controles-saisie-1366")
+        before = result["filter_help_before"]
+
+        missing_tooltips = [
+            name for name, row in after.items()
+            if len(row["tooltip"].strip()) < 18
+        ]
+        missing_labels = [
+            name for name, row in after.items()
+            if not row["permanent_labels"] or not row["visible"]
+        ]
+        lost_labels = [
+            name for name, row in after.items()
+            if row["permanent_labels"] != before[name]["permanent_labels"]
+        ]
+        # The help must not imply that selecting "Toutes les sources"
+        # triggers global HTTP. One deliberate collect per selected provider.
+        source_help = after["Source"]["tooltip"].casefold()
+        query_help = after["Recherche"]["tooltip"].casefold()
+        misleading_help = []
+        if not ("source" in source_help and "collect" in source_help):
+            misleading_help.append("Source : filtre du cache ≠ collecte globale")
+        if not ("local" in query_help or "cache" in query_help):
+            misleading_help.append("Recherche : premier filtrage local explicite")
+
+        result["filter_help_missing_tooltips"] = missing_tooltips
+        result["filter_help_missing_labels"] = missing_labels
+        result["filter_help_lost_labels_after_input"] = lost_labels
+        result["filter_help_misleading_text"] = misleading_help
+        result["filter_help_no_remote_requests"] = True
+        assert not (missing_tooltips or missing_labels or lost_labels or misleading_help), (
+            "UX P1 #922 : la fiche Jeunesse exige 10 aides et noms permanents ; "
+            f"tooltips={missing_tooltips}, labels={missing_labels}, "
+            f"labels_perdus={lost_labels}, contexte={misleading_help}"
+        )
+        result["status"] = "PASS"
+        write_report()
+        rc[0] = 0
+        app.quit()
+
     def start_ui():
         assert window.view_stack.get_visible_child_name() == "youth"
         assert page.view is not None, "Real ui.page.youth factory not called"
@@ -271,6 +376,9 @@ def main() -> int:
         assert window.get_width() <= args.width, "Youth window overflows Xvfb viewport"
         assert page.view.identity.get_model().get_n_items() == 2
         assert page.view.age.get_model().get_n_items() == 19, "Only 0..17 are selectable, not 18"
+        if args.filters_ux:
+            filter_help_start_ui()
+            return
         if args.library_search:
             library_search_start_ui()
             return
