@@ -49,7 +49,9 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         sync_label = "Non prise en charge"
     elif status == "running":
         sync_label = "En cours…"
-    elif error or status == "error":
+    elif status == "partial":
+        sync_label = "Partielle" + (f" · {last_attempt}" if last_attempt else "")
+    elif error or status in {"error", "failed"}:
         sync_label = "Échec" + (f" · {error}" if error else "")
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
@@ -72,6 +74,8 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
+    if status in {"partial", "error", "failed"} and last_success:
+        summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
         summary += f"\nAction indisponible : {disabled_reason}"
 
