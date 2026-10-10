@@ -358,15 +358,15 @@ def main() -> int:
         assert not requests, "Selecting source triggered unsolicited HTTP"
         assert_rows()
         # #910: exercise the true GTK Entry and installed provider under XTEST.
-        # Both synthetic BookTrust titles contain "des"; the live endpoint is
+        # Both synthetic BookTrust titles contain "The"; the live endpoint is
         # replaced by the existing HTTP MockTransport for this scenario.
         device.click_widget(page.view.query)
-        device.type_text("des")
+        device.type_text("The")
         later(220, source_keyboard_local)
 
     def source_keyboard_local():
         assert page.view.selected_source_plugin() == "youth.source.booktrust"
-        assert page.view.query.get_text() == "des", "Physical keyboard text did not reach GTK"
+        assert page.view.query.get_text() == "The", "Physical keyboard text did not reach GTK"
         assert not requests, "Typing in Youth must remain cache-only"
         audit = result["keyboard_selected_source"] = {
             "source_plugin": page.view.selected_source_plugin(),
