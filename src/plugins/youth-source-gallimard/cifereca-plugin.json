@@ -1,0 +1,26 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.youth-source-gallimard",
+    "version": "0.1.0",
+    "name": "Jeunesse — Gallimard Jeunesse",
+    "publisher": "CIFERECA",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "youth.source.gallimard",
+      "type": "youth.source",
+      "version": "0.1.0",
+      "entrypoint": "gallimard_youth:PLUGIN",
+      "display_name": "Gallimard Jeunesse — âges éditeur",
+      "description": "Catalogue Gallimard Jeunesse : fiches de résultats avec EAN et âges publiés.",
+      "help_text": "Recherche sur /catalogue.html?text=... ; lit les ISBN Bookland et les âges explicitement publiés dans les cartes. Pas de consultation de fiches, de contournement anti-bot ni de pagination sans lien attesté. Désactivé par défaut en attente de qualification HTTP.",
+      "enabled_by_default": false,
+      "priority": -63,
+      "instantiation": "singleton_public",
+      "capabilities": ["youth.source.search", "youth.source.browse"],
+      "system_requires": [{"type": "python-package", "name": "httpx", "version": ">=0.28.1,<0.29", "import": "httpx"}]
+    }
+  ]
+}
