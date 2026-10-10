@@ -321,3 +321,47 @@ def test_failed_ecole_qualification_retains_safe_snapshot_without_extra_http(
         "error_type": "RuntimeError",
     }
     assert "<html>" not in str(report)
+
+
+
+def test_live_evidence_rejects_valid_ean_check_digits_without_isbn_prefix():
+    """No live network: only exact 978/979 ISBN-13 with a valid check digit."""
+    script = script_module()
+    assert script._valid_isbn13("9782211309684")
+    assert script._valid_isbn13("9791234567896")
+    for bad in (
+        "3575678940134",  # toy/peluche EAN-13, valid GTIN check digit
+        "3127020507597",  # jeu EAN-13, valid GTIN check digit
+        "9780000000000",  # ISBN prefix but invalid ISBN checksum
+        "978221130968",   # missing digit
+        "978221130968X",  # invalid ISBN-13 character
+        "9782211309684\n", # no extraneous whitespace
+    ):
+        assert not script._valid_isbn13(bad)
+
+    for source_id, host in (
+        ("ecole-loisirs", "www.ecoledesloisirs.fr"),
+        ("milan", "www.editionsmilan.com"),
+    ):
+        age = NS(source_id=source_id, age_kind="publisher",
+                 source_label="3 à 6 ans", age_min=3, age_max=6)
+        base = dict(title="Livre", age_ranges=(age,),
+                    provenance=(source_id,),
+                    notice_url=f"https://{host}/livre/ouvrage")
+        for bad in ("3575678940134", "3127020507597", "9780000000000"):
+            row = NS(**(base | {"identifiers": {"isbn": bad}}))
+            assert script.evidence_for((row,), source_id) == []
+        for good in ("9782211309684", "9791234567896"):
+            row = NS(**(base | {"identifiers": {"isbn": good}}))
+            actual = script.evidence_for((row,), source_id)
+            assert len(actual) == 1 and actual[0]["isbn13"] == good
+
+
+def test_booktrust_qualification_remains_age_evidence_based_without_isbn():
+    script = script_module()
+    age = NS(source_id="booktrust", age_kind="interest",
+             source_label="Interest age 7-9", age_min=7, age_max=9)
+    book = NS(title="BookTrust title", identifiers={}, age_ranges=(age,),
+              notice_url="https://www.booktrust.org.uk/book-recommendations/bookfinder/example/",
+              provenance=("booktrust",))
+    assert len(script.evidence_for((book,), "booktrust")) == 1
