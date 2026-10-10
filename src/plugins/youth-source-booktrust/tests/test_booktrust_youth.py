@@ -441,3 +441,49 @@ def test_http_error_preserves_typed_status_for_youth_diagnostics():
     assert raised.value.http_status == 503
 
 
+
+
+def test_booktrust_per_call_request_evidence_success_failure_and_no_request():
+    seen = []
+    def ok(req):
+        seen.append(req)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(ok)))
+    assert source.browse(age=8)["collection_request_count"] == 1
+    assert len(seen) == 1
+    assert source.browse(age=15)["collection_request_count"] == 0
+    assert len(seen) == 1
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(503, headers={"content-type": "text/html"}, text="private")
+    ))
+    with pytest.raises(RuntimeError, match="503") as failed:
+        source.browse(age=8)
+    assert failed.value.collection_request_count == 1
+
+
+def test_booktrust_concurrent_collect_calls_keep_individual_counts():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from youth_catalog import YouthCatalogPlugin
+
+    barrier = Barrier(2)
+    seen = []
+    def handler(req):
+        seen.append(req)
+        barrier.wait(timeout=8)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    catalog = YouthCatalogPlugin()
+    def collect(identity):
+        return catalog.collect_source(identity, source, "press", limit=1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(pool.map(collect, ("alice", "bob")))
+    assert all(result.accepted == 1 for result in results)
+    assert len(seen) == 2
+    for identity in ("alice", "bob"):
+        row = {r["source_id"]: r for r in catalog.source_diagnostics(identity)}["booktrust"]
+        assert row["request_count"] == 1
+        assert row["accepted"] == 1
+    assert source._call_requests.get() is None
