@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from time import perf_counter
 from urllib.parse import urlsplit
@@ -14,6 +14,7 @@ from cifereca.plugin_api import (
     DocumentLink,
     UiActionContribution,
     UiBookDetailPresentation,
+    UiBookDetailAction,
     UiBookListEntry,
     UiPageContribution,
 )
@@ -837,7 +838,31 @@ class YouthView:
         if self.selected_book is None:
             self.master.empty_detail()
             return
-        self.master.show_detail(detail_presentation(self.selected_book))
+        presentation = detail_presentation(self.selected_book)
+        title = _text(getattr(self.selected_book, "title", ""))
+        search = getattr(self.host, "search_books", None)
+        if callable(search) and 2 <= len(title) <= 512:
+            identity_id = self.identity_id()
+            presentation = replace(presentation, actions=(
+                *presentation.actions,
+                UiBookDetailAction(
+                    id="search-library",
+                    title="Rechercher en bibliothèque",
+                    icon_name="system-search-symbolic",
+                    callback=lambda q=title, identity=identity_id: self._search_library(
+                        q, identity,
+                    ),
+                ),
+            ))
+        self.master.show_detail(presentation)
+
+    def _search_library(self, query: str, identity_id: str) -> None:
+        """Local catalogue only. Reject cross-identity navigation explicitly."""
+        method = getattr(self.host, "search_books", None)
+        if not callable(method) or not method(
+            query, field="title", online=False, identity_id=identity_id,
+        ):
+            self.host.toast("Recherche impossible : vérifiez le profil sélectionné.")
 
     def open_selected(self):
         if not self.selected_book:
