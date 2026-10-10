@@ -1245,3 +1245,21 @@ def test_youth_ui_collected_attaches_only_explicit_ecole_source_funnel():
     }["ecole-loisirs"]
     assert bob["collection_state"] == "not_tested"
     assert bob["pipeline"] == {}
+
+
+def test_detail_does_not_silently_drop_known_multivalued_metadata():
+    ages = tuple(YouthAgeRange(age, age + 1) for age in range(1, 11))
+    book = youth_book(
+        authors=("Autrice A", "Auteur B"),
+        age_ranges=ages,
+        themes=tuple(f"thème {i}" for i in range(15)),
+        publishers=tuple(f"éditeur {i}" for i in range(8)),
+    )
+    detail = detail_presentation(book)
+    assert len(detail.sections[0].fields) == 10
+    fields = [field for section in detail.sections for field in section.fields]
+    assert [field.value for field in fields if field.label == "Auteur"] == [
+        "Autrice A", "Auteur B",
+    ]
+    assert "thème 14" in next(field.value for field in fields if field.id == "themes")
+    assert "éditeur 7" in next(field.value for field in fields if field.id == "publishers")
