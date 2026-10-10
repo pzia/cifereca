@@ -810,3 +810,65 @@ def test_source_diagnostic_stage_is_strictly_whitelisted():
     row = {r["source_id"]: r for r in index.source_diagnostics("alice")}["milan"]
     assert row["collection_stage"] == "listing"
     assert row["http_status"] == 429
+
+
+def test_youth_per_call_http_counts_are_strict_and_isolated_by_identity():
+    from youth_catalog import YouthCatalogPlugin, collection_failure_diagnostic
+
+    plugin = YouthCatalogPlugin()
+    index = plugin.index
+    for value in (True, -1, "8", 1.5):
+        index.record_collection("alice", "booktrust", state="items", request_count=value)
+        assert {r["source_id"]: r for r in index.source_diagnostics("alice")}["booktrust"]["request_count"] is None
+    index.record_collection("alice", "booktrust", state="items", request_count=900_000)
+    assert {r["source_id"]: r for r in index.source_diagnostics("alice")}["booktrust"]["request_count"] == 100_000
+
+    class CountedSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            return {"items": [{"title": "One"}], "collection_request_count": 3}
+
+    counted = CountedSource()
+    assert plugin.collect_source("alice", counted, "One").accepted == 1
+    alice = {r["source_id"]: r for r in plugin.source_diagnostics("alice")}["youth.test"]
+    assert alice["request_count"] == 3
+    assert counted.calls == 1
+    assert "youth.test" not in {r["source_id"] for r in plugin.source_diagnostics("bob")}
+
+    class FailedCountedSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            error = RuntimeError("private url https://internal.invalid/session")
+            error.collection_request_count = 2
+            raise error
+
+    failed = FailedCountedSource()
+    assert plugin.collect_source("alice", failed, "One").rejected == 1
+    latest = {r["source_id"]: r for r in plugin.source_diagnostics("alice")}["youth.test"]
+    assert latest["collection_state"] == "error"
+    assert latest["request_count"] == 2
+    assert latest["cache_count"] == 1
+    assert "session" not in repr(latest)
+    assert failed.calls == 1
+    assert collection_failure_diagnostic(RuntimeError("HTTP 503"))["request_count"] is None
+
+
+def test_youth_collection_cancelled_exception_has_no_fabricated_http_count():
+    from youth_catalog import YouthCatalogPlugin, collection_failure_diagnostic
+
+    assert collection_failure_diagnostic(Exception("no evidence"))["request_count"] is None
+    assert collection_failure_diagnostic(TimeoutError("local"))["state"] == "timeout"
+    assert collection_failure_diagnostic(__import__("concurrent.futures", fromlist=["CancelledError"]).CancelledError())["state"] == "cancelled"
+    plugin = YouthCatalogPlugin()
+
+    class CancelledSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            raise __import__("concurrent.futures", fromlist=["CancelledError"]).CancelledError()
+
+    assert plugin.collect_source("alice", CancelledSource(), "").rejected == 1
+    row = {r["source_id"]: r for r in plugin.source_diagnostics("alice")}["youth.test"]
+    assert row["collection_state"] == "cancelled"
+    assert row["request_count"] is None
+
+
