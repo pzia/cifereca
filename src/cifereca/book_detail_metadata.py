@@ -7,6 +7,7 @@ never passed to the UI.  Filtering is conservative by design.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from itertools import chain
 import re
 
 # These are *public bibliographic facts*, not provider-internal identities.
@@ -42,6 +43,7 @@ _FIELDS = (
     ("isbn", "ISBN déclaré"),
     ("isbns", "ISBN déclaré"),
     ("isbn13", "ISBN déclaré"),
+    ("isbn10", "ISBN déclaré"),
     ("doi", "DOI déclaré"),
     ("ean", "EAN déclaré"),
     ("price", "Prix éditeur"),
@@ -52,7 +54,7 @@ _FIELD_KIND = {
     "subjects": "subject", "themes": "subject", "genres": "subject",
     "series": "series", "collection": "collection",
     "languages": "language", "language": "language",
-    "isbn": "isbn", "isbns": "isbn", "isbn13": "isbn",
+    "isbn": "isbn", "isbns": "isbn", "isbn13": "isbn", "isbn10": "isbn",
 }
 _COPY_ONLY = {"pages", "page_count", "number_of_pages", "publication_year",
               "dates", "published_at", "publication_date", "price"}
@@ -125,6 +127,44 @@ def _values(raw: object, key: str):
             yield value
 
 
+def _identifier_items(raw: object):
+    """Known public bibliographic IDs, never arbitrary provider identifiers.
+
+    EPUB records contain [{"scheme": "ISBN", "value": "..."}]. Other
+    catalogues sometimes expose {"isbn": "..."} instead. In both forms
+    only schemes on this allowlist cross the GTK metadata boundary.
+    """
+    if isinstance(raw, Mapping):
+        if "scheme" in raw or "value" in raw:
+            rows = (raw,)
+        else:
+            rows = ({"scheme": key, "value": value} for key, value in raw.items())
+    elif isinstance(raw, (list, tuple)):
+        rows = raw
+    else:
+        return
+    for index, record in enumerate(rows):
+        if index >= _MAX_COLLECTION_ENTRIES:
+            break
+        if not isinstance(record, Mapping):
+            continue
+        scheme = _safe_text(record.get("scheme") or record.get("type"))
+        value = _safe_text(record.get("value"))
+        if not scheme or not value or value.startswith("Valeur trop longue ("):
+            continue
+        normalized = re.sub(r"[^a-z0-9]", "", scheme.casefold())
+        if normalized in {"isbn", "isbn10", "isbn13"}:
+            yield "ISBN déclaré", value, "isbn"
+        elif normalized == "doi":
+            yield "DOI déclaré", value, "all"
+        elif normalized in {"ean", "ean13"}:
+            yield "EAN déclaré", value, "all"
+        elif normalized == "issn":
+            yield "ISSN déclaré", value, "all"
+        elif normalized == "oclc":
+            yield "OCLC déclaré", value, "all"
+
+
 def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
     """Return explicit bibliographic facts only; no network, HTML or raw dict."""
     if not isinstance(metadata, Mapping):
@@ -139,26 +179,32 @@ def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
     ):
         if not isinstance(data, Mapping):
             continue
-        for key, label in _FIELDS:
-            raw = data.get(key)
-            for value in _values(raw, key):
-                kind = _FIELD_KIND.get(key, "copy" if key in _COPY_ONLY else "all")
-                actual_label = prefix + label
-                if kind == "isbn":
-                    checked = canonical_book_isbn(value)
-                    if checked:
-                        value = checked
-                    else:
-                        actual_label, kind = prefix + "Identifiant déclaré", "all"
-                row = (actual_label, value, kind)
-                key_for_dedup = (actual_label, value)
-                if key_for_dedup in seen:
-                    continue
-                seen.add(key_for_dedup)
-                if len(rows) < _MAX_ROWS:
-                    rows.append(row)
+        known = (
+            (label, value, _FIELD_KIND.get(
+                key, "copy" if key in _COPY_ONLY else "all",
+            ))
+            for key, label in _FIELDS
+            for value in _values(data.get(key), key)
+        )
+        for label, value, kind in chain(
+            known, _identifier_items(data.get("identifiers")),
+        ):
+            actual_label = prefix + label
+            if kind == "isbn":
+                checked = canonical_book_isbn(value)
+                if checked:
+                    value = checked
                 else:
-                    omitted += 1
+                    actual_label, kind = prefix + "Identifiant déclaré", "all"
+            row = (actual_label, value, kind)
+            key_for_dedup = (actual_label, value)
+            if key_for_dedup in seen:
+                continue
+            seen.add(key_for_dedup)
+            if len(rows) < _MAX_ROWS:
+                rows.append(row)
+            else:
+                omitted += 1
     if omitted:
         rows.append(("Métadonnées", f"{omitted} valeur(s) supplémentaires non affichées (limite de sécurité)", "copy"))
     return tuple(rows)
