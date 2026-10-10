@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -338,6 +339,10 @@ def parse_detail(html: object, *, url: str, fallback_title: str = "") -> Mapping
     }
 
 
+class MilanCollectionCancelled(RuntimeError):
+    """Cooperative cancellation between network requests, with no private data."""
+
+
 class InvalidCatalogueStructureError(RuntimeError):
     """Publisher layout mismatch; never contains source HTML or private data."""
 
@@ -433,7 +438,12 @@ class MilanYouthSource:
         limit: int = 8,
         age: int | None = None,
         themes: tuple[str, ...] = (),
+        cancelled: Callable[[], bool] | None = None,
     ) -> Mapping[str, object]:
+        def check_cancelled() -> None:
+            if cancelled is not None and cancelled():
+                raise MilanCollectionCancelled("Milan collection cancelled")
+
         del themes
         try:
             page = int(cursor or "1")
@@ -461,7 +471,9 @@ class MilanYouthSource:
         }
         request_token = self._call_requests.set(0)
         try:
+            check_cancelled()  # no network call if already cancelled
             listing_html = self._get(listing_url(page=page), kind="listing")
+            check_cancelled()  # don't parse a cancelled listing
             products = listing_products(
                 listing_html, text_filter=text_filter, limit=36,
                 listing_diagnostic=self._last_diagnostic,
@@ -486,16 +498,20 @@ class MilanYouthSource:
             inspected = 0
             self._last_diagnostic["phase"] = "products"
             for title, url in products:
+                check_cancelled()  # stop before starting any further detail GET
                 if len(out) >= bounded or inspected >= 8:
                     break
                 inspected += 1
                 self._last_diagnostic["detail_requests"] = inspected
-                detail = parse_detail(self._get(url, kind="product"), url=url, fallback_title=title)
+                detail_html = self._get(url, kind="product")
+                check_cancelled()  # skip expensive parsing after cancellation
+                detail = parse_detail(detail_html, url=url, fallback_title=title)
                 if detail is None:
                     continue
                 if wanted_age is not None and int(detail["age_ranges"][0]["age_min"]) > wanted_age:
                     continue
                 out.append(detail)
+            check_cancelled()  # don't report success after the final detail
             self._last_diagnostic["qualified_items"] = len(out)
             self._last_diagnostic["phase"] = "complete"
             self._publish_diagnostic("ok")
@@ -509,12 +525,26 @@ class MilanYouthSource:
             exc.collection_request_count = self._call_requests.get()
             self._last_diagnostic["error_type"] = type(exc).__name__
             self._last_diagnostic["state"] = (
-                "invalid" if isinstance(exc, InvalidCatalogueStructureError) else "error"
+                "cancelled" if isinstance(exc, MilanCollectionCancelled)
+                else "invalid" if isinstance(exc, InvalidCatalogueStructureError)
+                else "error"
             )
             self._publish_diagnostic("error")
             raise
         finally:
             self._call_requests.reset(request_token)
+
+    def browse_with_cancellation(
+        self, *, cancelled: Callable[[], bool],
+        text_filter: str = "", cursor: str | None = None,
+        limit: int = 8, age: int | None = None,
+        themes: tuple[str, ...] = (),
+    ) -> Mapping[str, object]:
+        """Opt-in extension for the Youth task broker; browse stays compatible."""
+        return self.browse(
+            text_filter=text_filter, cursor=cursor, limit=limit,
+            age=age, themes=themes, cancelled=cancelled,
+        )
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 8) -> Mapping[str, object]:
         return self.browse(text_filter=_text(query), cursor=cursor, limit=limit)

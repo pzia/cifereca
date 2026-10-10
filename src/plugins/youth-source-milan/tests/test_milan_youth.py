@@ -669,3 +669,103 @@ def test_milan_per_collection_http_counter_includes_listing_and_product_details(
         source.browse(text_filter="Moqueuse", limit=1)
     assert exc.value.collection_request_count == 2
     assert source._call_requests.get() is None
+
+
+def test_milan_cooperative_cancel_after_listing_prevents_all_detail_http():
+    from milan_youth import MilanCollectionCancelled
+    state, requests = {"cancel": False}, []
+
+    def handler(request):
+        requests.append(request.url.path)
+        state["cancel"] = True
+        return httpx.Response(
+            200, headers={"content-type": "text/html"}, text=LISTING,
+        )
+
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(MilanCollectionCancelled) as err:
+        source.browse_with_cancellation(
+            cancelled=lambda: state["cancel"], age=8, limit=8,
+        )
+    assert requests == ["/livres/"]
+    assert err.value.collection_request_count == 1
+    assert source.diagnostic_snapshot()["state"] == "cancelled"
+    assert source.diagnostic_snapshot()["phase"] == "listing"
+    assert source._call_requests.get() is None
+
+
+def test_milan_cooperative_cancel_between_details_avoids_unneeded_http():
+    from milan_youth import MilanCollectionCancelled
+    from types import SimpleNamespace
+
+    state, requests, sent = {"cancel": False}, [], []
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: handler(request),
+    )))
+
+    def handler(request):
+        requests.append(request.url.path)
+        if request.url.path == "/livres/":
+            return httpx.Response(
+                200, headers={"content-type": "text/html"}, text=LISTING,
+            )
+        state["cancel"] = True
+        return httpx.Response(
+            200, headers={"content-type": "text/html"}, text=MOQUEUSE,
+        )
+
+    source.activate(SimpleNamespace(
+        report_diagnostic=lambda *args, **kwargs: sent.append((args, kwargs)),
+    ))
+    with pytest.raises(MilanCollectionCancelled) as err:
+        source.browse_with_cancellation(
+            cancelled=lambda: state["cancel"], age=8, limit=8,
+        )
+    assert requests == ["/livres/", "/livres/63047-moqueuse/"]
+    assert err.value.collection_request_count == 2
+    assert source.diagnostic_snapshot()["state"] == "cancelled"
+    assert source.diagnostic_snapshot()["detail_requests"] == 1
+    assert sent[-1][0] == ("Milan catalogue collection", "error")
+    assert source._call_requests.get() is None
+
+    # Next invocation is independent: no leaked cancellation flag or count.
+    state["cancel"] = False
+    source.client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text=LISTING if request.url.path == "/livres/" else MOQUEUSE,
+        )
+    ))
+    success = source.browse_with_cancellation(
+        cancelled=lambda: state["cancel"], text_filter="Moqueuse", limit=1,
+    )
+    assert success["collection_request_count"] == 2
+    assert len(success["items"]) == 1
+    assert source._call_requests.get() is None
+
+
+def test_milan_already_cancelled_before_first_http_proves_zero_requests():
+    from milan_youth import MilanCollectionCancelled
+
+    requests = []
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: requests.append(request) or httpx.Response(
+            200, headers={"content-type": "text/html"}, text=LISTING,
+        )
+    )))
+    with pytest.raises(MilanCollectionCancelled) as err:
+        source.browse_with_cancellation(cancelled=lambda: True)
+    assert requests == []
+    assert err.value.collection_request_count == 0
+    assert source.diagnostic_snapshot()["state"] == "cancelled"
+
+
+def test_milan_search_and_legacy_browse_contracts_unchanged_by_extension():
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text=LISTING if request.url.path == "/livres/" else MOQUEUSE,
+        )
+    )))
+    assert source.search("Moqueuse", limit=1)["collection_request_count"] == 2
+    assert source.browse(text_filter="Moqueuse", limit=1)["collection_request_count"] == 2
