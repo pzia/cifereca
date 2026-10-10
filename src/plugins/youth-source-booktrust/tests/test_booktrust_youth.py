@@ -521,3 +521,54 @@ def test_paginated_booktrust_html_without_book_links_is_structurally_invalid():
     assert valid["items"] == []
     assert valid["next_cursor"] == "3"
     assert source.diagnostic_snapshot()["state"] == "empty_unverified"
+
+
+def test_booktrust_current_call_funnel_distinguishes_candidate_and_local_text_loss():
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=LIST_HTML)
+
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.search("absent text", limit=100)
+    funnel = result["collection_pipeline"]
+    assert result["items"] == []
+    assert result["collection_request_count"] == len(requests) == 1
+    assert funnel["query_mode"] == "local"
+    assert funnel["effective_limit"] == 50
+    assert funnel["http_status"] == 200
+    assert funnel["html_bytes"] == len(LIST_HTML.encode("utf-8"))
+    assert len(funnel["html_sha256_prefix"]) == 16
+    assert funnel["candidate_count"] == funnel["product_link_count"] == 2
+    assert funnel["analyzed_count"] == 2
+    assert funnel["age_published_count"] == funnel["age_qualified_count"] == 2
+    assert funnel["returned_items"] == 0
+    assert funnel["rejection_reasons"] == {"text_filter_excluded": 2}
+    assert funnel["http_ms"] >= 0 and funnel["parse_ms"] >= 0
+    assert funnel["total_ms"] >= funnel["http_ms"]
+    assert "absent text" not in repr(funnel)
+    assert "Press Here" not in repr(funnel)
+    assert "bookfinder/" not in repr(funnel)
+
+    found = source.search("quest")
+    assert len(found["items"]) == 1
+    assert found["collection_pipeline"]["candidate_count"] == 2
+    assert found["collection_pipeline"]["returned_items"] == 1
+    assert found["collection_pipeline"]["rejection_reasons"] == {"text_filter_excluded": 1}
+    assert len(requests) == 2
+
+
+def test_booktrust_funnel_on_http_403_contains_no_raw_html_or_query():
+    source = BookTrustSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(403, headers={"content-type": "text/html"}, text="SECRET")
+    )))
+    with pytest.raises(RuntimeError, match="403") as exc:
+        source.search("private query")
+    funnel = exc.value.collection_pipeline
+    assert exc.value.collection_request_count == 1
+    assert funnel["query_mode"] == "local"
+    assert funnel["effective_limit"] == 50
+    assert funnel["http_status"] == 403
+    assert funnel["html_bytes"] == 6
+    assert "SECRET" not in repr(funnel)
+    assert "private query" not in repr(funnel)
