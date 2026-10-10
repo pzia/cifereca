@@ -185,11 +185,14 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     ranges = tuple(getattr(book, "age_ranges", ()) or ())
     age_fields = tuple(
         DetailField(f"age-{index}", KIND_LABELS.get(_fold(getattr(row, "age_kind", "")), "Âge"), age_detail(row))
-        for index, row in enumerate(ranges[:8])
+        for index, row in enumerate(ranges)
     )
     if not age_fields:
         age_fields = (DetailField("age-empty", "Âge", "Aucune tranche d’âge attestée en cache."),)
     metadata_fields = []
+    authors = tuple(_text(value) for value in (getattr(book, "authors", ()) or ()) if _text(value))
+    for index, author in enumerate(authors):
+        metadata_fields.append(DetailField(f"author-{index}", "Auteur", author))
     reference_id, reference_label, reference_value = edition_reference(book)
     if reference_value:
         metadata_fields.append(DetailField(reference_id, reference_label, reference_value))
@@ -207,10 +210,10 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
         metadata_fields.append(DetailField("type", "Type", book_type))
     themes = tuple(getattr(book, "themes", ()) or ())
     if themes:
-        metadata_fields.append(DetailField("themes", "Thèmes", ", ".join(themes[:12])))
+        metadata_fields.append(DetailField("themes", "Thèmes", ", ".join(themes)))
     publishers = tuple(getattr(book, "publishers", ()) or ())
     if publishers:
-        metadata_fields.append(DetailField("publishers", "Éditeurs", ", ".join(publishers[:6])))
+        metadata_fields.append(DetailField("publishers", "Éditeurs", ", ".join(publishers)))
     published_year = getattr(book, "published_year", None)
     if published_year:
         metadata_fields.append(DetailField("published-year", "Première publication", str(published_year)))
