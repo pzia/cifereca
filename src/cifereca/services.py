@@ -4075,7 +4075,12 @@ class LibraryService:
             if process:
                 facts = ", ".join(f"{key}={value}" for key, value in process.items())
                 message += f" ({facts})"
-            retryable = bool(getattr(exc, "retryable", False))
+            # This is a decoder/transport-contract failure, *not* an Adobe
+            # licensing decision. The next opening may retry it automatically.
+            # Never infer a named Adobe refusal from a generic CLI exit code.
+            retryable = bool(getattr(exc, "retryable", False)) or code in {
+                "kobo_adept_invalid_json",
+            }
             _TRACE_LOG.warning(
                 "Acquisition failed loan_id=%s executor=%s code=%s retryable=%s exit_code=%s message=%s dt=%.3fs process=%s",
                 loan.id, failure_executor, code, retryable, getattr(exc, "exit_code", None), str(exc), time.monotonic()-started, process,

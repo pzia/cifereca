@@ -102,8 +102,14 @@ class Core0913(unittest.TestCase):
                 z.writestr('mimetype','application/epub+zip'); z.writestr('META-INF/container.xml','<container/>'); z.writestr('content.xhtml','<html/>')
             return {'ok':True,'artifact':{'path':str(dest),'format':'epub'}}
         self.service.execute_acquisition_request.side_effect=execute
+        # Correcting the binding is an explicit user intervention; the next
+        # unattended opening must not silently replay an already failed ACSM.
         result=self.service._acquire_active_loan_automatically(self.loan)
-        self.assertEqual(result['status'],'complete'); self.session.download_digital.assert_called_once()
+        self.assertEqual(result['status'],'attention_required')
+        self.assertEqual(result['retry'],'explicit_only')
+        result=self.service._acquire_active_loan_automatically(self.loan,force_refresh=True)
+        self.assertEqual(result['status'],'complete')
+        self.assertEqual(self.session.download_digital.call_count,2)
         target=self.service._acquisition_work_dir('default','paris','loan')
         self.assertFalse((target/'Été.acsm').exists()); self.assertFalse((target/acsm_cache.MANIFEST).exists())
     def test_choices_use_stable_id_filter_readiness_and_deduplicate(self):
@@ -147,7 +153,10 @@ class Core0913(unittest.TestCase):
         from cifereca.kobo.errors import KoboAdeptError
         self.connect_provider();self.service.kobo_profiles=Mock(return_value=[{'name':'hb','fetch_capable':True}])
         self.service.execute_acquisition_request=Mock(side_effect=KoboAdeptError('failure',code='kobo_adept_invalid_json'))
-        for _ in range(2): self.assertEqual(self.service._acquire_active_loan_automatically(self.loan)['status'],'attention_required')
+        for _ in range(2):
+            # Malformed runtime JSON is a recoverable protocol failure rather
+            # than a named Adobe license refusal or identity ambiguity.
+            self.assertEqual(self.service._acquire_active_loan_automatically(self.loan)['status'],'retryable_error')
         self.session.download_digital.assert_called_once();self.assertEqual(self.service.execute_acquisition_request.call_count,2)
     def test_sync_issue_link_opens_identity_tab(self):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
