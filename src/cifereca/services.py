@@ -2277,6 +2277,187 @@ class LibraryService:
         )
         return public_return_state(row or checkpoint)
 
+    def verify_paris_return_inventory(self, loan: Loan) -> dict[str, str]:
+        """Read the exact Paris borrower without cache; no provider mutation."""
+        account, session, key = self._return_loan_identity(loan)
+        from .core.loan_return_guard import return_ref
+        try:
+            loans = session.loans(account)
+            if not isinstance(loans, list):
+                raise ValueError("Incomplete Paris inventory")
+            upstream_errors = getattr(session, "last_loan_errors", None)
+            if upstream_errors is None or any(
+                isinstance(item, dict) and item.get("upstream") == "DILICOM"
+                for item in upstream_errors
+            ):
+                raise ValueError("Paris DILICOM inventory not verified")
+            still_present = any(
+                item.id == loan.id and item.provider == loan.provider for item in loans
+            )
+            verification = "still_present" if still_present else "provider_absent"
+        except Exception:
+            verification = "unavailable"
+        _TRACE_LOG.info(
+            "TRACE return core phase=inventory_checked outcome=%s ref=%s",
+            verification, return_ref(key),
+        )
+        return {"verification": verification, "status": {
+            "still_present": "still_active",
+            "provider_absent": "provider_return_confirmed",
+            "unavailable": "verification_unavailable",
+        }[verification]}
+
+    def _adept_return_identity(self, loan: Loan):
+        """Check exact borrower and accession; don't use selected UI identity."""
+        account, _session, _key = self._return_loan_identity(loan)
+        identity_id = self.storage.identity_for_connection(
+            loan.source_provider, loan.source_credential,
+        )
+        if not identity_id or not loan.identity_id or loan.identity_id != identity_id:
+            raise AttentionRequired(
+                "L'identité emprunteuse ADEPT doit être confirmée (#976).",
+                code="adept_return_identity_unproven",
+            )
+        return account, identity_id
+
+    def _find_adept_return_source(self, loan: Loan) -> tuple[str, dict[str, Any] | None]:
+        from .core.return_adept_orchestrator import acquisition_for_loan
+        account, identity_id = self._adept_return_identity(loan)
+        return acquisition_for_loan(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_id=loan.source_provider, credential_id=loan.source_credential,
+            borrower_id=str(account.unique_id or "primary"),
+            loan_id=str(loan.id), item_id=str(loan.record_id or loan.id),
+            identity_id=identity_id,
+        )
+
+    def _adobe_return_inventory_confirmed(self, row: dict[str, Any]) -> bool:
+        """Recovery path must be read-only: NEVER re-execute Adobe mutation."""
+        binding = (row.get("metadata") or {}).get("adept_binding") or {}
+        profile = self._adept_profile_row(binding["adept_profile_id"], self.kobo_profiles())
+        if profile is None:
+            return False
+        profile_name = self._adept_profile_name(profile)
+        try:
+            inventory = self._kobo_adapter().loans(profile_name)
+            matches = [
+                item for item in inventory["loans"]
+                if item.get("id") == binding["adept_loan_id"]
+            ]
+            return (len(matches) == 1 and matches[0].get("returned") is True
+                    and matches[0].get("token_present") is False)
+        except Exception:
+            return False
+
+    def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
+        """Single safe entrypoint for Mes emprunts: Adobe first, Paris read-only.
+
+        Never use ReturnDigitalLoan in this method; a separate explicit Paris
+        action is required when no Adobe acquisition exists or Paris stays active.
+        """
+        import uuid
+        from .core.return_adept_orchestrator import (
+            adept_return_key, public_state,
+        )
+        if loan.source_provider != "paris" or loan.medium != "digital":
+            return self.return_digital(loan)
+        try:
+            account, identity_id = self._adept_return_identity(loan)
+        except AttentionRequired as exc:
+            return {
+                "status": "failed", "code": exc.code,
+                "scope": "adobe_first_paris", "retry": "resolve_identity",
+            }
+        key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        source_status, acquisition = self._find_adept_return_source(loan)
+        if acquisition is None:
+            return {
+                "status": source_status, "scope": "adobe_first_paris",
+                "retry": "provider_action_explicit" if source_status == "provider_action_available"
+                         else "resolve_identity",
+            }
+        # A previous explicit Paris POST must be reconciled before any Adobe
+        # mutation; neither return channel is a speculative fallback.
+        from .core.loan_return_guard import return_key, return_ref
+        pnb_key = return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        pnb = self.storage.loan_return_state(pnb_key)
+        if pnb is not None:
+            return {
+                "status": "partial", "scope": "adobe_first_paris",
+                "reason": "provider_return_already_requested",
+                "retry": "verification_only",
+            }
+        previous = self.storage.loan_return_state(key)
+        if previous is None:
+            op_id = uuid.uuid4().hex
+            claimed, record = self.storage.loan_return_claim(key, op_id)
+            if not claimed:
+                previous = record
+        if previous is not None:
+            if previous.get("status") == "paris_return_confirmed":
+                return public_state(previous)
+            if previous.get("adobe_verified") is not True:
+                if not self._adobe_return_inventory_confirmed(acquisition):
+                    # If the old worker crashed during Adobe return, no safe
+                    # way exists to infer whether another mutation is needed.
+                    # Only Adobe inventory may confirm; never replay mutation.
+                    return public_state(previous)
+                record = self.storage.loan_return_transition(
+                    key, str(previous.get("operation_id") or ""),
+                    status="adobe_return_confirmed", verification="adobe_confirmed",
+                    adobe_verified=True,
+                ) or previous
+            else:
+                record = previous
+        else:
+            op_id = record["operation_id"]
+            self.storage.loan_return_transition(
+                key, op_id, status="adobe_return_requested",
+                verification="adobe_pending", adobe_verified=False,
+            )
+            _TRACE_LOG.info(
+                "TRACE return core phase=adobe_return_requested ref=%s", return_ref(key),
+            )
+            try:
+                outcome = self.return_adept_acquisition(acquisition["acquisition_id"])
+                if outcome.get("verification") != "confirmed" or not outcome.get("ok"):
+                    raise ValueError("Adobe return not confirmed")
+            except Exception as exc:
+                record = self.storage.loan_return_transition(
+                    key, op_id, status="failed", verification="adobe_unavailable",
+                    adobe_verified=False, error_type=type(exc).__name__,
+                )
+                return public_state(record or {"status": "failed"})
+            record = self.storage.loan_return_transition(
+                key, op_id, status="adobe_return_confirmed",
+                verification="adobe_confirmed", adobe_verified=True,
+            )
+            _TRACE_LOG.info(
+                "TRACE return core phase=adobe_return_confirmed ref=%s", return_ref(key),
+            )
+        op_id = str(record.get("operation_id") or "")
+        self.storage.loan_return_transition(
+            key, op_id, status="paris_check_pending",
+            verification="not_checked", adobe_verified=True,
+        )
+        paris = self.verify_paris_return_inventory(loan)
+        status = "paris_return_confirmed" if paris["verification"] == "provider_absent" else "partial"
+        record = self.storage.loan_return_transition(
+            key, op_id, status=status, verification=paris["verification"],
+            adobe_verified=True,
+        )
+        return public_state(record or {"status": status, "adobe_verified": True})
+
+    def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
+        """Nonmutating UI refresh after Adobe return; no duplicate Adobe/PNB."""
+        return self.return_loan_prefer_adept(loan)
+
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
         """PNB provider return with an at-most-once POST until verified.
 
@@ -2292,6 +2473,22 @@ class LibraryService:
             session = self._session_for_source(loan.source_provider, loan.source_credential)
             return session.return_digital(loan, account)
         account, session, key = self._return_loan_identity(loan)
+        from .core.return_adept_orchestrator import adept_return_key, public_state
+        adobe_key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        adobe = self.storage.loan_return_state(adobe_key)
+        if adobe is not None:
+            # An Adobe return already attempted must never implicitly dispatch
+            # Paris POST. Only a *separate* explicit provider action can do so.
+            if not explicit_retry or adobe.get("adobe_verified") is not True:
+                return {
+                    **public_state(adobe), "reason": "adobe_return_takes_precedence",
+                }
+            fresh = self.verify_paris_return_inventory(loan)
+            if fresh["status"] != "still_active":
+                return fresh
         prior = self.storage.loan_return_state(key)
         if prior is not None:
             if not explicit_retry:
