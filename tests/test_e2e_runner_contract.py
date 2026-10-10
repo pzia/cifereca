@@ -24,6 +24,31 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     ]
 
 
+def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
+    runner = _module()
+    for width in (1024, 1366):
+        scenario = runner.SCENARIOS[f"book-detail-{width}"]
+        assert scenario["plugin"] == "detail"
+        assert scenario["fixture"] == "search-filters"
+        assert scenario["runner"] == "gtk-detail"
+        assert scenario["width"] == width
+    assert [n for n, _ in runner.select(None, "detail")] == [
+        "book-detail-1024", "book-detail-1366",
+    ]
+    source = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "core.storage.catalog_entry_put(entry)",
+        'expander.set_expanded(True)',
+        'device.click_widget(button)',
+        'clipboard.read_text_async(None, done)',
+        '"online": True, "identity_id": "camille"',
+        'window.navigate("library")',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in source
+
+
 def test_reference_scenario_runs_real_cifereca_without_plugins():
     runner = _module()
     scenario = runner.SCENARIOS["startup"]
