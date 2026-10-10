@@ -86,6 +86,7 @@ class LibraryService:
         self.last_search_warnings: list[str] = []
         self._plugin_manager: Any | None = None
         self._provider_plugin_ids: dict[str, str] = {}
+        self._virtual_parent_by_provider: dict[str, str] = {}
         self._kobo_adept_state_cache: dict[str, Any] | None = None
         self._kobo_adept_state_cache_at = 0.0
         # Search workers are shared across requests. Recreating an executor for
@@ -464,8 +465,60 @@ class LibraryService:
                 self.registry.register(service, replace=True)
                 self._provider_plugin_ids[service.descriptor.id] = status.descriptor.id
                 attached.append(service.descriptor.id)
+        attached.extend(self.refresh_virtual_collections())
         if attached:
             self.diagnostics.add("PLUGIN", "external providers attached", "ok", detail={"providers": attached}, level="detailed")
+        return attached
+
+    def refresh_virtual_collections(self) -> list[str]:
+        """Publish cached collections into the Core-owned provider registry.
+
+        Explicit Core operation: no discovery HTTP request, no plugin access to
+        registry internals and no implicit provider session connections. Call
+        connect_configured() outside the GTK thread after an inventory change.
+        """
+        manager = self._plugin_manager
+        if manager is None:
+            return []
+        try:
+            statuses = manager.candidates("provider.collection")
+        except Exception:
+            return []
+        live_parents: set[str] = set()
+        attached: list[str] = []
+        for status in statuses:
+            parent_id = status.descriptor.id
+            live_parents.add(parent_id)
+            service = manager.service(parent_id)
+            try:
+                children = self.registry.reconcile_collection(parent_id, service)
+            except Exception as exc:
+                self.diagnostics.add(
+                    "PLUGIN", "virtual provider inventory rejected", "error",
+                    detail={"parent": parent_id, "error_type": type(exc).__name__},
+                    level="detailed",
+                )
+                continue
+            attached.extend(children)
+        for parent in set(self._virtual_parent_by_provider.values()) - live_parents:
+            self.registry.retire_collection(parent)
+        new_mapping = {
+            provider_id: parent
+            for parent in live_parents
+            for provider_id in self.registry.virtual_ids(parent)
+        }
+        for old_id in set(self._virtual_parent_by_provider) - set(new_mapping):
+            for key, session in list(self._sessions.items()):
+                if session.provider_id == old_id:
+                    self._sessions.pop(key, None)
+                    try:
+                        session.close()
+                    except Exception:
+                        pass
+            self._provider_plugin_ids.pop(old_id, None)
+        for provider_id, parent in new_mapping.items():
+            self._provider_plugin_ids[provider_id] = parent
+        self._virtual_parent_by_provider = new_mapping
         return attached
 
     @property
@@ -489,11 +542,21 @@ class LibraryService:
             return str(provider_id) not in self._provider_plugin_ids
         if not status.enabled or status.state != "ready":
             return False
-        if getattr(status.descriptor, "instantiation", "multiple") != "singleton_public":
+        if (
+            provider_id not in self._virtual_parent_by_provider
+            and getattr(status.descriptor, "instantiation", "multiple") != "singleton_public"
+        ):
             return True
         identity = identity_id or (self.current_identity.identity_id if self.current_identity else "default")
         try:
-            return bool(self._plugin_manager.enabled_for_identity(status.descriptor.id, identity))
+            if not self._plugin_manager.enabled_for_identity(status.descriptor.id, identity):
+                return False
+            if provider_id in self._virtual_parent_by_provider:
+                state = getattr(self._plugin_manager, "state", None)
+                if state is not None:
+                    override = state.identity_enabled_override(provider_id, identity)
+                    return True if override is None else bool(override)
+            return True
         except Exception:
             return False
 
@@ -567,7 +630,8 @@ class LibraryService:
             descriptor = plugin.descriptor
             provider_id = str(descriptor.id or "").strip().lower()
             plugin_status = self._provider_plugin_status(provider_id)
-            instantiation = getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple")
+            instantiation = ("singleton_public" if provider_id in self._virtual_parent_by_provider else
+                             getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple"))
             if (
                 provider_id
                 and descriptor.state == "ready"
@@ -592,7 +656,8 @@ class LibraryService:
             plugin_status = self._provider_plugin_status(provider_id)
             if (
                 not provider_id or plugin.descriptor.state != "ready" or plugin.descriptor.credential_fields
-                or getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple") != "singleton_public"
+                or (provider_id not in self._virtual_parent_by_provider
+                    and getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple") != "singleton_public")
             ):
                 continue
             credential_id = "__public__"
