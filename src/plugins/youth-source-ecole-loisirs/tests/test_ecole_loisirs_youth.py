@@ -448,3 +448,135 @@ def test_ecole_paginated_changed_markup_is_invalid_and_does_not_expose_body():
     assert response["items"] == ()
     assert response["next_cursor"] == "2"
     assert source.diagnostic_snapshot()["state"] == "empty_unverified"
+
+
+def test_ecole_funnel_explains_fixture_success_and_unknown_age_without_remote_fetch():
+    from types import SimpleNamespace
+
+    snapshots, requests = [], []
+    def handler(req):
+        requests.append(req)
+        return httpx.Response(
+            200, headers={"content-type": "text/html; charset=utf-8"}, text=HTML,
+        )
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    source.activate(SimpleNamespace(report_diagnostic=lambda *args, **kw: snapshots.append(kw["detail"])))
+    result = source.search("loup", limit=100)
+    funnel = result["collection_pipeline"]
+    assert len(result["items"]) == 3
+    assert result["collection_request_count"] == 1
+    assert len(requests) == 1
+    assert funnel["query_mode"] == "remote"
+    assert funnel["effective_limit"] == 40  # caller's 100 is not 100 analyzed
+    assert funnel["http_status"] == 200
+    assert funnel["html_bytes"] == len(HTML.encode("utf-8"))
+    assert len(funnel["html_sha256_prefix"]) == 16
+    assert funnel["anchor_count"] == 5
+    assert funnel["product_link_count"] == 3
+    assert funnel["candidate_count"] == 3
+    assert funnel["analyzed_count"] == 3
+    assert funnel["isbn_valid_count"] == 3
+    assert funnel["age_published_count"] == 3
+    assert funnel["age_qualified_count"] == 2
+    assert funnel["age_unknown_count"] == 1
+    assert funnel["returned_items"] == 3
+    assert funnel["rejection_reasons"] == {}
+    assert funnel["truncated_by_limit"] is False
+    assert funnel["http_ms"] >= 0 and funnel["parse_ms"] >= 0
+    assert snapshots[-1]["returned_items"] == 3
+    assert "loup" not in repr(funnel)
+    assert "9782211348171" not in repr(funnel)
+    assert "/livre/" not in repr(funnel)
+
+
+def test_ecole_funnel_counts_20_books_with_one_get_without_claiming_live_validation():
+    # A deterministic local witness for the user's observed 20 results.
+    def isbn(index):
+        prefix = f"9782211{index:05d}"
+        check = (10 - sum(
+            int(digit) * (1 if i % 2 == 0 else 3)
+            for i, digit in enumerate(prefix)
+        ) % 10) % 10
+        return prefix + str(check)
+
+    html = "<html>" + "".join(
+        f'<div>3 à 6 ans</div><a href="/livre/test-{i}">Livre {i}</a>'
+        f'<div>album</div><div>ISBN: {isbn(i)}</div>'
+        for i in range(20)
+    ) + "</html>"
+    requests = []
+    def handler(req):
+        requests.append(req)
+        assert req.url.path == "/recherche-avancee"
+        assert req.url.params.get("search_api_views_fulltext") == "loup"
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.search("loup", limit=100)
+    funnel = result["collection_pipeline"]
+    assert len(result["items"]) == 20
+    assert len({row["isbn13"] for row in result["items"]}) == 20
+    assert result["collection_request_count"] == len(requests) == 1
+    assert funnel["candidate_count"] == 20
+    assert funnel["analyzed_count"] == 20
+    assert funnel["isbn_valid_count"] == 20
+    assert funnel["age_qualified_count"] == 20
+    assert funnel["returned_items"] == 20
+    assert funnel["effective_limit"] == 40
+    assert funnel["rejection_reasons"] == {}
+    assert funnel["truncated_by_limit"] is False
+
+
+def test_ecole_funnel_classifies_loss_before_qualification_and_real_empty():
+    # Published but unverified bookland ISBNs must not survive as book notices.
+    valid_isbn = "9782211348171"
+    markup = (
+        '<a href="/livre/without-age">No age</a>'
+        f'<div>ISBN: {valid_isbn}</div>'
+        '<div>3 à 6 ans</div><a href="/livre/without-isbn">No ISBN</a>'
+        '<div>album</div>'
+        '<div>3 à 6 ans</div><a href="/livre/game">Game</a>'
+        '<div>jeu</div>'
+        f'<div>ISBN: {valid_isbn}</div>'
+        '<div>3 à 6 ans</div><a href="/livre/good">Valid</a>'
+        '<div>album</div>'
+        f'<div>ISBN: {valid_isbn}</div>'
+        '<div>3 à 6 ans</div><a href="/livre/good">Duplicate</a>'
+        '<div>album</div>'
+        f'<div>ISBN: {valid_isbn}</div>'
+    )
+    diagnostic = {}
+    rows = parse_listing(markup, diagnostic=diagnostic)
+    assert len(rows) == 1
+    assert diagnostic["product_link_count"] == 5
+    assert diagnostic["candidate_count"] == 4
+    assert diagnostic["analyzed_count"] == 4
+    assert diagnostic["isbn_valid_count"] == 2
+    assert diagnostic["age_qualified_count"] == 1
+    assert diagnostic["rejection_reasons"] == {
+        "age_unattested": 1,
+        "isbn_invalid": 1,
+        "unsupported_product_type": 1,
+        "duplicate": 1,
+    }
+    empty = {}
+    assert parse_listing("<main>No matching books</main>", diagnostic=empty) == ()
+    assert empty["anchor_count"] == 0
+    assert empty["candidate_count"] == 0
+    assert empty["returned_items"] == 0
+    assert empty["rejection_reasons"] == {}
+
+
+def test_ecole_http_refusal_attaches_only_same_invocation_evidence():
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(403, headers={"content-type": "text/html"}, text="private query"),
+    )))
+    with pytest.raises(RuntimeError, match="403") as raised:
+        source.search("private query", limit=100)
+    evidence = raised.value.collection_pipeline
+    assert raised.value.collection_request_count == 1
+    assert evidence["http_status"] == 403
+    assert evidence["effective_limit"] == 40
+    assert evidence["http_ms"] >= 0
+    assert "html_sha256_prefix" in evidence
+    assert "private query" not in repr(evidence)
