@@ -35,6 +35,7 @@ from .locking import InterProcessLock, LockBusyError
 from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
 from .core.acquisition_decision import decide_artifact_reuse
+from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attention_code
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
@@ -3782,6 +3783,26 @@ class LibraryService:
                 "reason": decision.reason,
                 "source": decision.source,
             }
+        if blocked_automatic_adept_retry(
+            previous, provider_loan_id=loan.id, entitlement_id=entitlement_id,
+            force_refresh=force_refresh,
+        ):
+            # The existing ledger is the authoritative pending-intervention
+            # state. Preserve diagnostic, ACSM staging and any prior artifact;
+            # do not acquire the provider link or attempt a different profile.
+            code = str((previous or {}).get("attention_code")
+                       or (previous or {}).get("error_code") or "adept_attention_required")
+            _TRACE_LOG.warning(
+                "TRACE download loan_auto auto-retry-blocked provider=%s "
+                "reason=persisted_adept_attention code=%s",
+                loan.source_provider, code,
+            )
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": code, "reason": "persisted_adept_attention",
+                "retry": "explicit_only",
+            }
+
         if decision.action == "repair_legacy":
             _TRACE_LOG.info(
                 "TRACE download loan_auto repair-legacy loan_id=%s reason=%s",
@@ -3797,7 +3818,11 @@ class LibraryService:
             "item_id": str(loan.record_id or loan.id),
             "title": loan.title,
         }
-        self.storage.acquisition_put({**ledger_base, "status": "acquiring", "strategy": "loan_auto", "executor": "provider"})
+        self.storage.acquisition_put({
+            **ledger_base, "status": "acquiring", "strategy": "loan_auto",
+            "executor": "provider",
+            "metadata": {**previous_meta, "provider_loan_id": loan.id},
+        })
         _TRACE_LOG.info("TRACE download ledger acquiring loan_id=%s item_id=%s", loan.id, ledger_base["item_id"])
         retained_acsm: Path | None = None
         failure_executor = "provider"
@@ -3825,6 +3850,8 @@ class LibraryService:
                     self.storage.acquisition_put({
                         **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
                         "attention_code": exc.code, "error_message": str(exc),
+                        "metadata": {**previous_meta, "provider_loan_id": loan.id,
+                                     "acsm_staging_path": str(retained_acsm)},
                     })
                     _TRACE_LOG.info(
                         "TRACE download acsm cleanup loan_id=%s action=keep reason=%s file=%s",
@@ -3853,6 +3880,9 @@ class LibraryService:
                         self.storage.acquisition_put({
                             **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
                             "attention_code": code, "error_message": message,
+                            "metadata": {**previous_meta, "provider_loan_id": loan.id,
+                                         "acsm_staging_path": str(retained_acsm),
+                                         "adept_attempt_profile": profile_name},
                         })
                         _TRACE_LOG.info(
                             "TRACE download acsm cleanup loan_id=%s action=keep reason=%s profile=%s file=%s",
@@ -4046,18 +4076,35 @@ class LibraryService:
             if process:
                 facts = ", ".join(f"{key}={value}" for key, value in process.items())
                 message += f" ({facts})"
-            retryable = bool(getattr(exc, "retryable", False))
+            # This is a decoder/transport-contract failure, *not* an Adobe
+            # licensing decision. The next opening may retry it automatically.
+            # Never infer a named Adobe refusal from a generic CLI exit code.
+            retryable = bool(getattr(exc, "retryable", False)) or code in {
+                "kobo_adept_invalid_json",
+            }
             _TRACE_LOG.warning(
                 "Acquisition failed loan_id=%s executor=%s code=%s retryable=%s exit_code=%s message=%s dt=%.3fs process=%s",
                 loan.id, failure_executor, code, retryable, getattr(exc, "exit_code", None), str(exc), time.monotonic()-started, process,
             )
             status = "retryable_error" if retryable else "attention_required"
+            attention_code = adept_attention_code(code, message, executor=failure_executor)
+            metadata = {**previous_meta, "provider_loan_id": loan.id, "process": process}
+            if retained_acsm is not None:
+                metadata["acsm_staging_path"] = str(retained_acsm)
+            if failure_executor == "kobo-adept":
+                if isinstance(locals().get("profile_name"), str):
+                    metadata["adept_attempt_profile"] = profile_name
+                metadata["failure_stage"] = "adept_fulfillment"
             self.storage.acquisition_put({
                 **ledger_base, "status": status, "strategy": "loan_auto", "executor": failure_executor,
-                "error_code": code, "error_message": message, "metadata": {"process": process},
-                "attention_code": None if status == "retryable_error" else code,
+                "error_code": code, "error_message": message, "metadata": metadata,
+                "attention_code": None if status == "retryable_error" else attention_code,
             })
-            return {"status": status, "loan_id": loan.id, "error": message, "code": code, "process": process}
+            return {
+                "status": status, "loan_id": loan.id, "error": message,
+                "code": attention_code if status == "attention_required" else code,
+                "process": process,
+            }
         except Exception as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_id=%s action=keep reason=acquisition_error file=%s", loan.id, retained_acsm)
@@ -4071,7 +4118,11 @@ class LibraryService:
             # (manual ACSM retrieval can still succeed). Keep it observable but
             # retryable instead of permanently blocking the loan.
             validation_failure = failure_executor == "kobo-adept" and isinstance(exc, ProviderConfigurationError)
-            metadata = {"provider_condition": attention_code} if attention_code else {}
+            metadata = {**previous_meta, "provider_loan_id": loan.id}
+            if retained_acsm is not None:
+                metadata["acsm_staging_path"] = str(retained_acsm)
+            if attention_code:
+                metadata["provider_condition"] = attention_code
             if validation_failure:
                 metadata.update({"repairable": True, "failure_stage": "post_adept_validation"})
             self.storage.acquisition_put({
