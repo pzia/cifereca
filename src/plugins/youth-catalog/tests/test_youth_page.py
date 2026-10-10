@@ -471,13 +471,15 @@ def test_youth_collected_reports_ingest_outcomes_per_identity_without_leaking_re
         {"items": [{"title": "Livre Atlas", "isbn": "9780306406157",
                      "age_label": "8+"}], "next_cursor": "2", "fresh_for_seconds": 60},
         source_id="booktrust", label="BookTrust", append=False,
-        source_plugin="youth.source.booktrust", duration_ms=27,
+        source_plugin="youth.source.booktrust", duration_ms=27, requested_limit=5,
     )
     a = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
     assert a["booktrust"]["collection_state"] == "items"
     assert a["booktrust"]["cache_count"] == 1
     assert a["booktrust"]["next_cursor_present"] is True
     assert a["booktrust"]["duration_ms"] == 27
+    assert a["booktrust"]["received_count"] == 1
+    assert a["booktrust"]["requested_limit"] == 5
     assert view.next_cursor == "2"
 
     view.collected(
@@ -488,6 +490,9 @@ def test_youth_collected_reports_ingest_outcomes_per_identity_without_leaking_re
     a = {r["source_id"]: r for r in view.catalog.source_diagnostics("alice")}
     assert a["booktrust"]["collection_state"] == "invalid"
     assert a["booktrust"]["rejected"] == 1
+    assert a["booktrust"]["received_count"] == 1
+    assert a["booktrust"]["requested_limit"] is None
+    assert a["booktrust"]["rejection_categories"] == {"missing_title": 1}
     assert a["booktrust"]["cache_count"] == 1
     assert "Livre Atlas" not in repr(a["booktrust"])
     identity[0] = "bob"
@@ -615,6 +620,33 @@ def test_source_diagnostic_presentation_distinguishes_plugin_state_from_last_col
     assert "bibliographie uniquement" in lines[4] and "pas de preuve d’âge" in lines[4]
     assert "aucun" not in summary.casefold()
     assert source_diagnostic_presentation(())[0] == "Aucun profil actif"
+
+
+
+def test_youth_diagnostic_presentation_shows_bounded_receipts_and_safe_rejection_reasons():
+    row = {
+        "source_id": "booktrust", "label": "BookTrust",
+        "family": "age", "plugin_state": "ready", "enabled": True,
+        "collection_state": "invalid", "cache_count": 2,
+        "received_count": 4, "requested_limit": 10,
+        "accepted": 1, "rejected": 3,
+        "rejection_categories": {
+            "missing_title": 2, "other": 1,
+            "raw_secret?https://private.example/token": 42,
+        },
+    }
+    headline, lines = source_diagnostic_presentation((row,))
+    assert "1 dernier(s) essai(s) en échec" in headline
+    assert "reçues : 4/10 demandées" in lines[0]
+    assert "3 rejet(s) (2 sans titre, 1 autres)" in lines[0]
+    assert "cache : 2 notice(s)" in lines[0]
+    assert "private.example" not in repr(lines)
+    row["received_count"] = None
+    row["requested_limit"] = None
+    row["rejection_categories"] = {}
+    _, unknown = source_diagnostic_presentation((row,))
+    assert "reçues :" not in unknown[0]
+    assert "demandées" not in unknown[0]
 
 
 def test_youth_view_local_diagnostics_uses_public_inventory_and_keeps_identities_separate():
