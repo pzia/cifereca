@@ -260,7 +260,7 @@ def test_browse_path_prefix_spoof_is_rejected():
 def test_local_filter_is_bounded_to_300_characters(monkeypatch):
     captured = []
 
-    def fake_parse(html, *, text_filter="", age=None, limit=40):
+    def fake_parse(html, *, text_filter="", age=None, limit=40, diagnostic=None):
         captured.append(text_filter)
         return ()
 
