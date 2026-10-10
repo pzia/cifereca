@@ -483,6 +483,9 @@ class DetailPanel(Gtk.Box):
             # Explicit and local-only. Per-element actions; no network on display.
             group = Adw.PreferencesGroup()
             expander = Adw.ExpanderRow()
+            # Preserve each bibliographic value: global faceting applies only
+            # to summary rows and must not replace individual subtitles/actions.
+            expander._cifereca_preserve_bibliographic_rows = True
             expander.set_title("Détail")
             expander.set_subtitle(f"{len(rows)} champ(s) bibliographiques")
             expander.set_expanded(bool(getattr(self, "_detail_expanded", False)))
@@ -4317,6 +4320,11 @@ class MainWindow(Adw.ApplicationWindow):
         }
 
         def bind_rows(widget):
+            # The compact Détail expander owns exact per-value rows and its
+            # own Copier/Rechercher actions. Never rewrite their subtitles or
+            # traverse them as if they were summary facet rows.
+            if getattr(widget, "_cifereca_preserve_bibliographic_rows", False):
+                return
             if isinstance(widget, Adw.ActionRow):
                 field = row_fields.get(widget.get_title())
                 original_subtitle = getattr(
