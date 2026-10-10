@@ -180,7 +180,7 @@ def test_adept_return_failure_is_persisted_and_not_replayed(tmp_path):
     svc = _service(tmp_path, paris)
     _acquisition(svc, tmp_path)
     try:
-        events = _adept_mock(svc, failure=True)
+        events = _adept_mock(svc, failure=True, returned_after=False)
         first = svc.return_loan_prefer_adept(loan)
         assert first["status"] == "failed"
         assert first["adobe_return_confirmed"] is False
@@ -199,6 +199,7 @@ def test_missing_binding_or_unknown_exact_loan_never_attempts_adept_or_paris(tmp
     svc = _service(tmp_path, paris)
     try:
         svc.execute_drm_mutation = lambda x: pytest.fail("unproven ADEPT mutation")
+        assert svc.verify_loan_return(loan)["status"] == "not_requested"
         assert svc.return_loan_prefer_adept(loan)["status"] == "provider_action_available"
         artifact = _acquisition(svc, tmp_path)
         assert svc.return_loan_prefer_adept(replace(loan, id="other-loan"))["status"] == "provider_action_available"
@@ -320,3 +321,15 @@ def test_source_matching_never_uses_title_or_unscoped_acquisition():
     assert acquisition_for_loan([{**row, "credential_id": "paris-b"}], **kwargs)[0] == "provider_action_available"
     assert acquisition_for_loan([{**row, "item_id": "other-book"}], **kwargs)[0] == "provider_action_available"
     assert acquisition_for_loan([row, row], **kwargs)[0] == "adept_return_ambiguous"
+
+def test_profile_rotation_blocks_adobe_before_mutation(tmp_path):
+    loan = _loan()
+    svc = _service(tmp_path, Paris([]))
+    _acquisition(svc, tmp_path)
+    try:
+        svc.storage.adept_profile_binding_set("identity", "default", "another-profile")
+        svc.execute_drm_mutation = lambda *_: pytest.fail("different Adobe profile")
+        state = svc.return_loan_prefer_adept(loan)
+        assert state["status"] == "adept_return_profile_unproven"
+    finally:
+        svc.close()
