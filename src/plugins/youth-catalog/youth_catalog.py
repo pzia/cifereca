@@ -58,10 +58,15 @@ def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
     )
     # Only a directly attached per-call integer is authoritative; never read
     # a provider's shared last diagnostic (it may belong to another identity).
-    return {
+    result = {
         "state": state, "error_type": error_type, "http_status": status,
         "request_count": getattr(exc, "collection_request_count", None),
     }
+    # Preserve the existing exception projection when no funnel exists.
+    pipeline = getattr(exc, "collection_pipeline", None)
+    if isinstance(pipeline, Mapping):
+        result["pipeline"] = pipeline
+    return result
 
 
 def safe_ingest_rejection_categories(errors: Iterable[str]) -> dict[str, int]:
@@ -77,6 +82,59 @@ def safe_ingest_rejection_categories(errors: Iterable[str]) -> dict[str, int]:
         ) else "other"
         counts[label] = min(100_000, counts[label] + 1)
     return counts
+
+
+def sanitize_collection_pipeline(value: object) -> dict[str, object]:
+    """Fixed-shape source funnel from the *same* explicit request, cache-only.
+
+    Discard arbitrary source keys and values, even if a plugin sends raw HTML,
+    a title, an ISBN, a signed URL or account metadata by mistake.
+    """
+    if not isinstance(value, Mapping):
+        return {}
+    out: dict[str, object] = {}
+    if value.get("query_mode") in ("remote", "local"):
+        out["query_mode"] = value["query_mode"]
+    counts = (
+        "anchor_count", "product_link_count", "candidate_count",
+        "analyzed_count", "isbn_valid_count", "age_published_count",
+        "age_qualified_count", "age_unknown_count", "returned_items",
+    )
+    for key in counts:
+        item = value.get(key)
+        if type(item) is int and 0 <= item <= 100_000:
+            out[key] = item
+    limits = {
+        "effective_limit": 500, "html_bytes": 2_000_000,
+        "http_ms": 600_000, "parse_ms": 600_000,
+        "total_ms": 600_000,
+    }
+    for key, cap in limits.items():
+        item = value.get(key)
+        if type(item) is int and 0 <= item <= cap:
+            out[key] = item
+    status = value.get("http_status")
+    if type(status) is int and 100 <= status <= 599:
+        out["http_status"] = status
+    digest = value.get("html_sha256_prefix")
+    if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{16}", digest):
+        out["html_sha256_prefix"] = digest
+    if type(value.get("truncated_by_limit")) is bool:
+        out["truncated_by_limit"] = value["truncated_by_limit"]
+    raw_reasons = value.get("rejection_reasons")
+    reasons = {}
+    if isinstance(raw_reasons, Mapping):
+        for key in (
+            "age_unattested", "isbn_invalid", "unsupported_product_type",
+            "duplicate", "text_filter_excluded", "age_filter_excluded",
+            "unexpected_markup", "title_missing",
+        ):
+            num = raw_reasons.get(key)
+            if type(num) is int and 0 < num <= 100_000:
+                reasons[key] = num
+    if reasons:
+        out["rejection_reasons"] = reasons
+    return out
 
 
 def _field(value: object, name: str, default: object = "") -> object:
@@ -706,6 +764,7 @@ class YouthCatalogIndex:
         received_count: int | None = None,
         requested_limit: int | None = None,
         request_count: int | None = None,
+        pipeline: Mapping[str, object] | None = None,
         rejection_categories: Mapping[str, object] | None = None,
         duration_ms: int = 0,
         next_cursor_present: bool = False,
@@ -750,6 +809,7 @@ class YouthCatalogIndex:
                 max(0, min(request_count, 100_000))
                 if type(request_count) is int and request_count >= 0 else None
             ),
+            "pipeline": sanitize_collection_pipeline(pipeline),
             "rejection_categories": {
                 key: max(0, min(value, 100_000))
                 for key in ("missing_title", "other")
@@ -848,6 +908,14 @@ class YouthCatalogIndex:
                 "received_count": event.get("received_count"),
                 "requested_limit": event.get("requested_limit"),
                 "request_count": event.get("request_count"),
+                "pipeline": {
+                    **event.get("pipeline", {}),
+                    **({
+                        "rejection_reasons": dict(event["pipeline"]["rejection_reasons"])
+                    } if isinstance(event.get("pipeline"), Mapping)
+                         and isinstance(event["pipeline"].get("rejection_reasons"), Mapping)
+                       else {}),
+                },
                 "rejection_categories": dict(event.get("rejection_categories", {})),
                 "duration_ms": event.get("duration_ms", 0),
                 "next_cursor_present": event.get("next_cursor_present", False),
@@ -1076,6 +1144,7 @@ class YouthCatalogPlugin:
                     raw.get("collection_request_count") if isinstance(raw, Mapping)
                     else None
                 ),
+                pipeline=raw.get("collection_pipeline") if isinstance(raw, Mapping) else None,
                 rejection_categories=safe_ingest_rejection_categories(report.errors),
                 next_cursor_present=bool(next_cursor),
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),
@@ -1092,6 +1161,7 @@ class YouthCatalogPlugin:
                     raw.get("collection_request_count") if isinstance(raw, Mapping)
                     else None
                 ),
+                pipeline=raw.get("collection_pipeline") if isinstance(raw, Mapping) else None,
                 duration_ms=max(0, int((perf_counter() - started) * 1000)),
             )
             return IngestReport(

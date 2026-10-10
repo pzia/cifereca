@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-source-ecole-loisirs",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "name": "Jeunesse — l'école des loisirs",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "youth.source.ecole-loisirs",
       "type": "youth.source",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "ecole_loisirs_youth:PLUGIN",
       "display_name": "l'école des loisirs — âges éditeur",
       "description": "Recherche publique l'école des loisirs avec tranches d'âge et ISBN publiés.",

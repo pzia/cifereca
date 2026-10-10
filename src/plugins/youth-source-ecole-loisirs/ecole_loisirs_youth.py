@@ -211,31 +211,61 @@ def _card_authors(tokens, start: int, end: int) -> tuple[str, ...]:
     return ()
 
 
-def parse_listing(html: str, *, limit: int = 40) -> tuple[Mapping[str, object], ...]:
+def parse_listing(
+    html: str, *, limit: int = 40,
+    diagnostic: dict[str, object] | None = None,
+) -> tuple[Mapping[str, object], ...]:
+    """Parse only attested book editions; optionally count each filtering stage.
+
+    The diagnostic contains integers and fixed public reason identifiers,
+    never titles, ISBNs, product URLs, HTML or search terms.
+    """
     tokens = _tokens(html)
     products = []
+    anchor_count = 0
     for index, (kind, label, href) in enumerate(tokens):
         if kind != "link":
             continue
+        anchor_count += 1
         url = _product_url(href)
         if url and _fold(label) not in {"lire la suite"}:
             products.append((index, _text(label), url))
 
+    bounded = max(1, min(int(limit), 40))
+    reasons = {
+        "age_unattested": 0, "isbn_invalid": 0,
+        "unsupported_product_type": 0, "duplicate": 0,
+    }
     out = []
     seen = set()
+    examined = 0
+    age_published = 0
+    isbn_valid = 0
+    age_qualified = 0
+    age_unknown = 0
+    truncated = False
     for pos, (start, title, url) in enumerate(products):
         if url in seen:
+            reasons["duplicate"] += 1
             continue
+        if len(out) >= bounded:
+            truncated = True
+            break
+        examined += 1
         end = products[pos + 1][0] if pos + 1 < len(products) else len(tokens)
         age = _nearest_age(tokens, start)
         if age is None:
+            reasons["age_unattested"] += 1
             continue
+        age_published += 1
         isbn = _card_isbn(tokens, start, end)
         if not isbn:
+            reasons["isbn_invalid"] += 1
             continue
+        isbn_valid += 1
         book_type = _card_type(tokens, start, end)
-        # A game with even a valid ISBN must not be advertised as a book.
         if book_type == "jeu":
+            reasons["unsupported_product_type"] += 1
             continue
         item: dict[str, object] = {
             "record_id": isbn,
@@ -260,14 +290,29 @@ def parse_listing(html: str, *, limit: int = 40) -> tuple[Mapping[str, object], 
                 "source_id": "ecole-loisirs",
                 "confidence": 1.0,
             }]
+            age_qualified += 1
         else:
             item["age_ranges"] = []
+            age_unknown += 1
         out.append(item)
         seen.add(url)
-        if len(out) >= max(1, min(int(limit), 40)):
-            break
-    return tuple(out)
 
+    if diagnostic is not None:
+        diagnostic.update({
+            "query_mode": "remote", "effective_limit": bounded,
+            "anchor_count": anchor_count,
+            "product_link_count": len(products),
+            "candidate_count": len(set(url for _, _, url in products)),
+            "analyzed_count": examined,
+            "isbn_valid_count": isbn_valid,
+            "age_published_count": age_published,
+            "age_qualified_count": age_qualified,
+            "age_unknown_count": age_unknown,
+            "returned_items": len(out),
+            "truncated_by_limit": truncated,
+            "rejection_reasons": {key: val for key, val in reasons.items() if val},
+        })
+    return tuple(out)
 
 def next_cursor(html: str, *, current_page: int) -> str:
     for kind, label, href in _tokens(html):
@@ -350,7 +395,7 @@ class EcoleLoisirsYouthSource:
             "homepage_url": SEARCH,
         }
 
-    def _get(self, url: str) -> str:
+    def _get(self, url: str, *, diagnostic: dict[str, object] | None = None) -> str:
         allowed = _allowed_url(url)
         if not allowed or urlsplit(allowed).path != "/recherche-avancee":
             raise ValueError("only l'école des loisirs advanced search is allowed")
@@ -359,12 +404,15 @@ class EcoleLoisirsYouthSource:
         if counter is not None:
             self._call_requests.set(counter + 1)
         response = self.client.get(allowed)
-        self._last_diagnostic.update({
+        evidence = {
             "http_status": response.status_code,
             "content_type_is_html": "html" in _fold(response.headers.get("content-type")),
             "html_bytes": len(response.content),
             "html_sha256_prefix": sha256(response.content).hexdigest()[:16],
-        })
+        }
+        self._last_diagnostic.update(evidence)
+        if diagnostic is not None:
+            diagnostic.update(evidence)
         if response.status_code >= 300:
             error = RuntimeError(f"l'école des loisirs HTTP {response.status_code}")
             error.http_status = response.status_code
@@ -394,12 +442,25 @@ class EcoleLoisirsYouthSource:
             "request_count": 0,
         }
         request_token = self._call_requests.set(0)
+        pipeline: dict[str, object] = {
+            "query_mode": "remote", "effective_limit": max(1, min(int(limit), 40)),
+        }
         try:
             url = search_url(_text(query), page=page)
-            html = self._get(url)
+            http_started = perf_counter()
+            try:
+                html = self._get(url, diagnostic=pipeline)
+            finally:
+                pipeline["http_ms"] = max(0, int((perf_counter() - http_started) * 1000))
             self._last_diagnostic["phase"] = "parsing"
-            rows = parse_listing(html, limit=max(1, min(int(limit), 40)))
-            tokens = _tokens(html)
+            parse_started = perf_counter()
+            try:
+                rows = parse_listing(
+                    html, limit=max(1, min(int(limit), 40)), diagnostic=pipeline,
+                )
+                tokens = _tokens(html)
+            finally:
+                pipeline["parse_ms"] = max(0, int((perf_counter() - parse_started) * 1000))
             product_urls = {
                 _product_url(href)
                 for kind, label, href in tokens
@@ -411,9 +472,16 @@ class EcoleLoisirsYouthSource:
                 raise InvalidCatalogueStructureError(
                     "Ecole des loisirs paginated catalogue has no recognizable book links"
                 )
+            pipeline["total_ms"] = max(0, int((perf_counter() - started) * 1000))
             self._last_diagnostic.update({
                 "anchor_count": sum(kind == "link" for kind, _label, _href in tokens),
                 "product_url_count": len(product_urls),
+                "analyzed_count": pipeline.get("analyzed_count", 0),
+                "isbn_valid_count": pipeline.get("isbn_valid_count", 0),
+                "effective_limit": pipeline["effective_limit"],
+                "rejection_reasons": dict(pipeline.get("rejection_reasons", {})),
+                "http_ms": pipeline.get("http_ms", 0),
+                "parse_ms": pipeline.get("parse_ms", 0),
                 "returned_items": len(rows),
                 "qualified_age_count": sum(bool(row.get("age_ranges")) for row in rows),
                 "unqualified_age_count": sum(not row.get("age_ranges") for row in rows),
@@ -428,9 +496,11 @@ class EcoleLoisirsYouthSource:
                 "next_cursor": cursor_out,
                 "fresh_for_seconds": 86400,
                 "collection_request_count": self._call_requests.get(),
+                "collection_pipeline": dict(pipeline),
             }
         except Exception as exc:
             exc.collection_request_count = self._call_requests.get()
+            exc.collection_pipeline = dict(pipeline)
             self._last_diagnostic.update({
                 "state": (
                     "invalid" if isinstance(exc, InvalidCatalogueStructureError)
