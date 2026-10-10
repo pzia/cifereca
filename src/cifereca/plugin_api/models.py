@@ -977,6 +977,19 @@ class UiActionHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiSearchNavigationHost(UiPageHost, Protocol):
+    """Optional book-value search route.
+
+    Online requires explicit user activation. The host never silently switches
+    identity or inherits stale provider/type filters from a previous query.
+    """
+    def search_books(
+        self, query: str, *, field: str = "title",
+        online: bool = False, identity_id: str | None = None,
+    ) -> bool: ...
+
+
+@runtime_checkable
 class UiBookNavigationHost(UiPageHost, Protocol):
     """Optional public navigation to a book in the active identity's Library.
 
