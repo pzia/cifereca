@@ -166,7 +166,7 @@ def main():
         assert window.search_page.store.get_n_items() == 1, "Notice du catalogue connu absente"
         assert len(known_calls) == 1, f"Recherche locale non unique : {known_calls!r}"
         # Spy only *after* starting the local search but *before* building suffix buttons.
-        original_search_books[0] = window.search_books
+        original_search_books[0] = getattr(window, "search_books", None)
         def observe(query, *, field="title", online=False, identity_id=None):
             report["online_calls"].append({
                 "query": query, "field": field, "online": online, "identity_id": identity_id,
@@ -295,8 +295,11 @@ def main():
             device = X11Input()
             later(450, search_initial)
         def do_shutdown(self):
-            if original_search_books[0] is not None and window is not None:
-                window.search_books = original_search_books[0]
+            if window is not None:
+                if original_search_books[0] is not None:
+                    window.search_books = original_search_books[0]
+                elif "search_books" in vars(window):
+                    delattr(window, "search_books")
             core.library.search_known_catalog = original_known_search
             if device is not None:
                 device.close()
