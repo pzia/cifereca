@@ -1160,3 +1160,88 @@ def test_youth_gtk_idle_cancellation_overrides_transport_failure_without_secrets
     assert row["http_status"] is None
     assert "example.invalid" not in repr(row)
     assert statuses[-1] == "Collecte annulée. Le cache précédent est conservé."
+
+
+def test_youth_funnel_presentation_explains_pipeline_without_claiming_100_analyzed():
+    from youth_catalog import YouthCatalogPlugin
+
+    plugin = YouthCatalogPlugin()
+    plugin.record_collection(
+        "alice", "ecole-loisirs", state="items", accepted=20,
+        received_count=20, requested_limit=100, request_count=1,
+        pipeline={
+            "query_mode": "remote", "effective_limit": 40,
+            "http_status": 200, "html_bytes": 5020,
+            "html_sha256_prefix": "0123456789abcdef",
+            "anchor_count": 22, "product_link_count": 20,
+            "candidate_count": 20, "analyzed_count": 20,
+            "isbn_valid_count": 20, "age_qualified_count": 18,
+            "age_unknown_count": 2, "returned_items": 20,
+            "http_ms": 12, "parse_ms": 4,
+            "rejection_reasons": {"age_unattested": 1, "isbn_invalid": 2},
+            "signed_url": "https://private.example/token",
+        },
+    )
+    rows = plugin.source_diagnostics("alice")
+    summary, lines = source_diagnostic_presentation(rows)
+    line = next(x for x in lines if "l'école des loisirs" in x)
+    assert "requêtes HTTP : 1" in line
+    assert "reçues : 20" in line
+    assert "limite demandée : 100" in line
+    assert "borne source : 40" in line
+    assert "candidats : 20" in line
+    assert "examinés : 20" in line
+    assert "ISBN valides : 20" in line
+    assert "âges attestés : 18" in line
+    assert "recherche distante (une page)" in line
+    assert "HTTP : 200" in line and "HTTP ms : 12" in line
+    assert "parsing ms : 4" in line
+    assert "ISBN non valide : 2" in line
+    assert "0/100 analysées" not in line
+    assert "private.example" not in line
+    assert "20" not in repr(plugin.source_diagnostics("bob")[-1].get("pipeline", {}))
+
+
+def test_youth_ui_collected_attaches_only_explicit_ecole_source_funnel():
+    from youth_catalog import YouthCatalogPlugin
+
+    view = object.__new__(YouthView)
+    view.catalog = YouthCatalogPlugin()
+    calls, messages, refresh = [], [], []
+    view.identity_id = lambda: "alice"
+    view.status = NS(set_label=messages.append)
+    view.render_cached = lambda: calls.append("render")
+    view.refresh_source_diagnostics = lambda: refresh.append("local")
+    books = [
+        {"title": f"Book {i}", "record_id": f"book-{i}"}
+        for i in range(20)
+    ]
+    view.collected(
+        {
+            "items": books,
+            "collection_request_count": 1,
+            "collection_pipeline": {
+                "query_mode": "remote", "effective_limit": 40,
+                "candidate_count": 20, "analyzed_count": 20,
+                "returned_items": 20, "http_status": 200,
+                "raw_html": "<p>private</p>",
+            },
+        },
+        source_id="ecole-loisirs", label="École des loisirs", append=False,
+        source_plugin="youth.source.ecole-loisirs", requested_limit=100,
+    )
+    result = {
+        x["source_id"]: x for x in view.catalog.source_diagnostics("alice")
+    }["ecole-loisirs"]
+    assert result["cache_count"] == 20
+    assert result["request_count"] == 1
+    assert result["pipeline"]["candidate_count"] == 20
+    assert result["pipeline"]["effective_limit"] == 40
+    assert "raw_html" not in repr(result)
+    assert calls == ["render"] and refresh == ["local"]
+    assert "20 notice(s) reçue(s)" in messages[-1]
+    bob = {
+        x["source_id"]: x for x in view.catalog.source_diagnostics("bob")
+    }["ecole-loisirs"]
+    assert bob["collection_state"] == "not_tested"
+    assert bob["pipeline"] == {}
