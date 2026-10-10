@@ -537,3 +537,111 @@ def test_public_catalog_service_exposes_cache_only_identity_diagnostics():
     plugin.record_collection("alice", "milan", state="empty_unverified")
     assert {r["source_id"]: r["collection_state"] for r in plugin.source_diagnostics("alice")}["milan"] == "empty_unverified"
     assert {r["source_id"]: r["collection_state"] for r in plugin.source_diagnostics("bob")}["milan"] == "not_tested"
+
+
+def test_explicit_catalog_collect_source_updates_identity_scoped_diagnostic():
+    plugin = YouthCatalogPlugin()
+    source = GoodSource()
+    assert source.calls == 0
+    initial = {r["source_id"]: r for r in plugin.source_diagnostics("alice")}
+    assert "youth.test" not in initial
+    report = plugin.collect_source("alice", source, "chat")
+    assert report.accepted == 1 and report.next_cursor == "next"
+    assert source.calls == 1
+    collected = {r["source_id"]: r for r in plugin.source_diagnostics("alice")}["youth.test"]
+    assert collected["collection_state"] == "items"
+    assert collected["collection_stage"] == "ingest"
+    assert collected["cache_count"] == 1
+    assert collected["accepted"] == 1 and collected["rejected"] == 0
+    assert collected["next_cursor_present"] is True
+    assert collected["last_success_at_utc"]
+    assert collected["attempted_at_utc"]
+    assert collected["duration_ms"] >= 0
+    assert source.calls == 1, "Reading diagnostics must not call the source"
+    assert {r["source_id"]: r for r in plugin.source_diagnostics("bob")}["youth.test"]["collection_state"] == "not_tested"
+
+
+def test_catalog_collect_source_http_failure_preserves_last_good_cache():
+    plugin = YouthCatalogPlugin()
+    good = GoodSource()
+    plugin.collect_source("alice", good, "the")
+    old = {r["source_id"]: r for r in plugin.source_diagnostics("alice")}["youth.test"]
+    assert old["cache_count"] == 1
+    assert old["collection_state"] == "items"
+
+    class SimulatedHttpFailure(Exception):
+        def __init__(self):
+            super().__init__("https://secret.example/token=DO-NOT-LOG")
+            self.response = type("Response", (), {"status_code": 503})()
+
+    class HTTPSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            raise SimulatedHttpFailure()
+
+    source = HTTPSource()
+    report = plugin.collect_source("alice", source, "the")
+    assert report.accepted == 0 and report.rejected == 1
+    assert source.calls == 1
+    state = {r["source_id"]: r for r in plugin.source_diagnostics("alice")}["youth.test"]
+    assert state["collection_state"] == "http_error"
+    assert state["collection_stage"] == "search"
+    assert state["http_status"] == 503
+    assert state["error_type"] == "SimulatedHttpFailure"
+    assert state["last_success_at_utc"] == old["last_success_at_utc"]
+    assert state["cache_count"] == 1 and state["fresh_until"]
+    assert [x.title for x in plugin.search_cached("alice")] == ["Remote"]
+    assert "secret.example" not in repr(state)
+    assert "DO-NOT-LOG" not in repr(state)
+    assert "Remote" not in repr(state)
+
+
+def test_catalog_collect_source_rejections_timeout_and_empty_are_distinct():
+    plugin = YouthCatalogPlugin()
+
+    class InvalidSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            return {"items": [{"title": ""}], "next_cursor": ""}
+
+    invalid = InvalidSource()
+    report = plugin.collect_source("alice", invalid, "")
+    assert (report.accepted, report.rejected) == (0, 1)
+    assert {r["source_id"]: r for r in plugin.source_diagnostics("alice")}["youth.test"]["collection_state"] == "invalid"
+
+    class TimeoutSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            raise TimeoutError("https://private.invalid/session")
+
+    report = plugin.collect_source("bob", TimeoutSource(), "")
+    assert report.rejected == 1
+    bob = {r["source_id"]: r for r in plugin.source_diagnostics("bob")}["youth.test"]
+    assert bob["collection_state"] == "timeout"
+    assert bob["collection_stage"] == "search"
+    assert bob["error_type"] == "TimeoutError"
+    assert bob["cache_count"] == 0
+    assert "private.invalid" not in repr(bob)
+
+    class EmptySource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            return {"items": (), "next_cursor": ""}
+
+    assert plugin.collect_source("carol", EmptySource(), "").accepted == 0
+    carol = {r["source_id"]: r for r in plugin.source_diagnostics("carol")}["youth.test"]
+    assert carol["collection_state"] == "empty_unverified"
+    assert carol["collection_stage"] == "ingest"
+    assert carol["last_success_at_utc"]
+
+
+def test_source_diagnostic_stage_is_strictly_whitelisted():
+    index = YouthCatalogIndex()
+    index.record_collection("alice", "milan", state="error", stage="fetch?token=SECRET")
+    row = {r["source_id"]: r for r in index.source_diagnostics("alice")}["milan"]
+    assert row["collection_stage"] == ""
+    assert "SECRET" not in repr(row)
+    index.record_collection("alice", "milan", state="http_error", stage="listing", http_status=429)
+    row = {r["source_id"]: r for r in index.source_diagnostics("alice")}["milan"]
+    assert row["collection_stage"] == "listing"
+    assert row["http_status"] == 429
