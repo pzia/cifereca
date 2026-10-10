@@ -643,3 +643,27 @@ def test_http_error_preserves_typed_status_for_youth_diagnostics():
     assert raised.value.http_status == 429
 
 
+
+
+def test_milan_per_collection_http_counter_includes_listing_and_product_details():
+    requests = []
+    def handler(req):
+        requests.append(req.url.path)
+        text = LISTING if req.url.path == "/livres/" else MOQUEUSE
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=text)
+    source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.browse(text_filter="Moqueuse", limit=1)
+    assert len(result["items"]) == 1
+    assert result["collection_request_count"] == 2
+    assert requests == ["/livres/", "/livres/63047-moqueuse/"]
+    assert source._call_requests.get() is None
+
+    def fail_detail(req):
+        if req.url.path == "/livres/":
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=LISTING)
+        return httpx.Response(503, headers={"content-type": "text/html"}, text="private")
+    source.client = httpx.Client(transport=httpx.MockTransport(fail_detail))
+    with pytest.raises(RuntimeError, match="503") as exc:
+        source.browse(text_filter="Moqueuse", limit=1)
+    assert exc.value.collection_request_count == 2
+    assert source._call_requests.get() is None
