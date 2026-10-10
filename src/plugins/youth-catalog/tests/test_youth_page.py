@@ -1245,3 +1245,85 @@ def test_youth_ui_collected_attaches_only_explicit_ecole_source_funnel():
     }["ecole-loisirs"]
     assert bob["collection_state"] == "not_tested"
     assert bob["pipeline"] == {}
+
+
+def test_906_selected_book_searches_known_catalog_once_with_original_title():
+    calls, shown, toasts = [], [], []
+    view = object.__new__(YouthView)
+    view.rows = {"a": youth_book(
+        record_id="a", title="C'est quoi, l'écologie ?",
+        identifiers={"isbn": "9780306406157"},
+    )}
+    view.master = NS(show_detail=shown.append, empty_detail=lambda: None)
+    view.host = NS(
+        search_books=lambda *args, **kwargs: calls.append((args, kwargs)) or True,
+        toast=toasts.append,
+    )
+    view.identity_id = lambda: "alice"
+    YouthView.selected(view, NS(key="a"))
+    assert calls == []  # No implicit remote or local search on selection
+    assert len(shown) == 1
+    assert len(shown[0].actions) == 1
+    action = shown[0].actions[0]
+    assert action.id == "search-library"
+    assert action.title == "Rechercher en bibliothèque"
+    assert action.icon_name == "system-search-symbolic"
+    action.callback()
+    assert calls == [(("C'est quoi, l'écologie ?",), {
+        "field": "title", "online": False, "identity_id": "alice",
+    })]
+    assert toasts == []
+
+
+def test_906_identity_rejection_is_visible_without_fallback_search():
+    calls, toasts = [], []
+    view = object.__new__(YouthView)
+    view.rows = {"book": youth_book(title="Même titre")}
+    view.master = NS(show_detail=lambda presentation: captured.append(presentation),
+                     empty_detail=lambda: None)
+    captured = []
+    view.host = NS(
+        search_books=lambda *a, **kw: calls.append((a, kw)) or False,
+        toast=toasts.append,
+    )
+    view.identity_id = lambda: "bob"
+    YouthView.selected(view, NS(key="book"))
+    captured[0].actions[0].callback()
+    assert len(calls) == 1 and calls[0][1]["identity_id"] == "bob"
+    assert len(toasts) == 1
+    assert "profil" in toasts[0]
+
+
+def test_906_absent_selection_and_legacy_host_do_not_create_buttons():
+    empty, shown = [], []
+    view = object.__new__(YouthView)
+    view.rows = {"book": youth_book()}
+    view.master = NS(show_detail=shown.append, empty_detail=lambda: empty.append(True))
+    view.host = NS()
+    view.identity_id = lambda: "alice"
+    YouthView.selected(view, NS(key="book"))
+    assert shown[0].actions == ()
+    YouthView.selected(view, None)
+    assert empty == [True] and view.selected_book is None
+
+
+def test_906_same_title_different_editions_do_not_assert_possession():
+    calls, shown = [], []
+    first = youth_book(record_id="a", title="Deux éditions",
+                       identifiers={"isbn": "9780306406157"})
+    second = youth_book(record_id="b", title="Deux éditions",
+                        identifiers={"isbn": "9780140328721"})
+    view = object.__new__(YouthView)
+    view.rows = {"a": first, "b": second}
+    view.master = NS(show_detail=shown.append, empty_detail=lambda: None)
+    view.host = NS(search_books=lambda *a, **kw: calls.append((a, kw)) or True)
+    view.identity_id = lambda: "alice"
+    YouthView.selected(view, NS(key="a"))
+    YouthView.selected(view, NS(key="b"))
+    assert calls == []
+    for projection in shown:
+        projection.actions[0].callback()
+    assert calls == [
+        (("Deux éditions",), {"field": "title", "online": False, "identity_id": "alice"}),
+        (("Deux éditions",), {"field": "title", "online": False, "identity_id": "alice"}),
+    ]
