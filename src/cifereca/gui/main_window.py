@@ -4319,7 +4319,7 @@ class MainWindow(Adw.ApplicationWindow):
         def bind_rows(widget):
             # A native GTK type/title guard survives GObject wrapper recreation:
             # each Détail row retains its own subtitle and Copier/Rechercher.
-            if isinstance(widget, Adw.ExpanderRow) and widget.get_title() == "Détail":
+            if isinstance(widget, getattr(Adw, "ExpanderRow", ())) and widget.get_title() == "Détail":
                 return
             if isinstance(widget, Adw.ActionRow):
                 field = row_fields.get(widget.get_title())

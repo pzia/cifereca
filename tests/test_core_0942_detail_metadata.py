@@ -164,6 +164,6 @@ def test_collapsible_detail_is_marked_before_facet_traversal():
     group = ast.unparse(_method("DetailPanel", "_group"))
     facet = ast.unparse(_method("MainWindow", "_add_facets"))
     assert "Adw.ExpanderRow()" in group
-    assert "isinstance(widget, Adw.ExpanderRow)" in facet
+    assert 'isinstance(widget, getattr(Adw, \'ExpanderRow\', ()))' in facet
     assert "widget.get_title() == 'Détail'" in facet
     assert "_cifereca_preserve_bibliographic_rows" not in facet
