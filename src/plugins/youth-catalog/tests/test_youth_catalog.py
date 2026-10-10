@@ -558,7 +558,9 @@ def test_explicit_catalog_collect_source_updates_identity_scoped_diagnostic():
     assert collected["attempted_at_utc"]
     assert collected["duration_ms"] >= 0
     assert source.calls == 1, "Reading diagnostics must not call the source"
-    assert {r["source_id"]: r for r in plugin.source_diagnostics("bob")}["youth.test"]["collection_state"] == "not_tested"
+    assert "youth.test" not in {r["source_id"] for r in plugin.source_diagnostics("bob")}, (
+        "An unknown source collected by Alice must not appear in Bob's identity"
+    )
 
 
 def test_catalog_collect_source_http_failure_preserves_last_good_cache():
