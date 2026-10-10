@@ -792,7 +792,8 @@ def main() -> int:
         assert ("ISBN", "9780140328721") not in shown, f"Incorrect second ISBN leaked: {shown!r}"
         assert any("source booktrust" in sub and "Interest age: 5 to 7" in sub for _, sub in shown), shown
         assert any("source milan" in sub and "À partir de 12 ans" in sub for _, sub in shown), shown
-        assert any(title == "Sources" and "booktrust" in sub and "milan" in sub for title, sub in shown), shown
+        provenance = [sub for title, sub in shown if title == "Source"]
+        assert set(provenance) >= {"booktrust", "milan"}, shown
         result["same_isbn_detail"] = shown
         capture("01-conflicting-age-sources-preserved")
         later(140, editions_first_isbn_in_view)
