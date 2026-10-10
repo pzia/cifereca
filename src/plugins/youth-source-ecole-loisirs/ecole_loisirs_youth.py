@@ -49,7 +49,9 @@ def normalize_isbn13(value: object) -> str:
         prefix = "978" + raw[:9]
         check = (10 - sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(prefix)) % 10) % 10
         return prefix + str(check)
-    if len(raw) == 13 and raw.isdigit():
+    # A valid GTIN/EAN checksum does not make a product identifier an ISBN:
+    # only Bookland 978/979 are ISBN-13 prefixes (e.g. toys use other EANs).
+    if len(raw) == 13 and raw.isdigit() and raw.startswith(("978", "979")):
         total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(raw))
         return raw if total % 10 == 0 else ""
     return ""
@@ -231,6 +233,10 @@ def parse_listing(html: str, *, limit: int = 40) -> tuple[Mapping[str, object], 
         isbn = _card_isbn(tokens, start, end)
         if not isbn:
             continue
+        book_type = _card_type(tokens, start, end)
+        # A game with even a valid ISBN must not be advertised as a book.
+        if book_type == "jeu":
+            continue
         item: dict[str, object] = {
             "record_id": isbn,
             "source_item_id": isbn,
@@ -239,7 +245,7 @@ def parse_listing(html: str, *, limit: int = 40) -> tuple[Mapping[str, object], 
             "isbn13": isbn,
             "notice_url": url,
             "friendly_url": url,
-            "book_type": _card_type(tokens, start, end),
+            "book_type": book_type,
             "metadata": {
                 "age_evidence": "ecole-loisirs.search.explicit" if age.qualified else "ecole-loisirs.search.unknown",
                 "age_label": age.label,

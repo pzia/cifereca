@@ -376,3 +376,36 @@ def test_ecole_per_collection_request_evidence_survives_http_failure():
         source.search("loup")
     assert exc.value.collection_request_count == 1
     assert source._call_requests.get() is None
+
+
+def test_product_gtin_with_valid_checksum_is_not_an_isbn13():
+    """Publisher sometimes labels toy/barcode EAN-13 as 'ISBN'."""
+    for ean in ("3575678940134", "3127020507597"):
+        assert normalize_isbn13(ean) == ""
+    # ISBN-13: accept 978 and 979 prefixes with valid checksum.
+    assert normalize_isbn13("9782211309684") == "9782211309684"
+    assert normalize_isbn13("9791234567896") == "9791234567896"
+    assert normalize_isbn13("0306406152") == "9780306406157"
+
+
+def test_ecole_listing_excludes_games_and_nonbook_ean_while_keeps_real_book():
+    html = """
+        <div>3 à 6 ans</div>
+        <a href="/livre/peluche-loup">Peluche Le loup le plus beau</a>
+        <div>jeu</div><p>ISBN: 3575678940134</p>
+        <div>3 à 6 ans</div>
+        <a href="/livre/jeu-isbn">Jeu possédant un vrai ISBN</a>
+        <div>jeu</div><p>ISBN: 9782211348171</p>
+        <div>3 à 6 ans</div>
+        <a href="/livre/milo-loup">Milo et le loup</a>
+        <div>album</div><p>ISBN: 9782211309684</p>
+        <div>3 à 6 ans</div>
+        <a href="/livre/jeu-loup">Le loup — Cherche et trouve</a>
+        <div>jeu</div><p>ISBN: 3127020507597</p>
+    """
+    rows = parse_listing(html)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "Milo et le loup"
+    assert rows[0]["isbn13"] == "9782211309684"
+    assert rows[0]["book_type"] == "album"
+    assert rows[0]["age_ranges"][0]["source_label"] == "3 à 6 ans"
