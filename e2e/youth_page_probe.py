@@ -425,7 +425,9 @@ def main() -> int:
         else:
             window.go_back()
             result["library_search_back"] = "GTK navigation API"
-        # La transition Adw.Navigation/ViewStack est encore visiblement animée à 260 ms.\n        # La gate #962 attend la fin de l’animation avant de lire le focus GTK.\n        later(900 if args.focus_return else 260, library_search_verify_return)
+        # Attendre que la transition GTK se termine avant de mesurer le focus.
+        # Le parcours P0 conserve son délai initial.
+        later(900 if args.focus_return else 260, library_search_verify_return)
 
     def library_search_verify_return():
         assert window.view_stack.get_visible_child_name() == "youth"
