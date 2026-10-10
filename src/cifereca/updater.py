@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import tomllib
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -1063,6 +1064,16 @@ def _print(value: dict[str, Any], as_json: bool) -> None:
             print(f"{key}: {val}")
 
 
+def _cli_progress(transaction_id: str, stage: str, state: str, started: float) -> None:
+    """Bounded, secret-free CLI progress on stderr (stdout stays JSON-compatible)."""
+    elapsed_ms = max(0, int((time.monotonic() - started) * 1000))
+    print(
+        f"[cifereca-update] tx={transaction_id} stage={stage} "
+        f"status={state} elapsed_ms={elapsed_ms}",
+        file=sys.stderr, flush=True,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Updater atomique cifereca")
     p.add_argument("archive", nargs="?")
@@ -1081,6 +1092,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--python")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
+    # Do not claim that validation, packaging or activation has completed
+    # before the underlying operation returns successfully.
+    stage = ("status" if a.status else "rollback" if a.rollback else
+             "github_install" if a.github is not None else "archive_install")
+    tx = uuid.uuid4().hex[:12]
+    started = time.monotonic()
+    _cli_progress(tx, stage, "START", started)
     try:
         if a.status:
             result = status()
@@ -1094,9 +1112,11 @@ def main(argv: list[str] | None = None) -> int:
             if not a.archive:
                 p.error("archive ZIP requise (ou utiliser --github [branche|tag|commit])")
             result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
+        _cli_progress(tx, stage, "OK", started)
         _print(result, a.json)
         return 0
     except UpdateError as exc:
+        _cli_progress(tx, stage, "ERROR", started)
         error = {"ok": False, "error": {"code": "update_error", "message": str(exc)}}
         _print(error, a.json)
         return 1
