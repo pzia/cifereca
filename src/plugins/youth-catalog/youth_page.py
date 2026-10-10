@@ -17,7 +17,7 @@ from cifereca.plugin_api import (
     UiBookListEntry,
     UiPageContribution,
 )
-from youth_catalog import normalize_isbn
+from youth_catalog import collection_failure_diagnostic, normalize_isbn
 
 
 KIND_LABELS = {
@@ -895,10 +895,7 @@ class YouthView:
                 error_type, http_status = "", None
             except Exception as exc:
                 result, error = None, True
-                error_type = type(exc).__name__
-                response = getattr(exc, "response", None)
-                status_code = getattr(response, "status_code", None)
-                http_status = status_code if isinstance(status_code, int) else None
+                failure = collection_failure_diagnostic(exc)
             def apply():
                 current = self.filter_state()
                 current_token = (self.identity_id(), self.selected_source_plugin(), current.query, current.age, current.themes)
@@ -910,15 +907,9 @@ class YouthView:
                     row = self.selected_source()
                     if callable(reporter) and row is not None:
                         sid, _label = source_info(row)
-                        state = (
-                            "timeout" if "timeout" in error_type.casefold()
-                            else "http_error" if http_status is not None
-                            else "error"
-                        )
                         reporter(
-                            token[0], sid, state=state,
+                            token[0], sid, **failure,
                             duration_ms=max(0, int((perf_counter() - started) * 1000)),
-                            error_type=error_type, http_status=http_status,
                         )
                     self.status.set_label("Échec de la source. Le cache précédent est conservé.")
                     self.refresh_source_diagnostics()
