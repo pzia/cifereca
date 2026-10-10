@@ -698,6 +698,108 @@ def test_collect_source_runtime_http_failure_is_typed_and_keeps_identity_isolati
     assert bob["booktrust"]["collection_state"] == "not_tested"
 
 
+
+def test_rejection_categories_are_bounded_and_never_reveal_invalid_input():
+    from youth_catalog import safe_ingest_rejection_categories
+    raw = (
+        "item[0]: title is required",
+        "item[1]: invalid publisher https://private.example/?token=secret",
+        "item[2]: title is required",
+    )
+    summary = safe_ingest_rejection_categories(raw)
+    assert summary == {"missing_title": 2, "other": 1}
+    assert "private.example" not in repr(summary)
+    assert safe_ingest_rejection_categories(()) == {
+        "missing_title": 0, "other": 0,
+    }
+
+
+def test_youth_collection_metrics_are_local_and_identity_isolated():
+    from youth_catalog import YouthCatalogPlugin
+
+    plugin = YouthCatalogPlugin()
+    assert plugin.source_diagnostics("alice")[0]["received_count"] is None
+    assert plugin.source_diagnostics("alice")[0]["requested_limit"] is None
+    assert plugin.source_diagnostics("bob")[0]["received_count"] is None
+    source = GoodSource()
+    report = plugin.collect_source("alice", source, "chat", limit=7)
+    assert report.accepted == 1 and source.calls == 1
+    a = {x["source_id"]: x for x in plugin.source_diagnostics("alice")}["youth.test"]
+    assert a["collection_state"] == "items"
+    assert a["received_count"] == 1
+    assert a["requested_limit"] == 7
+    assert a["rejection_categories"] == {}
+    assert source.calls == 1  # diagnostic read is local
+
+    class MalformedSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            return {"items": [{"title": ""}, {"title": "valid"}]}
+
+    malformed = MalformedSource()
+    report = plugin.collect_source("alice", malformed, "chat", limit=3)
+    assert (report.accepted, report.rejected) == (1, 1)
+    current = {x["source_id"]: x for x in plugin.source_diagnostics("alice")}["youth.test"]
+    assert current["received_count"] == 2
+    assert current["requested_limit"] == 3
+    assert current["rejection_categories"] == {"missing_title": 1}
+    assert current["cache_count"] == 1
+    assert "title is required" not in repr(current)
+    assert "youth.test" not in {x["source_id"] for x in plugin.source_diagnostics("bob")}
+
+
+def test_failed_youth_fetch_marks_received_count_unknown_and_preserves_old_cache():
+    from youth_catalog import YouthCatalogPlugin
+
+    plugin = YouthCatalogPlugin()
+    plugin.collect_source("alice", GoodSource(), "Atlas", limit=5)
+    old = {x["source_id"]: x for x in plugin.source_diagnostics("alice")}["youth.test"]
+
+    class FailedSource(GoodSource):
+        def search(self, query, *, cursor=None, limit=50):
+            self.calls += 1
+            raise RuntimeError("private=https://example.org/token")
+
+    failed = FailedSource()
+    report = plugin.collect_source("alice", failed, "Atlas", limit=2)
+    assert report.rejected == 1
+    after = {x["source_id"]: x for x in plugin.source_diagnostics("alice")}["youth.test"]
+    assert after["collection_state"] == "error"
+    assert after["received_count"] is None
+    assert after["requested_limit"] == 2
+    assert after["cache_count"] == old["cache_count"] == 1
+    assert after["last_success_at_utc"] == old["last_success_at_utc"]
+    assert after["rejection_categories"] == {}
+    assert "token" not in repr(after)
+    assert failed.calls == 1
+
+
+def test_youth_collection_metrics_whitelist_rejection_types_and_values():
+    index = YouthCatalogIndex()
+    index.record_collection(
+        "alice", "booktrust", state="invalid",
+        received_count=True, requested_limit="100",
+        rejection_categories={
+            "missing_title": 200_000, "other": -1,
+            "URL=https://private.example/token": 3,
+        },
+    )
+    result = {x["source_id"]: x for x in index.source_diagnostics("alice")}["booktrust"]
+    assert result["received_count"] is None
+    assert result["requested_limit"] is None
+    assert result["rejection_categories"] == {"missing_title": 100_000}
+    assert "private.example" not in repr(result)
+    index.record_collection(
+        "alice", "booktrust", state="items",
+        received_count=1, requested_limit=2,
+        rejection_categories={"missing_title": True, "other": 1},
+    )
+    result = {x["source_id"]: x for x in index.source_diagnostics("alice")}["booktrust"]
+    assert result["received_count"] == 1
+    assert result["requested_limit"] == 2
+    assert result["rejection_categories"] == {"other": 1}
+
+
 def test_source_diagnostic_stage_is_strictly_whitelisted():
     index = YouthCatalogIndex()
     index.record_collection("alice", "milan", state="error", stage="fetch?token=SECRET")
