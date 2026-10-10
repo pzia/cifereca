@@ -63,7 +63,7 @@ def _safe_text(value: object) -> str:
         "password=", "secret=", "/home/", "/users/", "\\x00",
     )):
         return ""
-    if any(ord(char) < 32 and char not in "\\n\\t" for char in result):
+    if any(ord(char) < 32 and char not in "\n\t" for char in result):
         return ""
     if len(result) > _MAX_VALUE_LENGTH:
         return f"Valeur trop longue ({len(result)} caractères) — non affichée"
