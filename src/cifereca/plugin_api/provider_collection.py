@@ -11,7 +11,14 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, runtime_checkable
 
-from .contracts import capability_name_valid
+# Match the public capability syntax without a circular import through
+# plugin_api.contracts (which imports this Protocol for service checks).
+_CAPABILITY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$")
+
+
+def capability_name_valid(value: str) -> bool:
+    return bool(_CAPABILITY_RE.fullmatch(value))
+
 
 _SOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
