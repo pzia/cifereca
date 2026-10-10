@@ -580,3 +580,45 @@ def test_ecole_http_refusal_attaches_only_same_invocation_evidence():
     assert evidence["http_ms"] >= 0
     assert "html_sha256_prefix" in evidence
     assert "private query" not in repr(evidence)
+
+
+def test_ecole_explicit_no_match_keeps_zero_funnel_indeterminate():
+    requests = []
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: requests.append(req) or httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text="<main>Aucun résultat de recherche</main>",
+        )
+    )))
+    result = source.search("inexistant")
+    assert result["items"] == ()
+    assert len(requests) == result["collection_request_count"] == 1
+    funnel = result["collection_pipeline"]
+    assert funnel["candidate_count"] == 0
+    assert funnel["analyzed_count"] == 0
+    assert funnel["age_qualified_count"] == 0
+    assert funnel["returned_items"] == 0
+    assert funnel["rejection_reasons"] == {}
+    assert funnel["total_ms"] >= funnel["http_ms"]
+    assert source.diagnostic_snapshot()["state"] == "empty_unverified"
+
+
+def test_ecole_paginated_layout_drift_attaches_zero_candidates_to_error():
+    from ecole_loisirs_youth import InvalidCatalogueStructureError
+
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<p>Changed public markup</p>'
+                 '<a href="?page=2">Afficher plus de résultats</a>',
+        )
+    )))
+    with pytest.raises(InvalidCatalogueStructureError) as raised:
+        source.search("loup")
+    assert raised.value.collection_request_count == 1
+    evidence = raised.value.collection_pipeline
+    assert evidence["candidate_count"] == 0
+    assert evidence["returned_items"] == 0
+    assert evidence["anchor_count"] == 1
+    assert "Changed public markup" not in repr(evidence)
+    assert source.diagnostic_snapshot()["state"] == "invalid"
