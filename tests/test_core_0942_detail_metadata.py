@@ -52,6 +52,7 @@ def test_shared_builder_keeps_essential_and_detail_sections_separate():
     builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "book_detail_presentation")
     assert any(arg.arg == "metadata" for arg in builder.args.kwonlyargs)
     source = ast.unparse(builder)
-    assert "detail_metadata_rows(metadata)" in source
+    assert "detail_metadata_items(metadata)" in source
     assert "title='Détail'" in source or "title='Détail'".replace("'", '"') in source
     assert "already_shown" in source
+    assert "primary_title" in source
