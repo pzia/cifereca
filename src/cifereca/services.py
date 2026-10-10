@@ -14,6 +14,7 @@ from difflib import SequenceMatcher
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
@@ -4155,6 +4156,9 @@ class LibraryService:
             raise ProviderConfigurationError("Une synchronisation automatique est déjà en cours") from exc
 
     def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None = None, *, deep: bool = False) -> dict[str, Any]:
+        from .brokers import SynchronizationBrokerImpl
+        source_status = SynchronizationBrokerImpl(self)
+
         def emit(event: str, **detail: Any) -> None:
             if progress:
                 try: progress({"event": event, **detail})
@@ -4191,6 +4195,7 @@ class LibraryService:
                 detail["adept_provisioning"] = dict((profile or {}).get("provisioning") or {})
                 if adept_profiles and profile is None:
                     detail["adept_attention"] = "profile_missing"
+            accounts: list[Account] = []
             try:
                 loans: list[Loan] = []
                 seen_loans: set[tuple[str, str, str, str]] = set()
@@ -4283,6 +4288,21 @@ class LibraryService:
             summary = {"identity_id": identity.identity_id, "label": identity.label, "status": status,
                        "new_acquisitions": new_acquisitions, "attention_required": attention, "errors": errors, **detail}
             summaries.append(summary)
+            # Opening sync previously wrote only sync_runs, while GTK reads
+            # sync.source.state.*. Project the *confirmed* identity result into
+            # each enabled account, without inventing a success on partial ADEPT.
+            attempted_at = datetime.fromtimestamp(started, timezone.utc).isoformat(timespec="seconds")
+            for account in accounts:
+                try:
+                    source_status.record_opening_state(
+                        self.sync_source_id(account), identity_id=identity.identity_id,
+                        status=status, attempted_at=attempted_at,
+                    )
+                except Exception as sync_state_exc:
+                    _TRACE_LOG.warning(
+                        "TRACE sync source projection failed provider=%s reason=%s",
+                        account.provider_id, type(sync_state_exc).__name__,
+                    )
             emit("identity_end", **summary)
 
         try:

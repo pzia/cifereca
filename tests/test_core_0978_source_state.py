@@ -1,0 +1,155 @@
+"""P0 #978: SQLite states are truthful across manual/opening sync and restart."""
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+from cifereca.brokers import SynchronizationBrokerImpl
+from cifereca.config import Config
+from cifereca.diagnostics import Diagnostics
+from cifereca.gui.sync_view import sync_source_presentation
+from cifereca.models import Account, Loan
+from cifereca.services import LibraryService
+from cifereca.storage import Storage
+
+
+def fake_broker(storage, *, fail=False, partial=False):
+    account = Account(
+        display_name="Compte Paris", unique_id="borrower-1",
+        provider_id="paris", credential_id="paris-1", provider_label="Paris",
+        identity_id="default",
+    )
+    session = NS(capabilities=NS(loans=True), connected=True)
+    def synchronize(account, **kwargs):
+        if fail:
+            raise RuntimeError("source temporarily unavailable")
+        if partial:
+            return {"loans": 3, "attention_required": 1, "status": "partial"}
+        return {"loans": 3}
+    service = NS(
+        storage=storage, accounts=[account],
+        accounts_for_identity=lambda identity=None: [account],
+        _session_key=lambda provider, credential: f"{provider}::{credential}",
+        _sessions={"paris::paris-1": session},
+        synchronize_account_source=synchronize,
+    )
+    return SynchronizationBrokerImpl(service)
+
+
+def test_manual_success_sqlite_json_and_reopen(tmp_path):
+    path = tmp_path / "state.sqlite3"
+    storage = Storage(path)
+    broker = fake_broker(storage)
+    source = broker.sources()[0]
+    try:
+        assert source.connected and source.sync_capable
+        result = broker.synchronize_source(source.source_id)
+        assert result.ok and result.changed == 3
+        raw = storage.metadata_get("sync.source.state." + source.source_id)
+        saved = json.loads(raw)
+        assert saved["status"] == "ok"
+        assert saved["scope"] == "manual"
+        assert saved["last_success"].endswith("+00:00")
+    finally:
+        storage.close()
+    reopened = Storage(path)
+    try:
+        source = fake_broker(reopened).sources()[0]
+        assert source.last_success
+        assert source.status == "ok"
+        assert "Dernier succès" in sync_source_presentation(source).summary
+        assert "Jamais synchronisée" not in sync_source_presentation(source).summary
+    finally:
+        reopened.close()
+
+
+def test_failure_and_partial_keep_prior_success(tmp_path):
+    storage = Storage(tmp_path / "failure.sqlite3")
+    try:
+        healthy = fake_broker(storage)
+        sid = healthy.sources()[0].source_id
+        assert healthy.synchronize_source(sid).ok
+        first = healthy.sources()[0].last_success
+        failed = fake_broker(storage, fail=True)
+        assert failed.synchronize_source(sid).ok is False
+        state = failed.sources()[0]
+        assert state.status == "error"
+        assert state.last_success == first
+        assert "Dernier succès confirmé" in sync_source_presentation(state).summary
+        partial = fake_broker(storage, partial=True)
+        outcome = partial.synchronize_source(sid)
+        assert not outcome.ok and outcome.changed == 4
+        current = partial.sources()[0]
+        assert current.status == "partial"
+        assert current.last_success == first
+        assert "Partielle" in sync_source_presentation(current).sync_label
+        assert "Jamais synchronisée" not in sync_source_presentation(current).summary
+    finally:
+        storage.close()
+
+
+def test_legacy_repr_migrates_without_execution(tmp_path, caplog):
+    storage = Storage(tmp_path / "legacy.sqlite3")
+    try:
+        broker = fake_broker(storage)
+        key = "sync.source.state." + broker.sources()[0].source_id
+        original = {"last_attempt": "2026-10-01T08:00:00+00:00",
+                    "last_success": "2026-10-01T07:00:00+00:00",
+                    "status": "ok", "error": ""}
+        storage.metadata_set(key, original)  # historical str(dict)
+        assert broker.sources()[0].last_success == original["last_success"]
+        assert json.loads(storage.metadata_get(key)) == original
+        storage.metadata_set(key, "__import__('os').system('echo BAD')")
+        with caplog.at_level(logging.WARNING, logger="cifereca.sync"):
+            assert broker.sources()[0].last_success == ""
+        assert "invalid sync source metadata" in caplog.text
+        assert storage.metadata_get(key).startswith("__import__")
+    finally:
+        storage.close()
+
+
+def test_opening_sync_partial_never_invents_success(tmp_path, monkeypatch):
+    cfg = Config(tmp_path / "config.json")
+    cfg.set("library.directory", str(tmp_path / "EBooks"))
+    cfg.set("identities", [{
+        "id": "default", "label": "Lectrice", "directory_name": "lectrice",
+        "preferences": {"reading_languages": ["fr"]},
+    }])
+    cfg.set("providers.accounts", [])
+    lib = LibraryService(cfg, Storage(tmp_path / "opening.sqlite3"), Diagnostics())
+    try:
+        account = Account(
+            display_name="Paris", unique_id="borrower", provider_id="paris",
+            credential_id="paris-1", provider_label="Paris", identity_id="default",
+        )
+        lib.accounts = [account]
+        loan = Loan(
+            id="loan-1", provider="PNB", medium="digital", record_id="r1",
+            title="Livre", source_provider="paris", source_credential="paris-1",
+            source_account_id="borrower", identity_id="default",
+            ebook_url="https://example.invalid/fulfill.acsm",
+            due_at="2099-01-01T00:00:00Z",
+        )
+        monkeypatch.setattr(lib, "_loans_for_account", lambda _a, force=False: [loan])
+        monkeypatch.setattr(lib, "_acquire_active_loan_automatically",
+                            lambda _loan: {"status": "attention_required", "loan_id": loan.id})
+        monkeypatch.setattr(lib, "catalog_scan", lambda: {"scanned": 0})
+        monkeypatch.setattr(lib, "kobo_backup_enabled", lambda: False)
+        result = lib.opening_sync()
+        assert result["identities"][0]["status"] == "partial"
+        key = "sync.source.state." + lib.sync_source_id(account)
+        state = json.loads(lib.storage.metadata_get(key))
+        assert state["status"] == "partial"
+        assert state["scope"] == "opening"
+        assert "last_success" not in state
+        assert lib.storage.latest_sync_run("default")["status"] == "partial"
+        # Reopening the same SQLite after the service closes must be stable.
+    finally:
+        lib.close()
+    storage = Storage(tmp_path / "opening.sqlite3")
+    try:
+        assert json.loads(storage.metadata_get(key))["status"] == "partial"
+    finally:
+        storage.close()

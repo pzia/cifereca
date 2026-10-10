@@ -1,4 +1,6 @@
 from __future__ import annotations
+import ast
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -10,6 +12,8 @@ from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, 
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
+
+_SYNC_LOG = logging.getLogger("cifereca.sync")
 
 
 def _account_id(account: Any) -> str:
@@ -133,17 +137,64 @@ class SynchronizationBrokerImpl:
         return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
     def _state(self, source_id: str) -> dict[str, Any]:
-        raw = self.service.storage.metadata_get("sync.source.state." + source_id)
+        key = "sync.source.state." + source_id
+        raw = self.service.storage.metadata_get(key)
         if not raw:
             return {}
+        # Metadata is untrusted persisted text. Older versions accidentally
+        # stored str(dict), so accept only bounded Python *literals* as a
+        # one-time compatibility migration; never call eval().
+        if not isinstance(raw, str) or len(raw) > 8192:
+            _SYNC_LOG.warning("invalid sync source metadata size for %s", source_id)
+            return {}
+        legacy = False
         try:
             value = json.loads(raw)
-            return value if isinstance(value, dict) else {}
-        except Exception:
+        except (ValueError, TypeError):
+            try:
+                value = ast.literal_eval(raw)
+                legacy = True
+            except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
+                _SYNC_LOG.warning("invalid sync source metadata for %s", source_id)
+                return {}
+        if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+            _SYNC_LOG.warning("invalid sync source state shape for %s", source_id)
             return {}
+        state = {
+            key: value[key] for key in (
+                "last_attempt", "last_success", "status", "error", "scope", "identity_id",
+            ) if key in value and isinstance(value[key], str)
+        }
+        if legacy:
+            self._set_state(source_id, state)
+        return state
 
     def _set_state(self, source_id: str, value: dict[str, Any]) -> None:
-        self.service.storage.metadata_set("sync.source.state." + source_id, value)
+        self.service.storage.metadata_set(
+            "sync.source.state." + source_id,
+            json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+
+    def record_opening_state(self, source_id: str, *, identity_id: str,
+                             status: str, attempted_at: str) -> None:
+        """Project the opening sync into the same per-source state read by GTK.
+
+        An identity-level partial result is not proof that a source succeeded:
+        conservatively report partial for every involved source. Keep any
+        previously confirmed success, including after failed opening sync.
+        """
+        state = self._state(source_id)
+        if state.get("last_attempt", "") > attempted_at:
+            return  # a more recent manual sync should not be overwritten
+        state.update(last_attempt=attempted_at, status=status, error="",
+                     scope="opening", identity_id=identity_id)
+        if status == "success":
+            state["last_success"] = attempted_at
+        elif status in {"partial", "failed"}:
+            state["error"] = ("Ouverture partielle" if status == "partial"
+                              else "Échec de synchronisation au démarrage")
+        self._set_state(source_id, state)
+        self._notify()
 
     def _find_account(self, source_id: str) -> Any:
         for account in getattr(self.service, "accounts", ()) or ():
@@ -188,16 +239,34 @@ class SynchronizationBrokerImpl:
             return SyncResult(ok=True, changed=0, warnings=("source disabled",), facts={"source_id": source_id, "skipped": True})
         request = request or SyncRequest(identity_id=str(getattr(account, "identity_id", "") or ""))
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        state = {"last_attempt": now, "status": "running", "error": ""}
+        state = self._state(source_id)
+        state.update(last_attempt=now, status="running", error="", scope="manual",
+                     identity_id=str(getattr(account, "identity_id", "") or ""))
         self._set_state(source_id, state); self._notify()
         try:
-            result = self.service.synchronize_account_source(account, deep=bool(request.deep), control=control)
-            changed = sum(v for v in result.values() if isinstance(v, int) and not isinstance(v, bool)) if isinstance(result, dict) else 0
-            state.update({"last_success": datetime.now(timezone.utc).isoformat(timespec="seconds"), "status": "ok", "error": ""})
+            result = self.service.synchronize_account_source(
+                account, deep=bool(request.deep), control=control,
+            )
+            changed = sum(
+                v for v in result.values() if isinstance(v, int) and not isinstance(v, bool)
+            ) if isinstance(result, dict) else 0
+            facts = dict(result) if isinstance(result, dict) else {"result": result}
+            outcome = str(facts.get("status") or "").lower()
+            incomplete = (outcome in {"partial", "failed", "error", "attention_required",
+                                      "retryable_error"}
+                          or bool(facts.get("errors")) or bool(facts.get("attention_required"))
+                          or bool(facts.get("warnings")))
+            if incomplete:
+                state.update(status="partial", error="Synchronisation partielle")
+                self._set_state(source_id, state); self._notify()
+                return SyncResult(ok=False, changed=changed,
+                                  warnings=("synchronisation partielle",), facts=facts)
+            state.update(last_success=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                         status="ok", error="")
             self._set_state(source_id, state); self._notify()
-            return SyncResult(ok=True, changed=changed, facts=dict(result) if isinstance(result, dict) else {"result": result})
+            return SyncResult(ok=True, changed=changed, facts=facts)
         except Exception as exc:
-            state.update({"status": "error", "error": str(exc)})
+            state.update(status="error", error=str(exc))
             self._set_state(source_id, state); self._notify()
             return SyncResult(ok=False, warnings=(str(exc),), facts={"source_id": source_id})
 
