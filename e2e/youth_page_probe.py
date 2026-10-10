@@ -357,11 +357,11 @@ def main() -> int:
         assert page.view.selected_source_plugin() == "youth.source.booktrust"
         assert not requests, "Selecting source triggered unsolicited HTTP"
         assert_rows()
-        # #910: real keyboard, real installed BookTrust plugin. "des"
-        # matches both offline notices and is long enough for extension.
+        # #910: real keyboard, real installed BookTrust plugin. "the"
+        # matches both English fixture titles and is long enough for extension.
         device.click_widget(page.view.query)
         assert page.view.query.get_mapped(), "BookTrust query entry is not mapped"
-        device.type_text("des")
+        device.type_text("the")
         page.view.query.connect(
             "activate", lambda _entry: result.__setitem__(
                 "booktrust_enter_gtk_activations",
@@ -371,7 +371,7 @@ def main() -> int:
         later(190, source_enter_first)
 
     def source_enter_first():
-        assert page.view.query.get_text() == "des"
+        assert page.view.query.get_text() == "the"
         assert page.view.selected_source_plugin() == "youth.source.booktrust"
         assert_rows()
         assert requests == [], "Typing without Return must not launch HTTP"

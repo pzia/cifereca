@@ -273,7 +273,7 @@ clavier sur `Gtk.Entry`**, sans inventer de fournisseur et sans changer le
 transport HTTP de test :
 
 - Le plugin BookTrust réel est installé, sa source explicitement choisie.
-  Le texte `des` est saisi **physiquement par XTEST** et correspond aux
+  Le texte `the` est saisi **physiquement par XTEST** et correspond aux
   deux notices synthétiques existantes. Sans Entrée, zéro HTTP.
 - **Return** : validation locale, `0 résultat(s)` et indication de la
   seconde Entrée, **zéro HTTP** ; capture `00b-booktrust-return-local-no-http`.

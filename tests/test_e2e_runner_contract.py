@@ -238,7 +238,7 @@ def test_youth_booktrust_two_enter_keys_prove_one_remote_collection_in_real_gtk(
     # acknowledgement are asserted, not just the signal/manifest.
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
     assert 'device.click_widget(page.view.query)' in source
-    assert 'device.type_text("des")' in source
+    assert 'device.type_text("the")' in source
     assert "def source_enter_first():" in source
     assert "def source_enter_local_feedback():" in source
     assert 'keys("Return")' in source
