@@ -16,7 +16,7 @@ class Widget:
         self.children = []
         self.handlers = {}
     def set_title(self, *_): pass
-    def set_subtitle(self, *_): pass
+    def set_subtitle(self, value): self.subtitle = value
     def set_subtitle_lines(self, *_): pass
     def set_tooltip_text(self, *_): pass
     def set_expanded(self, *_): pass
@@ -105,6 +105,8 @@ def test_signed_urls_and_secrets_are_not_copied_or_searched():
     ], fields=(NS(kind="all"), NS(kind="author")))
     expander = groups[0].children[0]
     assert len(expander.children) == 1
+    # The visible count must reflect safe, rendered fields, not raw input rows.
+    assert expander.subtitle == "1 champ(s) bibliographiques"
     assert clipboard.value is None
     assert events == []
 
