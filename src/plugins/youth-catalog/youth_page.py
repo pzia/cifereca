@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from time import perf_counter
 from urllib.parse import urlsplit
@@ -14,6 +14,7 @@ from cifereca.plugin_api import (
     DocumentLink,
     UiActionContribution,
     UiBookDetailPresentation,
+    UiBookDetailAction,
     UiBookListEntry,
     UiPageContribution,
 )
@@ -185,45 +186,60 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     ranges = tuple(getattr(book, "age_ranges", ()) or ())
     age_fields = tuple(
         DetailField(f"age-{index}", KIND_LABELS.get(_fold(getattr(row, "age_kind", "")), "Âge"), age_detail(row))
-        for index, row in enumerate(ranges[:8])
+        for index, row in enumerate(ranges)
     )
     if not age_fields:
         age_fields = (DetailField("age-empty", "Âge", "Aucune tranche d’âge attestée en cache."),)
     metadata_fields = []
+    title = _text(getattr(book, "title", ""))
+    if title:
+        metadata_fields.append(DetailField("title", "Titre", title, kind="title"))
+    authors = tuple(_text(value) for value in (getattr(book, "authors", ()) or ()) if _text(value))
+    for index, author in enumerate(authors):
+        metadata_fields.append(DetailField(f"author-{index}", "Auteur", author, kind="author"))
     reference_id, reference_label, reference_value = edition_reference(book)
     if reference_value:
-        metadata_fields.append(DetailField(reference_id, reference_label, reference_value))
-    source = ", ".join(tuple(getattr(book, "provenance", ()) or ()))
-    if source:
-        metadata_fields.append(DetailField("sources", "Sources", source))
+        metadata_fields.append(DetailField(reference_id, reference_label, reference_value, kind="isbn" if reference_id == "isbn" else "copy"))
+    for index, value in enumerate(tuple(getattr(book, "provenance", ()) or ())):
+        source = _text(value)
+        if source:
+            metadata_fields.append(DetailField(f"source-{index}", "Source", source, kind="copy"))
     language = _text(getattr(book, "language", ""))
     if language:
-        metadata_fields.append(DetailField("language", "Langue", language))
+        metadata_fields.append(DetailField("language", "Langue", language, kind="language"))
     formats = tuple(getattr(book, "formats", ()) or ())
-    if formats:
-        metadata_fields.append(DetailField("formats", "Formats", ", ".join(formats)))
+    for index, value in enumerate(formats):
+        cleaned = _text(value)
+        if cleaned:
+            metadata_fields.append(DetailField(f"format-{index}", "Format", cleaned, kind="all"))
     book_type = _text(getattr(book, "book_type", ""))
     if book_type:
-        metadata_fields.append(DetailField("type", "Type", book_type))
+        metadata_fields.append(DetailField("type", "Type", book_type, kind="all"))
     themes = tuple(getattr(book, "themes", ()) or ())
-    if themes:
-        metadata_fields.append(DetailField("themes", "Thèmes", ", ".join(themes[:12])))
+    for index, value in enumerate(themes):
+        cleaned = _text(value)
+        if cleaned:
+            metadata_fields.append(DetailField(f"theme-{index}", "Thème", cleaned, kind="subject"))
     publishers = tuple(getattr(book, "publishers", ()) or ())
-    if publishers:
-        metadata_fields.append(DetailField("publishers", "Éditeurs", ", ".join(publishers[:6])))
+    for index, value in enumerate(publishers):
+        cleaned = _text(value)
+        if cleaned:
+            metadata_fields.append(DetailField(f"publisher-{index}", "Éditeur", cleaned, kind="all"))
     published_year = getattr(book, "published_year", None)
     if published_year:
-        metadata_fields.append(DetailField("published-year", "Première publication", str(published_year)))
+        metadata_fields.append(DetailField("published-year", "Première publication", str(published_year), kind="copy"))
     bibliography_sources = tuple(getattr(book, "bibliography_sources", ()) or ())
-    if bibliography_sources:
-        metadata_fields.append(DetailField(
-            "bibliography-sources", "Enrichissement bibliographique", ", ".join(bibliography_sources)
-        ))
+    for index, value in enumerate(bibliography_sources):
+        cleaned = _text(value)
+        if cleaned:
+            metadata_fields.append(DetailField(
+                f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
+            ))
     link = public_url(getattr(book, "friendly_url", "") or getattr(book, "notice_url", ""))
     links = (DocumentLink("notice", "Voir la notice publique", link),) if link else ()
     sections = [DetailSection("ages", "Âges attestés", age_fields)]
     if metadata_fields:
-        sections.append(DetailSection("metadata", "Métadonnées", tuple(metadata_fields)))
+        sections.append(DetailSection("metadata-detail", "Détail", tuple(metadata_fields), order=1000))
     return UiBookDetailPresentation(
         title=_text(getattr(book, "title", "")),
         subtitle=", ".join(tuple(getattr(book, "authors", ()) or ())),
@@ -837,7 +853,24 @@ class YouthView:
         if self.selected_book is None:
             self.master.empty_detail()
             return
-        self.master.show_detail(detail_presentation(self.selected_book))
+        presentation = detail_presentation(self.selected_book)
+        search_books = getattr(self.host, "search_books", None)
+        if callable(search_books):
+            title = _text(getattr(self.selected_book, "title", ""))
+            identity = self.identity_id()
+            if len(title) >= 2:
+                presentation = replace(presentation, actions=(
+                    *presentation.actions,
+                    UiBookDetailAction(
+                        id="search-library",
+                        title="Rechercher en bibliothèque",
+                        icon_name="system-search-symbolic",
+                        callback=lambda query=title, identity_id=identity: search_books(
+                            query, field="title", online=False, identity_id=identity_id,
+                        ),
+                    ),
+                ))
+        self.master.show_detail(presentation)
 
     def open_selected(self):
         if not self.selected_book:
