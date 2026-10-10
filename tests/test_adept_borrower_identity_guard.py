@@ -1,7 +1,7 @@
 """Focused borrower-provenance safety regression tests (#976)."""
 from types import SimpleNamespace
 
-from cifereca.services import CiferecaService
+from cifereca.services import LibraryService
 
 
 def account(identity, borrower, provider="paris"):
@@ -9,7 +9,7 @@ def account(identity, borrower, provider="paris"):
 
 
 def conflict(accounts, borrower="borrower-a", identity="alice"):
-    return CiferecaService._borrower_identity_conflict(
+    return LibraryService._borrower_identity_conflict(
         accounts, provider_id="paris", account_id=borrower, identity_id=identity
     )
 
