@@ -443,3 +443,97 @@ def test_fresh_installed_package_exposes_both_contributions_without_enabling_the
         assert store.active_version(package_id) == version
     finally:
         manager.close()
+
+
+def test_source_diagnostics_list_known_age_sources_and_bibliography_without_network():
+    index = YouthCatalogIndex()
+    inventory = (
+        {"plugin_id": "youth.source.booktrust", "type": "youth.source",
+         "state": "ready", "enabled": True, "package_id": "org.cifereca.youth-source-booktrust"},
+        {"plugin_id": "youth.source.milan", "type": "youth.source",
+         "state": "disabled", "enabled": False, "package_id": "org.cifereca.youth-source-milan"},
+        {"plugin_id": "youth.bibliography.openlibrary", "type": "youth.bibliography",
+         "state": "ready", "enabled": True, "package_id": "org.cifereca.youth-bibliography-openlibrary"},
+        {"plugin_id": "other.plugin", "type": "provider", "enabled": True},
+    )
+    rows = {item["source_id"]: item for item in index.source_diagnostics("alice", inventory)}
+    assert {"booktrust", "milan", "usborne", "ecole-loisirs",
+            "youth.bibliography.openlibrary"}.issubset(rows)
+    assert rows["booktrust"]["enabled"] is True
+    assert rows["booktrust"]["plugin_state"] == "ready"
+    assert rows["booktrust"]["collection_state"] == "not_tested"
+    assert rows["milan"]["plugin_state"] == "disabled"
+    assert rows["milan"]["collection_state"] == "not_tested"
+    assert rows["usborne"]["plugin_state"] == "not_installed"
+    assert rows["youth.bibliography.openlibrary"]["family"] == "bibliography"
+    assert rows["youth.bibliography.openlibrary"]["collection_state"] == "not_tested"
+    assert "other.plugin" not in rows
+    assert index.source_diagnostics("") == ()
+
+
+def test_source_collection_state_is_isolated_per_identity_and_old_cache_survives_error():
+    index = YouthCatalogIndex()
+    first = index.ingest("alice", "booktrust", [
+        row("Atlas", isbn="9780306406157", age_label="8+")
+    ], fresh_for_seconds=180)
+    assert first.accepted == 1
+    index.record_collection("alice", "booktrust", state="items",
+                            accepted=1, duration_ms=43, next_cursor_present=True)
+    index.record_collection("bob", "booktrust", state="http_error",
+                            http_status=429, error_type="HTTPStatusError")
+    rows_a = {x["source_id"]: x for x in index.source_diagnostics("alice")}
+    rows_b = {x["source_id"]: x for x in index.source_diagnostics("bob")}
+    assert rows_a["booktrust"]["collection_state"] == "items"
+    assert rows_a["booktrust"]["accepted"] == 1
+    assert rows_a["booktrust"]["cache_count"] == 1
+    assert rows_a["booktrust"]["duration_ms"] == 43
+    assert rows_a["booktrust"]["next_cursor_present"] is True
+    assert rows_a["booktrust"]["fresh_until"]
+    assert rows_b["booktrust"]["collection_state"] == "http_error"
+    assert rows_b["booktrust"]["http_status"] == 429
+    assert rows_b["booktrust"]["cache_count"] == 0
+    assert rows_b["booktrust"]["last_success_at_utc"] == ""
+
+    index.record_collection("alice", "booktrust", state="timeout",
+                            error_type="ReadTimeout")
+    after = {x["source_id"]: x for x in index.source_diagnostics("alice")}
+    assert after["booktrust"]["collection_state"] == "timeout"
+    assert after["booktrust"]["last_success_at_utc"] == rows_a["booktrust"]["last_success_at_utc"]
+    assert after["booktrust"]["cache_count"] == 1
+    assert len(index.search("alice", "Atlas")) == 1
+    assert index.search("bob") == ()
+    index.clear_identity("alice")
+    clean = {x["source_id"]: x for x in index.source_diagnostics("alice")}
+    assert clean["booktrust"]["collection_state"] == "not_tested"
+    assert clean["booktrust"]["cache_count"] == 0
+
+
+def test_collection_diagnostics_refuses_raw_exception_text_and_non_terminal_states():
+    import pytest
+
+    index = YouthCatalogIndex()
+    with pytest.raises(ValueError):
+        index.record_collection("alice", "booktrust", state="success_from_activation")
+    index.record_collection(
+        "alice", "milan", state="invalid",
+        accepted=-1, rejected=900_000,
+        duration_ms=9_000_000,
+        error_type="ValueError?token=TOP_SECRET",
+        http_status=20,
+    )
+    result = {x["source_id"]: x for x in index.source_diagnostics("alice")}["milan"]
+    assert result["accepted"] == 0
+    assert result["rejected"] == 100_000
+    assert result["duration_ms"] == 600_000
+    assert result["error_type"] == ""
+    assert result["http_status"] is None
+    assert "TOP_SECRET" not in repr(result)
+
+
+def test_public_catalog_service_exposes_cache_only_identity_diagnostics():
+    plugin = YouthCatalogPlugin()
+    rows = plugin.source_diagnostics("alice")
+    assert any(r["source_id"] == "ecole-loisirs" for r in rows)
+    plugin.record_collection("alice", "milan", state="empty_unverified")
+    assert {r["source_id"]: r["collection_state"] for r in plugin.source_diagnostics("alice")}["milan"] == "empty_unverified"
+    assert {r["source_id"]: r["collection_state"] for r in plugin.source_diagnostics("bob")}["milan"] == "not_tested"
