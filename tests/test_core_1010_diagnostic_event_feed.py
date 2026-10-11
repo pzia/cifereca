@@ -393,7 +393,9 @@ def test_log_id_is_stable_when_bounded_tail_start_moves(tmp_path):
         if row["message"] == "TRACE return core status=partial"
     )
     with log.open("a", encoding="utf-8") as handle:
-        for i in range(65):
+        # 125 × ~71 B, added to a 27 KiB prefix, exceeds 32 KiB and
+        # moves the tail start into the original first log line.
+        for i in range(125):
             handle.write(
                 f"2026-10-11 07:02:{i % 60:02d},000 "
                 "INFO cifereca.sync TRACE sync source status=ok\n"
