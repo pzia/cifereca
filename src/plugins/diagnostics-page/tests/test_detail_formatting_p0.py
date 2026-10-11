@@ -100,3 +100,20 @@ def test_redacted_key_collisions_preserve_all_values_without_original_names():
     assert len(json.loads(shown)) == 3
     assert "alice@example.com" not in shown and "bob@example.com" not in shown
     assert "never reveal this" not in shown
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_authentication_headers_are_redacted_entirely(mode):
+    details = {
+        "message": (
+            "Authorization: Basic dXNlcjpzZWNyZXQ=\\n"
+            "Proxy-Authorization: Digest username=alice, realm=private, response=abc123\\n"
+            "X-API-Key: KEY-PRIVATE-123\\nstatus=ok"
+        ),
+        "status": "ok",
+    }
+    shown = format_diagnostic_detail(details, mode)
+    for secret in ("dXNlcjpzZWNyZXQ=", "username=alice", "realm=private",
+                   "response=abc123", "KEY-PRIVATE-123"):
+        assert secret not in shown
+    assert "status" in shown
