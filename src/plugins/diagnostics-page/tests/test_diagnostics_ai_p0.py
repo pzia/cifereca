@@ -476,3 +476,21 @@ def test_ai_ui_uses_four_visible_broker_filters_and_invalidates_consent():
     ):
         assert signal in ui
     assert "f\"{preview['bytes']} octets UTF-8. \"" in ui
+
+
+@pytest.mark.parametrize("since", [[], "", "yesterday", "2026-10-11T07:00:00",
+                                    "x" * 100])
+def test_ai_rejects_unverifiable_period_before_broker_access(since):
+    model = FakeLLM()
+    broker = FakeBroker([event()])
+    with pytest.raises(ValueError, match="unsupported_since"):
+        prepare_analysis(model, broker, since=since)
+    assert broker.filters == [] and model.calls == 0
+
+
+def test_ai_preview_distinguishes_remote_intent_from_actual_transmission():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert "DISTANT — aucun envoi avant autorisation" in page
+    assert "LOCAL annoncé — aucun appel avant autorisation" in page
