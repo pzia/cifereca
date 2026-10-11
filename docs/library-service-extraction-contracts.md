@@ -280,3 +280,11 @@ Aucune migration, opération réseau réelle ou changement métier dans ce lot.
 | `acquire_digital_loan` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 7 | 7 | — |
 | `prepare_digital_download` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 1 | 1 | — |
 | `_download_filename` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 0 | 0 | — |
+
+### Synchronization boundaries
+
+`core/sync_coordination.py` orchestrates explicit account/opening synchronization
+and event recording through the existing facade-owned dependencies.
+`core/sync_projection.py` reads persisted action, inventory and dashboard state;
+these reads do not trigger authentication, scans or acquisition. Inter-process
+lock factories and paths are supplied by the facade to preserve coordination.

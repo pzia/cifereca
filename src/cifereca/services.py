@@ -21,6 +21,7 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
+from .core import sync_coordination, sync_projection
 from .core import library_projection, library_mutation
 from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
@@ -3524,39 +3525,10 @@ class LibraryService:
         deliberately isolates one source so disabling or failing a provider does
         not prevent the other sources from being synchronized.
         """
-        result: dict[str, Any] = {"provider": account.provider_id, "account_id": account.unique_id or "primary"}
-        session = self._session_for_account(account)
-        if not session.connected:
-            raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
-        if control is not None and callable(getattr(control, "check_cancelled", None)):
-            control.check_cancelled()
-        if session.capabilities.loans:
-            loans = self._loans_for_account(account, force=True)
-            result["loans"] = len(loans)
-        if session.capabilities.personal_library:
-            rows = session.library()
-            result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
-            if account.provider_id == "numilog" and session.capabilities.direct_download:
-                acquired = 0
-                for row in rows:
-                    if control is not None and callable(getattr(control, "check_cancelled", None)):
-                        control.check_cancelled()
-                    outcome = self._acquire_personal_library_item(session, row, account.identity_id)
-                    if outcome.get("status") == "complete":
-                        acquired += 1
-                result["acquired"] = acquired
-        if deep:
-            result["catalog_scan"] = self.catalog_scan()
-        return result
+        return sync_coordination._synchronize_account_source_impl(self, account, deep=deep, control=control)
 
     def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        try:
-            result = self._synchronize_account_source_impl(account, deep=deep, control=control)
-            self._record_action(account.identity_id, "synchronization", "success", provider_id=account.provider_id, facts={"deep": bool(deep)})
-            return result
-        except Exception as exc:
-            self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": type(exc).__name__})
-            raise
+        return sync_coordination.synchronize_account_source(self, account, deep=deep, control=control)
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
         """Return the Core naming policy result without touching the filesystem."""
@@ -3577,303 +3549,27 @@ class LibraryService:
 
     def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None = None, *, deep: bool = False) -> dict[str, Any]:
         """Synchronize remote state; filesystem reconciliation is opt-in/deep."""
-        lock = InterProcessLock(acquisition_lock_file())
-        try:
-            with lock:
-                result = self._opening_sync_locked(progress=progress, deep=deep)
-            for summary in result.get("identities", ()) if isinstance(result, dict) else ():
-                if not isinstance(summary, dict):
-                    continue
-                outcome = "failed" if str(summary.get("status") or "") == "failed" else "success"
-                self._record_action(str(summary.get("identity_id") or "") or None, "synchronization", outcome, facts={"deep": bool(deep), "status": summary.get("status"), "errors": int(summary.get("errors") or 0)})
-            return result
-        except LockBusyError as exc:
-            raise ProviderConfigurationError("Une synchronisation automatique est déjà en cours") from exc
+        return sync_coordination.opening_sync(self, progress, deep=deep, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
 
     def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None = None, *, deep: bool = False) -> dict[str, Any]:
-        from .brokers import SynchronizationBrokerImpl
-        source_status = SynchronizationBrokerImpl(self)
-
-        def emit(event: str, **detail: Any) -> None:
-            if progress:
-                try: progress({"event": event, **detail})
-                except Exception: pass
-
-        started = int(time.time())
-        acsm_cleanup = self._cleanup_old_acsm_work()
-        recovered = self.acquisition_reconciler.recover_interrupted()
-        expired_before = self.acquisition_reconciler.realize_expired_loans()
-        summaries: list[dict[str, Any]] = []
-        all_loans: list[Loan] = []
-        # Device/profile state is provider-owned by Kobo-Adept. Read it once per
-        # opening sync and only project it into the dashboard summary; Paris does
-        # not persist a competing device inventory.
-        adept_profiles: list[dict[str, Any]] = []
-        try:
-            if self._kobo_adapter().available():
-                adept_profiles = self.kobo_profiles()
-        except Exception as exc:
-            self.diagnostics.add("ADEPT", "profile list for dashboard", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-        for identity in self.identities:
-            run_id = self.storage.sync_run_put({
-                "identity_id": identity.identity_id, "scope": "opening", "status": "running", "started_at": started,
-                "detail": {"label": identity.label},
-            })
-            emit("identity_begin", identity_id=identity.identity_id, label=identity.label)
-            errors = 0; new_acquisitions = 0; attention = 0
-            detail: dict[str, Any] = {"label": identity.label, "providers": [], "loans": 0, "realized": 0}
-            bound_profile = str(self.storage.adept_profile_binding_get("identity", identity.identity_id) or "").strip()
-            if bound_profile:
-                profile = next((p for p in adept_profiles if str(p.get("profile_id") or "") == bound_profile or str(p.get("name") or "") == bound_profile), None)
-                detail["adept_profile_id"] = str((profile or {}).get("profile_id") or bound_profile)
-                detail["adept_profile_name"] = str((profile or {}).get("name") or bound_profile)
-                detail["adept_provisioning"] = dict((profile or {}).get("provisioning") or {})
-                if adept_profiles and profile is None:
-                    detail["adept_attention"] = "profile_missing"
-            accounts: list[Account] = []
-            try:
-                loans: list[Loan] = []
-                seen_loans: set[tuple[str, str, str, str]] = set()
-                provider_errors: list[dict[str, str]] = []
-                accounts = sorted(
-                    [a for a in self.accounts_for_identity(identity.identity_id) if self.sync_source_enabled(a)],
-                    key=lambda a: (0 if a.provider_id == "paris" else 1, a.provider_id, a.credential_id, a.unique_id),
-                )
-                for account in accounts:
-                    provider = account.provider_id
-                    if provider not in detail["providers"]:
-                        detail["providers"].append(provider)
-                    try:
-                        loan_started = time.monotonic()
-                        _TRACE_LOG.info(
-                            "TRACE loans sync begin identity=%s provider=%s credential=%s account=%s",
-                            identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                        )
-                        account_loans = self._loans_for_account(account, force=True)
-                        _TRACE_LOG.info(
-                            "TRACE loans sync end identity=%s provider=%s credential=%s account=%s count=%s dt=%.3fs",
-                            identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                            len(account_loans), time.monotonic() - loan_started,
-                        )
-                        session = self._sessions.get(self._session_key(account.provider_id, account.credential_id))
-                        partial_errors = list(getattr(session, "last_loan_errors", []) or []) if session is not None else []
-                        if partial_errors:
-                            errors += len(partial_errors)
-                            for part in partial_errors:
-                                provider_errors.append({
-                                    "provider": provider, "credential_id": account.credential_id,
-                                    "account_id": account.unique_id,
-                                    "upstream": str(part.get("upstream") or ""),
-                                    "error": str(part.get("error") or ""),
-                                })
-                            _TRACE_LOG.warning(
-                                "TRACE loans sync partial identity=%s provider=%s credential=%s account=%s errors=%s",
-                                identity.identity_id, provider, account.credential_id, account.unique_id or "primary", partial_errors,
-                            )
-                        for loan in account_loans:
-                            key = (loan.source_provider, loan.source_credential, str(loan.source_account_id or ""), loan.id)
-                            if key not in seen_loans:
-                                seen_loans.add(key); loans.append(loan)
-                    except Exception as exc:
-                        errors += 1
-                        provider_errors.append({"provider": provider, "credential_id": account.credential_id, "account_id": account.unique_id, "error": str(exc)})
-                        _TRACE_LOG.exception(
-                            "TRACE loans sync error identity=%s provider=%s credential=%s account=%s",
-                            identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                        )
-                loans.sort(key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
-                all_loans.extend(loans)
-                detail["loans"] = len(loans)
-                if provider_errors:
-                    detail["provider_errors"] = provider_errors
-                lifecycle = self._persist_active_loans(identity.identity_id, loans)
-                detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
-                for loan in loans:
-                    if loan.medium != "digital" or not (loan.ebook_url or loan.raw):
-                        continue
-                    result = self._acquire_active_loan_automatically(loan)
-                    if result["status"] == "complete":
-                        new_acquisitions += 1
-                        self._record_action(identity.identity_id, "acquisition", "success", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id})
-                    elif result["status"] == "attention_required":
-                        attention += 1
-                        self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
-                    elif result["status"] == "retryable_error":
-                        errors += 1
-                        self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
-                    if result["status"] in {"retryable_error", "attention_required"}:
-                        issue = redact({"provider": loan.source_provider, "loan_id": loan.id,
-                                        "title": loan.title, "status": result["status"],
-                                        "code": result.get("code"), "error": result.get("error"),
-                                        "process": result.get("process", {})})
-                        detail.setdefault("acquisition_errors", []).append(issue)
-                        self.diagnostics.add("ACQUISITION", "loan sync", "error" if result["status"] == "retryable_error" else "warning", detail=issue, level="errors")
-                if errors or attention:
-                    status = "partial" if loans or len(accounts) > len(provider_errors) else "failed"
-                else:
-                    status = "success"
-            except Exception as exc:
-                errors += 1; status = "failed"; detail["error"] = str(exc)
-            finished = int(time.time())
-            self.storage.sync_run_put({
-                "sync_run_id": run_id, "identity_id": identity.identity_id, "scope": "opening", "status": status,
-                "started_at": started, "finished_at": finished, "new_acquisitions": new_acquisitions,
-                "attention_required": attention, "errors": errors, "detail": detail,
-            })
-            summary = {"identity_id": identity.identity_id, "label": identity.label, "status": status,
-                       "new_acquisitions": new_acquisitions, "attention_required": attention, "errors": errors, **detail}
-            summaries.append(summary)
-            # Opening sync previously wrote only sync_runs, while GTK reads
-            # sync.source.state.*. Project the *confirmed* identity result into
-            # each enabled account, without inventing a success on partial ADEPT.
-            attempted_at = datetime.fromtimestamp(started, timezone.utc).isoformat(timespec="seconds")
-            for account in accounts:
-                try:
-                    source_status.record_opening_state(
-                        self.sync_source_id(account), identity_id=identity.identity_id,
-                        status=status, attempted_at=attempted_at,
-                    )
-                except Exception as sync_state_exc:
-                    _TRACE_LOG.warning(
-                        "TRACE sync source projection failed provider=%s reason=%s",
-                        account.provider_id, type(sync_state_exc).__name__,
-                    )
-            emit("identity_end", **summary)
-
-        try:
-            mirror = self.mirror_personal_libraries()
-            emit("catalog_mirror", result=mirror)
-        except Exception as exc:
-            _TRACE_LOG.warning("TRACE catalog mirror opening error=%s", exc)
-
-        # Kobo owned sync is one global batch because the existing engine already
-        # serializes and reconciles all connected Vault sessions.
-        kobo_summary: dict[str, Any] | None = None
-        if self.kobo_backup_enabled() and any(
-            s.connected and s.provider_id == "kobo" and s.capabilities.backup
-            and any(a.provider_id == "kobo" and a.credential_id == s.credential_id and self.sync_source_enabled(a) for a in self.accounts)
-            for s in self._sessions.values()
-        ):
-            if deep or self._kobo_backup_due():
-                try:
-                    kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-                except Exception as exc:
-                    kobo_summary = {"errors": 1, "error": str(exc)}
-            else:
-                kobo_summary = {"errors": 0, "status": "fresh_cache", "skipped_fresh": True}
-                _TRACE_LOG.info("TRACE kobo sync skipped reason=fresh-cache interval_minutes=%s", self.config.get("kobo_backup.interval_minutes", 60))
-        for identity in self.identities:
-            emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
-        self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
-        if deep:
-            catalog = self.catalog_scan(repair_misnamed=True)
-            self.storage.metadata_set("catalog_deep_last_at", int(time.time()))
-            sync_mode = "deep"
-        else:
-            catalog = {"mode": "fast", "filesystem_scan": "skipped", "entries": len(self.storage.catalog_entries())}
-            sync_mode = "fast"
-        return {
-            "started_at": started, "finished_at": int(time.time()), "recovered_interrupted": recovered,
-            "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "catalog": catalog,
-            "sync_mode": sync_mode, "acsm_cleanup": acsm_cleanup,
-        }
+        return sync_coordination._opening_sync_locked(self, progress, deep=deep, logger=_TRACE_LOG)
 
     def _record_action(self, identity_id: str | None, action_type: str, outcome: str, *, provider_id: str = "", plugin_id: str = "", facts: Mapping[str, Any] | None = None) -> None:
-        try:
-            self.storage.action_event_put(identity_id=identity_id, action_type=action_type, outcome=outcome, provider_id=provider_id, plugin_id=plugin_id, facts=facts)
-        except Exception as exc:
-            self.diagnostics.add("STATISTICS", "action event", "error", detail={"action": action_type, "error": type(exc).__name__})
+        return sync_coordination._record_action(self, identity_id, action_type, outcome, provider_id=provider_id, plugin_id=plugin_id, facts=facts)
 
     def action_statistics(self, identity_id: str, *, window_seconds: int = 2592000):
-        from .plugin_api import ActionStatistics
-        window = max(60, int(window_seconds or 2592000))
-        until = int(time.time()); since = until - window
-        counts = {(row["action_type"], row["outcome"]): int(row["count"]) for row in self.storage.action_event_counts(identity_id=identity_id, since=since, until=until)}
-        def count(action: str, outcome: str) -> int:
-            return counts.get((action, outcome), 0)
-        return ActionStatistics(
-            window, since, until,
-            count("acquisition", "success"), count("acquisition", "failed"),
-            count("import", "success"), count("import", "failed"),
-            count("synchronization", "success"), count("synchronization", "failed"),
-            count("transformation", "success"), count("transformation", "failed"),
-            count("transfer", "success"), count("transfer", "failed"),
-        )
+        return sync_projection.action_statistics(self, identity_id, window_seconds=window_seconds)
 
     def _record_loan_statistics(self, account, rows, *, from_cache=False):
-        key='loan_statistics:'+str(account.identity_id)
-        source=hashlib.sha256(f'{account.provider_id}:{account.credential_id}:{account.unique_id}'.encode()).hexdigest()
-        value={'loan_keys':sorted({hashlib.sha256(f'{source}:{row.id}'.encode()).hexdigest() for row in rows}),
-               'observed_at':None if from_cache else int(time.time()),'origin':'cache' if from_cache else 'provider'}
-        self.storage.metadata_json_put_item(key,source,value,only_if_missing=from_cache)
+        return sync_coordination._record_loan_statistics(self, account, rows, from_cache=from_cache)
 
     def identity_statistics(self, identity_id, *, window_seconds: int = 2592000):
         """Persisted inventory facts only; no scan, authentication or download."""
-        placements=[r for r in self.storage.placements(state='present') if r.get('identity_id')==identity_id]
-        artifacts={r['artifact_id']:r for r in self.storage.artifacts()}
-        ids={r['artifact_id'] for r in placements if r['artifact_id'] in artifacts}
-        formats=Counter();sources=Counter();covers=Counter()
-        for aid in ids:
-            artifact=artifacts[aid];formats[str(artifact.get('media_format') or 'unknown')]+=1
-            meta=artifact.get('metadata') or {}
-            if artifact.get('media_format') in {'epub','kepub'}:
-                covers['extracted' if meta.get('epub_cover') else str(meta.get('epub_cover_status') or 'not_inspected')]+=1
-        for provider in {r.get('provider_id') or 'local' for r in placements}:
-            sources[provider]=len({r['artifact_id'] for r in placements if (r.get('provider_id') or 'local')==provider})
-        try:observations=json.loads(self.storage.metadata_get('loan_statistics:'+str(identity_id)) or '{}')
-        except (ValueError,TypeError):observations={}
-        if not isinstance(observations,dict):observations={}
-        selected=[]
-        for account in self.accounts_for_identity(identity_id):
-            key=hashlib.sha256(f'{account.provider_id}:{account.credential_id}:{account.unique_id}'.encode()).hexdigest()
-            if isinstance(observations.get(key),dict):selected.append(observations[key])
-        loan_keys={key for row in selected for key in row.get('loan_keys',[])}
-        owned={r['entitlement_id'] for r in self.storage.entitlements(state='active') if r.get('identity_id')==identity_id and r.get('entitlement_type')=='owned'}
-        return {'identity_id':identity_id,'local_books':len(ids),'local_placements':len(placements),'local_files':sum((r.get('metadata') or {}).get('artifact_kind')!='bundle' for r in placements),
-                'known_loans':len(loan_keys) if selected else None,'loan_sources_observed':len(selected),
-                'loans_observed_at':min((r.get('observed_at') for r in selected),default=None) if all(isinstance(r.get('observed_at'),int) for r in selected) else None,
-                'remote_owned_rights':len(owned),'formats':dict(formats),'sources':dict(sources),'epub_covers':dict(covers),
-                'actions':asdict(self.action_statistics(identity_id, window_seconds=window_seconds)),
-                'scope':'persisted_inventory_last_observed_provider_loans_and_action_window'}
+        return sync_projection.identity_statistics(self, identity_id, window_seconds=window_seconds)
 
     def dashboard_state(self) -> list[dict[str, Any]]:
         """Return dashboard cards without triggering network I/O."""
-        cards: list[dict[str, Any]] = []
-        for identity in self.identities:
-            providers = sorted({a.provider_id for a in self.accounts_for_identity(identity.identity_id)})
-            latest = self.storage.latest_sync_run(identity.identity_id)
-            profile_id = self.storage.adept_profile_binding_get("identity", identity.identity_id)
-            try:
-                deep_last_at = int(self.storage.metadata_get("catalog_deep_last_at") or 0) or None
-            except (TypeError, ValueError):
-                deep_last_at = None
-            labels = {"search": "Recherche", "loans": "Emprunts", "history": "Historique",
-                      "bookings": "Réservations", "borrow": "Emprunter", "digital_download": "Récupérer les prêts",
-                      "direct_download": "Téléchargement direct", "personal_library": "Bibliothèque du compte",
-                      "return_loan": "Restituer un prêt", "renew_loan": "Prolonger un prêt"}
-            capabilities = set(); sources = []
-            credentials = {(account.provider_id, account.credential_id) for account in self.accounts_for_identity(identity.identity_id)}
-            for session in self._sessions.values():
-                descriptor = session.descriptor
-                public = getattr(descriptor, "instantiation", "multiple") == "singleton_public"
-                if not self._provider_enabled_for_identity(session.provider_id, identity.identity_id):
-                    continue
-                if not public and (session.provider_id, session.credential_id) not in credentials:
-                    continue
-                sources.append({"provider_id": session.provider_id, "label": descriptor.display_name,
-                                "connected": bool(session.connected)})
-                if session.connected:
-                    capabilities.update(key for key in labels if bool(getattr(session.capabilities, key, False)))
-            cards.append({
-                "sources": sources,
-                "statistics": self.identity_statistics(identity.identity_id),
-                "selected": bool(self.current_identity and self.current_identity.identity_id == identity.identity_id),
-                "capabilities": [{"id": key, "label": labels[key]} for key in labels if key in capabilities],
-                "identity_id": identity.identity_id, "label": identity.label, "directory_name": identity.directory_name,
-                "providers": providers, "adept_profile_id": profile_id,
-                "sync": latest, "deep_last_at": deep_last_at,
-            })
-        return cards
+        return sync_projection.dashboard_state(self)
 
     def acquisition_ledger_records(self, *, status: str | None = None) -> list[dict[str, Any]]:
         return self.storage.acquisitions(status=status)
