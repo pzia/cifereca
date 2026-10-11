@@ -33,7 +33,16 @@ de champs non secrets sur liste blanche (`phase`, `status`, `outcome`…).
 Un message libre est remplacé par « contenu libre masqué ». Pour les
 Diagnostics structurés, seuls les mots opérationnels autorisés sont diffusés,
 pas les détails ni les valeurs potentiellement personnelles. Les empreintes
-d'événements ne réintroduisent aucune valeur brute.
+d'événements ne réintroduisent aucune valeur brute. Pour les journaux
+applicatifs, les identifiants pseudonymisés s'appuient sur l'identité du fichier
+(périphérique/inode), l'offset absolu de la ligne et les seules valeurs
+opérationnelles publiques. Les deux premières informations ne sont jamais
+exposées directement. **Une rotation par renommage** (`cifereca.log` →
+`.1` → `.2`) préserve ainsi l'identifiant, même pour des lignes identiques.
+Une rotation par *copytruncate*, une recopie ou la récréation du fichier
+peut changer l'identifiant : aucun lien de provenance ne doit être déduit
+dans ces situations. Le changement d'algorithme ne garantit pas la conservation
+des anciens identifiants déjà exportés par des versions antérieures.
 
 **Limites connues :** le flux est un **snapshot borné**, pas une archive
 historique globale. Lorsque le journal est tronqué ou rotaté, son état est
