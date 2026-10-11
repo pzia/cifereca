@@ -337,3 +337,74 @@ def test_logger_path_never_exposes_freeform_identifiers(tmp_path):
     assert [r["module"] for r in result["events"]] == ["cifereca.sync", "cifereca", "cifereca.sync"]
     assert "private_customer" not in str(result)
     assert "unknowncustomer" not in str(result)
+
+
+def test_event_ids_survive_rename_rotation_and_identical_lines_stay_distinct(tmp_path):
+    """A rename keeps the inode and byte offsets; .1/.2 must not alter IDs."""
+    log = tmp_path / "cifereca.log"
+    line = ("2026-10-11 07:00:00,000 WARNING cifereca.sync "
+            "[Worker] TRACE sync source status=partial")
+    make_log(log, line, line)
+    before = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    originals = [event["event_id"] for event in before["events"]]
+    assert len(originals) == len(set(originals)) == 2
+
+    log.rename(tmp_path / "cifereca.log.1")
+    after = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert [event["event_id"] for event in after["events"]] == originals
+
+    (tmp_path / "cifereca.log.1").rename(tmp_path / "cifereca.log.2")
+    final = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert [event["event_id"] for event in final["events"]] == originals
+    assert all(len(event_id) == 16 for event_id in originals)
+
+
+def test_event_ids_remain_stable_when_file_grows_and_tail_window_moves(tmp_path):
+    log = tmp_path / "cifereca.log"
+    first = ("2026-10-11 07:00:00,000 INFO cifereca.sync "
+             "[Worker] TRACE sync source status=ok")
+    persistent = ("2026-10-11 07:10:00,000 WARNING cifereca.sync "
+                  "[Worker] TRACE return core status=partial")
+    make_log(log, first, persistent)
+    initial = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    expected_id = next(row["event_id"] for row in initial["events"]
+                       if row["severity"] == "warning")
+
+    # Append without modifying the original lines or their physical offsets.
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "2026-10-11 07:15:00,000 INFO cifereca.sync "
+            "[Worker] TRACE sync source status=ok\n"
+        )
+    after = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    matching = [row for row in after["events"]
+                if row["severity"] == "warning"]
+    assert len(matching) == 1
+    assert matching[0]["event_id"] == expected_id
+
+
+def test_rotated_log_ids_do_not_expose_device_inode_path_or_private_text(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync "
+        "[Worker] token=VERY_PRIVATE_CUSTOMER_SECRET",
+    )
+    result = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert len(result["events"]) == 1
+    event = result["events"][0]
+    assert event["event_id"].isalnum() and len(event["event_id"]) == 16
+    output = json.dumps(result)
+    assert "VERY_PRIVATE_CUSTOMER_SECRET" not in output
+    assert str(tmp_path) not in output
