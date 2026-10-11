@@ -466,10 +466,7 @@ def source_diagnostic_presentation(rows):
         if type(received) is int and received >= 0:
             line += f" · reçues : {received}"
             if type(requested) is int and requested > 0:
-                if funnel:
-                    line += f" · limite demandée : {requested}"
-                else:
-                    line += f"/{requested} demandées"
+                line += f" · limite demandée : {requested} (pas un total de notices disponibles)"
         mode = funnel.get("query_mode")
         if mode == "remote":
             line += " · recherche distante (une page)"
