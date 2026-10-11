@@ -65,6 +65,12 @@ jobs:
           CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-1366
 
+      - name: Replay Diagnostics 1600 long report and keyboard / XTEST
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-large-1600
+
       - name: Replay Cifereca Library to Diagnostics navigation via real GTK4 / XTEST
         if: ${{ !cancelled() }}
         env:
