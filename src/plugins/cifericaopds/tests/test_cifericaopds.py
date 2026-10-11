@@ -150,7 +150,10 @@ def test_https_or_loopback():
 @pytest.fixture
 def mocked_candidate_server():
     calls = []
-    state = {"bad": False, "redirect": False, "sources": inventory("alpha", "beta")}
+    state = {
+        "bad": False, "redirect": False, "sources": inventory("alpha", "beta"),
+        "raw": None, "content_type": "application/json", "status": 200,
+    }
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -167,9 +170,10 @@ def mocked_candidate_server():
                 return
             data = (state["sources"] if self.path == "/api/v1/sources"
                     else {"items": [{"id": "book", "title": "Livre HTTP"}]})
-            payload = json.dumps(data).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            payload = (state["raw"] if state["raw"] is not None
+                       else json.dumps(data).encode())
+            self.send_response(state["status"])
+            self.send_header("Content-Type", state["content_type"])
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -710,3 +714,85 @@ def test_failed_inventory_publish_keeps_previous_snapshot_and_cleans_tmp(
     assert coll.snapshot() == original
     assert (tmp_path / "inventory.json").read_bytes() == original_bytes
     assert not list(tmp_path.glob(".cifericaopds-inventory-*.tmp"))
+
+
+
+@pytest.mark.parametrize("body", [
+    b'{"api_major":NaN,"sources":[]}',
+    b'{"api_major":Infinity,"sources":[]}',
+    b'{"api_major":1e999,"sources":[]}',
+    b'{"api_major":1,"api_major":1,"sources":[]}',
+    b'{"sources":[{"source_id":"alpha","source_id":"beta"}]}',
+    b'\xff\xfe',
+    b'{"incomplete":',
+    b' ' * (1024 * 1024 + 1),
+])
+def test_candidate_http_strict_json_preserves_good_inventory(
+    tmp_path, mocked_candidate_server, body,
+):
+    url, calls, state = mocked_candidate_server
+    coll = CifericaCollection().activate(context(
+        tmp_path, mode="candidate_v02", base_url=url,
+    ))
+    accepted = coll.refresh()
+    baseline = (tmp_path / "inventory.json").read_bytes()
+    state["raw"] = body
+    with pytest.raises(ContractUnavailable) as exc:
+        coll.refresh()
+    assert exc.value.__cause__ is None
+    assert coll.snapshot() == accepted
+    assert (tmp_path / "inventory.json").read_bytes() == baseline
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(("status", "content_type"), [
+    (503, "application/json"),
+    (401, "application/json"),
+    (200, "text/html"),
+    (200, "application/problem+json"),
+])
+def test_candidate_http_wrong_status_or_media_type_fails_closed(
+    tmp_path, mocked_candidate_server, status, content_type,
+):
+    url, calls, state = mocked_candidate_server
+    coll = CifericaCollection().activate(context(
+        tmp_path, mode="candidate_v02", base_url=url,
+    ))
+    state["status"] = status
+    state["content_type"] = content_type
+    with pytest.raises(ContractUnavailable) as exc:
+        coll.refresh()
+    assert exc.value.__cause__ is None
+    with pytest.raises(ContractUnavailable):
+        coll.snapshot()
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("timeout", [
+    None, "invalid", "nan", float("inf"), float("-inf"), True, False,
+])
+def test_candidate_http_rejects_invalid_timeout_before_request(tmp_path, timeout):
+    with pytest.raises(ContractUnavailable, match="invalid configured timeout") as exc:
+        CifericaCollection().activate(context(
+            tmp_path, mode="candidate_v02", timeout_seconds=timeout,
+        ))
+    assert exc.value.__cause__ is None
+
+
+def test_local_inventory_rejects_duplicate_keys_and_nonfinite_float(tmp_path):
+    ctx = context(tmp_path)
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(ctx)
+    old = coll.refresh()
+    old_bytes = (tmp_path / "inventory.json").read_bytes()
+    for body in (
+        b'{"api_major":1,"api_major":1,"sources":[]}',
+        b'{"api_major":1,"discovery_generation":1e999,"sources":[]}',
+    ):
+        fixture.write_bytes(body)
+        with pytest.raises(ContractUnavailable) as exc:
+            coll.refresh()
+        assert "local source JSON" in str(exc.value)
+        assert coll.snapshot() == old
+        assert (tmp_path / "inventory.json").read_bytes() == old_bytes

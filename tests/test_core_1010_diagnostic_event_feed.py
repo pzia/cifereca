@@ -547,3 +547,84 @@ def test_overwriting_same_log_inode_offset_changes_id_for_module(tmp_path):
     assert first["module"] == "cifereca.sync"
     assert second["module"] == "cifereca.core"
     assert first["event_id"] != second["event_id"]
+
+
+def test_broker_source_last_event_is_latest_published_with_timezone_and_rotation(tmp_path):
+    from datetime import datetime, timezone
+
+    class StaticDiagnostics:
+        enabled = True
+
+        def snapshot(self):
+            return [
+                {"timestamp": "2026-10-11T10:00:00+02:00",
+                 "category": "SYNC", "operation": "sync", "status": "ok"},
+                {"timestamp": "2026-10-11T09:00:00+00:00",
+                 "category": "SYNC", "operation": "sync", "status": "ok"},
+            ]
+
+    log = tmp_path / "cifereca.log"
+    make_log(
+        tmp_path / "cifereca.log.1",
+        "2026-10-11 06:30:00,000 INFO cifereca.sync TRACE sync source status=ok",
+    )
+    make_log(
+        log,
+        "2026-10-11 07:30:00,000 INFO cifereca.sync TRACE sync source status=ok",
+    )
+    feed = query_diagnostic_events(
+        StaticDiagnostics(), log_path=log, source="all", limit=1,
+        module="no.match", offset=0,
+    )
+    assert feed["events"] == [] and feed["total"] == 0
+    assert [row["source"] for row in feed["sources"]] == ["core_events", "app_log"]
+    core_last = datetime.fromisoformat(feed["sources"][0]["last_event"])
+    log_last = datetime.fromisoformat(feed["sources"][1]["last_event"])
+    assert core_last == datetime(2026, 10, 11, 9, 0, tzinfo=timezone.utc)
+    published_log_rows = query_diagnostic_events(
+        StaticDiagnostics(), log_path=log, source="app_log",
+    )["events"]
+    assert log_last == max(
+        datetime.fromisoformat(row["timestamp"]) for row in published_log_rows
+    )
+    assert core_last.utcoffset().total_seconds() == 0
+    assert log_last.utcoffset().total_seconds() == 0
+
+
+def test_source_last_event_stays_stable_across_public_pagination(tmp_path):
+    from datetime import datetime
+    log = tmp_path / "cifereca.log"
+    make_log(
+        log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync TRACE sync source status=ok",
+        "2026-10-11 08:00:00,000 INFO cifereca.sync TRACE sync source status=ok",
+        "2026-10-11 09:00:00,000 INFO cifereca.sync TRACE sync source status=ok",
+    )
+    first = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log", limit=1,
+    )
+    last = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log", limit=1, offset=2,
+    )
+    assert first["total"] == last["total"] == 3
+    assert first["sources"][0]["last_event"] == last["sources"][0]["last_event"]
+    parsed = datetime.fromisoformat(first["sources"][0]["last_event"])
+    newest = max(datetime.fromisoformat(row["timestamp"]) for row in
+                 query_diagnostic_events(Diagnostics(), log_path=log,
+                                         source="app_log")["events"])
+    assert parsed == newest
+
+
+def test_source_without_public_events_has_no_misleading_last_timestamp(tmp_path):
+    empty_log = tmp_path / "cifereca.log"
+    make_log(empty_log, "record not published by broker")
+    feed = query_diagnostic_events(
+        Diagnostics(enabled=False), log_path=empty_log,
+    )
+    assert [row["status"] for row in feed["sources"]] == ["disabled", "empty"]
+    assert all("last_event" not in row for row in feed["sources"])
+
+    missing = query_diagnostic_events(
+        Diagnostics(enabled=False), log_path=tmp_path / "no-log",
+    )
+    assert all("last_event" not in row for row in missing["sources"])
