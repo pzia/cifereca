@@ -89,7 +89,7 @@ def test_no_previous_artifact_requires_normal_acquisition():
 def test_service_logs_one_structured_decision_before_provider_call():
     tree = ast.parse(SERVICES.read_text(encoding='utf-8'))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'LibraryService')
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == '_acquire_active_loan_automatically')
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == '_acquire_active_loan_automatically_guarded')
     source = ast.unparse(method)
     assert 'decide_artifact_reuse' in source
     assert 'TRACE download loan_auto decision' in source
@@ -98,7 +98,7 @@ def test_service_logs_one_structured_decision_before_provider_call():
 
 def test_reuse_returns_before_provider_call_and_exposes_reason():
     source = SERVICES.read_text(encoding='utf-8')
-    start = source.index('def _acquire_active_loan_automatically')
+    start = source.index('def _acquire_active_loan_automatically_guarded')
     end = source.index('\n    def ', start + 10)
     method = source[start:end]
     reuse = method.index('if decision.action == "reuse"')

@@ -5,7 +5,7 @@ from pathlib import Path
 from cifereca.acquisition import Acquisition
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.models import Loan
+from cifereca.models import Loan, Account
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -37,6 +37,7 @@ def test_bound_profile_explicitly_not_fetch_ready_blocks_before_adept(tmp_path: 
             "credential_id": "alex-paris",
             "label": "Paris Alex",
         })
+        service.accounts.append(Account(unique_id="primary", provider_id="paris", credential_id="alex-paris", identity_id="alex"))
         service.storage.adept_profile_binding_set(
             "identity",
             "alex",

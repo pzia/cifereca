@@ -5,7 +5,7 @@ from unittest.mock import Mock,patch
 from cifereca.core import CiferecaCore
 from cifereca.gui.facet_text import author_search_text
 from cifereca.plugin_api import AttentionRequired
-from cifereca.models import Loan
+from cifereca.models import Loan, Account
 from cifereca.kobo.errors import KoboAdeptError
 from cifereca.acquisition import Acquisition
 
@@ -79,13 +79,25 @@ class Core0911(unittest.TestCase):
             session.capabilities.digital_download=False;self.assertFalse(self.service.can_download_loan(loan))
             session.capabilities.digital_download=True;session.connected=False;self.assertFalse(self.service.can_download_loan(loan))
             loan.medium='physical';self.assertFalse(self.service.can_download_loan(loan))
+    def _loan_with_proven_borrower(self):
+        self.core.storage.provider_connection_put({
+            'identity_id':'default', 'provider_id':'paris',
+            'credential_id':'test', 'label':'Paris'
+        })
+        self.service.accounts.append(Account(
+            unique_id='primary', provider_id='paris',
+            credential_id='test', identity_id='default'
+        ))
+        loan=self.loan()
+        loan.source_account_id='primary'
+        return loan
     def test_provider_error_origin_preserved(self):
         self.service.acquire_digital_loan=Mock(side_effect=AttentionRequired('Refus',code='pnb_redirect_refused'))
-        result=self.service._acquire_active_loan_automatically(self.loan())
+        result=self.service._acquire_active_loan_automatically(self._loan_with_proven_borrower())
         self.assertEqual(result['code'],'pnb_redirect_refused')
         self.assertEqual(self.core.storage.acquisitions(provider_id='paris')[0]['executor'],'provider')
     def failed_runtime(self,artifact=False):
-        loan=self.loan();self.core.storage.adept_profile_binding_set('identity','default','hb')
+        loan=self._loan_with_proven_borrower();self.core.storage.adept_profile_binding_set('identity','default','hb')
         acsm=self.root/'loan.acsm';acsm.write_text('<fulfillmentToken><format>application/epub+zip</format></fulfillmentToken>')
         self.service.acquire_digital_loan=Mock(return_value=Acquisition(provider_id='paris',credential_id='test',account_id='primary',item_id='123',loan_id='loan',kind='acsm',source_url='https://example.invalid/acsm',local_path=acsm,mime_type='application/vnd.adobe.adept+xml',drm='adept',acsm_path=acsm,target_dir=self.root))
         self.service.kobo_profiles=Mock(return_value=[])
