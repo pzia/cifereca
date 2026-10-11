@@ -292,3 +292,21 @@ def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():
         'assert window._search_mode == "local" and not online_attempts',
     ):
         assert required in source
+
+
+def test_xvfb_display_retry_is_limited_to_transport_initialization():
+    runner = _module()
+    error = (
+        "Gtk-CRITICAL gtk_icon_theme_get_for_display GDK_IS_DISPLAY failed\n"
+        "RuntimeError: Gtk couldn't be initialized."
+    )
+    assert runner.retryable_x11_startup_failure(1, error) is True
+    assert runner.retryable_x11_startup_failure(0, error) is False
+    assert runner.retryable_x11_startup_failure(1, "AssertionError: expected search page") is False
+    assert runner.retryable_x11_startup_failure(
+        1, "RuntimeError: Gtk couldn't be initialized. Missing config."
+    ) is False
+    source = RUNNER.read_text(encoding="utf-8")
+    assert 'name in {"startup", "core-navigation"}' in source
+    assert '"xvfb_display_retry"' in source
+    assert "attempt=2" in source
