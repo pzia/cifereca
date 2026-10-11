@@ -295,3 +295,22 @@ def test_ai_consent_refuses_mutated_oversize_multibyte_prompt():
     with pytest.raises(ValueError, match="preview_invalid"):
         analyze_with_consent(model, preview, approval_id=preview["approval_id"])
     assert model.calls == 0
+
+
+def test_ai_task_submission_errors_recover_interface_and_require_fresh_consent():
+    """Prevent a rejected queue submission from leaving IA controls stuck."""
+    from pathlib import Path
+    ui = (Path(__file__).parents[1] / "cifereca_diagnostics_page.py").read_text()
+    prepare = ui.split("        def prepare_ai(", 1)[1].split("        def finish_preview(", 1)[0]
+    send = ui.split("        def send_ai(", 1)[1].split("        def finish_ai(", 1)[0]
+    assert "try:\n                handle = self.tasks.submit(" in prepare
+    assert "except Exception:\n                ai_status.set_text(" in prepare
+    assert "Aperçu IA indisponible : tâche non démarrée" in prepare
+    assert 'ai_input.get_buffer().set_text("")' in prepare
+    assert 'ai_report.get_buffer().set_text("")' in prepare
+    assert "try:\n                handle = self.tasks.submit(" in send
+    assert "except Exception:" in send
+    assert "Analyse IA indisponible : planification impossible" in send
+    assert "ai_prepare.set_sensitive(True)" in send
+    assert "ai_preview = None  # single-use consent per request" in send
+    assert "ai_send.set_sensitive(False)" in send
