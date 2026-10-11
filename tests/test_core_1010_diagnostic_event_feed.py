@@ -262,3 +262,23 @@ def test_trace_field_values_are_bounded_to_safe_vocabulary(tmp_path):
     assert rows["events"][0]["message"] == "TRACE sync source status=ok count=12"
     for secret in ("Alice", "privatecustomer", "credentialref"):
         assert secret not in json.dumps(rows)
+
+
+def test_core_events_do_not_stringify_untrusted_snapshot_fields(tmp_path):
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("unexpected stringification")
+    class Snapshot:
+        enabled = True
+        def snapshot(self):
+            return [
+                {"timestamp": Hostile(), "operation": Hostile()},
+                {"timestamp": "2026-10-11T07:00:00+00:00",
+                 "category": Hostile(), "operation": Hostile(), "status": Hostile()},
+            ]
+    rows = query_diagnostic_events(Snapshot(), log_path=tmp_path / "missing", source="core_events")
+    assert rows["total"] == 1
+    event = rows["events"][0]
+    assert event["module"] == "DIAGNOSTICS"
+    assert event["message"] == "[opération masquée]"
+    assert event["status"] == "unknown"
