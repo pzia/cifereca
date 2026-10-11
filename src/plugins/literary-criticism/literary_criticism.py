@@ -307,31 +307,44 @@ def discover_feeds(
         rows_iter = iter(rows or ())
     except (TypeError, ValueError, RuntimeError):
         return ()
-    for row in islice(rows_iter, bounded * MAX_SEARCH_ROWS_PER_RESULT):
-        page_url = canonical_url(_field(row, "url"))
-        title = _text(_field(row, "title"))
-        for field_name in ("feed_url", "feed_urls"):
-            for raw_url in _limited_feed_values(_field(row, field_name)):
-                url = canonical_url(raw_url, base_url=page_url)
-                if url and url not in seen:
-                    seen.add(url)
-                    candidates.append(FeedCandidate(
-                        url=url,
-                        page_url=page_url,
-                        title=title,
-                        evidence="metasearch-explicit-feed",
-                    ))
+    for _ in range(bounded * MAX_SEARCH_ROWS_PER_RESULT):
+        try:
+            row = next(rows_iter)
+        except StopIteration:
+            break
+        except Exception:
+            # Third-party iterator failures can carry tokens in exception
+            # messages. Keep already discovered candidates; emit no raw error.
+            break
+        try:
+            page_url = canonical_url(_field(row, "url"))
+            title = _text(_field(row, "title"))
+            for field_name in ("feed_url", "feed_urls"):
+                for raw_url in _limited_feed_values(_field(row, field_name)):
+                    url = canonical_url(raw_url, base_url=page_url)
+                    if url and url not in seen:
+                        seen.add(url)
+                        candidates.append(FeedCandidate(
+                            url=url,
+                            page_url=page_url,
+                            title=title,
+                            evidence="metasearch-explicit-feed",
+                        ))
+                        if len(candidates) >= bounded:
+                            return tuple(candidates)
+            html = _field(row, "html", "")
+            if page_url and isinstance(html, str) and html:
+                for item in discover_feed_links(page_url, html):
+                    if item.url in seen:
+                        continue
+                    seen.add(item.url)
+                    candidates.append(replace(item, title=item.title or title))
                     if len(candidates) >= bounded:
                         return tuple(candidates)
-        html = _field(row, "html", "")
-        if page_url and isinstance(html, str) and html:
-            for item in discover_feed_links(page_url, html):
-                if item.url in seen:
-                    continue
-                seen.add(item.url)
-                candidates.append(replace(item, title=item.title or title))
-                if len(candidates) >= bounded:
-                    return tuple(candidates)
+        except Exception:
+            # Invalid result rows are isolated; remaining rows still count
+            # against the finite discovery work budget.
+            continue
     return tuple(candidates[:bounded])
 
 
