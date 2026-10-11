@@ -7,6 +7,8 @@ import ast
 from pathlib import Path
 
 EXPORTS = {
+    'master_detail': {'MasterDetailPage'},
+    'public_book_view': {'PublicBookMasterDetailView'},
     'detail_model': None,
     'detail_panel': {'DetailPanel'},
     'history_cover_resolver': {'HistoryCoverResolver', '_MetaRequest'},

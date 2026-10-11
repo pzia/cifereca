@@ -402,3 +402,11 @@ removing their duplicate definition. `main_window.py` keeps historical exports.
 all existing assertions continue to inspect their original bodies. It creates
 no substitute implementation. Components receive the window host explicitly;
 MainWindow is imported by DetailPanel only under TYPE_CHECKING.
+
+## Master/detail component ownership
+
+`master_detail.py` owns the virtualized list, stable-key reconciliation and
+narrow pane lifecycle. `public_book_view.py` owns the public plugin adapter and
+reuses the same component and URI validation boundary. Both are reexported from
+MainWindow; runtime imports remain acyclic and the window is supplied explicitly.
+Source contracts read the real declarations through the maintained owner map.
