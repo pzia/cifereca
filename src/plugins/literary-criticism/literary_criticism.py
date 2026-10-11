@@ -519,8 +519,10 @@ class CriticismIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 article = normalize_article(raw, source_id=sid)
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # External item repr/errors may embed URLs, auth parameters or
+                # user data; emit a stable category instead of raw exceptions.
+                errors.append(f"item[{index}]: invalid_article")
                 continue
             key = article.url
             incoming_keys.add(key)
@@ -531,6 +533,13 @@ class CriticismIndex:
             else:
                 self._articles[key] = _merge_duplicate(current, article)
                 duplicates += 1
+        if replace_source and not incoming_keys and errors:
+            # An all-invalid reply is not proof that a previously valid feed
+            # became empty. Keep the last-good articles and freshness marker.
+            return CollectionReport(
+                source_id=sid, accepted=accepted, duplicates=duplicates,
+                errors=tuple(errors), fresh_until=self._fresh_until.get(sid, ""),
+            )
         if replace_source:
             stale = previous_keys - incoming_keys
             for key in stale:
@@ -606,8 +615,8 @@ class LiteraryCriticismPlugin:
     ) -> CollectionReport:
         try:
             info = validate_source_contract(source)
-        except Exception as exc:
-            return CollectionReport(source_id="", errors=(str(exc),))
+        except Exception:
+            return CollectionReport(source_id="", errors=("source: incompatible",))
         bounded = max(1, min(int(limit), 500))
         try:
             raw = source.collect(cursor=cursor, limit=bounded)  # type: ignore[attr-defined]
@@ -619,8 +628,10 @@ class LiteraryCriticismPlugin:
                 fresh_for_seconds=fresh_for,
             )
             return replace(report, next_cursor=next_cursor)
-        except Exception as exc:
-            return CollectionReport(source_id=info.source_id, errors=(f"collect: {exc}",))
+        except Exception:
+            # Never expose a third-party exception message. It may include a
+            # signed feed URL, token, private book title or raw response body.
+            return CollectionReport(source_id=info.source_id, errors=("collect: source_error",))
 
     def articles_for(self, book: object) -> tuple[CriticismMatch, ...]:
         return self.index.matches_for(book)
