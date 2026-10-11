@@ -13,6 +13,10 @@ SERVICES = ROOT / "src/cifereca/services.py"
 
 
 def _method(path: Path, class_name: str, method_name: str) -> str:
+    if path == SERVICES and method_name == "recent_acquisitions":
+        module = ast.parse((ROOT / "src/cifereca/core/library_projection.py").read_text())
+        return ast.unparse(next(n for n in module.body
+                               if isinstance(n, ast.FunctionDef) and n.name == method_name))
     tree = ast.parse(path.read_text(encoding="utf-8"))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)

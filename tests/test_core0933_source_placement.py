@@ -5,13 +5,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ROOT / "src/cifereca/services.py"
+SERVICES = ROOT / "src/cifereca/core/library_projection.py"
 
 
 def _method_source(name: str) -> str:
     tree = ast.parse(SERVICES.read_text())
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "LibraryService")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
+    method = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
     body = method.body
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
         body = body[1:]

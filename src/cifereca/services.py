@@ -21,6 +21,7 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
+from .core import library_projection, library_mutation
 from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
 from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
@@ -676,47 +677,11 @@ class LibraryService:
         return summary
 
     def refresh_history(self, force: bool = False) -> list[HistoryItem]:
-        account = self.current_account
-        epoch = self._account_context_epoch
-        key = self._key("history-v3")
-        ttl = int(self.config.get("cache.history_seconds", 1800))
-        if not force:
-            cached = self.storage.cache_get("account", key)
-            if isinstance(cached, list):
-                rows = [HistoryItem(**x) for x in cached]
-                if self._account_context_epoch == epoch and self.current_account is account:
-                    self.last_history = rows
-                self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
-                return rows
-        session = self._session_for_account(account)
-        if not session.capabilities.history:
-            if self._account_context_epoch == epoch and self.current_account is account:
-                self.last_history = []
-            return []
-        rows = session.history(account)
-        direct = sum(1 for x in rows if x.thumbnail_url)
-        default_only = sum(1 for x in rows if not x.thumbnail_url and x.default_thumbnail_url)
-        missing = sum(1 for x in rows if not x.thumbnail_url and not x.default_thumbnail_url)
-        self.diagnostics.add(
-            "API", "history thumbnails", "ok",
-            detail={
-                "provider_plugin": account.provider_id,
-                "account": "primary" if account.is_primary else "linked",
-                "count": len(rows), "direct_thumbnail": direct,
-                "default_only": default_only, "missing": missing,
-            },
-            level="detailed",
-        )
-        self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
-        if self._account_context_epoch == epoch and self.current_account is account:
-            self.last_history = rows
-        return rows
+        return library_projection.refresh_history(self, force)
 
     @staticmethod
     def _history_fold(value: str | None) -> str:
-        text = unicodedata.normalize("NFKD", str(value or "").casefold())
-        text = "".join(ch for ch in text if not unicodedata.combining(ch))
-        return re.sub(r"[^0-9a-z]+", " ", text).strip()
+        return library_projection._history_fold(value)
 
     @classmethod
     def _history_cover_score(
@@ -727,41 +692,7 @@ class LibraryService:
         record_id: str | None,
         candidate: SearchResult,
     ) -> float:
-        title = cls._history_fold(item_title)
-        cand_title = cls._history_fold(candidate.title)
-        if not title or not cand_title:
-            return 0.0
-        ratio = SequenceMatcher(None, title, cand_title).ratio()
-        left = set(title.split())
-        right = set(cand_title.split())
-        token_overlap = len(left & right) / max(1, len(left | right))
-        score = ratio * 55.0 + token_overlap * 25.0
-        if title == cand_title:
-            score += 30.0
-        elif title in cand_title or cand_title in title:
-            score += 12.0
-
-        if record_id and str(candidate.record_id) == str(record_id):
-            # Si Syracuse finit par renvoyer le même identifiant via Search,
-            # c'est un signal plus fiable que le GetListHoldings défaillant.
-            score += 60.0
-
-        author = cls._history_fold(item_author)
-        cand_author = cls._history_fold(candidate.author)
-        if author and cand_author:
-            author_ratio = SequenceMatcher(None, author, cand_author).ratio()
-            aleft = set(author.split())
-            aright = set(cand_author.split())
-            author_tokens = len(aleft & aright) / max(1, len(aleft | aright))
-            score += max(author_ratio, author_tokens) * 18.0
-            if author == cand_author:
-                score += 5.0
-
-        year = re.sub(r"\D", "", str(item_year or ""))[:4]
-        published = str(candidate.published_at or "")
-        if year and year in published:
-            score += 9.0
-        return score
+        return library_projection._history_cover_score(cls, item_title, item_author, item_year, record_id, candidate)
 
     @classmethod
     def _history_search_queries(cls, title: str) -> list[str]:
@@ -771,31 +702,7 @@ class LibraryService:
         ``ListHandings`` (sous-titre, ponctuation, mention de volume). On ne
         journalise jamais le texte de ces requêtes dans les diagnostics.
         """
-        original = re.sub(r"\s+", " ", str(title or "")).strip()[:180]
-        if not original:
-            return []
-        variants = [original]
-
-        # Titre principal avant un séparateur de sous-titre fréquent.
-        main = re.split(r"\s(?:[:;/=])\s|\s[-–—]\s", original, maxsplit=1)[0].strip()
-        if len(main) >= 4:
-            variants.append(main[:180])
-
-        # Variante sans ponctuation ni diacritiques : utile quand ListHandings
-        # et le catalogue n'emploient pas exactement la même typographie.
-        folded = cls._history_fold(original)
-        if folded:
-            words = folded.split()
-            variants.append(" ".join(words[:8])[:180])
-
-        out: list[str] = []
-        seen: set[str] = set()
-        for value in variants:
-            key = value.casefold().strip()
-            if key and key not in seen:
-                seen.add(key)
-                out.append(value)
-        return out[:3]
+        return library_projection._history_search_queries(cls, title)
 
     def resolve_history_thumbnail(
         self,
@@ -814,190 +721,7 @@ class LibraryService:
         recherche. Une notice fiable sans image est enrichie via ``holdings``
         *avec l'identifiant issu de Search.svc*, qui est exploitable.
         """
-        provider = (provider or "SYRACUSE").upper()
-        title = str(title or "").strip()
-        if not title:
-            return default_url, "not_found"
-
-        folded = "\0".join([
-            provider,
-            str(record_id or ""),
-            self._history_fold(title),
-            self._history_fold(author),
-            str(year or ""),
-        ])
-        key = hashlib.sha256(folded.encode("utf-8")).hexdigest()
-        # Nouveau namespace : invalide automatiquement les not_found de 0.2.5.
-        namespace = "history-cover-search-v2"
-        cached = self.storage.cache_get(namespace, key)
-        if isinstance(cached, dict) and cached.get("status"):
-            status = str(cached.get("status"))
-            url = str(cached.get("url") or "").strip() or None
-            self.diagnostics.add(
-                "COVER", "history search", "ok",
-                detail={"provider": provider, "result": status, "cache": True},
-                level="detailed",
-            )
-            return url or default_url, status
-
-        # Cover enrichment is provider-agnostic: use the current provider
-        # session contract rather than any concrete Syracuse client.
-        session = self._session_for_account()
-        all_rows: list[SearchResult] = []
-        seen: set[str] = set()
-        attempts = 0
-        search_error: Exception | None = None
-        search_queries = self._history_search_queries(title)
-        folded_queries = {self._history_fold(q) for q in search_queries if q}
-
-        for query in search_queries:
-            attempts += 1
-            try:
-                rows = session.search(query, scope="all", page=0, field="all")
-            except Exception as exc:
-                search_error = exc
-                self.diagnostics.add(
-                    "COVER", "history search attempt", "error",
-                    detail={
-                        "provider": provider,
-                        "attempt": attempts,
-                        "error": type(exc).__name__,
-                        "message": str(exc)[:160],
-                    },
-                    level="detailed",
-                )
-                continue
-
-            for row in rows:
-                if row.id not in seen:
-                    seen.add(row.id)
-                    all_rows.append(row)
-            self.diagnostics.add(
-                "COVER", "history search attempt", "ok",
-                detail={
-                    "provider": provider,
-                    "attempt": attempts,
-                    "rows": len(rows),
-                    "rows_total": len(all_rows),
-                    "with_thumbnail": sum(1 for x in rows if x.thumbnail_url),
-                },
-                level="detailed",
-            )
-
-            # Une égalité forte permet d'éviter les requêtes plus larges.
-            preview = sorted(
-                ((self._history_cover_score(title, author, year, record_id, x), x) for x in all_rows),
-                key=lambda pair: pair[0], reverse=True,
-            )
-            if preview:
-                pscore, pbest = preview[0]
-                if str(record_id or "") and str(pbest.record_id) == str(record_id):
-                    break
-                if self._history_fold(pbest.title) == self._history_fold(title) and pscore >= 85.0:
-                    break
-
-        if not all_rows and search_error is not None:
-            self.storage.cache_put(namespace, key, {"url": "", "status": "error"}, 5 * 60)
-            self.diagnostics.add(
-                "COVER", "history search", "error",
-                detail={
-                    "provider": provider,
-                    "result": "error",
-                    "cache": False,
-                    "attempts": attempts,
-                    "error": type(search_error).__name__,
-                    "message": str(search_error)[:160],
-                },
-                level="detailed",
-            )
-            return default_url, "error"
-
-        scored = sorted(
-            ((self._history_cover_score(title, author, year, record_id, x), x) for x in all_rows),
-            key=lambda pair: pair[0], reverse=True,
-        )
-        status = "not_found"
-        url: str | None = None
-        best_score = 0.0
-        gap = 0.0
-        cover_source = "none"
-        best: SearchResult | None = None
-
-        if scored:
-            best_score, best = scored[0]
-            second_score = scored[1][0] if len(scored) > 1 else 0.0
-            gap = best_score - second_score
-            best_title = self._history_fold(best.title)
-            history_title = self._history_fold(title)
-            exact_title = bool(history_title and best_title == history_title)
-            exact_variant = bool(best_title and best_title in folded_queries)
-            same_record = bool(record_id and str(best.record_id) == str(record_id))
-
-            confident = False
-            if same_record:
-                confident = True
-            elif (exact_title or exact_variant) and (len(scored) == 1 or gap >= 5.0):
-                confident = True
-            elif best_score >= 92.0 and gap >= 10.0:
-                confident = True
-            elif best_score >= 72.0:
-                status = "ambiguous"
-
-            if confident:
-                if best.thumbnail_url:
-                    url = best.thumbnail_url
-                    status = "matched"
-                    cover_source = "search"
-                else:
-                    # Les résultats physiques peuvent être dépourvus d'image
-                    # dans CompactResult/CustomResult. L'identifiant Search.svc
-                    # est en revanche valide pour la fiche détaillée.
-                    try:
-                        detail = session.holdings(best, search_terms="")
-                        if detail.thumbnail_url:
-                            url = detail.thumbnail_url
-                            status = "matched"
-                            cover_source = "detail"
-                        else:
-                            status = "no_cover"
-                    except Exception as exc:
-                        status = "no_cover"
-                        self.diagnostics.add(
-                            "COVER", "history detail cover", "error",
-                            detail={
-                                "provider": provider,
-                                "error": type(exc).__name__,
-                                "message": str(exc)[:160],
-                            },
-                            level="detailed",
-                        )
-
-        # Match positif durable ; les négatifs restent courts pour ne plus
-        # verrouiller une mauvaise première résolution pendant plusieurs jours.
-        ttl = {
-            "matched": 30 * 24 * 3600,
-            "no_cover": 6 * 3600,
-            "ambiguous": 30 * 60,
-            "not_found": 15 * 60,
-            "error": 5 * 60,
-        }.get(status, 15 * 60)
-        self.storage.cache_put(namespace, key, {"url": url or "", "status": status}, ttl)
-        self.diagnostics.add(
-            "COVER", "history search", "ok",
-            detail={
-                "provider": provider,
-                "result": status,
-                "cache": False,
-                "attempts": attempts,
-                "candidates": len(all_rows),
-                "with_thumbnail": sum(1 for x in all_rows if x.thumbnail_url),
-                "score": round(best_score, 1),
-                "gap": round(gap, 1),
-                "cover_source": cover_source,
-            },
-            level="detailed",
-        )
-        return url or default_url, status
+        return library_projection.resolve_history_thumbnail(self, provider, record_id, title, author, year, default_url)
 
     def refresh_bookings(self, force: bool = False) -> list[Booking]:
         account = self.current_account
@@ -1227,175 +951,19 @@ class LibraryService:
         every visible placement re-read the full Kobo backup and entitlement
         tables solely to resolve a cover.
         """
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        entries = {str(x.get("placement_id")): x for x in self.storage.catalog_entries() if x.get("placement_id")}
-        backup_by_item: dict[str, list[tuple[dict[str, Any], str | None]]] = {}
-        for record in self.storage.backup_list("kobo"):
-            item_key = str(record.get("item_id") or record.get("product_id") or "")
-            if not item_key:
-                continue
-            try:
-                record_identity = self.identity_for_connection("kobo", str(record.get("credential_id") or "")).identity_id
-            except Exception:
-                record_identity = None
-            backup_by_item.setdefault(item_key, []).append((record, record_identity))
-        loan_by_key: dict[tuple[str, str, str | None], Loan] = {}
-        for loan in self.last_loans:
-            try:
-                loan_identity = loan.identity_id or self.identity_for_connection(loan.source_provider, loan.source_credential).identity_id
-            except Exception:
-                loan_identity = loan.identity_id
-            loan_by_key[(loan.source_provider, str(loan.record_id or loan.id), loan_identity)] = loan
-        entitlements_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for entitlement in self.storage.entitlements():
-            entitlements_by_key.setdefault(
-                (str(entitlement.get("provider_id") or ""), str(entitlement.get("item_id") or "")), []
-            ).append(entitlement)
-        rows: list[dict[str, Any]] = []
-        for placement in sorted(
-            self.storage.placements(),
-            key=lambda x: int(x.get("created_at") or x.get("updated_at") or 0),
-            reverse=True,
-        ):
-            if placement.get("state") != "present":
-                continue
-            if identity_id and placement.get("identity_id") not in {identity_id, None, ""}:
-                continue
-            entry = entries.get(str(placement.get("placement_id"))) or {}
-            metadata = dict(entry.get("metadata") or {})
-            provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
-            row_identity = placement.get("identity_id") or identity_id
-            item_id = str(entry.get("item_id") or placement.get("source_item_id") or "")
-            cover_candidates = []
-            embedded = cover_candidate(
-                cached_cover_url(metadata), tier="embedded", source="epub",
-                evidence_id=str(placement.get("artifact_id") or ""), evidence_strength=100,
-            )
-            if embedded:
-                cover_candidates.append(embedded)
-            legacy = cover_candidate(
-                metadata.get("cover_url") or metadata.get("thumbnail_url"),
-                tier="origin", source="catalog-entry",
-                evidence_id=f"{provider_id}:{item_id}" if item_id else provider_id, evidence_strength=60,
-            )
-            if legacy:
-                cover_candidates.append(legacy)
-            catalog_cover = metadata.get("catalog_cover")
-            if isinstance(catalog_cover, dict):
-                public = cover_candidate(
-                    catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
-                    evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
-                )
-                if public:
-                    cover_candidates.append(public)
-            if item_id:
-                if provider_id == "kobo":
-                    for record, record_identity in backup_by_item.get(item_id, []):
-                        if row_identity and record_identity and record_identity != row_identity:
-                            continue
-                        value = cover_candidate(
-                            record.get("cover_url"), tier="origin", source="kobo-backup",
-                            evidence_id=f"{provider_id}:{item_id}", evidence_strength=100,
-                        )
-                        if value:
-                            cover_candidates.append(value)
-                loan_candidates = [
-                    loan_by_key.get((provider_id, item_id, row_identity)),
-                    loan_by_key.get((provider_id, item_id, None)),
-                ]
-                loan = next((value for value in loan_candidates if value is not None), None)
-                if loan is None:
-                    loan = next((
-                        value for (p, i, _identity), value in loan_by_key.items()
-                        if p == provider_id and i == item_id and (not row_identity or _identity == row_identity)
-                    ), None)
-                if loan is not None:
-                    value = cover_candidate(
-                        loan.thumbnail_url, tier="origin", source="loan",
-                        evidence_id=f"{provider_id}:{item_id}", evidence_strength=90,
-                    )
-                    if value:
-                        cover_candidates.append(value)
-                for entitlement in entitlements_by_key.get((provider_id, item_id), []):
-                    if row_identity and entitlement.get("identity_id") not in {row_identity, None, ""}:
-                        continue
-                    emeta = dict(entitlement.get("metadata") or {})
-                    value = cover_candidate(
-                        emeta.get("cover_url") or emeta.get("thumbnail_url"),
-                        tier="origin", source="entitlement",
-                        evidence_id=str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}"),
-                        evidence_strength=80,
-                    )
-                    if value:
-                        cover_candidates.append(value)
-            cover = resolve_cover(cover_candidates)
-            thumbnail_url = cover.url or None
-            metadata["cover_resolution"] = cover.metadata()
-            rows.append({
-                "placement_id": placement.get("placement_id"), "artifact_id": placement.get("artifact_id"),
-                "title": entry.get("title") or Path(str(placement.get("path") or "")).stem, "author": entry.get("author"),
-                "identity_id": row_identity, "provider_id": provider_id, "item_id": item_id or None,
-                "path": placement.get("path"), "media_format": entry.get("media_format"), "thumbnail_url": thumbnail_url,
-                "metadata": metadata,
-                "acquired_at": placement.get("created_at") or placement.get("updated_at"),
-                "updated_at": placement.get("updated_at"),
-            })
-            if len(rows) >= max(1, limit):
-                break
-        return rows
+        return library_projection.recent_acquisitions(self, identity_id=identity_id, limit=limit)
 
     def local_book_path(self, placement_id: str, *, identity_id: str) -> Path:
         """Resolve an inventoried file in the explicit identity scope, no acquisition."""
-        if not identity_id or not self.identity_by_id(identity_id):
-            raise ProviderConfigurationError('Identité locale inconnue')
-        row=self.storage.placement_get(str(placement_id))
-        owner=(row or {}).get('identity_id')
-        if not owner and self.identities:owner=self.identities[0].identity_id
-        if not row or owner!=identity_id or row.get('state')!='present':
-            raise ProviderConfigurationError('Fichier local absent ou hors de cette identité')
-        path=Path(str(row.get('path') or '')).expanduser().resolve()
-        if path.is_dir():
-            try:manifest=load_bundle_manifest(path,verify=True)
-            except BundleError as exc:raise ProviderConfigurationError('Bundle local invalide') from exc
-            if not manifest.playlist:raise ProviderConfigurationError('Ce bundle ne possède pas de fichier à ouvrir')
-            target=(path/manifest.playlist).resolve()
-            if path not in target.parents:raise ProviderConfigurationError('Playlist locale invalide')
-            path=target
-        if not path.is_file():raise ProviderConfigurationError('Le fichier local a disparu')
-        return path
+        return library_projection.local_book_path(self, placement_id, identity_id=identity_id)
 
     def local_placement_for_source(self, *, provider_id, credential_id, item_id, identity_id):
         """Find only an acquisition-attested unique placement, never by title."""
-        artifact_ids={str(row.get('artifact_id') or '') for row in self.storage.acquisitions()
-                      if row.get('status')=='complete' and row.get('identity_id')==identity_id
-                      and row.get('provider_id')==provider_id and row.get('credential_id')==credential_id
-                      and str(row.get('item_id') or '')==str(item_id)}
-        rows=[row for row in self.storage.placements() if row.get('state')=='present'
-              and row.get('identity_id')==identity_id and row.get('artifact_id') in artifact_ids]
-        if len(rows)!=1:return None
-        try:self.local_book_path(rows[0]['placement_id'],identity_id=identity_id)
-        except ProviderConfigurationError:return None
-        return rows[0]
+        return library_projection.local_placement_for_source(self, provider_id=provider_id, credential_id=credential_id, item_id=item_id, identity_id=identity_id)
 
     def local_placements_for_sources(self, identity_id):
         """One snapshot for search; only unique acquisition-attested placements."""
-        artifacts = {}
-        for row in self.storage.acquisitions(status='complete'):
-            if row.get('identity_id') != identity_id or not row.get('artifact_id'): continue
-            key = (row.get('provider_id'), row.get('credential_id'), str(row.get('item_id') or ''))
-            artifacts.setdefault(key, set()).add(row['artifact_id'])
-        placements = {}
-        for row in self.storage.placements():
-            if row.get('identity_id') == identity_id and row.get('state') == 'present':
-                placements.setdefault(row.get('artifact_id'), []).append(row)
-        linked = {}
-        for key, ids in artifacts.items():
-            rows = [row for artifact_id in ids for row in placements.get(artifact_id, [])]
-            if len(rows) != 1: continue
-            try: self.local_book_path(rows[0]['placement_id'], identity_id=identity_id)
-            except ProviderConfigurationError: continue
-            linked[key] = rows[0]
-        return linked
+        return library_projection.local_placements_for_sources(self, identity_id)
 
     def materialize_to_identity(self, placement_id: str, target_identity_id: str) -> dict[str, Any]:
         """Materialize an existing Artifact for another Identity without reacquisition.
@@ -1404,93 +972,7 @@ class LibraryService:
         catalog scan after a one-file hardlink/copy made this visible user action
         proportional to the entire library size.
         """
-        source = self.storage.placement_get(placement_id)
-        if not source or source.get("state") != "present":
-            raise ProviderConfigurationError("Placement source local introuvable")
-        src = Path(str(source.get("path") or ""))
-        if not src.is_file() and not src.is_dir():
-            raise ProviderConfigurationError("Artifact source introuvable")
-        is_bundle = src.is_dir()
-        source_bundle = None
-        if is_bundle:
-            try:
-                source_bundle = load_bundle_manifest(src, verify=True)
-            except BundleError as exc:
-                raise ProviderConfigurationError(f"Bundle source invalide: {exc}") from exc
-        target_identity = self.identity_by_id(target_identity_id)
-        if target_identity is None:
-            raise ProviderConfigurationError(f"Identité cible inconnue: {target_identity_id}")
-        provider = str(source.get("provider_id") or "shared")
-        source_entries = [
-            row for row in self.storage.catalog_entries()
-            if str(row.get("placement_id") or "") == str(placement_id)
-        ]
-        source_entry = source_entries[0] if source_entries else {}
-        dest_dir = self.library_identity_provider_dir(target_identity_id, provider)
-        dest = dest_dir / src.name
-        unchanged = False
-        if dest.exists():
-            if is_bundle and dest.is_dir():
-                try:
-                    unchanged = load_bundle_manifest(dest, verify=True).bundle_sha256 == source_bundle.bundle_sha256
-                except BundleError:
-                    unchanged = False
-            elif not is_bundle and dest.is_file():
-                unchanged = sha256_file(dest) == sha256_file(src)
-            if not unchanged:
-                stem, suffix = dest.stem, dest.suffix; n = 2
-                while dest.exists():
-                    dest = dest_dir / f"{stem} ({n}){suffix}"; n += 1
-        if not unchanged:
-            if is_bundle:
-                shutil.copytree(src, dest)
-            else:
-                try:
-                    os.link(src, dest)
-                except OSError:
-                    shutil.copy2(src, dest)
-
-        artifact_id = str(source.get("artifact_id") or "").strip()
-        item_id = str(source.get("source_item_id") or source_entry.get("item_id") or "").strip() or None
-        if artifact_id:
-            stat_target = (dest / ".cifereca-bundle.json") if is_bundle else dest
-            stat = stat_target.stat()
-            try:
-                relative = str(dest.resolve().relative_to(self.library_dir().resolve()))
-            except ValueError:
-                relative = dest.name
-            placement_meta = {
-                "relative_path": relative, "mtime_ns": int(stat.st_mtime_ns),
-                "materialized_from": placement_id, "artifact_kind": "bundle" if is_bundle else "file",
-            }
-            if is_bundle:
-                placement_meta["manifest_size"] = int(stat.st_size)
-            else:
-                placement_meta["file_size"] = int(stat.st_size)
-            new_placement_id = self.storage.placement_put({
-                "artifact_id": artifact_id, "path": str(dest), "identity_id": target_identity_id,
-                "provider_id": provider, "source_item_id": item_id, "state": "present",
-                "last_seen_at": int(time.time()), "metadata": placement_meta,
-            })
-            metadata = dict(source_entry.get("metadata") or {})
-            metadata["path"] = str(dest.resolve())
-            metadata["materialized_from"] = placement_id
-            self.storage.catalog_entry_put({
-                "artifact_id": artifact_id, "placement_id": new_placement_id,
-                "title": source_entry.get("title") or src.stem, "author": source_entry.get("author"),
-                "media_format": source_entry.get("media_format") or src.suffix.lstrip(".").lower(),
-                "identity_id": target_identity_id, "provider_id": provider, "item_id": item_id,
-                "local_state": "local", "metadata": metadata,
-            })
-        else:
-            self.catalog_index_path(
-                dest, title=str(source_entry.get("title") or src.stem), item_id=item_id,
-                identity_id=target_identity_id, provider_id=provider,
-            )
-        return {
-            "status": "unchanged" if unchanged else "complete", "path": str(dest),
-            "target_identity_id": target_identity_id, "provider_id": provider,
-        }
+        return library_mutation.materialize_to_identity(self, placement_id, target_identity_id)
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
         key = f"{item.source_provider}:{item.source_credential}:{item.scenario}:{item.docbase}:{item.record_id}"
@@ -3069,23 +2551,16 @@ class LibraryService:
 
     def catalog_scan(self, *, repair_misnamed: bool = False, force_covers: bool = False) -> dict[str, Any]:
         """Reconcile the local-first catalog from the Paris-owned library tree."""
-        result = LocalCatalog(self.storage, self.library_dir()).scan(repair_misnamed=repair_misnamed, force_covers=force_covers)
-        self.diagnostics.add(
-            "CATALOG", "local scan", "ok" if not result.invalid else "warning",
-            detail=result.as_dict(),
-        )
-        return {**result.as_dict(), "storage_schema_version": self.storage.schema_version()}
+        return library_mutation.catalog_scan(self, repair_misnamed=repair_misnamed, force_covers=force_covers)
 
     def catalog_entries(self, *, state: str | None = None) -> list[dict[str, Any]]:
-        return LocalCatalog(self.storage, self.library_dir()).entries(state=state)
+        return library_projection.catalog_entries(self, state=state)
 
     def catalog_index_path(
         self, path: Path, *, title: str | None = None, item_id: str | None = None,
         identity_id: str | None = None, provider_id: str | None = None,
     ) -> dict[str, Any]:
-        return LocalCatalog(self.storage, self.library_dir()).index_path(
-            path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id,
-        )
+        return library_mutation.catalog_index_path(self, path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id)
 
     def library_entries(self, *, identity_id: str | None = None, scan: bool = False) -> list[dict[str, Any]]:
         """Canonical Library projection.
@@ -3094,232 +2569,11 @@ class LibraryService:
         by provider/item. Remote-only rights remain distinct until reconciliation
         can bind them to a local Artifact.
         """
-        _lib_started = time.monotonic()
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        _TRACE_LOG.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
-        if scan:
-            self.catalog_scan()
-        merged: dict[str, dict[str, Any]] = {}
-        source_alias: dict[tuple[str, str], str] = {}
-        default_identity_id = self.identities[0].identity_id if self.identities else None
-        artifacts = {str(row.get("artifact_id") or ""): row for row in self.storage.artifacts()}
-        placements_by_artifact: dict[str, list[dict[str, Any]]] = {}
-        for placement in self.storage.placements(state="present"):
-            # The artifact itself is shared by content hash, but placements
-            # belong to identities. Do not project another identity's paths,
-            # storage targets or placement counts into this library snapshot.
-            # Legacy unscoped placements belong only to the default identity.
-            placement_identity = placement.get("identity_id") or default_identity_id
-            if identity_id and placement_identity != identity_id:
-                continue
-            placements_by_artifact.setdefault(str(placement.get("artifact_id") or ""), []).append(placement)
-
-        def placement_view(row: dict[str, Any]) -> dict[str, Any]:
-            meta = dict(row.get("metadata") or {})
-            return {
-                "placement_id": str(row.get("placement_id") or ""),
-                "identity_id": row.get("identity_id") or default_identity_id,
-                "provider_id": str(row.get("provider_id") or "local"),
-                "source_item_id": str(row.get("source_item_id") or ""),
-                "kind": str(meta.get("placement_kind") or ("storage" if meta.get("storage_target_id") else "library")),
-                "storage_target_id": meta.get("storage_target_id"),
-                "storage_plugin_id": meta.get("storage_plugin_id"),
-                "filename": Path(str(row.get("path") or "")).name,
-                "state": str(row.get("state") or "present"),
-            }
-
-        def add_unique(values: list[Any], value: Any) -> None:
-            if value not in {None, ""} and value not in values:
-                values.append(value)
-
-        for row in self.storage.catalog_entries():
-            if row.get("local_state") != "local":
-                continue
-            row_identity = row.get("identity_id")
-            if identity_id and row_identity != identity_id:
-                if row_identity not in {None, ""} or identity_id != default_identity_id:
-                    continue
-            provider_id = str(row.get("provider_id") or "local")
-            artifact_id = str(row.get("artifact_id") or "")
-            item_id = str(row.get("item_id") or artifact_id or row.get("catalog_entry_id"))
-            artifact = artifacts.get(artifact_id, {})
-            sha256 = str(artifact.get("sha256") or "")
-            if not sha256 and artifact_id.startswith("sha256:"):
-                sha256 = artifact_id.split(":", 1)[1]
-            canonical = f"sha256:{sha256}" if sha256 else (artifact_id or f"source:{provider_id}:{item_id}")
-            key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
-            source_alias[(provider_id, item_id)] = key
-            metadata = dict(row.get("metadata") or {})
-            all_placements = [placement_view(p) for p in placements_by_artifact.get(artifact_id, ())]
-            current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
-            existing = merged.get(key)
-            source_ref = {"provider_id": provider_id, "item_id": item_id, "identity_id": row_identity or default_identity_id}
-            base_cover_candidates = []
-            embedded_cover = cover_candidate(
-                cached_cover_url(metadata), tier="embedded", source="epub",
-                evidence_id=artifact_id or sha256, evidence_strength=100,
-            )
-            if embedded_cover:
-                base_cover_candidates.append(embedded_cover)
-            legacy_cover = cover_candidate(
-                metadata.get("cover_url") or metadata.get("thumbnail_url"),
-                tier="origin", source="catalog-entry",
-                evidence_id=f"{provider_id}:{item_id}" if item_id else provider_id, evidence_strength=60,
-            )
-            if legacy_cover:
-                base_cover_candidates.append(legacy_cover)
-            catalog_cover = metadata.get("catalog_cover")
-            if isinstance(catalog_cover, dict):
-                public_cover = cover_candidate(
-                    catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
-                    evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
-                )
-                if public_cover:
-                    base_cover_candidates.append(public_cover)
-            base_cover = resolve_cover(base_cover_candidates)
-            metadata["cover_resolution"] = base_cover.metadata()
-            if existing is None:
-                existing = {
-                    "key": key, "book_id": item_id, "title": str(row.get("title") or "Sans titre"),
-                    "author": row.get("author"), "provider_id": provider_id, "providers": [provider_id],
-                    "identity_id": row_identity or default_identity_id, "identity_ids": [row_identity or default_identity_id] if (row_identity or default_identity_id) else [],
-                    "item_id": item_id, "source_refs": [source_ref], "state": "local", "local": True,
-                    "local_path": metadata.get("path") or (current_placement or {}).get("path"),
-                    "media_format": artifact.get("media_format") or row.get("media_format"),
-                    "artifact_kind": metadata.get("artifact_kind") or artifact.get("kind") or "file",
-                    "bundle_members": metadata.get("bundle_members") or [], "playlist": metadata.get("playlist"),
-                    "entitlement_type": None, "due_at": None, "source": "catalog",
-                    "thumbnail_url": base_cover.url or None,
-                    "artifact_id": artifact_id or None, "sha256": sha256 or None,
-                    "placement_id": row.get("placement_id"), "placements": all_placements, "possessions": [],
-                    "metadata": metadata,
-                }
-                merged[key] = existing
-            else:
-                add_unique(existing.setdefault("providers", []), provider_id)
-                add_unique(existing.setdefault("identity_ids", []), row_identity or default_identity_id)
-                if source_ref not in existing.setdefault("source_refs", []): existing["source_refs"].append(source_ref)
-                known_ids={p.get("placement_id") for p in existing.setdefault("placements", [])}
-                existing["placements"].extend(p for p in all_placements if p.get("placement_id") not in known_ids)
-                if not existing.get("author") and row.get("author"): existing["author"] = row.get("author")
-                if existing.get("title") in {None, "", "Sans titre"} and row.get("title"): existing["title"] = row.get("title")
-                if not existing.get("thumbnail_url") and base_cover.url:
-                    existing["thumbnail_url"] = base_cover.url
-                existing["metadata"] = {**metadata, **dict(existing.get("metadata") or {})}
-
-        backup_by_key = {(str(row.get("credential_id") or ""), str(row.get("item_id") or "")): row for row in self.storage.backup_list("kobo")}
-        loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
-        for loan in self.last_loans:
-            loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
-
-        for entitlement in self.storage.entitlements(state="active"):
-            entitlement_type = str(entitlement.get("entitlement_type") or "unknown")
-            if entitlement_type not in {"owned", "loan", "license"}: continue
-            entitlement_identity = str(entitlement.get("identity_id") or "").strip() or default_identity_id
-            if identity_id and entitlement_identity != identity_id: continue
-            provider_id = str(entitlement.get("provider_id") or ""); item_id = str(entitlement.get("item_id") or "")
-            if not provider_id or not item_id: continue
-            source_key=(provider_id,item_id); canonical_key=source_alias.get(source_key, f"source:{provider_id}:{item_id}")
-            existing = merged.get(canonical_key, {})
-            meta = dict(entitlement.get("metadata") or {})
-            backup = backup_by_key.get((str(entitlement.get("credential_id") or ""), item_id), {}) if provider_id == "kobo" else {}
-            loan = loans_by_key.get((provider_id, str(entitlement.get("credential_id") or ""), entitlement.get("account_id"), item_id))
-            loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
-            title = str(meta.get("title") or backup.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
-            author = meta.get("author") or backup.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")
-            from .core.search import file_format
-            source_media_format = meta.get("media_format") or backup.get("format") or (loan.media_format if loan else None) or loan_extra.get("format")
-            local_format = file_format(existing.get("media_format")) if existing.get("local") else ""
-            media_format = local_format or file_format(source_media_format) or file_format(existing.get("media_format"))
-            meta["source_media_format"] = source_media_format
-            cover_candidates = []
-            existing_meta = dict(existing.get("metadata") or {})
-            embedded_cover = cover_candidate(
-                cached_cover_url(existing_meta), tier="embedded", source="epub",
-                evidence_id=str(existing.get("artifact_id") or existing.get("sha256") or ""), evidence_strength=100,
-            )
-            if embedded_cover:
-                cover_candidates.append(embedded_cover)
-            for url, source, strength, evidence in (
-                (existing_meta.get("cover_url") or existing_meta.get("thumbnail_url"), "catalog-entry", 60, f"{provider_id}:{item_id}"),
-                (meta.get("cover_url") or meta.get("thumbnail_url"), "entitlement", 80, str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}")),
-                (backup.get("cover_url"), "kobo-backup", 100, f"{provider_id}:{item_id}"),
-                ((loan.thumbnail_url if loan else None), "loan", 90, f"{provider_id}:{item_id}"),
-            ):
-                value = cover_candidate(url, tier="origin", source=source, evidence_id=evidence, evidence_strength=strength)
-                if value:
-                    cover_candidates.append(value)
-            for metadata_source in (existing_meta, meta):
-                public_meta = metadata_source.get("catalog_cover")
-                if isinstance(public_meta, dict):
-                    value = cover_candidate(
-                        public_meta.get("url"), tier="catalog", source=str(public_meta.get("source") or "catalog"),
-                        evidence_id=str(public_meta.get("evidence_id") or ""), evidence_strength=int(public_meta.get("evidence_strength") or 0),
-                    )
-                    if value:
-                        cover_candidates.append(value)
-            cover = resolve_cover(cover_candidates)
-            thumbnail = cover.url or None
-            combined_meta = {**existing_meta, **meta}
-            combined_meta["cover_resolution"] = cover.metadata()
-            remote_state = "remote_owned" if entitlement_type == "owned" else "remote_loan_active" if entitlement_type == "loan" else "remote_entitled"
-            possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
-            if existing:
-                add_unique(existing.setdefault("providers", []), provider_id)
-                add_unique(existing.setdefault("identity_ids", []), entitlement_identity)
-                if possession not in existing.setdefault("possessions", []): existing["possessions"].append(possession)
-                source_ref={"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}
-                if source_ref not in existing.setdefault("source_refs", []): existing["source_refs"].append(source_ref)
-                existing.update({"title":title,"author":author,"state":"local" if existing.get("local") else remote_state,"media_format":str(media_format or "").lower() or None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"metadata":combined_meta})
-            else:
-                merged[canonical_key]={"key":canonical_key,"book_id":item_id,"title":title,"author":author,"provider_id":provider_id,"providers":[provider_id],"identity_id":entitlement_identity,"identity_ids":[entitlement_identity] if entitlement_identity else [],"item_id":item_id,"source_refs":[{"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}],"state":remote_state,"local":False,"local_path":None,"media_format":str(media_format or "").lower() or None,"artifact_kind":None,"bundle_members":[],"playlist":None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"source":"entitlement","loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"artifact_id":None,"sha256":None,"placement_id":None,"placements":[],"possessions":[possession],"metadata":combined_meta}
-
-        result=[]
-        for row in merged.values():
-            row["providers"] = sorted(dict.fromkeys(str(x) for x in row.get("providers", []) if x))
-            row["identity_ids"] = list(dict.fromkeys(x for x in row.get("identity_ids", []) if x))
-            row["placement_count"] = len(row.get("placements") or [])
-            row["source_count"] = len(row.get("source_refs") or [])
-            result.append(row)
-        result.sort(key=lambda row: (str(row.get("title") or "").casefold(), str(row.get("provider_id") or "")))
-        _TRACE_LOG.info("TRACE library-entries end identity=%s count=%s dt=%.3fs", identity_id, len(result), time.monotonic()-_lib_started)
-        return result
+        return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
 
     def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool = True) -> dict[str, int]:
         """Persist current digital loans and realize rights no longer reported."""
-        active_ids: set[str] = set()
-        persisted = 0
-        for loan in loans:
-            if loan.medium != "digital":
-                continue
-            source = SourceIdentity(
-                provider_id=loan.source_provider,
-                credential_id=loan.source_credential,
-                account_id=loan.source_account_id,
-                identity_id=identity_id,
-            )
-            entitlement = Entitlement(
-                source=source,
-                item_id=str(loan.record_id or loan.id),
-                entitlement_type="loan",
-                state="active",
-                loan_id=loan.id,
-                expires_at=loan.due_at,
-                metadata={
-                    "title": loan.title,
-                    "author": loan.author or (dict((loan.raw or {}).get("_cifereca") or {}).get("author") if isinstance((loan.raw or {}).get("_cifereca"), dict) else None),
-                    "media_format": loan.media_format or (dict((loan.raw or {}).get("_cifereca") or {}).get("format") if isinstance((loan.raw or {}).get("_cifereca"), dict) else None),
-                    "cover_url": loan.thumbnail_url,
-                    "ebook_url": loan.ebook_url,
-                    "document_type": loan.document_type,
-                },
-            )
-            active_ids.add(entitlement.entitlement_id)
-            self.storage.entitlement_put(entitlement)
-            persisted += 1
-        returned = self.storage.entitlement_realize_missing_loans(active_ids, identity_id=identity_id) if reconcile_missing else 0
-        expired = self.storage.entitlement_realize_expired()
-        return {"persisted": persisted, "returned_realized": returned, "expired_realized": expired}
+        return library_mutation._persist_active_loans(self, identity_id, loans, reconcile_missing=reconcile_missing)
 
     @staticmethod
     def _loan_destination_name(title: str, suffix: str = ".epub") -> str:
