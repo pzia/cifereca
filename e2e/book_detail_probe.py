@@ -341,7 +341,7 @@ def main():
         expander = expanded[0]
         rows = [
             widget for widget in walk(expander)
-            if isinstance(widget, Adw.ActionRow) and widget is not expander
+            if isinstance(widget, Adw.ActionRow) and widget.get_title() != "Détail"
         ]
         public = [(str(widget.get_title()), str(widget.get_subtitle())) for widget in rows]
         prohibited = (
