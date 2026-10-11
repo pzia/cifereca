@@ -319,8 +319,18 @@ class CifericaCollection:
         self._mode = "fixture"
         self._show_synthetic = False
         self._session_epochs = {}
+        self._active = False
+        self._activation_generation = 0
 
     def activate(self, context):
+        with self._lock:
+            self._activation_generation += 1
+            # Invalidate sessions from previous activations, including cases
+            # where the new cache advertises identical upstream revisions.
+            for sid in self._session_epochs:
+                self._session_epochs[sid] += 1
+            self._snapshot = None
+            self._active = False
         cfg = dict(context.config)
         self._mode = cfg.get("mode", "fixture")
         if self._mode not in ("fixture", "candidate_v02"):
@@ -338,11 +348,18 @@ class CifericaCollection:
                 )
             except (ValueError, TypeError, OSError):
                 self._snapshot = None
+        with self._lock:
+            self._active = True
         return self
 
     def deactivate(self):
         with self._lock:
+            self._activation_generation += 1
+            self._active = False
+            for sid in self._session_epochs:
+                self._session_epochs[sid] += 1
             self._callbacks.clear()
+            self._directory = None
 
     def snapshot(self):
         with self._lock:
@@ -353,10 +370,14 @@ class CifericaCollection:
     def refresh(self, *, explicit=True):
         if explicit is not True:
             raise ContractUnavailable("discovery must be explicit")
-        if self._directory is None:
-            raise ContractUnavailable("plugin is not active")
-        if self._mode == "fixture":
-            path = self._directory / "fixture-sources.json"
+        with self._lock:
+            if not self._active or self._directory is None:
+                raise ContractUnavailable("plugin is not active")
+            activation = self._activation_generation
+            directory = self._directory
+            mode = self._mode
+        if mode == "fixture":
+            path = directory / "fixture-sources.json"
             if path.stat().st_size > MAX_JSON_BYTES:
                 raise ContractUnavailable("oversized local source fixture")
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -366,11 +387,13 @@ class CifericaCollection:
         if not isinstance(data, dict):
             raise ContractUnavailable("invalid candidate inventory")
         with self._lock:
+            if not self._active or self._activation_generation != activation:
+                raise ContractUnavailable("plugin changed during source refresh")
             accepted = candidate_inventory(data, self._snapshot,
                                            show_synthetic=self._show_synthetic)
             if accepted == self._snapshot:
                 return accepted
-            path = self._directory / "inventory.json"
+            path = directory / "inventory.json"
             temp = path.with_suffix(".tmp")
             try:
                 temp.write_text(json.dumps(asdict(accepted), ensure_ascii=False,
@@ -397,7 +420,7 @@ class CifericaCollection:
         """Inspect current validated local inventory and source incarnation."""
         with self._lock:
             snapshot = self._snapshot
-            if snapshot is None or self._session_epochs.get(source_id, 0) != epoch:
+            if not self._active or snapshot is None or self._session_epochs.get(source_id, 0) != epoch:
                 return False
             return any(
                 child.source_id == source_id
@@ -411,8 +434,8 @@ class CifericaCollection:
     def create_provider(self, source_id):
         with self._lock:
             snapshot = self._snapshot
-            if snapshot is None:
-                raise ContractUnavailable("no local source inventory")
+            if not self._active or snapshot is None:
+                raise ContractUnavailable("no active local source inventory")
             child = next((row for row in snapshot.children
                           if row.source_id == source_id and row.status == "ready"), None)
             epoch = self._session_epochs.get(source_id, 0)
