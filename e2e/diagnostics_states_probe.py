@@ -107,7 +107,11 @@ class SlowHandle:
 
 class StateTasks(Tasks):
     def submit(self, fn, *, label, kind):
-        if label == "Vérifications diagnostics":
+        if label in {"Consultation des journaux", "Vérifications diagnostics"}:
+            # Reproduce real TaskRunner completion semantics: failures in
+            # broker.events() are delivered asynchronously via result().
+            # Calling fn inline would instead exercise the submission-error
+            # path, which has a different (also valid) UI message.
             self.calls.append((label, kind))
             return SlowHandle(fn)
         return super().submit(fn, label=label, kind=kind)
@@ -276,11 +280,25 @@ def main():
     def d04():
         assert broker[0].checks == 0
         check = button_tooltip("Vérifier les services configurés et runtimes")
-        # Keep the click on a mapped, visible GTK control.
         assert check.get_mapped()
+        # The diagnostic controls can sit below the outer scroll viewport;
+        # mapped != onscreen. Scroll based on real widget bounds before XTEST.
+        content = page[0].get_child()
+        ok, bounds = check.compute_bounds(content)
+        assert ok, "Position GTK de Vérifier introuvable"
+        adjustment = page[0].get_vadjustment()
+        target = max(0, min(
+            float(bounds.get_y()) - 65,
+            adjustment.get_upper() - adjustment.get_page_size(),
+        ))
+        adjustment.set_value(target)
+        report["checks"]["D04_check_button_scrolled_into_view"] = True
+        later(lambda: click_slow_check(check), 220)
+
+    def click_slow_check(check):
         checks_started_at[0] = monotonic()
         report["ticks_at_click"] = tick[0]
-        device[0].click_widget(check)
+        report["check_click"] = device[0].click_widget(check)
         until(lambda: has("Vérification en cours") and broker[0].checks == 1,
               during_slow_check, seconds=4)
 
