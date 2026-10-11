@@ -641,8 +641,11 @@ def test_structured_opt_in_never_displaces_primary_event_evidence():
                                include_snapshot=True)
     assert preview["count"] == 3
     assert all(f"ref-{i}" in preview["prompt"] for i in range(3))
-    assert preview["structured_count"] < 4
-    assert preview["sample_truncated"] is True
+    # Free-form snapshot messages are excluded at the opt-in boundary.
+    # The four small operational rows now fit without dropping primary events.
+    assert preview["structured_count"] == 4
+    assert preview["sample_truncated"] is False
+    assert "S" * 700 not in preview["prompt"]
     assert preview["bytes"] <= 3000
     assert model.calls == 0
 
@@ -1339,11 +1342,14 @@ def test_structured_snapshot_uses_latest_four_events_and_newest_first():
     assert preview["count"] == 0
     assert preview["structured_count"] == 4
     assert preview["sample_truncated"] is True
+    # Unknown component labels are not a safe IA field. The timestamp is
+    # canonical and can prove the most recent four records were chosen.
+    assert "incident-" not in preview["prompt"]
     for i in range(6, 10):
-        assert f"incident-{i}" in preview["prompt"]
+        assert f"2026-10-11T00:{i:02d}:00+00:00" in preview["prompt"]
     for i in range(6):
-        assert f"incident-{i}" not in preview["prompt"]
-    assert preview["prompt"].index("incident-9") < preview["prompt"].index("incident-8")
+        assert f"2026-10-11T00:{i:02d}:00+00:00" not in preview["prompt"]
+    assert preview["prompt"].index("2026-10-11T00:09:00+00:00") < preview["prompt"].index("2026-10-11T00:08:00+00:00")
     assert preview["bytes"] <= 3000
     assert broker.snapshot_calls == 1
     assert model.calls == 0
@@ -1462,3 +1468,62 @@ def test_ai_structured_detail_cannot_stringify_unknown_objects():
     preview = prepare_analysis(FakeLLM(), HostileBroker([]), include_snapshot=True)
     assert preview["structured_count"] == 1
     assert '"detail"' not in preview["prompt"]
+
+
+def test_ai_snapshot_top_level_free_text_never_leaves_local_preview():
+    class PersonalTopLevelBroker(FakeBroker):
+        def snapshot(self):
+            return [{
+                "timestamp": "2026-10-11T20:00:00+02:00",
+                "source": "core_events",
+                "component": "scheduler",
+                "status": "partial",
+                "severity": "warning",
+                "operation": "return Alice book title Jane Doe",
+                "message": "Livre Mon Secret de Pierre Dupont prêté à Camille",
+                "plugin_id": "cifereca.alice_private_library",
+                "detail": {"phase": "fetch", "attempts": 2},
+            }, {
+                "component": "Jean Martin", "status": "failed",
+                "operation": "verify", "message": "ISBN SECRET_ISBN_NO_PATTERN",
+                "source": "customer_library",
+            }]
+
+    model = FakeLLM(remote=True)
+    broker = PersonalTopLevelBroker([event(ref="ref-top")])
+    preview = prepare_analysis(model, broker, include_snapshot=True)
+    assert preview["structured_count"] == 2
+    for expected in ("scheduler", "partial", "warning", "fetch", "verify",
+                     "2026-10-11T18:00:00+00:00"):
+        assert expected in preview["prompt"]
+    for private in ("Alice", "Jane Doe", "Pierre Dupont", "Camille",
+                    "Jean Martin", "Mon Secret", "SECRET_ISBN_NO_PATTERN",
+                    "alice_private_library", "customer_library"):
+        assert private not in preview["prompt"]
+    # Filtered Core events legitimately have a redacted message field;
+    # only the optional structured section must omit free-form messages.
+    structured_part = preview["prompt"].split('"structured_diagnostics":', 1)[1]
+    assert '"message"' not in structured_part
+    assert model.calls == 0
+    assert preview["bytes"] <= 3000
+
+
+def test_ai_snapshot_unknown_root_values_not_stringified_or_transmitted():
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("root values must not be stringified")
+        def __repr__(self):
+            raise AssertionError("root values must not be repr-ed")
+
+    class HostileBroker(FakeBroker):
+        def snapshot(self):
+            return [{"component": "core", "message": Hostile(),
+                     "plugin_id": Hostile(), "operation": Hostile(),
+                     "status": "ok", "detail": {"note": Hostile()}}]
+
+    preview = prepare_analysis(FakeLLM(), HostileBroker([]),
+                               include_snapshot=True)
+    assert preview["structured_count"] == 1
+    assert '"message"' not in preview["prompt"]
+    assert '"plugin_id"' not in preview["prompt"]
+    assert '"operation"' not in preview["prompt"]
