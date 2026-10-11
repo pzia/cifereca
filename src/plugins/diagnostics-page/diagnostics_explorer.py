@@ -140,17 +140,33 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
     sources = payload.get("sources")
     if not isinstance(sources, (list, tuple)):
         return states
+    from cifereca_diagnostics_page import redacted_detail
+
+    def safe_text(value: Any, limit: int) -> str:
+        if type(value) is not str:
+            return ""
+        # Redact the complete original value before shortening it: cropping
+        # signed URLs, tokens or emails first could disclose their prefixes.
+        cleaned = redacted_detail(value)
+        return "".join(char if char.isprintable() else " " for char in cleaned).strip()[:limit]
+
     for raw in sources[:4]:
         if not isinstance(raw, Mapping):
             continue
         status = raw.get("status")
-        if not isinstance(status, str):
+        if type(status) is not str or len(status) > 20 or status not in SOURCE_STATES:
             status = "unavailable"
-        states.append({
-            "source": raw["source"][:40] if isinstance(raw.get("source"), str) else "inconnue",
-            "status": status if status in SOURCE_STATES else "unavailable",
-            "label": SOURCE_STATES.get(status, SOURCE_STATES["unavailable"]),
-        })
+        state = {
+            "source": safe_text(raw.get("source"), 40) or "inconnue",
+            "status": status,
+            "label": SOURCE_STATES[status],
+        }
+        reason = safe_text(raw.get("reason"), 120)
+        # The availability reason is diagnostics data too, never raw broker
+        # output. Keep the original three-field contract when no reason exists.
+        if reason and status in ("empty", "disabled", "unavailable", "partial"):
+            state["reason"] = reason
+        states.append(state)
     return states
 
 
