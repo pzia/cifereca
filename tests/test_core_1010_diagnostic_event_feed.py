@@ -262,3 +262,16 @@ def test_trace_field_values_are_bounded_to_safe_vocabulary(tmp_path):
     assert rows["events"][0]["message"] == "TRACE sync source status=ok count=12"
     for secret in ("Alice", "privatecustomer", "credentialref"):
         assert secret not in json.dumps(rows)
+
+
+@pytest.mark.parametrize("snapshot", [None, {}, "unexpected", 123, b"secret"])
+def test_invalid_diagnostic_snapshot_shape_reports_unavailable(tmp_path, snapshot):
+    class InvalidSnapshot:
+        enabled = True
+        def snapshot(self):
+            return snapshot
+    result = query_diagnostic_events(InvalidSnapshot(), log_path=tmp_path / "missing", source="core_events")
+    assert result["events"] == []
+    assert result["sources"][0] == {
+        "source": "core_events", "status": "unavailable", "reason": "snapshot_unavailable"
+    }
