@@ -69,6 +69,66 @@ def _public_structured_detail(raw: Any) -> dict[str, Any]:
     if type(retryable) is bool:
         safe["retryable"] = retryable
     return safe
+
+
+# The public Core snapshot can still include arbitrary names, filenames,
+# book titles and provider-supplied prose in its top-level fields. Unlike
+# regex redaction, a closed vocabulary cannot accidentally publish them.
+_STRUCTURED_COMPONENTS = frozenset({
+    "core", "diagnostics", "scheduler", "runtime", "sync", "service",
+    "database", "network", "cache", "plugin", "transport", "provider",
+    "catalog", "import", "download", "ui", "worker", "update",
+})
+_STRUCTURED_SOURCES = frozenset({"core_events", "app_log"})
+_STRUCTURED_SEVERITIES = frozenset({
+    "debug", "info", "warning", "error", "critical",
+})
+_STRUCTURED_STATUSES = frozenset({
+    "ok", "success", "failed", "error", "warning", "partial",
+    "pending", "running", "completed", "cancelled", "skipped",
+    "unavailable", "available", "disabled", "empty", "timeout",
+    "ready", "idle", "accepted", "rejected", "attention_required",
+})
+
+
+def _public_structured_row(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Strictly project operational top-level fields, never raw prose.
+
+    Do not transform unknown names into seemingly sanitized free text. The
+    nested detail has its own closed public telemetry vocabulary.
+    """
+    safe: dict[str, Any] = {}
+    timestamp = raw.get("timestamp")
+    if type(timestamp) is str and len(timestamp) <= 40:
+        try:
+            stamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if stamp.tzinfo is not None and stamp.utcoffset() is not None:
+                safe["timestamp"] = stamp.astimezone(timezone.utc).isoformat()
+        except (ValueError, OverflowError):
+            pass
+    for name, allowed in (
+        ("source", _STRUCTURED_SOURCES),
+        ("component", _STRUCTURED_COMPONENTS),
+        ("severity", _STRUCTURED_SEVERITIES),
+        ("status", _STRUCTURED_STATUSES),
+        ("operation", _STRUCTURED_DETAIL_VALUES),
+        ("message", _STRUCTURED_DETAIL_VALUES),
+    ):
+        value = raw.get(name)
+        if type(value) is str and value in allowed:
+            safe[name] = value
+
+    plugin_id = raw.get("plugin_id")
+    if type(plugin_id) is str and plugin_id.startswith("cifereca."):
+        suffix = plugin_id.removeprefix("cifereca.")
+        if suffix in _STRUCTURED_COMPONENTS:
+            safe["plugin_id"] = plugin_id
+    detail = _public_structured_detail(raw.get("detail"))
+    if detail:
+        safe["detail"] = detail
+    return safe
+
+
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
 # Every field later copied from an approved preview into a user-facing
@@ -337,28 +397,18 @@ def prepare_analysis(
         records = snapshot()
         if not isinstance(records, (list, tuple)):
             raise ValueError("structured_diagnostics_unavailable")
-        fields = (
-            "timestamp", "source", "component", "plugin_id", "severity",
-            "status", "message", "operation", "detail",
-        )
         # Diagnostics.snapshot() exposes the Core's append-ordered deque.
         # Sample the *latest* records, newest first, so a full history or
         # a tight byte budget does not hide the incident being investigated.
         for item in reversed(records[-_MAX_STRUCTURED:]):
             if not isinstance(item, Mapping):
                 continue
-            row = {field: item.get(field) for field in fields if field in item}
+            # Both first-level and nested fields are strictly projected;
+            # unrecognized values are omitted *before* generic regex masking.
+            # This blocks innocuous-looking private book titles and names.
+            row = _public_structured_row(item)
             if not row:
                 continue
-            # Never forward arbitrary nested Core detail to an LLM, even
-            # after regex masking. Book titles and personal names may not
-            # look like secrets. Permit only closed-vocabulary telemetry.
-            if "detail" in row:
-                detail = _public_structured_detail(row["detail"])
-                if detail:
-                    row["detail"] = detail
-                else:
-                    del row["detail"]
             safe = redacted_detail(row)
             candidate = structured + [safe]
             if _prompt_bytes(header + evidence_body(filtered, candidate, {})) > _MAX_PROMPT:
