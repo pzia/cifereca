@@ -61,6 +61,29 @@ ADEPT stable change. L'activation demeure bloquée tant qu'une nouvelle
 confirmation explicite n'est pas faite. Les comptes principaux restent
 liés à leur connexion prouvée.
 
+## 5. Auditer les emprunts visibles sur plusieurs connexions (hors réseau)
+
+```bash
+cifereca-cli paris-adept audit
+cifereca-cli paris-adept audit --credential "<connexion-paris>"
+```
+
+Cette commande effectue un rapprochement **en lecture seule** des prêts actifs
+et acquisitions déjà enregistrés en base, des connexions Paris et des profils
+ADEPT associés. Aucune activation, connexion fournisseur, vérification
+distante, suppression ou restitution n'est effectuée.
+
+La sortie JSON signale `multiple_connections`, `profile_disagreement`,
+`binding_state`, `recorded_adept_profile_id` et `multiple_item_ids`.
+Un filtre de connexion conserve les autres provenances du même identifiant
+de prêt afin de ne pas masquer les conflits. La présence d'un même identifiant
+de prêt chez deux connexions ne prouve **pas** à elle seule qu'il s'agit d'une
+seule transaction Adobe ; un rapprochement manuel est obligatoire.
+`binding_state=locally_consistent` **n'est pas** une preuve côté Adobe.
+
+Si l'inventaire est vide, synchroniser d'abord les sources via les
+mécanismes existants : `audit` ne déclenche pas de synchronisation.
+
 ## Limites
 
 - Ne pas utiliser cette procédure pour deviner un profil Adobe.
