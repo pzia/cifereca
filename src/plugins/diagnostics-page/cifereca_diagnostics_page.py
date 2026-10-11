@@ -647,7 +647,9 @@ class DiagnosticsPagePlugin:
             states = source_summaries(current_page)
             if states:
                 journals_sources.set_text("  ·  ".join(
-                    f"{state['source']} : {state['label']}" for state in states
+                    f"{state['source']} : {state['label']}" +
+                    (f" — {state['reason']}" if state.get("reason") else "")
+                    for state in states
                 ))
             else:
                 journals_sources.set_text("Sources non alimentées ou indisponibles")
