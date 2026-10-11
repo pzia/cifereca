@@ -494,3 +494,56 @@ def test_structured_duplicate_ids_remain_stable_across_broker_pages(tmp_path):
         visited.extend(row["event_id"] for row in page["events"])
     assert len(set(visited)) == 4
     assert visited == [row["event_id"] for row in full["events"]]
+
+
+def test_overwriting_same_log_inode_offset_changes_id_for_severity(tmp_path):
+    """The event hash must change if a record is rewritten in-place."""
+    log = tmp_path / "cifereca.log"
+    initial = (
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] "
+        "TRACE sync source status=ok"
+    )
+    revised = initial.replace(" INFO ", " ERROR ")
+    make_log(log, initial)
+    inode = log.stat().st_ino
+    first = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"][0]
+
+    make_log(log, revised)
+    assert log.stat().st_ino == inode
+    second = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"][0]
+    assert first["timestamp"] == second["timestamp"]
+    assert first["message"] == second["message"]
+    assert first["module"] == second["module"]
+    assert first["severity"] == "info"
+    assert second["severity"] == "error"
+    assert first["event_id"] != second["event_id"]
+
+
+def test_overwriting_same_log_inode_offset_changes_id_for_module(tmp_path):
+    """Different public modules are not the same evidence at one byte offset."""
+    log = tmp_path / "cifereca.log"
+    before_line = (
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] "
+        "TRACE sync source status=ok"
+    )
+    after_line = before_line.replace("cifereca.sync", "cifereca.core")
+    make_log(log, before_line)
+    first = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"][0]
+    inode = log.stat().st_ino
+    make_log(log, after_line)
+    assert log.stat().st_ino == inode
+    second = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"][0]
+    assert first["timestamp"] == second["timestamp"]
+    assert first["message"] == second["message"]
+    assert first["severity"] == second["severity"]
+    assert first["module"] == "cifereca.sync"
+    assert second["module"] == "cifereca.core"
+    assert first["event_id"] != second["event_id"]
