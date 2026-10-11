@@ -313,3 +313,14 @@ def test_export_does_not_stringify_untrusted_broker_values():
     assert len(exported["events"]) == 1
     assert exported["events"][0]["message"] == ""
     assert exported["events"][0]["event_id"] == "safe-id"
+
+
+def test_export_redacts_secret_crossing_500_character_cutoff():
+    # Truncating before redaction would expose a fragment of the token.
+    text = "x" * 490 + " token=SUPERPRIVATESECRET-" + "z" * 40
+    row = event("bounded", message=text)
+    payload = json.loads(export_selected_events([row], {"bounded"}))
+    message = payload["events"][0]["message"]
+    assert "SUPERPRIVATE" not in message
+    assert "token=<expurgé>" in message
+    assert len(message) <= 500
