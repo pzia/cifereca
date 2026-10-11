@@ -156,12 +156,9 @@ def _read_local_json(path: Path, *, label: str, optional: bool = False):
         raise ContractUnavailable(f"unreadable local {label} JSON") from None
     if len(raw) > MAX_JSON_BYTES:
         raise ContractUnavailable(f"oversized local {label} JSON")
-    def reject_nonstandard_number(_value):
-        raise ValueError("nonstandard JSON number")
-
     try:
-        # Reject non-standard float literals rather than silently accepting NaN.
-        return json.loads(raw.decode("utf-8"), parse_constant=reject_nonstandard_number)
+        # Use exactly the same strict JSON grammar for local and HTTP data.
+        return _decode_strict_json(raw)
     except (UnicodeDecodeError, ValueError, RecursionError):
         raise ContractUnavailable(f"invalid local {label} JSON") from None
 
