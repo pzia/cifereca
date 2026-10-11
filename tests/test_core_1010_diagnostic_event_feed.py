@@ -262,3 +262,13 @@ def test_trace_field_values_are_bounded_to_safe_vocabulary(tmp_path):
     assert rows["events"][0]["message"] == "TRACE sync source status=ok count=12"
     for secret in ("Alice", "privatecustomer", "credentialref"):
         assert secret not in json.dumps(rows)
+
+
+@pytest.mark.parametrize("source", [[], {}, None, 42, True])
+def test_invalid_source_types_fail_before_access(tmp_path, monkeypatch, source):
+    from cifereca.core import diagnostic_event_feed as feed
+    def forbidden(*args, **kwargs):
+        raise AssertionError("invalid source must not read logs")
+    monkeypatch.setattr(feed, "_source_logs", forbidden)
+    with pytest.raises(ValueError, match="source"):
+        feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", source=source)
