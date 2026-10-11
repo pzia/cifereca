@@ -50,6 +50,26 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert marker in source
 
 
+def test_diagnostics_volume_real_gtk_bounded_broker_and_provenance():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-volume-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-volume"
+    assert scenario["width"] == 1366
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    source = (ROOT / "e2e/diagnostics_volume_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "TOTAL = 10000",
+        "D06_10000_events_50_rows_bounded",
+        "D06_stable_pagination_next_50",
+        "D09_period_changes_broker_query",
+        "D10_adept_code10_no_invented_adobe_cause",
+        "D11_paris_return_requested_not_confirmed",
+        "D12_link_proven_by_broker",
+        'report["unmet_criteria"]',
+    ):
+        assert marker in source
+
+
 def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
     runner = _module()
     state = runner.SCENARIOS["diagnostics-states-1366"]
