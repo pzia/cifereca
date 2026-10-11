@@ -68,6 +68,11 @@ routes n'est attestée sur le serveur réel**.
   les valeurs invalides ou non finies. Les exceptions de transport ne sont
   pas chaînées dans les erreurs publiques afin de ne pas exposer de requêtes
   ou paramètres sensibles. Le dernier inventaire sain est préservé.
+- Le transport candidat ignore les proxies issus de l'environnement et
+  du système afin de ne pas relayer par accident les requêtes du serveur
+  local. Les deux seules routes HTTP GET permises sont `/api/v1/sources`
+  sans paramètre et `/api/v1/search` avec `source_id` validé et `q`
+  borné ; toute autre route ou clé est refusée localement, sans réseau.
 - Le mode HTTP refuse les redirections, les URL contenant des identifiants,
   les chemins d'origine, et HTTP en dehors de loopback ; délais et tailles
   bornés, réponse JSON strictement typée.
