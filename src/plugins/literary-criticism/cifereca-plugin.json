@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.3.5",
+    "version": "0.3.7",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -26,11 +26,11 @@
     {
       "id": "literary.criticism",
       "type": "criticism.index",
-      "version": "0.2.2",
+      "version": "0.3.7",
       "entrypoint": "literary_criticism:PLUGIN",
       "display_name": "Critique littéraire",
       "description": "Agrège des critiques publiques, les déduplique et les rattache aux livres par preuves explicables.",
-      "help_text": "Index de critiques avec preuves ISBN, URL ou titre/auteur ; les éditions contradictoires restent des suggestions. Aucune collecte implicite. Toute collecte exclusivement invalide conserve le dernier cache valide et sa fraîcheur ; erreurs de source sous forme de catégories expurgées. Pages de sources bornées à la limite demandée, rejet des réponses hors budget ou structurellement incorrectes avant mutation du cache et fraîcheur externe plafonnée à sept jours.",
+      "help_text": "Index de critiques avec preuves ISBN, URL ou titre/auteur ; les éditions contradictoires restent des suggestions. Aucune collecte implicite. Toute collecte exclusivement invalide conserve le dernier cache valide et sa fraîcheur ; erreurs de source sous forme de catégories expurgées. Pages de sources bornées à la limite demandée, rejet des réponses hors budget ou structurellement incorrectes avant mutation du cache et fraîcheur externe plafonnée à sept jours. La prévisualisation RSS/Atom issue d'une métarecherche est bornée à quatre fois le nombre de sources demandées (max 400 lignes), huit URL par résultat, 32 liens alternate par page et 128000 caractères HTML ; aucune activation ni collecte automatique.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
@@ -48,7 +48,7 @@
     {
       "id": "ui.page.literary-criticism",
       "type": "ui.page",
-      "version": "0.2.2",
+      "version": "0.3.7",
       "entrypoint": "criticism_page:PLUGIN",
       "display_name": "Critiques littéraires",
       "description": "Sources et critiques associées depuis la fiche d’un livre.",
@@ -82,7 +82,7 @@
     {
       "id": "criticism.source.rss",
       "type": "criticism.source",
-      "version": "0.3.1",
+      "version": "0.3.7",
       "entrypoint": "criticism_feeds:PLUGIN",
       "display_name": "Source RSS/Atom",
       "description": "Source de critiques publique RSS 2, Atom ou JSON Feed.",
