@@ -32,6 +32,13 @@ from diagnostics_page_probe import Broker, Context, Tasks, Host, walk
 from x11_input import X11Input
 
 SECRET = "SECRET-NE-JAMAIS-COPIER-D07"
+SUPPORT_REPORT = (
+    "Rapport support fictif expurgé\n"
+    "Provenance : Core local\n"
+    "Période : 24 heures\n"
+    "Identifiants privés : [EXPURGÉ]\n"
+    "Aucun envoi réseau"
+)
 STRUCTURED = {
     "null": None,
     "false": False,
@@ -48,6 +55,10 @@ STRUCTURED = {
 
 
 class StructuredBroker(Broker):
+    def __init__(self):
+        super().__init__()
+        self.support_exports = 0
+
     def system_status(self):
         return {"STRUCTURE UX D07": STRUCTURED}
 
@@ -58,7 +69,8 @@ class StructuredBroker(Broker):
         return ()
 
     def export_support_text(self):
-        return "Rapport support fictif expurgé"
+        self.support_exports += 1
+        return SUPPORT_REPORT
 
     def events(self, **query):
         self.event_queries.append(dict(query))
@@ -264,15 +276,116 @@ def main():
             report["checks"]["D13_ctrl_c_selection_expurgated"] = True
             screenshot("03-selection-copie-ctrl-c")
             assert broker.checks == 0
+            later(support_report_begin, 150)
+        except Exception as exc:
+            fail(f"Clipboard Ctrl+C: {type(exc).__name__}: {exc}")
+
+    def support_report_begin():
+        panes = [
+            w for w in walk(page[0]) if isinstance(w, Gtk.Expander)
+            and w.get_label() == "Ouvrir le rapport support"
+        ]
+        assert len(panes) == 1
+        panes[0].set_expanded(True)
+        views = [w for w in walk(panes[0]) if isinstance(w, Gtk.TextView)]
+        assert len(views) == 1
+        until(lambda: views[0].get_mapped() and text(views[0]) == SUPPORT_REPORT,
+              lambda: support_copy_prepare(views[0]), seconds=6)
+
+    def support_copy_prepare(view):
+        assert SECRET not in text(view)
+        assert "Provenance : Core local" in text(view)
+        buttons = [
+            w for w in walk(page[0]) if isinstance(w, Gtk.Button)
+            and w.get_tooltip_text() == "Copier le diagnostic support expurgé"
+        ]
+        assert len(buttons) == 1, "Copie support explicite manquante"
+        button = buttons[0]
+        # One read to render the report; subsequent read only on user gesture.
+        before = broker.support_exports
+        assert before >= 1
+        assert button.grab_focus() is not False
+        until(lambda: button.has_focus(),
+              lambda: support_copy_xtest(view, before), seconds=5)
+
+    def support_copy_xtest(view, before):
+        assert broker.support_exports == before
+        physical("space")
+        until(lambda: broker.support_exports == before + 1,
+              lambda: later(lambda: support_read_full(view), 230), seconds=5)
+
+    def support_read_full(view):
+        Gdk.Display.get_default().get_clipboard().read_text_async(
+            None, lambda clipboard, task: support_full_done(
+                clipboard, task, view
+            )
+        )
+
+    def support_full_done(clipboard, task, view):
+        try:
+            content = clipboard.read_text_finish(task)
+            assert content == SUPPORT_REPORT, "Copie support inexacte"
+            assert SECRET not in content
+            assert "Provenance : Core local" in content
+            report["checks"]["D13_support_copy_button_xtest_exact_redacted"] = True
+            report["audits"]["D13_report_provenance_visible_in_copy"] = True
+            screenshot("04-support-action-copy")
+            later(lambda: support_select_partial(view), 150)
+        except Exception as exc:
+            fail(f"Copie support complète : {type(exc).__name__}: {exc}")
+
+    def support_select_partial(view):
+        # Selection is made in the actual Gtk.TextBuffer, then Ctrl+C is
+        # delivered physically; unlike 'Copier le diagnostic', this must copy
+        # ONLY the chosen portion.
+        needle = "Provenance : Core local"
+        body = text(view)
+        begin = body.index(needle)
+        buffer = view.get_buffer()
+        buffer.select_range(
+            buffer.get_iter_at_offset(begin + len(needle)),
+            buffer.get_iter_at_offset(begin),
+        )
+        assert buffer.get_has_selection()
+        assert view.grab_focus() is not False
+        until(lambda: view.has_focus(),
+              lambda: support_slice_xtest(needle), seconds=5)
+
+    def support_slice_xtest(expected):
+        device[0].key("Control_L", True)
+        try:
+            physical("c")
+        finally:
+            device[0].key("Control_L", False)
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+            None, lambda clipboard, task: support_slice_done(
+                clipboard, task, expected
+            )
+        ), 260)
+
+    def support_slice_done(clipboard, task, expected):
+        try:
+            content = clipboard.read_text_finish(task)
+            assert content == expected, (
+                "Ctrl+C ne doit copier que le segment sélectionné",
+                repr(content),
+            )
+            assert content != SUPPORT_REPORT
+            assert SECRET not in content
+            assert broker.checks == 0 and plugin.llm is None
+            assert len(broker.event_queries) == 1
+            report["checks"]["D13_support_partial_selection_ctrl_c_xtest"] = True
+            screenshot("05-support-ctrl-c-selection-partielle")
             report["unmet_criteria"] = [
-                "D13: export direct du rapport support vers un fichier absent — #1158"
+                "D13: export direct du rapport support vers un fichier absent — #1158",
+                "D05: fermeture du volet sans perte de sélection encore non satisfaite",
             ]
             report["status"] = "PASS"
             save()
             rc[0] = 0
             app.quit()
         except Exception as exc:
-            fail(f"Clipboard Ctrl+C: {type(exc).__name__}: {exc}")
+            fail(f"Ctrl+C support partiel : {type(exc).__name__}: {exc}")
 
     class Application(Gtk.Application):
         def __init__(self):
