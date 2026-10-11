@@ -1201,3 +1201,119 @@ def test_approved_ai_preview_preserves_exact_metadata_when_untouched():
     assert report["limitations"] == preview["limitations"]
     exported = json.loads(export_analysis_json(report))
     assert exported["evidence"]["source_states"] == preview["source_states"]
+
+
+def test_passive_support_metadata_does_not_falsely_mark_complete_sample_truncated():
+    class CompleteSupport(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert verbose is False and include_checks is False
+            return {
+                "format": 1,
+                "result": "ok",
+                "core": {"version": "0.9"},
+                "runtime": {"status": "ok"},
+                "database": {"status": "ok"},
+                "config": {"status": "ok"},
+                "plugins": {"status": "ok"},
+                "checks_executed": False,
+                "checks": [],
+            }
+
+    llm = FakeLLM()
+    preview = prepare_analysis(llm, CompleteSupport([]), include_support_report=True)
+    assert preview["count"] == 0
+    assert preview["support_fields"] == 7
+    assert preview["sample_truncated"] is False
+    assert '"checks_executed"' not in preview["prompt"]
+    assert '"checks"' not in preview["prompt"]
+    assert llm.calls == 0
+    report = analyze_with_consent(llm, preview, approval_id=preview["approval_id"])
+    assert report["sample_truncated"] is False
+    assert json.loads(export_analysis_json(report))["evidence"]["sample_truncated"] is False
+
+
+def test_passive_support_more_than_eight_eligible_sections_remains_truncated():
+    class ExpandedSupport(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert include_checks is False
+            return {
+                "checks_executed": False,
+                "checks": [],
+                **{f"section_{i}": "ok" for i in range(9)},
+            }
+
+    preview = prepare_analysis(FakeLLM(), ExpandedSupport([]),
+                               include_support_report=True)
+    assert preview["support_fields"] == 8
+    assert preview["sample_truncated"] is True
+
+
+def test_public_source_last_event_is_available_in_ai_preview_and_export():
+    class TimedSource(FakeBroker):
+        def events(self, **kwargs):
+            page = super().events(**kwargs)
+            page["sources"] = [{
+                "source": "app_log", "status": "partial",
+                "reason": "log_tail_bounded",
+                "last_event": "2026-10-11T14:00:00+02:00",
+            }]
+            return page
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, TimedSource([event()]))
+    assert preview["source_states"][0]["last_event"] == "2026-10-11T12:00:00+00:00"
+    assert "2026-10-11T12:00:00+00:00" in preview["prompt"]
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert json.loads(export_analysis_json(result))["evidence"]["source_states"][0][
+        "last_event"
+    ] == "2026-10-11T12:00:00+00:00"
+
+
+def test_public_source_last_event_changes_revoke_approval():
+    class TimedSource(FakeBroker):
+        def events(self, **kwargs):
+            page = super().events(**kwargs)
+            page["sources"] = [{
+                "source": "app_log", "status": "available",
+                "last_event": "2026-10-11T14:00:00Z",
+            }]
+            return page
+
+    model = FakeLLM()
+    preview = prepare_analysis(model, TimedSource([event()]))
+    preview["source_states"][0]["last_event"] = "2026-10-11T14:01:00Z"
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
+
+
+@pytest.mark.parametrize("malformed", [
+    None, [], {}, 123, "yesterday", "2026-10-11T12:00:00",
+    "2026-10-11T12:00:00+02:00 signed?token=PRIVATE_KEY",
+    "X" * 100,
+])
+def test_public_source_last_event_ignores_malformed_data(malformed):
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("untrusted source timestamp stringified")
+
+    class BadTimestamp(FakeBroker):
+        def events(self, **kwargs):
+            feed = super().events(**kwargs)
+            feed["sources"] = [
+                {"source": "app_log", "status": "available",
+                 "last_event": malformed},
+                {"source": "core_events", "status": "empty",
+                 "last_event": "2026-10-11T14:00:00Z"},
+                {"source": "app_log", "status": "partial",
+                 "last_event": Hostile()},
+            ]
+            return feed
+
+    model = FakeLLM()
+    preview = prepare_analysis(model, BadTimestamp([event()]))
+    assert all("last_event" not in state for state in preview["source_states"])
+    assert "PRIVATE_KEY" not in preview["prompt"]
+    assert model.calls == 0
