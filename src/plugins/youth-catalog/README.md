@@ -122,3 +122,32 @@ inaccessible ou redirigée n'est pas une preuve de DOM. Avant toute
 implémentation d'adaptateur, comparer également au moins deux fiches,
 qualifier les âges *propres à l'édition* et rejeter les produits hors livre.
 Aucune supposition de DOM commun avec Milan.
+
+
+## Recherche Jeunesse simplifiée — P2 #1029 (0.4.18)
+
+La page présente un **champ de recherche unique**. Les critères Source et
+Âge sont directement sous la recherche ; les critères Langue, Format,
+Type et Thème sont des **facettes facultatives** sous une section repliée.
+Les valeurs des facettes proviennent uniquement des notices en cache de
+**l'identité active**, sans API distante. Les quatre entrées libres, le
+choix technique du type d'âge et la case « âge inféré » sont retirés
+de l'écran principal, mais types d'âge et provenances demeurent dans
+les données/détails. Les estimations sont affichées comme **non
+confirmées** et ne deviennent jamais une preuve d'âge.
+
+**Sémantique explicite :** « Âge minimum publié ≥ 10 ans » renvoie les
+livres dont la borne minimale publiée est de 10 ans ou plus, dont 10–12
+et 12+, **pas 8–12**. Cela n'affirme en aucune manière qu'une notice
+12+ convient à un enfant âgé de 10 ans. Le filtre historique ponctuel
+age=10 (qui inclut 8–12 et 10–12) reste accessible par API pour les
+autres intégrations, sans être imposé à l'utilisateur dans cette page.
+La validation finale de la formulation appartient à l'UX.
+
+L'ouverture de la page, la saisie et le choix des facettes restent
+**strictement locaux, sans requête réseau**. Le bouton manuel de collecte
+d'une source reste disponible. La recherche fédérée des sources actives
+est un chantier distinct **#1028**, la recherche multichamp dans le cache
+est portée par la PR distincte **#1032**, et le moteur global du Core
+par **#1023**. Aucune de ces trois dépendances n'est présentée comme
+livrée par cet incrément. Tests : tests/test_simple_facets_p2.py.
