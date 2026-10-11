@@ -288,6 +288,63 @@ def test_unverified_pagination_never_duplicates_first_page(tmp_path):
     session.close()
 
 
+@pytest.mark.parametrize(("unsafe_id", "unsafe_title", "unsafe_author"), [
+    ("https://example.invalid/book?token=secret", "Book", None),
+    ("id/with/path", "Book", None),
+    ("clean-id", "https://example.invalid/private?key=secret", None),
+    ("clean-id", "A title\nwith newline", None),
+    ("clean-id", "A title", "Bearer: secret"),
+    ("clean-id", "A title", "author@example.invalid"),
+    ("clean-id", "A title", "Author\rName"),
+])
+def test_candidate_records_reject_untrusted_free_text(
+    unsafe_id, unsafe_title, unsafe_author,
+):
+    row = {"id": unsafe_id, "title": unsafe_title}
+    if unsafe_author is not None:
+        row["author"] = unsafe_author
+    with pytest.raises(ContractUnavailable):
+        candidate_results({"items": [row]}, "cifericaopds.alpha")
+
+
+def test_candidate_records_accept_stable_opaque_identifiers_and_isbn_fallback():
+    row = candidate_results({"items": [{
+        "id": "urn:uuid:550e8400-e29b-41d4-a716-446655440000",
+        "title": "Un livre avec sous-titre", "author": "Auteur Exemple",
+        "isbn13": "3127020510184",  # not Bookland
+        "isbn": "9782211348171",    # valid Bookland fallback
+    }]}, "cifericaopds.alpha")[0]
+    assert row.record_id == "urn:uuid:550e8400-e29b-41d4-a716-446655440000"
+    assert row.title == "Un livre avec sous-titre"
+    assert row.author == "Auteur Exemple"
+    assert row.metadata["isbn"] == "9782211348171"
+
+
+def test_invalid_query_is_rejected_before_fixture_search_or_network(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    for query in (None, 42, "search\ninjected", "a" * 301):
+        with pytest.raises(ContractUnavailable):
+            session.search(query)
+    session.close()
+
+
+def test_optional_scalar_with_control_char_does_not_reach_search_result():
+    result = candidate_results({"items": [{
+        "id": "book-7", "title": "Titre", "author": "Auteur",
+        "publisher": "Éditions\nSecret", "type": "fiction\tpayload",
+        "format": "epub\rprivate",
+    }]}, "cifericaopds.alpha")[0]
+    assert result.publisher is None
+    assert result.type is None
+    assert result.format is None
+
+
 def test_existing_sessions_fail_closed_on_disable_remove_and_revision(tmp_path):
     fixture = tmp_path / "fixture-sources.json"
     fixture.write_text(json.dumps(inventory("alpha", "beta", generation=1)))

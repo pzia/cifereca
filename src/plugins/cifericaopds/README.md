@@ -82,6 +82,11 @@ routes n'est attestée sur le serveur réel**.
 - La recherche peut fonctionner en mode fixture sans serveur. En mode HTTP
   candidat, l'indisponibilité HTTP produit une erreur explicite ; l'inventaire
   validé reste inchangé. Les notices précédemment indexées restent dans Core.
+- Les identifiants de notices du schéma candidat doivent être opaques et sans
+  chemin/URL ; les titres et auteurs contenant des URL, données de compte,
+  secrets ou caractères de contrôle sont refusés avant normalisation.
+  Les recherches sont bornées à 300 caractères sans caractères de contrôle.
+  Ces contrôles ne qualifient pas le contrat distant v0.2.
 - Les notices issues du schéma candidat projettent uniquement les faits
   bibliographiques explicitement publiés : éditeur, type, format, date
   validée, langue et ISBN-13 Bookland contrôlé. Les données libres de détail,
