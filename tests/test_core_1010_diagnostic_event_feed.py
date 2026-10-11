@@ -262,3 +262,78 @@ def test_trace_field_values_are_bounded_to_safe_vocabulary(tmp_path):
     assert rows["events"][0]["message"] == "TRACE sync source status=ok count=12"
     for secret in ("Alice", "privatecustomer", "credentialref"):
         assert secret not in json.dumps(rows)
+
+
+@pytest.mark.parametrize("source", [[], {}, None, 42, True])
+def test_invalid_source_types_fail_before_access(tmp_path, monkeypatch, source):
+    from cifereca.core import diagnostic_event_feed as feed
+    def forbidden(*args, **kwargs):
+        raise AssertionError("invalid source must not read logs")
+    monkeypatch.setattr(feed, "_source_logs", forbidden)
+    with pytest.raises(ValueError, match="source"):
+        feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", source=source)
+
+
+def test_core_events_do_not_stringify_untrusted_snapshot_fields(tmp_path):
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("unexpected stringification")
+    class Snapshot:
+        enabled = True
+        def snapshot(self):
+            return [
+                {"timestamp": Hostile(), "operation": Hostile()},
+                {"timestamp": "2026-10-11T07:00:00+00:00",
+                 "category": Hostile(), "operation": Hostile(), "status": Hostile()},
+            ]
+    rows = query_diagnostic_events(Snapshot(), log_path=tmp_path / "missing", source="core_events")
+    assert rows["total"] == 1
+    event = rows["events"][0]
+    assert event["module"] == "DIAGNOSTICS"
+    assert event["message"] == "[opération masquée]"
+    assert event["status"] == "unknown"
+
+
+@pytest.mark.parametrize("snapshot", [None, {}, "unexpected", 123, b"secret"])
+def test_invalid_diagnostic_snapshot_shape_reports_unavailable(tmp_path, snapshot):
+    class InvalidSnapshot:
+        enabled = True
+        def snapshot(self):
+            return snapshot
+    result = query_diagnostic_events(InvalidSnapshot(), log_path=tmp_path / "missing", source="core_events")
+    assert result["events"] == []
+    assert result["sources"][0] == {
+        "source": "core_events", "status": "unavailable", "reason": "snapshot_unavailable"
+    }
+
+
+def test_invalid_trace_values_do_not_consume_safe_field_quota(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log, "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] "
+                  "TRACE sync source phase=private1 outcome=private2 "
+                  "operation=private3 status=private4 status=ok count=7")
+    rows = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert rows["events"][0]["message"] == "TRACE sync source status=ok count=7"
+
+
+@pytest.mark.parametrize("kwargs", [{"since": "X" * 65}, {"until": "X" * 65}])
+def test_oversized_date_filters_fail_before_log_access(tmp_path, monkeypatch, kwargs):
+    from cifereca.core import diagnostic_event_feed as feed
+    def forbidden(*args, **kw):
+        raise AssertionError("invalid date should not read logs")
+    monkeypatch.setattr(feed, "_source_logs", forbidden)
+    with pytest.raises(ValueError, match="date filters"):
+        feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", **kwargs)
+
+
+def test_logger_path_never_exposes_freeform_identifiers(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync.private_customer [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:01,000 INFO cifereca.unknowncustomer [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:02,000 INFO cifereca.sync [Worker] TRACE sync source status=ok",
+    )
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert [r["module"] for r in result["events"]] == ["cifereca.sync", "cifereca", "cifereca.sync"]
+    assert "private_customer" not in str(result)
+    assert "unknowncustomer" not in str(result)
