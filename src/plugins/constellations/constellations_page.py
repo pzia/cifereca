@@ -1,7 +1,8 @@
 """Constellations page and contextual action, using public Plugin API only."""
 from cifereca.plugin_api import (UiPageContribution, UiActionContribution,
     UiBookDetailPresentation, DetailSection, DetailField, DocumentLink)
-from constellation_view_model import (node_from_row, merge_nodes, neighbours, Navigation)
+from constellation_view_model import (node_from_row, merge_nodes, neighbours,
+    promenade, replace_step, Navigation)
 
 
 def neighbour_card_fields(edge):
@@ -272,6 +273,36 @@ class View:
         if callable(method) and method(original, identity_id=self.origin_identity or self.identity_id()):
             return
         self.host.toast('Fiche d’origine indisponible pour ce profil.')
+
+    # Legacy engine adapter kept only for internal/backward compatibility.
+    # Neither these operations nor the departure/arrival controls are exposed
+    # anywhere in the new P2 book-first page (route planning is P3 #703).
+    def finish_walk(self):
+        if not getattr(self, 'start', None) or not self.center:
+            self.status.set_label('Parcours non disponible dans cette vue.')
+            return
+        variant_picker = getattr(self, 'variant', None)
+        selected = variant_picker.get_selected() if variant_picker is not None else 1
+        variant = ('court', 'équilibré', 'surprenant')[selected]
+        nodes, start, end = self.nodes, self.start, self.center
+        self.status.set_label('Calcul du parcours historique…')
+        def apply(path):
+            self.path = path
+            self.render()
+        self.run_calculation(
+            lambda control: promenade(nodes, start, end, variant=variant, control=control),
+            apply, 'Calcul du parcours historique',
+        )
+
+    def replace(self, index):
+        path, nodes = self.path, self.nodes
+        def apply(replacement):
+            self.path = replacement
+            self.render()
+        self.run_calculation(
+            lambda control: replace_step(path, index, nodes),
+            apply, 'Remplacement historique',
+        )
 
     def render(self):
         if not hasattr(self, 'flow'):
