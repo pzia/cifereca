@@ -7,6 +7,8 @@ Only cifereca.plugin_api is imported; no private registry access or remote code.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import date
+import re
 import json
 import os
 from pathlib import Path
@@ -136,6 +138,44 @@ def candidate_inventory(data, previous, *, show_synthetic=False):
     }, parent_plugin_id=PARENT_ID, previous=previous)
 
 
+
+def _published_text(value, *, maximum=256):
+    """Allow only bounded scalar publisher facts, never URLs or credentials."""
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned or len(cleaned) > maximum:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        return None
+    if re.search(r"(?:https?://|www\.|@|(?:access[_-]?token|api[_-]?key|password|bearer)\s*[:=])", cleaned, re.I):
+        return None
+    return cleaned
+
+
+def _published_date(value):
+    raw = _published_text(value, maximum=10)
+    if raw is None or not re.fullmatch(r"(?:1[89]|20)\d{2}(?:-\d{2}-\d{2})?", raw):
+        return None
+    if len(raw) == 10:
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            return None
+    return raw
+
+
+def _published_isbn(value):
+    if not isinstance(value, str):
+        return None
+    raw = re.sub(r"[-\s]", "", value)
+    if len(raw) != 13 or not raw.isdigit() or not raw.startswith(("978", "979")):
+        return None
+    checksum = sum(int(number) * (1 if index % 2 == 0 else 3)
+                   for index, number in enumerate(raw))
+    return raw if checksum % 10 == 0 else None
+
+
 def candidate_results(data, provider_id):
     """Conservative projection: no inferred rights, signed URLs or user data."""
     values = data.get("items")
@@ -153,14 +193,30 @@ def candidate_results(data, provider_id):
         author = item.get("author")
         if author is not None and (not isinstance(author, str) or len(author) > 512):
             raise ContractUnavailable("invalid author")
+        # v0.2 is still unverified. Project *only* bounded, explicit,
+        # bibliographic scalars from the candidate fixture/schema.
+        # Never trust upstream URLs, entitlement, acquisition or free-form metadata.
+        published_isbn = _published_isbn(item.get("isbn13") or item.get("isbn"))
+        published_language = _published_text(item.get("language"), maximum=12)
+        if published_language and not re.fullmatch(
+                r"[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?", published_language):
+            published_language = None
+        metadata = {"source_id": provider_id.removeprefix("cifericaopds.")}
+        if published_isbn:
+            metadata["isbn"] = published_isbn
+        if published_language:
+            metadata["language"] = published_language
         rows.append(SearchResult(
             id=f"{provider_id}:{record_id}", record_id=record_id,
             docbase="CIFERICAOPDS", medium="unknown", title=title,
-            author=author, type=None, format=None, publisher=None,
-            published_at=None, description=None, thumbnail_url=None,
-            friendly_url=None, scenario="CATALOG",
-            source_provider=provider_id, source_credential="__public__",
-            metadata={"source_id": provider_id.removeprefix("cifericaopds.")},
+            author=author,
+            type=_published_text(item.get("type"), maximum=80),
+            format=_published_text(item.get("format"), maximum=40),
+            publisher=_published_text(item.get("publisher"), maximum=256),
+            published_at=_published_date(item.get("published_at")),
+            description=None, thumbnail_url=None, friendly_url=None,
+            scenario="CATALOG", source_provider=provider_id,
+            source_credential="__public__", metadata=metadata,
         ))
     return rows
 
@@ -178,6 +234,12 @@ class CifericaSession(ProviderSession):
         self.connected = False
 
     def search(self, query, scope="all", page=0, field="all"):
+        if type(page) is not int or not 0 <= page <= 100:
+            raise ContractUnavailable("invalid search page")
+        if page:
+            if self._mode == "fixture":
+                return []  # One bounded fixture page; never repeat first-page records.
+            raise ContractUnavailable("candidate server pagination is unverified")
         sid = self.provider_id.removeprefix("cifericaopds.")
         if self._mode == "fixture":
             path = self._directory / "fixture-results.json"
