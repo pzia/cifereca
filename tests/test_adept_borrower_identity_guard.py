@@ -233,3 +233,27 @@ def test_auto_acquisition_lock_busy_never_enters_fulfillment(monkeypatch):
     )
     assert result["status"] == "attention_required"
     assert result["code"] == "acquisition_busy"
+
+
+def test_cross_identity_active_entitlement_blocks_when_acquisition_missing():
+    rights = [{"loan_id": "loan-123", "identity_id": "alice"}]
+    assert LibraryService._cross_identity_loan_conflict(
+        [], provider_loan_id="loan-123", identity_id="bob",
+        entitlements=rights,
+    )
+
+
+def test_same_identity_active_entitlement_does_not_block():
+    rights = [{"loan_id": "loan-123", "identity_id": "alice"}]
+    assert not LibraryService._cross_identity_loan_conflict(
+        [], provider_loan_id="loan-123", identity_id="alice",
+        entitlements=rights,
+    )
+
+
+def test_different_entitlement_loan_does_not_block():
+    rights = [{"loan_id": "loan-456", "identity_id": "alice"}]
+    assert not LibraryService._cross_identity_loan_conflict(
+        [], provider_loan_id="loan-123", identity_id="bob",
+        entitlements=rights,
+    )
