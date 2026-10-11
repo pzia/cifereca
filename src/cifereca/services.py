@@ -4794,8 +4794,8 @@ class LibraryService:
                     )
                     return {"status": "attention_required", "loan_id": loan.id, "code": exc.code, "error": str(exc)}
                 _TRACE_LOG.info(
-                    "TRACE download adept profile-resolved loan_id=%s identity=%s profile=%s source=%s",
-                    loan.id, identity.identity_id, profile_name, profile_source,
+                    "TRACE download adept profile-resolved loan_id=%s connection_identity=%s borrower_identity=%s profile=%s source=%s",
+                    loan.id, identity.identity_id, adept_borrower_identity_id, profile_name, profile_source,
                 )
                 # 0.13.3+ distinguishes a reader-backed profile from one that
                 # can actually execute ACSM/libgourou operations. Only block
@@ -4862,7 +4862,7 @@ class LibraryService:
                     loan.id, profile_name, acquisition.acsm_path.name, adept_destination, acsm_format, format_source,
                 )
                 adept_started = time.monotonic()
-                originating_profile_id = self._originating_adept_profile_id(identity.identity_id, profile_name)
+                originating_profile_id = self._originating_adept_profile_id(adept_borrower_identity_id, profile_name)
                 result = self.execute_acquisition_request(request)
                 from .adept_binding import capture_binding
                 adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)

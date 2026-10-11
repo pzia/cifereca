@@ -203,3 +203,61 @@ def test_connection_identity_transfer_revokes_effective_borrower_grant(tmp_path)
         ) == (None, "adept_borrower_connection_changed")
     finally:
         service.close()
+
+
+def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_path, monkeypatch):
+    """The Adobe-origin profile must belong to the borrower, not the connector."""
+    from pathlib import Path
+    from cifereca.acquisition import Acquisition
+
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        service.bind_paris_borrower_adept(
+            credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service._persist_active_loans("alice", [loan])
+        acsm = tmp_path / "linked.acsm"
+        acsm.write_text(
+            "<fulfillmentToken><format>application/pdf</format></fulfillmentToken>",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            service, "acquire_digital_loan",
+            lambda _loan: Acquisition(
+                provider_id="paris", credential_id="alice-paris",
+                account_id="linked-123", item_id="book", loan_id=loan.id,
+                kind="acsm", source_url="https://example.invalid/acsm",
+                local_path=acsm, mime_type="application/vnd.adobe.adept+xml",
+                drm="adept", acsm_path=acsm, target_dir=tmp_path,
+            ),
+        )
+        monkeypatch.setattr(service, "kobo_profiles", lambda: [{
+            "profile_id": "bob-profile", "name": "bob-cli",
+            "fetch_capable": True, "provisioning": {"acsm_fetch_ready": True},
+        }])
+        monkeypatch.setattr(service, "runtime_diagnostic", lambda *_: {})
+        captured = {}
+
+        def execute(request):
+            captured.update(request)
+            destination = Path(request["destination"])
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"%PDF-1.7\\n1 0 obj\\n<<>>\\nendobj\\n%%EOF\\n")
+            return {
+                "ok": True, "profile": "bob-cli", "loan_id": "adept-bob-loan",
+                "artifact": {"path": str(destination), "format": "pdf", "drm": "none"},
+            }
+
+        monkeypatch.setattr(service, "execute_acquisition_request", execute)
+        result = service._acquire_active_loan_automatically(loan)
+        assert result["status"] == "complete"
+        assert captured["profile"] == "bob-cli"
+        row = next(
+            row for row in service.storage.acquisitions(status="complete")
+            if row["item_id"] == "book"
+        )
+        assert row["metadata"]["adept_binding"]["adept_profile_id"] == "bob-profile"
+        assert row["metadata"]["adept_binding"]["adept_profile_name"] == "bob-cli"
+    finally:
+        service.close()
