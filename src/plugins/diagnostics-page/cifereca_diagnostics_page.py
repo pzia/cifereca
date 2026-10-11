@@ -972,8 +972,8 @@ class DiagnosticsPagePlugin:
                 f"{scope['severity'] or 'tous niveaux'} · "
                 f"depuis {scope['since'] or 'tout historique'} · "
                 f"diagnostics structurés : {'oui' if scope['include_snapshot'] else 'non'}. "
-                coverage_warning +
-                "Le modèle produit des hypothèses, jamais une preuve."
+                + coverage_warning
+                + "Le modèle produit des hypothèses, jamais une preuve."
             )
             ai_input.get_buffer().set_text(preview["prompt"])
             ai_expander.set_expanded(True)
