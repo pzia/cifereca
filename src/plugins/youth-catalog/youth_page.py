@@ -92,7 +92,7 @@ def public_url(value: object) -> str:
                 "jwt", "csrf", "signed", "policy", "expires",
         )) or field.startswith(("xamz", "xgoog")):
             return ""
-        if "@" in val or re.search(r"\\bbearer\\s", val, re.I):
+        if "@" in val or re.search(r"\bbearer\s", val, re.I):
             return ""
     return value
 
