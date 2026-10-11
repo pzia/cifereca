@@ -250,3 +250,15 @@ def test_fifo_log_is_rejected_without_blocking(tmp_path):
     assert time.monotonic() - started < 2.0
     assert result["events"] == []
     assert result["sources"][0]["status"] == "unavailable"
+
+
+def test_trace_field_values_are_bounded_to_safe_vocabulary(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] TRACE sync source phase=Alice outcome=privatecustomer status=ok count=12 operation=credentialref",
+    )
+    rows = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert rows["total"] == 1
+    assert rows["events"][0]["message"] == "TRACE sync source status=ok count=12"
+    for secret in ("Alice", "privatecustomer", "credentialref"):
+        assert secret not in json.dumps(rows)
