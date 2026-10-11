@@ -114,7 +114,7 @@ def test_collection_isolates_source_failure():
     report = plugin.collect_source(BrokenSource())
     assert report.source_id == "revue.test"
     assert report.accepted == 0
-    assert report.errors == ("collect: network down",)
+    assert report.errors == ("collect: source_error",)
     assert plugin.index.articles() == ()
 
 
