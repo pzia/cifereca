@@ -488,8 +488,66 @@ def main():
         ]
         report["checks"]["live_resize_narrow_and_wide_without_global_horizontal_overflow"] = True
         screenshot("07-live-resized-wide-1600")
-        # UX audit, not a PASS for D13/D15: record actual capabilities without
-        # converting missing product functionality into a green assertion.
+        # D05/D15: reduce the actual long support report with Enter XTEST,
+        # retaining the focus and an already selected portion of its text.
+        # This must not be confused with the still-unimplemented Escape action.
+        report["stage"] = "keyboard_enter_reduce"
+        expander = find_expander("Ouvrir le rapport support")
+        report_view = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(report_view) == 1
+        buffer = report_view[0].get_buffer()
+        assert buffer.get_char_count() > 4000
+        buffer.select_range(buffer.get_end_iter(), buffer.get_start_iter())
+        assert buffer.get_has_selection()
+        report["audit"] = {"D05_selection_before_reduce": True}
+        resize = find_button("Réduire")
+        outer = page[0].get_vadjustment()
+        content = page[0].get_child()
+        ok, bounds = resize.compute_bounds(content)
+        assert ok
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: focus_enter_reduce(expander, resize, buffer), 180)
+
+    def focus_enter_reduce(expander, resize, buffer):
+        assert resize.grab_focus() is not False
+        until(lambda: resize.has_focus(),
+              lambda: press_enter_reduce(expander, resize, buffer), seconds=4)
+
+    def press_enter_reduce(expander, resize, buffer):
+        report["stage"] = "enter_xtest_reduce"
+        assert resize.has_focus()
+        press("Return")
+        until(lambda: resize.get_label() == "Agrandir"
+              and [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)][0]
+                  .get_size_request()[1] == 320,
+              lambda: verify_enter_reduce(expander, resize, buffer), seconds=4)
+
+    def verify_enter_reduce(expander, resize, buffer):
+        assert resize.has_focus(), "Le focus a quitté le bouton après Entrée"
+        assert buffer.get_has_selection(), "La sélection a disparu à la réduction"
+        report["checks"]["D05_report_reduced_with_selection_preserved"] = True
+        report["checks"]["D15_return_xtest_activates_button_and_keeps_focus"] = True
+        screenshot("08-report-reduced-enter-1600")
+        report["stage"] = "enter_xtest_reexpand"
+        press("Return")
+        until(lambda: resize.get_label() == "Réduire"
+              and [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)][0]
+                  .get_size_request()[1] == 560,
+              lambda: verify_enter_reexpand(expander, resize, buffer), seconds=4)
+
+    def verify_enter_reexpand(expander, resize, buffer):
+        assert resize.has_focus(), "Le focus n'est pas revenu à la réouverture"
+        assert buffer.get_has_selection(), "La sélection a disparu à la réouverture"
+        report["checks"]["D05_reexpand_preserves_focus_and_selection"] = True
+        screenshot("09-report-reexpanded-enter-1600")
+        begin_escape_audit()
+
+    def begin_escape_audit():
+        # Esc and file export remain separate observations; neither should be
+        # passed solely because Enter works and a clipboard action exists.
         report["stage"] = "audit_escape_and_file_export"
         expander = find_expander("Ouvrir le rapport support")
         report["audit"] = {"report_open_before_escape": expander.get_expanded()}
@@ -544,8 +602,38 @@ def main():
                 ("D13: export support explicite vers un fichier", bool(export_buttons)),
             ) if not ok
         ]
-        screenshot("08-escape-export-audit-1600")
+        screenshot("10-escape-export-audit-1600")
         assert broker.checks == 0 and plugin.llm is None
+        # Check the focus and selection after closing the real Gtk.Expander
+        # with the physical Return key. If GTK cannot focus/collapse it,
+        # preserve the finding as an audit (not a fabricated PASS).
+        later(lambda: audit_expander_keyboard_close(expander), 130)
+
+    def audit_expander_keyboard_close(expander):
+        report["stage"] = "audit_report_close_focus"
+        views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(views) == 1
+        buffer = views[0].get_buffer()
+        focusable = expander.grab_focus() is not False and expander.has_focus()
+        report["audit"]["D05_expander_focusable"] = focusable
+        if focusable:
+            press("Return")
+        later(lambda: finish_expander_audit(expander, buffer, focusable), 280)
+
+    def finish_expander_audit(expander, buffer, focusable):
+        collapsed = not expander.get_expanded()
+        focused = expander.has_focus()
+        selected = buffer.get_has_selection()
+        report["audit"]["D05_return_collapsed_expander"] = focusable and collapsed
+        report["audit"]["D05_focus_after_collapse"] = focused if collapsed else False
+        report["audit"]["D05_text_selection_after_collapse"] = selected
+        if focusable and collapsed and focused and selected:
+            report["checks"]["D05_keyboard_collapse_focus_and_selection"] = True
+        else:
+            report["unmet_criteria"].append(
+                "D05: fermeture du volet par Entrée avec conservation focus/sélection non établie"
+            )
+        screenshot("11-report-collapse-focus-audit-1600")
         pass_scenario()
 
     class Application(Gtk.Application):
