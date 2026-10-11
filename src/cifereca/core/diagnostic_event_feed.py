@@ -90,8 +90,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # Export only known machine-generated TRACE categories and small
             # allowlisted status fields. Everything else remains private.
             trace = _TRACE.match(match["body"])
-            if trace:
-                message = "TRACE " + trace.group(1) + " " + trace.group(2)
+            if trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
+                message = "TRACE " + trace.group(1).lower() + " " + trace.group(2).lower()
                 suffix = match["body"][trace.end():]
                 pairs = _SAFE_FIELDS.findall(suffix)[:4]
                 if pairs:
@@ -172,6 +172,12 @@ def query_diagnostic_events(
     """
     if source not in {"all", "core_events", "app_log"}:
         raise ValueError("unknown diagnostic source")
+    if not isinstance(module, str) or len(module) > 90:
+        raise ValueError("diagnostic module must be a string of at most 90 characters")
+    if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
+        raise ValueError("unknown diagnostic severity")
+    if any(value is not None and not isinstance(value, str) for value in (since, until)):
+        raise ValueError("diagnostic date filters must be ISO-8601 strings")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= _MAX_RESULTS:
         raise ValueError("diagnostic limit must be 1..100")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
@@ -207,7 +213,10 @@ def query_diagnostic_events(
     page = events[offset:offset + limit]
     return {
         "status": "partial" if any(st["status"] == "partial" for st in states) else (
-            "available" if total else "empty"
+            "available" if total else (
+                "unavailable" if all(st["status"] in {"disabled", "unavailable"} for st in states)
+                else "empty"
+            )
         ),
         "sources": states,
         "events": page,
