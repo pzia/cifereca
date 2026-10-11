@@ -198,3 +198,16 @@ def test_available_but_empty_source_remains_empty(tmp_path):
     rows = query_diagnostic_events(Diagnostics(enabled=False), log_path=log)
     assert rows["status"] == "empty"
     assert rows["sources"][1]["status"] == "empty"
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"module": 123}, {"module": "x" * 91}, {"severity": 123},
+    {"since": 123}, {"until": []},
+])
+def test_malformed_filter_types_fail_before_reading_logs(tmp_path, monkeypatch, kwargs):
+    from cifereca.core import diagnostic_event_feed as feed
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("unvalidated request must not read logs")
+    monkeypatch.setattr(feed, "_source_logs", forbidden)
+    with pytest.raises(ValueError):
+        feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", **kwargs)
