@@ -2,6 +2,11 @@
 
 Ce répertoire contient des **recettes machine/runtime reproductibles** pour exécuter ou tester Cifereca dans des contextes techniques particuliers.
 
+**Point d'entrée E2E UX pour les agents : [E2E-UX.md](E2E-UX.md).**
+Il précise les commandes vérifiées dans les sources, la distinction
+runtime/simulation/scénarios, le niveau de preuve et la suspension GitHub
+Actions liée au budget.
+
 Il ne contient ni code applicatif, ni faux services métier de référence. Il doit rester distinct :
 
 - du Core et des plugins ;
@@ -55,8 +60,11 @@ GTK, Xvfb, D-Bus et les outils de capture.
 
 Si le bootstrap Debian échoue uniquement parce que le conteneur ne peut pas
 résoudre `deb.debian.org`/`security.debian.org`, **ne pas abandonner GTK et
-ne pas fabriquer une fausse vidéo**. Utiliser GitHub Actions comme relais
-réseau :
+ne pas fabriquer une fausse vidéo**. Le relais GitHub n'est qu'une solution
+**conditionnelle**, actuellement **suspendue pour budget GitHub Actions**
+(décision du 11/10/2026), à ne pas déclencher sans nouvel accord. Lorsqu'il
+est de nouveau autorisé, l'utiliser exclusivement pour transporter les
+paquets, pas pour exécuter l'E2E :
 
 1. créer une branche technique temporaire ; le modèle `openai-chat-debian/github-cache-relay.yml.example` est fourni ;
 2. y ajouter un workflow déclenché uniquement sur cette branche ;
