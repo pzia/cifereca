@@ -641,8 +641,11 @@ def test_structured_opt_in_never_displaces_primary_event_evidence():
                                include_snapshot=True)
     assert preview["count"] == 3
     assert all(f"ref-{i}" in preview["prompt"] for i in range(3))
-    assert preview["structured_count"] < 4
-    assert preview["sample_truncated"] is True
+    # Large untrusted messages are omitted rather than consuming
+    # evidence budget or being transmitted to the model.
+    assert preview["structured_count"] == 4
+    assert preview["sample_truncated"] is False
+    assert "S" * 100 not in preview["prompt"]
     assert preview["bytes"] <= 3000
     assert model.calls == 0
 
@@ -1462,3 +1465,83 @@ def test_ai_structured_detail_cannot_stringify_unknown_objects():
     preview = prepare_analysis(FakeLLM(), HostileBroker([]), include_snapshot=True)
     assert preview["structured_count"] == 1
     assert '"detail"' not in preview["prompt"]
+
+
+@pytest.mark.parametrize("field, private", [
+    ("message", "Mon livre secret et identifiable"),
+    ("operation", "return prêt Jean Martin"),
+    ("component", "sync-Marie Dupont"),
+    ("plugin_id", "cifereca.Alexandre_private_collection"),
+    ("source", "Jean Martin private library"),
+    ("severity", "warning user Alice"),
+    ("status", "ok for Alexandre Bernard"),
+    ("timestamp", "2026-10-11T10:00:00Z private user"),
+])
+def test_structured_snapshot_unknown_top_level_text_never_reaches_llm(field, private):
+    class PrivateTopLevelBroker(FakeBroker):
+        def snapshot(self):
+            row = {
+                "timestamp": "2026-10-11T10:00:00+02:00",
+                "source": "core_events", "component": "scheduler",
+                "plugin_id": "cifereca.sync",
+                "status": "partial",
+                "detail": {"phase": "fetch", "reason": "provider_timeout"},
+            }
+            row[field] = private
+            return [row]
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(
+        model, PrivateTopLevelBroker([event(ref="ref-clean")]),
+        include_snapshot=True,
+    )
+    assert preview["structured_count"] == 1
+    assert private not in preview["prompt"]
+    for operational in ("scheduler", "provider_timeout", "ref-clean"):
+        # When "component" is the private field, it is intentionally dropped.
+        if operational != "scheduler" or field != "component":
+            assert operational in preview["prompt"]
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+
+
+def test_structured_snapshot_does_not_stringify_hostile_top_level_objects():
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("must not stringify private Core telemetry")
+        def __repr__(self):
+            raise AssertionError("must not repr private Core telemetry")
+
+    class Broker(FakeBroker):
+        def snapshot(self):
+            return [
+                {"component": "core", "status": "ok",
+                 "message": Hostile(), "operation": Hostile(),
+                 "plugin_id": Hostile(), "timestamp": Hostile()},
+            ]
+
+    model = FakeLLM()
+    preview = prepare_analysis(model, Broker([]), include_snapshot=True)
+    assert preview["structured_count"] == 1
+    assert '"component": "core"' in preview["prompt"]
+    assert '"status": "ok"' in preview["prompt"]
+    assert model.calls == 0
+
+
+def test_structured_snapshot_operational_first_level_values_are_preserved():
+    class Broker(FakeBroker):
+        def snapshot(self):
+            return [{
+                "component": "sync", "source": "core_events",
+                "severity": "warning", "status": "partial",
+                "operation": "sync", "message": "provider_timeout",
+                "plugin_id": "cifereca.sync",
+                "timestamp": "2026-10-11T12:00:00+02:00",
+            }]
+
+    preview = prepare_analysis(FakeLLM(), Broker([]), include_snapshot=True)
+    assert preview["structured_count"] == 1
+    for value in ("sync", "provider_timeout", "cifereca.sync",
+                  "core_events", "partial", "warning",
+                  "2026-10-11T10:00:00+00:00"):
+        assert value in preview["prompt"]
