@@ -575,6 +575,38 @@ class YouthPagePlugin:
         self.view = self.pending = None
 
 
+def youth_action_states(*, identity, source, page, book, isbn, bibliography, local_detail, busy):
+    """Network-free UI affordances with explicit failure reasons (#923)."""
+    if not identity:
+        collect = "Sélectionnez un profil de bibliothèque."
+    elif not source:
+        collect = "Choisir une source Jeunesse précise pour lancer une collecte."
+    elif busy:
+        collect = "Collecte déjà en cours pour cette source."
+    else:
+        collect = ""
+    return {
+        "Collecter cette source": (not collect, collect or "Collecte réseau uniquement sur clic explicite."),
+        "Plus de résultats": (
+            bool(identity and source and page and not busy),
+            "Page suivante disponible pour la source choisie."
+            if identity and source and page and not busy else
+            "Aucune page suivante attestée pour cette source et ces filtres.",
+        ),
+        "Enrichir la bibliographie": (
+            bool(identity and book and isbn and bibliography and not busy),
+            "Lancer l’enrichissement pour cet ISBN." if identity and book and isbn and bibliography and not busy
+            else "Sélectionnez un livre avec ISBN valide et activez une source bibliographique.",
+        ),
+        "Ouvrir la fiche Bibliothèque": (
+            bool(identity and book and local_detail),
+            "Ouvre uniquement une fiche locale reconnue dans ce profil ; aucune disponibilité distante garantie."
+            if identity and book and local_detail else
+            "Sélectionnez un livre Jeunesse ; l’ouverture exige une correspondance locale non ambiguë.",
+        ),
+    }
+
+
 class YouthView:
     def __init__(self, plugin, host, Gtk, GLib):
         self.plugin, self.host, self.Gtk, self.GLib = plugin, host, Gtk, GLib
@@ -606,6 +638,7 @@ class YouthView:
         self.age = Gtk.DropDown.new_from_strings(["Tous les âges"] + [f"{age} ans" for age in range(18)])
         self.age_kind = Gtk.DropDown.new_from_strings([KIND_LABELS[value] for value in KIND_VALUES])
         self.source = Gtk.DropDown.new_from_strings(["Toutes les sources"])
+        self.source.set_tooltip_text("Filtre le cache Jeunesse ; « Toutes les sources » ne lance aucune collecte.")
         self.language = Gtk.Entry(placeholder_text="Langue (fr, en…)")
         self.format = Gtk.Entry(placeholder_text="Format (epub, pdf…)")
         self.book_type = Gtk.Entry(placeholder_text="Type (fiction, documentaire…)")
@@ -622,10 +655,16 @@ class YouthView:
 
         actions = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
         self.widget.append(actions)
+        self._action_buttons = {}
         actions.append(self.button("Collecter cette source", self.collect))
         actions.append(self.button("Plus de résultats", self.more))
         actions.append(self.button("Enrichir la bibliographie", self.enrich_bibliography))
         actions.append(self.button("Ouvrir la fiche Bibliothèque", self.open_selected))
+        self.actions_hint = Gtk.Label(
+            label="« Toutes les sources » consulte seulement le cache. Choisissez une source pour collecter.",
+            wrap=True, xalign=0,
+        )
+        self.widget.append(self.actions_hint)
 
         # Only local state and the public plugin-inventory broker are read.
         # Collapse by default to preserve the original 1024px reading viewport.
@@ -658,11 +697,64 @@ class YouthView:
 
     def button(self, label, callback):
         button = self.Gtk.Button(label=label)
+        self._action_buttons[label] = button
         def clicked(*_args):
             self.enter_sequence.reset()
             callback()
         button.connect("clicked", clicked)
         return button
+
+    def update_action_availability(self):
+        """Refresh GTK sensitivity/tooltips, never querying a remote provider."""
+        buttons = getattr(self, "_action_buttons", None)
+        if not buttons:
+            return
+        source = self.selected_source()
+        service = getattr(source, "service", None) if source is not None else None
+        compatible = bool(service is not None and (
+            callable(getattr(service, "browse", None))
+            or callable(getattr(service, "search", None))
+        ))
+        identity = bool(self.identity_id())
+        book = getattr(self, "selected_book", None)
+        current_key = book_key(book) if book is not None else ""
+        current = bool(current_key and current_key in getattr(self, "rows", {}))
+        isbn = ""
+        if current:
+            identifiers = getattr(book, "identifiers", {}) or {}
+            if isinstance(identifiers, Mapping):
+                isbn = normalize_isbn(identifiers.get("isbn"))
+        bibliography = False
+        if current and isbn:
+            try:
+                bibliography = bool(tuple(self.plugin.context.services(
+                    "youth.bibliography", contract="cifereca.youth-bibliography",
+                    version=">=1,<2", capabilities=("youth.bibliography.lookup",),
+                )))
+            except Exception:
+                bibliography = False
+        busy = getattr(self, "_remote_running_token", None) is not None
+        states = youth_action_states(
+            identity=identity, source=compatible, book=current, isbn=bool(isbn),
+            page=bool(compatible and self.next_cursor and
+                      self.next_source_plugin == self.selected_source_plugin()),
+            bibliography=bibliography,
+            local_detail=callable(getattr(self.host, "open_book_detail", None)),
+            busy=busy,
+        )
+        for label, button in buttons.items():
+            enabled, reason = states[label]
+            button.set_sensitive(enabled)
+            button.set_tooltip_text(reason)
+        hint = getattr(self, "actions_hint", None)
+        if hint is not None:
+            hint.set_label(
+                "Une collecte est déjà en cours. Les autres sources restent consultables en cache."
+                if busy else
+                "« Toutes les sources » affiche uniquement le cache. Choisir une source pour lancer une collecte."
+                if source is None else
+                "Source choisie : la collecte et la pagination restent des actions réseau explicites."
+            )
 
     def identity_changed(self):
         self.filters_changed()
@@ -771,6 +863,7 @@ class YouthView:
             self.task.cancel()
         self.next_cursor = self.next_source_plugin = ""
         self.render_cached()
+        self.update_action_availability()
 
     def query_activated(self):
         """Return and KP_Enter: local first, chosen-source remote second."""
@@ -814,12 +907,14 @@ class YouthView:
                 "dialog-warning-symbolic",
             )
             self.master.empty_detail()
+            self.update_action_availability()
             return
         identity = self.identity_id()
         if not identity:
             self.rows = {}
             self.master.set_list_state("Aucun profil disponible", "Créez ou activez un profil Cifereca.")
             self.master.empty_detail()
+            self.update_action_availability()
             return
         state = self.filter_state()
         books = self.catalog.search_cached(
@@ -843,15 +938,18 @@ class YouthView:
                 "Les filtres restent locaux. Une collecte distante n’a lieu que sur demande explicite.",
             )
             self.master.empty_detail()
+        self.update_action_availability()
 
     def selected(self, row):
         if row is None:
             self.selected_book = None
             self.master.empty_detail()
+            self.update_action_availability()
             return
         self.selected_book = self.rows.get(row.key)
         if self.selected_book is None:
             self.master.empty_detail()
+            self.update_action_availability()
             return
         presentation = detail_presentation(self.selected_book)
         title = _text(getattr(self.selected_book, "title", ""))
@@ -870,6 +968,7 @@ class YouthView:
                 ),
             ))
         self.master.show_detail(presentation)
+        self.update_action_availability()
 
     def _search_library(self, query: str, identity_id: str) -> None:
         """Local catalogue only. Reject cross-identity navigation explicitly."""
@@ -1033,6 +1132,7 @@ class YouthView:
         started = perf_counter()
         self.status.set_label("Collecte explicite en cours…")
         self.task = broker.submit(operation, label="Catalogue Jeunesse", kind="youth")
+        self.update_action_availability()
         def done(handle):
             try:
                 result, error = handle.result(), False
@@ -1095,6 +1195,7 @@ class YouthView:
                     self.refresh_source_diagnostics()
                 else:
                     complete(result)
+                self.update_action_availability()
                 return False
             self.GLib.idle_add(apply)
         self.task.add_done_callback(done)
@@ -1121,6 +1222,7 @@ class YouthView:
             )
             self.status.set_label("Réponse de source invalide. Le cache précédent est conservé.")
             self.refresh_source_diagnostics()
+            self.update_action_availability()
             return
         report = self.catalog.ingest(
             self.identity_id(),
