@@ -62,6 +62,12 @@ routes n'est attestée sur le serveur réel**.
 
 ## Sécurité, limites et reprise
 
+- Le JSON de la route HTTP candidate est soumis au même parseur strict
+  que les fixtures : UTF-8, pas de clés dupliquées ni de constantes/flottants
+  non finis, taille et type MIME bornés. La configuration du délai rejette
+  les valeurs invalides ou non finies. Les exceptions de transport ne sont
+  pas chaînées dans les erreurs publiques afin de ne pas exposer de requêtes
+  ou paramètres sensibles. Le dernier inventaire sain est préservé.
 - Le mode HTTP refuse les redirections, les URL contenant des identifiants,
   les chemins d'origine, et HTTP en dehors de loopback ; délais et tailles
   bornés, réponse JSON strictement typée.
