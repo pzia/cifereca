@@ -496,3 +496,15 @@ def test_xvfb_display_retry_is_limited_to_transport_initialization():
     assert 'name in {"startup", "core-navigation"}' in source
     assert '"xvfb_display_retry"' in source
     assert "attempt=2" in source
+
+def test_e2e_workflow_does_not_replay_core_search_filter_twice():
+    """The core group already exercises search-filter-p0 in real GTK/XTEST."""
+    runner = _module()
+    assert [name for name, _ in runner.select(None, "core")].count(
+        "search-filter-p0"
+    ) == 1
+    workflow = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+    assert workflow.count("e2e/run.py --plugin core") == 1
+    assert "--scenario search-filter-p0" not in workflow
