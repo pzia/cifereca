@@ -110,9 +110,12 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             if trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
                 message = "TRACE " + trace.group(1).lower() + " " + trace.group(2).lower()
                 suffix = match["body"][trace.end():]
-                pairs = _SAFE_FIELDS.findall(suffix)[:4]
+                pairs = [
+                    (key, value) for key, value in _SAFE_FIELDS.findall(suffix)
+                    if _safe_trace_field(key, value)
+                ][:4]
                 if pairs:
-                    message += " " + " ".join(k + "=" + v for k, v in pairs if _safe_trace_field(k, v))
+                    message += " " + " ".join(k + "=" + v for k, v in pairs)
             else:
                 message = "[contenu libre masqué : consulter le journal local]"
             try:
@@ -120,10 +123,18 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 ts = ts.astimezone().isoformat()
             except ValueError:
                 continue
+            # Logger names are not guaranteed to be static: extensions may
+            # embed account identifiers. Publish only recognised components.
+            logger_parts = match["logger"].split(".")
+            safe_parts = ["cifereca"]
+            for part in logger_parts[1:]:
+                if part.lower() not in (_STRUCTURED_TERMS | {"core", "diagnostics", "ui", "service", "worker"}):
+                    break
+                safe_parts.append(part.lower())
             events.append({
                 "timestamp": ts,
                 "source": "app_log",
-                "module": match["logger"][:90],
+                "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
                 "event_id": _event_id("app_log", ts, f"{index}:{line_number}:{message}"),
@@ -137,22 +148,30 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
     if not getattr(diagnostics, "enabled", True):
         return [], {"source": "core_events", "status": "disabled", "reason": "diagnostics_disabled"}
     try:
-        rows = diagnostics.snapshot()[-500:]
+        snapshot = diagnostics.snapshot()
+        if not isinstance(snapshot, (list, tuple)):
+            raise ValueError("snapshot must be a sequence")
+        rows = snapshot[-500:]
     except (AttributeError, ValueError, TypeError):
         return [], {"source": "core_events", "status": "unavailable", "reason": "snapshot_unavailable"}
     events: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
-        stamp = str(row.get("timestamp") or "")
+        stamp = row.get("timestamp")
+        if not isinstance(stamp, str):
+            continue
         try:
             _stamp(stamp)
         except (ValueError, TypeError):
             continue
-        category = str(row.get("category") or "").upper()
+        raw_category = row.get("category")
+        raw_operation = row.get("operation")
+        raw_status = row.get("status")
+        category = raw_category.upper() if isinstance(raw_category, str) else ""
         module = category if category in _CATEGORIES else "DIAGNOSTICS"
-        operation = str(row.get("operation") or "")
-        status = str(row.get("status") or "").lower()
+        operation = raw_operation if isinstance(raw_operation, str) else ""
+        status = raw_status.lower() if isinstance(raw_status, str) else ""
         severity = "error" if status in {"error", "failed"} else "warning" if status in {
             "warning", "attention_required", "partial"
         } else "info"
@@ -187,14 +206,14 @@ def query_diagnostic_events(
     Log content is intentionally *not* an unredacted viewer. The caller may
     only select sources and filters, never a filesystem path.
     """
-    if source not in {"all", "core_events", "app_log"}:
+    if not isinstance(source, str) or source not in {"all", "core_events", "app_log"}:
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
     if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
         raise ValueError("unknown diagnostic severity")
-    if any(value is not None and not isinstance(value, str) for value in (since, until)):
-        raise ValueError("diagnostic date filters must be ISO-8601 strings")
+    if any(value is not None and (not isinstance(value, str) or len(value) > 64) for value in (since, until)):
+        raise ValueError("diagnostic date filters must be bounded ISO-8601 strings")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= _MAX_RESULTS:
         raise ValueError("diagnostic limit must be 1..100")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
