@@ -435,3 +435,62 @@ def test_byte_offsets_distinguish_multibyte_and_duplicate_rows(tmp_path):
         Diagnostics(), log_path=log, source="app_log",
     )
     assert ids == [row["event_id"] for row in again["events"]]
+
+
+def test_structured_identical_timestamp_and_operation_have_unique_public_ids(tmp_path):
+    class RepeatedDiagnostics:
+        enabled = True
+
+        def snapshot(self):
+            return [
+                {"timestamp": "2026-10-11T07:00:00+00:00",
+                 "category": "SYNC", "operation": "return sync",
+                 "status": "ok"},
+                {"timestamp": "2026-10-11T07:00:00+00:00",
+                 "category": "SYNC", "operation": "return sync",
+                 "status": "error"},
+                {"timestamp": "2026-10-11T07:00:00+00:00",
+                 "category": "SYNC", "operation": "return sync",
+                 "status": "ok"},
+            ]
+
+    diag = RepeatedDiagnostics()
+    feed = query_diagnostic_events(
+        diag, log_path=tmp_path/"missing", source="core_events",
+    )
+    assert feed["total"] == 3
+    event_ids = [row["event_id"] for row in feed["events"]]
+    assert len(set(event_ids)) == 3
+    assert all(len(event_id) == 16 for event_id in event_ids)
+    assert {row["status"] for row in feed["events"]} == {"ok", "error"}
+    again = query_diagnostic_events(
+        diag, log_path=tmp_path/"missing", source="core_events",
+    )
+    assert event_ids == [row["event_id"] for row in again["events"]]
+    assert "operation" not in str(feed["sources"])
+
+
+def test_structured_duplicate_ids_remain_stable_across_broker_pages(tmp_path):
+    class RepeatedDiagnostics:
+        enabled = True
+
+        def snapshot(self):
+            return [
+                {"timestamp": "2026-10-11T07:00:00Z",
+                 "category": "SYNC", "operation": "sync",
+                 "status": "ok"} for _ in range(4)
+            ]
+
+    diag = RepeatedDiagnostics()
+    full = query_diagnostic_events(
+        diag, log_path=tmp_path/"missing", source="core_events",
+    )
+    visited = []
+    for offset in range(4):
+        page = query_diagnostic_events(
+            diag, log_path=tmp_path/"missing", source="core_events",
+            limit=1, offset=offset,
+        )
+        visited.extend(row["event_id"] for row in page["events"])
+    assert len(set(visited)) == 4
+    assert visited == [row["event_id"] for row in full["events"]]
