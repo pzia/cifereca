@@ -415,6 +415,11 @@ class DiagnosticsPagePlugin:
         )
         ai_notice.set_wrap(True)
         outer.append(ai_notice)
+        ai_snapshot = Gtk.CheckButton(
+            label="Inclure les diagnostics structurés Core (lecture seule)"
+        )
+        ai_snapshot.set_active(False)
+        outer.append(ai_snapshot)
         ai_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         ai_prepare = Gtk.Button(label="Prévisualiser pour l’IA")
         ai_send = Gtk.Button(label="Autoriser et analyser")
@@ -880,6 +885,7 @@ class DiagnosticsPagePlugin:
                 selected_period = PERIODS[int(period_selector.get_selected())]
                 selected_module = module_filter.get_text().strip()
                 selected_severity = SEVERITIES[int(severity_selector.get_selected())]
+                selected_snapshot = ai_snapshot.get_active()
             except (ValueError, TypeError, IndexError) as exc:
                 ai_status.set_text("Destination IA indisponible : " + type(exc).__name__)
                 return
@@ -901,6 +907,7 @@ class DiagnosticsPagePlugin:
                     self.llm, broker, source=selected_source,
                     module=selected_module, severity=selected_severity,
                     since=explorer_since(selected_period),
+                    include_snapshot=selected_snapshot,
                 )
 
             try:
@@ -939,12 +946,14 @@ class DiagnosticsPagePlugin:
             locality = "DISTANT — données envoyées hors machine" if dest["remote"] else "LOCAL"
             ai_status.set_text(
                 f"{locality} · {dest['provider']} · modèle {dest['model']} · "
-                f"hôte {dest['host']} · {preview['count']} événements · "
+                f"hôte {dest['host']} · {preview['count']} événements, "
+                f"{preview['structured_count']} diagnostics structurés · "
                 f"{preview['bytes']} octets UTF-8. "
                 f"Périmètre demandé : {scope['source']} · "
                 f"{scope['module'] or 'tous modules'} · "
                 f"{scope['severity'] or 'tous niveaux'} · "
-                f"depuis {scope['since'] or 'tout historique'}. "
+                f"depuis {scope['since'] or 'tout historique'} · "
+                f"diagnostics structurés : {'oui' if scope['include_snapshot'] else 'non'}. "
                 "Le modèle produit des hypothèses, jamais une preuve."
             )
             ai_input.get_buffer().set_text(preview["prompt"])
@@ -1015,7 +1024,8 @@ class DiagnosticsPagePlugin:
             ai_result = (
                 "# Analyse générée par IA — hypothèses NON vérifiées\n"
                 + f"Destination annoncée : {result['provider']} / {result['model']}\n"
-                + f"Provenance : {result['evidence_count']} événements Core expurgés\n"
+                + f"Provenance : {result['evidence_count']} événements Core et "
+                  f"{result['structured_count']} diagnostics structurés expurgés\n"
                 + f"Limites : {result['limitations']}\n\n"
                 + "## Analyse du modèle (inférée)\n"
                 + result["text"]
@@ -1067,6 +1077,7 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
         module_filter.connect("changed", invalidate_ai)
+        ai_snapshot.connect("toggled", invalidate_ai)
 
         def render(*_args) -> None:
             clear_container(status_grid)

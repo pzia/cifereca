@@ -21,6 +21,7 @@ from cifereca.plugin_api import LLMRequest
 
 _MAX_PROMPT = 3000
 _MAX_EVENTS = 24
+_MAX_STRUCTURED = 4
 _APPROVAL_SECONDS = 300
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
@@ -117,6 +118,7 @@ def llm_destination(llm: Any) -> dict[str, str | bool]:
 def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
+    include_snapshot: bool = False,
 ) -> dict[str, Any]:
     """Read only 24 public events once, bound preview to exact destination."""
     from cifereca_diagnostics_page import redacted_detail, format_diagnostic_detail
@@ -138,8 +140,13 @@ def prepare_analysis(
         )
     ):
         raise ValueError("unsupported_since")
+    if type(include_snapshot) is not bool:
+        raise ValueError("unsupported_structured_scope")
     module = module.strip()
-    scope = {"source": source, "module": module, "severity": severity, "since": since}
+    scope = {
+        "source": source, "module": module, "severity": severity,
+        "since": since, "include_snapshot": include_snapshot,
+    }
     feed = diagnostics_broker.events(
         source=source, module=module, severity=severity,
         since=since, until=None, limit=_MAX_EVENTS, offset=0,
@@ -156,6 +163,43 @@ def prepare_analysis(
         "Filtres demandés au broker (couverture non garantie) : "
         + json.dumps(scope, ensure_ascii=False, sort_keys=True) + "\n"
     )
+    def evidence_body(event_rows: list, structured_rows: list) -> str:
+        evidence = {"events": event_rows}
+        if include_snapshot:
+            evidence["structured_diagnostics"] = structured_rows
+        return format_diagnostic_detail(evidence, "json")
+
+    # The Core snapshot is read-only and explicitly selected. Never invoke
+    # active_checks(), arbitrary filesystem reads or runtime operations.
+    structured = []
+    truncated = False
+    if include_snapshot:
+        snapshot = getattr(diagnostics_broker, "snapshot", None)
+        if not callable(snapshot):
+            raise ValueError("structured_diagnostics_unavailable")
+        records = snapshot()
+        if not isinstance(records, (list, tuple)):
+            raise ValueError("structured_diagnostics_unavailable")
+        fields = (
+            "timestamp", "source", "component", "plugin_id", "severity",
+            "status", "message", "operation", "detail",
+        )
+        for item in records[:_MAX_STRUCTURED]:
+            if not isinstance(item, Mapping):
+                continue
+            row = {field: item.get(field) for field in fields if field in item}
+            if not row:
+                continue
+            # Recursive redaction masks secret-bearing keys inside 'detail'.
+            safe = redacted_detail(row)
+            candidate = structured + [safe]
+            if _prompt_bytes(header + evidence_body([], candidate)) > _MAX_PROMPT:
+                truncated = True
+                continue
+            structured.append(safe)
+        if len(records) > _MAX_STRUCTURED:
+            truncated = True
+
     filtered = []
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     for item in events[:_MAX_EVENTS]:
@@ -164,13 +208,13 @@ def prepare_analysis(
         row = {field: item.get(field) for field in fields if field in item}
         safe = redacted_detail(row)
         candidate = filtered + [safe]
-        body = format_diagnostic_detail({"events": candidate}, "json")
-        if _prompt_bytes(header + body) > _MAX_PROMPT:
-            break
+        if _prompt_bytes(header + evidence_body(candidate, structured)) > _MAX_PROMPT:
+            truncated = True
+            continue
         filtered.append(safe)
-    if not filtered:
+    if not filtered and not structured:
         raise ValueError("no_diagnostic_events")
-    prompt = header + format_diagnostic_detail({"events": filtered}, "json")
+    prompt = header + evidence_body(filtered, structured)
     prompt_size = _prompt_bytes(prompt)
     if prompt_size > _MAX_PROMPT:
         raise ValueError("prompt_too_large")
@@ -198,9 +242,14 @@ def prepare_analysis(
         "prompt": prompt, "destination": destination, "scope": scope,
         "approval_id": approval.token, "_approval_state": approval,
         "evidence_refs": refs,
-        "count": len(filtered), "source_states": states,
+        "count": len(filtered), "structured_count": len(structured),
+        "sample_truncated": truncated, "source_states": states,
         "chars": len(prompt), "bytes": prompt_size, "generated": False,
-        "limitations": "Échantillon borné à 24 événements, aucune corrélation prouvée.",
+        "limitations": (
+            "Au plus 24 événements et 4 diagnostics structurés publics ; "
+            + ("échantillon partiel, " if truncated else "")
+            + "aucune corrélation causale prouvée."
+        ),
     }
 
 
@@ -225,7 +274,8 @@ def analyze_with_consent(
         not isinstance(gate, _OneUseApproval)
         or not isinstance(refs, tuple)
         or not isinstance(scope, dict)
-        or set(scope) != {"source", "module", "severity", "since"}
+        or set(scope) != {"source", "module", "severity", "since", "include_snapshot"}
+        or type(scope.get("include_snapshot")) is not bool
     ):
         raise ValueError("explicit_consent_required")
     fingerprint = _fingerprint(prompt, destination, refs, scope)
@@ -261,6 +311,7 @@ def analyze_with_consent(
         "references_unknown": unknown,
         "reference_status": "matched_ids_not_verified_facts" if matched else "no_known_event_cited",
         "evidence_count": preview["count"],
+        "structured_count": preview["structured_count"],
         "limitations": preview["limitations"],
         "scope": dict(scope),
     }
@@ -298,6 +349,7 @@ def export_analysis_json(analysis: Mapping[str, Any]) -> str:
         "analysis": analysis["text"],
         "evidence": {
             "sample_count": analysis.get("evidence_count"),
+            "structured_count": analysis.get("structured_count"),
             "matched_references": analysis.get("references_matched"),
             "unknown_references": analysis.get("references_unknown"),
             "reference_status": analysis.get("reference_status"),
