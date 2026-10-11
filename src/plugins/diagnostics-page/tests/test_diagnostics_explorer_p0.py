@@ -324,3 +324,15 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+@pytest.mark.parametrize("search", [[], {}, 123, object()])
+def test_invalid_local_search_rejected_cleanly(search):
+    with pytest.raises(ValueError, match="search"):
+        sanitized_rows({"events": [event("safe")]}, search=search)
+
+
+@pytest.mark.parametrize("sort", [None, 1, [], "descending"])
+def test_invalid_sort_direction_rejected_cleanly(sort):
+    with pytest.raises(ValueError, match="sort"):
+        sanitized_rows({"events": [event("safe")]}, newest_first=sort)
