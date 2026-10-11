@@ -211,7 +211,9 @@ def prepare_analysis(
         "Cite les identifiants d'événement exacts. "
         "Un diagnostic structuré sans ID n'est pas une preuve de corrélation.\n"
         "Filtres demandés au broker (couverture non garantie) : "
-        + json.dumps(scope, ensure_ascii=False, sort_keys=True) + "\n"
+        # Scope is also user-controlled (notably the free-text module filter):
+        # never leak an email, signed URL, path or token through this header.
+        + json.dumps(redacted_detail(scope), ensure_ascii=False, sort_keys=True) + "\n"
         "États de sources publiés par le Core (non exhaustifs) : "
         + json.dumps(states, ensure_ascii=False, sort_keys=True) + "\n"
     )
