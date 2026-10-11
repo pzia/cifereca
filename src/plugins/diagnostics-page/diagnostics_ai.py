@@ -22,6 +22,7 @@ from cifereca.plugin_api import LLMRequest
 _MAX_PROMPT = 3000
 _MAX_EVENTS = 24
 _MAX_STRUCTURED = 4
+_MAX_SUPPORT_FIELDS = 8
 _APPROVAL_SECONDS = 300
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
@@ -137,7 +138,7 @@ def llm_destination(llm: Any) -> dict[str, str | bool]:
 def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
-    include_snapshot: bool = False,
+    include_snapshot: bool = False, include_support_report: bool = False,
 ) -> dict[str, Any]:
     """Read only 24 public events once, bound preview to exact destination."""
     from cifereca_diagnostics_page import redacted_detail, format_diagnostic_detail
@@ -161,10 +162,13 @@ def prepare_analysis(
         raise ValueError("unsupported_since")
     if type(include_snapshot) is not bool:
         raise ValueError("unsupported_structured_scope")
+    if type(include_support_report) is not bool:
+        raise ValueError("unsupported_support_scope")
     module = module.strip()
     scope = {
         "source": source, "module": module, "severity": severity,
         "since": since, "include_snapshot": include_snapshot,
+        "include_support_report": include_support_report,
     }
     feed = diagnostics_broker.events(
         source=source, module=module, severity=severity,
@@ -218,16 +222,21 @@ def prepare_analysis(
         + json.dumps(states, ensure_ascii=False, sort_keys=True) + "\n"
     )
 
-    def evidence_body(event_rows: list, structured_rows: list) -> str:
+    def evidence_body(
+        event_rows: list, structured_rows: list, support_sections: dict,
+    ) -> str:
         evidence = {"events": event_rows}
         if include_snapshot:
             evidence["structured_diagnostics"] = structured_rows
+        if include_support_report:
+            evidence["support_report_sections"] = support_sections
         return format_diagnostic_detail(evidence, "json")
 
     # Filtered events are the primary evidence: optional structured context
     # must not displace them from the bounded preview.
     filtered = []
     structured = []
+    support_sections = {}
     truncated = len(events) > _MAX_EVENTS or broker_has_more
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     for item in events[:_MAX_EVENTS]:
@@ -236,7 +245,7 @@ def prepare_analysis(
         row = {field: item.get(field) for field in fields if field in item}
         safe = redacted_detail(row)
         candidate = filtered + [safe]
-        if _prompt_bytes(header + evidence_body(candidate, [])) > _MAX_PROMPT:
+        if _prompt_bytes(header + evidence_body(candidate, [], {})) > _MAX_PROMPT:
             truncated = True
             continue
         filtered.append(safe)
@@ -263,18 +272,54 @@ def prepare_analysis(
             # Recursive redaction masks secret-bearing keys in nested detail.
             safe = redacted_detail(row)
             candidate = structured + [safe]
-            if _prompt_bytes(header + evidence_body(filtered, candidate)) > _MAX_PROMPT:
+            if _prompt_bytes(header + evidence_body(filtered, candidate, {})) > _MAX_PROMPT:
                 truncated = True
                 continue
             structured.append(safe)
         if len(records) > _MAX_STRUCTURED:
             truncated = True
 
-    if not filtered and not structured:
+    # The Core's existing support_report() is read-only, distinct from
+    # running active_checks(). Never fetch this report without explicit opt-in.
+    # Redact the whole public mapping before inspecting any key or value.
+    if include_support_report:
+        report_method = getattr(diagnostics_broker, "support_report", None)
+        if not callable(report_method):
+            raise ValueError("support_report_unavailable")
+        report = report_method(verbose=False)
+        if not isinstance(report, Mapping):
+            raise ValueError("support_report_unavailable")
+        safe_report = redacted_detail(report)
+        if not isinstance(safe_report, Mapping):
+            raise ValueError("support_report_unavailable")
+        for key, value in list(safe_report.items())[:32]:
+            if len(support_sections) >= _MAX_SUPPORT_FIELDS:
+                truncated = True
+                break
+            if not isinstance(key, str):
+                continue
+            # Never include raw logs or opaque payloads by default, even if
+            # a future Core report adds them as public-looking sections.
+            if any(word in key.casefold() for word in (
+                "raw", "payload", "file_content", "attachment",
+            )):
+                truncated = True
+                continue
+            candidate = {**support_sections, key: value}
+            if _prompt_bytes(header + evidence_body(
+                filtered, structured, candidate,
+            )) > _MAX_PROMPT:
+                truncated = True
+                continue
+            support_sections = candidate
+        if len(safe_report) > len(support_sections):
+            truncated = True
+
+    if not filtered and not structured and not support_sections:
         raise ValueError("no_diagnostic_events")
     if len(filtered) < min(len(events), _MAX_EVENTS):
         truncated = True
-    prompt = header + evidence_body(filtered, structured)
+    prompt = header + evidence_body(filtered, structured, support_sections)
     prompt_size = _prompt_bytes(prompt)
     if prompt_size > _MAX_PROMPT:
         raise ValueError("prompt_too_large")
@@ -305,11 +350,12 @@ def prepare_analysis(
         "approval_id": approval.token, "_approval_state": approval,
         "evidence_refs": refs,
         "count": len(filtered), "structured_count": len(structured),
-        "total_available": known_total,
+        "support_fields": len(support_sections), "total_available": known_total,
         "sample_truncated": truncated, "source_states": states,
         "chars": len(prompt), "bytes": prompt_size, "generated": False,
         "limitations": (
-            "Au plus 24 événements et 4 diagnostics structurés publics ; "
+            "Au plus 24 événements, 4 diagnostics structurés et "
+            "8 rubriques du rapport support public ; "
             + ("échantillon partiel, " if truncated else "")
             + coverage
             + "aucune corrélation causale prouvée."
@@ -338,8 +384,12 @@ def analyze_with_consent(
         not isinstance(gate, _OneUseApproval)
         or not isinstance(refs, tuple)
         or not isinstance(scope, dict)
-        or set(scope) != {"source", "module", "severity", "since", "include_snapshot"}
+        or set(scope) != {
+            "source", "module", "severity", "since",
+            "include_snapshot", "include_support_report",
+        }
         or type(scope.get("include_snapshot")) is not bool
+        or type(scope.get("include_support_report")) is not bool
     ):
         raise ValueError("explicit_consent_required")
     fingerprint = _fingerprint(prompt, destination, refs, scope)
@@ -381,6 +431,7 @@ def analyze_with_consent(
         ),
         "evidence_count": preview["count"],
         "structured_count": preview["structured_count"],
+        "support_fields": preview["support_fields"],
         "total_available": preview["total_available"],
         "sample_truncated": preview["sample_truncated"],
         "source_states": preview["source_states"],
@@ -422,6 +473,7 @@ def export_analysis_json(analysis: Mapping[str, Any]) -> str:
         "evidence": {
             "sample_count": analysis.get("evidence_count"),
             "structured_count": analysis.get("structured_count"),
+            "support_fields": analysis.get("support_fields"),
             "total_available": analysis.get("total_available"),
             "sample_truncated": analysis.get("sample_truncated"),
             "source_states": analysis.get("source_states"),
