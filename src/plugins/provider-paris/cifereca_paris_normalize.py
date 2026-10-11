@@ -1,6 +1,7 @@
 from __future__ import annotations
 from cifereca.plugin_api import description_text, description_element
 from cifereca_paris_formats import projection
+from cifereca_paris_bibliography import project_bibliographic_facets
 import html
 import re
 import uuid
@@ -117,6 +118,9 @@ def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult 
     docbase = str(resource["RscBase"])
     record_id = str(resource["RscId"])
     digital, content_type, media_format, metadata = projection(resource, raw, scenario, docbase)
+    # Only *attested* per-resource facets are added. No homepage scraping,
+    # guessed publisher ISBN, implied edition or reading-age inference.
+    metadata.update(project_bibliographic_facets(resource, raw))
     return SearchResult(
         id=f"{docbase}:{record_id}",
         record_id=record_id,
