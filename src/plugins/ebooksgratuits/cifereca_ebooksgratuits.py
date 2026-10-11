@@ -32,7 +32,7 @@ DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et
 class Parser(HTMLParser):
     """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
     def __init__(self, base_url=BASE):
-        super().__init__(convert_charrefs=True); self.base_url=str(base_url); self.cards=[]; self._depth=0; self._card=None; self._capture=None
+        super().__init__(convert_charrefs=True); self.base_url=str(base_url); self.cards=[]; self._depth=0; self._card=None; self._capture=None; self._ignored=0
     @staticmethod
     def _attrs(attrs): return {str(k).lower():str(v or '') for k,v in attrs}
     def handle_starttag(self,tag,attrs):
@@ -41,6 +41,8 @@ class Parser(HTMLParser):
             if self._depth==0: self._card={'title':[],'author':[],'description':[],'detail':'','epub':'','image':'','_plain':[],'_plain_size':0}
             self._depth+=1; return
         if not self._card: return
+        # Script/style/template text is not visible catalogue evidence.
+        if tag in {'script','style','template'}: self._ignored+=1
         classes={x.casefold() for x in a.get('class','').split()}
         if tag=='a':
             href=a.get('href','')
@@ -55,7 +57,7 @@ class Parser(HTMLParser):
             elif 'auteur' in classes: self._capture='author'
             elif classes.intersection({'resume','résumé','description','descriptif'}): self._capture='description'
     def handle_data(self,data):
-        if not self._card: return
+        if not self._card or self._ignored: return
         if self._capture and data.strip(): self._card[self._capture].append(data.strip())
         # Only evidence already present on the returned catalog card. No
         # detail-page fetch or inference from the author's death date.
@@ -65,6 +67,7 @@ class Parser(HTMLParser):
             self._card['_plain_size']+=len(kept)
     def handle_endtag(self,tag):
         tag=tag.lower()
+        if tag in {'script','style','template'} and self._ignored: self._ignored-=1
         if tag in {'span','div','p'}: self._capture=None
         if tag=='li' and self._depth:
             self._depth-=1
@@ -79,7 +82,7 @@ class Parser(HTMLParser):
                 row['territorial_rights_warning']=_rights_warning_attested(plain)
                 if row['detail'] and row['epub'] and row['title']: self.cards.append(row)
     def rows(self,text):
-        self.cards=[]; self._depth=0; self._card=None; self._capture=None; self.feed(text); self.close(); return list(self.cards)
+        self.cards=[]; self._depth=0; self._card=None; self._capture=None; self._ignored=0; self.feed(text); self.close(); return list(self.cards)
 class FilterParser(HTMLParser):
     """Extract public search select options without executing page scripts."""
     def __init__(self):
