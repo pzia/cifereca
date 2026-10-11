@@ -19,7 +19,7 @@ MAX_RESPONSE = 512 * 1024
 MAX_RELEASES = 30
 DEFAULT_REPOSITORY = "pzia/cifereca"
 _REPO_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
-_ASSET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+\\-]{0,159}$")
+_ASSET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,159}$")
 
 
 class ReleaseCheckError(Exception):
@@ -115,7 +115,7 @@ def select_release(payload, *, channel="stable"):
         published = item.get("published_at")
         if (not isinstance(tag, str) or not 1 <= len(tag) <= 100
                 or not isinstance(published, str) or
-                not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z", published)):
+                not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", published)):
             continue
         notes = item.get("body")
         zip_names, verification = _assets(item.get("assets"))
