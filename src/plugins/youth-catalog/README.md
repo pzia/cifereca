@@ -161,3 +161,16 @@ est dans une PR distincte. Les scénarios UX GTK 1366/1600 et le cumul
 des deux PR Jeunesse devront être validés par le merger/UX.
 
 Tests hors réseau : `tests/test_federated_search_p2.py`.
+
+## Liens de notices et de couvertures (#959)
+
+Les liens affichés dans la liste et le détail passent par `public_url()` :
+HTTP(S) public seulement, sans identifiants intégrés, fragment de session,
+paramètres de signature/authentification, hôte local/privé, port arbitraire
+ni URL malformée ou surdimensionnée. Les paramètres de présentation
+ordinaires (par exemple `width=180`) sont préservés.
+
+Si `friendly_url` est refusée, une `notice_url` sûre et indépendante peut
+encore être affichée. Un lien accepté n'atteste **ni la possession d'une
+édition, ni un exemplaire, ni une disponibilité** ; la recherche bibliothèque
+par ISBN reste une action explicite distincte (#959).
