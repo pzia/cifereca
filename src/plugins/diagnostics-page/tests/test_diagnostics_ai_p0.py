@@ -1317,3 +1317,72 @@ def test_public_source_last_event_ignores_malformed_data(malformed):
     assert all("last_event" not in state for state in preview["source_states"])
     assert "PRIVATE_KEY" not in preview["prompt"]
     assert model.calls == 0
+
+
+def test_structured_snapshot_uses_latest_four_events_and_newest_first():
+    class OrderedCoreSnapshot(FakeBroker):
+        def __init__(self):
+            super().__init__([])
+            self.snapshot_calls = 0
+
+        def snapshot(self):
+            self.snapshot_calls += 1
+            return [
+                {"timestamp": f"2026-10-11T00:{i:02d}:00+00:00",
+                 "component": f"incident-{i}", "status": "partial"}
+                for i in range(10)
+            ]
+
+    model = FakeLLM(remote=True)
+    broker = OrderedCoreSnapshot()
+    preview = prepare_analysis(model, broker, include_snapshot=True)
+    assert preview["count"] == 0
+    assert preview["structured_count"] == 4
+    assert preview["sample_truncated"] is True
+    for i in range(6, 10):
+        assert f"incident-{i}" in preview["prompt"]
+    for i in range(6):
+        assert f"incident-{i}" not in preview["prompt"]
+    assert preview["prompt"].index("incident-9") < preview["prompt"].index("incident-8")
+    assert preview["bytes"] <= 3000
+    assert broker.snapshot_calls == 1
+    assert model.calls == 0
+
+
+def test_support_report_global_result_survives_large_bounded_sections():
+    class FatReportBroker(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert include_checks is False
+            return {
+                "checks_executed": False,
+                "config": {"details": "C" * 800},
+                "core": {"details": "K" * 800},
+                "database": {"details": "D" * 800},
+                "plugins": {"details": "P" * 800},
+                "runtime": {"details": "R" * 800},
+                "result": "warning",
+            }
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, FatReportBroker([event()]),
+                               include_support_report=True)
+    assert preview["count"] == 1
+    assert preview["support_fields"] >= 1
+    assert preview["sample_truncated"] is True
+    assert '"result": "warning"' in preview["prompt"]
+    # JSON formatting sorts keys again. Priority governs *inclusion*
+    # under budget, not the serialized key order.
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+
+
+def test_snapshot_remains_disabled_until_explicit_selection():
+    class ForbiddenSnapshot(FakeBroker):
+        def snapshot(self):
+            raise AssertionError("snapshot not selected")
+
+    model = FakeLLM()
+    preview = prepare_analysis(model, ForbiddenSnapshot([event()]))
+    assert preview["structured_count"] == 0
+    assert preview["scope"]["include_snapshot"] is False
+    assert model.calls == 0
