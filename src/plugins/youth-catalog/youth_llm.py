@@ -38,6 +38,8 @@ def theme_request(themes):
     safe = tuple(
         " ".join(value.split())[:96] for value in tuple(themes or ())[:6]
         if isinstance(value, str) and value.strip()
+        and not _AGE_CLAIM.search(value)
+        and not any(character.isdigit() for character in value)
     )
     if not safe:
         return None
@@ -78,7 +80,8 @@ def rewrite_themes(service, themes, *, enabled=False, consent=False, control=Non
     if not isinstance(content, str):
         return None
     content = " ".join(content.split())
-    if not 3 <= len(content) <= 320 or _AGE_CLAIM.search(content):
+    if (not 3 <= len(content) <= 320 or _AGE_CLAIM.search(content)
+            or any(character.isdigit() for character in content)):
         return None
     return ThemeWording(
         text=content,
