@@ -710,8 +710,14 @@ def main():
         views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
         assert len(views) == 1
         buffer = views[0].get_buffer()
+        # Re-establish a known selection immediately before the close action:
+        # previous D13 clipboard/focus gestures may have cleared it already.
+        buffer.select_range(buffer.get_end_iter(), buffer.get_start_iter())
+        assert buffer.get_has_selection(), "Sélection préalable D05 introuvable"
+        report["audit"]["D05_selection_reestablished_before_close"] = True
         focusable = expander.grab_focus() is not False and expander.has_focus()
         report["audit"]["D05_expander_focusable"] = focusable
+        report["audit"]["D05_selection_after_focus_transfer"] = buffer.get_has_selection()
         if focusable:
             press("Return")
         later(lambda: finish_expander_audit(expander, buffer, focusable), 280)
@@ -727,7 +733,7 @@ def main():
             report["checks"]["D05_keyboard_collapse_focus_and_selection"] = True
         else:
             report["unmet_criteria"].append(
-                "D05: fermeture du volet par Entrée avec conservation focus/sélection non établie"
+                "D05: perte de la sélection pendant transfert de focus ou fermeture du volet Entrée"
             )
         screenshot("13-report-collapse-focus-audit-1600")
         pass_scenario()
