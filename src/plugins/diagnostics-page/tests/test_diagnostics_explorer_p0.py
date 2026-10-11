@@ -300,3 +300,16 @@ def test_header_ignores_objects_with_custom_integer_conversion():
     }, [])
     assert "0 disponibles" in result
     assert "page à partir de 1" in result
+
+
+def test_export_does_not_stringify_untrusted_broker_values():
+    class Untrusted:
+        def __str__(self):
+            raise AssertionError("never stringify broker objects")
+
+    rows = [{"event_id": "safe-id", "message": Untrusted(),
+             "timestamp": "2026-10-11T07:00:00+02:00", "source": "app_log"}]
+    exported = json.loads(export_selected_events(rows, {"safe-id"}))
+    assert len(exported["events"]) == 1
+    assert exported["events"][0]["message"] == ""
+    assert exported["events"][0]["event_id"] == "safe-id"
