@@ -110,9 +110,12 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             if trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
                 message = "TRACE " + trace.group(1).lower() + " " + trace.group(2).lower()
                 suffix = match["body"][trace.end():]
-                pairs = _SAFE_FIELDS.findall(suffix)[:4]
+                pairs = [
+                    (key, value) for key, value in _SAFE_FIELDS.findall(suffix)
+                    if _safe_trace_field(key, value)
+                ][:4]
                 if pairs:
-                    message += " " + " ".join(k + "=" + v for k, v in pairs if _safe_trace_field(k, v))
+                    message += " " + " ".join(k + "=" + v for k, v in pairs)
             else:
                 message = "[contenu libre masqué : consulter le journal local]"
             try:
