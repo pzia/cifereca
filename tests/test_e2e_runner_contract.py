@@ -61,7 +61,7 @@ def test_diagnostics_navigation_targets_real_mainwindow_and_pointer_events():
     for marker in (
         "MainWindow(self, core.config, core.library, core.diagnostics)",
         "Pages().pages()",
-        "page_plugin.pages()",
+        "self.diagnostics_page.pages()",
         'click_widget(w.nav_rows["library"])',
         'click_widget(w.nav_rows["diagnostics"])',
         "Configuration / Technique",
