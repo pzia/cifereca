@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+import re
 import json
 from pathlib import Path
 
@@ -19,6 +20,32 @@ def filtered_matches(index, book, *, source='', language='', since=''):
         if (not source or source.casefold() in ' '.join(m.article.provenance).casefold())
         and (not language or m.article.language.casefold() == language.casefold())
         and (not since or (cutoff and date_text(m.article.published_at) and date_text(m.article.published_at) >= cutoff)))
+
+
+def validate_review_filters(language: str, since: str) -> str:
+    lang, since = str(language or "").strip(), str(since or "").strip()
+    if lang and (len(lang) > 35 or not re.fullmatch(
+        r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", lang
+    )):
+        return "Langue invalide : utilisez un code tel que fr ou en."
+    if since:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", since):
+            return "Date invalide : format AAAA-MM-JJ requis."
+        try:
+            date.fromisoformat(since)
+        except ValueError:
+            return "Date invalide : vérifiez le jour, le mois et l’année."
+    return ""
+
+
+def review_view_state(*, book_present, sources_present, filters_valid, matches_present):
+    if not book_present:
+        return "no_book"
+    if not sources_present:
+        return "no_sources"
+    if not filters_valid:
+        return "invalid_filters"
+    return "results" if matches_present else "no_matches"
 
 
 class ReviewStore:
@@ -132,18 +159,29 @@ class ReviewView:
         self.since = Gtk.Entry(placeholder_text='Depuis AAAA-MM-JJ')
         for entry in (self.source, self.language, self.since):
             controls.append(entry); entry.connect('changed', lambda *_: self.render())
-        controls.append(self.button('Actualiser les sources actives', self.refresh))
-        controls.append(self.button('Retour à la fiche du livre', self.open_book))
-        self.url = Gtk.Entry(placeholder_text='URL de page ou de flux RSS/Atom/JSON Feed', hexpand=True)
-        self.widget.append(self.url)
-        self.widget.append(self.button('Prévisualiser les flux', self.preview))
-        self.previews = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.widget.append(self.previews)
-        self.subscriptions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.widget.append(self.subscriptions)
+        self.refresh_button = self.button('Actualiser les sources actives', self.refresh)
+        self.back_button = self.button('Retour à la fiche du livre', self.open_book)
+        self.choose_button = self.button('Choisir un livre', lambda: self.host.navigate('library'))
+        controls.append(self.refresh_button)
+        controls.append(self.back_button)
+        controls.append(self.choose_button)
+        self.widget.append(Gtk.Label(label='Critiques de ce livre', xalign=0))
         self.results = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        scroll = Gtk.ScrolledWindow(vexpand=True); scroll.set_child(self.results)
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        scroll.set_child(self.results)
         self.widget.append(scroll)
+
+        self.sources_expander = Gtk.Expander(label='Gérer les sources de critiques')
+        sources_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.sources_expander.set_child(sources_content)
+        self.widget.append(self.sources_expander)
+        self.url = Gtk.Entry(placeholder_text='URL de page ou de flux RSS/Atom/JSON Feed', hexpand=True)
+        sources_content.append(self.url)
+        sources_content.append(self.button('Prévisualiser les flux', self.preview))
+        self.previews = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        sources_content.append(self.previews)
+        self.subscriptions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        sources_content.append(self.subscriptions)
         self.render_sources(); self.render()
 
     def button(self, label, callback):
@@ -233,24 +271,95 @@ class ReviewView:
             return
         self.host.toast('La fiche locale n’est pas disponible dans le profil actif.')
 
+    def open_source_management(self):
+        self.sources_expander.set_expanded(True)
+        self.url.grab_focus()
+
+    def reset_filters(self):
+        for field in (self.source, self.language, self.since):
+            field.set_text("")
+
     def render(self):
-        self.heading.set_label('Critiques : ' + self.book.title if self.book else 'Depuis une fiche livre, choisissez « Consulter les critiques ».')
+        self.heading.set_label(
+            'Critiques : ' + self.book.title if self.book
+            else 'Aucun livre sélectionné — ouvrez une fiche depuis la Bibliothèque.'
+        )
         self.clear(self.results)
-        disabled = {FeedSource(url).source_info()['source_id'] for url, enabled in self.plugin.store.subscriptions.items() if not enabled}
-        matches = filtered_matches(self.plugin.store.index, self.book, source=self.source.get_text().strip(),
-            language=self.language.get_text().strip(), since=self.since.get_text().strip())
-        matches = tuple(m for m in matches if set(m.article.provenance) - disabled)
-        if not matches:
-            self.results.append(self.Gtk.Label(label='Aucune critique associée dans le cache pour ces filtres.', wrap=True))
+        has_book = self.book is not None
+        for field in (self.source, self.language, self.since):
+            field.set_sensitive(has_book)
+        self.back_button.set_sensitive(has_book)
+        self.back_button.set_visible(has_book)
+        self.choose_button.set_visible(not has_book)
+
+        try:
+            has_sources = bool(self.plugin.store.sources(self.plugin.context))
+        except Exception:
+            has_sources = False
+        self.refresh_button.set_sensitive(bool(has_book and has_sources))
+        self.refresh_button.set_tooltip_text(
+            'Actualise explicitement les sources de critiques actives.'
+            if has_book and has_sources else
+            'Sélectionnez un livre et activez une source de critiques avant toute actualisation.'
+        )
+        error = validate_review_filters(self.language.get_text(), self.since.get_text())
+        matches = ()
+        if has_book and has_sources and not error:
+            disabled = {
+                FeedSource(url).source_info()['source_id']
+                for url, enabled in self.plugin.store.subscriptions.items() if not enabled
+            }
+            matches = filtered_matches(
+                self.plugin.store.index, self.book, source=self.source.get_text().strip(),
+                language=self.language.get_text().strip(), since=self.since.get_text().strip(),
+            )
+            matches = tuple(m for m in matches if set(m.article.provenance) - disabled)
+        state = review_view_state(
+            book_present=has_book, sources_present=has_sources,
+            filters_valid=not error, matches_present=bool(matches),
+        )
+        if state == 'no_book':
+            self.results.append(self.Gtk.Label(
+                label='Choisissez un livre dans la Bibliothèque pour consulter ses critiques en cache.',
+                wrap=True, xalign=0,
+            ))
+            return
+        if state == 'no_sources':
+            self.results.append(self.Gtk.Label(
+                label='Aucune source de critiques active. Ajoutez un flux puis activez-le explicitement.',
+                wrap=True, xalign=0,
+            ))
+            self.results.append(self.button('Ajouter un flux', self.open_source_management))
+            return
+        if state == 'invalid_filters':
+            self.results.append(self.Gtk.Label(label=error, wrap=True, xalign=0))
+            return
+        if state == 'no_matches':
+            self.results.append(self.Gtk.Label(
+                label='Aucune critique correspondante dans le cache pour ce livre et ces filtres.',
+                wrap=True, xalign=0,
+            ))
+            self.results.append(self.button('Réinitialiser les filtres', self.reset_filters))
+            return
         for match in matches:
             article = match.article
-            status = 'Rattachement confirmé' if match.status == 'confirmed' else 'Suggestion à vérifier'
-            details = '\n'.join([article.title, status + ' · ' + ', '.join(match.reasons),
-                'Sources : ' + ', '.join(article.provenance),
-                'Fraîcheur : ' + ', '.join(sid + ' — ' + ('à actualiser' if not self.plugin.store.freshness.get(sid) or self.plugin.store.freshness[sid] < datetime.now(timezone.utc).isoformat() else 'en cache récent') for sid in article.provenance),
-                ' · '.join(filter(None, [article.critic_author, article.published_at, article.language])), article.excerpt])
-            self.results.append(self.Gtk.Label(label=details, wrap=True, xalign=0, selectable=True))
-            self.results.append(self.Gtk.LinkButton.new_with_label(article.url, 'Lire la critique dans le navigateur'))
+            card = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=3)
+            status = 'Confirmée' if match.status == 'confirmed' else 'Suggestion à vérifier'
+            card.append(self.Gtk.Label(label=status, wrap=True, xalign=0))
+            card.append(self.Gtk.Label(label=article.title, wrap=True, xalign=0, selectable=True))
+            card.append(self.Gtk.Label(label='Preuve : ' + ', '.join(match.reasons), wrap=True, xalign=0))
+            card.append(self.Gtk.Label(
+                label='Source : ' + ', '.join(article.provenance)
+                + ' · ' + ' · '.join(filter(None, (
+                    article.critic_author, article.published_at, article.language,
+                ))), wrap=True, xalign=0,
+            ))
+            card.append(self.Gtk.Label(label=article.excerpt, wrap=True, xalign=0, selectable=True))
+            if article.url:
+                card.append(self.Gtk.LinkButton.new_with_label(
+                    article.url, 'Lire la critique dans le navigateur',
+                ))
+            self.results.append(card)
 
     def dispose(self):
         self.disposed = True; self.generation += 1
