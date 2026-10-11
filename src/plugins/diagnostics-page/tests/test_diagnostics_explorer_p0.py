@@ -439,3 +439,67 @@ def test_diagnostic_detail_handles_invalid_unicode(mode):
     assert "bad-" not in result
     if mode == "json":
         assert json.loads(result)["truncated"] is True
+
+
+def test_source_summaries_redact_entire_name_and_reason_before_display_cut():
+    payload = {
+        "sources": [{
+            "source": "alice@example.com",
+            "status": "partial",
+            "reason": (
+                "journal rotaté : authorization=Bearer PRIVATE_TOKEN "
+                "https://example.org/path?token=PRIVATE_URL"
+            ),
+        }, {
+            "source": "app_log",
+            "status": "unavailable",
+            "reason": "/home/alice/private/cifereca.log",
+        }],
+    }
+    states = source_summaries(payload)
+    assert len(states) == 2
+    assert states[0]["status"] == "partial"
+    assert "courriel expurgé" in states[0]["source"]
+    assert "journal rotaté" in states[0]["reason"]
+    assert "PRIVATE_TOKEN" not in repr(states)
+    assert "PRIVATE_URL" not in repr(states)
+    assert "alice@example.com" not in repr(states)
+    assert "/home/alice" not in repr(states)
+    assert "chemin expurgé" in states[1]["reason"]
+
+
+def test_source_summaries_never_stringify_malformed_reason_or_long_status():
+    class Secret:
+        def __str__(self):
+            raise AssertionError("must not stringify")
+
+    states = source_summaries({"sources": [
+        {"source": Secret(), "status": "unknown" * 10000, "reason": Secret()},
+        {"source": "app_log", "status": "available", "reason": "PRIVATE_SHOULD_NOT_SHOW"},
+    ]})
+    assert states[0] == {
+        "source": "inconnue", "status": "unavailable", "label": "Indisponible",
+    }
+    assert states[1] == {
+        "source": "app_log", "status": "available", "label": "Alimentée",
+    }
+
+
+def test_source_summaries_do_not_expose_partial_tokens_cut_at_display_bound():
+    source = "prefix-" + "x" * 35 + " token=PRIVATE_SUFFIX"
+    states = source_summaries({"sources": [
+        {"source": source, "status": "disabled",
+         "reason": "Error\nAuthorization: Bearer PRIVATE_HEADER"},
+    ]})
+    shown = repr(states)
+    assert "PRIVATE_SUFFIX" not in shown
+    assert "PRIVATE_HEADER" not in shown
+    assert "\\n" not in states[0]["reason"]
+
+
+def test_journals_ui_shows_optional_expurgated_source_reasons():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert 'state.get("reason")' in page
+    assert 'source_summaries(current_page)' in page
