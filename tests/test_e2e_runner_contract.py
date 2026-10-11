@@ -116,6 +116,10 @@ def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
         "D14_support_active_and_ai_states_independent_during_check",
         "D14_active_result_not_confused_with_ai",
         "D14_support_report_freshness_explicit",
+        "D16_1366_display_narrow_no_horizontal_overflow",
+        "D16_narrow_actions_keyboard_reachable",
+        "D16_restore_without_losing_diagnostics_state",
+        "D16_full_multi_monitor_coverage",
 
         "D02_explicit_zero_anomaly_with_period",
         "D04_full_mainwindow_navigation",
