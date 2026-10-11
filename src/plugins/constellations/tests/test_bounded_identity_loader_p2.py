@@ -155,10 +155,8 @@ def test_cache_is_per_identity_and_evicts_least_recently_used_profile():
     assert len(v.cache) == PAGE_CACHE_PROFILES
     assert "identity-0" in v.cache
     assert "identity-1" not in v.cache  # true LRU
-    assert all(
-        all(identity == row["book_id"].split("-")[0] for row in ())
-        for identity in ()
-    )  # no hidden cross-profile shared static cache
+    for profile, (rows, _truncated) in v.cache.items():
+        assert all(row["book_id"].startswith(profile + "-") for row in rows)
 
 
 def test_wrong_identity_pending_book_is_not_injected_or_consumed():
