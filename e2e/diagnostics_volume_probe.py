@@ -322,11 +322,19 @@ def main():
         # which may intentionally drop unknown broker keys including 'detail'.
         # Audit the rendered Gtk.TextView rather than assuming a broker field
         # remains consultable. This is an honest unresolved UX criterion.
-        panes = [
-            w for w in widgets(Gtk.Expander)
-            if w.get_label() == "Détails expurgés"
+        # Target specifically the *long error* (event 00002), not the
+        # first generic Kobo row sorted newest-first in the same group.
+        error_labels = [
+            w for w in widgets(Gtk.Label)
+            if "Erreur fictive longue" in (w.get_text() or "")
         ]
-        assert panes, "Volet de détail de l'événement Kobo absent"
+        assert len(error_labels) == 1, ("Erreur Kobo ciblée", len(error_labels))
+        item = error_labels[0].get_parent().get_parent()
+        panes = [
+            w for w in walk(item)
+            if isinstance(w, Gtk.Expander) and w.get_label() == "Détails expurgés"
+        ]
+        assert len(panes) == 1, "Détail de l'erreur Kobo introuvable"
         panes[0].set_expanded(True)
         views = [w for w in walk(panes[0]) if isinstance(w, Gtk.TextView)]
         assert len(views) == 1
@@ -339,6 +347,19 @@ def main():
             "La fixture est attendue sans detail brut dans sanitized_rows()"
         )
         report["checks"]["D08_real_detail_panel_available_and_redacted"] = True
+        journal_scroll = error_labels[0].get_parent()
+        while journal_scroll is not None and not isinstance(journal_scroll, Gtk.ScrolledWindow):
+            journal_scroll = journal_scroll.get_parent()
+        assert journal_scroll is not None
+        ok, rect = error_labels[0].compute_bounds(journal_scroll.get_child())
+        assert ok
+        adjustment = journal_scroll.get_vadjustment()
+        target = max(0, min(
+            float(rect.get_y()) - 45,
+            adjustment.get_upper() - adjustment.get_page_size(),
+        ))
+        adjustment.set_value(target)
+        report["audits"]["D08_long_error_in_view_scroll_y"] = round(target, 2)
         later(kobo_detail_visible, 260)
 
     def kobo_detail_visible():
