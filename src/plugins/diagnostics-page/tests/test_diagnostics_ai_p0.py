@@ -641,8 +641,11 @@ def test_structured_opt_in_never_displaces_primary_event_evidence():
                                include_snapshot=True)
     assert preview["count"] == 3
     assert all(f"ref-{i}" in preview["prompt"] for i in range(3))
-    assert preview["structured_count"] < 4
-    assert preview["sample_truncated"] is True
+    # Free-form snapshot messages are excluded at the opt-in boundary.
+    # The four small operational rows now fit without dropping primary events.
+    assert preview["structured_count"] == 4
+    assert preview["sample_truncated"] is False
+    assert "S" * 700 not in preview["prompt"]
     assert preview["bytes"] <= 3000
     assert model.calls == 0
 
@@ -1339,11 +1342,14 @@ def test_structured_snapshot_uses_latest_four_events_and_newest_first():
     assert preview["count"] == 0
     assert preview["structured_count"] == 4
     assert preview["sample_truncated"] is True
+    # Unknown component labels are not a safe IA field. The timestamp is
+    # canonical and can prove the most recent four records were chosen.
+    assert "incident-" not in preview["prompt"]
     for i in range(6, 10):
-        assert f"incident-{i}" in preview["prompt"]
+        assert f"2026-10-11T00:{i:02d}:00+00:00" in preview["prompt"]
     for i in range(6):
-        assert f"incident-{i}" not in preview["prompt"]
-    assert preview["prompt"].index("incident-9") < preview["prompt"].index("incident-8")
+        assert f"2026-10-11T00:{i:02d}:00+00:00" not in preview["prompt"]
+    assert preview["prompt"].index("2026-10-11T00:09:00+00:00") < preview["prompt"].index("2026-10-11T00:08:00+00:00")
     assert preview["bytes"] <= 3000
     assert broker.snapshot_calls == 1
     assert model.calls == 0
