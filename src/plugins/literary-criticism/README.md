@@ -91,3 +91,30 @@ Les limites existantes restent inchangées : 2 Mio maximum, cinq redirections au
 Le chemin de production de `FeedSource` utilise directement `fetch_public` : il ne dépend pas du client `httpx` injectable réservé aux tests historiques. Les tests de non-régression du transport couvrent maintenant ce chemin par défaut et vérifient qu’un nom public résolu vers une adresse privée est refusé avant création du socket, puis qu’un peer différent de l’adresse DNS validée est refusé avant TLS/HTTP.
 
 Le transport épinglé est local à `criticism_feeds.py`. La recherche de références dans le dépôt ne montre pas de réutilisation par d’autres plugins : les autres chemins réseau restent donc hors périmètre de #824 et doivent être audités séparément s’ils nécessitent la même garantie.
+
+
+## Synthèse facultative des critiques par IA — #782
+
+Version 0.3.3 : option `llm_summaries=false` **désactivée par défaut**. Une
+fois activée, la page affiche le bouton « Synthétiser les extraits (IA) » lorsque
+le cache contient des critiques correspondant au livre et aux filtres courants.
+La simple ouverture de la page, le changement de livre ou des filtres ne
+provoquent **aucun appel IA**.
+
+Le clic explicite transmet au maximum **trois extraits publics déjà mis en
+cache, chacun tronqué à 240 caractères**, et leur identifiant de source
+expurgé. Aucun corps intégral d'article, titre de livre, profil utilisateur,
+identifiant de bibliothèque ou URL de téléchargement n'est ajouté par le
+plugin. Les extraits restent des données externes potentiellement sensibles :
+le service public `llm` peut être distant, ce que signale le bouton.
+
+Le résultat n'est affiché que sous le libellé « Synthèse générée — non
+attestée », avec les sources des extraits, le fournisseur et le modèle ;
+les critiques originales, leurs liens publics, leur statut confirmé/suggéré
+et leurs preuves restent visibles. **Aucune synthèse ni rapprochement
+LLM ne modifie le statut bibliographique d'une critique.**
+
+Repli déterministe si le service Core #778 est absent, indisponible, en erreur
+ou annulé, ainsi qu'en cas de filtre/livre modifié avant réception. Aucun
+backend LLM ni collecte automatique n'est introduit. Tests hors réseau :
+`tests/test_criticism_llm_p2.py`.
