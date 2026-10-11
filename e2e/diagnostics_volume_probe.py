@@ -209,13 +209,17 @@ def main():
         assert len(rows) == 1
         return rows[0]
 
-    def query_module(mod, then):
+    def query_module(mod, expected, then):
         previous = len(broker.requests)
         entry = module_entry()
         entry.set_text(mod)
         entry.emit("activate")
-        until(lambda: len(broker.requests) > previous and
-              seen("événements affichés"), then)
+        # The broker can return before the GTK idle handler applies the new
+        # page. A generic "événements affichés" can refer to the old result.
+        until(lambda: len(broker.requests) > previous
+              and broker.requests[-1]["module"] == mod
+              and not seen("Actualisation en cours")
+              and seen(expected), then)
 
     def start():
         assert seen("50 événements affichés")
@@ -243,7 +247,7 @@ def main():
         assert seen("10000 disponibles")
         report["checks"]["D06_stable_pagination_next_50"] = True
         screenshot("01-page-51-sur-10000")
-        query_module("adept", adept_case)
+        query_module("adept", "ADEPT code 10", adept_case)
 
     def adept_case():
         assert broker.requests[-1]["module"] == "adept"
@@ -254,7 +258,7 @@ def main():
         report["checks"]["D10_adept_code10_no_invented_adobe_cause"] = True
         report["checks"]["D09_adept_module_filter"] = True
         screenshot("02-adept-code10-absence-preuve")
-        query_module("paris", paris_case)
+        query_module("paris", "Paris retour demandé et accepté", paris_case)
 
     def paris_case():
         assert broker.requests[-1]["module"] == "paris"
@@ -269,7 +273,7 @@ def main():
         report["audits"]["D12_distinct_pseudonymous_loan_profiles_visible"] = pseudo_A and pseudo_B
         report["audits"]["D12_link_proven_by_broker"] = False
         screenshot("03-paris-retour-profils")
-        query_module("kobo", kobo_case)
+        query_module("kobo", "Erreur fictive longue", kobo_case)
 
     def kobo_case():
         assert broker.requests[-1]["module"] == "kobo"
@@ -285,7 +289,10 @@ def main():
         assert len(selectors) == 1
         before = len(broker.requests)
         selectors[0].set_selected(3)  # 7 jours
-        until(lambda: len(broker.requests) > before and seen("événements affichés"), period_case)
+        until(lambda: len(broker.requests) > before
+              and broker.requests[-1]["since"] is not None
+              and not seen("Actualisation en cours")
+              and seen("Erreur fictive longue"), period_case)
 
     def period_case():
         assert broker.requests[-1]["module"] == "kobo"
