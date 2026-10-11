@@ -47,7 +47,9 @@ def fetch_explorer_page(
     severity: str = "", period: str = "day", offset: int = 0,
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
-    if source not in SOURCES or severity not in SEVERITIES:
+    if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
+        raise ValueError("unsupported diagnostics filter")
+    if source not in SOURCES or severity not in SEVERITIES or period not in PERIODS:
         raise ValueError("unsupported diagnostics filter")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("invalid diagnostics module")

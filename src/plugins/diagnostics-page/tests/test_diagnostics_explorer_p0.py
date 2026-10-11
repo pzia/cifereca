@@ -313,3 +313,14 @@ def test_export_does_not_stringify_untrusted_broker_values():
     assert len(exported["events"]) == 1
     assert exported["events"][0]["message"] == ""
     assert exported["events"][0]["event_id"] == "safe-id"
+
+
+@pytest.mark.parametrize("filters", [
+    {"source": []}, {"source": {}}, {"severity": []}, {"severity": {}},
+    {"period": []}, {"period": {}}, {"source": None}, {"severity": 1},
+])
+def test_malformed_selector_types_fail_without_broker_access(filters):
+    broker = Broker()
+    with pytest.raises(ValueError):
+        fetch_explorer_page(broker, **filters)
+    assert broker.calls == []
