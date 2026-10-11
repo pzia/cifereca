@@ -51,7 +51,7 @@ def walk(widget):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366,))
+    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -306,7 +306,7 @@ def main():
         def do_activate(self):
             nonlocal window, device
             window = MainWindow(self, core.config, core.library, core.diagnostics)
-            window.set_default_size(args.width - 40, 780)
+            window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
             window.present()
             device = X11Input()
             later(450, search_initial)
