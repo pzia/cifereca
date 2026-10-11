@@ -370,3 +370,23 @@ def test_normalizer_redacts_before_500_character_display_cutoff():
     assert "SUPERPRIVATE" not in shown
     assert "token=SUP" not in shown
     assert len(shown) <= 500
+
+
+@pytest.mark.parametrize("now", [0, False, "", {}, [], object()])
+def test_period_refuses_invalid_clock_values(now):
+    with pytest.raises(ValueError, match="reference time"):
+        explorer_since("day", now=now)
+
+
+def test_module_groups_fail_closed_on_malformed_fields():
+    rows = [None, {}, {"module": [], "source": {}, "severity": []},
+            {"module": "valid", "source": "app_log", "severity": "error"}]
+    groups = module_groups(rows)
+    assert len(groups) == 2
+    assert next(group for group in groups if group["module"] == "valid")["severity"] == "error"
+    assert next(group for group in groups if group["module"] == "Inconnu")["severity"] == "unknown"
+
+
+def test_module_groups_are_page_bounded():
+    rows = [event(str(i), module="m" + str(i)) for i in range(PAGE_SIZE + 10)]
+    assert sum(group["count"] for group in module_groups(rows)) == PAGE_SIZE
