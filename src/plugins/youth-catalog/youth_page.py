@@ -884,7 +884,8 @@ class YouthView:
         )
 
     def filters_changed(self):
-        self._clear_llm_wording()
+        if hasattr(self, "_llm_generation"):
+            self._clear_llm_wording()
         self.generation += 1
         sequence = getattr(self, "enter_sequence", None)
         if sequence is not None:
@@ -1067,7 +1068,7 @@ class YouthView:
         updater = getattr(self, 'update_action_availability', None)
         refresh_actions = updater if callable(updater) else lambda: None
         changed = getattr(self, "_llm_selected_changed", None)
-        if callable(changed):
+        if callable(changed) and hasattr(self, "_llm_generation"):
             changed(row)
         if row is None:
             self.selected_book = None
@@ -1414,7 +1415,8 @@ class YouthView:
         self.refresh_source_diagnostics()
 
     def dispose(self):
-        self._clear_llm_wording()
+        if hasattr(self, "_llm_generation"):
+            self._clear_llm_wording()
         self.disposed = True
         self.generation += 1
         if self.task:
