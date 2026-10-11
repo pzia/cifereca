@@ -144,15 +144,20 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
     for row in rows:
         if not isinstance(row, dict):
             continue
-        stamp = str(row.get("timestamp") or "")
+        stamp = row.get("timestamp")
+        if not isinstance(stamp, str):
+            continue
         try:
             _stamp(stamp)
         except (ValueError, TypeError):
             continue
-        category = str(row.get("category") or "").upper()
+        raw_category = row.get("category")
+        raw_operation = row.get("operation")
+        raw_status = row.get("status")
+        category = raw_category.upper() if isinstance(raw_category, str) else ""
         module = category if category in _CATEGORIES else "DIAGNOSTICS"
-        operation = str(row.get("operation") or "")
-        status = str(row.get("status") or "").lower()
+        operation = raw_operation if isinstance(raw_operation, str) else ""
+        status = raw_status.lower() if isinstance(raw_status, str) else ""
         severity = "error" if status in {"error", "failed"} else "warning" if status in {
             "warning", "attention_required", "partial"
         } else "info"
