@@ -84,3 +84,9 @@ pour distinguer le calcul de l'application UI sans prétendre valider GTK.
 - aucun cache réutilisé sans identité **et** jeton de fraîcheur explicites ;
 - une identité vide n'est jamais mise en cache ;
 - les relations, classements, promenades et états de disponibilité restent inchangés.
+
+## Présentation du voisinage — P2 #762 (0.3.1)
+
+La barre d'actions est regroupée par intention **Explorer**, **Chercher**, **Parcours** ; les extrémités **Proche** et **Surprenant** ainsi que la valeur 0–100 sont visibles. Le panneau de détail ne prétend plus qu'il n'existe aucun voisin lorsque la liste du composant commun est vide : les voisins se trouvent dans une grille distincte avec un compteur explicite.
+
+Chaque carte sépare titre, auteur, raison principale attestée si disponible, nombre de raisons complémentaires, statut d'accès et présence d'indice inféré. Un clic sur la carte visite le livre sélectionné sans accès réseau. Les actions explicites de recherche et actualisation conservent leurs budgets historiques (300 notices locales, 100 résultats distants). La recette visuelle et clavier relève du rôle UX à **1366 et 1600 px**, sans réintroduire de tests de basse résolution.

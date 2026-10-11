@@ -5,6 +5,29 @@ from constellation_view_model import (node_from_row, merge_nodes, neighbours, re
     promenade, replace_step, Navigation)
 
 
+def neighbour_card_fields(edge):
+    """Read-only presentation, with inferred reasons kept distinguishable."""
+    book = edge.target.book
+    reasons = tuple(str(item) for item in edge.reasons if str(item))
+    certain = tuple(value for value in reasons if not value.startswith('Inféré :'))
+    inferred = tuple(value for value in reasons if value.startswith('Inféré :'))
+    return {
+        'title': str(book.title or ''),
+        'authors': ', '.join(str(value) for value in book.authors if str(value)),
+        'access': ', '.join(str(value) for value in edge.target.availability if str(value)),
+        'reason': certain[0] if certain else (inferred[0] if inferred else 'Raison inconnue'),
+        'other_reasons': max(0, len(reasons) - 1),
+        'inferred': bool(inferred),
+    }
+
+
+def neighbour_count_label(edges):
+    number = len(edges)
+    inferred = sum(any(str(item).startswith('Inféré :') for item in e.reasons) for e in edges)
+    return (f"{number} voisin(s) proposé(s) · {inferred} avec un indice inféré"
+            if number else "Aucun voisin proposé avec les paramètres actuels")
+
+
 class ConstellationsPlugin:
     def activate(self, context):
         self.context, self.view, self.pending = context, None, None
@@ -46,36 +69,60 @@ class View:
         self.identity.set_tooltip_text('Profil de bibliothèque')
         self.widget.append(self.identity)
         self.identity.connect('notify::selected', lambda *_: self.load())
-        controls = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5)
-        self.widget.append(controls)
+        # Explicitly grouped intents; catalog calls remain click-only.
+        sections = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.widget.append(sections)
+
+        def group(title):
+            sections.append(Gtk.Label(label=title, xalign=0))
+            line = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5)
+            sections.append(line)
+            return line
+
+        explore = group('Explorer')
         self.mode = Gtk.DropDown.new_from_strings(['Explorateur', 'Confort', 'Projet', 'Humeur'])
+        self.mode.set_tooltip_text('Mode de proximité entre livres')
         self.mode.connect('notify::selected', lambda *_: self.render())
-        controls.append(self.mode)
+        explore.append(self.mode)
         self.signal = Gtk.Entry(placeholder_text='Sujet du projet / humeur attestée')
         self.signal.connect('changed', lambda *_: self.render())
-        controls.append(self.signal)
+        explore.append(self.signal)
+
+        distance = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        distance.append(Gtk.Label(label='Proche'))
         self.surprise = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5)
-        self.surprise.set_value(25); self.surprise.set_size_request(180, -1)
-        self.surprise.set_tooltip_text('Proche (0) ↔ surprenant (100)')
-        self.surprise.update_property([Gtk.AccessibleProperty.LABEL], ['Proche à surprenant'])
+        self.surprise.set_value(25)
+        self.surprise.set_size_request(160, -1)
+        self.surprise.set_digits(0)
+        self.surprise.set_draw_value(True)
+        self.surprise.set_tooltip_text('Proche (0) à surprenant (100)')
+        self.surprise.update_property([Gtk.AccessibleProperty.LABEL], ['Proximité de 0 à 100'])
         self.surprise.connect('value-changed', lambda *_: self.render())
-        controls.append(self.surprise)
+        distance.append(self.surprise)
+        distance.append(Gtk.Label(label='Surprenant'))
+        explore.append(distance)
+        explore.append(self.button('Précédent', lambda: self.move(-1)))
+        explore.append(self.button('Suivant', lambda: self.move(1)))
+        explore.append(self.button('Ouvrir la fiche Bibliothèque', self.open_book))
+
+        search = group('Chercher')
         self.query = Gtk.Entry(placeholder_text='Requête catalogue — envoi explicite')
-        controls.append(self.query)
-        controls.append(self.button('Chercher en ligne', lambda: self.load(remote=self.query.get_text().strip())))
-        controls.append(self.button('Actualiser la bibliothèque', lambda: self.load(refresh=True)))
-        controls.append(self.button('Précédent', lambda: self.move(-1)))
-        controls.append(self.button('Suivant', lambda: self.move(1)))
-        controls.append(self.button('Ouvrir la fiche Bibliothèque', self.open_book))
+        search.append(self.query)
+        search.append(self.button('Chercher en ligne', lambda: self.load(remote=self.query.get_text().strip())))
+        search.append(self.button('Actualiser la bibliothèque', lambda: self.load(refresh=True)))
+
+        walk = group('Parcours')
+        self.variant = Gtk.DropDown.new_from_strings(['court', 'équilibré', 'surprenant'])
+        walk.append(self.variant)
+        walk.append(self.button('Choisir le départ', self.start_walk))
+        walk.append(self.button('Rejoindre ce livre', self.finish_walk))
         self.heading = Gtk.Label(wrap=True, xalign=0)
         self.widget.append(self.heading)
-        self.variant = Gtk.DropDown.new_from_strings(['court', 'équilibré', 'surprenant'])
-        controls.append(self.variant)
-        controls.append(self.button('Choisir le départ', self.start_walk))
-        controls.append(self.button('Rejoindre ce livre', self.finish_walk))
         self.start = None
-        self.master = host.build_book_master_detail(title='Livre central', empty_title='Aucun voisin attesté')
+        self.master = host.build_book_master_detail(title='Livre central', empty_title='Aucun livre sélectionné dans cette liste')
         self.widget.append(self.master.widget)
+        self.neighbours_summary = Gtk.Label(label='Aucun voisin proposé', wrap=True, xalign=0)
+        self.widget.append(self.neighbours_summary)
         self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=3, min_children_per_line=1)
         scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=200)
         scroll.set_child(self.flow)
@@ -266,6 +313,7 @@ class View:
             self.choices.remove(child); child = self.choices.get_first_child()
         if not self.center:
             self.heading.set_label('Aucun livre central')
+            self.neighbours_summary.set_label('Choisissez un livre pour afficher son voisinage')
             self.master.empty_detail(); return
         node = self.center
         self.heading.set_label('Centre : ' + node.book.title)
@@ -276,13 +324,34 @@ class View:
         mode = ('Explorateur', 'Confort', 'Projet', 'Humeur')[self.mode.get_selected()]
         edges = neighbours(self.nodes, node, mode=mode, surprise=self.surprise.get_value()/100,
             theme=self.signal.get_text(), mood=self.signal.get_text(), profile=self.local)
+        self.neighbours_summary.set_label(neighbour_count_label(edges))
         if not edges:
-            self.flow.append(self.Gtk.Label(label='Aucun lien attesté pour ce mode. Choisissez un livre ci-dessous ou cherchez en ligne.', wrap=True))
+            self.flow.append(self.Gtk.Label(
+                label='Aucun lien proposé pour ce mode. Choisissez un autre livre ou cherchez en ligne.',
+                wrap=True, xalign=0,
+            ))
         for edge in edges:
-            text = edge.target.book.title + '\n' + ', '.join(edge.target.availability) + '\n' + '\n'.join(edge.reasons)
-            b = self.button(text, lambda n=edge.target: self.visit(n))
-            b.get_child().set_wrap(True)
-            self.flow.append(b)
+            row = neighbour_card_fields(edge)
+            card = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=3)
+            card.append(self.Gtk.Label(label=row['title'], wrap=True, xalign=0))
+            if row['authors']:
+                card.append(self.Gtk.Label(label='Auteur : ' + row['authors'], wrap=True, xalign=0))
+            card.append(self.Gtk.Label(label='Lien principal : ' + row['reason'], wrap=True, xalign=0))
+            if row['other_reasons']:
+                card.append(self.Gtk.Label(
+                    label=f"{row['other_reasons']} autre(s) raison(s)", wrap=True, xalign=0,
+                ))
+            card.append(self.Gtk.Label(
+                label='Accès : ' + (row['access'] or 'non précisé'), wrap=True, xalign=0,
+            ))
+            if row['inferred']:
+                card.append(self.Gtk.Label(label='Contient un indice inféré', wrap=True, xalign=0))
+            card.append(self.Gtk.Label(label='Visiter ce livre', xalign=0))
+            button = self.Gtk.Button()
+            button.set_child(card)
+            button.set_tooltip_text('Visiter : ' + row['title'])
+            button.connect('clicked', lambda *_args, node=edge.target: self.visit(node))
+            self.flow.append(button)
         # Catalogue selector remains available when metadata cannot produce edges.
         for other in self.nodes[:100]:
             if other.key != node.key and all(e.target.key != other.key for e in edges):
