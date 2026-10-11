@@ -1,1 +1,3 @@
 Demande utilisateur confirmée le 2026-10-11 : déclencher une seule recette GTK Diagnostics 1366 via GitHub Actions.
+
+Nouvel essai UX GTK validé par « next » (2026-10-11 09:37 Europe/Paris), après correctif safe.directory ; exécution unique.
