@@ -23,7 +23,7 @@ _DIAGNOSTIC_SECRET_KEY = re.compile(
 )
 _DIAGNOSTIC_SECRET_VALUE = re.compile(
     r"(?i)\b(password|cookie|token|secret|authorization|barcode|readerid)"
-    r"\s*[:=]\s*[^\s,;]+"
+    r"""\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)"""
 )
 _DIAGNOSTIC_URL = re.compile(r"(?i)https?://[^\s<>]+")
 _DIAGNOSTIC_MAIL = re.compile(r"(?i)\b[a-z0-9_.+%-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
