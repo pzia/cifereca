@@ -2,8 +2,8 @@
 
 **Lire d'abord [environnements/E2E-UX.md](../environnements/E2E-UX.md)**
 avant d'exécuter ces scénarios : le guide explique l'environnement rootless,
-la simulation, les différents niveaux de preuve et la suspension du relais
-GitHub pour budget.
+la simulation, les niveaux de preuve et l'exécution autorisée sur
+les runners GitHub standard.
 
 
 Pour les hôtes avec GTK4/PyGObject installés et accessibles au Python du
@@ -55,14 +55,15 @@ fixé à `1280x1024x24` afin que les coordonnées du scénario restent détermin
 ## Attention : runtime Debian rootless
 
 `environnements/openai-chat-debian/gtk-python` utilise les dépendances
-isolées sous `runtime/root`. **`e2e/run.py` remplace actuellement
-`PYTHONPATH` par `src/` dans l'environnement du probe** : invoquer
-simplement ce runner avec le runtime rootless peut échouer avec
-`ModuleNotFoundError: gi` malgré un `check_import.py` réussi.
-Ne pas présenter ces deux opérations comme équivalentes. Le guide
-[`environnements/E2E-UX.md`](../environnements/E2E-UX.md#5-tests-e2e--distinguer-runner-système-et-runtime-rootless)
-décrit une commande `headless` + `gtk-python` pour le widget Diagnostics
-et ses limites. L'unification du runner reste à traiter séparément.
+isolées sous `runtime/root`. **`e2e/run.py` remplace actuellement `PYTHONPATH` par `src/` dans
+l'environnement du probe**. Pour le runtime Debian local rootless,
+transmettre `environnements/openai-chat-debian/gtk-python` par
+`--python` : ce lanceur restaure `env.sh` au démarrage du sous-processus.
+Sur les runners standard `E2E Smoke`, le venv Python
+`--system-site-packages` accède directement à GI/GTK4. Le guide
+[`environnements/E2E-UX.md`](../environnements/E2E-UX.md)
+distingue les deux chemins. Aucun scénario PASS n'est présumé sans rapport
+et captures vérifiés.
 
 ## Dépendances Linux
 

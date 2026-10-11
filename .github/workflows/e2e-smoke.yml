@@ -59,6 +59,42 @@ jobs:
           CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario search-filter-p0
 
+      - name: Replay Diagnostics P0 widget on real GTK4 / XTEST
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-1366
+
+      - name: Replay Diagnostics 1600 long report and keyboard / XTEST
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-large-1600
+
+      - name: Replay Diagnostics source states D01-D04 and slow checks on GTK4
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-states-1366
+
+      - name: Replay Diagnostics volume 10000 and provenance D06-D12 on GTK4
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-volume-1366
+
+      - name: Replay Cifereca Library to Diagnostics navigation via real GTK4 / XTEST
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-1366
+
+      - name: Replay Diagnostics slow check while navigating real MainWindow / XTEST
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-slow-1366
+
       - name: Replay Jeunesse P1 in a real virtual GTK4 environment
         if: ${{ !cancelled() }}
         env:

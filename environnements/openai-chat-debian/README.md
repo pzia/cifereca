@@ -2,7 +2,7 @@
 
 Pour l'usage **E2E UX**, commencer par [le guide transversal](../E2E-UX.md)
 (choix de la machine, commande complète, preuves attendues, cas DNS hors service,
-limitation actuelle du runner `e2e/run.py` et suspension GitHub Actions).
+distinction entre runtime local rootless et E2E sur runners GitHub standard).
 
 
 Recette reproductible pour exécuter et tester Cifereca dans un environnement
@@ -55,10 +55,12 @@ command -v ffmpeg || true
 ```
 
 Si `bootstrap.py` échoue sur la résolution DNS, réutiliser un cache Debian 13
-portable déjà disponible. Un relais GitHub n'est à envisager qu'après
-rétablissement du budget Actions et nouvel accord explicite : il est
-**suspendu depuis le 11/10/2026**. Le runner doit
-être Debian 13 pour respecter Python 3.13 et les paquets de cette recette.
+portable déjà disponible ou construire un cache via un relais GitHub
+ponctuel. Cette démarche concerne seulement **la machine Debian locale**.
+L'exécution E2E sur les runners standard Ubuntu 24.04 est autorisée
+séparément depuis le 11/10/2026, sans cache Debian transféré.
+Pour produire un cache Debian, le conteneur relais doit rester Debian 13
+afin de respecter Python 3.13 et les paquets de cette recette.
 Le modèle prêt à copier est `github-cache-relay.yml.example` dans ce répertoire.
 
 Séquence de relais recommandée :
