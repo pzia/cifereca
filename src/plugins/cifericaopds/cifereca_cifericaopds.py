@@ -11,6 +11,7 @@ from datetime import date
 import re
 import json
 import os
+import stat
 from pathlib import Path
 from threading import RLock
 from urllib.error import HTTPError, URLError
@@ -86,6 +87,43 @@ class JsonClient:
         if not isinstance(result, dict):
             raise ContractUnavailable("JSON object required")
         return result
+
+
+def _read_local_json(path: Path, *, label: str, optional: bool = False):
+    """Bounded, no-symlink JSON read; never include local paths in failures.
+
+    The file size is checked on the opened descriptor, not with a separate
+    path.stat(), to prevent accidental unbounded reads after a file swap.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        if optional:
+            return None
+        raise ContractUnavailable(f"missing local {label} fixture") from None
+    except OSError:
+        raise ContractUnavailable(f"unreadable local {label} JSON") from None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            file_status = os.fstat(handle.fileno())
+            if not stat.S_ISREG(file_status.st_mode):
+                raise ContractUnavailable(f"invalid local {label} file")
+            if file_status.st_size > MAX_JSON_BYTES:
+                raise ContractUnavailable(f"oversized local {label} JSON")
+            raw = handle.read(MAX_JSON_BYTES + 1)
+    except OSError:
+        raise ContractUnavailable(f"unreadable local {label} JSON") from None
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractUnavailable(f"oversized local {label} JSON")
+    try:
+        # Reject non-standard float literals rather than silently accepting NaN.
+        return json.loads(
+            raw.decode("utf-8"),
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise ContractUnavailable(f"invalid local {label} JSON") from None
 
 
 def _text(value, label, maximum=512):
@@ -266,11 +304,9 @@ class CifericaSession(ProviderSession):
         sid = self.provider_id.removeprefix("cifericaopds.")
         if self._mode == "fixture":
             path = self._directory / "fixture-results.json"
-            if not path.exists():
+            data = _read_local_json(path, label="results", optional=True)
+            if data is None:
                 return []
-            if path.stat().st_size > MAX_JSON_BYTES:
-                raise ContractUnavailable("oversized local results fixture")
-            data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or not isinstance(data.get(sid, {"items": []}), dict):
                 raise ContractUnavailable("invalid local results fixture")
             values = candidate_results(data.get(sid, {"items": []}), self.provider_id)
@@ -340,14 +376,16 @@ class CifericaCollection:
         self._show_synthetic = bool(cfg.get("show_synthetic", False))
         self._directory = context.data_directory
         path = self._directory / "inventory.json"
-        if path.is_file() and path.stat().st_size <= MAX_JSON_BYTES:
-            try:
+        try:
+            cached = _read_local_json(path, label="inventory", optional=True)
+            if cached is not None:
                 self._snapshot = validate_provider_collection_snapshot(
-                    json.loads(path.read_text(encoding="utf-8")),
-                    parent_plugin_id=PARENT_ID,
+                    cached, parent_plugin_id=PARENT_ID,
                 )
-            except (ValueError, TypeError, OSError):
-                self._snapshot = None
+        except (ContractUnavailable, ValueError, TypeError, RecursionError):
+            # A damaged cache cannot prevent the plugin from activating.
+            # It is neither published nor overwritten before an explicit refresh.
+            self._snapshot = None
         with self._lock:
             self._active = True
         return self
@@ -378,9 +416,7 @@ class CifericaCollection:
             mode = self._mode
         if mode == "fixture":
             path = directory / "fixture-sources.json"
-            if path.stat().st_size > MAX_JSON_BYTES:
-                raise ContractUnavailable("oversized local source fixture")
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = _read_local_json(path, label="source")
         else:
             # Experimental candidate route, not an assertion about upstream v0.2.
             data = self._client.get("/api/v1/sources")
