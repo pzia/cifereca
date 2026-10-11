@@ -643,8 +643,7 @@ def main():
         end = buffer.get_iter_at_offset(160)
         buffer.select_range(end, begin)
         assert buffer.get_has_selection()
-        ok, sel_start, sel_end = buffer.get_selection_bounds()
-        assert ok
+        sel_start, sel_end = buffer.get_selection_bounds()
         expected = buffer.get_text(sel_start, sel_end, False)
         assert "RAPPORT SUPPORT EXPURGÉ" in expected
         assert "SECRET-UX-TEST" not in expected
