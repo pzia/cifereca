@@ -354,6 +354,16 @@ class ReviewView:
                     article.critic_author, article.published_at, article.language,
                 ))), wrap=True, xalign=0,
             ))
+            card.append(self.Gtk.Label(
+                label='Fraîcheur : ' + ', '.join(
+                    sid + ' — ' + (
+                        'en cache récent' if self.plugin.store.freshness.get(sid)
+                        and self.plugin.store.freshness[sid] >= datetime.now(timezone.utc).isoformat()
+                        else 'à actualiser'
+                    )
+                    for sid in article.provenance
+                ), wrap=True, xalign=0,
+            ))
             card.append(self.Gtk.Label(label=article.excerpt, wrap=True, xalign=0, selectable=True))
             if article.url:
                 card.append(self.Gtk.LinkButton.new_with_label(
