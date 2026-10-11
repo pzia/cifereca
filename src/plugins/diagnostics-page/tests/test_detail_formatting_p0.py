@@ -100,3 +100,13 @@ def test_redacted_key_collisions_preserve_all_values_without_original_names():
     assert len(json.loads(shown)) == 3
     assert "alice@example.com" not in shown and "bob@example.com" not in shown
     assert "never reveal this" not in shown
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_api_and_access_keys_are_always_redacted(mode):
+    detail = {"api_key": "API-PRIVATE-ABC", "access_key": "ACCESS-PRIVATE-XYZ",
+              "api-key": "SECOND-API-SECRET", "status": "ok"}
+    shown = format_diagnostic_detail(detail, mode)
+    for secret in ("API-PRIVATE-ABC", "ACCESS-PRIVATE-XYZ", "SECOND-API-SECRET"):
+        assert secret not in shown
+    assert "ok" in shown
