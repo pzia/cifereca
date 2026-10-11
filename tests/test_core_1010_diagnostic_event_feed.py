@@ -262,3 +262,16 @@ def test_trace_field_values_are_bounded_to_safe_vocabulary(tmp_path):
     assert rows["events"][0]["message"] == "TRACE sync source status=ok count=12"
     for secret in ("Alice", "privatecustomer", "credentialref"):
         assert secret not in json.dumps(rows)
+
+
+def test_logger_path_never_exposes_freeform_identifiers(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync.private_customer [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:01,000 INFO cifereca.unknowncustomer [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:02,000 INFO cifereca.sync [Worker] TRACE sync source status=ok",
+    )
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert [r["module"] for r in result["events"]] == ["cifereca.sync", "cifereca", "cifereca.sync"]
+    assert "private_customer" not in str(result)
+    assert "unknowncustomer" not in str(result)
