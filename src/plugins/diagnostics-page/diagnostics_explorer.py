@@ -67,6 +67,8 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
     """Normalize only Core-published fields; omit unexpected keys entirely."""
     if not isinstance(payload, Mapping):
         return []
+    if not isinstance(search, str) or len(search) > 500:
+        raise ValueError("invalid diagnostics search")
     results: list[dict[str, str]] = []
     events = payload.get("events")
     if not isinstance(events, (list, tuple)):
