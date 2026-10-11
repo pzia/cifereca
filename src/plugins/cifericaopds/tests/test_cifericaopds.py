@@ -923,7 +923,7 @@ def test_snapshot_unavailable_after_deactivation_despite_prior_cache(tmp_path):
     callback = []
     collection.subscribe(lambda: callback.append("stale"))
     collection.deactivate()
-    with pytest.raises(ContractUnavailable, match="no active validated inventory"):
+    with pytest.raises(ContractUnavailable, match="no validated inventory"):
         collection.snapshot()
     with pytest.raises(ContractUnavailable):
         collection.create_provider("alpha")
