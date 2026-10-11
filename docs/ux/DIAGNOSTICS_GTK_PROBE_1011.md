@@ -26,6 +26,37 @@ contient **14 captures** vérifiées (6 grand écran, 4 widget 1366, 4 navigatio
 
 Cette preuve **renforce D05, D15 et D16**, sans valider les parcours `Esc`, l'export disque, le redimensionnement dynamique ni les 16 scénarios de la matrice. Le gestionnaire et les brokers restent simulés. Le code est dans la [PR #1146](https://github.com/pzia/cifereca/pull/1146) non fusionnée.
 
+## Agrandissement, redimensionnement dynamique, Escape et export (run du 11/10)
+
+Dernière campagne standard : [run E2E #38136016404](https://github.com/pzia/cifereca/actions/runs/38136016404)
+**SUCCESS global**, [artefact #11700768842](https://github.com/pzia/cifereca/actions/runs/38136016404/artifacts/11700768842).
+Le rapport `diagnostics-large-1600/screen.json` fournit **10 checks PASS**
+avec **9 captures** à 1600 × 1000, toutes vérifiées par SHA-256.
+
+- **D16 partiel PASS :** redimensionnement de la *vraie fenêtre GTK visible*
+  **1560×870 → 1240×800 → 1560×870** (Xvfb reste 1600×1000),
+  **0 pixel de débordement horizontal global**. Captures
+  `06-live-resized-narrow-1600.png` et
+  `07-live-resized-wide-1600.png`.
+- **D05/D15 partiels PASS :** 250 lignes de rapport fictif, scroll interne
+  jusqu'à **3724 px** sans bouger le scroll extérieur (**1286 px**),
+  Espace, Tab et Shift+Tab **XTEST** avec focus contrôlé.
+- **D15 NON SATISFAIT :** Escape XTEST, focus sur « Réduire » :
+  l'agrandissement reste actif. `escape_collapses_or_reduces_report=false`.
+- **D13 NON SATISFAIT :** copie du rapport expurgé vers le presse-papiers
+  existante ; **aucune action explicite d'export vers un fichier** trouvée
+  dans le widget. `file_export_action_present=false`.
+- Ces deux écarts **produit** sont transmis au rôle **Plugins/CoreUI**
+  dans [#1158](https://github.com/pzia/cifereca/issues/1158), sans
+  modification de la page par l'agent UX. Le test E2E vaut PASS pour
+  **ses 10 assertions exécutées**, mais son `unmet_criteria` et la recette
+  D01–D16 restent incomplets.
+
+Les 3 scénarios `diagnostics-1366`,
+`diagnostics-navigation-1366` et `diagnostics-large-1600`
+restent PASS sur ce même run (total **17 PNG** diagnostics). Pas de
+recette d'export disque fictive et pas de faux PASS pour Escape.
+
 ## Exécuter sur un runner GTK préparé
 
 Depuis la racine du dépôt, avec `xvfb-run`, GTK4/libadwaita,
