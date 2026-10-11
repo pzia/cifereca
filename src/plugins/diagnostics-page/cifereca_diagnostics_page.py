@@ -42,12 +42,35 @@ _MAX_DETAIL_CHILDREN = 50
 _MAX_DETAIL_TEXT = 800
 
 
+_ANSI_CSI = re.compile(r"\\x1b\\[[0-?]*[ -/]*[@-~]")
+
+
+def _neutralize_diagnostic_controls(value: str) -> str:
+    """Strip display-control sequences *before* secret pattern recognition.
+
+    For example, 'token\\x1b[31m=private' must become 'token=private' so
+    the complete sensitive value can be redacted instead of being displayed.
+    Preserve newlines and tabs in readable diagnostic reports.
+    """
+    import unicodedata
+
+    without_ansi = _ANSI_CSI.sub("", value)
+    return "".join(
+        char for char in without_ansi
+        if char in ("\\n", "\\t") or (
+            not (ord(char) < 32 or 0x7F <= ord(char) <= 0x9F)
+            and unicodedata.category(char) != "Cf"
+        )
+    )
+
+
 def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT) -> str:
     # A partial email, URL or token can straddle the preview cut. Redact
     # complete values BEFORE truncating anything shown or copied to the UI.
     # Fail closed on oversized untrusted text to bound regex scanning.
     if len(value) > _MAX_DETAIL_BYTES:
         return "<texte trop long : contenu masqué>"
+    value = _neutralize_diagnostic_controls(value)
     text = _DIAGNOSTIC_URL.sub("<URL expurgée>", value)
     text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
     text = _DIAGNOSTIC_PATH.sub("<chemin expurgé>", text)
