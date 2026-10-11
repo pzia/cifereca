@@ -69,5 +69,55 @@ class AttentionCoverageTests(unittest.TestCase):
         self.assertIn("Paris · connexion requise",labels)
         self.assertIn("Profil ADE à associer",labels)
 
+
+class CompactDashboardTests(unittest.TestCase):
+    def test_counts_are_not_duplicated_as_another_local_statistic(self):
+        source={'label':'Local','provider_id':'local','kind':'local','count':562}
+        self.assertIn('déjà comptée',mod.compact_source_text(source,total_local_books=562))
+        self.assertNotIn('562',mod.compact_source_text(source,total_local_books=562))
+        self.assertIn('42 livre(s) d’origine',mod.compact_source_text(
+            dict(source,count=42),total_local_books=562))
+
+    def test_grouping_keeps_public_auth_and_unknown_origins_distinct(self):
+        row={
+            'providers':['local','gutenberg','paris'],
+            'sources':[{'provider_id':'paris','label':'Paris','connected':False},
+                       {'provider_id':'gutenberg','label':'Gutenberg','connected':False}],
+            'statistics':{'local_books':562,
+                          'sources':{'local':562,'gutenberg':80,'paris':24,'orphan-provider':9}},
+        }
+        groups=mod.compact_source_groups(row)
+        self.assertEqual([r['provider_id'] for r in groups['local']],['local'])
+        self.assertEqual([r['provider_id'] for r in groups['public']],['gutenberg'])
+        self.assertEqual([r['provider_id'] for r in groups['authenticated']],['paris'])
+        self.assertEqual([r['provider_id'] for r in groups['unknown']],['orphan-provider'])
+        self.assertIn('catalogue public',mod.compact_source_text(
+            {'label':'Gallica','kind':'public'}))
+        self.assertIn('non connectée',mod.compact_source_text(groups['authenticated'][0]))
+        self.assertNotIn('connect',mod.compact_source_text(groups['public'][0]))
+
+    def test_sync_never_assumes_unknown_means_zero(self):
+        self.assertEqual(mod.compact_sync_text({}),
+            'État : Jamais synchronisée · acquisitions : — · actions requises : — · erreurs : —')
+        self.assertEqual(
+            mod.compact_sync_text({'status':'partial','new_acquisitions':0,
+                                   'attention_required':2,'errors':1}),
+            'État : Partielle · acquisitions : 0 · actions requises : 2 · erreurs : 1',
+        )
+        self.assertIn('erreurs : —',mod.compact_sync_text({'errors':None}))
+        self.assertIn('erreurs : —',mod.compact_sync_text({'errors':False}))
+
+    def test_attention_preserves_the_first_highest_priority_sync_action(self):
+        row={
+            'providers':['paris'],
+            'sources':[{'provider_id':'paris','connected':False}],
+            'statistics':{'known_loans':None},
+            'sync':{'attention_required':2,'errors':1,'status':'partial'},
+        }
+        items=mod.attention_items(row,now=0)
+        self.assertEqual(items[0]['key'],'sync')
+        self.assertEqual(items[0]['action_label'],'Réessayer')
+        self.assertNotIn('loans-stale',[item['key'] for item in items])
+
 if __name__=="__main__":
     unittest.main()
