@@ -189,6 +189,10 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
         "notice": "Événements expurgés du Core ; pas de corrélation de tâches prouvée",
         "events": selected,
     }, ensure_ascii=False, indent=2, allow_nan=False)
-    if len(result.encode("utf-8")) > 24_000:
+    try:
+        size = len(result.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ValueError("diagnostic export contains invalid Unicode") from exc
+    if size > 24_000:
         raise ValueError("diagnostic export exceeds the 24 KB limit")
     return result
