@@ -122,3 +122,32 @@ inaccessible ou redirigée n'est pas une preuve de DOM. Avant toute
 implémentation d'adaptateur, comparer également au moins deux fiches,
 qualifier les âges *propres à l'édition* et rejeter les produits hors livre.
 Aucune supposition de DOM commun avec Milan.
+
+
+## Recherche locale multichamps Jeunesse — P2 #1023 (0.4.17)
+
+Le cache Jeunesse conserve maintenant, lorsqu'ils sont réellement fournis,
+les résumés HTML nettoyés, séries, collections et prix littéraires.
+Ces champs restent distincts des preuves d'âge et ne sont jamais inventés.
+La fusion de notices ne transfère ces valeurs qu'en cas de preuve forte
+(ISBN/URL canonique/identifiant source), pas par seul titre/auteur.
+
+Le champ unique de recherche utilise un **AND de mots significatifs**
+trouvés potentiellement dans plusieurs champs : titre, auteurs, sujets,
+séries, collections, prix, éditeur, description, ISBN et références de
+notice, date, langue, format et libellé d'âge explicitement attesté.
+La normalisation ignore casse, accents, apostrophes, tirets et
+ponctuation ; les mots-outils courants français ne deviennent pas des
+conditions impératives (ex. `prix du quai` ↔ `prix quai`).
+Les guillemets `"..." ` ou `« ... »` exigent en plus une expression
+contiguë dans une même métadonnée. Un classement déterministe favorise
+titre > auteurs > séries/collections/prix > thèmes > éditeur > résumé.
+Une recherche vide conserve l'ordre des notices.
+
+**Aucun LLM ni réseau** n'intervient dans le filtre. Les critères Source,
+Âge, Type d'âge, Langue, Format, Type et Thèmes conservent leur sémantique
+composable ; les âges inférés ne sont pas transformés en preuves. Ce
+correctif porte sur le catalogue **Jeunesse en cache seulement** ; la
+recherche générale Bibliothèque/Recherche et son moteur Core (issue #1023)
+restent à traiter indépendamment. Pas d'extension du périmètre à des
+notices qui ne sont pas encore ingérées.
