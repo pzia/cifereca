@@ -1009,3 +1009,134 @@ def test_ai_support_report_always_requests_passive_core_mode():
     )
     assert "report_method(verbose=False, include_checks=False)" in code
     assert 'report.get("checks_executed") is not False' in code
+
+
+def test_ai_multi_paragraph_response_retains_beyond_800_chars_in_markdown_and_json():
+    class LongAnalysis(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible",
+                model="qa-llm", text=(
+                    "Constats : " + "a" * 950
+                    + "\nHypothèses : " + "b" * 940
+                    + "\nContradictions : " + "c" * 960
+                    + "\nVérifications : " + "d" * 900
+                ),
+            )
+
+    model = LongAnalysis(remote=True)
+    preview = prepare_analysis(model, FakeBroker([event(ref="ref-1")]))
+    report = analyze_with_consent(
+        model, preview, approval_id=preview["approval_id"],
+    )
+    assert report["ok"] is True
+    for title in ("Constats :", "Hypothèses :", "Contradictions :", "Vérifications :"):
+        assert title in report["text"]
+    assert len(report["text"]) > 3000
+    exported = json.loads(export_analysis_json(report))
+    assert exported["analysis"] == report["text"]
+    assert len(exported["analysis"]) > 3000
+    assert len(json.dumps(exported, ensure_ascii=False).encode("utf-8")) <= 24_000
+
+
+def test_ai_long_response_redacts_secrets_after_first_800_chars_before_cut():
+    class PrivateAnalysis(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible",
+                model="qa-llm", text=(
+                    "Analyse : " + "a" * 1000
+                    + "\nDonnée de contexte alice@example.com "
+                    + "token=PRIVATE_TOKEN_LATE "
+                    + "https://example.org/signed?token=PRIVATE_URL "
+                    + "/home/alice/private.log"
+                    + "\nFin du rapport"
+                ),
+            )
+
+    model = PrivateAnalysis(remote=True)
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    blob = export_analysis_json(result)
+    for secret in ("PRIVATE_TOKEN_LATE", "PRIVATE_URL",
+                   "alice@example.com", "/home/alice"):
+        assert secret not in result["text"] and secret not in blob
+    assert "Fin du rapport" in result["text"]
+    assert "Fin du rapport" in json.loads(blob)["analysis"]
+
+
+def test_ai_long_response_caps_after_full_redaction_with_visible_notice():
+    class OverlongAnalysis(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible",
+                model="qa-llm", text="a" * 3950 + " token=NEVER_LEAK" + "b" * 50,
+            )
+
+    model = OverlongAnalysis()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    report = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert "NEVER_LEAK" not in report["text"]
+    assert len(report["text"]) <= 4000
+    assert "[tronqué]" in report["text"]
+    exported = json.loads(export_analysis_json(report))
+    assert exported["analysis"] == report["text"]
+
+
+def test_ai_invalid_unicode_is_not_sent_to_clipboard():
+    class BrokenResponse(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible",
+                model="qa-llm", text="Unicode invalid " + chr(0xD800),
+            )
+
+    model = BrokenResponse()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    with pytest.raises(ValueError, match="invalid_llm_response_unicode"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 1
+
+
+def test_default_diagnostic_detail_still_truncates_at_800_characters():
+    from cifereca_diagnostics_page import redacted_detail, redacted_ai_response
+    original = "A" * 1200
+    assert "[tronqué]" in redacted_detail(original)
+    assert len(redacted_detail(original)) < 900
+    assert redacted_ai_response(original) == original
+    with pytest.raises(ValueError, match="invalid_diagnostics_text_budget"):
+        redacted_detail(original, max_text=40_000)
+
+
+@pytest.mark.parametrize("private, marker", [
+    (" token=PRIVATE_TOKEN", "<expurgé>"),
+    (" alice@example.com", "<courriel expurgé>"),
+    (" /home/alice/private.log", "<chemin expurgé>"),
+    (" https://example.org/path?token=PRIVATE_URL", "<URL expurgée>"),
+    (" Authorization: Bearer PRIVATE_AUTH", None),
+])
+def test_long_ai_redaction_marker_is_atomic_and_export_is_identical(private, marker):
+    from cifereca_diagnostics_page import redacted_ai_response
+
+    # Every replacement starts near the 3960-character cap and crosses it.
+    private_value = "a" * 3950 + private + "b" * 70
+    safe = redacted_ai_response(private_value)
+    if marker is not None:
+        assert marker in safe
+    # An authorization key that crosses the cutoff may be discarded entirely.
+    assert "\n… [tronqué]" in safe
+    assert len(safe) <= 4000
+    for secret in (
+        "PRIVATE_TOKEN", "alice@example.com", "/home/alice",
+        "PRIVATE_URL", "PRIVATE_AUTH",
+    ):
+        assert secret not in safe
+
+    # The displayed result and the JSON export must contain exactly the same
+    # already-redacted string after the second presentation redaction.
+    from cifereca_diagnostics_page import redacted_detail
+    assert redacted_detail(safe, max_text=4000) == safe
