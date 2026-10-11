@@ -4721,23 +4721,29 @@ class LibraryService:
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
         confirmed: bool = False,
     ) -> dict[str, Any]:
-        """Explicitly confirm the ADEPT owner of a linked Paris borrower.
+        """Explicitly pin a Paris account's exceptional fulfillment identity.
 
         This operation must be initiated by an authorized user, never by sync,
         and never by guessing from the connected/current UI identity.
         """
+        if account_id is None:
+            raise ValueError("Paris borrower account is required")
+        borrower = str(account_id).strip()
+        if borrower in {"", "primary"}:
+            borrower = "primary"
         matches = [
             account for account in self.accounts
             if str(account.provider_id).lower() == "paris"
             and str(account.credential_id) == str(credential_id)
-            and not account.is_primary
-            and str(account.unique_id or "").strip() == str(account_id or "").strip()
+            and ((borrower == "primary" and account.is_primary)
+                 or (borrower != "primary" and not account.is_primary
+                     and str(account.unique_id or "").strip() == borrower))
         ]
         if (
-            len(matches) != 1 or not str(account_id or "").strip()
+            len(matches) != 1
             or str(matches[0].identity_id) != self.storage.identity_for_connection("paris", credential_id)
         ):
-            raise ValueError("linked Paris borrower not uniquely identified for connection")
+            raise ValueError("Paris borrower not uniquely identified for connection")
         owner = self.identity_by_id(borrower_identity_id)
         if owner is None:
             raise ValueError("unknown ADEPT borrower identity")
@@ -4745,12 +4751,12 @@ class LibraryService:
         if not profile_id:
             raise ValueError("ADEPT borrower identity has no stable profile binding")
         self.storage.paris_borrower_adept_binding_put(
-            credential_id=credential_id, account_id=account_id,
+            credential_id=credential_id, account_id=borrower,
             borrower_identity_id=owner.identity_id, profile_id=profile_id,
             confirmed=confirmed,
         )
         return self.storage.paris_borrower_adept_binding_get(
-            credential_id=credential_id, account_id=account_id,
+            credential_id=credential_id, account_id=borrower,
         )
 
     def _paris_adept_identity_for_loan(
@@ -4758,9 +4764,9 @@ class LibraryService:
     ) -> tuple[str | None, str | None]:
         """Resolve the Adobe borrower separately from the Paris connection.
 
-        The primary borrower may use its proven connection identity. A linked
-        borrower needs an explicit pinned grant, even if its account happens to
-        be displayed under the same Cifereca identity as the connection.
+        The primary account normally uses its proven connection identity.
+        An explicit exceptional grant takes precedence without changing that
+        identity's normal profile. Linked accounts always require a grant.
         """
         if loan.source_account_id is None:
             return None, "adept_borrower_ambiguous"
@@ -4786,14 +4792,16 @@ class LibraryService:
                 credential_id=credential,
             ):
                 return None, "adept_borrower_ambiguous"
-            return connection_identity_id, None
+            borrower = "primary"
 
-        if not borrower or borrower == "primary":
+        if not matches[0].is_primary and (not borrower or borrower == "primary"):
             return None, "adept_borrower_ambiguous"
         binding = self.storage.paris_borrower_adept_binding_get(
             credential_id=credential, account_id=borrower,
         )
         if binding is None:
+            if matches[0].is_primary:
+                return connection_identity_id, None
             return None, "adept_borrower_binding_required"
         if str(binding.get("connection_identity_id") or "") != connection_identity_id:
             return None, "adept_borrower_connection_changed"
