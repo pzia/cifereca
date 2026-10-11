@@ -299,6 +299,9 @@ def main():
         # The widget is keyboard activated via real XTEST events, not signal emission.
         assert button.grab_focus() is not False
         assert button.has_focus(), "Le focus clavier doit être visible sur Copier"
+        # Prevent an old clipboard value from masquerading a failed key press.
+        clipboard = Gdk.Display.get_default().get_clipboard()
+        clipboard.set("SENTINELLE_UX_AVANT_COPIE")
         device[0].key("space", True)
         device[0].key("space", False)
         report["checks"]["copy_button_keyboard_xtest"] = True
@@ -307,6 +310,7 @@ def main():
         def clipboard_done(clipboard, task):
             try:
                 actual = clipboard.read_text_finish(task)
+                assert actual != "SENTINELLE_UX_AVANT_COPIE", "Le raccourci clavier n'a pas activé Copier"
                 assert actual == expected, "Presse-papiers différent du JSON affiché"
                 assert "EXEMPLE-PRIVE-UX" not in actual
                 assert "SECRET-UX-TEST" not in actual
