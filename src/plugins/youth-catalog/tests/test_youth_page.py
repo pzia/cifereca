@@ -636,7 +636,7 @@ def test_youth_diagnostic_presentation_shows_bounded_receipts_and_safe_rejection
     }
     headline, lines = source_diagnostic_presentation((row,))
     assert "1 dernier(s) essai(s) en échec" in headline
-    assert "reçues : 4/10 demandées" in lines[0]
+    assert "reçues : 4 · limite demandée : 10 (pas un total de notices disponibles)" in lines[0]
     assert "3 rejet(s) (2 sans titre, 1 autres)" in lines[0]
     assert "cache : 2 notice(s)" in lines[0]
     assert "private.example" not in repr(lines)
@@ -1354,3 +1354,30 @@ def test_youth_detail_typed_fields_do_not_merge_authors_and_subjects():
     assert len([f for f in fields if f.id.startswith("format-")]) == 2
     assert len([f for f in fields if f.id.startswith("source-")]) == 2
     assert next(f for f in fields if f.id == "isbn").kind == "isbn"
+
+
+def test_923_core_bridge_partial_host_has_no_action_updater():
+    # Core #906 extracts selected() against a light host, not a real GTK View.
+    # This must not break the previously supported callback contract.
+    seen, emptied = [], []
+    partial = NS(
+        rows={"a": youth_book(record_id="a", title="Un livre")},
+        host=NS(),
+        master=NS(show_detail=seen.append, empty_detail=lambda: emptied.append(True)),
+    )
+    YouthView.selected(partial, NS(key="a"))
+    assert len(seen) == 1 and partial.selected_book is partial.rows["a"]
+    YouthView.selected(partial, None)
+    assert emptied == [True] and partial.selected_book is None
+
+
+def test_923_real_view_selected_refreshes_action_availability():
+    calls = []
+    view = object.__new__(YouthView)
+    view.rows = {"a": youth_book(record_id="a", title="Une histoire")}
+    view.host = NS()
+    view.master = NS(show_detail=lambda _: None, empty_detail=lambda: None)
+    view.update_action_availability = lambda: calls.append("refresh")
+    view.selected(NS(key="a"))
+    view.selected(None)
+    assert calls == ["refresh", "refresh"]

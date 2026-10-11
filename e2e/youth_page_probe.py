@@ -484,12 +484,52 @@ def main() -> int:
         app.quit()
 
 
+
+    def audit_milan_action_states(stage, expected):
+        """#923: real GTK state, tooltips and HTTP counter at every transition."""
+        assert args.milan, "Milan action audit only belongs to the offline Milan scenario"
+        buttons = page.view._action_buttons
+        required = (
+            "Collecter cette source", "Plus de résultats",
+            "Enrichir la bibliographie", "Ouvrir la fiche Bibliothèque",
+        )
+        assert set(buttons) == set(required), f"Missing GTK actions: {buttons!r}"
+        state = {}
+        for label in required:
+            button = buttons[label]
+            assert isinstance(button, Gtk.Button) and button.get_mapped(), (
+                f"{stage}: {label} is missing from the mapped GTK window"
+            )
+            enabled = bool(button.get_sensitive())
+            tooltip = button.get_tooltip_text() or ""
+            assert tooltip.strip(), f"{stage}: {label} has no help text"
+            state[label] = {"enabled": enabled, "tooltip": tooltip}
+            if label in expected:
+                assert enabled is expected[label], (
+                    f"{stage}: {label} expected {expected[label]} got {enabled}: {tooltip}"
+                )
+        result.setdefault("milan_action_states_923", []).append({
+            "stage": stage,
+            "source": page.view.selected_source_plugin(),
+            "identity_id": page.view.identity_id(),
+            "next_cursor": page.view.next_cursor,
+            "selected_book": getattr(page.view.selected_book, "record_id", None),
+            "request_count": len(requests),
+            "buttons": state,
+        })
+
     def milan_start_ui():
         assert len(page.view.sources) == 1, "Installed Milan provider not listed"
         assert page.view.sources[0].plugin_id == "youth.source.milan"
         assert page.view.source.get_model().get_n_items() == 2
         assert_rows()
         assert requests == [], "Opening Milan page triggered remote HTTP"
+        audit_milan_action_states("empty-all-sources", {
+            "Collecter cette source": False,
+            "Plus de résultats": False,
+            "Enrichir la bibliographie": False,
+            "Ouvrir la fiche Bibliothèque": False,
+        })
         capture("00-milan-source-no-cache")
         page.view.source.set_selected(1)
         later(180, milan_collect)
@@ -497,6 +537,12 @@ def main() -> int:
     def milan_collect():
         assert page.view.selected_source_plugin() == "youth.source.milan"
         assert not requests, "Selecting Milan triggered remote HTTP"
+        audit_milan_action_states("milan-selected-no-results", {
+            "Collecter cette source": True,
+            "Plus de résultats": False,
+            "Enrichir la bibliographie": False,
+            "Ouvrir la fiche Bibliothèque": False,
+        })
         device.click_widget(collect_button())
         later(170, milan_success)
 
@@ -512,6 +558,12 @@ def main() -> int:
         assert "4 notice(s) reçue(s) de Éditions Milan" in status, status
         assert "page suivante disponible" in status, status
         assert len(catalog.search_cached("camille")) == 4
+        audit_milan_action_states("milan-first-page", {
+            "Collecter cette source": True,
+            "Plus de résultats": True,
+            "Enrichir la bibliographie": False,
+            "Ouvrir la fiche Bibliothèque": False,
+        })
         # Immediate capture documents the actual empty -> list CROSSFADE.
         capture("01-milan-collected-four")
         later(1100, milan_list_settled)
@@ -537,6 +589,12 @@ def main() -> int:
         expected_uri = book.notice_url
         assert expected_uri.startswith("https://www.editionsmilan.com/livres/")
         assert page.view.master._page.detail._rendered_document_urls == {expected_uri}
+        audit_milan_action_states("milan-book-selected", {
+            "Collecter cette source": True,
+            "Plus de résultats": True,
+            "Enrichir la bibliographie": False,
+            "Ouvrir la fiche Bibliothèque": True,
+        })
         def links(widget):
             result_links = []
             if isinstance(widget, Gtk.LinkButton):
@@ -599,6 +657,7 @@ def main() -> int:
             return None
         more = find_more(page.view.widget)
         assert more is not None and more.get_mapped(), "Milan pagination button missing"
+        assert more.get_sensitive(), "Available cursor must enable pagination"
         device.click_widget(more)
         later(170, milan_page_two)
 
@@ -610,6 +669,10 @@ def main() -> int:
         assert len(requests) == 12, f"Expected listing + 2 page-2 detail requests: {requests!r}"
         assert requests[9] == "https://www.editionsmilan.com/livres/page/2/"
         assert not page.view.next_cursor, "Milan terminal page still exposes next cursor"
+        audit_milan_action_states("milan-terminal-page", {
+            "Collecter cette source": True,
+            "Plus de résultats": False,
+        })
         capture("03-milan-page-two-appended")
         fault["unavailable"] = True
         device.click_widget(collect_button())
@@ -626,6 +689,10 @@ def main() -> int:
         assert len(catalog.search_cached("camille")) == 5
         result["milan_requests"] = list(requests)
         result["milan_outage_feedback"] = message
+        audit_milan_action_states("milan-outage-cache-retained", {
+            "Collecter cette source": True,
+            "Plus de résultats": False,
+        })
         capture("04-milan-outage-cache-preserved")
         page.view.age.set_selected(1)  # 0 years; all attested Milan ages start at 1+
         later(200, milan_empty)
@@ -634,6 +701,12 @@ def main() -> int:
         assert_rows()
         assert len(requests) == 13, "Local age filter unexpectedly contacted Milan"
         assert page.view.master._page.list_stack.get_visible_child_name() == "empty"
+        audit_milan_action_states("milan-filtered-empty", {
+            "Collecter cette source": True,
+            "Plus de résultats": False,
+            "Enrichir la bibliographie": False,
+            "Ouvrir la fiche Bibliothèque": False,
+        })
         capture("05-milan-empty-without-request")
         # Exit local no-results filter; only a further XTEST click may retry.
         page.view.age.set_selected(0)
@@ -658,6 +731,10 @@ def main() -> int:
         assert len(catalog.search_cached("camille")) == 4
         assert page.view.next_cursor == "2", "Recovery should expose the fresh second page"
         assert "page suivante disponible" in status and "Échec de la source" not in status, status
+        audit_milan_action_states("milan-recovered", {
+            "Collecter cette source": True,
+            "Plus de résultats": True,
+        })
         result["milan_requests_after_recovery"] = list(requests)
         result["milan_recovery_feedback"] = status
         capture("06-milan-recovered-first-page")
@@ -1009,10 +1086,10 @@ def main() -> int:
         )
         result["detail_provenance"] = shown
         capture("06-keyboard-search-detail")
-        later(160, click_collect_without_source)
+        later(160, inspect_collect_without_source)
 
-    def click_collect_without_source():
-        """XTEST no-source action: explicit feedback, no implicit remote request."""
+    def inspect_collect_without_source():
+        """#923: no source means a disabled GTK action, not a clickable error."""
         assert not page.view.sources, "No remote youth provider should be installed"
 
         def find_collect(widget):
@@ -1028,16 +1105,33 @@ def main() -> int:
 
         button = find_collect(page.view.widget)
         assert button is not None and button.get_mapped(), "Collect action is not visible"
-        result["no_source_click"] = device.click_widget(button)
+        assert not button.get_sensitive(), "No-source collect action must be disabled"
+        reason = button.get_tooltip_text() or ""
+        assert "source Jeunesse" in reason and "collecte" in reason, reason
+        assert page.view.actions_hint.get_mapped(), "The no-source help must be visible"
+        hint = page.view.actions_hint.get_text()
+        assert "Toutes les sources" in hint and "cache" in hint.lower(), hint
+        assert requests == [], "Disabled no-source action must not start HTTP"
+        result["no_source_action_state"] = {
+            "enabled": button.get_sensitive(),
+            "tooltip": reason,
+            "hint": hint,
+            "status_before": page.view.status.get_text(),
+            "requests_before": len(requests),
+        }
+        # Do not synthesize a click on an insensitive widget: that is precisely
+        # the obsolete behavior which made the GTK E2E red after #923.
         later(200, verify_no_source)
 
     def verify_no_source():
-        message = page.view.status.get_text()
-        assert "Choisissez une source Jeunesse avant de collecter." in message, message
+        assert requests == [], "No remote request without a source"
+        assert page.view.status.get_text() == result["no_source_action_state"]["status_before"], (
+            "Inspecting an unavailable action must not inject a click or change status"
+        )
         assert_rows("interest-eight")
         assert page.view.selected_book is not None
         assert page.view.selected_book.record_id == "interest-eight"
-        result["no_source_feedback"] = message
+        result["no_source_feedback"] = result["no_source_action_state"]["hint"]
         capture("07-no-source-feedback")
         page.view.age.set_selected(0)
         page.view.query.set_text("Age inconnu")
