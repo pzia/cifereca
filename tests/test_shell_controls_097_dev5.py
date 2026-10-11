@@ -1,3 +1,4 @@
+from tests.gui_source import gui_source_text
 import ast
 import unittest
 from pathlib import Path
@@ -42,7 +43,7 @@ class ShellControls(unittest.TestCase):
     def setUpClass(cls):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
         cls.path=source
-        tree=ast.parse(source.read_text());main=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MainWindow')
+        tree=ast.parse(gui_source_text(source));main=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MainWindow')
         names={'_create_shell_header','_ensure_pages_menu_rightmost','_refresh_header_actions','_invoke_ui_action','_install_shell_shortcuts','_quit_application','_open_pages_menu','_cycle_page'}
         methods=[n for n in main.body if isinstance(n,ast.FunctionDef) and n.name in names]
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
