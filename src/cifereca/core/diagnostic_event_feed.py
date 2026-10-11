@@ -112,7 +112,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "event_id": _event_id("app_log", ts, message),
             })
     status = "partial" if partial else ("available" if observed else "unavailable")
-    return events, {"source": "app_log", "status": status if events else ("empty" if observed else "unavailable"),
+    return events, {"source": "app_log", "status": "partial" if partial else (status if events else ("empty" if observed else "unavailable")),
                     "reason": "log_tail_bounded" if partial else ("no_matching_events" if observed and not events else "")}
 
 
