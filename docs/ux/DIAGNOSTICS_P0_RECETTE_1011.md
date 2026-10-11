@@ -1,8 +1,37 @@
 # Recette UX P0 — Diagnostics (#1011)
 
-Statut : contrat UX, à exécuter sur l'application GTK réelle ; **aucune validation E2E revendiquée ici**.  
-Référence : branche `main`, environnement GTK sous `environnement/` du dépôt. Les ZIP GTK joints aux conversations sont obsolètes.  
-Propriétaire : UX (spécification et validation) ; Plugins/CoreUI (implémentation). Pas de modification CI/CD.
+Statut : **recette E2E partielle PASS au 11/10/2026**, compléments D01–D16 à exécuter avant clôture.  
+Référence : `main` pour le contrat, [PR #1146](https://github.com/pzia/cifereca/pull/1146) pour les nouveaux scénarios, [guide environnement E2E](../../environnements/E2E-UX.md). Les ZIP GTK historiques ne sont pas des fixtures.  
+Propriétaire : UX (spécification et validation) ; Plugins/CoreUI (implémentation). Pas de modification CI/CD hors passage dans le workflow E2E existant.
+
+## Validation GTK effective, avec limites
+
+Le workflow existant [E2E Smoke #38132474643](https://github.com/pzia/cifereca/actions/runs/38132474643)
+sur **Ubuntu 24.04 / GTK4 / Xvfb** est **SUCCESS**. Rapports et 8 PNG
+dans [l'artefact #11699662411](https://github.com/pzia/cifereca/actions/runs/38132474643/artifacts/11699662411),
+avec `status=PASS`, commit de test `8e7c4fa9ca2de4a11a72826d5070bb3f6328de50`
+et SHA-256 concordants. Voir [la fiche de preuves GTK](DIAGNOSTICS_GTK_PROBE_1011.md).
+
+| Sous-recette | Preuve acquise | Limite |
+| --- | --- | --- |
+| Widget `diagnostics-1366` | 6 checks PASS, 4 PNG ; lecture rapport, agrandissement, JSON expurgé, copie clavier XTEST/presse-papiers, pagination 50→15, aucune activation IA/check implicite | widget isolé et brokers simulés ; pas d'export fichier, scroll extrême ni batterie clavier complète |
+| Navigation `diagnostics-navigation-1366` | 6 checks PASS, 4 PNG ; vraie `MainWindow`, clics XTEST Bibliothèque → groupe Configuration → Diagnostics → Bibliothèque ; route, titre et contenu visibles | contribution réelle montée avec doubles de gestionnaire de plugins et brokers ; pas d'installation ZIP ni de profil utilisateur réel |
+
+**Avancement D01–D16 :** preuves partielles pour **D05** (rapport et
+agrandissement, mais pas le scroll de bout en bout ni le focus de retour),
+**D07** (un JSON expurgé, pas tous les types limites), **D13**
+(copie presse-papiers, mais pas sélection `Ctrl+C` ni export disque),
+**D14** (aucune IA ou vérification active implicite, pas tous les statuts)
+et **D16** (1366 px seulement, pas de redimensionnement ni grand écran).
+Les **D01–D04, D06, D08–D12, D15** ainsi que les parties manquantes
+des précédents restent à vérifier. Ne pas cocher l'ensemble de la matrice,
+ni clôturer #1011 sur ces seuls scénarios.
+
+**Intégration :** la PR [#1146](https://github.com/pzia/cifereca/pull/1146)
+est toujours soumise au CI ordinaire ; l'inventaire de plugins non classés
+est suivi dans [#1148](https://github.com/pzia/cifereca/issues/1148).
+Le PASS E2E **ne** permet **pas** de fusionner une PR dont le CI requis
+est rouge.
 
 ## Architecture d'information
 
