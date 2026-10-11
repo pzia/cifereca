@@ -346,13 +346,23 @@ def main():
         assert len(rows) == 1, (placeholder, len(rows))
         return rows[0]
 
+    def focus_inside(widget):
+        # Gtk.Entry delegates keyboard focus to its internal Gtk.Text child:
+        # entry.has_focus() can be False although the entry is visibly focused.
+        current = window[0].get_focus()
+        while current is not None:
+            if current is widget:
+                return True
+            current = current.get_parent()
+        return False
+
     def begin_keyboard_filter():
         assert args.width == 1366
         assert len(broker.event_queries) == 2
         module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
         search = entry_with_placeholder("Rechercher dans cette page")
         assert module.grab_focus() is not False
-        until(lambda: module.has_focus(),
+        until(lambda: focus_inside(module),
               lambda: type_keyboard_module(module, search), seconds=5)
 
     def type_keyboard_module(module, search):
@@ -366,7 +376,7 @@ def main():
         assert len(broker.event_queries) == 2
         report["checks"]["D15_typing_does_not_implicitly_query"] = True
         press("Tab")
-        until(lambda: search.has_focus(),
+        until(lambda: focus_inside(search),
               lambda: keyboard_tab_backward(module), seconds=5)
 
     def keyboard_tab_backward(module):
@@ -375,7 +385,7 @@ def main():
             press("Tab")
         finally:
             device[0].key("Shift_L", False)
-        until(lambda: module.has_focus(),
+        until(lambda: focus_inside(module),
               keyboard_filter_submit, seconds=5)
 
     def keyboard_filter_submit():
@@ -396,7 +406,7 @@ def main():
         screenshot("04-module-filter-enter-1366")
         module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
         assert module.grab_focus() is not False
-        until(lambda: module.has_focus(),
+        until(lambda: focus_inside(module),
               lambda: clear_keyboard_filter(module), seconds=5)
 
     def clear_keyboard_filter(module):
