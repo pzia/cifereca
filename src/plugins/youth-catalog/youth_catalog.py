@@ -558,7 +558,7 @@ def normalize_record(raw: object, *, source_id: str) -> YouthBook:
         publishers=_names(_field(raw, "publishers") or _field(raw, "publisher")),
         published_year=_publication_year(raw),
         cover_url=_public_cover_url(_field(raw, "cover_url") or _field(raw, "thumbnail_url")),
-        description=description_text(_attested_field(raw, "description", "summary", "synopsis"))[:4000],
+        description=(description_text(_attested_field(raw, "description", "summary", "synopsis")) or "")[:4000],
         series=_names(_attested_field(raw, "series", "series_name"))[:20],
         collections=_names(_attested_field(raw, "collections", "collection"))[:20],
         awards=_names(_attested_field(raw, "awards", "prizes", "literary_awards"))[:20],
