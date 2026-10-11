@@ -71,6 +71,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         raise ValueError("invalid diagnostics search")
     if not isinstance(newest_first, bool):
         raise ValueError("invalid diagnostics sort order")
+    # Redact the complete broker value before applying the UI's display limit.
+    # Cutting first could turn token=PRIVATE into token=PRI and expose a prefix.
+    from cifereca_diagnostics_page import redacted_detail
     results: list[dict[str, str]] = []
     events = payload.get("events")
     if not isinstance(events, (list, tuple)):
@@ -79,7 +82,7 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         if not isinstance(raw, Mapping):
             continue
         safe = {
-            key: raw.get(key, "")[:500] if isinstance(raw.get(key), str) else ""
+            key: redacted_detail(raw[key])[:500] if isinstance(raw.get(key), str) else ""
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
         # Full text search is explicitly local to this 50-item broker page.
