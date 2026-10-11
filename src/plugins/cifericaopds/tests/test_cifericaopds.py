@@ -842,3 +842,73 @@ def test_candidate_http_bypasses_untrusted_environment_proxy(
         "/api/v1/sources",
         "/api/v1/search?source_id=alpha&q=Un+livre",
     ]
+
+
+
+def test_synthetic_visibility_is_local_offline_and_survives_config_toggles(tmp_path):
+    data = inventory("alpha", "merged", generation=1)
+    data["sources"][1]["kind"] = "synthetic.merged"
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(data))
+    ctx_hidden = context(tmp_path, show_synthetic=False)
+    first = CifericaCollection().activate(ctx_hidden)
+    first.refresh()
+    assert [entry.source_id for entry in first.snapshot().children] == ["alpha"]
+    with pytest.raises(ContractUnavailable):
+        first.create_provider("merged")
+
+    saved = (tmp_path / "inventory.json").read_bytes()
+    full = json.loads(saved)
+    assert {entry["source_id"] for entry in full["children"]} == {"alpha", "merged"}
+    first.deactivate()
+
+    # No HTTP/refresh needed to restore previously accepted source metadata.
+    ctx_shown = context(tmp_path, show_synthetic=True)
+    shown = CifericaCollection().activate(ctx_shown)
+    assert {entry.source_id for entry in shown.snapshot().children} == {"alpha", "merged"}
+    assert shown.create_provider("merged").descriptor.id == "cifericaopds.merged"
+    assert (tmp_path / "inventory.json").read_bytes() == saved
+
+    # Same upstream discovery generation must be accepted after changing
+    # a *local* visibility preference; this is not remote source drift.
+    assert len(shown.refresh().children) == 2
+    assert (tmp_path / "inventory.json").read_bytes() == saved
+    shown.deactivate()
+
+    hidden_again = CifericaCollection().activate(ctx_hidden)
+    assert [entry.source_id for entry in hidden_again.snapshot().children] == ["alpha"]
+    with pytest.raises(ContractUnavailable):
+        hidden_again.create_provider("merged")
+    assert len(hidden_again.refresh().children) == 1
+    assert (tmp_path / "inventory.json").read_bytes() == saved
+
+
+def test_same_generation_remote_change_still_refused_with_hidden_synthetic(tmp_path):
+    data = inventory("alpha", "merged", generation=3)
+    data["sources"][1]["kind"] = "synthetic.merged"
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(data))
+    coll = CifericaCollection().activate(context(tmp_path, show_synthetic=False))
+    accepted = coll.refresh()
+    saved = (tmp_path / "inventory.json").read_bytes()
+
+    # Even changes to hidden sources must obey the Core generation contract.
+    data["sources"][1]["revision"] = "changed-without-generation"
+    fixture.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="same generation"):
+        coll.refresh()
+    assert coll.snapshot() == accepted
+    assert (tmp_path / "inventory.json").read_bytes() == saved
+
+
+def test_synthetic_source_never_visible_when_disabled_on_offline_restart(tmp_path):
+    data = inventory("alpha", "merged", generation=1)
+    data["sources"][1]["kind"] = "synthetic.merged"
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(data))
+    original = CifericaCollection().activate(context(tmp_path, show_synthetic=True))
+    original.refresh()
+    original.deactivate()
+    restart = CifericaCollection().activate(context(tmp_path, show_synthetic=False))
+    assert {x.plugin_id for x in restart.snapshot().children} == {"cifericaopds.alpha"}
+    with pytest.raises(ContractUnavailable):
+        restart.create_provider("merged")
