@@ -10,6 +10,7 @@ from diagnostics_explorer import (
     PAGE_SIZE, SOURCES, SEVERITIES, PERIODS,
     explorer_since, fetch_explorer_page, sanitized_rows, module_groups,
     source_summaries, explorer_header, export_selected_events, next_page_offset,
+    selectable_event_ids,
 )
 
 
@@ -324,3 +325,21 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+def test_selection_requires_unique_nonempty_event_ids():
+    rows = [event(""), event("collision"), event("collision"), event("unique")]
+    assert selectable_event_ids(rows) == {"unique"}
+    for invalid in ("", "collision"):
+        with pytest.raises(ValueError, match="ambiguous"):
+            export_selected_events(rows, {invalid})
+    payload = json.loads(export_selected_events(rows, {"unique"}))
+    assert [row["event_id"] for row in payload["events"]] == ["unique"]
+
+
+def test_selection_disabled_for_ambiguous_references_in_ui():
+    from pathlib import Path
+    page = (Path(__file__).resolve().parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert "select.set_sensitive(event_id in valid_ids)" in page
+    assert "visible_ids = selectable_event_ids(rows)" in page
