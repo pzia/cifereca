@@ -5911,6 +5911,7 @@ class MainWindow(Adw.ApplicationWindow):
                 return
             host, remote = destination_summary(settings)
             if remote:
+                confirmation_version = ai_probe_version[0]
                 confirm = Adw.MessageDialog.new(
                     self, "Tester la connexion distante ?",
                     f"Une requête synthétique sera envoyée à {host} avec le modèle "
@@ -5921,13 +5922,23 @@ class MainWindow(Adw.ApplicationWindow):
                 confirm.add_response("accept", "Autoriser ce test")
                 confirm.set_default_response("cancel")
                 confirm.set_close_response("cancel")
-                confirm.connect(
-                    "response",
-                    lambda _dialog, response: (
-                        submit_ai_probe(settings, confirmed=True)
-                        if response == "accept" else None
-                    ),
-                )
+                def confirmed_probe(_dialog, response):
+                    if response != "accept":
+                        return
+                    # Never send to a stale destination after edits while
+                    # the confirmation dialog was open.
+                    if confirmation_version != ai_probe_version[0]:
+                        ai_status.set_text("Paramètres modifiés : renouveler la confirmation")
+                        return
+                    try:
+                        if read_ai_settings() != settings:
+                            ai_status.set_text("Paramètres modifiés : renouveler la confirmation")
+                            return
+                    except LLMSettingsError:
+                        ai_status.set_text("Configuration IA invalide")
+                        return
+                    submit_ai_probe(settings, confirmed=True)
+                confirm.connect("response", confirmed_probe)
                 confirm.present()
                 return
             submit_ai_probe(settings)
@@ -6194,6 +6205,9 @@ class MainWindow(Adw.ApplicationWindow):
                 set_diagnostics_level(self.diagnostics.level)
                 message = "Configuration enregistrée"
                 if ai_restart_required:
+                    # Cancel/reset must now restore the newly saved values.
+                    ai_cfg.clear()
+                    ai_cfg.update(new_ai_settings)
                     message = "Configuration IA enregistrée — redémarrage nécessaire"
                     ai_status.set_text(
                         "Enregistré · redémarrer Cifereca pour actualiser "
