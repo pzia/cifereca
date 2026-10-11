@@ -636,7 +636,7 @@ def test_youth_diagnostic_presentation_shows_bounded_receipts_and_safe_rejection
     }
     headline, lines = source_diagnostic_presentation((row,))
     assert "1 dernier(s) essai(s) en échec" in headline
-    assert "reçues : 4/10 demandées" in lines[0]
+    assert "reçues : 4 · limite demandée : 10 (pas un total de notices disponibles)" in lines[0]
     assert "3 rejet(s) (2 sans titre, 1 autres)" in lines[0]
     assert "cache : 2 notice(s)" in lines[0]
     assert "private.example" not in repr(lines)
