@@ -120,10 +120,18 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 ts = ts.astimezone().isoformat()
             except ValueError:
                 continue
+            # Logger names are not guaranteed to be static: extensions may
+            # embed account identifiers. Publish only recognised components.
+            logger_parts = match["logger"].split(".")
+            safe_parts = ["cifereca"]
+            for part in logger_parts[1:]:
+                if part.lower() not in (_STRUCTURED_TERMS | {"core", "diagnostics", "ui", "service", "worker"}):
+                    break
+                safe_parts.append(part.lower())
             events.append({
                 "timestamp": ts,
                 "source": "app_log",
-                "module": match["logger"][:90],
+                "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
                 "event_id": _event_id("app_log", ts, f"{index}:{line_number}:{message}"),
