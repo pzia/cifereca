@@ -276,3 +276,27 @@ def test_failed_refresh_clears_stale_events_before_showing_error():
     assert '"events": [], "sources": []' in failure
     assert "display_events()" in failure
     assert failure.index("display_events()") < failure.index("Source indisponible")
+
+
+def test_refresh_invalidates_previous_page_before_async_request():
+    from pathlib import Path
+    ui = (Path(__file__).resolve().parents[1] /
+          "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    refresh = ui.split("        def load_events(", 1)[1].split("        def reset_events(", 1)[0]
+    clear = refresh.index('            selected_event_ids.clear()')
+    blank = refresh.index('            current_page = {', clear)
+    rerender = refresh.index('            display_events()', blank)
+    submit = refresh.index('                handle = self.tasks.submit(', rerender)
+    assert clear < blank < rerender < submit
+
+
+def test_header_ignores_objects_with_custom_integer_conversion():
+    class Untrusted:
+        def __int__(self):
+            raise AssertionError("must not call custom __int__")
+    result = explorer_header({
+        "sources": [{"source": "app_log"}],
+        "total": Untrusted(), "offset": Untrusted(),
+    }, [])
+    assert "0 disponibles" in result
+    assert "page à partir de 1" in result
