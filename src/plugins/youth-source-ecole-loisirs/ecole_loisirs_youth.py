@@ -226,11 +226,17 @@ class _ProductCards(HTMLParser):
         classes = set(a.get("class", "").split())
         if self.card is None:
             if tag == "div" and "product-item" in classes:
-                self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": ""}
+                self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": "", "cover_url": ""}
                 self.stack = [tag]
             return
         if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
             self.stack.append(tag)
+        if tag == "img" and not self.card["cover_url"]:
+            for candidate in (a.get("data-src"), a.get("src"), (a.get("srcset") or "").split(",")[0].strip().split(" ")[0]):
+                url = _allowed_url(candidate)
+                if url and urlsplit(url).path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")) and "_files/" not in url:
+                    self.card["cover_url"] = url
+                    break
         if tag == "a":
             self.card["url"] = self.card["url"] or _product_url(a.get("href"))
         if "card-title" in classes:
@@ -271,13 +277,13 @@ def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
             continue
         seen.add(url)
         info = _text(" ".join(card["info"]))
-        age_match = re.search(r"(?:âge|age)\\s*:\\s*(\\d{1,2}\\s*à\\s*\\d{1,2}\\s*ans|\\d{1,2}\\s*ans\\s*et\\s*\\+)", info, re.I)
+        age_match = re.search(r"(?:âge|age)\s*:\s*(\d{1,2}\s*à\s*\d{1,2}\s*ans|\d{1,2}\s*ans\s*et\s*\+)", info, re.I)
         age = parse_age_label(age_match.group(1)) if age_match else None
         title = _text(" ".join(card["title"]))
         if not title or age is None or not age.qualified:
             continue
         slug = urlsplit(url).path.removeprefix("/livre/")
-        out.append({
+        item = {
             "record_id": slug, "source_item_id": slug, "title": title,
             "authors": tuple(dict.fromkeys(card["authors"])),
             "notice_url": url, "friendly_url": url, "book_type": "roman",
@@ -285,7 +291,14 @@ def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
                             "age_kind": "publisher", "source_label": age.label,
                             "source_id": "ecole-loisirs", "confidence": 1.0}],
             "metadata": {"age_label": age.label, "age_evidence": "ecole-loisirs.catalogue.explicit"},
-        })
+        }
+        if card["cover_url"]:
+            item["cover_url"] = card["cover_url"]
+        if card["summary"]:
+            item["description"] = _text(" ".join(card["summary"]))
+        if info:
+            item["collection"] = info
+        out.append(item)
         if len(out) >= max(1, min(int(limit), 40)):
             break
     if diagnostic is not None:
