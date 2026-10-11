@@ -852,8 +852,14 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_record(raw, source_id=sid))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Provider rows and exception text are untrusted. A raw error
+                # can contain signed URLs, credentials or private searches.
+                title = raw.get("title") if type(raw) is dict else object()
+                kind = ("title is required"
+                        if title is None or (type(title) is str and not title.strip())
+                        else "invalid record")
+                errors.append(f"item[{index}]: {kind}")
         # Reject an entirely malformed refresh atomically: never replace
         # the last usable cache with zero valid records and parsing failures.
         # A genuinely empty (error-free) page is still an authoritative result.
@@ -893,8 +899,10 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_bibliography_record(raw, source_id=sid, expected_isbn=expected))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Never include provider/bibliography exception payloads in a
+                # cache report, even when the library page does not display it.
+                errors.append(f"item[{index}]: invalid bibliography record")
         unique = {item.record_id or item.notice_url or repr(item): item for item in accepted}
         if len(unique) > 1:
             return BibliographyReport(identity, sid, expected, rejected=len(accepted), errors=("ambiguous bibliography result",))
@@ -1260,13 +1268,13 @@ class YouthCatalogPlugin:
     ) -> IngestReport:
         """Collect one chosen source and record its outcome for this identity.
 
-        Reading source_diagnostics() never calls search(). Error messages stay
-        in the legacy IngestReport, not the sanitized diagnostic projection.
+        Reading source_diagnostics() never calls search(). Error codes in
+        IngestReport are fixed, never raw provider text or source payloads.
         """
         try:
             info = validate_source_contract(source)
         except Exception as exc:
-            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
+            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=("invalid source contract",))
         bounded = max(1, min(int(limit), 500))
         started = perf_counter()
         stage = "search"
@@ -1327,7 +1335,7 @@ class YouthCatalogPlugin:
             )
             return IngestReport(
                 self.index.identity_key(identity_id), info.source_id,
-                rejected=1, errors=(f"search: {exc}",),
+                rejected=1, errors=("source search failed",),
             )
 
 PLUGIN = YouthCatalogPlugin()

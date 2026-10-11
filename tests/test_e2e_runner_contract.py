@@ -85,6 +85,11 @@ def test_diagnostics_volume_real_gtk_bounded_broker_and_provenance():
         "D09_period_changes_broker_query",
         "D10_adept_code10_no_invented_adobe_cause",
         "D11_paris_return_requested_not_confirmed",
+        "D09_event_provenance_source_module_reference_visible",
+        "D09_source_filter_no_cross_source_attribution",
+        "D08_real_detail_panel_available_and_redacted",
+        "D12_copy_one_identity_without_mixing_profiles",
+        "D12_broker_link_between_profiles_proven",
         "D12_link_proven_by_broker",
         'report["unmet_criteria"]',
     ):

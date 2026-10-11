@@ -138,7 +138,16 @@ def _plugin_state(manager: Any, *, verbose: bool) -> dict[str, Any]:
     }
 
 
-def build_support_report(service: Any, *, verbose: bool = False) -> dict[str, Any]:
+def build_support_report(
+    service: Any, *, verbose: bool = False, include_checks: bool = True,
+) -> dict[str, Any]:
+    """Assemble a public support report; active checks are explicit.
+
+    Normal support exports retain their existing checks. A Diagnostics IA
+    preview opts out: no active_checks broker call is made, even indirectly.
+    """
+    if type(include_checks) is not bool:
+        raise ValueError("invalid_support_checks_scope")
     install = _release_metadata()
     manager = getattr(service, "plugin_manager", None) or getattr(service, "_plugin_manager", None)
     runtime = _runtime_state()
@@ -147,19 +156,23 @@ def build_support_report(service: Any, *, verbose: bool = False) -> dict[str, An
     plugins = _plugin_state(manager, verbose=verbose)
 
     checks: list[dict[str, Any]] = []
-    try:
-        from .brokers import DiagnosticsBrokerImpl
-        for item in DiagnosticsBrokerImpl(service).active_checks():
-            checks.append(redact({
-                "check_id": getattr(item, "check_id", ""),
-                "component": getattr(item, "component", ""),
-                "status": getattr(item, "status", "unknown"),
-                "message": getattr(item, "message", ""),
-                "detail": dict(getattr(item, "detail", {}) or {}),
-                "scope": getattr(item, "scope", ""),
-            }))
-    except Exception as exc:
-        checks.append({"check_id": "core.active_checks", "status": "error", "error_type": type(exc).__name__})
+    if include_checks:
+        try:
+            from .brokers import DiagnosticsBrokerImpl
+            for item in DiagnosticsBrokerImpl(service).active_checks():
+                checks.append(redact({
+                    "check_id": getattr(item, "check_id", ""),
+                    "component": getattr(item, "component", ""),
+                    "status": getattr(item, "status", "unknown"),
+                    "message": getattr(item, "message", ""),
+                    "detail": dict(getattr(item, "detail", {}) or {}),
+                    "scope": getattr(item, "scope", ""),
+                }))
+        except Exception as exc:
+            checks.append({
+                "check_id": "core.active_checks", "status": "error",
+                "error_type": type(exc).__name__,
+            })
 
     statuses = [
         str(runtime.get("status") or "unknown"),
@@ -189,6 +202,7 @@ def build_support_report(service: Any, *, verbose: bool = False) -> dict[str, An
         "database": db,
         "config": cfg,
         "plugins": plugins,
+        "checks_executed": include_checks,
         "checks": checks,
     }
     return redact(report)

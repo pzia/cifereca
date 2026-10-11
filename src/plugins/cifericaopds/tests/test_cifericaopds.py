@@ -11,7 +11,7 @@ import pytest
 
 from cifereca.plugin_api import ProviderCollection, ProviderPlugin
 from cifereca_cifericaopds import (
-    CifericaCollection, ContractUnavailable, PARENT_ID, candidate_inventory,
+    CifericaCollection, ContractUnavailable, JsonClient, PARENT_ID, candidate_inventory,
     candidate_results, safe_base_url,
 )
 
@@ -796,3 +796,49 @@ def test_local_inventory_rejects_duplicate_keys_and_nonfinite_float(tmp_path):
         assert "local source JSON" in str(exc.value)
         assert coll.snapshot() == old
         assert (tmp_path / "inventory.json").read_bytes() == old_bytes
+
+
+
+@pytest.mark.parametrize(("endpoint", "params"), [
+    ("/api/v1/sources", {"q": "secret"}),
+    ("/api/v1/search", None),
+    ("/api/v1/search", {"source_id": "alpha"}),
+    ("/api/v1/search", {"source_id": "alpha", "q": "Livre", "token": "secret"}),
+    ("/api/v1/search", {"source_id": "alpha/beta", "q": "Livre"}),
+    ("/api/v1/search", {"source_id": "alpha", "q": "token\nprivate"}),
+    ("/api/v1/search", {"source_id": "alpha", "q": "a" * 301}),
+    ("/api/v1/search/../secrets", None),
+    ("/api/v1/private", None),
+    ("/api/v1/sources?api_key=secret", None),
+])
+def test_candidate_http_restricts_endpoints_and_query_schema(
+    mocked_candidate_server, endpoint, params,
+):
+    url, calls, _state = mocked_candidate_server
+    client = JsonClient(url)
+    with pytest.raises(ContractUnavailable):
+        client.get(endpoint, params=params)
+    assert calls == []
+
+
+def test_candidate_http_bypasses_untrusted_environment_proxy(
+    mocked_candidate_server, monkeypatch,
+):
+    url, calls, _state = mocked_candidate_server
+    monkeypatch.setenv("HTTP_PROXY", "http://malicious.invalid:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://malicious.invalid:8080")
+    monkeypatch.setenv("http_proxy", "http://malicious.invalid:8080")
+    client = JsonClient(url)
+    from urllib.request import ProxyHandler
+    handlers = [handler for handler in client._opener.handlers
+                if isinstance(handler, ProxyHandler)]
+    # urllib may omit an empty ProxyHandler from the built opener entirely.
+    assert not any(handler.proxies for handler in handlers)
+    assert client.get("/api/v1/sources")["api_major"] == 1
+    assert client.get("/api/v1/search", params={
+        "source_id": "alpha", "q": "Un livre",
+    })["items"][0]["title"] == "Livre HTTP"
+    assert calls == [
+        "/api/v1/sources",
+        "/api/v1/search?source_id=alpha&q=Un+livre",
+    ]
