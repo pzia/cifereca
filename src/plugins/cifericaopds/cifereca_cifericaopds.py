@@ -6,7 +6,7 @@ Only cifereca.plugin_api is imported; no private registry access or remote code.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date
 import re
 import json
@@ -433,6 +433,9 @@ class CifericaCollection:
     def __init__(self):
         self._lock = RLock()
         self._snapshot = None
+        # Raw accepted inventory, including hidden synthetic sources. The
+        # public snapshot is a local visibility projection of this inventory.
+        self._full_snapshot = None
         self._callbacks = []
         self._directory = None
         self._client = None
@@ -450,6 +453,7 @@ class CifericaCollection:
             for sid in self._session_epochs:
                 self._session_epochs[sid] += 1
             self._snapshot = None
+            self._full_snapshot = None
             self._active = False
         cfg = dict(context.config)
         self._mode = cfg.get("mode", "fixture")
@@ -463,12 +467,14 @@ class CifericaCollection:
         try:
             cached = _read_local_json(path, label="inventory", optional=True)
             if cached is not None:
-                self._snapshot = validate_provider_collection_snapshot(
+                self._full_snapshot = validate_provider_collection_snapshot(
                     cached, parent_plugin_id=PARENT_ID,
                 )
+                self._snapshot = self._visible_snapshot(self._full_snapshot)
         except (ContractUnavailable, ValueError, TypeError, RecursionError):
             # A damaged cache cannot prevent the plugin from activating.
             # It is neither published nor overwritten before an explicit refresh.
+            self._full_snapshot = None
             self._snapshot = None
         with self._lock:
             self._active = True
@@ -488,6 +494,13 @@ class CifericaCollection:
             if self._snapshot is None:
                 raise ContractUnavailable("no validated inventory; explicit refresh required")
             return self._snapshot
+
+    def _visible_snapshot(self, full):
+        if full is None or self._show_synthetic:
+            return full
+        return replace(full, children=tuple(
+            row for row in full.children if row.kind != "synthetic.merged"
+        ))
 
     def refresh(self, *, explicit=True):
         if explicit is not True:
@@ -509,16 +522,23 @@ class CifericaCollection:
         with self._lock:
             if not self._active or self._activation_generation != activation:
                 raise ContractUnavailable("plugin changed during source refresh")
-            accepted = candidate_inventory(data, self._snapshot,
-                                           show_synthetic=self._show_synthetic)
-            if accepted == self._snapshot:
+            # Validate and cache the *full* upstream inventory. Display
+            # options must never rewrite generation semantics or persist a
+            # lossy, identity-dependent view of source capabilities.
+            accepted_full = candidate_inventory(
+                data, self._full_snapshot, show_synthetic=True,
+            )
+            accepted = self._visible_snapshot(accepted_full)
+            if accepted_full == self._full_snapshot and accepted == self._snapshot:
                 return accepted
-            _persist_inventory(directory / "inventory.json", accepted)
+            if accepted_full != self._full_snapshot:
+                _persist_inventory(directory / "inventory.json", accepted_full)
             previous = {row.source_id: row for row in self._snapshot.children} if self._snapshot else {}
             current = {row.source_id: row for row in accepted.children}
             for source_id in previous.keys() | current.keys():
                 if previous.get(source_id) != current.get(source_id):
                     self._session_epochs[source_id] = self._session_epochs.get(source_id, 0) + 1
+            self._full_snapshot = accepted_full
             self._snapshot = accepted
             subscribers = tuple(self._callbacks)
         for callback in subscribers:
