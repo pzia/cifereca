@@ -10,6 +10,7 @@ from dataclasses import asdict
 from datetime import date
 import re
 import json
+import math
 import os
 import stat
 from pathlib import Path
@@ -56,10 +57,43 @@ def safe_base_url(raw: str) -> str:
     return urlunsplit((parts.scheme, host + (f":{port}" if port is not None else ""), "", "", ""))
 
 
+def _decode_strict_json(raw: bytes):
+    """Reject ambiguous or non-finite JSON before it enters local/HTTP state."""
+    def reject_constant(_value):
+        raise ValueError("invalid JSON numeric constant")
+
+    def reject_duplicate_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
+    def parse_finite_float(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("non-finite JSON number")
+        return result
+
+    return json.loads(
+        raw.decode("utf-8"), parse_constant=reject_constant,
+        parse_float=parse_finite_float, object_pairs_hook=reject_duplicate_fields,
+    )
+
+
 class JsonClient:
     def __init__(self, base_url, timeout=4):
         self.base_url = safe_base_url(base_url)
-        self.timeout = min(20.0, max(0.5, float(timeout)))
+        try:
+            if isinstance(timeout, bool):
+                raise ValueError("invalid timeout")
+            seconds = float(timeout)
+            if not math.isfinite(seconds):
+                raise ValueError("invalid timeout")
+            self.timeout = min(20.0, max(0.5, seconds))
+        except (TypeError, ValueError, OverflowError):
+            raise ContractUnavailable("invalid configured timeout") from None
         self._opener = build_opener(NoRedirects())
 
     def get(self, endpoint: str, *, params=None):
@@ -77,14 +111,16 @@ class JsonClient:
                 if content_type != "application/json":
                     raise ContractUnavailable("invalid JSON content type")
                 raw = response.read(MAX_JSON_BYTES + 1)
-        except (HTTPError, URLError, OSError, TimeoutError) as exc:
-            raise ContractUnavailable("server unavailable") from exc
+        except (HTTPError, URLError, OSError, TimeoutError):
+            # Do not chain a transport exception: its repr may contain
+            # URL query parameters, hostname or configuration secrets.
+            raise ContractUnavailable("server unavailable") from None
         if len(raw) > MAX_JSON_BYTES:
             raise ContractUnavailable("oversized JSON response")
         try:
-            result = json.loads(raw)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise ContractUnavailable("invalid server JSON") from exc
+            result = _decode_strict_json(raw)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise ContractUnavailable("invalid server JSON") from None
         if not isinstance(result, dict):
             raise ContractUnavailable("JSON object required")
         return result
