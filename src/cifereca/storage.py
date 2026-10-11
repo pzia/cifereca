@@ -138,7 +138,8 @@ class Storage:
     def loan_return_transition(self, key: str, operation_id: str, *,
                                status: str, verification: str,
                                accepted: bool | None = None,
-                               error_type: str | None = None) -> dict[str, Any] | None:
+                               error_type: str | None = None,
+                               adobe_verified: bool | None = None) -> dict[str, Any] | None:
         """CAS update: an obsolete worker may not overwrite a newer attempt."""
         import json as _json
         from datetime import datetime, timezone
@@ -159,6 +160,8 @@ class Storage:
                 row["request_accepted"] = bool(accepted)
             if error_type is not None:
                 row["error_type"] = error_type[:90]
+            if adobe_verified is not None:
+                row["adobe_verified"] = bool(adobe_verified)
             db.execute(
                 "UPDATE metadata SET value=? WHERE key=?",
                 (_json.dumps(row, sort_keys=True, separators=(",", ":")), key),
