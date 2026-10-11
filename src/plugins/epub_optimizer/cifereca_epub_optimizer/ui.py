@@ -678,9 +678,9 @@ class OptimizerPage:
                     location = "distant" if result.remote else "local"
                     self._semantic_preview_label.set_label(
                         "PRÉVISUALISATION IA — générée, non vérifiée. "
-                        "Aucune modification de l'EPUB ni création de variante.\\n"
+                        "Aucune modification de l'EPUB ni création de variante.\n"
                         + result.text
-                        + "\\nModèle : " + result.provider + " / " + result.model
+                        + "\nModèle : " + result.provider + " / " + result.model
                         + " · service " + location
                         + f" · passage saisi : {result.input_chars} caractères."
                     )
