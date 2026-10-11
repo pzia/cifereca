@@ -147,6 +147,9 @@ class ReviewView:
         self.plugin, self.host, self.Gtk, self.GLib = plugin, host, Gtk, GLib
         self.book = plugin.pending
         self.generation, self.task, self.disposed = 0, None, False
+        config = getattr(plugin.context, 'config', {}) or {}
+        self._llm_enabled = config.get('llm_summaries') is True if isinstance(config, dict) else False
+        self._llm_generation, self._llm_task, self._llm_matches = 0, None, ()
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.heading = Gtk.Label(wrap=True, xalign=0)
         self.widget.append(self.heading)
@@ -165,6 +168,18 @@ class ReviewView:
         controls.append(self.refresh_button)
         controls.append(self.back_button)
         controls.append(self.choose_button)
+        self._llm_button = None
+        if self._llm_enabled:
+            self._llm_button = self.button('Synthétiser les extraits (IA)', self.summarize)
+            self._llm_button.set_sensitive(False)
+            self._llm_button.set_tooltip_text(
+                'Clic explicite : transmet jusqu’à trois extraits publics en cache (240 caractères chacun) '
+                'au service IA configuré, éventuellement distant. Les liens bibliographiques restent inchangés.'
+            )
+            controls.append(self._llm_button)
+            self._llm_result = Gtk.Label(label='IA facultative : sélectionnez un livre avec critiques. Aucun envoi implicite.', wrap=True, xalign=0)
+            self._llm_result.set_selectable(True)
+            self.widget.append(self._llm_result)
         self.widget.append(Gtk.Label(label='Critiques de ce livre', xalign=0))
         self.results = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         scroll = Gtk.ScrolledWindow(vexpand=True)
@@ -279,7 +294,87 @@ class ReviewView:
         for field in (self.source, self.language, self.since):
             field.set_text("")
 
+    def _reset_llm(self):
+        self._llm_generation += 1
+        handle, self._llm_task = self._llm_task, None
+        if handle is not None:
+            handle.cancel()
+        self._llm_matches = ()
+        if self._llm_button is not None:
+            self._llm_button.set_sensitive(False)
+            self._llm_result.set_label(
+                'IA facultative : choisissez un livre avec critiques. '
+                'Aucun rapprochement n’est confirmé par l’IA.'
+            )
+
+    def summarize(self):
+        if not self._llm_enabled or self._llm_task is not None or self.disposed:
+            return
+        matches = self._llm_matches
+        context = self.plugin.context
+        if not matches or context is None:
+            return
+        service = context.service('llm')
+        tasks = context.broker('tasks')
+        if service is None or tasks is None:
+            self._llm_result.set_label('Service IA indisponible. Les critiques restent consultables.')
+            return
+        # Lazy import: historic GTK smoke may install only the page and index.
+        try:
+            from criticism_llm import summarize_cached_reviews
+        except ImportError:
+            self._llm_result.set_label('Module facultatif indisponible. Les critiques restent consultables.')
+            return
+        self._llm_generation += 1
+        generation = self._llm_generation
+        self._llm_button.set_sensitive(False)
+        self._llm_result.set_label('Synthèse IA demandée… Sources et preuves originales conservées.')
+        try:
+            handle = tasks.submit(
+                lambda control: summarize_cached_reviews(
+                    service, matches, enabled=True, consent=True, control=control,
+                ),
+                label='Synthèse explicite de critiques en cache', kind='criticism.llm',
+            )
+        except Exception:
+            self._llm_button.set_sensitive(True)
+            self._llm_result.set_label('Synthèse indisponible. Le cache de critiques est inchangé.')
+            return
+        self._llm_task = handle
+
+        def done(finished):
+            if finished.control.cancelled():
+                return
+            try:
+                summary = finished.result()
+            except Exception:
+                summary = None
+
+            def apply():
+                if (self.disposed or self.plugin.context is None
+                        or generation != self._llm_generation):
+                    return False
+                self._llm_task = None
+                self._llm_button.set_sensitive(True)
+                if summary is None:
+                    self._llm_result.set_label('Aucune synthèse IA valide. Les critiques originales restent accessibles.')
+                else:
+                    self._llm_result.set_label(
+                        'Synthèse générée — non attestée, à vérifier dans les critiques liées ci-dessous : '
+                        + summary.text + '\nSources des extraits : ' + ', '.join(summary.sources)
+                        + f' · modèle {summary.provider}/{summary.model}'
+                        + (' · service distant' if summary.remote else ' · service local')
+                        + '. Ne confirme aucun rattachement bibliographique.'
+                    )
+                return False
+
+            self.GLib.idle_add(apply)
+
+        handle.add_done_callback(done)
+
     def render(self):
+        if hasattr(self, '_llm_generation'):
+            self._reset_llm()
         self.heading.set_label(
             'Critiques : ' + self.book.title if self.book
             else 'Aucun livre sélectionné — ouvrez une fiche depuis la Bibliothèque.'
@@ -341,6 +436,11 @@ class ReviewView:
             ))
             self.results.append(self.button('Réinitialiser les filtres', self.reset_filters))
             return
+        if self._llm_button is not None:
+            self._llm_matches = tuple(matches[:3])
+            self._llm_button.set_sensitive(bool(self._llm_matches))
+            if self._llm_matches:
+                self._llm_result.set_label('IA facultative : synthétiser les extraits nécessite un clic explicite. Source potentiellement distante.')
         for match in matches:
             article = match.article
             card = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=3)
@@ -372,6 +472,8 @@ class ReviewView:
             self.results.append(card)
 
     def dispose(self):
+        if hasattr(self, '_llm_generation'):
+            self._reset_llm()
         self.disposed = True; self.generation += 1
         if self.task:
             self.task.cancel()
