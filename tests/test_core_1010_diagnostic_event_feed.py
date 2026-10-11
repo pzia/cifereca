@@ -337,3 +337,81 @@ def test_logger_path_never_exposes_freeform_identifiers(tmp_path):
     assert [r["module"] for r in result["events"]] == ["cifereca.sync", "cifereca", "cifereca.sync"]
     assert "private_customer" not in str(result)
     assert "unknowncustomer" not in str(result)
+
+
+def test_log_event_reference_survives_rename_rotation_and_append(tmp_path):
+    log = tmp_path / "cifereca.log"
+    first_line = (
+        "2026-10-11 07:00:00,000 WARNING cifereca.sync [Worker] "
+        "TRACE sync source status=partial"
+    )
+    second_line = (
+        "2026-10-11 08:00:00,000 INFO cifereca.sync [Worker] "
+        "TRACE sync source status=ok"
+    )
+    make_log(log, first_line)
+    before = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    original = before["events"][0]["event_id"]
+    assert len(original) == 16
+
+    # Appending newer events does not move the original physical byte offset.
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(second_line + "\n")
+    appended = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert appended["events"][0]["event_id"] == original
+
+    # Standard rename-based rotation preserves the inode and record offset.
+    log.rename(tmp_path / "cifereca.log.1")
+    make_log(log, second_line)
+    rotated = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert rotated["total"] == 3
+    assert rotated["events"][0]["event_id"] == original
+    assert len({row["event_id"] for row in rotated["events"]}) == 3
+
+
+def test_pseudonym_reference_is_unchanged_when_bounded_tail_shifts(tmp_path):
+    log = tmp_path / "cifereca.log"
+    normal = (
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] "
+        "TRACE sync source status=ok"
+    )
+    # Make the file longer than 32 KiB while retaining the last public line.
+    make_log(log, *(normal for _ in range(400)))
+    before = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert before["sources"][0]["status"] == "partial"
+    last_reference = before["events"][-1]["event_id"]
+
+    # A new line shifts the 32 KiB window, not the old line's actual offset.
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write(normal + "\n")
+    after = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert after["sources"][0]["status"] == "partial"
+    assert after["events"][-2]["event_id"] == last_reference
+    assert len({row["event_id"] for row in after["events"]}) == len(after["events"])
+
+
+def test_log_event_reference_hash_does_not_publish_inode_or_file_offset(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(
+        log,
+        "2026-10-11 07:00:00,000 ERROR cifereca.sync [Worker] "
+        "TRACE sync source status=failed",
+    )
+    response = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    event_id = response["events"][0]["event_id"]
+    assert len(event_id) == 16
+    assert all(character in "0123456789abcdef" for character in event_id)
+    assert str(log.stat().st_ino) not in event_id
+    assert str(log) not in str(response)
