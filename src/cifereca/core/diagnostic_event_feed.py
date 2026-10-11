@@ -25,6 +25,23 @@ _SAFE_FIELDS = re.compile(
     r"([a-zA-Z][a-zA-Z_-]{0,32}|\d{1,6})\b"
 )
 _ALLOWED_FIELDS = {"phase", "status", "outcome", "operation", "duration_ms", "count", "returncode"}
+_SAFE_TRACE_VALUES = frozenset({
+    "ok", "success", "failed", "error", "warning", "partial",
+    "available", "unavailable", "disabled", "empty", "pending",
+    "running", "completed", "cancelled", "skipped", "timeout",
+    "accepted", "rejected", "attention_required",
+    "adobe_return_confirmed",
+})
+
+
+def _safe_trace_field(key: str, value: str) -> bool:
+    if key not in _ALLOWED_FIELDS:
+        return False
+    if key in {"duration_ms", "count", "returncode"}:
+        return value.isascii() and value.isdecimal()
+    return value.lower() in _SAFE_TRACE_VALUES
+
+
 _MAX_BYTES_PER_LOG = 32768
 _MAX_EVENTS_PER_FILE = 200
 _MAX_RESULTS = 100
@@ -95,7 +112,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 suffix = match["body"][trace.end():]
                 pairs = _SAFE_FIELDS.findall(suffix)[:4]
                 if pairs:
-                    message += " " + " ".join(k + "=" + v for k, v in pairs if k in _ALLOWED_FIELDS)
+                    message += " " + " ".join(k + "=" + v for k, v in pairs if _safe_trace_field(k, v))
             else:
                 message = "[contenu libre masqué : consulter le journal local]"
             try:
