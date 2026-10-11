@@ -200,6 +200,44 @@ def test_available_but_empty_source_remains_empty(tmp_path):
     assert rows["sources"][1]["status"] == "empty"
 
 
+@pytest.mark.parametrize("kwargs", [
+    {"module": 123}, {"module": "x" * 91}, {"severity": 123},
+    {"since": 123}, {"until": []},
+])
+def test_malformed_filter_types_fail_before_reading_logs(tmp_path, monkeypatch, kwargs):
+    from cifereca.core import diagnostic_event_feed as feed
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("unvalidated request must not read logs")
+    monkeypatch.setattr(feed, "_source_logs", forbidden)
+    with pytest.raises(ValueError):
+        feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", **kwargs)
+
+
+def test_log_namespace_must_have_exact_cifereca_boundary(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO ciferecaevil [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:01,000 INFO cifereca-private [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:02,000 INFO cifereca [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:03,000 INFO cifereca.sync [Worker] TRACE sync source status=ok",
+    )
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert [row["module"] for row in result["events"]] == ["cifereca", "cifereca.sync"]
+    assert result["total"] == 2
+
+
+def test_line_limit_marks_history_partial_even_below_byte_limit(tmp_path):
+    log = tmp_path / "cifereca.log"
+    line = "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] TRACE sync source status=ok"
+    make_log(log, *([line] * 201))
+    assert log.stat().st_size < 32768
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert result["total"] == 200
+    assert result["sources"][0]["status"] == "partial"
+    assert result["status"] == "partial"
+    assert result["sources"][0]["reason"] == "log_tail_bounded"
+
+
 def test_fifo_log_is_rejected_without_blocking(tmp_path):
     import stat
     import time
