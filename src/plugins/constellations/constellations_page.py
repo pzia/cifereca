@@ -431,7 +431,7 @@ class View:
         edges = neighbours(self.nodes, node, mode=mode, surprise=self.surprise.get_value()/100,
             theme=self.signal.get_text(), mood=self.signal.get_text(), profile=self.local)
         self.neighbours_summary.set_label(neighbour_count_label(edges))
-        if self._semantic_button is not None:
+        if getattr(self, '_semantic_button', None) is not None:
             try:
                 from semantic_llm import pick_unlinked_pair
                 self._semantic_candidate = pick_unlinked_pair(self.nodes, node)
