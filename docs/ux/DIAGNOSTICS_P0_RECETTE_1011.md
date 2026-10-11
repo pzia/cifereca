@@ -19,6 +19,7 @@ et SHA-256 concordants. Voir [la fiche de preuves GTK](DIAGNOSTICS_GTK_PROBE_101
 | Grand écran `diagnostics-large-1600` | **10 checks PASS, 9 PNG** ; rapport long 250 lignes, Space/Tab/Shift+Tab XTEST, scroll rapport 3724/3724 px, page externe stable à 1286 px, redimensionnement GTK 1560→1240→1560 px, sans débordement horizontal | widget isolé, molette non testée ; **Escape et export fichier observés non satisfaits** ([#1158](https://github.com/pzia/cifereca/issues/1158)) |
 | États `diagnostics-states-1366` | 6 checks PASS, 6 PNG ; sources non alimentées, source disponible sans événement, broker indisponible, retry explicite et contrôle lent réactif | D02 : synthèse zéro anomalie datée absente ([#1161](https://github.com/pzia/cifereca/issues/1161)) ; widget isolé, brokers simulés |
 | Navigation lente `diagnostics-navigation-slow-1366` | 10 checks PASS, 7 PNG ; vraie MainWindow, 7 gestes XTEST, lancement volontaire d'un contrôle puis navigation Bibliothèque et retour avec résultat visible | test asynchrone simulé, sans serveur distant ni installation ZIP |
+| Volume `diagnostics-volume-1366` | **8 checks PASS, 6 PNG** ; 10 000 événements virtuels, 50 lignes/réponse, filtres ADEPT/Paris/Kobo et période, événements ADEPT code 10 et Paris retour demandé | D06 seulement bornage/pagination (pas 10 000 widgets ni molette) ; D08 détail complet, D09 catégories source, D12 lien entre identités non attestés |
 
 **Avancement D01–D16 :** preuves partielles pour **D05** (rapport
 multipage et scroll interne jusqu'au bas, mais pas focus de retour complet),
@@ -34,8 +35,12 @@ simulés. **D02** reste **partiel**, car l'absence d'erreur observée sur
 une période n'est pas explicitement affichée ([#1161](https://github.com/pzia/cifereca/issues/1161)).
 **D04** couvre la réactivité et le retour au résultat via une vraie
 MainWindow avec tâches simulées et navigation XTEST, pas un runtime externe réel.
-Les **D06 et D08–D12**, ainsi que les parties manquantes des autres
-critères, restent à exercer. Ne pas cocher l'ensemble de la matrice,
+**D06** couvre désormais le volume virtuel 10 000, 50 événements
+par requête et la pagination, pas le scroll molette ni la charge physique
+de 10 000 widgets. **D10** et **D11** disposent de preuves GTK sur événements
+fictifs ; **D08/D09/D12** restent partiels (détail long consultable,
+provenance exhaustive, corrélation non prouvée).
+**D07** et les compléments des autres critères restent à exercer. Ne pas cocher l'ensemble de la matrice,
 ni clôturer #1011 sur ces seuls scénarios.
 
 **Run le plus récent :** [E2E Smoke #38135244581](https://github.com/pzia/cifereca/actions/runs/38135244581)
@@ -90,6 +95,17 @@ Ces deux écarts sont décrits dans le ticket Plugins/CoreUI
 [#1158](https://github.com/pzia/cifereca/issues/1158).
 Ils **interdisent de considérer D13/D15 clos**, malgré le succès du
 harnais. La PR #1146 reste soumise aux gates CI ordinaires.
+
+## Dernière tranche D06–D12 — preuves GTK
+
+[Run E2E Smoke #38141639752](https://github.com/pzia/cifereca/actions/runs/38141639752) **SUCCESS**,
+[artefact #11702993418](https://github.com/pzia/cifereca/actions/runs/38141639752/artifacts/11702993418) :
+le scénario `diagnostics-volume-1366` est PASS avec **8 checks et 6 PNG**
+(SHA-256 vérifiés). Broker virtuel de **10 000 événements**, 6 requêtes,
+300 lignes effectivement générées, sources Core/app_log et modules métier
+simulés. Le harnais conserve dans `screen.json` les limites D08/D09/D12.
+Ceci n'est pas la preuve de 10 000 widgets physiquement rendus ni d'un
+parcours de corrélation métier réel.
 
 ## Architecture d'information
 
