@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UX #1011: vrai widget GTK4 Diagnostics, brokers simulés, Xvfb 1366.
+"""UX #1011: vrai widget GTK4 Diagnostics, brokers simulés, Xvfb 1366/1600.
 
 Recette d'intégration du plugin (pas une preuve de toute la fenêtre Cifereca).
 Aucune identité ou service distant n'est utilisé.
@@ -146,7 +146,7 @@ class Host:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366,))
+    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -177,7 +177,7 @@ def main():
 
     def screenshot(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
-        assert image.width == args.width, image.size
+        assert image.size == (args.width, 1000 if args.width == 1600 else 900), image.size
         assert image.getbbox() is not None, "capture entièrement vide"
         path = out / (stage + ".png")
         image.save(path)
@@ -329,10 +329,85 @@ def main():
         assert plugin.llm is None
         report["checks"]["pagination_50_then_15"] = True
         screenshot("03-journals-second-page")
+        if args.width == 1600:
+            later(extended_keyboard, 120)
+            return
+        pass_scenario()
+
+    def pass_scenario():
         report["status"] = "PASS"
         save()
         rc[0] = 0
         app.quit()
+
+    def press(key):
+        device[0].key(key, True)
+        device[0].key(key, False)
+
+    def extended_keyboard():
+        # Deliberately keep the 1366 baseline unchanged: this adds only
+        # a large-display, long-report and physical keyboard exercise.
+        assert args.width == 1600
+        assert window[0].get_width() <= args.width
+        expander = find_expander("Ouvrir le rapport support")
+        assert expander.get_expanded(), "Rapport refermé pendant la navigation"
+        scrollers = [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)]
+        texts = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        wraps = [w for w in walk(expander) if isinstance(w, Gtk.CheckButton)
+                 and w.get_label() == "Retour à la ligne"]
+        assert len(scrollers) == len(texts) == len(wraps) == 1
+        text = texts[0].get_buffer()
+        contents = text.get_text(text.get_start_iter(), text.get_end_iter(), False)
+        assert contents.count("Événement fictif.") >= 250, "Rapport multipage absent"
+        assert "SECRET-UX-TEST" not in contents
+        assert "EXEMPLE-PRIVE-UX" not in contents
+        report["checks"]["long_redacted_report_1600"] = True
+        resize = find_button("Agrandir")
+        assert resize.grab_focus() is not False
+        assert resize.has_focus(), "Agrandir n'a pas de focus clavier"
+        # Physical keyboard activation, not a GObject signal.
+        press("space")
+        assert resize.get_label() == "Réduire"
+        assert scrollers[0].get_size_request()[1] == 560
+        later(lambda: verify_tab(resize, wraps[0], scrollers[0]), 180)
+
+    def verify_tab(resize, wrap, scroller):
+        assert resize.has_focus(), "Le focus n'a pas été préservé après Space"
+        press("Tab")
+        assert wrap.has_focus(), "Tab ne rejoint pas Retour à la ligne"
+        device[0].key("Shift_L", True)
+        press("Tab")
+        device[0].key("Shift_L", False)
+        assert resize.has_focus(), "Shift+Tab ne revient pas à Agrandir/Réduire"
+        report["checks"]["tab_shift_tab_and_space_xtest"] = True
+        screenshot("04-report-keyboard-1600")
+        adjustment = scroller.get_vadjustment()
+        bottom = max(0, adjustment.get_upper() - adjustment.get_page_size())
+        assert bottom > 500, ("Rapport sans défilement interne", bottom)
+        outer = page[0].get_vadjustment()
+        outer_before = outer.get_value()
+        adjustment.set_value(bottom)
+        later(lambda: verify_scrolled(scroller, outer_before, bottom), 200)
+
+    def verify_scrolled(scroller, outer_before, bottom):
+        adjustment = scroller.get_vadjustment()
+        assert adjustment.get_value() >= bottom - 3, (
+            "Bas du rapport inaccessible", adjustment.get_value(), bottom
+        )
+        outer = page[0].get_vadjustment()
+        assert abs(outer.get_value() - outer_before) <= 4, (
+            "Défilement interne modifie la page", outer_before, outer.get_value()
+        )
+        report["checks"]["independent_scroll_to_report_end"] = True
+        report["scroll"] = {
+            "inner_bottom": round(bottom, 2),
+            "inner_value": round(adjustment.get_value(), 2),
+            "outer_before": round(outer_before, 2),
+            "outer_after": round(outer.get_value(), 2),
+        }
+        screenshot("05-report-bottom-1600")
+        assert broker.checks == 0 and plugin.llm is None
+        pass_scenario()
 
     class Application(Gtk.Application):
         def __init__(self):
@@ -341,7 +416,7 @@ def main():
         def do_activate(self):
             window[0] = Gtk.ApplicationWindow(application=self)
             window[0].set_title("Diagnostics UX GTK isolé")
-            window[0].set_default_size(args.width - 40, 790)
+            window[0].set_default_size(args.width - 40, 870 if args.width == 1600 else 790)
             device[0] = X11Input()
             page[0] = plugin._build(host)
             window[0].set_child(page[0])
@@ -356,7 +431,7 @@ def main():
 
     app = Application()
     GLib.timeout_add_seconds(
-        35, lambda: (fail("Timeout GTK 35s"), False)[1]
+        45, lambda: (fail("Timeout GTK 45s"), False)[1]
         if report["status"] == "RUNNING" else False)
     app.run([sys.argv[0]])
     if not (out / "screen.json").exists():
