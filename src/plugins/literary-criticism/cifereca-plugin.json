@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -48,11 +48,11 @@
     {
       "id": "ui.page.literary-criticism",
       "type": "ui.page",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "entrypoint": "criticism_page:PLUGIN",
       "display_name": "Critiques littéraires",
       "description": "Sources et critiques associées depuis la fiche d’un livre.",
-      "help_text": "Sans livre : choisir une fiche Bibliothèque. Sans source : ajouter puis activer un flux. Filtres langue/date validés, cache seul à l’ouverture ; rafraîchissement explicite.",
+      "help_text": "Sans livre : choisir une fiche Bibliothèque. Sans source : ajouter puis activer un flux. Filtres langue/date validés, cache seul à l’ouverture ; rafraîchissement explicite. Synthèse IA désactivée par défaut et seulement sur clic séparé : trois extraits publics en cache bornés, service public llm/tasks, résultat marqué non attesté et sourcé ; aucune mutation des rattachements confirmés.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
@@ -77,7 +77,20 @@
       ],
       "requires": [],
       "recommends": [],
-      "capabilities": []
+      "capabilities": [],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "llm_summaries": {
+            "type": "boolean",
+            "default": false,
+            "title": "Synthèse facultative par IA",
+            "description": "Autorise le bouton manuel de synthèse de trois extraits publics en cache. Aucun texte intégral ni livre/profil envoyé ; le modèle peut être distant. Aucune confirmation bibliographique automatique."
+          }
+        }
+      }
     },
     {
       "id": "criticism.source.rss",
