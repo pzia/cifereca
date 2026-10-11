@@ -136,7 +136,7 @@ def age_badge(age_range: object) -> str:
         "interest": "Intérêt ",
         "reading": "Lecture ",
         "publisher": "Éditeur ",
-        "inferred": "Estimé (non confirmé) ",
+        "inferred": "Estimé ",
     }.get(kind, "")
     return f"{prefix}{bounds} ans"
 
