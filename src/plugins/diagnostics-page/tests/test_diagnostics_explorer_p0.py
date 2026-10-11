@@ -324,3 +324,9 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+def test_next_page_rejects_cursor_beyond_declared_total():
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 50}, current_offset=0) is None
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 51}, current_offset=0) == 50
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": "unknown"}, current_offset=0) is None
