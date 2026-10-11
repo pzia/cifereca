@@ -54,3 +54,16 @@ les traces ; ne jamais changer le verdict pour simuler une réussite.
 
 La branche temporaire et le workflow associé doivent être fermés/supprimés
 après recette. Éviter toute exécution automatisée permanente.
+
+## Suspension — budget GitHub Actions (11 octobre 2026)
+
+**Blocage confirmé par le responsable du dépôt : budget GitHub Actions.**
+Les exécutions récentes ont été refusées **avant la première étape** (`steps: null`), y compris le CI habituel. Ne pas relancer les workflows pour diagnostiquer ce symptôme : il ne s'agit pas d'une preuve d'échec de GTK4 ou de PyGObject.
+
+**Décision : suspendre toute consommation de minutes GitHub Actions**, y compris les relais de paquets et les runs UX ; ne pas créer de déclenchement `push`, `pull_request`, `workflow_dispatch` ni relancer des jobs sans nouvelle instruction explicite et levée du blocage budgétaire.
+
+**Architecture retenue :** la recette canonique `environnements/openai-chat-debian/` prépare GTK localement sans root ; GitHub n'était envisagé que comme relais réseau ponctuel des paquets Debian/Ubuntu inaccessibles depuis le conteneur, et **pas** comme plateforme d'exécution des tests UX. Éviter le mélange de paquets Debian et Ubuntu.
+
+**Reprise possible après accord :** confirmer le rétablissement du budget ; fournir un canal d'accès aux paquets, exécuter `bootstrap.py --offline --deb-cache …`, `./gtk-python check_import.py`, puis la recette GTK locale et conserver les captures. En attendant : aucun run, aucune nouvelle PR de bootstrap, pas de conclusion « GTK PASS » pour le scénario Diagnostics.
+
+Historique utile : [run 38121476235](https://github.com/pzia/cifereca/actions/runs/38121476235) (préflight GTK/PyGObject réussi), [run 38124311496](https://github.com/pzia/cifereca/actions/runs/38124311496) (job refusé avant démarrage).
