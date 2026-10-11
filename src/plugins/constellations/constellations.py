@@ -403,14 +403,58 @@ def relation(left: ConstellationBook, right: ConstellationBook) -> Relation | No
     return Relation(left.key, right.key, strength, tuple(reasons))
 
 
+def _relation_facets(book: ConstellationBook) -> tuple[tuple[str, str], ...]:
+    """Only attested facets that can produce a reason in relation().
+
+    This deliberately mirrors every equality check in relation(); no fuzzy
+    or inferred edge is introduced. Repeated facet values are ignored.
+    """
+    facets: list[tuple[str, str]] = []
+    for kind, values in (
+        ("author", (_fold(v) for v in book.authors)),
+        ("series", book.series),
+        ("subject", book.subjects),
+        ("format", book.formats),
+        ("mood", book.moods),
+    ):
+        facets.extend((kind, value) for value in values if value)
+    for kind, value in (
+        ("period", book.period),
+        ("language", book.language),
+        ("length", book.length),
+        ("publisher", book.publisher),
+    ):
+        if value:
+            facets.append((kind, value))
+    return tuple(dict.fromkeys(facets))
+
+
 class ConstellationGraph:
     def __init__(self, books: Iterable[object]) -> None:
         normalized = deduplicate_books(books)
         self.books = {book.key: book for book in normalized}
         self._edges: dict[tuple[str, str], Relation] = {}
         keys = tuple(self.books)
+
+        # Sparse catalogues have mostly unrelated pairs. Index every observed
+        # equality facet, then evaluate only candidate pairs sharing at least
+        # one attested value. The final relation() function stays the sole
+        # authority for strength, evidence ordering and edge presence.
+        postings: dict[tuple[str, str], list[int]] = {}
+        facets_by_index: list[tuple[tuple[str, str], ...]] = []
+        for index, key in enumerate(keys):
+            facets = _relation_facets(self.books[key])
+            facets_by_index.append(facets)
+            for facet in facets:
+                postings.setdefault(facet, []).append(index)
         for index, left_key in enumerate(keys):
-            for right_key in keys[index + 1:]:
+            candidate_indices: set[int] = set()
+            for facet in facets_by_index[index]:
+                candidate_indices.update(
+                    right for right in postings[facet] if right > index
+                )
+            for right in sorted(candidate_indices):
+                right_key = keys[right]
                 edge = relation(self.books[left_key], self.books[right_key])
                 if edge is not None:
                     self._edges[(left_key, right_key)] = edge
