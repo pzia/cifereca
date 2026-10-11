@@ -63,6 +63,8 @@ class StateBroker(Broker):
             "events": [], "total": 0, "offset": 0, "next_offset": None,
             "sources": [] if self.state == "empty" else [
                 {"source": "core_events", "status": "available"},
+                *([{"source": "app_log", "status": "unavailable"}]
+                  if self.state == "partial" else []),
             ],
         }
 
@@ -240,9 +242,22 @@ def main():
         # The generic '0 events' header alone must not be misreported as PASS.
         message = " ".join(labels()).casefold()
         explicit = "pas d'erreur observée" in message or "pas d’erreur observée" in message
+        assert explicit and "24 heures" in message
+        assert "ne garantit pas" in message
         report["audits"]["D02_explicit_zero_anomaly_with_period"] = explicit
         report["checks"]["D02_zero_events_vs_source_available"] = True
         capture("01-source-alimentee-sans-evenement")
+        switch("partial")
+        until(lambda: has("Couverture partielle") and
+              len(broker[0].event_queries) == 1, verify_d02_partial)
+
+    def verify_d02_partial():
+        assert has("Aucune anomalie rapportée dans les sources consultées")
+        assert has("24 heures") and has("sources indisponibles ne sont pas évaluées")
+        assert not has("Pas d’erreur observée")
+        assert broker[0].checks == 0 and plugin[0].llm is None
+        report["checks"]["D02_partial_coverage_not_global_health"] = True
+        capture("01b-couverture-partielle-sans-evenement")
         switch("unavailable")
         # Immediate fixture raises directly in tasks.submit(): the plugin
         # uses its explicit "Source indisponible : RuntimeError" UI state.

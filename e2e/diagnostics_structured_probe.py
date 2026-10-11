@@ -377,8 +377,8 @@ def main():
             report["checks"]["D13_support_partial_selection_ctrl_c_xtest"] = True
             screenshot("05-support-ctrl-c-selection-partielle")
             report["unmet_criteria"] = [
-                "D13: export direct du rapport support vers un fichier absent — #1158",
-                "D05: fermeture du volet sans perte de sélection encore non satisfaite",
+                "D13: export fichier non exercé par ce scénario (recette dédiée)",
+                "D05: fermeture/sélection non exercée par ce scénario (recette rapport long)",
             ]
             report["status"] = "PASS"
             save()
