@@ -17,15 +17,13 @@ PATH = Path(__file__).resolve().parents[1] / "src/plugins/diagnostics-page/cifer
 
 
 def _formatter():
-    """Compile only the pure formatting function: no GTK/plugin activation."""
-    tree = ast.parse(PATH.read_text(encoding="utf-8"))
-    fn = next(
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_safe_text"
-    )
-    namespace = {"Any": object}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(PATH), "exec"), namespace)
-    return namespace["_safe_text"]
+    """Import the real pure Python formatter, without instantiating GTK."""
+    import sys
+    plugin_dir = str(PATH.parent)
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+    from cifereca_diagnostics_page import _safe_text
+    return _safe_text
 
 
 @pytest.mark.xfail(strict=True, reason="#1012: structured values presently use repr")
