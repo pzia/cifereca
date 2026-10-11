@@ -14,7 +14,7 @@ from urllib.parse import urljoin, urlsplit
 BASE = "https://www.baen.com/"
 FREE_LIBRARY = BASE + "catalog/category/view/s/free-library/id/2012"
 MAX_HTML_BYTES = 1_500_000
-MAX_PAGE_SIZE = 48
+MAX_PAGE_SIZE = 36
 
 
 def public_product_url(href: str) -> str:
@@ -97,7 +97,7 @@ class FreeLibraryCards(HTMLParser):
         self.depth = max(0, self.depth - 1)
 
 
-def catalog_cards(document: str, *, limit: int = 48) -> tuple[tuple[str, str], ...]:
+def catalog_cards(document: str, *, limit: int = 36) -> tuple[tuple[str, str], ...]:
     if not isinstance(document, str) or len(document.encode("utf-8")) > MAX_HTML_BYTES:
         raise ValueError("baen_catalog_oversize")
     if not 0 <= limit <= MAX_PAGE_SIZE:
