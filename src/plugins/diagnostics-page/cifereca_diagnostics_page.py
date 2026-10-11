@@ -979,7 +979,7 @@ class DiagnosticsPagePlugin:
             )
             ai_result = (
                 "# Analyse générée par IA — hypothèses NON vérifiées\n"
-                + f"Modèle : {result['provider']} / {result['model']}\n"
+                + f"Destination annoncée : {result['provider']} / {result['model']}\n"
                 + f"Provenance : {result['evidence_count']} événements Core expurgés\n"
                 + f"Limites : {result['limitations']}\n\n"
                 + "## Analyse du modèle (inférée)\n"
