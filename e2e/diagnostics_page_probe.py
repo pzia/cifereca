@@ -361,6 +361,36 @@ def main():
         assert broker.checks == 0
         report["checks"]["source_filter_resets_pagination"] = True
         screenshot("04-source-filter-reset")
+        # Search is deliberately local to the current 50-row page (#1039).
+        searches = [
+            w for w in walk(page[0]) if isinstance(w, Gtk.Entry)
+            and w.get_placeholder_text() == "Rechercher dans cette page"
+        ]
+        assert len(searches) == 1, "Champ de recherche locale absent"
+        queries_before = len(broker.event_queries)
+        searches[0].set_text("AUCUNE_CORRESPONDANCE_UX")
+        assert len(broker.event_queries) == queries_before, (
+            "La recherche locale ne doit pas relancer le broker"
+        )
+        until(
+            lambda: find_label("0 événements affichés") and
+            find_label("Aucun événement sur cette page"),
+            lambda: local_search_done(queries_before, searches[0]),
+        )
+
+    def local_search_done(queries_before, search):
+        assert len(broker.event_queries) == queries_before
+        assert find_label("recherche dans cette page uniquement"), (
+            "La limitation du périmètre de recherche doit être visible"
+        )
+        report["checks"]["search_scope_and_empty_page"] = True
+        screenshot("05-local-search-empty")
+        search.set_text("")
+        assert len(broker.event_queries) == queries_before
+        until(lambda: find_label("50 événements affichés"), finish_search)
+
+    def finish_search():
+        report["checks"]["search_reset_without_broker"] = True
         report["status"] = "PASS"
         save()
         rc[0] = 0
