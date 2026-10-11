@@ -855,7 +855,10 @@ class YouthCatalogIndex:
             except Exception:
                 # Provider rows and exception text are untrusted. A raw error
                 # can contain signed URLs, credentials or private searches.
-                kind = "title is required" if not _text(_field(raw, "title")) else "invalid record"
+                title = raw.get("title") if type(raw) is dict else object()
+                kind = ("title is required"
+                        if title is None or (type(title) is str and not title.strip())
+                        else "invalid record")
                 errors.append(f"item[{index}]: {kind}")
         # Reject an entirely malformed refresh atomically: never replace
         # the last usable cache with zero valid records and parsing failures.
