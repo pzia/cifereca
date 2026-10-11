@@ -390,3 +390,15 @@ Les captures et logs restent des artefacts externes, jamais du code produit.
 - `tests/test_settings_migration_099_dev2.py` — source/structure
 - `tests/test_shell_controls_097_dev5.py` — source/structure
 - `tests/test_ui_iteration_097.py` — source/structure
+
+## Detail ownership after the first extraction
+
+`gui/history_cover_resolver.py` owns the lazy resolver; `gui/detail_panel.py`
+owns the unchanged shared GTK renderer. `gui/detail_model.py` owns the same
+neutral presentation and pure formatting helpers without GTK. Existing
+`gui/action_widgets.py` now owns the common button and container helpers,
+removing their duplicate definition. `main_window.py` keeps historical exports.
+`tests/gui_source.py` follows these exact exports to read the real declarations;
+all existing assertions continue to inspect their original bodies. It creates
+no substitute implementation. Components receive the window host explicitly;
+MainWindow is imported by DetailPanel only under TYPE_CHECKING.

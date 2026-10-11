@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from datetime import date
@@ -13,7 +14,7 @@ WIDGETS = ROOT / "src/cifereca/gui/book_widgets.py"
 
 
 def _method(path: Path, class_name: str, method_name: str) -> str:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(path))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
     return ast.unparse(method)

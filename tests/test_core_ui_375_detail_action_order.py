@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -9,7 +10,7 @@ MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _methods(*names):
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     selected = [node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name in names]
     ns = {"Gtk": NS(Button=object)}
