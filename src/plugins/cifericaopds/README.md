@@ -69,6 +69,16 @@ routes n'est attestée sur le serveur réel**.
   **kind**, pas un identifiant avec points. Exemple : source \`merged\`.
 - Les secrets, droits, URLs signées et capacités non implémentées ne sont
   jamais projetés dans \`SearchResult\`.
+- Les sessions existantes sont invalidées lorsque leur source passe à
+  `disabled`, `removed`, perd `catalog.search`, ou change de révision ou
+  génération de catalogue. Même une réapparition sous la même révision exige
+  une nouvelle session. Les autres sources dont le contrat reste identique
+  ne sont pas interrompues. L'inventaire validé reste stocké, sans purger
+  les notices Core déjà indexées.
+- Le garde de session examine uniquement l'inventaire local, avant l'appel
+  de recherche et de nouveau avant d'en publier les résultats. Une réponse
+  devenue périmée pendant une requête HTTP en cours est jetée ; ceci ne
+  constitue pas une annulation réseau native.
 - La recherche peut fonctionner en mode fixture sans serveur. En mode HTTP
   candidat, l'indisponibilité HTTP produit une erreur explicite ; l'inventaire
   validé reste inchangé. Les notices précédemment indexées restent dans Core.

@@ -238,9 +238,10 @@ def candidate_results(data, provider_id):
 
 
 class CifericaSession(ProviderSession):
-    def __init__(self, *, client, mode, directory, **kw):
+    def __init__(self, *, client, mode, directory, source_searchable, **kw):
         super().__init__(**kw)
         self._client, self._mode, self._directory = client, mode, directory
+        self._source_searchable = source_searchable
 
     def connect(self):
         self.connected = True  # No discovery or network probe.
@@ -259,6 +260,9 @@ class CifericaSession(ProviderSession):
             if self._mode == "fixture":
                 return []  # One bounded fixture page; never repeat first-page records.
             raise ContractUnavailable("candidate server pagination is unverified")
+        # Lock-protected local inventory check; no network.
+        if not self._source_searchable():
+            raise ContractUnavailable("source inactive or changed; reconnect required")
         sid = self.provider_id.removeprefix("cifericaopds.")
         if self._mode == "fixture":
             path = self._directory / "fixture-results.json"
@@ -271,15 +275,21 @@ class CifericaSession(ProviderSession):
                 raise ContractUnavailable("invalid local results fixture")
             values = candidate_results(data.get(sid, {"items": []}), self.provider_id)
             q = str(query).strip().casefold()
-            return [x for x in values if q in x.title.casefold() or q in (x.author or "").casefold()]
-        # Explicit user search only. This GET schema is UNVERIFIED for real v0.2.
-        data = self._client.get("/api/v1/search", params={"source_id": sid, "q": str(query)})
-        return candidate_results(data, self.provider_id)
+            rows = [x for x in values if q in x.title.casefold() or q in (x.author or "").casefold()]
+        else:
+            # Explicit user search only; candidate HTTP is NOT confirmed v0.2.
+            data = self._client.get("/api/v1/search", params={"source_id": sid, "q": str(query)})
+            rows = candidate_results(data, self.provider_id)
+        if not self._source_searchable():
+            raise ContractUnavailable("source changed during search; results discarded")
+        return rows
 
 
 class CifericaProvider(ProviderPlugin):
-    def __init__(self, source_id, capabilities, *, client, mode, directory):
+    def __init__(self, source_id, capabilities, *, client, mode, directory,
+                 source_searchable):
         self._client, self._mode, self._directory = client, mode, directory
+        self._source_searchable = source_searchable
         self.descriptor = ProviderDescriptor(
             id=f"cifericaopds.{source_id}", display_name=f"CifericaOPDS · {source_id}",
             description="Public metadata only; no acquisition rights",
@@ -295,6 +305,7 @@ class CifericaProvider(ProviderPlugin):
             descriptor=self.descriptor, credential_id=credential_id,
             label=label, credentials={}, options={},
             client=self._client, mode=self._mode, directory=self._directory,
+            source_searchable=self._source_searchable,
         )
 
 
@@ -307,6 +318,7 @@ class CifericaCollection:
         self._client = None
         self._mode = "fixture"
         self._show_synthetic = False
+        self._session_epochs = {}
 
     def activate(self, context):
         cfg = dict(context.config)
@@ -367,6 +379,11 @@ class CifericaCollection:
             finally:
                 if temp.exists():
                     temp.unlink()
+            previous = {row.source_id: row for row in self._snapshot.children} if self._snapshot else {}
+            current = {row.source_id: row for row in accepted.children}
+            for source_id in previous.keys() | current.keys():
+                if previous.get(source_id) != current.get(source_id):
+                    self._session_epochs[source_id] = self._session_epochs.get(source_id, 0) + 1
             self._snapshot = accepted
             subscribers = tuple(self._callbacks)
         for callback in subscribers:
@@ -376,18 +393,37 @@ class CifericaCollection:
                 pass
         return accepted
 
+    def _searchable(self, source_id, source_revision, catalog_generation, epoch):
+        """Inspect current validated local inventory and source incarnation."""
+        with self._lock:
+            snapshot = self._snapshot
+            if snapshot is None or self._session_epochs.get(source_id, 0) != epoch:
+                return False
+            return any(
+                child.source_id == source_id
+                and child.status == "ready"
+                and "catalog.search" in child.capabilities
+                and child.source_revision == source_revision
+                and child.catalog_generation == catalog_generation
+                for child in snapshot.children
+            )
+
     def create_provider(self, source_id):
         with self._lock:
             snapshot = self._snapshot
-        if snapshot is None:
-            raise ContractUnavailable("no local source inventory")
-        child = next((row for row in snapshot.children
-                      if row.source_id == source_id and row.status == "ready"), None)
+            if snapshot is None:
+                raise ContractUnavailable("no local source inventory")
+            child = next((row for row in snapshot.children
+                          if row.source_id == source_id and row.status == "ready"), None)
+            epoch = self._session_epochs.get(source_id, 0)
         if child is None:
             raise ContractUnavailable("source absent or disabled")
-        return CifericaProvider(source_id, child.capabilities,
-                                client=self._client, mode=self._mode,
-                                directory=self._directory)
+        return CifericaProvider(
+            source_id, child.capabilities, client=self._client, mode=self._mode,
+            directory=self._directory,
+            source_searchable=lambda: self._searchable(
+                source_id, child.source_revision, child.catalog_generation, epoch),
+        )
 
     def subscribe(self, callback):
         with self._lock:
