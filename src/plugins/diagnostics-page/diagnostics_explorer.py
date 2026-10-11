@@ -138,6 +138,8 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
+    if not isinstance(payload, Mapping):
+        return "Sources non alimentées — aucune donnée disponible"
     def bounded_count(value: Any) -> int:
         # The broker contract uses numeric counts. Do not call __int__
         # on arbitrary objects supplied by a malformed broker response.
