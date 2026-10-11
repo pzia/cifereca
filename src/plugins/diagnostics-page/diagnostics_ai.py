@@ -156,6 +156,14 @@ def prepare_analysis(
     events = feed.get("events") or ()
     if not isinstance(events, (tuple, list)):
         raise ValueError("diagnostics_unavailable")
+    raw_total = feed.get("total")
+    # The Core can return a full, correctly bounded page with more matching
+    # events beyond it. Do not mistake 24/500 for complete coverage.
+    known_total = (
+        raw_total if type(raw_total) is int and 0 <= raw_total <= 1_000_000
+        else None
+    )
+    broker_has_more = type(raw_total) is int and raw_total > len(events)
     # Broker metadata is advisory (a partial or unavailable log does not
     # prove an event was absent). Redact even this public presentation surface.
     raw_sources = feed.get("sources")
@@ -199,7 +207,7 @@ def prepare_analysis(
     # must not displace them from the bounded preview.
     filtered = []
     structured = []
-    truncated = len(events) > _MAX_EVENTS
+    truncated = len(events) > _MAX_EVENTS or broker_has_more
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     for item in events[:_MAX_EVENTS]:
         if not isinstance(item, Mapping):
@@ -243,6 +251,8 @@ def prepare_analysis(
 
     if not filtered and not structured:
         raise ValueError("no_diagnostic_events")
+    if len(filtered) < min(len(events), _MAX_EVENTS):
+        truncated = True
     prompt = header + evidence_body(filtered, structured)
     prompt_size = _prompt_bytes(prompt)
     if prompt_size > _MAX_PROMPT:
@@ -257,16 +267,30 @@ def prepare_analysis(
     )
     fingerprint = _fingerprint(prompt, destination, refs, scope)
     approval = _OneUseApproval(fingerprint)
+    source_gaps = [
+        f"{state['source']} ({state['status']})"
+        for state in states if state["status"] in (
+            "partial", "disabled", "unavailable",
+        )
+    ]
+    coverage = (
+        f"Broker : {known_total} événements disponibles ; "
+        if known_total is not None and known_total > len(filtered) else ""
+    )
+    if source_gaps:
+        coverage += "Sources incomplètes ou indisponibles : " + ", ".join(source_gaps) + " ; "
     return {
         "prompt": prompt, "destination": destination, "scope": scope,
         "approval_id": approval.token, "_approval_state": approval,
         "evidence_refs": refs,
         "count": len(filtered), "structured_count": len(structured),
+        "total_available": known_total,
         "sample_truncated": truncated, "source_states": states,
         "chars": len(prompt), "bytes": prompt_size, "generated": False,
         "limitations": (
             "Au plus 24 événements et 4 diagnostics structurés publics ; "
             + ("échantillon partiel, " if truncated else "")
+            + coverage
             + "aucune corrélation causale prouvée."
         ),
     }
@@ -331,6 +355,9 @@ def analyze_with_consent(
         "reference_status": "matched_ids_not_verified_facts" if matched else "no_known_event_cited",
         "evidence_count": preview["count"],
         "structured_count": preview["structured_count"],
+        "total_available": preview["total_available"],
+        "sample_truncated": preview["sample_truncated"],
+        "source_states": preview["source_states"],
         "limitations": preview["limitations"],
         "scope": dict(scope),
     }
@@ -369,6 +396,9 @@ def export_analysis_json(analysis: Mapping[str, Any]) -> str:
         "evidence": {
             "sample_count": analysis.get("evidence_count"),
             "structured_count": analysis.get("structured_count"),
+            "total_available": analysis.get("total_available"),
+            "sample_truncated": analysis.get("sample_truncated"),
+            "source_states": analysis.get("source_states"),
             "matched_references": analysis.get("references_matched"),
             "unknown_references": analysis.get("references_unknown"),
             "reference_status": analysis.get("reference_status"),
