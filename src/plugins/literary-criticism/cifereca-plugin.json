@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -48,11 +48,11 @@
     {
       "id": "ui.page.literary-criticism",
       "type": "ui.page",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "entrypoint": "criticism_page:PLUGIN",
       "display_name": "Critiques littéraires",
       "description": "Sources et critiques associées depuis la fiche d’un livre.",
-      "help_text": "Lecture du cache local à l’ouverture. Ajouter un flux le laisse désactivé ; activez-le puis lancez Actualiser. Filtres source, langue, date. Navigation locale optionnelle Core #737.",
+      "help_text": "Sans livre : choisir une fiche Bibliothèque. Sans source : ajouter puis activer un flux. Filtres langue/date validés, cache seul à l’ouverture ; rafraîchissement explicite.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
