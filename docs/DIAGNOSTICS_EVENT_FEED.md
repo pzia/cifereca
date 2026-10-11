@@ -33,7 +33,21 @@ de champs non secrets sur liste blanche (`phase`, `status`, `outcome`…).
 Un message libre est remplacé par « contenu libre masqué ». Pour les
 Diagnostics structurés, seuls les mots opérationnels autorisés sont diffusés,
 pas les détails ni les valeurs potentiellement personnelles. Les empreintes
-d'événements ne réintroduisent aucune valeur brute.
+d'événements ne réintroduisent aucune valeur brute. Pour les journaux
+applicatifs, `event_id` est une empreinte de la date, du résumé publié et
+de l'identité interne du fichier ouvert (périphérique/inode et position
+absolue en octets). Elle reste stable lors du renommage standard
+`cifereca.log` vers `cifereca.log.1` et lors du déplacement de la fenêtre
+de lecture bornée, sans exposer ces métadonnées dans l'API. Des lignes
+identiques demeurent distinctes. Pour les diagnostics structurés, deux
+enregistrements avec la même date, catégorie et opération reçoivent
+également des identifiants distincts dans le snapshot publié (désambiguïsation
+par ordre d'apparition). La stabilité n'est garantie que tant que ces
+enregistrements restent présents dans cette même fenêtre du Core ;
+l'éviction des premières entrées peut renuméroter des doublons.
+**Limite :** une rotation par copie,
+restauration ou réécriture du fichier peut changer cette empreinte ; elle
+n'est pas un identifiant global ou une preuve de corrélation métier.
 
 **Limites connues :** le flux est un **snapshot borné**, pas une archive
 historique globale. Lorsque le journal est tronqué ou rotaté, son état est
