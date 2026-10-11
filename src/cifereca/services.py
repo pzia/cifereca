@@ -4243,37 +4243,118 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "loan binding", "ok" if detail["return_available"] else "warning", detail=detail, level="normal")
 
     def adept_return_status_for_loan(self, loan: Loan) -> dict[str, Any]:
-        identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
-        entitlements = {r["entitlement_id"] for r in self.storage.entitlements(provider_id=loan.source_provider)
-                        if r.get("identity_id") == identity.identity_id and r.get("loan_id") == loan.id
-                        and r.get("credential_id") == loan.source_credential
-                        and str(r.get("account_id") or "") == str(loan.source_account_id or "")}
-        for row in self.storage.acquisitions(provider_id=loan.source_provider, status="complete"):
-            if (row.get("identity_id") != identity.identity_id or row.get("credential_id") != loan.source_credential
+        """Read-only ADEPT return status from the exact Paris borrower provenance.
+
+        Never infer the Adobe owner from the selected UI identity or the Paris
+        connection owner for a linked account. Keep return actions unavailable
+        when the source, loan transaction or origin profile is ambiguous.
+        """
+        is_paris = str(loan.source_provider).lower() == "paris"
+        if is_paris:
+            connection_identity_id = self.storage.identity_for_connection(
+                loan.source_provider, loan.source_credential
+            )
+            identity = self.identity_by_id(connection_identity_id)
+            if identity is None:
+                return {"status": "adept_identity_unproven", "return_available": False}
+            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=identity.identity_id,
+            )
+            if borrower_code:
+                return {"status": borrower_code, "return_available": False}
+            assert borrower_identity_id is not None
+        else:
+            identity = self.identity_for_connection(
+                loan.source_provider, loan.source_credential
+            )
+            borrower_identity_id = identity.identity_id
+
+        all_rights = self.storage.entitlements(provider_id=loan.source_provider)
+        all_acquisitions = self.storage.acquisitions(provider_id=loan.source_provider)
+        if is_paris and self._cross_identity_loan_conflict(
+            all_acquisitions, provider_loan_id=loan.id,
+            identity_id=identity.identity_id,
+            entitlements=[r for r in all_rights if r.get("state") == "active"],
+        ):
+            return {"status": "adept_loan_identity_conflict", "return_available": False}
+
+        entitlements = {
+            row["entitlement_id"] for row in all_rights
+            if row.get("identity_id") == identity.identity_id
+            and row.get("loan_id") == loan.id
+            and row.get("credential_id") == loan.source_credential
+            and str(row.get("account_id") or "") == str(loan.source_account_id or "")
+            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
+        }
+        candidates = []
+        for row in all_acquisitions:
+            if (row.get("status") != "complete"
+                    or row.get("executor") != "kobo-adept"
+                    or row.get("identity_id") != identity.identity_id
+                    or row.get("credential_id") != loan.source_credential
                     or str(row.get("account_id") or "") != str(loan.source_account_id or "")
                     or str(row.get("item_id") or "") != str(loan.record_id or loan.id)):
                 continue
             metadata = row.get("metadata") or {}
-            if row.get("entitlement_id") not in entitlements and metadata.get("provider_loan_id") != loan.id:
+            recorded_loan_id = metadata.get("provider_loan_id")
+            if recorded_loan_id is not None and str(recorded_loan_id) != str(loan.id):
                 continue
-            binding = metadata.get("adept_binding") or {}
-            state = "returned" if binding.get("loan_state") == "returned" else ("loan_id_missing" if not binding.get("adept_loan_id") else ("profile_missing" if not binding.get("adept_profile_id") else "ready"))
-            if state == "returned" and (binding.get("return_verification") != "confirmed" or binding.get("token_present") is not False):
-                state = "returned_unverified"
-            if binding.get("return_verification") in {"pending", "verification_failed"}:
-                state = "verification_failed"
-            elif binding.get("loan_state") == "expired":
-                state = "expired"
-            elif binding.get("inventory_status") in {"unresolved", "ambiguous", "inventory_error", "binding_conflict"} and state != "returned":
-                state = binding["inventory_status"]
-            elif binding.get("token_present") is False and state != "returned":
-                state = "token_missing"
-            if state in {'returned', 'returned_unverified'} and self._provider_loan_active_for_acquisition(row):
-                state = 'provider_conflict'
-            return {"status": state, "acquisition_id": row["acquisition_id"],
-                    "adept_loan_id": binding.get("adept_loan_id"), "profile_name": binding.get("adept_profile_name"),
-                    "return_available": bool(state == "ready" and binding.get("return_available") and self._adept_return_capability())}
-        return {"status": "no_acquisition", "return_available": False}
+            if recorded_loan_id is None and row.get("entitlement_id") not in entitlements:
+                continue
+            candidates.append(row)
+
+        if not candidates:
+            return {"status": "no_acquisition", "return_available": False}
+        if len(candidates) != 1:
+            return {"status": "adept_return_acquisition_ambiguous", "return_available": False}
+
+        row = candidates[0]
+        binding = (row.get("metadata") or {}).get("adept_binding") or {}
+        if is_paris and binding.get("adept_profile_id") and (
+            self.storage.adept_profile_binding_get(
+                "identity", borrower_identity_id
+            ) != binding["adept_profile_id"]
+        ):
+            return {
+                "status": "adept_return_profile_conflict",
+                "acquisition_id": row["acquisition_id"],
+                "return_available": False,
+            }
+
+        state = "returned" if binding.get("loan_state") == "returned" else (
+            "loan_id_missing" if not binding.get("adept_loan_id") else (
+                "profile_missing" if not binding.get("adept_profile_id") else "ready"
+            )
+        )
+        if state == "returned" and (
+            binding.get("return_verification") != "confirmed"
+            or binding.get("token_present") is not False
+        ):
+            state = "returned_unverified"
+        if binding.get("return_verification") in {"pending", "verification_failed"}:
+            state = "verification_failed"
+        elif binding.get("loan_state") == "expired":
+            state = "expired"
+        elif (
+            binding.get("inventory_status") in {
+                "unresolved", "ambiguous", "inventory_error", "binding_conflict"
+            } and state != "returned"
+        ):
+            state = binding["inventory_status"]
+        elif binding.get("token_present") is False and state != "returned":
+            state = "token_missing"
+        if state in {"returned", "returned_unverified"} and self._provider_loan_active_for_acquisition(row):
+            state = "provider_conflict"
+        return {
+            "status": state,
+            "acquisition_id": row["acquisition_id"],
+            "adept_loan_id": binding.get("adept_loan_id"),
+            "profile_name": binding.get("adept_profile_name"),
+            "return_available": bool(
+                state == "ready" and binding.get("return_available")
+                and self._adept_return_capability()
+            ),
+        }
 
     def reacquire_digital_loan(self, loan: Loan) -> dict[str, Any]:
         """Explicit full recovery, serialized with automatic acquisitions.
