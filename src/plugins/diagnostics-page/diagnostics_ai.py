@@ -25,6 +25,51 @@ _MAX_EVENTS = 24
 _MAX_STRUCTURED = 4
 _MAX_SUPPORT_FIELDS = 8
 _APPROVAL_SECONDS = 300
+
+# Core snapshots may contain arbitrary provider/book/person metadata in
+# 'detail'. Recursive regex redaction alone cannot classify names or titles.
+# Only these operational value tokens are allowed into an LLM preview.
+_STRUCTURED_DETAIL_VALUES = frozenset({
+    "ok", "success", "failed", "error", "warning", "partial",
+    "pending", "running", "completed", "cancelled", "skipped",
+    "unavailable", "available", "disabled", "empty", "timeout",
+    "provider_timeout", "network_timeout", "provider_unavailable",
+    "network_error", "rate_limited", "permission_denied",
+    "invalid_response", "not_found", "missing", "retry",
+    "retrying", "ready", "idle", "fetch", "download", "connect",
+    "sync", "parse", "import", "return", "verify", "check",
+    "update", "install", "search", "catalog", "open",
+    "accepted", "rejected", "attention_required",
+})
+_STRUCTURED_DETAIL_STRING_KEYS = frozenset({
+    "phase", "reason", "status", "outcome", "result", "operation",
+})
+_STRUCTURED_DETAIL_NUMERIC_KEYS = frozenset({
+    "count", "duration_ms", "attempts", "returncode",
+})
+
+
+def _public_structured_detail(raw: Any) -> dict[str, Any]:
+    """Project known operational scalar fields only; never walk unknown data.
+
+    The snapshot contract is public, but detail values can still contain
+    personally identifying strings with no recognizable secret marker.
+    """
+    if not isinstance(raw, Mapping):
+        return {}
+    safe: dict[str, Any] = {}
+    for key in sorted(_STRUCTURED_DETAIL_STRING_KEYS):
+        value = raw.get(key)
+        if type(value) is str and value in _STRUCTURED_DETAIL_VALUES:
+            safe[key] = value
+    for key in sorted(_STRUCTURED_DETAIL_NUMERIC_KEYS):
+        value = raw.get(key)
+        if type(value) is int and -9999 <= value <= 1_000_000:
+            safe[key] = value
+    retryable = raw.get("retryable")
+    if type(retryable) is bool:
+        safe["retryable"] = retryable
+    return safe
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
 # Every field later copied from an approved preview into a user-facing
@@ -303,7 +348,15 @@ def prepare_analysis(
             row = {field: item.get(field) for field in fields if field in item}
             if not row:
                 continue
-            # Recursive redaction masks secret-bearing keys in nested detail.
+            # Never forward arbitrary nested Core detail to an LLM, even
+            # after regex masking. Book titles and personal names may not
+            # look like secrets. Permit only closed-vocabulary telemetry.
+            if "detail" in row:
+                detail = _public_structured_detail(row["detail"])
+                if detail:
+                    row["detail"] = detail
+                else:
+                    del row["detail"]
             safe = redacted_detail(row)
             candidate = structured + [safe]
             if _prompt_bytes(header + evidence_body(filtered, candidate, {})) > _MAX_PROMPT:
