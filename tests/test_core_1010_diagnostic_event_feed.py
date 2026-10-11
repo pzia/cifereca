@@ -371,22 +371,28 @@ def test_event_ids_remain_stable_when_file_grows_and_tail_window_moves(tmp_path)
              "[Worker] TRACE sync source status=ok")
     persistent = ("2026-10-11 07:10:00,000 WARNING cifereca.sync "
                   "[Worker] TRACE return core status=partial")
-    make_log(log, first, persistent)
+    # The initial window contains the entire file, including a long
+    # non-diagnostic line; the later 32-KiB window starts mid-first-line.
+    make_log(log, "X" * 15000, first, persistent)
     initial = query_diagnostic_events(
         Diagnostics(), log_path=log, source="app_log",
     )
     expected_id = next(row["event_id"] for row in initial["events"]
                        if row["severity"] == "warning")
 
-    # Append without modifying the original lines or their physical offsets.
+    # In-place append preserves original byte offsets while moving the bounded
+    # reader start beyond zero; the event must still fit inside its new tail.
     with log.open("a", encoding="utf-8") as handle:
+        handle.write("Y" * 25000 + "\n")
         handle.write(
             "2026-10-11 07:15:00,000 INFO cifereca.sync "
             "[Worker] TRACE sync source status=ok\n"
         )
+    assert log.stat().st_size > 32768
     after = query_diagnostic_events(
         Diagnostics(), log_path=log, source="app_log",
     )
+    assert after["sources"][0]["status"] == "partial"
     matching = [row for row in after["events"]
                 if row["severity"] == "warning"]
     assert len(matching) == 1
