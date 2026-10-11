@@ -240,14 +240,23 @@ def main():
         report["checks"]["D02_zero_events_vs_source_available"] = True
         capture("01-source-alimentee-sans-evenement")
         switch("unavailable")
-        until(lambda: has("Données indisponibles") and
-              len(broker[0].event_queries) == 1, verify_d03)
+        # Immediate fixture raises directly in tasks.submit(): the plugin
+        # uses its explicit "Source indisponible : RuntimeError" UI state.
+        # Async broker failure instead displays "Données indisponibles".
+        until(lambda: (
+                has("Source indisponible : RuntimeError")
+                or has("Données indisponibles")
+              ) and len(broker[0].event_queries) == 1, verify_d03)
 
     def verify_d03():
         assert page[0].get_mapped(), "Fenêtre GTK indisponible"
         assert any("Diagnostics indisponibles" in toast for toast in host[0].toasts)
         refresh = button_tooltip("Actualiser les diagnostics")
         assert refresh.get_sensitive()
+        report["audits"]["D03_visible_error_state"] = (
+            "Source indisponible : RuntimeError" if
+            has("Source indisponible : RuntimeError") else "Données indisponibles"
+        )
         report["checks"]["D03_error_contextualized_and_ui_responsive"] = True
         capture("02-broker-indisponible")
         # A deliberate user retry after the outage, never an automatic call.
