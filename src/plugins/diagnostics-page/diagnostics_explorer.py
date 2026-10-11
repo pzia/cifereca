@@ -166,7 +166,10 @@ def next_page_offset(payload: Mapping[str, Any], *, current_offset: int) -> int 
         return None
     if type(following) is not int:
         return None
-    if current_offset < following <= min(10000, current_offset + PAGE_SIZE):
+    total = payload.get("total")
+    if type(total) is not int or total < 0:
+        return None
+    if current_offset < following <= min(10000, current_offset + PAGE_SIZE) and following < total:
         return following
     return None
 
