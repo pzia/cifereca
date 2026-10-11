@@ -143,6 +143,10 @@ def _published_text(value, *, maximum=256):
     """Allow only bounded scalar publisher facts, never URLs or credentials."""
     if not isinstance(value, str):
         return None
+    # Check the raw value *before* whitespace normalization. Otherwise a CR,
+    # newline or tab in upstream text can be silently converted into content.
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return None
     cleaned = " ".join(value.split())
     if not cleaned or len(cleaned) > maximum:
         return None
@@ -178,6 +182,8 @@ def _published_isbn(value):
 
 def candidate_results(data, provider_id):
     """Conservative projection: no inferred rights, signed URLs or user data."""
+    if not isinstance(data, dict):
+        raise ContractUnavailable("invalid candidate result envelope")
     values = data.get("items")
     if not isinstance(values, list) or len(values) > MAX_RESULTS:
         raise ContractUnavailable("invalid candidate item list")
@@ -185,18 +191,28 @@ def candidate_results(data, provider_id):
     for item in values:
         if not isinstance(item, dict):
             raise ContractUnavailable("invalid candidate item")
-        record_id = _text(item.get("id"), "record id", 256)
-        title = _text(item.get("title"), "title", 1024)
+        # Opaque but path-free IDs only; reject URLs, tokens and arbitrary
+        # serialized objects before they reach SearchResult or UI/log contexts.
+        record_id = item.get("id")
+        if not isinstance(record_id, str) or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", record_id):
+            raise ContractUnavailable("invalid candidate record id")
+        title = _published_text(item.get("title"), maximum=1024)
+        if title is None:
+            raise ContractUnavailable("invalid candidate title")
+        author = item.get("author")
+        if author is not None:
+            author = _published_text(author, maximum=512)
+            if author is None:
+                raise ContractUnavailable("invalid candidate author")
         if record_id in seen:
             continue
         seen.add(record_id)
-        author = item.get("author")
-        if author is not None and (not isinstance(author, str) or len(author) > 512):
-            raise ContractUnavailable("invalid author")
         # v0.2 is still unverified. Project *only* bounded, explicit,
         # bibliographic scalars from the candidate fixture/schema.
         # Never trust upstream URLs, entitlement, acquisition or free-form metadata.
-        published_isbn = _published_isbn(item.get("isbn13") or item.get("isbn"))
+        published_isbn = (_published_isbn(item.get("isbn13"))
+                          or _published_isbn(item.get("isbn")))
         published_language = _published_text(item.get("language"), maximum=12)
         if published_language and not re.fullmatch(
                 r"[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?", published_language):
@@ -234,6 +250,9 @@ class CifericaSession(ProviderSession):
         self.connected = False
 
     def search(self, query, scope="all", page=0, field="all"):
+        if not isinstance(query, str) or len(query) > 300 or any(
+                ord(ch) < 32 or ord(ch) == 127 for ch in query):
+            raise ContractUnavailable("invalid search query")
         if type(page) is not int or not 0 <= page <= 100:
             raise ContractUnavailable("invalid search page")
         if page:
