@@ -391,3 +391,69 @@ def test_removed_virtual_source_blocks_existing_session_http(tmp_path, mocked_ca
     assert len(calls) == count  # No network request from stale session.
     with pytest.raises(ContractUnavailable):
         coll.create_provider("alpha")
+
+
+def test_retired_source_reintroduced_without_revision_change_needs_new_session(tmp_path):
+    fixture = tmp_path / "fixture-sources.json"
+    original = inventory("alpha", generation=1)
+    fixture.write_text(json.dumps(original))
+    (tmp_path / "fixture-results.json").write_text(json.dumps({
+        "alpha": {"items": [{"id": "1", "title": "Livre Alpha"}]},
+    }))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    def session():
+        return coll.create_provider("alpha").create_session(
+            credential_id="__public__", label="alpha", credentials={},
+            options={}, config=None, storage=None, diagnostics=None,
+        )
+    stale = session()
+    assert len(stale.search("Livre")) == 1
+
+    retired = inventory("alpha", generation=2)
+    retired["sources"][0].update({
+        "status": "removed", "revision": "v1", "catalog_generation": 1,
+    })
+    fixture.write_text(json.dumps(retired))
+    coll.refresh()
+    with pytest.raises(ContractUnavailable):
+        stale.search("Livre")
+
+    returned = inventory("alpha", generation=3)
+    returned["sources"][0].update({"revision": "v1", "catalog_generation": 1})
+    fixture.write_text(json.dumps(returned))
+    coll.refresh()
+    with pytest.raises(ContractUnavailable):
+        stale.search("Livre")
+    assert len(session().search("Livre")) == 1
+
+
+def test_refresh_during_http_search_discards_inflight_response(tmp_path):
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    calls = []
+
+    def get_with_refresh(endpoint, *, params):
+        calls.append((endpoint, params))
+        updated = inventory("alpha", generation=2)
+        updated["sources"][0]["status"] = "disabled"
+        fixture.write_text(json.dumps(updated))
+        coll.refresh()
+        return {"items": [{"id": "first", "title": "A stale book"}]}
+
+    # Exercise the candidate HTTP search boundary with a synchronous fake
+    # client so the source invalidates *during* its upstream request.
+    session._mode = "candidate_v02"
+    session._client = NS(get=get_with_refresh)
+    with pytest.raises(ContractUnavailable, match="changed during search"):
+        session.search("book")
+    assert len(calls) == 1
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        session.search("book")
+    assert len(calls) == 1
