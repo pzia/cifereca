@@ -112,6 +112,27 @@ Classement, preuves d'arête, promenade, sécurité de téléchargement et
 politique de requêtes externes inchangés. Tests hors réseau :
 `tests/test_cache_lifecycle_p2.py`.
 
+## Construction indexée du graphe — P2 #700 (0.3.4)
+
+La construction du graphe crée un index inversé sur les facettes **attestées**
+(auteurs, séries, thèmes, période, langue, longueur, format, humeur et éditeur).
+Une paire de notices sans facette commune n'est plus évaluée par
+`relation()` ; les paires candidates sont évaluées **exactement par la même
+fonction** qu'auparavant. Scores, ordre des raisons, directions, provenance,
+classements et promenades sont inchangés. Il n'y a aucun vecteur, LLM,
+lien inféré, accès réseau, nouvelle acquisition ni envoi de métadonnées.
+
+Ce travail élimine la comparaison quadratique pour les catalogues
+**clairsemés** (600 livres sans facette commune : zéro appel à `relation()`
+contre 179 700 avant), mais n'élimine pas la nature quadratique des graphes
+**denses** (ex. tous les livres de langue française) : chaque arête
+réellement attestée est encore conservée en mémoire. Un budget d'arêtes
+et sa validation UX relèvent d'une décision séparée.
+
+Tests offline `tests/test_facet_graph_index_p2.py` :
+parité exacte avec le double parcours naïf, cas clairsemé et dense,
+directions de voisinage et protection contre les faux liens entre
+types de facettes.
 
 ## Refonte du point d'entrée : livre d'abord — #1042 (0.3.5)
 

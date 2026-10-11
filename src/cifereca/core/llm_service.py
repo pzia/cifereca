@@ -77,6 +77,18 @@ class OptionalLLMService:
         valid = enabled and provider == "openai-compatible" and bool(model) and permit
         return valid, remote, provider, model, endpoint, timeout, max_input, max_tokens
 
+    def destination(self) -> dict[str, str | bool]:
+        """Safe per-request disclosure for explicit UI consent; no URL path/key."""
+        available, remote, provider, model, endpoint, *_ = self._settings()
+        try:
+            host = urlsplit(endpoint).hostname if available else ""
+        except ValueError:
+            host = ""
+        return {
+            "available": bool(available), "remote": bool(remote) if available else False,
+            "provider": provider[:80], "model": model[:128], "host": str(host or "")[:180],
+        }
+
     def available(self) -> bool:
         return self._settings()[0]
 

@@ -33,7 +33,6 @@ def test_1009_analyze_button_exists_but_is_user_triggered():
     assert "clicked" in source, "Run AI only after an explicit user action"
 
 
-@pytest.mark.xfail(strict=True, reason="#1009: preflight preview and consent missing")
 def test_1009_remote_analysis_requires_preview_and_explicit_consent():
     source = _source().casefold()
     assert "prévisualis" in source or "aperçu" in source
@@ -41,7 +40,6 @@ def test_1009_remote_analysis_requires_preview_and_explicit_consent():
     assert "annul" in source, "User must be able to cancel before sending"
 
 
-@pytest.mark.xfail(strict=True, reason="#1009: generated findings must be labeled distinctly")
 def test_1009_generated_report_cannot_masquerade_as_deterministic_evidence():
     source = _source().casefold()
     assert "généré" in source or "hypothèse ia" in source
