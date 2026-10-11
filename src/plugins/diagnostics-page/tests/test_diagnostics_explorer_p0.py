@@ -324,3 +324,10 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+@pytest.mark.parametrize("payload", [None, [], "unexpected", 123, object()])
+def test_header_refuses_non_mapping_broker_response(payload):
+    assert explorer_header(payload, []) == (
+        "Sources non alimentées — aucune donnée disponible"
+    )
