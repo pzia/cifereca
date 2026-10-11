@@ -15,6 +15,19 @@ def loan_return_feedback(result: Any, *, channel: str) -> tuple[str, str]:
         return "attention", "Résultat de restitution incomplet : vérification nécessaire."
 
     status = str(result.get("status") or "")
+    code = str(result.get("code") or "")
+    if code == "loan_return_busy":
+        return (
+            "attention",
+            "Une restitution de ce même prêt est déjà en cours. "
+            "Aucune seconde action Adobe ou Paris n’a été envoyée.",
+        )
+    if code == "loan_return_identity_conflict":
+        return (
+            "attention",
+            "Le prêt apparaît sous plusieurs identités Paris : le propriétaire "
+            "doit être vérifié avant toute restitution PNB. Aucun POST n’a été envoyé.",
+        )
     if channel == "adept":
         if (
             status == "paris_return_confirmed"
