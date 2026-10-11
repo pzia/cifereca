@@ -324,3 +324,38 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+@pytest.mark.parametrize("search", [[], {}, 123, object()])
+def test_invalid_local_search_rejected_cleanly(search):
+    with pytest.raises(ValueError, match="search"):
+        sanitized_rows({"events": [event("safe")]}, search=search)
+
+
+@pytest.mark.parametrize("sort", [None, 1, [], "descending"])
+def test_invalid_sort_direction_rejected_cleanly(sort):
+    with pytest.raises(ValueError, match="sort"):
+        sanitized_rows({"events": [event("safe")]}, newest_first=sort)
+
+
+@pytest.mark.parametrize("payload", [None, [], "unexpected", 123, object()])
+def test_header_refuses_non_mapping_broker_response(payload):
+    assert explorer_header(payload, []) == (
+        "Sources non alimentées — aucune donnée disponible"
+    )
+
+
+def test_export_rejects_invalid_unicode_without_crashing_ui():
+    rows = [event("invalid", message="bad-\ud800-surrogate")]
+    with pytest.raises(ValueError, match="invalid Unicode"):
+        export_selected_events(rows, {"invalid"})
+
+
+def test_export_redacts_secret_crossing_500_character_cutoff():
+    text = "x" * 480 + " token=SUPERPRIVATESECRET-" + "z" * 40
+    row = event("bounded", message=text)
+    payload = json.loads(export_selected_events([row], {"bounded"}))
+    message = payload["events"][0]["message"]
+    assert "SUPERPRIVATE" not in message
+    assert "token=<expurgé>" in message
+    assert len(message) <= 500
