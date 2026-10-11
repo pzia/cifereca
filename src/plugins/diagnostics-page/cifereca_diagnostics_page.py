@@ -91,6 +91,15 @@ def redacted_detail(value: Any) -> Any:
                 result = {}
                 for name, child in pairs[:_MAX_DETAIL_CHILDREN]:
                     safe_name = _redacted_text(name)[:160]
+                    # Redaction/truncation may collapse distinct original keys.
+                    # Preserve every entry without revealing original names.
+                    if safe_name in result:
+                        base_name = safe_name
+                        suffix = 2
+                        while safe_name in result:
+                            marker = f" [{suffix}]"
+                            safe_name = base_name[:160 - len(marker)] + marker
+                            suffix += 1
                     result[safe_name] = (
                         "<expurgé>" if (
                             len(name) > _MAX_DETAIL_BYTES
