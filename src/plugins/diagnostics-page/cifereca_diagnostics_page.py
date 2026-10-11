@@ -37,13 +37,19 @@ _MAX_DETAIL_TEXT = 800
 
 
 def _redacted_text(value: str) -> str:
-    text = value[:_MAX_DETAIL_TEXT]
-    text = _DIAGNOSTIC_URL.sub("<URL expurgée>", text)
+    # A partial email, URL or token can straddle the preview cut. Redact
+    # complete values BEFORE truncating anything shown or copied to the UI.
+    # Fail closed on oversized untrusted text to bound regex scanning.
+    if len(value) > _MAX_DETAIL_BYTES:
+        return "<texte trop long : contenu masqué>"
+    text = _DIAGNOSTIC_URL.sub("<URL expurgée>", value)
     text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
     text = _DIAGNOSTIC_PATH.sub("<chemin expurgé>", text)
     text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
     text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
-    return text + ("… [tronqué]" if len(value) > _MAX_DETAIL_TEXT else "")
+    return text[:_MAX_DETAIL_TEXT] + (
+        "… [tronqué]" if len(text) > _MAX_DETAIL_TEXT else ""
+    )
 
 
 def redacted_detail(value: Any) -> Any:
