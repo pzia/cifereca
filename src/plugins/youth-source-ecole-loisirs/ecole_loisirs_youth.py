@@ -211,6 +211,90 @@ def _card_authors(tokens, start: int, end: int) -> tuple[str, ...]:
     return ()
 
 
+
+class _ProductCards(HTMLParser):
+    """Parse separate product-item cards, ignoring duplicate thumbnail cards."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.card = None
+        self.cards = []
+        self.field = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        classes = set(a.get("class", "").split())
+        if self.card is None:
+            if tag == "div" and "product-item" in classes:
+                self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": ""}
+                self.stack = [tag]
+            return
+        if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
+            self.stack.append(tag)
+        if tag == "a":
+            self.card["url"] = self.card["url"] or _product_url(a.get("href"))
+        if "card-title" in classes:
+            self.field = ("title", len(self.stack))
+        elif "card-author" in classes:
+            self.field = ("authors", len(self.stack))
+        elif "card-infos" in classes:
+            self.field = ("info", len(self.stack))
+        elif "card-text" in classes:
+            self.field = ("summary", len(self.stack))
+
+    def handle_data(self, data):
+        if self.card is not None and self.field:
+            value = _text(data)
+            if value:
+                self.card[self.field[0]].append(value)
+
+    def handle_endtag(self, tag):
+        if self.card is None:
+            return
+        if self.field and self.field[1] == len(self.stack):
+            self.field = None
+        if self.stack:
+            self.stack.pop()
+        if not self.stack:
+            self.cards.append(self.card)
+            self.card = None
+
+
+def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
+    parser = _ProductCards()
+    parser.feed(html or "")
+    parser.close()
+    out, seen = [], set()
+    for card in parser.cards:
+        url = card["url"]
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        info = _text(" ".join(card["info"]))
+        age_match = re.search(r"(?:âge|age)\\s*:\\s*(\\d{1,2}\\s*à\\s*\\d{1,2}\\s*ans|\\d{1,2}\\s*ans\\s*et\\s*\\+)", info, re.I)
+        age = parse_age_label(age_match.group(1)) if age_match else None
+        title = _text(" ".join(card["title"]))
+        if not title or age is None or not age.qualified:
+            continue
+        slug = urlsplit(url).path.removeprefix("/livre/")
+        out.append({
+            "record_id": slug, "source_item_id": slug, "title": title,
+            "authors": tuple(dict.fromkeys(card["authors"])),
+            "notice_url": url, "friendly_url": url, "book_type": "roman",
+            "age_ranges": [{"age_min": age.age_min, "age_max": age.age_max,
+                            "age_kind": "publisher", "source_label": age.label,
+                            "source_id": "ecole-loisirs", "confidence": 1.0}],
+            "metadata": {"age_label": age.label, "age_evidence": "ecole-loisirs.catalogue.explicit"},
+        })
+        if len(out) >= max(1, min(int(limit), 40)):
+            break
+    if diagnostic is not None:
+        diagnostic.update({"cards_detected": len(parser.cards), "candidate_count": len(seen),
+                           "age_qualified_count": len(out), "returned_items": len(out),
+                           "missing_isbn": len(out)})
+    return tuple(out)
+
+
 def parse_listing(
     html: str, *, limit: int = 40,
     diagnostic: dict[str, object] | None = None,
@@ -220,6 +304,8 @@ def parse_listing(
     The diagnostic contains integers and fixed public reason identifiers,
     never titles, ISBNs, product URLs, HTML or search terms.
     """
+    if 'product-item' in (html or ''):
+        return parse_catalogue_cards(html, limit=limit, diagnostic=diagnostic)
     tokens = _tokens(html)
     products = []
     anchor_count = 0
