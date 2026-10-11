@@ -28,7 +28,7 @@ def test_missing_sources_are_explicit_and_offline(tmp_path, monkeypatch):
     assert isinstance(broker, DiagnosticsBroker)
     result = broker.events()
     assert result["events"] == []
-    assert result["status"] == "empty"
+    assert result["status"] == "unavailable"
     assert [(x["source"], x["status"]) for x in result["sources"]] == [
         ("core_events", "disabled"), ("app_log", "unavailable"),
     ]
@@ -182,6 +182,48 @@ def test_unknown_trace_tokens_are_never_exported(tmp_path):
     assert rows["events"][1]["message"] == "TRACE sync source phase=ok"
     assert "secretcustomer" not in json.dumps(rows)
     assert "sessionid" not in json.dumps(rows)
+
+
+def test_all_unavailable_or_disabled_sources_not_reported_empty(tmp_path):
+    disabled = Diagnostics(enabled=False)
+    rows = query_diagnostic_events(disabled, log_path=tmp_path / "missing")
+    assert rows["events"] == []
+    assert rows["status"] == "unavailable"
+    assert [row["status"] for row in rows["sources"]] == ["disabled", "unavailable"]
+
+
+def test_available_but_empty_source_remains_empty(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log, "non diagnostic record")
+    rows = query_diagnostic_events(Diagnostics(enabled=False), log_path=log)
+    assert rows["status"] == "empty"
+    assert rows["sources"][1]["status"] == "empty"
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"module": 123}, {"module": "x" * 91}, {"severity": 123},
+    {"since": 123}, {"until": []},
+])
+def test_malformed_filter_types_fail_before_reading_logs(tmp_path, monkeypatch, kwargs):
+    from cifereca.core import diagnostic_event_feed as feed
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("unvalidated request must not read logs")
+    monkeypatch.setattr(feed, "_source_logs", forbidden)
+    with pytest.raises(ValueError):
+        feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", **kwargs)
+
+
+def test_log_namespace_must_have_exact_cifereca_boundary(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO ciferecaevil [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:01,000 INFO cifereca-private [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:02,000 INFO cifereca [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:03,000 INFO cifereca.sync [Worker] TRACE sync source status=ok",
+    )
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert [row["module"] for row in result["events"]] == ["cifereca", "cifereca.sync"]
+    assert result["total"] == 2
 
 
 def test_line_limit_marks_history_partial_even_below_byte_limit(tmp_path):

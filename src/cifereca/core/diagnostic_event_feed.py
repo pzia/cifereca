@@ -84,7 +84,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         partial |= status == "partial"
         for line_number, line in enumerate(lines):
             match = _LOG_LINE.match(line)
-            if not match or not match["logger"].startswith("cifereca"):
+            if not match or not (match["logger"] == "cifereca" or match["logger"].startswith("cifereca.")):
                 continue
             # Raw log messages may contain arbitrary PII or ACSM/licence URLs.
             # Export only known machine-generated TRACE categories and small
@@ -172,6 +172,12 @@ def query_diagnostic_events(
     """
     if source not in {"all", "core_events", "app_log"}:
         raise ValueError("unknown diagnostic source")
+    if not isinstance(module, str) or len(module) > 90:
+        raise ValueError("diagnostic module must be a string of at most 90 characters")
+    if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
+        raise ValueError("unknown diagnostic severity")
+    if any(value is not None and not isinstance(value, str) for value in (since, until)):
+        raise ValueError("diagnostic date filters must be ISO-8601 strings")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= _MAX_RESULTS:
         raise ValueError("diagnostic limit must be 1..100")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
@@ -207,7 +213,10 @@ def query_diagnostic_events(
     page = events[offset:offset + limit]
     return {
         "status": "partial" if any(st["status"] == "partial" for st in states) else (
-            "available" if total else "empty"
+            "available" if total else (
+                "unavailable" if all(st["status"] in {"disabled", "unavailable"} for st in states)
+                else "empty"
+            )
         ),
         "sources": states,
         "events": page,
