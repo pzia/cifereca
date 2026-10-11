@@ -174,3 +174,17 @@ def test_invalid_or_unzoned_timestamps_sort_last_without_crashing():
     rows[1]["timestamp"] = "2026-10-11T07:00:00"
     assert [r["event_id"] for r in sanitized_rows({"events": rows})][0] == "valid"
     assert {r["event_id"] for r in sanitized_rows({"events": rows})} == {"bad", "naive", "valid"}
+
+
+def test_failed_refresh_clears_stale_events_before_showing_error():
+    from pathlib import Path
+    page = Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py"
+    code = page.read_text(encoding="utf-8")
+    start = code.index("        def load_events(")
+    end = code.index("        def reset_events(", start)
+    refresh = code[start:end]
+    failure = refresh[refresh.index("            except Exception as exc:"):]
+    assert 'current_page = {' in failure
+    assert '"events": [], "sources": []' in failure
+    assert "display_events()" in failure
+    assert failure.index("display_events()") < failure.index("Source indisponible")
