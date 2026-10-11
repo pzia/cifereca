@@ -222,9 +222,10 @@ def candidate_results(data, provider_id):
 
 
 class CifericaSession(ProviderSession):
-    def __init__(self, *, client, mode, directory, **kw):
+    def __init__(self, *, client, mode, directory, source_searchable, **kw):
         super().__init__(**kw)
         self._client, self._mode, self._directory = client, mode, directory
+        self._source_searchable = source_searchable
 
     def connect(self):
         self.connected = True  # No discovery or network probe.
@@ -240,6 +241,11 @@ class CifericaSession(ProviderSession):
             if self._mode == "fixture":
                 return []  # One bounded fixture page; never repeat first-page records.
             raise ContractUnavailable("candidate server pagination is unverified")
+        # A session created before an inventory refresh must not continue to
+        # issue HTTP requests for a disabled, removed or revised source.
+        # The snapshot inspection is lock-protected, local and network-free.
+        if not self._source_searchable():
+            raise ContractUnavailable("source inactive or changed; reconnect required")
         sid = self.provider_id.removeprefix("cifericaopds.")
         if self._mode == "fixture":
             path = self._directory / "fixture-results.json"
@@ -259,8 +265,10 @@ class CifericaSession(ProviderSession):
 
 
 class CifericaProvider(ProviderPlugin):
-    def __init__(self, source_id, capabilities, *, client, mode, directory):
+    def __init__(self, source_id, capabilities, *, client, mode, directory,
+                 source_searchable):
         self._client, self._mode, self._directory = client, mode, directory
+        self._source_searchable = source_searchable
         self.descriptor = ProviderDescriptor(
             id=f"cifericaopds.{source_id}", display_name=f"CifericaOPDS · {source_id}",
             description="Public metadata only; no acquisition rights",
@@ -276,6 +284,7 @@ class CifericaProvider(ProviderPlugin):
             descriptor=self.descriptor, credential_id=credential_id,
             label=label, credentials={}, options={},
             client=self._client, mode=self._mode, directory=self._directory,
+            source_searchable=self._source_searchable,
         )
 
 
@@ -357,18 +366,38 @@ class CifericaCollection:
                 pass
         return accepted
 
+    def _searchable(self, source_id, source_revision, catalog_generation):
+        """Consult only the most recent validated, in-memory inventory."""
+        with self._lock:
+            snapshot = self._snapshot
+            if snapshot is None:
+                return False
+            return any(
+                child.source_id == source_id
+                and child.status == "ready"
+                and "catalog.search" in child.capabilities
+                and child.source_revision == source_revision
+                and child.catalog_generation == catalog_generation
+                for child in snapshot.children
+            )
+
     def create_provider(self, source_id):
         with self._lock:
             snapshot = self._snapshot
-        if snapshot is None:
-            raise ContractUnavailable("no local source inventory")
-        child = next((row for row in snapshot.children
-                      if row.source_id == source_id and row.status == "ready"), None)
+            if snapshot is None:
+                raise ContractUnavailable("no local source inventory")
+            child = next((row for row in snapshot.children
+                          if row.source_id == source_id and row.status == "ready"), None)
         if child is None:
             raise ContractUnavailable("source absent or disabled")
-        return CifericaProvider(source_id, child.capabilities,
-                                client=self._client, mode=self._mode,
-                                directory=self._directory)
+        # A new provider binds to one accepted source revision. Older
+        # sessions fail closed after a source is retired or republished.
+        return CifericaProvider(
+            source_id, child.capabilities, client=self._client, mode=self._mode,
+            directory=self._directory,
+            source_searchable=lambda: self._searchable(
+                source_id, child.source_revision, child.catalog_generation),
+        )
 
     def subscribe(self, callback):
         with self._lock:
