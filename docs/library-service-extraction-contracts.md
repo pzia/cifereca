@@ -288,3 +288,11 @@ and event recording through the existing facade-owned dependencies.
 `core/sync_projection.py` reads persisted action, inventory and dashboard state;
 these reads do not trigger authentication, scans or acquisition. Inter-process
 lock factories and paths are supplied by the facade to preserve coordination.
+
+### Kobo backup stages
+
+`core/kobo_backup.py` keeps Vault manifest authority and negotiated artifact
+execution, with separate stages for interrupted local remnants, metadata
+refresh, acquisition decisions, execution/persistence, success-only pruning
+and summary publication. Failed or partial runs preserve manifest rights and
+local artifacts; locks and the existing facade entry points remain unchanged.
