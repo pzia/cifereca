@@ -90,7 +90,7 @@ SCENARIOS = {
         "plugin": "ui.page.diagnostics",
         "fixture": "startup",
         "description": "P0 #1011 D06/D08-D12 : 10000 événements fictifs paginés, filtres source/module/période et provenance sans réseau.",
-        "runner": "gtk-diagnostics-structured", "gtk-diagnostics-volume",
+        "runner": "gtk-diagnostics-volume",
         "width": 1366,
     },
     "diagnostics-states-1366": {
@@ -347,7 +347,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
