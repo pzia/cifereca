@@ -663,6 +663,9 @@ class YouthView:
         self.widget.append(actions)
         self._action_buttons = {}
         actions.append(self.button("Collecter cette source", self.collect))
+        actions.append(self.button(
+            "Rechercher dans toutes les sources Jeunesse", self.collect_federated,
+        ))
         actions.append(self.button("Plus de résultats", self.more))
         actions.append(self.button("Enrichir la bibliographie", self.enrich_bibliography))
         actions.append(self.button("Ouvrir la fiche Bibliothèque", self.open_selected))
@@ -671,6 +674,11 @@ class YouthView:
             wrap=True, xalign=0,
         )
         self.widget.append(self.actions_hint)
+        self.federated_status = Gtk.Label(
+            label="Recherche fédérée non lancée. Aucune requête automatique.",
+            wrap=True, xalign=0,
+        )
+        self.widget.append(self.federated_status)
 
         # Only local state and the public plugin-inventory broker are read.
         # Collapse by default to preserve the original 1024px reading viewport.
@@ -755,7 +763,19 @@ class YouthView:
             busy=busy,
         )
         for label, button in buttons.items():
-            enabled, reason = states[label]
+            if label == "Rechercher dans toutes les sources Jeunesse":
+                # Lazy-import only if the federated action is in this view;
+                # keep historical partial GTK fixtures compatible.
+                from youth_federation_ui import federated_action_available
+                enabled = federated_action_available(self)
+                reason = (
+                    "Réseau uniquement au clic : 8 sources au plus, 2 connexions simultanées "
+                    "et 2 pages de 50 notices par source."
+                    if enabled else
+                    "Choisissez un profil avec des sources Jeunesse compatibles, sans collecte en cours."
+                )
+            else:
+                enabled, reason = states[label]
             button.set_sensitive(enabled)
             button.set_tooltip_text(reason)
         hint = getattr(self, "actions_hint", None)
@@ -1144,6 +1164,11 @@ class YouthView:
 
     def collect(self):
         self._remote_request("")
+
+    def collect_federated(self):
+        """Click-only network federation. No network on typing/filtering."""
+        from youth_federation_ui import run_federated_action
+        run_federated_action(self)
 
     def more(self):
         if not self.next_cursor or self.next_source_plugin != self.selected_source_plugin():
