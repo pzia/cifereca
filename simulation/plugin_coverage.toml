@@ -6,6 +6,14 @@ version = 1
 data = []
 gap = "Baen : faux catalogue/fiches/EPUB HTTP, sans GUI E2E ni vrais comptes"
 
+[package.cifericaopds]
+data = []
+gap = "Collection de providers virtuels en pilote fixture ; aucune preuve de service HTTP ni E2E GTK certifiée"
+
+[package.dev-updater]
+data = []
+gap = "Consultation explicite des releases GitHub en lecture seule ; aucun serveur simulé ni parcours GTK validé"
+
 [package.constellations]
 data = ["local-library", "specialized-seed"]
 gap = "JSON exposé en HTTP local ; promenades et graphe à vérifier sur vraie UI"
