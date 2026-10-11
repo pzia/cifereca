@@ -82,7 +82,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             continue
         observed = True
         partial |= status == "partial"
-        for line in lines:
+        for line_number, line in enumerate(lines):
             match = _LOG_LINE.match(line)
             if not match or not match["logger"].startswith("cifereca"):
                 continue
@@ -109,7 +109,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "module": match["logger"][:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
-                "event_id": _event_id("app_log", ts, message),
+                "event_id": _event_id("app_log", ts, f"{index}:{line_number}:{message}"),
             })
     status = "partial" if partial else ("available" if observed else "unavailable")
     return events, {"source": "app_log", "status": "partial" if partial else (status if events else ("empty" if observed else "unavailable")),
