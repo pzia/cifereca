@@ -67,6 +67,10 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
     """Normalize only Core-published fields; omit unexpected keys entirely."""
     if not isinstance(payload, Mapping):
         return []
+    if not isinstance(search, str):
+        raise ValueError("invalid diagnostics search")
+    if not isinstance(newest_first, bool):
+        raise ValueError("invalid diagnostics sort order")
     results: list[dict[str, str]] = []
     events = payload.get("events")
     if not isinstance(events, (list, tuple)):
@@ -138,6 +142,8 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
+    if not isinstance(payload, Mapping):
+        return "Sources non alimentées — aucune donnée disponible"
     def bounded_count(value: Any) -> int:
         # The broker contract uses numeric counts. Do not call __int__
         # on arbitrary objects supplied by a malformed broker response.
@@ -177,7 +183,7 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     selected = [
         {
-            field: redacted_detail(value[:500] if isinstance(value, str) else "")
+            field: redacted_detail(value)[:500] if isinstance(value, str) else ""
             for field in fields
             for value in (row.get(field),)
         }
@@ -191,6 +197,10 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
         "notice": "Événements expurgés du Core ; pas de corrélation de tâches prouvée",
         "events": selected,
     }, ensure_ascii=False, indent=2, allow_nan=False)
-    if len(result.encode("utf-8")) > 24_000:
+    try:
+        size = len(result.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ValueError("diagnostic export contains invalid Unicode") from exc
+    if size > 24_000:
         raise ValueError("diagnostic export exceeds the 24 KB limit")
     return result
