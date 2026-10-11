@@ -175,7 +175,7 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     selected = [
         {
-            field: redacted_detail(value[:500] if isinstance(value, str) else "")
+            field: redacted_detail(value)[:500] if isinstance(value, str) else ""
             for field in fields
             for value in (row.get(field),)
         }
