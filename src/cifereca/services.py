@@ -38,6 +38,7 @@ from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
 from .core.acquisition_decision import decide_artifact_reuse
 from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attention_code
+from .core.borrower_adept_binding import borrower_key, loan_owner_key, read_proof, save_proof, conflicting_loan_identities
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
@@ -443,15 +444,179 @@ class LibraryService:
         account_id: str | None = None,
         explicit_profile: str | None = None,
     ) -> tuple[str, str]:
-        """Resolve ADE at Paris-identity scope.
-
-        ``account_id`` remains in the call contract for compatibility, but 0.8.1
-        deliberately no longer binds ADE profiles to provider sub-accounts.
-        """
-        identity = self.identity_for_connection(provider_id, credential_id)
+        """Public resolver: Paris borrower has priority over login/UI identity."""
+        identity = self._drm_identity_for_connection(provider_id, credential_id)
+        if provider_id == "paris":
+            borrower = self._borrower_id(account_id)
+            proof = read_proof(self.storage, borrower_key(
+                provider_id, credential_id, borrower,
+            ))
+            if proof is None:
+                raise AdeptProfileResolutionError(
+                    "Emprunteur non associé explicitement à un profil ADEPT",
+                    code="adept_borrower_binding_required",
+                )
+            if (not self.identity_by_id(proof["identity_id"])
+                    or self.storage.adept_profile_binding_get("identity", proof["identity_id"])
+                    != proof["profile_id"]):
+                raise AdeptProfileResolutionError(
+                    "Liaison emprunteur/profil ADEPT périmée",
+                    code="adept_borrower_profile_unproven",
+                )
+            identity = self.identity_by_id(proof["identity_id"])
         return self.resolve_adept_profile_for_identity(
-            identity.identity_id, explicit_profile=explicit_profile
+            identity.identity_id, explicit_profile=explicit_profile,
         )
+
+    def _drm_identity_for_connection(self, provider_id: str, credential_id: str) -> Identity:
+        """Unlike UI identity_for_connection(), Adobe mutation has no fallback."""
+        identity_id = self.storage.identity_for_connection(provider_id, credential_id)
+        identity = self.identity_by_id(identity_id) if identity_id else None
+        if identity is None:
+            raise AdeptProfileResolutionError(
+                "L'identité de connexion de l'emprunteur est inconnue",
+                code="adept_borrower_identity_unproven",
+            )
+        return identity
+
+    @staticmethod
+    def _borrower_id(account_id: str | None) -> str:
+        if account_id is None:
+            raise AdeptProfileResolutionError(
+                "L'identifiant du compte emprunteur est absent",
+                code="adept_borrower_missing",
+            )
+        return "primary" if str(account_id) in ("", "primary") else str(account_id)
+
+    def confirm_adept_borrower(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        identity_id: str, profile_id: str, confirmed: bool = False,
+    ) -> None:
+        """Explicit user-confirmed borrower→identity→stable ADEPT profile map.
+
+        Linked accounts may belong to a different Cifereca identity than the
+        connection login; never guess from the login's identity or active tab.
+        """
+        if confirmed is not True:
+            raise ProviderConfigurationError("Confirmation explicite de l'emprunteur requise")
+        if provider_id != "paris":
+            raise ProviderConfigurationError("Liaison emprunteur réservée aux prêts Paris")
+        self._drm_identity_for_connection(provider_id, credential_id)
+        borrower = self._borrower_id(account_id)
+        if not self.identity_by_id(identity_id):
+            raise ProviderConfigurationError("Identité emprunteur inconnue")
+        matches = [
+            a for a in self.accounts
+            if a.provider_id == provider_id and a.credential_id == credential_id
+            and (self._borrower_id(a.unique_id) == borrower)
+        ]
+        if len(matches) != 1:
+            raise ProviderConfigurationError("Compte emprunteur non vérifiable dans cette connexion")
+        if str(self.storage.adept_profile_binding_get("identity", identity_id) or "") != profile_id:
+            raise ProviderConfigurationError("Profil ADEPT stable non lié à l'identité emprunteuse")
+        if not str(profile_id or "").strip():
+            raise ProviderConfigurationError("Profil ADEPT stable requis")
+        save_proof(
+            self.storage, borrower_key(provider_id, credential_id, borrower),
+            identity_id=identity_id, profile_id=profile_id,
+        )
+
+    def confirm_adept_loan_owner(
+        self, loan: Loan, *, identity_id: str, confirmed: bool = False,
+    ) -> None:
+        """User chooses the owner when the same Paris loan spans identities."""
+        if confirmed is not True or loan.source_provider != "paris":
+            raise ProviderConfigurationError("Attribution du prêt à confirmer explicitement")
+        borrower = self._borrower_id(loan.source_account_id)
+        binding = read_proof(self.storage, borrower_key(
+            loan.source_provider, loan.source_credential, borrower,
+        ))
+        if not binding or binding["identity_id"] != identity_id:
+            raise ProviderConfigurationError("L'emprunteur doit être lié avant l'attribution du prêt")
+        if not loan.id or not (loan.record_id or loan.id):
+            raise ProviderConfigurationError("Transaction de prêt non identifiée")
+        save_proof(
+            self.storage, loan_owner_key(loan.source_provider, loan.id, str(loan.record_id or loan.id)),
+            identity_id=identity_id, profile_id=binding["profile_id"],
+            owner_borrower_key=borrower_key(
+                loan.source_provider, loan.source_credential, borrower,
+            ),
+        )
+
+    def _adept_borrower_proof(self, loan: Loan) -> tuple[str, str] | None:
+        """Return proven (identity, stable profile) or fail closed.
+
+        An existing identity-level ADEPT binding is sufficient only for one
+        explicit *primary* borrower on one active Paris login. Linked and
+        multi-login cases always need an explicit borrower confirmation.
+        """
+        if loan.source_provider != "paris":
+            return None
+        self._drm_identity_for_connection(loan.source_provider, loan.source_credential)
+        borrower = self._borrower_id(loan.source_account_id)
+        binding = read_proof(self.storage, borrower_key(
+            loan.source_provider, loan.source_credential, borrower,
+        ))
+        if binding:
+            identity_id, profile_ref = binding["identity_id"], binding["profile_id"]
+        else:
+            accounts = [
+                a for a in self.accounts if a.provider_id == loan.source_provider
+                and a.credential_id == loan.source_credential
+            ]
+            paris_connections = [
+                row for row in self.storage.provider_connections()
+                if row.get("provider_id") == "paris" and row.get("enabled")
+            ]
+            # Compatibility for a sole, provably primary borrower with
+            # a user-selected identity-bound stable profile.
+            if not (len(accounts) == 1 and accounts[0].is_primary
+                    and self._borrower_id(accounts[0].unique_id) == borrower
+                    and len(paris_connections) == 1
+                    and paris_connections[0]["credential_id"] == loan.source_credential
+                    and borrower == "primary"):
+                raise AdeptProfileResolutionError(
+                    "Confirmer l'emprunteur et son identité ADEPT avant activation",
+                    code="adept_borrower_binding_required",
+                )
+            identity_id = self._drm_identity_for_connection(
+                loan.source_provider, loan.source_credential,
+            ).identity_id
+            profile_ref = str(self.storage.adept_profile_binding_get("identity", identity_id) or "")
+        if not self.identity_by_id(identity_id):
+            raise AdeptProfileResolutionError(
+                "Identité ADEPT de l'emprunteur inconnue", code="adept_borrower_identity_unproven",
+            )
+        if not profile_ref or self.storage.adept_profile_binding_get("identity", identity_id) != profile_ref:
+            raise AdeptProfileResolutionError(
+                "Le profil ADEPT lié à l'emprunteur a changé ou est absent",
+                code="adept_borrower_profile_unproven",
+            )
+        item = str(loan.record_id or loan.id)
+        current_proof = read_proof(
+            self.storage, loan_owner_key(loan.source_provider, loan.id, item),
+        )
+        all_connections = {
+            row["identity_id"] for row in self.storage.provider_connections()
+            if row.get("provider_id") == loan.source_provider and row.get("enabled")
+            and row.get("identity_id")
+        }
+        identities = conflicting_loan_identities(
+            self.storage.entitlements(provider_id=loan.source_provider),
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_id=loan.source_provider, loan_id=loan.id, item_id=item,
+        )
+        if len(all_connections) > 1 or len(identities) > 1 or current_proof is not None:
+            if (current_proof is None or current_proof["identity_id"] != identity_id
+                    or current_proof["profile_id"] != profile_ref
+                    or current_proof.get("owner_borrower_key") != borrower_key(
+                        loan.source_provider, loan.source_credential, borrower,
+                    )):
+                raise AdeptProfileResolutionError(
+                    "Prêt présent sur plusieurs comptes : propriétaire ADEPT à confirmer",
+                    code="adept_loan_owner_ambiguous",
+                )
+        return identity_id, profile_ref
 
     def _local_account(self) -> Account:
         return Account(
@@ -2775,6 +2940,229 @@ class LibraryService:
         )
         return public_return_state(row or checkpoint)
 
+    def verify_paris_return_inventory(self, loan: Loan) -> dict[str, str]:
+        """Read the exact Paris borrower without cache; no provider mutation."""
+        account, session, key = self._return_loan_identity(loan)
+        from .core.loan_return_guard import return_ref
+        try:
+            loans = session.loans(account)
+            if not isinstance(loans, list):
+                raise ValueError("Incomplete Paris inventory")
+            upstream_errors = getattr(session, "last_loan_errors", None)
+            if upstream_errors is None or any(
+                isinstance(item, dict) and item.get("upstream") == "DILICOM"
+                for item in upstream_errors
+            ):
+                raise ValueError("Paris DILICOM inventory not verified")
+            still_present = any(
+                item.id == loan.id and item.provider == loan.provider for item in loans
+            )
+            verification = "still_present" if still_present else "provider_absent"
+        except Exception:
+            verification = "unavailable"
+        _TRACE_LOG.info(
+            "TRACE return core phase=inventory_checked outcome=%s ref=%s",
+            verification, return_ref(key),
+        )
+        return {"verification": verification, "status": {
+            "still_present": "still_active",
+            "provider_absent": "provider_return_confirmed",
+            "unavailable": "verification_unavailable",
+        }[verification]}
+
+    def _adept_return_identity(self, loan: Loan):
+        """Resolve confirmed *borrower* identity, not the login's UI identity.
+
+        The loan still must originate from the exact Paris account displayed.
+        Its Adobe profile may legitimately belong to a different Cifereca
+        identity when the account is linked/delegated (#976).
+        """
+        account, _session, _key = self._return_loan_identity(loan)
+        if not loan.identity_id or loan.identity_id != account.identity_id:
+            raise AttentionRequired(
+                "La provenance du prêt ne correspond pas au sous-compte affiché.",
+                code="adept_return_loan_provenance_mismatch",
+            )
+        try:
+            proof = self._adept_borrower_proof(loan)
+        except AdeptProfileResolutionError as exc:
+            raise AttentionRequired(
+                "Confirmer l'emprunteur et son profil ADEPT avant restitution.",
+                code=exc.code,
+            ) from exc
+        if proof is None:
+            raise AttentionRequired(
+                "Aucune preuve d'emprunteur ADEPT n'est disponible.",
+                code="adept_return_identity_unproven",
+            )
+        identity_id, stable_profile_id = proof
+        if (not self.identity_by_id(identity_id)
+                or self.storage.adept_profile_binding_get("identity", identity_id)
+                != stable_profile_id):
+            raise AttentionRequired(
+                "La liaison ADEPT de l'emprunteur a changé.",
+                code="adept_borrower_profile_unproven",
+            )
+        return account, identity_id
+
+    def _find_adept_return_source(self, loan: Loan) -> tuple[str, dict[str, Any] | None]:
+        from .core.return_adept_orchestrator import acquisition_for_loan
+        account, identity_id = self._adept_return_identity(loan)
+        return acquisition_for_loan(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_id=loan.source_provider, credential_id=loan.source_credential,
+            borrower_id=str(account.unique_id or "primary"),
+            loan_id=str(loan.id), item_id=str(loan.record_id or loan.id),
+            identity_id=identity_id,
+        )
+
+    def _adobe_return_inventory_confirmed(self, row: dict[str, Any]) -> bool:
+        """Recovery path must be read-only: NEVER re-execute Adobe mutation."""
+        binding = (row.get("metadata") or {}).get("adept_binding") or {}
+        profile = self._adept_profile_row(binding["adept_profile_id"], self.kobo_profiles())
+        if profile is None:
+            return False
+        profile_name = self._adept_profile_name(profile)
+        try:
+            inventory = self._kobo_adapter().loans(profile_name)
+            matches = [
+                item for item in inventory["loans"]
+                if item.get("id") == binding["adept_loan_id"]
+            ]
+            return (len(matches) == 1 and matches[0].get("returned") is True
+                    and matches[0].get("token_present") is False)
+        except Exception:
+            return False
+
+    def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
+        """Single safe entrypoint for Mes emprunts: Adobe first, Paris read-only.
+
+        Never use ReturnDigitalLoan in this method; a separate explicit Paris
+        action is required when no Adobe acquisition exists or Paris stays active.
+        """
+        import uuid
+        from .core.return_adept_orchestrator import (
+            adept_return_key, public_state,
+        )
+        if loan.source_provider != "paris" or loan.medium != "digital":
+            return self.return_digital(loan)
+        try:
+            account, identity_id = self._adept_return_identity(loan)
+        except AttentionRequired as exc:
+            return {
+                "status": "failed", "code": exc.code,
+                "scope": "adobe_first_paris", "retry": "resolve_identity",
+            }
+        key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        source_status, acquisition = self._find_adept_return_source(loan)
+        if acquisition is not None:
+            origin_id = ((acquisition.get("metadata") or {}).get("adept_binding") or {}).get("adept_profile_id")
+            if self.storage.adept_profile_binding_get("identity", identity_id) != origin_id:
+                return {
+                    "status": "adept_return_profile_unproven",
+                    "scope": "adobe_first_paris", "retry": "resolve_identity",
+                }
+        if acquisition is None:
+            return {
+                "status": source_status, "scope": "adobe_first_paris",
+                "retry": "provider_action_explicit" if source_status == "provider_action_available"
+                         else "resolve_identity",
+            }
+        # A previous explicit Paris POST must be reconciled before any Adobe
+        # mutation; neither return channel is a speculative fallback.
+        from .core.loan_return_guard import return_key, return_ref
+        pnb_key = return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        pnb = self.storage.loan_return_state(pnb_key)
+        if pnb is not None:
+            return {
+                "status": "partial", "scope": "adobe_first_paris",
+                "reason": "provider_return_already_requested",
+                "retry": "verification_only",
+            }
+        previous = self.storage.loan_return_state(key)
+        if previous is None:
+            op_id = uuid.uuid4().hex
+            claimed, record = self.storage.loan_return_claim(key, op_id)
+            if not claimed:
+                previous = record
+        if previous is not None:
+            if previous.get("status") == "paris_return_confirmed":
+                return public_state(previous)
+            if previous.get("adobe_verified") is not True:
+                if not self._adobe_return_inventory_confirmed(acquisition):
+                    # If the old worker crashed during Adobe return, no safe
+                    # way exists to infer whether another mutation is needed.
+                    # Only Adobe inventory may confirm; never replay mutation.
+                    return public_state(previous)
+                record = self.storage.loan_return_transition(
+                    key, str(previous.get("operation_id") or ""),
+                    status="adobe_return_confirmed", verification="adobe_confirmed",
+                    adobe_verified=True,
+                ) or previous
+            else:
+                record = previous
+        else:
+            op_id = record["operation_id"]
+            self.storage.loan_return_transition(
+                key, op_id, status="adobe_return_requested",
+                verification="adobe_pending", adobe_verified=False,
+            )
+            _TRACE_LOG.info(
+                "TRACE return core phase=adobe_return_requested ref=%s", return_ref(key),
+            )
+            try:
+                outcome = self.return_adept_acquisition(acquisition["acquisition_id"])
+                if outcome.get("verification") != "confirmed" or not outcome.get("ok"):
+                    raise ValueError("Adobe return not confirmed")
+            except Exception as exc:
+                record = self.storage.loan_return_transition(
+                    key, op_id, status="failed", verification="adobe_unavailable",
+                    adobe_verified=False, error_type=type(exc).__name__,
+                )
+                return public_state(record or {"status": "failed"})
+            record = self.storage.loan_return_transition(
+                key, op_id, status="adobe_return_confirmed",
+                verification="adobe_confirmed", adobe_verified=True,
+            )
+            _TRACE_LOG.info(
+                "TRACE return core phase=adobe_return_confirmed ref=%s", return_ref(key),
+            )
+        op_id = str(record.get("operation_id") or "")
+        self.storage.loan_return_transition(
+            key, op_id, status="paris_check_pending",
+            verification="not_checked", adobe_verified=True,
+        )
+        paris = self.verify_paris_return_inventory(loan)
+        status = "paris_return_confirmed" if paris["verification"] == "provider_absent" else "partial"
+        record = self.storage.loan_return_transition(
+            key, op_id, status=status, verification=paris["verification"],
+            adobe_verified=True,
+        )
+        return public_state(record or {"status": status, "adobe_verified": True})
+
+    def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
+        """No mutation on first inspection; resume only an existing checkpoint."""
+        from .core.return_adept_orchestrator import adept_return_key
+        if loan.source_provider != "paris" or loan.medium != "digital":
+            return {"status": "not_requested", "scope": "adobe_first_paris"}
+        try:
+            account, _identity = self._adept_return_identity(loan)
+        except AttentionRequired as exc:
+            return {"status": "failed", "code": exc.code, "scope": "adobe_first_paris"}
+        key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        if self.storage.loan_return_state(key) is None:
+            return {"status": "not_requested", "scope": "adobe_first_paris"}
+        return self.return_loan_prefer_adept(loan)
+
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
         """PNB provider return with an at-most-once POST until verified.
 
@@ -2790,6 +3178,22 @@ class LibraryService:
             session = self._session_for_source(loan.source_provider, loan.source_credential)
             return session.return_digital(loan, account)
         account, session, key = self._return_loan_identity(loan)
+        from .core.return_adept_orchestrator import adept_return_key, public_state
+        adobe_key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        adobe = self.storage.loan_return_state(adobe_key)
+        if adobe is not None:
+            # An Adobe return already attempted must never implicitly dispatch
+            # Paris POST. Only a *separate* explicit provider action can do so.
+            if not explicit_retry or adobe.get("adobe_verified") is not True:
+                return {
+                    **public_state(adobe), "reason": "adobe_return_takes_precedence",
+                }
+            fresh = self.verify_paris_return_inventory(loan)
+            if fresh["status"] != "still_active":
+                return fresh
         prior = self.storage.loan_return_state(key)
         if prior is not None:
             if not explicit_retry:
@@ -4439,46 +4843,40 @@ class LibraryService:
             "TRACE download loan_auto begin loan_id=%s item_id=%s title=%r provider=%s credential=%s account=%s direct_url_present=%s",
             loan.id, loan.record_id, loan.title, loan.source_provider, loan.source_credential, loan.source_account_id, bool(loan.ebook_url),
         )
-        # DRM must never inherit the currently selected identity when a provider
-        # connection has no persisted owner. Keep this fail-closed at the
-        # automatic acquisition boundary; unrelated UI navigation may still
-        # use the historical identity_for_connection fallback.
-        bound_identity_id = self.storage.identity_for_connection(
-            loan.source_provider, loan.source_credential
+        try:
+            identity = (self._drm_identity_for_connection(
+                loan.source_provider, loan.source_credential,
+            ) if loan.source_provider == "paris" else self.identity_for_connection(
+                loan.source_provider, loan.source_credential,
+            ))
+            if loan.source_provider == "paris" and loan.source_account_id is not None:
+                binding = read_proof(
+                    self.storage, borrower_key(
+                        loan.source_provider, loan.source_credential,
+                        self._borrower_id(loan.source_account_id),
+                    ),
+                )
+                paris_identities = {
+                    r["identity_id"] for r in self.storage.provider_connections()
+                    if r.get("provider_id") == "paris" and r.get("enabled")
+                    and r.get("identity_id")
+                }
+                if binding or len(paris_identities) > 1:
+                    borrower_identity, _profile_ref = self._adept_borrower_proof(loan)
+                    identity = self.identity_by_id(borrower_identity)
+        except AdeptProfileResolutionError as exc:
+            return {"status": "attention_required", "loan_id": loan.id,
+                    "code": exc.code, "error": str(exc)}
+        _TRACE_LOG.info(
+            "TRACE download identity resolved loan_id=%s identity=%s",
+            loan.id, identity.identity_id,
         )
-        identity = self.identity_by_id(bound_identity_id)
-        if identity is None:
-            _TRACE_LOG.warning(
-                "TRACE download loan_auto blocked reason=unbound_connection_identity provider=%s",
-                loan.source_provider,
-            )
-            return {
-                "status": "attention_required", "loan_id": loan.id,
-                "code": "adept_identity_unproven",
-                "reason": "unbound_connection_identity",
-                "retry": "explicit_only",
-            }
-        _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
-        entitlement_inventory = self.storage.entitlements(
-            provider_id=loan.source_provider, state="active"
-        )
-        if str(loan.source_provider).lower() == "paris" and self._cross_identity_loan_conflict(
-            self.storage.acquisitions(provider_id=loan.source_provider),
-            provider_loan_id=loan.id, identity_id=identity.identity_id,
-            entitlements=entitlement_inventory,
-        ):
-            _TRACE_LOG.warning(
-                "TRACE download loan_auto blocked reason=cross_identity_loan provider=%s",
-                loan.source_provider,
-            )
-            return {
-                "status": "attention_required", "loan_id": loan.id,
-                "code": "adept_loan_identity_conflict",
-                "reason": "cross_identity_loan", "retry": "explicit_only",
-            }
         entitlement_rows = [
-            row for row in entitlement_inventory
-            if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
+            row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
+            if row.get("loan_id") == loan.id
+            and row.get("credential_id") == loan.source_credential
+            and str(row.get("account_id") or "primary") == str(loan.source_account_id or "primary")
+            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
         ]
         entitlement_id = entitlement_rows[0]["entitlement_id"] if entitlement_rows else None
         existing = [
@@ -4616,6 +5014,20 @@ class LibraryService:
                 loan.id, decision.reason,
             )
 
+        if loan.source_provider == "paris":
+            # This preflight rejects cross-identity claims *before* contacting
+            # the provider; unresolved sole-borrower mappings are handled at
+            # the ACSM boundary below so a reusable input may still be staged.
+            try:
+                if len({
+                    r["identity_id"] for r in self.storage.provider_connections()
+                    if r.get("provider_id") == "paris" and r.get("enabled")
+                }) > 1:
+                    self._adept_borrower_proof(loan)
+            except AdeptProfileResolutionError as exc:
+                return {"status": "attention_required", "loan_id": loan.id,
+                        "code": exc.code, "error": str(exc)}
+
         ledger_base = {
             "entitlement_id": entitlement_id,
             "provider_id": loan.source_provider,
@@ -4677,7 +5089,13 @@ class LibraryService:
                         "code": code, "retry": "explicit_only",
                     }
                 try:
-                    profile_name, profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
+                    borrower_binding = self._adept_borrower_proof(loan)
+                    if borrower_binding is not None:
+                        real_identity_id, _stable_ref = borrower_binding
+                        identity = self.identity_by_id(real_identity_id)
+                    profile_name, profile_source = self.resolve_adept_profile_for_identity(
+                        identity.identity_id,
+                    )
                 except AdeptProfileResolutionError as exc:
                     self.storage.acquisition_put({
                         **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
@@ -6150,7 +6568,16 @@ class LibraryService:
         )
         # Digital provider payloads are staged outside ~/EBooks. In particular,
         # ACSM files are transient inputs and must not become user-library items.
+        # Provider-only staging is not an Adobe DRM mutation: allow it without
+        # a borrower profile, while later fulfillment still requires proof.
         identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+        if loan.source_provider == "paris" and loan.source_account_id is not None:
+            borrower = self._borrower_id(loan.source_account_id)
+            proof = read_proof(self.storage, borrower_key(
+                loan.source_provider, loan.source_credential, borrower,
+            ))
+            if proof and self.identity_by_id(proof["identity_id"]):
+                identity = self.identity_by_id(proof["identity_id"])
         library_target_dir = self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
         target_dir = self._acquisition_work_dir(identity.identity_id, loan.source_provider, loan.id)
         cached = None if force_refresh else acsm_cache.reuse(target_dir, loan, identity.identity_id, account_key)

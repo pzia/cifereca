@@ -44,6 +44,10 @@ def _service(tmp_path: Path) -> LibraryService:
     })
     service.accounts.append(Account(unique_id="primary", provider_id="paris", credential_id="p", identity_id="default"))
     service.storage.adept_profile_binding_set("identity", "default", "profile-hb")
+    service.accounts = [
+        Account(display_name="Primary", unique_id="", is_primary=True,
+                provider_id="paris", credential_id="p", identity_id="default"),
+    ]
     service.kobo_profiles = lambda: [{
         "profile_id": "profile-hb",
         "name": "hb",

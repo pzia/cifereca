@@ -22,6 +22,10 @@ class Core0919(unittest.TestCase):
   self.storage.provider_connection_put({'identity_id':'default','provider_id':'paris','credential_id':'reader','label':'Paris'})
   self.service.accounts.append(Account(unique_id='account',provider_id='paris',credential_id='reader',identity_id='default'))
   self.storage.adept_profile_binding_set('identity','default','stable-profile')
+  self.service.accounts=[Account(display_name='Reader',unique_id='account',is_primary=False,
+      provider_id='paris',credential_id='reader',identity_id='default')]
+  self.service.confirm_adept_borrower(provider_id='paris',credential_id='reader',
+      account_id='account',identity_id='default',profile_id='stable-profile',confirmed=True)
   self.service.can_download_loan=Mock(return_value=True)
   self.service.kobo_profiles=Mock(return_value=[{'profile_id':'stable-profile','name':'hb','fetch_capable':True}])
   self.service.runtime_diagnostic=Mock(return_value={})

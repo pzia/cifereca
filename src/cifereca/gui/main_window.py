@@ -3473,8 +3473,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _return_loan(self, loan: Loan, control: Gtk.Widget) -> None:
         self.runner.submit(
-            "Restitution du livre numérique…", lambda: self.service.return_digital(loan), lambda _r: self.refresh_loans(True),
-            control=control, success_toast="Demande de restitution envoyée", priority=TaskPriority.USER_ACTION, kind="loan-return",
+            "Vérification de restitution…", lambda: self.service.return_loan_prefer_adept(loan), lambda _r: self.refresh_loans(True),
+            control=control, success_toast="État de restitution actualisé", priority=TaskPriority.USER_ACTION, kind="loan-return",
         )
 
     # ---------- search ----------
