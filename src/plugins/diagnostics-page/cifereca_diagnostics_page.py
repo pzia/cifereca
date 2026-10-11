@@ -943,7 +943,25 @@ class DiagnosticsPagePlugin:
                 return False
             dest = preview["destination"]
             scope = preview["scope"]
-            locality = "DISTANT — données envoyées hors machine" if dest["remote"] else "LOCAL"
+            locality = (
+                "DISTANT — aucun envoi avant autorisation"
+                if dest["remote"] else "LOCAL — aucun appel avant autorisation"
+            )
+            source_states = preview.get("source_states") or ()
+            source_warnings = [
+                str(row.get("source", "inconnue")) + " : " +
+                str(row.get("status", "unavailable")) +
+                (" (" + str(row["reason"]) + ")" if row.get("reason") else "")
+                for row in source_states if row.get("status") in (
+                    "partial", "disabled", "unavailable",
+                )
+            ]
+            coverage_warning = (
+                "Attention : échantillon incomplet (budget/limite des sources). "
+                if preview.get("sample_truncated") else ""
+            )
+            if source_warnings:
+                coverage_warning += "Sources limitées : " + "; ".join(source_warnings) + ". "
             ai_status.set_text(
                 f"{locality} · {dest['provider']} · modèle {dest['model']} · "
                 f"hôte {dest['host']} · {preview['count']} événements, "
@@ -954,6 +972,7 @@ class DiagnosticsPagePlugin:
                 f"{scope['severity'] or 'tous niveaux'} · "
                 f"depuis {scope['since'] or 'tout historique'} · "
                 f"diagnostics structurés : {'oui' if scope['include_snapshot'] else 'non'}. "
+                coverage_warning +
                 "Le modèle produit des hypothèses, jamais une preuve."
             )
             ai_input.get_buffer().set_text(preview["prompt"])
