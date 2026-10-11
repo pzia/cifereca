@@ -927,7 +927,10 @@ class DiagnosticsPagePlugin:
                 return False
             dest = preview["destination"]
             scope = preview["scope"]
-            locality = "DISTANT — données envoyées hors machine" if dest["remote"] else "LOCAL"
+            locality = (
+                "DISTANT — aucun envoi avant autorisation"
+                if dest["remote"] else "LOCAL annoncé — aucun appel avant autorisation"
+            )
             ai_status.set_text(
                 f"{locality} · {dest['provider']} · modèle {dest['model']} · "
                 f"hôte {dest['host']} · {preview['count']} événements · "
