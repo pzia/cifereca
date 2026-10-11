@@ -186,7 +186,7 @@ def format_diagnostic_detail(value: Any, mode: str = "readable") -> str:
                 excerpt = excerpt[:len(excerpt) // 2]
                 result = preview_json(excerpt)
             return result
-        return excerpt + "\\n… [affichage limité]"
+        return excerpt + "\n… [affichage limité]"
     return text
 
 
