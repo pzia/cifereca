@@ -182,3 +182,24 @@ def test_primary_borrower_keeps_proven_connection_profile_without_grant(tmp_path
         ) == ("alice", None)
     finally:
         service.close()
+
+
+def test_connection_identity_transfer_revokes_effective_borrower_grant(tmp_path):
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        saved = service.bind_paris_borrower_adept(
+            credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        assert saved["connection_identity_id"] == "alice"
+        service.storage.provider_connection_put({
+            "identity_id": "bob", "provider_id": "paris",
+            "credential_id": "alice-paris", "label": "Transférée à Bob",
+        })
+        service.accounts[0].identity_id = "bob"
+        service.accounts[1].identity_id = "bob"
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="bob",
+        ) == (None, "adept_borrower_connection_changed")
+    finally:
+        service.close()

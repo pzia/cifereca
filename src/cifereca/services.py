@@ -4390,8 +4390,11 @@ class LibraryService:
             and not account.is_primary
             and str(account.unique_id or "").strip() == str(account_id or "").strip()
         ]
-        if len(matches) != 1 or not str(account_id or "").strip():
-            raise ValueError("linked Paris borrower not uniquely identified")
+        if (
+            len(matches) != 1 or not str(account_id or "").strip()
+            or str(matches[0].identity_id) != self.storage.identity_for_connection("paris", credential_id)
+        ):
+            raise ValueError("linked Paris borrower not uniquely identified for connection")
         owner = self.identity_by_id(borrower_identity_id)
         if owner is None:
             raise ValueError("unknown ADEPT borrower identity")
@@ -4449,6 +4452,8 @@ class LibraryService:
         )
         if binding is None:
             return None, "adept_borrower_binding_required"
+        if str(binding.get("connection_identity_id") or "") != connection_identity_id:
+            return None, "adept_borrower_connection_changed"
         owner = str(binding.get("borrower_identity_id") or "")
         pinned = str(binding.get("profile_id") or "")
         if not owner or self.identity_by_id(owner) is None or not pinned:

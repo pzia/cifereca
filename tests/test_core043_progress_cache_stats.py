@@ -51,7 +51,7 @@ class _FakeSession:
 def test_core043_public_versions_and_schema():
     assert PLUGIN_API_VERSION == "1.4.0"
     assert MANIFEST_VERSION == 1
-    assert CURRENT_SCHEMA_VERSION == 12
+    assert CURRENT_SCHEMA_VERSION == 13
 
 
 def test_progressive_search_isolates_provider_failure(tmp_path, monkeypatch):

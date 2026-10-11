@@ -858,6 +858,7 @@ class Storage:
                     CREATE TABLE IF NOT EXISTS paris_borrower_adept_bindings (
                         credential_id TEXT NOT NULL,
                         account_id TEXT NOT NULL,
+                        connection_identity_id TEXT NOT NULL,
                         borrower_identity_id TEXT NOT NULL,
                         profile_id TEXT NOT NULL,
                         confirmed_by TEXT NOT NULL,
@@ -1591,7 +1592,7 @@ class Storage:
         now = int(time.time())
         with self._lock, self._connect() as db:
             connection = db.execute(
-                "SELECT 1 FROM provider_connections WHERE provider_id='paris' AND credential_id=?",
+                "SELECT identity_id FROM provider_connections WHERE provider_id='paris' AND credential_id=?",
                 (credential,),
             ).fetchone()
             binding = db.execute(
@@ -1605,12 +1606,13 @@ class Storage:
                 raise ValueError("Paris connection or identity ADEPT profile is not proven")
             db.execute(
                 "INSERT INTO paris_borrower_adept_bindings "
-                "(credential_id,account_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?) ON CONFLICT(credential_id,account_id) DO UPDATE SET "
+                "(credential_id,account_id,connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(credential_id,account_id) DO UPDATE SET "
+                "connection_identity_id=excluded.connection_identity_id,"
                 "borrower_identity_id=excluded.borrower_identity_id,"
                 "profile_id=excluded.profile_id,confirmed_by=excluded.confirmed_by,"
                 "confirmed_at=excluded.confirmed_at,updated_at=excluded.updated_at",
-                (credential, borrower, owner, profile, "explicit", now, now),
+                (credential, borrower, str(connection[0]), owner, profile, "explicit", now, now),
             )
 
     def paris_borrower_adept_binding_get(
@@ -1622,14 +1624,14 @@ class Storage:
             return None
         with self._lock, self._connect() as db:
             row = db.execute(
-                "SELECT borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
+                "SELECT connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
                 "FROM paris_borrower_adept_bindings WHERE credential_id=? AND account_id=?",
                 (credential, borrower),
             ).fetchone()
         if row is None:
             return None
         return dict(zip(
-            ("borrower_identity_id", "profile_id", "confirmed_by", "confirmed_at", "updated_at"),
+            ("connection_identity_id", "borrower_identity_id", "profile_id", "confirmed_by", "confirmed_at", "updated_at"),
             row,
         ))
 
