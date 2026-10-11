@@ -99,9 +99,8 @@ def public_book_url(value, base_url=LIBRARY):
         if any(part in ('.','..') for part in raw.path.split('/')):
             return None
         parsed = urlsplit(urljoin(base_url,value))
-        base = urlsplit(base_url)
         candidate = urlunsplit((parsed.scheme,parsed.netloc,parsed.path,"",""))
-        if (origin(candidate) != origin(base)
+        if (origin(candidate) != origin(base_url)
                 or parsed.username or parsed.password or parsed.fragment
                 or parsed.scheme not in ('https','http')
                 or not parsed.path.startswith('/')):
