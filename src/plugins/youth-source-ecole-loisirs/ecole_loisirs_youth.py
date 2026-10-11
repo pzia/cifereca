@@ -299,7 +299,9 @@ def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
         if card["summary"]:
             item["description"] = _text(" ".join(card["summary"]))
         if info:
-            item["collection"] = info
+            collection = _text(info.replace(age_match.group(0), "")) if age_match else info
+            if collection:
+                item["collection"] = collection
         out.append(item)
         if len(out) >= max(1, min(int(limit), 40)):
             break
@@ -319,7 +321,7 @@ def parse_listing(
     The diagnostic contains integers and fixed public reason identifiers,
     never titles, ISBNs, product URLs, HTML or search terms.
     """
-    if 'product-item' in (html or ''):
+    if re.search(r'class\s*=\s*["\'][^"\']*\bproduct-item\b', html or ''):
         return parse_catalogue_cards(html, limit=limit, diagnostic=diagnostic)
     tokens = _tokens(html)
     products = []
@@ -553,6 +555,19 @@ class EcoleLoisirsYouthSource:
         return {"items": rows, "next_cursor": next_page,
                 "fresh_for_seconds": 86400, "collection_request_count": 1,
                 "collection_pipeline": diagnostic}
+
+    def browse(self, *, age: int | None = None, themes: tuple[str, ...] = (),
+               text_filter: str = "", cursor: str | None = None,
+               limit: int = 40) -> Mapping[str, object]:
+        """Explicit UI browse: one catalogue page; age/theme filters remain local.
+
+        No network request happens until the user clicks collect/more.
+        The catalogue endpoint has not demonstrated remote age/theme filtering.
+        """
+        if cursor is not None and (not isinstance(cursor, str) or
+                                   not re.fullmatch(r"(?:0|[1-9][0-9]{0,2})", cursor)):
+            raise ValueError("invalid catalogue page cursor")
+        return self.search_catalogue(text_filter, page=int(cursor or "0"), limit=limit)
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 40) -> Mapping[str, object]:
         try:
