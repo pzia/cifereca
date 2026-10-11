@@ -43,3 +43,31 @@ def test_cards_reject_unattested_age_and_non_public_links():
     <div class="card-title">Unknown</div></a><div class="card-infos">Age : indéterminé</div></div>
     """
     assert parse_catalogue_cards(html) == ()
+
+
+def test_cover_safety_and_explicit_catalogue_route():
+    import httpx
+    from ecole_loisirs_youth import EcoleLoisirsYouthSource
+    seen = []
+    html = """
+    <div class="product-item"><a href="/livre/un-loup">
+      <span class="card-title">Un loup</span></a>
+      <span class="card-author">Auteur A</span>
+      <ul class="card-infos"><li>Age : 13 ans et +</li></ul>
+      <img src="https://example.org/cover.jpg" data-src="/images/un-loup.jpg">
+      <p class="card-text">Résumé publié</p>
+    </div>
+    """
+    def handle(request):
+        seen.append(request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handle)))
+    result = source.search_catalogue("loup")
+    assert len(seen) == result["collection_request_count"] == 1
+    assert seen[0].url.path == "/catalogue/romans"
+    assert seen[0].url.params["search"] == "loup"
+    assert result["next_cursor"] == ""
+    book = result["items"][0]
+    assert book["cover_url"] == "https://www.ecoledesloisirs.fr/images/un-loup.jpg"
+    assert book["description"] == "Résumé publié"
+    assert "isbn13" not in book
