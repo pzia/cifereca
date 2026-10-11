@@ -91,3 +91,23 @@ Les limites existantes restent inchangées : 2 Mio maximum, cinq redirections au
 Le chemin de production de `FeedSource` utilise directement `fetch_public` : il ne dépend pas du client `httpx` injectable réservé aux tests historiques. Les tests de non-régression du transport couvrent maintenant ce chemin par défaut et vérifient qu’un nom public résolu vers une adresse privée est refusé avant création du socket, puis qu’un peer différent de l’adresse DNS validée est refusé avant TLS/HTTP.
 
 Le transport épinglé est local à `criticism_feeds.py`. La recherche de références dans le dépôt ne montre pas de réutilisation par d’autres plugins : les autres chemins réseau restent donc hors périmètre de #824 et doivent être audités séparément s’ils nécessitent la même garantie.
+
+
+## Résilience du cache et erreurs expurgées — #709 (0.3.4)
+
+Une collecte demandée explicitement mais composée exclusivement de notices
+**invalides** ne constitue pas une preuve d'absence de critiques : une mise à
+jour `replace_source=True` conserve les articles et la fraîcheur déjà
+connus. Une collecte **réellement vide, valide** reste autorisée à vider la
+source, sans effacer les autres sources ni la provenance des articles partagés.
+Un lot mixte garde ses notices valides ; les erreurs ne bloquent pas les
+sources indépendantes.
+
+Les descriptions brutes d'exceptions (transport, adaptateur, normalisation)
+ne sont plus incluses dans `CollectionReport.errors` : seuls des codes
+stables `item[N]: invalid_article`, `collect: source_error` et
+`source: incompatible` peuvent être remontés. Aucun token, URL signée ni
+autre contenu privé ne doit fuiter dans le rapport d'erreur.
+
+Tests hors réseau : `tests/test_cache_resilience_p2.py`. Le plugin ne
+collecte jamais automatiquement à l'ouverture d'une fiche livre.
