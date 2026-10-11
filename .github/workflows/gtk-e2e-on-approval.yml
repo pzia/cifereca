@@ -5,7 +5,7 @@ name: UX GTK Diagnostics Debian 13 (sur accord)
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
     paths:
       - .github/gtk-e2e-run-request.txt
 
