@@ -227,8 +227,8 @@ def test_next_page_rejects_invalid_or_nonmonotonic_cursors(next_cursor):
 
 
 def test_next_page_validates_current_page_and_bounds():
-    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=0) == 50
-    assert next_page_offset({"offset": 9950, "next_offset": 10000}, current_offset=9950) == 10000
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 100}, current_offset=0) == 50
+    assert next_page_offset({"offset": 9950, "next_offset": 10000, "total": 10001}, current_offset=9950) == 10000
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=50) is None
     assert next_page_offset({"offset": "0", "next_offset": 50}, current_offset=0) is None
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=True) is None
@@ -390,3 +390,13 @@ def test_module_groups_fail_closed_on_malformed_fields():
 def test_module_groups_are_page_bounded():
     rows = [event(str(i), module="m" + str(i)) for i in range(PAGE_SIZE + 10)]
     assert sum(group["count"] for group in module_groups(rows)) == PAGE_SIZE
+
+
+def test_search_rejects_excessive_input():
+    with pytest.raises(ValueError, match="search"):
+        sanitized_rows({"events": [event("x")]}, search="x" * 501)
+
+
+def test_cursor_respects_broker_total():
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 50}, current_offset=0) is None
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 51}, current_offset=0) == 50
