@@ -84,7 +84,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         partial |= status == "partial"
         for line_number, line in enumerate(lines):
             match = _LOG_LINE.match(line)
-            if not match or not match["logger"].startswith("cifereca"):
+            if not match or not (match["logger"] == "cifereca" or match["logger"].startswith("cifereca.")):
                 continue
             # Raw log messages may contain arbitrary PII or ACSM/licence URLs.
             # Export only known machine-generated TRACE categories and small
