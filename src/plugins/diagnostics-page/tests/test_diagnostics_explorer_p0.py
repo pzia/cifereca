@@ -324,3 +324,23 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_diagnostic_detail_respects_24k_utf8_byte_budget(mode):
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    data = {f"field_{i:02d}": "é" * 400 for i in range(48)}
+    text = format_diagnostic_detail(data, mode)
+    assert len(text.encode("utf-8")) <= 24_000
+    if mode == "json":
+        assert json.loads(text)["truncated"] is True
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_diagnostic_detail_handles_invalid_unicode(mode):
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    result = format_diagnostic_detail({"message": "bad-\\ud800"}, mode)
+    assert len(result.encode("utf-8")) <= 24_000
+    assert "bad-" not in result
+    if mode == "json":
+        assert json.loads(result)["truncated"] is True
