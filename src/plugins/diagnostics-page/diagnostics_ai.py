@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from hashlib import sha256
 from hmac import compare_digest
 from secrets import token_urlsafe
@@ -132,12 +133,17 @@ def prepare_analysis(
         "", "debug", "info", "warning", "error", "critical",
     ):
         raise ValueError("unsupported_severity")
-    if since is not None and (
-        type(since) is not str or len(since) > 64 or any(
+    if since is not None:
+        if type(since) is not str or len(since) > 64 or any(
             ord(char) < 32 or ord(char) == 127 for char in since
-        )
-    ):
-        raise ValueError("unsupported_since")
+        ):
+            raise ValueError("unsupported_since")
+        try:
+            instant = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            if instant.tzinfo is None:
+                raise ValueError("timezone required")
+        except ValueError as exc:
+            raise ValueError("unsupported_since") from exc
     module = module.strip()
     scope = {"source": source, "module": module, "severity": severity, "since": since}
     feed = diagnostics_broker.events(
