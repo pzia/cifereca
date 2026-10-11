@@ -72,6 +72,15 @@ routes n'est attestée sur le serveur réel**.
 - La recherche peut fonctionner en mode fixture sans serveur. En mode HTTP
   candidat, l'indisponibilité HTTP produit une erreur explicite ; l'inventaire
   validé reste inchangé. Les notices précédemment indexées restent dans Core.
+- Les notices issues du schéma candidat projettent uniquement les faits
+  bibliographiques explicitement publiés : éditeur, type, format, date
+  validée, langue et ISBN-13 Bookland contrôlé. Les données libres de détail,
+  URLs, tokens, droits et liens d'acquisition restent exclus. Ceci **ne
+  certifie pas** que le serveur v0.2 produit ces champs.
+- La fixture ne possède qu'une page (`page=0`) : les pages suivantes
+  rendent une liste vide sans répéter les résultats. En mode HTTP candidat,
+  une demande `page>0` est refusée explicitement tant que le contrat de
+  pagination du serveur n'est pas attesté.
 - **Non implémenté :** auth/secret_ref, mapping OpenAPI v0.2 attesté,
   \`POST /search/query\`, SSE/jobs, annulation native amont, champs détaillés.
   Ces points sont bloqués tant que l'OpenAPI serveur n'est pas fournie.
