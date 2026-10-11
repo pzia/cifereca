@@ -764,10 +764,17 @@ class YouthView:
         )
         for label, button in buttons.items():
             if label == "Rechercher dans toutes les sources Jeunesse":
-                # Lazy-import only if the federated action is in this view;
-                # keep historical partial GTK fixtures compatible.
-                from youth_federation_ui import federated_action_available
-                enabled = federated_action_available(self)
+                # No federation-module import during page build. Historic
+                # E2E/plugin subsets may include only core page files;
+                # federation is a lazy optional action until the user clicks.
+                eligible = any(
+                    getattr(row, "enabled", True) is not False
+                    and getattr(getattr(row, "service", row), "enabled", True) is not False
+                    and any(callable(getattr(getattr(row, "service", row), method, None))
+                            for method in ("browse", "search", "browse_with_cancellation"))
+                    for row in getattr(self, "sources", ())
+                )
+                enabled = bool(identity and not busy and eligible)
                 reason = (
                     "Réseau uniquement au clic : 8 sources au plus, 2 connexions simultanées "
                     "et 2 pages de 50 notices par source."
