@@ -131,3 +131,50 @@ Pas de collecte au simple affichage d'une fiche ; la pagination
 multi-source reste explicitement plafonnée à cinq pages dans le worker.
 Tests déterministes sans réseau dans
 `tests/test_collection_page_bounds_p2.py`.
+
+
+## Découverte de flux bornée — P2 #709 (0.3.7)
+
+La découverte par métarecherche **n'est qu'un aperçu** de sources RSS,
+Atom et JSON Feed. Elle ne doit jamais télécharger, activer, ingérer
+ou parcourir sans limite les résultats d'un moteur tiers.
+
+Avant cet incrément, `discover_feeds` demandait au moteur
+`limit=N`, mais pouvait tout de même itérer **indéfiniment** sur une
+suite de lignes sans flux valide ; `_iter_values(feed_urls)` matérialisait
+également une liste entière de candidats, même si cette valeur était
+un générateur sans fin. `discover_feed_links` analysait toute la
+chaîne HTML, puis matérialisait chaque balise `<link rel=alternate>`
+avant de dédupliquer.
+
+Nouvelles **bornes locales déterministes** :
+
+- maximum **N×4 lignes de métarecherche** parcourues, avec
+  `N` normalisé entre 1 et 100, soit 400 lignes au plus ;
+- maximum **8 URL explicites par champ** `feed_url` ou `feed_urls`,
+  sans matérialiser la fin de l'itérateur ;
+- maximum **128 000 caractères** de document HTML en découverte ;
+  document au-delà de la borne ignoré (sans extrapoler l'absence de flux) ;
+- maximum **32 balises de liens alternatifs** prises en compte par
+  page, y compris si le HTML contient des centaines de liens ;
+- arrêt immédiat dès que **N candidats uniques** sont trouvés ;
+  les autres filtres existants `canonical_url`, MIME et `rel=alternate`
+  sont inchangés.
+
+Tout cela s'applique **seulement à la découverte volontaire**.
+La collecte, les abonnements, les caches, les références
+bibliographiques et le matching restent inchangés. Une limite
+atteinte **ne constitue pas une preuve que le site ne propose aucun
+autre flux** : c'est une couverture partielle volontaire pour
+protéger l'interface et la mémoire.
+
+Tests sans réseau dans `tests/test_bounded_discovery_p2.py` :
+itérateur de métarecherche infini sans candidats, liste URL infinie,
+HTML trop grand, page à 92 liens RSS, déduplication, résultat borné,
+format JSON Feed, moteur non itérable. Les exemples HTML sont
+**synthétiques**, pas des pages amont capturées.
+
+Handoff merger : PR distincte du maintien des preuves de
+critiques par source [#1087](https://github.com/pzia/cifereca/pull/1087)
+et de l'explication LLM [#1015](https://github.com/pzia/cifereca/pull/1015).
+Réconcilier versions/manifeste si les branches sont fusionnées.
