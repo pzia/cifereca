@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import OrderedDict
 import html
 import logging
-from datetime import date
+from datetime import date, datetime
 import re
 import time
 from pathlib import Path
@@ -71,6 +71,26 @@ def _attested_date(value: str | None) -> str | None:
             return None
         return text
     return None
+
+
+def _attested_atom_timestamp(value: str | None) -> str | None:
+    """Keep public Atom entry chronology as metadata, never as book issued date."""
+    if not isinstance(value, str) or len(value) > 40:
+        return None
+    text = value.strip()
+    if _attested_date(text):
+        return text
+    if "T" not in text or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        r"(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})", text,
+    ):
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # Offset-aware dates only; malformed "2025-99" rejected.
+    return text if parsed.tzinfo is not None else None
 
 
 def _safe_url(value: str) -> str:
@@ -282,8 +302,8 @@ class GutenbergSession(ProviderSession):
             # establishes the publication date of the described ebook.
             # Only an explicit dcterms:issued may populate published_at.
             issued = _attested_date(self._text(entry.find(f"{{{DCTERMS}}}issued")))
-            entry_published = _attested_date(self._text(entry.find(f"{{{ATOM}}}published")))
-            entry_updated = _attested_date(self._text(entry.find(f"{{{ATOM}}}updated")))
+            entry_published = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}published")))
+            entry_updated = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}updated")))
             language = normalize_language_tag(self._text(entry.find(f"{{{DCTERMS}}}language")))
             rights = self._text(entry.find(f"{{{ATOM}}}rights"))
             categories = [
