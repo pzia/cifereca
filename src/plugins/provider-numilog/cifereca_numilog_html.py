@@ -4,7 +4,7 @@ from html import unescape
 from html.parser import HTMLParser
 import json
 import re
-from urllib.parse import urljoin, urlsplit, parse_qs
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qs
 
 BASE = 'https://www.numilog.com/'
 LIBRARY = BASE + 'Pages/Compte/MesLivres.aspx'
@@ -77,6 +77,51 @@ def origin(value):
     return (p.scheme.casefold(),(p.hostname or '').casefold(),port)
 
 
+
+def public_book_url(value, base_url=LIBRARY):
+    """Allow only an attested Numilog public book-detail URL.
+
+    The 2026 public Numilog catalogue exposes /<id>/<slug>.ebook.
+    Older local fixtures also attest /livres/<slug> and /ebooks/<slug>.
+    This is not a login/library/download link and must never transport
+    account sessions, signed query parameters, or fragments into Core.
+    """
+    if not isinstance(value,str) or not 0 < len(value) <= 512:
+        return None
+    if value != value.strip() or any(c.isspace() or ord(c) < 32 for c in value):
+        return None
+    if '\\' in value:
+        return None
+    try:
+        parsed = urlsplit(urljoin(base_url,value))
+        base = urlsplit(base_url)
+        candidate = urlunsplit((parsed.scheme,parsed.netloc,parsed.path,"",""))
+        if (origin(candidate) != origin(base)
+                or parsed.username or parsed.password or parsed.fragment
+                or parsed.scheme not in ('https','http')
+                or not parsed.path.startswith('/')):
+            return None
+        path = parsed.path
+        public = re.fullmatch(
+            r'/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\\.ebook',
+            path,flags=re.I,
+        )
+        legacy = re.fullmatch(
+            r'/(?:livres|ebooks)/[A-Za-z0-9][A-Za-z0-9._-]{0,100}',
+            path,flags=re.I,
+        )
+        if not (public or legacy):
+            return None
+        # Only a harmless, previously supported legacy link parameter is
+        # preserved. Never echo tokens, signed URLs or tracking parameters.
+        if parsed.query:
+            if not legacy or parse_qs(parsed.query,keep_blank_values=True) != {'ref':['library']}:
+                return None
+        return urlunsplit((parsed.scheme,parsed.netloc,parsed.path,parsed.query,""))
+    except (ValueError,AttributeError):
+        return None
+
+
 def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
@@ -107,13 +152,9 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
             raw_href=str(anchor.attrs.get('href') or '').strip()
             if not raw_href:
                 continue
-            resolved=urljoin(base_url,raw_href)
-            parsed_public=urlsplit(resolved)
-            if origin(resolved)!=site_origin or parsed_public.username or parsed_public.password or parsed_public.fragment:
-                continue
-            if parsed_public.path.casefold().startswith('/pages/compte/'):
-                continue
-            public_candidates.append(resolved)
+            resolved=public_book_url(raw_href,base_url)
+            if resolved:
+                public_candidates.append(resolved)
         public_candidates=list(dict.fromkeys(public_candidates))
         public_url=public_candidates[0] if len(public_candidates)==1 else None
         for link in links:
