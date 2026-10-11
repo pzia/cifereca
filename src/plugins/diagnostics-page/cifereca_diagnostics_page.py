@@ -698,7 +698,7 @@ class DiagnosticsPagePlugin:
             journals_copy.set_sensitive(bool(selected_event_ids))
 
         def load_events(*_args) -> None:
-            nonlocal page_generation
+            nonlocal page_generation, current_page
             page_generation += 1
             generation = page_generation
             selected_event_ids.clear()
@@ -726,7 +726,6 @@ class DiagnosticsPagePlugin:
             except Exception as exc:
                 # A failed refresh must not leave an earlier page visible as
                 # though it were the result of the current filters.
-                nonlocal current_page
                 current_page = {
                     "events": [], "sources": [], "total": 0,
                     "offset": page_offset, "next_offset": None,
