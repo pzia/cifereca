@@ -296,21 +296,31 @@ def main():
         ]
         assert copied_detail, "Bouton de copie expurgée absent"
         button = copied_detail[0]
-        # The widget is keyboard activated via real XTEST events, not signal emission.
-        assert button.grab_focus() is not False
-        assert button.has_focus(), "Le focus clavier doit être visible sur Copier"
-        # Prevent an old clipboard value from masquerading a failed key press.
+        # Real GTK key routing: wait for a mapped/focused button before XTEST.
+        # Avoid attributing a stale clipboard value to a successful activation.
+        expected = payload
         clipboard = Gdk.Display.get_default().get_clipboard()
         clipboard.set("SENTINELLE_UX_AVANT_COPIE")
-        device[0].key("space", True)
-        device[0].key("space", False)
-        report["checks"]["copy_button_keyboard_xtest"] = True
-        expected = payload
 
-        def clipboard_done(clipboard, task):
+        def press_copy():
+            assert button.get_mapped(), "Copier doit être affiché avant XTEST"
+            assert button.grab_focus() is not False, "Focus clavier inaccessible"
+            until(lambda: button.has_focus(), send_key, seconds=3)
+
+        def send_key():
+            assert button.has_focus(), "Focus perdu avant l'activation XTEST"
+            device[0].key("space", True)
+            device[0].key("space", False)
+            report["checks"]["copy_button_keyboard_xtest"] = True
+            later(read_clipboard, 250)
+
+        def read_clipboard():
+            clipboard.read_text_async(None, clipboard_done)
+
+        def clipboard_done(source, task):
             try:
-                actual = clipboard.read_text_finish(task)
-                assert actual != "SENTINELLE_UX_AVANT_COPIE", "Le raccourci clavier n'a pas activé Copier"
+                actual = source.read_text_finish(task)
+                assert actual != "SENTINELLE_UX_AVANT_COPIE", "Le clavier n'a pas activé Copier"
                 assert actual == expected, "Presse-papiers différent du JSON affiché"
                 assert "EXEMPLE-PRIVE-UX" not in actual
                 assert "SECRET-UX-TEST" not in actual
@@ -319,7 +329,8 @@ def main():
             except Exception as exc:
                 fail(f"Clipboard: {type(exc).__name__}: {exc}")
 
-        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(None, clipboard_done), 250)
+        # Focus from an idle turn, after expansion and dropdown layout.
+        later(press_copy, 180)
 
     def next_page():
         find_button("Suivant").emit("clicked")
