@@ -159,9 +159,13 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "message": message[:240],
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
+                # A file can be overwritten on the same inode/offset.
+                # Include every published event discriminator so a change of
+                # severity or sanitized module cannot reuse an old reference.
                 "event_id": _event_id(
                     "app_log", ts,
-                    f"{identity[0]}:{identity[1]}:{byte_offset}:{message}",
+                    f"{identity[0]}:{identity[1]}:{byte_offset}:"
+                    f"{match['level']}:{'.'.join(safe_parts)}:{message}",
                 ),
             })
     status = "partial" if partial else ("available" if observed else "unavailable")
