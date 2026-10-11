@@ -4,8 +4,11 @@ from types import SimpleNamespace
 from cifereca.services import LibraryService
 
 
-def account(identity, borrower, provider="paris"):
-    return SimpleNamespace(identity_id=identity, unique_id=borrower, provider_id=provider)
+def account(identity, borrower, provider="paris", credential="paris-a"):
+    return SimpleNamespace(
+        identity_id=identity, unique_id=borrower, provider_id=provider,
+        credential_id=credential, is_primary=False,
+    )
 
 
 def conflict(accounts, borrower="borrower-a", identity="alice"):
