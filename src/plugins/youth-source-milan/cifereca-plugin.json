@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-source-milan",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "name": "Jeunesse — Éditions Milan",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "youth.source.milan",
       "type": "youth.source",
-      "version": "0.1.7",
+      "version": "0.1.8",
       "entrypoint": "milan_youth:PLUGIN",
       "display_name": "Éditions Milan — âges éditeur",
       "description": "Catalogue public Milan avec âge minimum et ISBN publiés sur les fiches produit.",
-      "help_text": "Parcourt une page publique du catalogue Milan puis qualifie au plus 8 fiches produit par appel. L'âge n'est accepté que lorsqu'il est explicitement publié sur la fiche (par ex. À partir de 8 ans) avec ISBN valide. Aucun paramètre de recherche distant non attesté, aucun âge déduit de la collection.",
+      "help_text": "Catalogue Milan et recherche /recherche/books/?text=... ; au plus 8 fiches qualifiées par appel. Âge explicite et ISBN valide requis. Données de fiche attestées, sans inférence.",
       "enabled_by_default": false,
       "priority": -62,
       "instantiation": "singleton_public",
