@@ -154,7 +154,13 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
-                "event_id": _event_id("app_log", ts, private_position),
+                # Include only public, sanitized event fields to avoid reusing
+                # an ID if a file is overwritten at the same byte offset.
+                "event_id": _event_id(
+                    "app_log", ts,
+                    private_position + ":" + match["level"] + ":" +
+                    ".".join(safe_parts) + ":" + message,
+                ),
             })
     status = "partial" if partial else ("available" if observed else "unavailable")
     return events, {"source": "app_log", "status": "partial" if partial else (status if events else ("empty" if observed else "unavailable")),
