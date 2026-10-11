@@ -25,6 +25,11 @@ _DIAGNOSTIC_SECRET_VALUE = re.compile(
     r"(?i)\b(password|cookie|token|secret|authorization|barcode|readerid)"
     r"\s*[:=]\s*[^\s,;]+"
 )
+# Authentication headers may contain schemes followed by several secret fields.
+# Mask the entire value, not merely the first whitespace-delimited token.
+_DIAGNOSTIC_AUTH_HEADER = re.compile(
+    r"(?im)\\b((?:proxy-)?authorization|x-api-key)\\s*[:=][^\\r\\n]*"
+)
 _DIAGNOSTIC_URL = re.compile(r"(?i)https?://[^\s<>]+")
 _DIAGNOSTIC_MAIL = re.compile(r"(?i)\b[a-z0-9_.+%-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
 _DIAGNOSTIC_PATH = re.compile(
@@ -46,6 +51,7 @@ def _redacted_text(value: str) -> str:
     text = _DIAGNOSTIC_URL.sub("<URL expurgée>", value)
     text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
     text = _DIAGNOSTIC_PATH.sub("<chemin expurgé>", text)
+    text = _DIAGNOSTIC_AUTH_HEADER.sub(r"\1=<expurgé>", text)
     text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
     text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
     return text[:_MAX_DETAIL_TEXT] + (
