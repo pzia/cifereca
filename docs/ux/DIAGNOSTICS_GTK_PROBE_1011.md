@@ -1,7 +1,7 @@
 # Recette UX Diagnostics P0 — preuves GTK4 exécutées (#1011)
 
-**Statut au 11 octobre 2026 : deux scénarios E2E PASS sur runner GitHub
-standard Ubuntu 24.04**, à 1366 × 900 ; la recette exhaustive D01–D16
+**Statut au 11 octobre 2026 : trois scénarios E2E PASS sur runner GitHub
+standard Ubuntu 24.04**, à 1366 × 900 et 1600 × 1000 ; la recette exhaustive D01–D16
 reste ouverte. Les scénarios de navigation sont proposés dans la
 [PR UX #1146](https://github.com/pzia/cifereca/pull/1146) et ne sont **pas
 encore fusionnés** sur `main`.
@@ -13,6 +13,19 @@ encore fusionnés** sur `main`.
 - Commit réellement recetté (lu dans `screen.json`) :
   `8e7c4fa9ca2de4a11a72826d5070bb3f6328de50`.
 
+## Nouvelle validation grand écran du 11 octobre 2026
+
+Le run [E2E Smoke #38135244581](https://github.com/pzia/cifereca/actions/runs/38135244581)
+est **SUCCESS global**. L'[artefact #11701076489](https://github.com/pzia/cifereca/actions/runs/38135244581/artifacts/11701076489)
+contient **14 captures** vérifiées (6 grand écran, 4 widget 1366, 4 navigation 1366) et les trois rapports `screen.json` avec `status=PASS`.
+
+- `diagnostics-large-1600` : **9 checks PASS**, vrai widget à **1600 × 1000**, rapport support simulé long (250 lignes), secrets de la fixture expurgés, activation de « Agrandir » par **Space XTEST**, séquence **Tab / Shift+Tab XTEST**, focus vérifié, puis défilement interne du rapport jusqu'au bas.
+- Mesure GTK : défilement interne `3724 / 3724` px ; position de la page externe **1286 px avant/après**. Le défilement est effectué par l'ajustement GTK réel du widget, **pas** par un geste molette/pavé tactile.
+- Captures spécifiques `04-report-keyboard-1600.png` et `05-report-bottom-1600.png`, ainsi que les quatre captures du scénario 1600 précédant ces gestes ; toutes les empreintes SHA-256 concordent.
+- `diagnostics-1366` : **6 checks PASS**, et `diagnostics-navigation-1366` : **6 checks PASS** de nouveau dans le même run.
+
+Cette preuve **renforce D05, D15 et D16**, sans valider les parcours `Esc`, l'export disque, le redimensionnement dynamique ni les 16 scénarios de la matrice. Le gestionnaire et les brokers restent simulés. Le code est dans la [PR #1146](https://github.com/pzia/cifereca/pull/1146) non fusionnée.
+
 ## Exécuter sur un runner GTK préparé
 
 Depuis la racine du dépôt, avec `xvfb-run`, GTK4/libadwaita,
@@ -21,6 +34,7 @@ PyGObject, Pillow et le Python venv `--system-site-packages` :
 ```bash
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-1366
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-1366
+dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-large-1600
 ```
 
 `CIFERECA_E2E_PYTHON` peut sélectionner le Python de la recette ;
