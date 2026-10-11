@@ -165,14 +165,31 @@ def format_diagnostic_detail(value: Any, mode: str = "readable") -> str:
         text = safe
     else:
         text = json.dumps(safe, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    if len(text) > _MAX_DETAIL_BYTES:
+    # An actual clipboard/preview budget is in bytes, not Unicode codepoints.
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeError:
+        notice = "Contenu Unicode invalide : affichage masqué"
+        return (json.dumps({"notice": notice, "truncated": True},
+                           ensure_ascii=False) if mode == "json" else notice)
+    if len(encoded) > _MAX_DETAIL_BYTES:
+        excerpt = encoded[:(
+            _MAX_DETAIL_BYTES // 2 if mode == "json" else _MAX_DETAIL_BYTES - 100
+        )].decode("utf-8", errors="ignore")
         if mode == "json":
-            return json.dumps({
-                "notice": "Aperçu JSON limité à 24 Kio",
-                "truncated": True,
-                "preview": text[:_MAX_DETAIL_BYTES // 2],
-            }, ensure_ascii=False, indent=2)
-        return text[:_MAX_DETAIL_BYTES] + "\n… [affichage limité]"
+            def preview_json(value: str) -> str:
+                return json.dumps({
+                    "notice": "Aperçu JSON limité à 24 Kio",
+                    "truncated": True, "preview": value,
+                }, ensure_ascii=False, indent=2)
+
+            result = preview_json(excerpt)
+            # JSON escaping can expand the excerpt a second time.
+            while len(result.encode("utf-8")) > _MAX_DETAIL_BYTES:
+                excerpt = excerpt[:len(excerpt) // 2]
+                result = preview_json(excerpt)
+            return result
+        return excerpt + "\n… [affichage limité]"
     return text
 
 
