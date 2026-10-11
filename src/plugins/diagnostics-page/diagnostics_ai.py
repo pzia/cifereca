@@ -25,6 +25,14 @@ _APPROVAL_SECONDS = 300
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
 
+def _prompt_bytes(prompt: str) -> int:
+    """Bound the exact UTF-8 request body, not just its character count."""
+    try:
+        return len(prompt.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ValueError("prompt_invalid_unicode") from exc
+
+
 def _fingerprint(prompt: str, destination: Mapping[str, Any], refs: object) -> str:
     data = json.dumps([prompt, destination, refs], ensure_ascii=False, sort_keys=True)
     return sha256(data.encode("utf-8")).hexdigest()
@@ -126,13 +134,14 @@ def prepare_analysis(
         safe = redacted_detail(row)
         candidate = filtered + [safe]
         body = format_diagnostic_detail({"events": candidate}, "json")
-        if len(header + body) > _MAX_PROMPT:
+        if _prompt_bytes(header + body) > _MAX_PROMPT:
             break
         filtered.append(safe)
     if not filtered:
         raise ValueError("no_diagnostic_events")
     prompt = header + format_diagnostic_detail({"events": filtered}, "json")
-    if len(prompt) > _MAX_PROMPT:
+    prompt_size = _prompt_bytes(prompt)
+    if prompt_size > _MAX_PROMPT:
         raise ValueError("prompt_too_large")
     refs = tuple(
         {
@@ -144,17 +153,22 @@ def prepare_analysis(
     )
     fingerprint = _fingerprint(prompt, destination, refs)
     approval = _OneUseApproval(fingerprint)
+    source_rows = feed.get("sources")
+    if not isinstance(source_rows, (list, tuple)):
+        source_rows = ()
     states = [
-        {"source": str(x.get("source") or "")[:32],
-         "status": str(x.get("status") or "")[:32]}
-        for x in tuple(feed.get("sources") or ())[:4] if isinstance(x, Mapping)
+        {
+            "source": x.get("source", "")[:32] if type(x.get("source")) is str else "",
+            "status": x.get("status", "")[:32] if type(x.get("status")) is str else "",
+        }
+        for x in source_rows[:4] if isinstance(x, Mapping)
     ]
     return {
         "prompt": prompt, "destination": destination,
         "approval_id": approval.token, "_approval_state": approval,
         "evidence_refs": refs,
         "count": len(filtered), "source_states": states,
-        "chars": len(prompt), "generated": False,
+        "chars": len(prompt), "bytes": prompt_size, "generated": False,
         "limitations": "Échantillon borné à 24 événements, aucune corrélation prouvée.",
     }
 
@@ -166,7 +180,9 @@ def analyze_with_consent(
     if not isinstance(preview, Mapping):
         raise ValueError("preview_missing")
     prompt = preview.get("prompt")
-    if not isinstance(prompt, str) or len(prompt) > _MAX_PROMPT or not prompt:
+    if not isinstance(prompt, str) or not prompt:
+        raise ValueError("preview_invalid")
+    if _prompt_bytes(prompt) > _MAX_PROMPT:
         raise ValueError("preview_invalid")
     destination = llm_destination(llm)
     if destination != preview.get("destination"):

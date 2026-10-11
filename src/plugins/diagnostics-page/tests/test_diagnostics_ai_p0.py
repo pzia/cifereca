@@ -244,3 +244,54 @@ def test_ui_displays_only_matched_references_with_explicit_disclaimer():
     assert "result.get(\"references_unknown\")" in src
     assert "ne prouve PAS" in src
     assert "Aucun événement de l’extrait n’a été cité" in src
+
+
+
+def test_ai_preview_budgets_utf8_bytes_before_remote_consent():
+    model = FakeLLM(remote=True)
+    records = [event(message=("é" * 700), ref=f"ref-{i}") for i in range(6)]
+    preview = prepare_analysis(model, FakeBroker(records))
+    assert preview["count"] < len(records)
+    assert preview["bytes"] == len(preview["prompt"].encode("utf-8"))
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+
+
+def test_ai_preview_skips_malformed_source_metadata_without_stringifying():
+    class Secret:
+        def __str__(self):
+            raise AssertionError("untrusted source metadata stringified")
+
+    class MalformedBroker(FakeBroker):
+        def __init__(self, sources):
+            super().__init__([event()])
+            self.sources = sources
+
+        def events(self, **kwargs):
+            result = super().events(**kwargs)
+            result["sources"] = self.sources
+            return result
+
+    model = FakeLLM()
+    for invalid in (None, {"source": "leak"}, 123, object()):
+        preview = prepare_analysis(model, MalformedBroker(invalid))
+        assert preview["source_states"] == []
+        assert model.calls == 0
+
+    preview = prepare_analysis(model, MalformedBroker([
+        {"source": Secret(), "status": Secret()},
+        {"source": "app_log", "status": "partial"},
+    ]))
+    assert preview["source_states"] == [
+        {"source": "", "status": ""},
+        {"source": "app_log", "status": "partial"},
+    ]
+
+
+def test_ai_consent_refuses_mutated_oversize_multibyte_prompt():
+    model = FakeLLM()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    preview["prompt"] = "é" * 2000
+    with pytest.raises(ValueError, match="preview_invalid"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
