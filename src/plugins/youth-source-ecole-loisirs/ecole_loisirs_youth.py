@@ -323,7 +323,7 @@ def next_cursor(html: str, *, current_page: int) -> str:
             url = SEARCH + raw
         else:
             url = _allowed_url(raw)
-        if not url or urlsplit(url).path != "/recherche-avancee":
+        if not url or urlsplit(url).path not in {"/recherche-avancee", "/recherche-avancee/romans"}:
             continue
         query = parse_qs(urlsplit(url).query)
         try:
@@ -331,16 +331,20 @@ def next_cursor(html: str, *, current_page: int) -> str:
         except ValueError:
             continue
         if page == int(current_page) + 1 and page <= 100:
-            return str(page)
+            return f"romans:{page}" if urlsplit(url).path.endswith("/romans") else str(page)
     return ""
 
 
-def search_url(query: str, *, page: int) -> str:
+def search_url(query: str, *, page: int, route: str = "advanced") -> str:
     params = {
         "page": str(max(1, min(int(page), 100))),
         "search_api_views_fulltext": _text(query)[:_MAX_QUERY_CHARS],
         "types": "livre",
     }
+    if route == "romans":
+        return SEARCH + "/romans?" + urlencode({
+            "page": params["page"], "type": "romans", "search": _text(query)[:_MAX_QUERY_CHARS],
+        })
     return SEARCH + "?" + urlencode(params)
 
 
@@ -397,7 +401,7 @@ class EcoleLoisirsYouthSource:
 
     def _get(self, url: str, *, diagnostic: dict[str, object] | None = None) -> str:
         allowed = _allowed_url(url)
-        if not allowed or urlsplit(allowed).path != "/recherche-avancee":
+        if not allowed or urlsplit(allowed).path not in {"/recherche-avancee", "/recherche-avancee/romans"}:
             raise ValueError("only l'école des loisirs advanced search is allowed")
         self._last_diagnostic["request_count"] = int(self._last_diagnostic.get("request_count", 0)) + 1
         counter = self._call_requests.get()
@@ -426,7 +430,8 @@ class EcoleLoisirsYouthSource:
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 40) -> Mapping[str, object]:
         try:
-            page = int(cursor or "1")
+            route = "romans" if (cursor or "").startswith("romans:") else "advanced"
+            page = int((cursor or "1").removeprefix("romans:"))
         except ValueError:
             raise ValueError("invalid l'école des loisirs page cursor")
         if not 1 <= page <= 100:
@@ -446,7 +451,7 @@ class EcoleLoisirsYouthSource:
             "query_mode": "remote", "effective_limit": max(1, min(int(limit), 40)),
         }
         try:
-            url = search_url(_text(query), page=page)
+            url = search_url(_text(query), page=page, route=route)
             http_started = perf_counter()
             try:
                 html = self._get(url, diagnostic=pipeline)
