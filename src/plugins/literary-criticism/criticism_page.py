@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from collections.abc import Mapping
 from datetime import date, datetime, timezone
 import re
 import json
@@ -148,7 +149,7 @@ class ReviewView:
         self.book = plugin.pending
         self.generation, self.task, self.disposed = 0, None, False
         config = getattr(plugin.context, 'config', {}) or {}
-        self._llm_enabled = config.get('llm_summaries') is True if isinstance(config, dict) else False
+        self._llm_enabled = config.get('llm_summaries') is True if isinstance(config, Mapping) else False
         self._llm_generation, self._llm_task, self._llm_matches = 0, None, ()
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.heading = Gtk.Label(wrap=True, xalign=0)
