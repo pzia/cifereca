@@ -840,3 +840,33 @@ def test_ai_report_discloses_ambiguous_ids_instead_of_attributing_a_source():
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
     assert 'result.get("references_ambiguous")' in page
     assert "Références ambiguës (ID dupliqué, source non attribuable)" in page
+
+
+@pytest.mark.parametrize("module, secret", [
+    ("sync alice@example.com", "alice@example.com"),
+    ("token=PRIVATE_MODULE_SECRET", "PRIVATE_MODULE_SECRET"),
+    ("/home/alice/private.log", "/home/alice"),
+    ("https://host.example/signed?token=PRIVATE_URL", "PRIVATE_URL"),
+    ("Authorization: Bearer PRIVATE_AUTH", "PRIVATE_AUTH"),
+])
+def test_ai_free_text_filter_is_redacted_in_llm_prompt_but_query_is_preserved(module, secret):
+    model = FakeLLM(remote=True)
+    broker = FakeBroker([event()])
+    preview = prepare_analysis(model, broker, module=module)
+
+    # The Core's exact query and fingerprint still describe the user's choice.
+    assert broker.filters == [{
+        "source": "all", "module": module, "severity": "", "since": None,
+        "until": None, "limit": 24, "offset": 0,
+    }]
+    assert preview["scope"]["module"] == module
+    assert secret not in preview["prompt"]
+    assert "expurg" in preview["prompt"]
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+
+    # No sending without explicit opt-in; an altered scope cannot reuse it.
+    preview["scope"]["module"] = "different.module"
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
