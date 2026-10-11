@@ -202,17 +202,22 @@ def analyze_with_consent(
         control=control,
     )
     if not response.ok:
-        return {"ok": False, "reason": str(response.reason or "unavailable")[:40]}
+        # Errors from the provider are not trusted presentation content.
+        return {"ok": False, "reason": "unavailable"}
+    if type(response.text) is not str or not response.text.strip():
+        return {"ok": False, "reason": "invalid_llm_response"}
     from cifereca_diagnostics_page import format_diagnostic_detail
-    # Redact the *complete* bounded LLM output before any display cut.
-    # Truncating first could expose a token/URL prefix that no longer matches.
-    safe_answer = format_diagnostic_detail(str(response.text or ""), "raw")
+    # Redact the complete response before any presentation cut.
+    safe_answer = format_diagnostic_detail(response.text, "raw")
     matched, unknown = _referenced_evidence(safe_answer, refs)
     return {
         "ok": True, "generated": True,
         "source": "llm_inference_not_proven",
-        "model": str(response.model or destination["model"])[:128],
-        "provider": str(response.provider or destination["provider"])[:80],
+        # Only the destination disclosed before consent is trusted here.
+        # Unverified response metadata must not overwrite report provenance.
+        "model": destination["model"],
+        "provider": destination["provider"],
+        "provenance": "destination_disclosed_not_independently_verified",
         "remote": destination["remote"],
         "text": safe_answer[:4000],
         "references_matched": matched,
