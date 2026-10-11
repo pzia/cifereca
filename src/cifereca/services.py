@@ -4297,8 +4297,9 @@ class LibraryService:
                 if str(loan.source_provider).lower() == "paris" and (
                     self._borrower_identity_conflict(
                         self.accounts, provider_id=loan.source_provider,
-                        account_id=str(loan.source_account_id or ""),
+                        account_id=loan.source_account_id,
                         identity_id=identity.identity_id,
+                        credential_id=loan.source_credential,
                     )
                     or self._cross_identity_loan_conflict(
                         self.storage.acquisitions(provider_id=loan.source_provider),
@@ -4332,19 +4333,45 @@ class LibraryService:
 
     @staticmethod
     def _borrower_identity_conflict(
-        accounts: Any, *, provider_id: str, account_id: str, identity_id: str
+        accounts: Any, *, provider_id: str, account_id: str | None,
+        identity_id: str, credential_id: str | None = None,
     ) -> bool:
-        """Require exactly one matching borrower owner before Paris ADEPT."""
-        borrower = str(account_id or "").strip()
-        if not borrower:
+        """Fail closed unless the borrower is bound to the requested identity.
+
+        Paris uses the literal "primary" for its main-account provenance,
+        while the provider account can have unique_id="". These values
+        identify a borrower only inside the exact provider connection.
+        """
+        if account_id is None:
             return True
-        owners = {
-            str(account.identity_id)
-            for account in accounts
-            if str(account.provider_id).lower() == str(provider_id).lower()
-            and str(account.unique_id or "").strip() == borrower
-        }
-        return owners != {identity_id}
+        borrower = str(account_id).strip()
+        provider = str(provider_id).lower()
+        matching = [
+            account for account in accounts
+            if str(account.provider_id).lower() == provider
+        ]
+        if borrower in {"", "primary"}:
+            if not credential_id:
+                return True
+            matching = [
+                account for account in matching
+                if str(account.credential_id) == str(credential_id)
+                and bool(account.is_primary)
+                and (borrower == "primary" or str(account.unique_id or "") == "")
+            ]
+            return len(matching) != 1 or str(matching[0].identity_id) != identity_id
+
+        matching = [
+            account for account in matching
+            if str(account.unique_id or "").strip() == borrower
+        ]
+        if credential_id is not None and not any(
+            str(account.credential_id) == str(credential_id)
+            and str(account.identity_id) == identity_id
+            for account in matching
+        ):
+            return True
+        return {str(account.identity_id) for account in matching} != {identity_id}
 
     @staticmethod
     def _cross_identity_loan_conflict(
@@ -4627,10 +4654,11 @@ class LibraryService:
                 # A linked Paris account can be exposed by multiple credentials.
                 # A shared account id with competing Cifereca identities is not
                 # sufficient evidence of which Adobe profile activated the loan.
-                account_id = str(loan.source_account_id or "").strip()
                 if str(loan.source_provider).lower() == "paris" and self._borrower_identity_conflict(
                     self.accounts, provider_id=loan.source_provider,
-                    account_id=account_id, identity_id=identity.identity_id,
+                    account_id=loan.source_account_id,
+                    identity_id=identity.identity_id,
+                    credential_id=loan.source_credential,
                 ):
                     code = "adept_borrower_ambiguous"
                     self.storage.acquisition_put({

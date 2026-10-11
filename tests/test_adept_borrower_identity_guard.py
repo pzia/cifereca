@@ -257,3 +257,62 @@ def test_different_entitlement_loan_does_not_block():
         [], provider_loan_id="loan-123", identity_id="bob",
         entitlements=rights,
     )
+
+
+def test_primary_paris_sentinel_matches_empty_uid_in_same_connection():
+    primary = SimpleNamespace(identity_id="alice", unique_id="",
+                              provider_id="paris", credential_id="paris-alice",
+                              is_primary=True)
+    assert not LibraryService._borrower_identity_conflict(
+        [primary], provider_id="paris", account_id="primary",
+        identity_id="alice", credential_id="paris-alice"
+    )
+    assert not LibraryService._borrower_identity_conflict(
+        [primary], provider_id="paris", account_id="",
+        identity_id="alice", credential_id="paris-alice"
+    )
+
+
+def test_primary_paris_sentinel_cannot_borrow_another_connection_identity():
+    primary = SimpleNamespace(identity_id="alice", unique_id="",
+                              provider_id="paris", credential_id="paris-alice",
+                              is_primary=True)
+    for credential, identity in (("paris-bob", "alice"), ("paris-alice", "bob")):
+        assert LibraryService._borrower_identity_conflict(
+            [primary], provider_id="paris", account_id="primary",
+            identity_id=identity, credential_id=credential
+        )
+
+
+def test_primary_paris_sentinel_requires_unique_primary_account():
+    primary = SimpleNamespace(identity_id="alice", unique_id="",
+                              provider_id="paris", credential_id="paris-alice",
+                              is_primary=True)
+    assert LibraryService._borrower_identity_conflict(
+        [primary, primary], provider_id="paris", account_id="primary",
+        identity_id="alice", credential_id="paris-alice"
+    )
+    assert LibraryService._borrower_identity_conflict(
+        [primary], provider_id="paris", account_id="primary", identity_id="alice"
+    )
+
+
+def test_unknown_primary_borrower_is_not_inferred_from_connection():
+    primary = SimpleNamespace(identity_id="alice", unique_id="",
+                              provider_id="paris", credential_id="paris-alice",
+                              is_primary=True)
+    assert LibraryService._borrower_identity_conflict(
+        [primary], provider_id="paris", account_id=None,
+        identity_id="alice", credential_id="paris-alice"
+    )
+
+
+def test_linked_borrower_requires_matching_connection_as_well_as_identity():
+    other_connection = SimpleNamespace(
+        identity_id="alice", unique_id="linked-borrower",
+        provider_id="paris", credential_id="paris-other", is_primary=False
+    )
+    assert LibraryService._borrower_identity_conflict(
+        [other_connection], provider_id="paris", account_id="linked-borrower",
+        identity_id="alice", credential_id="paris-current"
+    )
