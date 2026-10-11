@@ -186,6 +186,8 @@ def selectable_event_ids(rows: list[dict[str, str]]) -> set[str]:
 def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> str:
     """Export the COMPLETE selected page or fail explicitly; never truncate."""
     from cifereca_diagnostics_page import redacted_detail
+    if len(event_ids) > PAGE_SIZE:
+        raise ValueError("too many selected events for one export")
     if not event_ids.issubset(selectable_event_ids(rows)):
         raise ValueError("ambiguous or unidentified event selection")
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
