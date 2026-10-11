@@ -410,3 +410,69 @@ def test_destination_fields_never_stringify_untrusted_objects():
     with pytest.raises(ValueError, match="llm_destination_unproven"):
         llm_destination(model)
     assert model.calls == 0
+
+
+def test_ai_preview_forwards_all_visible_filters_before_explicit_consent():
+    llm = FakeLLM(remote=True)
+    broker = FakeBroker([event(ref="ref-visible")])
+    preview = prepare_analysis(
+        llm, broker, source="app_log", module=" cifereca.sync ",
+        severity="warning", since="2026-10-11T00:00:00+00:00",
+    )
+    assert broker.filters == [{
+        "source": "app_log", "module": "cifereca.sync",
+        "severity": "warning", "since": "2026-10-11T00:00:00+00:00",
+        "until": None, "limit": 24, "offset": 0,
+    }]
+    assert preview["scope"] == {
+        "source": "app_log", "module": "cifereca.sync",
+        "severity": "warning", "since": "2026-10-11T00:00:00+00:00",
+    }
+    assert '"module": "cifereca.sync"' in preview["prompt"]
+    assert preview["bytes"] == len(preview["prompt"].encode("utf-8"))
+    assert preview["bytes"] <= 3000
+    assert llm.calls == 0
+    result = analyze_with_consent(llm, preview, approval_id=preview["approval_id"])
+    assert result["ok"] is True
+    assert llm.calls == 1
+
+
+@pytest.mark.parametrize("overrides", [
+    {"source": None}, {"source": "private_file"}, {"module": []},
+    {"module": "x" * 91}, {"module": "one\ninjected"},
+    {"severity": None}, {"severity": "severe"},
+    {"since": []}, {"since": "x" * 65},
+])
+def test_ai_invalid_scope_refused_before_broker_or_model(overrides):
+    llm = FakeLLM()
+    broker = FakeBroker([event()])
+    with pytest.raises(ValueError):
+        prepare_analysis(llm, broker, **overrides)
+    assert broker.filters == []
+    assert llm.calls == 0
+
+
+def test_ai_tampered_filter_scope_cannot_reuse_approval():
+    llm = FakeLLM()
+    preview = prepare_analysis(llm, FakeBroker([event()]), severity="warning")
+    preview["scope"]["severity"] = "error"
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(llm, preview, approval_id=preview["approval_id"])
+    assert llm.calls == 0
+
+
+def test_ai_ui_uses_four_visible_broker_filters_and_invalidates_consent():
+    from pathlib import Path
+    ui = (Path(__file__).parents[1] / "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    block = ui.split("        def prepare_ai(", 1)[1].split("        def finish_preview(", 1)[0]
+    assert "selected_module = module_filter.get_text().strip()" in block
+    assert "selected_severity = SEVERITIES[int(severity_selector.get_selected())]" in block
+    assert "module=selected_module, severity=selected_severity" in block
+    for signal in (
+        'source_selector.connect("notify::selected", invalidate_ai)',
+        'severity_selector.connect("notify::selected", invalidate_ai)',
+        'period_selector.connect("notify::selected", invalidate_ai)',
+        'module_filter.connect("changed", invalidate_ai)',
+    ):
+        assert signal in ui
+    assert "f\"{preview['bytes']} octets UTF-8. \"" in ui
