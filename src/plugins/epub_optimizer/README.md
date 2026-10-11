@@ -72,3 +72,38 @@ La validation du conteneur EPUB applique désormais le contrat OCF avant analyse
 - les autres entrées ZIP doivent utiliser uniquement Stored ou Deflate.
 
 Ainsi, le plan et la transformation rejettent le même EPUB non conforme au lieu que l’analyse l’accepte puis que la production échoue plus tard. Le pipeline PDF n’est pas modifié.
+
+
+## Laboratoire IA — prévisualisation sémantique facultative (#784, 0.3.4)
+
+L'optimisation des images EPUB et PDF existante reste **déterministe et
+fonctionne sans IA**. L'option de page `llm_semantic_preview=false` est
+**désactivée par défaut** et n'affecte pas `artifact.plan` ni
+`artifact.transform`.
+
+Après activation, la section repliée « Laboratoire IA » permet de **coller
+volontairement** un extrait de 20 à 1 600 caractères, de choisir
+simplification, résumé ou glossaire, de cocher un consentement spécifique
+puis de cliquer **Prévisualiser (IA)**. Le clic est nécessaire pour chaque
+demande. Aucune requête automatique n'est déclenchée en ouvrant la page,
+en consultant un livre, en éditant l'extrait ou en optimisant un document.
+
+Une demande `LLMRequest(max_output_tokens=384)` passe par le service public
+`context.service("llm")` et le broker `tasks`, hors thread GTK.
+**Seul le texte collé est envoyé**, sans contenu lu automatiquement dans
+l'EPUB, chemin de fichier, identité, bibliothèque entière ou ZIP. Le
+modèle peut être distant : le consentement le signale. La réponse est
+bornée, marquée **générée, non vérifiée**, avec fournisseur, modèle et
+emplacement local/distant. Les erreurs, absences de service et retours
+tardifs après édition sont tolérés sans modification d'artefact.
+
+Cette version fournit uniquement une **prévisualisation**, **pas**
+l'application des transformations LLM à une variante EPUB : aucune
+écriture, injection XHTML, manifest OPF, ajout de fichiers ou
+métadonnées de version n'est exécutée. Une variante sémantique
+réellement générée exigerait prévisualisation et validation du diff,
+préservation de l'original, traçabilité par passage, contrat
+`artifact.execution` Core et tests EPUB d'intégrité avant activation.
+Ce lot reste dépendant du vrai service LLM Core #778.
+
+Tests hors réseau : `tests/test_semantic_preview_p2.py`.
