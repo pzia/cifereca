@@ -315,7 +315,7 @@ def main():
             except Exception as exc:
                 fail(f"Clipboard: {type(exc).__name__}: {exc}")
 
-        Gdk.Display.get_default().get_clipboard().read_text_async(None, clipboard_done)
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(None, clipboard_done), 250)
 
     def next_page():
         find_button("Suivant").emit("clicked")
