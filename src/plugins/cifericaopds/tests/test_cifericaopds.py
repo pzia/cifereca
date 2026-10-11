@@ -225,3 +225,64 @@ def test_invalid_child_ids_rejected_without_remote_code_execution():
     data["sources"][0]["capabilities"] = ["catalog.search", "acquisition.download"]
     result = candidate_inventory(data, None)
     assert result.children[0].capabilities == ("catalog.search",)
+
+
+
+def test_attested_public_bibliography_is_projected_without_untrusted_links():
+    row = candidate_results({"items": [{
+        "id": "catalogue-1", "title": "Un livre", "author": "Auteur",
+        "publisher": "Éditions exemple", "type": "roman", "format": "epub",
+        "published_at": "2026-09-22", "language": "fr",
+        "isbn13": "9782211348171",
+        "description": "Un résumé contenant un compte privé",
+        "thumbnail_url": "https://invalid.example/signed?token=secret",
+        "friendly_url": "https://invalid.example/signed?token=secret",
+        "access_token": "secret", "download_url": "https://invalid.example/secret",
+        "owned": True, "downloadable": True,
+    }]}, "cifericaopds.alpha")[0]
+    assert (row.publisher, row.type, row.format, row.published_at) == (
+        "Éditions exemple", "roman", "epub", "2026-09-22",
+    )
+    assert row.metadata == {
+        "source_id": "alpha", "isbn": "9782211348171", "language": "fr",
+    }
+    assert row.description is None
+    assert row.thumbnail_url is None and row.friendly_url is None
+    assert row.download_url is None and row.owned is None and row.downloadable is None
+    assert "secret" not in str(row.metadata)
+
+
+def test_non_bookland_and_untrusted_optional_fields_are_never_promoted():
+    rows = candidate_results({"items": [{
+        "id": "1", "title": "Livre",
+        "isbn13": "3127020510184",
+        "publisher": "https://publisher.invalid/private?token=abc",
+        "published_at": "2026-02-30",
+        "language": "a::b", "format": "access_token=abc",
+        "type": ["roman"],
+    }]}, "cifericaopds.alpha")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.publisher is None and row.published_at is None
+    assert row.format is None and row.type is None
+    assert "isbn" not in row.metadata and "language" not in row.metadata
+
+
+def test_unverified_pagination_never_duplicates_first_page(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    (tmp_path / "fixture-results.json").write_text(json.dumps({
+        "alpha": {"items": [{"id": "1", "title": "Premier livre"}]},
+    }))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    assert len(session.search("Premier", page=0)) == 1
+    assert session.search("Premier", page=1) == []
+    with pytest.raises(ContractUnavailable):
+        session.search("Premier", page=-1)
+    with pytest.raises(ContractUnavailable):
+        session.search("Premier", page="1")
+    session.close()
