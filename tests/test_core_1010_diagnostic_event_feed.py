@@ -337,3 +337,99 @@ def test_logger_path_never_exposes_freeform_identifiers(tmp_path):
     assert [r["module"] for r in result["events"]] == ["cifereca.sync", "cifereca", "cifereca.sync"]
     assert "private_customer" not in str(result)
     assert "unknowncustomer" not in str(result)
+
+
+def test_log_event_ids_survive_rename_rotation_and_new_active_log(tmp_path):
+    """Renaming an existing file must preserve the same evidence references."""
+    log = tmp_path / "cifereca.log"
+    lines = [
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [W] TRACE sync source status=ok",
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [W] TRACE sync source status=ok",
+        "2026-10-11 07:01:00,000 WARNING cifereca.sync [W] TRACE return core status=partial",
+    ]
+    make_log(log, *lines)
+    before = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"]
+    assert len(before) == 3
+    assert len({row["event_id"] for row in before}) == 3
+
+    log.rename(tmp_path / "cifereca.log.1")
+    make_log(log, *lines[:1])  # New inode, even when the content repeats.
+    after = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"]
+    assert len(after) == 4
+    assert [row["event_id"] for row in after[:3]] == [
+        row["event_id"] for row in before
+    ]
+    assert after[3]["event_id"] not in {
+        row["event_id"] for row in before
+    }
+    assert all(len(row["event_id"]) == 16 for row in after)
+    assert all(
+        "inode" not in row and "path" not in row and "byte_offset" not in row
+        for row in after
+    )
+
+
+def test_log_id_is_stable_when_bounded_tail_start_moves(tmp_path):
+    """A tail moving by bytes must not renumber still-visible records."""
+    log = tmp_path / "cifereca.log"
+    prefix = (
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [W] "
+        "TRACE sync source status=ok " + "X" * 27000
+    )
+    anchor = (
+        "2026-10-11 07:01:00,000 WARNING cifereca.sync [W] "
+        "TRACE return core status=partial"
+    )
+    make_log(log, prefix, anchor)
+    initial = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    original_id = next(
+        row["event_id"] for row in initial["events"]
+        if row["message"] == "TRACE return core status=partial"
+    )
+    with log.open("a", encoding="utf-8") as handle:
+        for i in range(65):
+            handle.write(
+                f"2026-10-11 07:02:{i % 60:02d},000 "
+                "INFO cifereca.sync TRACE sync source status=ok\n"
+            )
+    later = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert later["sources"][0]["status"] == "partial"
+    later_id = next(
+        row["event_id"] for row in later["events"]
+        if row["message"] == "TRACE return core status=partial"
+    )
+    assert later_id == original_id
+
+
+def test_byte_offsets_distinguish_multibyte_and_duplicate_rows(tmp_path):
+    """UTF-8 bytes, not Unicode positions, identify repeated log records."""
+    log = tmp_path / "cifereca.log"
+    repeated = (
+        "2026-10-11 07:00:00,000 WARNING cifereca.sync [W] "
+        "TRACE sync source status=partial"
+    )
+    make_log(
+        log,
+        "2026-10-11 06:59:00,000 INFO cifereca "
+        "note Unicode é🙂 should be hidden",
+        repeated, repeated,
+    )
+    first = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    ids = [row["event_id"] for row in first["events"]]
+    assert len(ids) == len(set(ids)) == 3
+    assert "Unicode" not in str(first)
+    assert "🙂" not in str(first)
+    again = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )
+    assert ids == [row["event_id"] for row in again["events"]]
