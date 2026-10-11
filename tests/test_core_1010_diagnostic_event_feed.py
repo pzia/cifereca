@@ -413,5 +413,30 @@ def test_log_event_reference_hash_does_not_publish_inode_or_file_offset(tmp_path
     event_id = response["events"][0]["event_id"]
     assert len(event_id) == 16
     assert all(character in "0123456789abcdef" for character in event_id)
-    assert str(log.stat().st_ino) not in event_id
+    assert "inode" not in str(response)
+    assert "file_offset" not in str(response)
     assert str(log) not in str(response)
+
+
+def test_replacing_log_content_at_same_file_offset_cannot_reuse_event_reference(tmp_path):
+    log = tmp_path / "cifereca.log"
+    first = (
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] "
+        "TRACE sync source status=ok"
+    )
+    changed = first.replace("status=ok", "status=error")
+    make_log(log, first)
+    before = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"][0]
+    inode = log.stat().st_ino
+
+    # Truncate the same inode, preserving the timestamp and byte offset.
+    make_log(log, changed)
+    assert log.stat().st_ino == inode
+    after = query_diagnostic_events(
+        Diagnostics(), log_path=log, source="app_log",
+    )["events"][0]
+    assert before["timestamp"] == after["timestamp"]
+    assert before["message"] != after["message"]
+    assert before["event_id"] != after["event_id"]
