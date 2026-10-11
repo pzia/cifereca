@@ -777,3 +777,66 @@ def test_huge_core_total_flags_partial_without_exporting_unbounded_count():
     preview = prepare_analysis(FakeLLM(), HugeTotalBroker([event()]))
     assert preview["total_available"] is None
     assert preview["sample_truncated"] is True
+
+
+@pytest.mark.parametrize("ids", [
+    ("ref-shared", "ref-shared"),
+    ("ref-shared", "REF-SHARED"),
+])
+def test_ai_repeated_event_ids_never_claim_a_unique_source(ids):
+    class DuplicateCitingLLM(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible", model="qa-llm",
+                text="Hypothèse ref-shared ; autre cas ref-unique ; réf ref-unknown.",
+            )
+
+    # The same event_id from two sources, or case-fold collisions, cannot
+    # identify a single source, even though the IDs are in the sent preview.
+    rows = [
+        {**event("one", ids[0]), "source": "app_log"},
+        {**event("two", ids[1]), "source": "core_events"},
+        event("three", "ref-unique"),
+    ]
+    model = DuplicateCitingLLM()
+    preview = prepare_analysis(model, FakeBroker(rows))
+    assert preview["count"] == 3
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert result["references_matched"] == [{
+        "event_id": "ref-unique", "timestamp": "2026-10-11T05:20:00+00:00",
+        "source": "app_log",
+    }]
+    assert result["references_unknown"] == ["ref-unknown"]
+    assert result["references_ambiguous"] == ["ref-shared"]
+    assert result["reference_status"] == "ambiguous_event_references"
+    exported = json.loads(export_analysis_json(result))
+    assert exported["evidence"]["ambiguous_references"] == ["ref-shared"]
+    assert exported["evidence"]["matched_references"][0]["event_id"] == "ref-unique"
+    assert model.calls == 1
+
+
+def test_ai_case_changed_id_is_unknown_not_claimed_as_exact_source():
+    class CaseShiftedLLM(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible",
+                model="qa-llm", text="Référence REF-UnIqUe.",
+            )
+
+    model = CaseShiftedLLM()
+    preview = prepare_analysis(model, FakeBroker([event(ref="ref-unique")]))
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert result["references_matched"] == []
+    assert result["references_unknown"] == ["REF-UnIqUe"]
+    assert result["references_ambiguous"] == []
+    assert result["reference_status"] == "no_known_event_cited"
+
+
+def test_ai_report_discloses_ambiguous_ids_instead_of_attributing_a_source():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert 'result.get("references_ambiguous")' in page
+    assert "Références ambiguës (ID dupliqué, source non attribuable)" in page
