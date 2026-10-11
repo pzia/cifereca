@@ -16,16 +16,26 @@ et SHA-256 concordants. Voir [la fiche de preuves GTK](DIAGNOSTICS_GTK_PROBE_101
 | --- | --- | --- |
 | Widget `diagnostics-1366` | 6 checks PASS, 4 PNG ; lecture rapport, agrandissement, JSON expurgé, copie clavier XTEST/presse-papiers, pagination 50→15, aucune activation IA/check implicite | widget isolé et brokers simulés ; pas d'export fichier, scroll extrême ni batterie clavier complète |
 | Navigation `diagnostics-navigation-1366` | 6 checks PASS, 4 PNG ; vraie `MainWindow`, clics XTEST Bibliothèque → groupe Configuration → Diagnostics → Bibliothèque ; route, titre et contenu visibles | contribution réelle montée avec doubles de gestionnaire de plugins et brokers ; pas d'installation ZIP ni de profil utilisateur réel |
+| Grand écran `diagnostics-large-1600` | 9 checks PASS, 6 PNG ; rapport long 250 lignes, Space/Tab/Shift+Tab XTEST, scroll rapport 3724/3724 px, page externe stable à 1286 px | widget isolé ; défilement via ajustement GTK et non molette ; `Esc`, export, redimensionnement dynamique non vérifiés |
 
-**Avancement D01–D16 :** preuves partielles pour **D05** (rapport et
-agrandissement, mais pas le scroll de bout en bout ni le focus de retour),
+**Avancement D01–D16 :** preuves partielles pour **D05** (rapport
+multipage et scroll interne jusqu'au bas, mais pas focus de retour complet),
 **D07** (un JSON expurgé, pas tous les types limites), **D13**
 (copie presse-papiers, mais pas sélection `Ctrl+C` ni export disque),
-**D14** (aucune IA ou vérification active implicite, pas tous les statuts)
-et **D16** (1366 px seulement, pas de redimensionnement ni grand écran).
-Les **D01–D04, D06, D08–D12, D15** ainsi que les parties manquantes
+**D14** (aucune IA ou vérification active implicite, pas tous les statuts),
+**D15** (Space/Tab/Shift+Tab physiques au niveau du rapport, pas toute
+l'interface, pas `Esc`) et **D16** (screenshots à 1366 et 1600 px,
+pas de redimensionnement dynamique).
+Les **D01–D04, D06, D08–D12** ainsi que les parties manquantes
 des précédents restent à vérifier. Ne pas cocher l'ensemble de la matrice,
 ni clôturer #1011 sur ces seuls scénarios.
+
+**Run le plus récent :** [E2E Smoke #38135244581](https://github.com/pzia/cifereca/actions/runs/38135244581)
+**SUCCESS**, [artefact #11701076489](https://github.com/pzia/cifereca/actions/runs/38135244581/artifacts/11701076489) :
+trois rapports PASS, 14 PNG avec SHA-256 vérifiés. CI ordinaire du
+même head **FAIL** sur `XPASS(strict)` d'un test explorateur
+([#1013](https://github.com/pzia/cifereca/issues/1013)), relevant de
+son propriétaire ; un PASS GTK ne l'autorise pas à être ignoré.
 
 **Intégration :** la PR [#1146](https://github.com/pzia/cifereca/pull/1146)
 est toujours soumise au CI ordinaire ; l'inventaire de plugins non classés
