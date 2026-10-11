@@ -1,16 +1,10 @@
 name: Validate installed Core
 
+# Matrix 3.11/3.12/3.13 is an explicit compatibility audit, not a second
+# installed-Core validation on every main push. The ordinary checks remain
+# in pr-ci.yml and core-full-install.yml; run this manually when needed.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'src/cifereca/**'
-      - 'pyproject.toml'
-      - 'VERSION'
-      - 'README.md'
-      - 'scripts/ci-smoke-installed-wheel.sh'
-      - '.github/workflows/core-install.yml'
 
 permissions:
   contents: read
