@@ -4,9 +4,8 @@
 name: UX GTK Diagnostics Debian 13 (sur accord)
 
 on:
-  push:
-    branches:
-      - ux/gtk-e2e-github-on-approval-20261011
+  pull_request:
+    types: [opened]
     paths:
       - .github/gtk-e2e-run-request.txt
 
