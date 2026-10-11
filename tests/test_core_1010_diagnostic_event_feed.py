@@ -262,3 +262,12 @@ def test_trace_field_values_are_bounded_to_safe_vocabulary(tmp_path):
     assert rows["events"][0]["message"] == "TRACE sync source status=ok count=12"
     for secret in ("Alice", "privatecustomer", "credentialref"):
         assert secret not in json.dumps(rows)
+
+
+def test_invalid_trace_values_do_not_consume_safe_field_quota(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log, "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] "
+                  "TRACE sync source phase=private1 outcome=private2 "
+                  "operation=private3 status=private4 status=ok count=7")
+    rows = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert rows["events"][0]["message"] == "TRACE sync source status=ok count=7"
