@@ -34,8 +34,9 @@ Un message libre est remplacé par « contenu libre masqué ». Pour les
 Diagnostics structurés, seuls les mots opérationnels autorisés sont diffusés,
 pas les détails ni les valeurs potentiellement personnelles. Les empreintes
 d'événements ne réintroduisent aucune valeur brute. Pour les journaux
-applicatifs, `event_id` est une empreinte de la date, du résumé publié et
-de l'identité interne du fichier ouvert (périphérique/inode et position
+applicatifs, `event_id` est une empreinte de la date, du niveau,
+du module expurgé, du résumé publié et de l'identité interne du fichier
+ouvert (périphérique/inode et position
 absolue en octets). Elle reste stable lors du renommage standard
 `cifereca.log` vers `cifereca.log.1` et lors du déplacement de la fenêtre
 de lecture bornée, sans exposer ces métadonnées dans l'API. Des lignes
