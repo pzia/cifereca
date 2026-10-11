@@ -613,6 +613,14 @@ class YouthView:
         self.enter_sequence = YouthEnterSequence()
         self._remote_running_token = None
         self.next_cursor, self.next_source_plugin = "", ""
+        config = getattr(plugin.context, "config", None)
+        self._llm_enabled = bool(isinstance(config, Mapping) and config.get("llm_themes") is True)
+        self._llm_task = None
+        self._llm_generation = 0
+        self._llm_key = None
+        self._llm_wording = None
+        self._llm_button = None
+        self._llm_hint = None
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.status = Gtk.Label(
             label="Cache local uniquement. Une collecte distante nécessite le bouton « Collecter cette source ».",
@@ -657,6 +665,21 @@ class YouthView:
         actions.append(self.button("Plus de résultats", self.more))
         actions.append(self.button("Enrichir la bibliographie", self.enrich_bibliography))
         actions.append(self.button("Ouvrir la fiche Bibliothèque", self.open_selected))
+        if self._llm_enabled:
+            self._llm_button = Gtk.Button(label="Reformuler les thèmes (IA)")
+            self._llm_button.set_sensitive(False)
+            self._llm_button.set_tooltip_text(
+                "Envoi volontaire des seuls thèmes attestés au service IA configuré, "
+                "potentiellement distant. Aucun titre, âge ou profil n’est transmis."
+            )
+            self._llm_button.connect("clicked", lambda *_: self.rewrite_selected_themes())
+            actions.append(self._llm_button)
+            self._llm_hint = Gtk.Label(
+                label="IA désactivée tant qu’aucun livre avec thèmes attestés n’est sélectionné. "
+                      "Aucune tranche d’âge ne sera inférée.",
+                wrap=True, xalign=0,
+            )
+            self.widget.append(self._llm_hint)
         self.actions_hint = Gtk.Label(
             label="« Toutes les sources » consulte seulement le cache. Choisissez une source pour collecter.",
             wrap=True, xalign=0,
@@ -743,6 +766,15 @@ class YouthView:
             enabled, reason = states[label]
             button.set_sensitive(enabled)
             button.set_tooltip_text(reason)
+        llm_button = getattr(self, "_llm_button", None)
+        if llm_button is not None:
+            current_book = getattr(self, "selected_book", None)
+            llm_button.set_sensitive(bool(
+                self.identity_id() and current_book is not None
+                and book_key(current_book) in getattr(self, "rows", {})
+                and tuple(getattr(current_book, "themes", ()) or ())
+                and getattr(self, "_llm_task", None) is None
+            ))
         hint = getattr(self, "actions_hint", None)
         if hint is not None:
             hint.set_label(
@@ -851,6 +883,8 @@ class YouthView:
         )
 
     def filters_changed(self):
+        if hasattr(self, "_llm_generation"):
+            self._clear_llm_wording()
         self.generation += 1
         sequence = getattr(self, "enter_sequence", None)
         if sequence is not None:
@@ -937,11 +971,112 @@ class YouthView:
             self.master.empty_detail()
         self.update_action_availability()
 
+    def _clear_llm_wording(self):
+        """Discard stale optional text; never touch source book or cache."""
+        self._llm_generation += 1
+        pending = self._llm_task
+        self._llm_task = None
+        if pending is not None:
+            pending.cancel()
+        self._llm_key = None
+        self._llm_wording = None
+        if self._llm_button is not None:
+            self._llm_button.set_sensitive(False)
+        if self._llm_hint is not None:
+            self._llm_hint.set_label(
+                "IA facultative : sélectionnez un livre avec thèmes. "
+                "Aucune tranche d’âge ne sera inférée."
+            )
+
+    def _llm_selected_changed(self, row):
+        book = self.rows.get(row.key) if row is not None else None
+        new_key = (self.identity_id(), book_key(book)) if book is not None else None
+        if new_key != self._llm_key:
+            self._clear_llm_wording()
+            self._llm_key = new_key
+
+    def rewrite_selected_themes(self):
+        """Only a second, explicit click may schedule an AI request."""
+        if not self._llm_enabled or self._llm_task is not None or self.disposed:
+            return
+        book = self.selected_book
+        key = (self.identity_id(), book_key(book)) if book is not None else None
+        if book is None or not key[0] or key != self._llm_key:
+            return
+        themes = tuple(getattr(book, "themes", ()) or ())
+        if not themes:
+            self._llm_hint.set_label("Aucun thème attesté disponible pour une reformulation.")
+            return
+        # The historic GTK smoke installs a minimal page/catalogue ZIP with no
+        # optional modules. Import only on explicit AI action; production plugin
+        # packages include youth_llm.py in the normal complete ZIP.
+        try:
+            from youth_llm import rewrite_themes
+        except ImportError:
+            self._llm_hint.set_label("Module IA facultatif indisponible. Aucun âge modifié.")
+            return
+        context = self.plugin.context
+        service = context.service("llm") if context is not None else None
+        tasks = context.broker("tasks") if context is not None else None
+        if service is None or tasks is None:
+            self._llm_hint.set_label("Service IA indisponible. Les âges et thèmes attestés restent inchangés.")
+            return
+        self._llm_generation += 1
+        token = self._llm_generation
+        self._llm_wording = None
+        self._llm_button.set_sensitive(False)
+        self._llm_hint.set_label("Reformulation volontaire en cours… Aucun âge ne sera généré.")
+        try:
+            handle = tasks.submit(
+                lambda control: rewrite_themes(
+                    service, themes, enabled=True, consent=True, control=control,
+                ),
+                label="Reformulation facultative des thèmes Jeunesse",
+                kind="youth.llm",
+            )
+        except Exception:
+            self._llm_hint.set_label("Reformulation indisponible. Le catalogue reste intact.")
+            self.update_action_availability()
+            return
+        self._llm_task = handle
+
+        def done(result_handle):
+            if result_handle.control.cancelled():
+                return
+            try:
+                wording = result_handle.result()
+            except Exception:
+                wording = None
+
+            def apply():
+                if (self.disposed or self.plugin.context is None
+                        or token != self._llm_generation
+                        or key != self._llm_key):
+                    return False
+                self._llm_task = None
+                self._llm_wording = wording
+                self._llm_hint.set_label(
+                    "Texte IA affiché séparément, non attesté et sans valeur d’âge."
+                    if wording is not None else
+                    "Aucune reformulation utilisable. Les thèmes attestés sont conservés."
+                )
+                self.update_action_availability()
+                if self.selected_book is not None:
+                    self.selected(UiBookListEntry(key=book_key(self.selected_book), title=""))
+                return False
+
+            self.GLib.idle_add(apply)
+
+        handle.add_done_callback(done)
+
     def selected(self, row):
         # The public bridge may reuse this callback without the whole GTK view.
         # A real YouthView always exposes the updater; a partial host may not.
         updater = getattr(self, 'update_action_availability', None)
         refresh_actions = updater if callable(updater) else lambda: None
+        changed = getattr(self, "_llm_selected_changed", None)
+        if callable(changed) and hasattr(self, "_llm_generation"):
+            changed(row)
         if row is None:
             self.selected_book = None
             self.master.empty_detail()
@@ -966,6 +1101,28 @@ class YouthView:
                     callback=lambda q=title, identity=identity_id: self._search_library(
                         q, identity,
                     ),
+                ),
+            ))
+        if (getattr(self, "_llm_enabled", False)
+                and getattr(self, "_llm_wording", None) is not None
+                and getattr(self, "_llm_key", None) == (self.identity_id(), book_key(self.selected_book))):
+            wording = self._llm_wording
+            presentation = replace(presentation, sections=(
+                *presentation.sections,
+                DetailSection(
+                    "ai-themes", "Thèmes reformulés par IA — non attestés",
+                    (
+                        DetailField("ai-themes-text", "Formulation générée", wording.text),
+                        DetailField(
+                            "ai-themes-source", "Service utilisé",
+                            f"{wording.provider} / {wording.model}"
+                            + (" · distant" if wording.remote else " · local"),
+                        ),
+                        DetailField(
+                            "ai-themes-warning", "Prudence",
+                            "Aucun âge ni critère de filtrage ne provient de l’IA."
+                        ),
+                    ), order=1100,
                 ),
             ))
         self.master.show_detail(presentation)
@@ -1265,6 +1422,8 @@ class YouthView:
         self.refresh_source_diagnostics()
 
     def dispose(self):
+        if hasattr(self, "_llm_generation"):
+            self._clear_llm_wording()
         self.disposed = True
         self.generation += 1
         if self.task:

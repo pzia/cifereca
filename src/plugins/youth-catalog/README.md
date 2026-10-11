@@ -122,3 +122,30 @@ inaccessible ou redirigée n'est pas une preuve de DOM. Avant toute
 implémentation d'adaptateur, comparer également au moins deux fiches,
 qualifier les âges *propres à l'édition* et rejeter les produits hors livre.
 Aucune supposition de DOM commun avec Milan.
+
+
+## Reformulation thématique IA opt-in — #781 (0.4.16)
+
+Le filtre des âges et les recommandations de lecture **ne consultent jamais l'IA**.
+Le cache des notices, les âges éditeur et leur provenance restent immuables.
+
+- `llm_themes=false` par défaut dans la configuration de la page Jeunesse.
+  Une fois activée, la commande **« Reformuler les thèmes (IA) »** s'affiche,
+  mais reste indisponible sans livre et sans thèmes attestés.
+- Le clic explicite est indispensable à chaque demande. Le service public
+  `context.service("llm")` peut être **distant** : seules six étiquettes de
+  thème déjà dans le cache (96 caractères chacune au plus) sont envoyées ;
+  ni identité, ni titre, ni âge, ni ISBN, ni description complète.
+- Appel borné `LLMRequest(max_output_tokens=96)` par le broker `tasks`.
+  Un texte généré est présenté dans la section distincte
+  **« Thèmes reformulés par IA — non attestés »**, avec modèle et provenance.
+  **Une réponse qui énonce une tranche d'âge est refusée**, même si le
+  modèle ignore cette consigne.
+- Les données générées ne deviennent **ni âge source, ni âge inféré, ni
+  thème filtrable, ni preuve bibliographique**. Échec, quota, absence de
+  service, annulation ou sélection modifiée : le catalogue et ses filtres
+  restent identiques, sans requête réseau implicite.
+- La configuration/exécution du service `llm` est une dépendance du ticket
+  Core #778 (toujours ouvert). Ce plugin ne crée pas de backend LLM.
+
+Tests unitaires hors réseau dans `tests/test_youth_llm_p2.py`.
