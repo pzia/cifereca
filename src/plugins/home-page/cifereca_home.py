@@ -158,6 +158,53 @@ def attention_items(row, *, now=None):
     return sorted(items,key=lambda item:(-int(item.get('priority') or 0),str(item.get('label') or '')))
 
 
+def compact_sync_text(sync):
+    """No zero is inferred from an absent count; status and errors stay visible."""
+    sync=sync if isinstance(sync,dict) else {}
+    def count(key):
+        value=sync.get(key)
+        return str(value) if type(value) is int and value>=0 else '—'
+    return ('État : '+STATUS.get(sync.get('status'),'Jamais synchronisée')
+            +' · acquisitions : '+count('new_acquisitions')
+            +' · actions requises : '+count('attention_required')
+            +' · erreurs : '+count('errors'))
+
+
+def compact_source_groups(row, public_providers=PUBLIC_PROVIDERS):
+    """Display each origin once, without promoting an unknown origin to login."""
+    groups=source_groups(row,public_providers)
+    stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else {}
+    counts=stats.get('sources') if isinstance(stats.get('sources'),dict) else {}
+    seen={str(src['provider_id']) for rows in groups.values() for src in rows}
+    other=[{'provider_id':key, 'label':SOURCE_NAMES.get(key,key), 'count':value,
+            'kind':'unknown'} for key,value in sorted(counts.items())
+           if isinstance(key,str) and key not in seen]
+    return {'local':groups['local'],'public':groups['public'],
+            'authenticated':groups['authenticated'],'unknown':other}
+
+
+def compact_source_text(item, *, total_local_books=None):
+    """Counts describe indexed book origins, not remote search availability."""
+    label=str(item.get('label') or item.get('provider_id') or 'Source')
+    kind=item.get('kind')
+    count=item.get('count')
+    has_count=type(count) is int and count>=0
+    if kind=='local':
+        # Local provenance == total local books in the common case; do not
+        # repeat the exact same number underneath the main summary.
+        amount=('origine locale (déjà comptée)' if has_count and
+                type(total_local_books) is int and count==total_local_books
+                else f"{count} livre(s) d’origine" if has_count else 'origine locale')
+    elif kind=='public':
+        amount=f"{count} livre(s) d’origine" if has_count else 'catalogue public'
+    elif kind=='authenticated':
+        status='connectée' if item.get('connected') is True else 'non connectée'
+        amount=status+(f" · {count} livre(s) d’origine" if has_count else '')
+    else:
+        amount=f"{count} livre(s) d’origine" if has_count else 'origine non classée'
+    return label+' · '+amount
+
+
 class OverviewController:
     def __init__(self,host,render,identity_broker=None):
         self.host=host;self.render=render;self.identity_broker=identity_broker;self.closed=False
@@ -224,8 +271,7 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
     quick=Gtk.Button.new_from_icon_name('view-refresh-symbolic');quick.set_tooltip_text('Synchronisation rapide')
     deep=Gtk.Button.new_from_icon_name('system-search-symbolic');deep.set_tooltip_text('Vérifier toute la bibliothèque')
     header.append(quick);header.append(deep);outer.append(header)
-    # Two identity cards per row; each card keeps its own three-column metric
-    # sections. The outer grid owns card placement, the inner grids own metrics.
+    # Two compact identity panels per row, with comparison data above the fold.
     grid=Gtk.FlowBox();grid.set_selection_mode(Gtk.SelectionMode.NONE);grid.set_homogeneous(True)
     grid.set_min_children_per_line(2);grid.set_max_children_per_line(2);grid.set_column_spacing(12);grid.set_row_spacing(12);outer.append(grid)
     empty=Gtk.Label(label='Aucune identité configurée. Ouvrez Paramètres pour en créer une.',xalign=0);empty.set_wrap(True);outer.append(empty)
@@ -235,184 +281,218 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
         item.set_wrap_mode(Pango.WrapMode.WORD_CHAR);item.set_width_chars(1);item.set_max_width_chars(44);item.set_hexpand(True)
         if style:item.add_css_class(style)
         parent.append(item);return item
-    def section(parent,title_text,columns=3,icon=None):
-        section_head=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=6)
-        if icon is not None:
-            section_icon=Gtk.Image.new_from_icon_name(icon);section_icon.add_css_class('dim-label');section_head.append(section_icon)
-        label(section_head,title_text,'heading');parent.append(section_head)
-        area=Gtk.Grid();area.set_column_homogeneous(True);area.set_column_spacing(6);area.set_row_spacing(6)
-        area._cifereca_columns=columns;area._cifereca_next=0
-        parent.append(area);return area
-    def tile(area,caption,value,style='accent',tooltip=None,callback=None,settings_callback=None,span=1):
-        content=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=0);content.set_hexpand(True);content.set_vexpand(True);content.add_css_class('card')
-        inner=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=1);inner.set_hexpand(True);inner.set_vexpand(True);inner.set_valign(Gtk.Align.CENTER)
-        for margin in ('top','bottom','start','end'):getattr(inner,'set_margin_'+margin)(6)
-        content.append(inner)
-        value_label=label(inner,value,style);value_label.add_css_class('heading')
-        caption_label=label(inner,caption,'caption')
-        for centered in (value_label,caption_label):
-            centered.set_xalign(.5);centered.set_justify(Gtk.Justification.CENTER)
-        if tooltip:value_label.set_tooltip_text(tooltip)
-        main=content
-        if callback is not None:
-            action=Gtk.Button();action.set_child(content);action.add_css_class('flat');action.set_hexpand(True);action.set_vexpand(True)
-            if tooltip:action.set_tooltip_text(tooltip)
-            action.connect('clicked',callback);main=action
-        if settings_callback is not None:
-            wrapper=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=2);wrapper.set_hexpand(True)
-            wrapper.append(main)
-            settings=Gtk.Button();settings.set_child(Gtk.Image.new_from_icon_name('emblem-system-symbolic'));settings.add_css_class('flat')
-            settings.set_tooltip_text('Configurer ce fournisseur');settings.connect('clicked',settings_callback);wrapper.append(settings)
-            main=wrapper
-        index=area._cifereca_next;columns=area._cifereca_columns;span=max(1,min(int(span),columns))
-        column=index % columns
-        if column+span>columns:
-            index+=columns-column;column=0
-        area.attach(main,column,index // columns,span,1);area._cifereca_next=index+span
-        return main
+    def plain_section(parent,title_text):
+        head=Gtk.Label(label=title_text,xalign=0)
+        head.add_css_class('heading')
+        parent.append(head)
+        area=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3)
+        parent.append(area)
+        return area
+
+    def compact_row(area,description,*,action=None,action_title='Voir',settings=None,tooltip=None):
+        line=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=6)
+        line.set_hexpand(True)
+        caption=Gtk.Label(label=str(description),xalign=0)
+        caption.set_wrap(True)
+        caption.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        caption.set_hexpand(True)
+        caption.set_max_width_chars(68)
+        if tooltip:caption.set_tooltip_text(tooltip)
+        line.append(caption)
+        if action is not None:
+            button=Gtk.Button(label=action_title)
+            button.add_css_class('flat')
+            button.set_valign(Gtk.Align.CENTER)
+            button.set_tooltip_text(tooltip or action_title)
+            button.connect('clicked',action)
+            line.append(button)
+        if settings is not None:
+            button=Gtk.Button.new_from_icon_name('emblem-system-symbolic')
+            button.add_css_class('flat')
+            button.set_valign(Gtk.Align.CENTER)
+            button.set_tooltip_text('Configurer cette source')
+            button.connect('clicked',settings)
+            line.append(button)
+        area.append(line)
+        return line
+
     def attention_entry(area,item,identity_id):
-        row_box=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=8);row_box.set_hexpand(True);row_box.add_css_class('card')
-        for margin in ('top','bottom','start','end'):getattr(row_box,'set_margin_'+margin)(4)
-        priority=Gtk.Label(label='Urgent' if item.get('kind')=='error' else 'À faire')
-        priority.add_css_class('pill');priority.add_css_class(item.get('kind') or 'warning');priority.set_valign(Gtk.Align.CENTER)
-        row_box.append(priority)
-        text_box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=1);text_box.set_hexpand(True)
-        title=Gtk.Label(label=str(item.get('label') or 'Action requise'),xalign=0);title.set_wrap(True);title.add_css_class('heading');text_box.append(title)
+        # Attention stays primary and actionable, but is no longer a card
+        # nested inside another card.
+        row_box=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=6)
+        row_box.set_hexpand(True)
+        row_box.add_css_class('error' if item.get('kind')=='error' else 'warning')
+        content=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=1)
+        content.set_hexpand(True)
         context=str(item.get('context') or '').strip()
         if item.get('count') is not None:
-            context=(context+' · ' if context else '')+str(item.get('count'))+' élément(s)'
+            context=(context+' · ' if context else '')+str(item['count'])+' élément(s)'
+        label(content,str(item.get('label') or 'Action requise'),'heading')
         if context:
-            detail=Gtk.Label(label=context,xalign=0);detail.set_wrap(True);detail.add_css_class('caption');detail.add_css_class('dim-label');text_box.append(detail)
-        row_box.append(text_box)
+            context_label=label(content,context,'caption')
+            context_label.add_css_class('dim-label')
+        row_box.append(content)
         action=str(item.get('action') or 'open')
-        callback=None
         if action=='sync':
             callback=lambda _b:controller.synchronize(False)
         elif action=='settings':
             callback=lambda _b,pid=item.get('provider_id'):controller.settings(pid)
         else:
             callback=lambda _b,iid=identity_id:controller.open(iid)
-        button=Gtk.Button(label=str(item.get('action_label') or 'Voir'));button.add_css_class('suggested-action')
-        button.set_valign(Gtk.Align.CENTER);button.connect('clicked',callback);row_box.append(button)
-        index=area._cifereca_next;area.attach(row_box,0,index,1,1);area._cifereca_next=index+1
+        button=Gtk.Button(label=str(item.get('action_label') or 'Voir'))
+        button.add_css_class('suggested-action')
+        button.set_valign(Gtk.Align.CENTER)
+        button.connect('clicked',callback)
+        row_box.append(button)
+        area.append(row_box)
         return row_box
+
     def render(rows):
         child=grid.get_first_child()
         while child is not None:
-            next_child=child.get_next_sibling();grid.remove(child);child=next_child
+            next_child=child.get_next_sibling()
+            grid.remove(child)
+            child=next_child
         empty.set_visible(not rows)
+        filter_supported=getattr(host,'supports_identity_view_filters',None)
+        has_filters=bool(callable(filter_supported) and filter_supported() is True
+                         and callable(getattr(host,'open_identity_view',None)))
+        settings_open=getattr(host,'open_plugin_settings',None)
+
         for row in rows:
-            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=7);box.set_hexpand(True);box.add_css_class('card')
-            for margin in ('top','bottom','start','end'):getattr(box,'set_margin_'+margin)(10)
-            head=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=10)
-            avatar=Gtk.Image.new_from_icon_name('avatar-default-symbolic');avatar.set_pixel_size(28);avatar.add_css_class('accent');head.append(avatar)
-            identity=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=0);identity.set_hexpand(True)
-            name=Gtk.Button(label=str(row.get('label') or 'Utilisateur'));name.set_halign(Gtk.Align.START);name.add_css_class('flat');name.add_css_class('title-3')
-            name.get_child().set_wrap(True);name.get_child().set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            name.get_child().set_max_width_chars(28);name.set_tooltip_text('Sélectionner cette identité et ouvrir sa bibliothèque')
-            name.connect('clicked',lambda button,iid=row['identity_id']:controller.open(iid));identity.append(name)
-            subtitle=Gtk.Label(label='Bibliothèque personnelle',xalign=0);subtitle.add_css_class('caption');subtitle.add_css_class('dim-label');identity.append(subtitle)
-            head.append(identity)
-            state=Gtk.Label(label='ACTIVE' if row.get('selected') else 'PROFIL');state.add_css_class('pill')
-            state.add_css_class('success' if row.get('selected') else 'dim-label');state.set_valign(Gtk.Align.CENTER);head.append(state)
-            box.append(head);box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            iid=row.get('identity_id') or ''
+            stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else None
+            sync=row.get('sync') if isinstance(row.get('sync'),dict) else {}
+            box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=5)
+            box.set_hexpand(True)
+            box.add_css_class('card')
+            for margin in ('top','bottom','start','end'):
+                getattr(box,'set_margin_'+margin)(8)
+
+            head=Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,spacing=8)
+            name=Gtk.Button(label=str(row.get('label') or 'Utilisateur'))
+            name.set_halign(Gtk.Align.START)
+            name.set_hexpand(True)
+            name.add_css_class('flat')
+            name.add_css_class('title-3')
+            name.get_child().set_wrap(True)
+            name.get_child().set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            name.get_child().set_max_width_chars(28)
+            name.set_tooltip_text('Ouvrir la bibliothèque de ce profil')
+            name.connect('clicked',lambda _button,identity=iid:controller.open(identity))
+            head.append(name)
+            state=Gtk.Label(label='ACTIVE' if row.get('selected') else 'AUTRE PROFIL')
+            state.add_css_class('pill')
+            state.add_css_class('success' if row.get('selected') else 'dim-label')
+            state.set_valign(Gtk.Align.CENTER)
+            head.append(state)
+            box.append(head)
 
             attention=attention_items(row)
             if attention:
-                attention_grid=section(box,'À traiter',1,'dialog-warning-symbolic')
-                for action in attention:
-                    attention_entry(attention_grid,action,row['identity_id'])
+                attention_area=plain_section(box,'À traiter')
+                # Never hide a real alert in a collapsed expander.
+                for item in attention[:2]:
+                    attention_entry(attention_area,item,iid)
+                if len(attention)>2:
+                    more=Gtk.Expander(label=f"{len(attention)-2} autre(s) action(s) à traiter")
+                    inside=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3)
+                    for item in attention[2:]:
+                        attention_entry(inside,item,iid)
+                    more.set_child(inside)
+                    attention_area.append(more)
 
-            stats=row.get('statistics')
-            if isinstance(stats,dict):
-                globals_grid=section(box,'En bref',3,'view-grid-symbolic')
-                loans=stats.get('known_loans')
-                tile(globals_grid,'Livres locaux',stats.get('local_books',0),'success',
-                     'Ouvrir la bibliothèque de cette identité',
-                     lambda _b,iid=row['identity_id']:controller.open(iid))
-                tile(globals_grid,'Emprunts connus',loans if loans is not None else '—','accent')
-                tile(globals_grid,"Droits d’achat distants",stats.get('remote_owned_rights',0),'accent')
-
-                breakdown=section(box,'Catalogues',3,'view-list-symbolic')
-                support=getattr(host,'supports_identity_view_filters',None)
-                filters=bool(callable(support) and support() is True and callable(getattr(host,'open_identity_view',None)))
-                names={'paris':'Paris','kobo':'Kobo','gallica':'Gallica','gutenberg':'Gutenberg','bnf-catalogue':'BnF','local':'Local / origine non rapprochée'}
-                source_rows=sorted((stats.get('sources') or {}).items())
-                if source_rows:
-                    for provider,count in source_rows:
-                        pname=names.get(provider,provider)
-                        callback=(lambda _b,iid=row['identity_id'],pid=provider:controller.filter(iid,'library',pid)) if filters else None
-                        tile(breakdown,pname,count,'accent','Ouvrir la bibliothèque filtrée sur '+pname if filters else None,callback)
-                else:
-                    tile(breakdown,'Catalogues','Aucune donnée','dim-label')
+            summary=plain_section(box,'En bref')
+            if stats is None:
+                compact_row(summary,'Statistiques indisponibles · actualisation nécessaire')
             else:
-                unavailable=section(box,'En bref',3,'view-grid-symbolic');tile(unavailable,'Statistiques','Core029 requis','warning')
+                books=stats.get('local_books')
+                loans=stats.get('known_loans')
+                compact_row(
+                    summary,
+                    f"Livres locaux : {books if books is not None else '—'}"
+                    +f" · emprunts connus : {loans if loans is not None else '—'}",
+                    action=lambda _b,identity=iid:controller.open(identity),
+                    action_title='Bibliothèque',
+                    tooltip='Ouvrir les livres de cette identité. Les emprunts peuvent être partiels.',
+                )
+                if loans is None:
+                    compact_row(summary,'Prêts non actualisés · vérifier les alertes et la synchronisation')
 
-            groups=source_groups(row,public_providers)
-            support=getattr(host,'supports_identity_view_filters',None)
-            source_filters=bool(callable(support) and support() is True and callable(getattr(host,'open_identity_view',None)))
+            groups=compact_source_groups(row,public_providers)
+            if any(groups.values()):
+                sources_area=plain_section(box,'Sources et origines')
+                for kind,title_text in (
+                    ('local','Local'),
+                    ('public','Catalogues publics'),
+                    ('authenticated','Sources authentifiées'),
+                    ('unknown','Autres origines'),
+                ):
+                    members=groups[kind]
+                    if not members:
+                        continue
+                    subtitle=Gtk.Label(label=title_text,xalign=0)
+                    subtitle.add_css_class('caption')
+                    subtitle.add_css_class('dim-label')
+                    sources_area.append(subtitle)
+                    for source in members:
+                        pid=str(source['provider_id'])
+                        connected=source.get('connected') is True
+                        route='library' if kind in ('local','unknown') else 'search'
+                        if kind=='authenticated' and not connected:
+                            action=None
+                        elif has_filters:
+                            action=lambda _b,identity=iid,provider=pid,dest=route:controller.filter(identity,dest,provider)
+                        else:
+                            action=None
+                        settings=None
+                        if kind=='authenticated' and connected and callable(settings_open):
+                            settings=lambda _b,provider=pid:settings_open('provider.'+provider)
+                        count=stats.get('local_books') if stats is not None else None
+                        compact_row(
+                            sources_area,
+                            compact_source_text(source,total_local_books=count),
+                            action=action,
+                            action_title='Filtrer' if kind in ('local','unknown') else 'Chercher',
+                            settings=settings,
+                            tooltip='Origine du cache local ; ne préjuge pas de la disponibilité distante.'
+                                    if kind in ('local','public','unknown')
+                                    else 'Source authentifiée ; la connexion est indépendante des livres en cache.',
+                        )
 
-            if groups['local']:
-                local_grid=section(box,'Local',3,'folder-symbolic')
-                for source in groups['local']:
-                    pname=str(source.get('label') or source['provider_id'])
-                    count=source.get('count')
-                    value=count if count is not None else 'Disponible'
-                    callback=(lambda _b,iid=row['identity_id'],pid=source['provider_id']:controller.filter(iid,'library',pid)) if source_filters else None
-                    tile(local_grid,pname,value,'success',
-                         'Ouvrir la bibliothèque locale' if source_filters else None,callback)
-
-            if groups['public']:
-                public_grid=section(box,'Sources publiques',3,'system-search-symbolic')
-                for source in groups['public']:
-                    pname=str(source.get('label') or source['provider_id'])
-                    count=source.get('count')
-                    value=count if count is not None else 'Disponible'
-                    callback=(lambda _b,iid=row['identity_id'],pid=source['provider_id']:controller.filter(iid,'search',pid)) if source_filters else None
-                    tile(public_grid,pname,value,'accent',
-                         'Rechercher dans cette source publique' if source_filters else None,callback)
-
-            if groups['authenticated']:
-                sources_grid=section(box,'Sources authentifiées',3,'network-server-symbolic')
-                for linked in groups['authenticated']:
-                    connected=bool(linked.get('connected'));pname=str(linked.get('label') or linked['provider_id'])
-                    callback=(lambda _b,iid=row['identity_id'],pid=linked['provider_id']:controller.filter(iid,'search',pid)) if source_filters else None
-                    settings_open=getattr(host,'open_plugin_settings',None)
-                    settings_callback=(lambda _b,pid='provider.'+str(linked['provider_id']):settings_open(pid)) if connected and callable(settings_open) else None
-                    state='Connectée' if connected else 'Non connectée · voir À traiter'
-                    tile(sources_grid,pname,state,'success' if connected else 'warning',
-                         'Rechercher dans cette source' if connected and source_filters else None,callback if connected else None,settings_callback)
-
-            sync=row.get('sync') or {}
-            actions_grid=section(box,'Synchronisation',4,'view-refresh-symbolic')
-            tile(actions_grid,'Acquisitions',sync.get('new_acquisitions',0),'success')
-            tile(actions_grid,'Actions requises',sync.get('attention_required',0),'warning')
-            tile(actions_grid,'Erreurs',sync.get('errors',0),'error' if sync.get('errors') else 'dim-label')
-            tile(actions_grid,'État',STATUS.get(sync.get('status'),'Jamais synchronisée'),
-                 'success' if sync.get('status')=='success' else ('warning' if sync.get('status') in {'running','partial'} else ('error' if sync.get('status')=='failed' else 'dim-label')))
-
-            info_grid=section(box,'Profil et appareils',6,'preferences-system-symbolic')
-            loans_missing=isinstance(stats,dict) and stats.get('known_loans') is None
-            primary_span=2 if loans_missing else 3
-            if isinstance(stats,dict):
-                tile(info_grid,'Emplacements',stats.get('local_placements',0),'accent',span=primary_span)
-                if loans_missing:tile(info_grid,'Prêts','Non actualisés · voir À traiter','warning',span=2)
-            tile(info_grid,'Compte ADE','Profil lié' if row.get('adept_profile_id') else 'À traiter','success' if row.get('adept_profile_id') else 'warning',span=primary_span)
-            tile(info_grid,'Liseuses',readers_text(row).removeprefix('Liseuses : '),'accent',span=3)
-            if row.get('deep_last_at'):
-                from datetime import datetime
-                try:date=datetime.fromtimestamp(int(row['deep_last_at'])).astimezone().strftime('%d/%m/%Y %H:%M')
-                except (TypeError,ValueError,OverflowError,OSError):date='Date inconnue'
-                tile(info_grid,'Vérification complète',date,'dim-label')
-            if isinstance(stats,dict):
-                tile(info_grid,'Chiffres','Dernier inventaire','dim-label','Les sources peuvent se chevaucher ; les comptes de prêts peuvent être partiels.',span=3)
-
+            sync_area=plain_section(box,'Synchronisation')
+            compact_row(sync_area,compact_sync_text(sync))
             if sync.get('errors') or sync.get('attention_required'):
-                issues=Gtk.Expander(label='Erreurs et actions')
-                message=Gtk.Label(label=issues_text(sync),xalign=0);message.set_wrap(True)
-                message.set_wrap_mode(Pango.WrapMode.WORD_CHAR);message.set_width_chars(1);message.set_max_width_chars(44);message.set_hexpand(True)
-                issues.set_child(message);box.append(issues)
+                # The alert is already visible in À traiter above. Detailed
+                # diagnostic remains available on demand without leaking URL.
+                details=Gtk.Expander(label='Détails des erreurs et actions')
+                diagnostic=Gtk.Label(label=issues_text(sync),xalign=0)
+                diagnostic.set_wrap(True)
+                diagnostic.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                diagnostic.set_max_width_chars(62)
+                details.set_child(diagnostic)
+                sync_area.append(details)
+
+            secondary=Gtk.Expander(label='Profil, appareils et inventaire')
+            extra=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3)
+            if stats is not None:
+                compact_row(extra,
+                    f"Emplacements : {stats.get('local_placements') if stats.get('local_placements') is not None else '—'}"
+                    +f" · droits d’achat distants : {stats.get('remote_owned_rights') if stats.get('remote_owned_rights') is not None else '—'}")
+            ade='lié' if row.get('adept_profile_id') else 'non lié'
+            compact_row(extra,'Compte ADE : '+ade+' · '+readers_text(row))
+            if row.get('deep_last_at') is not None:
+                from datetime import datetime
+                try:
+                    stamp=datetime.fromtimestamp(int(row['deep_last_at'])).astimezone().strftime('%d/%m/%Y %H:%M')
+                except (TypeError,ValueError,OverflowError,OSError):
+                    stamp='Date inconnue'
+                compact_row(extra,'Dernier inventaire complet : '+stamp)
+            compact_row(extra,'Les origines peuvent se chevaucher ; les comptes de prêts peuvent être partiels.')
+            secondary.set_child(extra)
+            box.append(secondary)
             grid.insert(box,-1)
+
     controller=OverviewController(host,render,identity_broker=identity_broker);controllers.append(controller)
     quick.connect('clicked',lambda button:controller.synchronize(False,button))
     deep.connect('clicked',lambda button:controller.synchronize(True,button))

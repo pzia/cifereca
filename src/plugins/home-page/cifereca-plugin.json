@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.ui.page.home",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "name": "Accueil",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -10,13 +10,13 @@
   "plugins": [
     {
       "id": "ui.page.home",
-      "version": "1.0.13",
+      "version": "1.0.14",
       "type": "ui.page",
       "entrypoint": "cifereca_home:PLUGIN",
       "priority": 100,
       "display_name": "Accueil",
       "description": "Sources liées, compte ADE, synchronisation, actions à traiter et accès direct à la bibliothèque.",
-      "help_text": "Tableau de bord par identité structuré en sections homogènes. « À traiter » est la zone opérationnelle prioritaire, placée en tête de chaque identité : une ligne par cause, triée par urgence, avec contexte et action directe (Voir, Connecter, Actualiser ou Réessayer) quand un contrat public existe. Les problèmes de fraîcheur déjà couverts par une synchronisation en erreur ne sont pas dupliqués. Les autres sections restent synthétiques et renvoient vers « À traiter » pour les états actionnables. Local, sources publiques et sources authentifiées restent séparés ; seuls les providers authentifiables peuvent demander une connexion. Les données viennent de l’inventaire/synchronisation connus et n’effectuent aucun accès réseau lors de la lecture.",
+      "help_text": "Synthèse compacte par identité : À traiter en premier (actions immédiates, autres incidents dépliables), livres et emprunts comptés une seule fois, origines locales/publiques/authentifiées distinctes, synchronisation sur une ligne et détails d’appareils repliés. Les compteurs absents restent inconnus (—), sans inventer zéro ni une connexion. Navigation, filtres fournisseurs, réglages et relance restent explicites ; aucune collecte à l’ouverture.",
       "capabilities": [
         "ui.dashboard",
         "identity.list",
