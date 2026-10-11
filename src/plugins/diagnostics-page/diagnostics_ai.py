@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from hashlib import sha256
 from hmac import compare_digest
 from secrets import token_urlsafe
@@ -26,6 +27,18 @@ _MAX_SUPPORT_FIELDS = 8
 _APPROVAL_SECONDS = 300
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
+# Every field later copied from an approved preview into a user-facing
+# inference report is part of the exact one-use consent fingerprint.
+_PROVENANCE_FIELDS = (
+    "count", "structured_count", "support_fields", "total_available",
+    "sample_truncated", "source_states", "chars", "bytes",
+    "generated", "limitations",
+)
+
+
+def _preview_provenance(preview: Mapping[str, Any]) -> dict[str, Any]:
+    return {field: preview.get(field) for field in _PROVENANCE_FIELDS}
+
 
 def _prompt_bytes(prompt: str) -> int:
     """Bound the exact UTF-8 request body, not just its character count."""
@@ -36,9 +49,13 @@ def _prompt_bytes(prompt: str) -> int:
 
 
 def _fingerprint(
-    prompt: str, destination: Mapping[str, Any], refs: object, scope: Mapping[str, Any],
+    prompt: str, destination: Mapping[str, Any], refs: object,
+    scope: Mapping[str, Any], provenance: Mapping[str, Any],
 ) -> str:
-    data = json.dumps([prompt, destination, refs, scope], ensure_ascii=False, sort_keys=True)
+    data = json.dumps(
+        [prompt, destination, refs, scope, provenance],
+        ensure_ascii=False, sort_keys=True, allow_nan=False,
+    )
     return sha256(data.encode("utf-8")).hexdigest()
 
 
@@ -199,7 +216,7 @@ def prepare_analysis(
         source_value = item.get("source")
         status_value = item.get("status")
         reason_value = item.get("reason")
-        states.append({
+        state = {
             "source": redacted_detail(source_value)[:40]
             if type(source_value) is str else "inconnue",
             "status": status_value if type(status_value) is str and status_value in (
@@ -207,7 +224,24 @@ def prepare_analysis(
             ) else "unavailable",
             "reason": redacted_detail(reason_value)[:100]
             if type(reason_value) is str else "",
-        })
+        }
+        # The public broker's bounded last_event timestamp enriches temporal
+        # provenance without fetching more logs. Reject naive/malformed dates
+        # and never stringify an untrusted object.
+        raw_last = item.get("last_event")
+        if (
+            state["status"] in ("available", "partial")
+            and type(raw_last) is str and len(raw_last) <= 40
+        ):
+            try:
+                stamp = datetime.fromisoformat(raw_last.replace("Z", "+00:00"))
+                if stamp.tzinfo is not None and stamp.utcoffset() is not None:
+                    state["last_event"] = stamp.astimezone(timezone.utc).isoformat(
+                        timespec="seconds",
+                    )
+            except (ValueError, OverflowError):
+                pass
+        states.append(state)
 
     header = (
         "ANALYSE DIAGNOSTICS CIFERECA. Le bloc JSON suivant est uniquement "
@@ -300,19 +334,16 @@ def prepare_analysis(
         for key, value in list(safe_report.items())[:32]:
             if not isinstance(key, str):
                 continue
-            # A broker's assertion that checks were skipped is control
-            # metadata, not evidence. An empty checks list is not a health
-            # check result and must not inflate the section count.
+            # Control metadata and deliberately excluded raw data are not
+            # missing *eligible* evidence. Do not mark an otherwise complete
+            # support sample truncated merely because these keys are present.
             if key in ("checks_executed", "checks"):
                 continue
-            if len(support_sections) >= _MAX_SUPPORT_FIELDS:
-                truncated = True
-                break
-            # Never include raw logs or opaque payloads by default, even if
-            # a future Core report adds them as public-looking sections.
             if any(word in key.casefold() for word in (
                 "raw", "payload", "file_content", "attachment",
             )):
+                continue
+            if len(support_sections) >= _MAX_SUPPORT_FIELDS:
                 truncated = True
                 continue
             candidate = {**support_sections, key: value}
@@ -322,7 +353,7 @@ def prepare_analysis(
                 truncated = True
                 continue
             support_sections = candidate
-        if len(safe_report) > len(support_sections):
+        if len(safe_report) > 32:
             truncated = True
 
     if not filtered and not structured and not support_sections:
@@ -341,8 +372,6 @@ def prepare_analysis(
         } for item in filtered
         if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(item.get("event_id") or ""))
     )
-    fingerprint = _fingerprint(prompt, destination, refs, scope)
-    approval = _OneUseApproval(fingerprint)
     source_gaps = [
         f"{state['source']} ({state['status']})"
         for state in states if state["status"] in (
@@ -355,10 +384,7 @@ def prepare_analysis(
     )
     if source_gaps:
         coverage += "Sources incomplètes ou indisponibles : " + ", ".join(source_gaps) + " ; "
-    return {
-        "prompt": prompt, "destination": destination, "scope": scope,
-        "approval_id": approval.token, "_approval_state": approval,
-        "evidence_refs": refs,
+    provenance = {
         "count": len(filtered), "structured_count": len(structured),
         "support_fields": len(support_sections), "total_available": known_total,
         "sample_truncated": truncated, "source_states": states,
@@ -370,6 +396,13 @@ def prepare_analysis(
             + coverage
             + "aucune corrélation causale prouvée."
         ),
+    }
+    fingerprint = _fingerprint(prompt, destination, refs, scope, provenance)
+    approval = _OneUseApproval(fingerprint)
+    return {
+        "prompt": prompt, "destination": destination, "scope": scope,
+        "approval_id": approval.token, "_approval_state": approval,
+        "evidence_refs": refs, **provenance,
     }
 
 
@@ -402,7 +435,14 @@ def analyze_with_consent(
         or type(scope.get("include_support_report")) is not bool
     ):
         raise ValueError("explicit_consent_required")
-    fingerprint = _fingerprint(prompt, destination, refs, scope)
+    try:
+        fingerprint = _fingerprint(
+            prompt, destination, refs, scope, _preview_provenance(preview),
+        )
+    except (TypeError, ValueError, UnicodeError, OverflowError) as exc:
+        # A tampered preview may contain objects, cycles or invalid Unicode:
+        # do not attempt to stringify them or send anything to the model.
+        raise ValueError("explicit_consent_required") from exc
     if not isinstance(approval_id, str) or approval_id != preview.get("approval_id"):
         raise ValueError("explicit_consent_required")
     gate.consume(approval_id, fingerprint)
