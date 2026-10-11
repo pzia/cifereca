@@ -621,11 +621,34 @@ class LiteraryCriticismPlugin:
         try:
             raw = source.collect(cursor=cursor, limit=bounded)  # type: ignore[attr-defined]
             items, next_cursor, fresh_for = _extract_collection(raw)
+            # A provider can ignore the requested page limit, yield forever,
+            # or supply malformed pagination. Reject the *whole* page before
+            # changing the cached index; never accidentally treat it as empty.
+            if (not isinstance(next_cursor, str) or len(next_cursor) > 512
+                    or any(ord(ch) < 32 or ord(ch) == 127 for ch in next_cursor)):
+                return CollectionReport(
+                    source_id=info.source_id, errors=("collect: invalid_cursor",),
+                    fresh_until=self.index.fresh_until(info.source_id),
+                )
+            if isinstance(items, (str, bytes, Mapping)):
+                return CollectionReport(
+                    source_id=info.source_id, errors=("collect: invalid_items",),
+                    fresh_until=self.index.fresh_until(info.source_id),
+                )
+            from itertools import islice
+            page = tuple(islice(iter(items), bounded + 1))
+            if len(page) > bounded:
+                return CollectionReport(
+                    source_id=info.source_id, errors=("collect: limit_exceeded",),
+                    fresh_until=self.index.fresh_until(info.source_id),
+                )
             report = self.index.ingest(
                 info.source_id,
-                items,
+                page,
                 replace_source=replace_source,
-                fresh_for_seconds=fresh_for,
+                # A third-party feed must not mint an effectively eternal
+                # freshness proof or overflow datetime on the worker.
+                fresh_for_seconds=min(fresh_for, 7 * 24 * 3600),
             )
             return replace(report, next_cursor=next_cursor)
         except Exception:
