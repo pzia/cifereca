@@ -534,6 +534,20 @@ class DiagnosticsBrokerImpl:
     def snapshot(self):
         return tuple(self.service.diagnostics.snapshot())
 
+    def events(
+        self, *, source: str = "all", module: str = "", severity: str = "",
+        since: str | None = None, until: str | None = None,
+        limit: int = 50, offset: int = 0,
+    ) -> dict[str, Any]:
+        """Read-only, bounded public feed; filesystem paths are Core-owned."""
+        from .core.diagnostic_event_feed import query_diagnostic_events
+        from .paths import log_file
+        return query_diagnostic_events(
+            self.service.diagnostics, log_path=log_file(),
+            source=source, module=module, severity=severity,
+            since=since, until=until, limit=limit, offset=offset,
+        )
+
     def system_status(self):
         from .system_status import system_status
         return system_status(getattr(self.service, "plugin_manager", None))
