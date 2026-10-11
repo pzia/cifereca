@@ -134,7 +134,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             events.append({
                 "timestamp": ts,
                 "source": "app_log",
-                "module": match["logger"][:90],
+                "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
                 "event_id": _event_id("app_log", ts, f"{index}:{line_number}:{message}"),
