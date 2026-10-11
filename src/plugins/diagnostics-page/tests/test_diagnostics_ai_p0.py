@@ -295,3 +295,45 @@ def test_ai_consent_refuses_mutated_oversize_multibyte_prompt():
     with pytest.raises(ValueError, match="preview_invalid"):
         analyze_with_consent(model, preview, approval_id=preview["approval_id"])
     assert model.calls == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("model", None),
+    ("model", []),
+    ("provider", True),
+    ("host", 123),
+    ("model", "   "),
+    ("provider", "openai\\nmalicious"),
+    ("host", "model.example\\rspoof"),
+    ("model", "safe" + chr(0x202E) + "spoof"),
+])
+def test_untrusted_destination_metadata_is_rejected_before_broker_or_llm(field, value):
+    class UntrustedLLM(FakeLLM):
+        def destination(self):
+            row = super().destination()
+            row[field] = value
+            return row
+
+    model = UntrustedLLM(remote=True)
+    broker = FakeBroker([event()])
+    with pytest.raises(ValueError, match="llm_destination_unproven"):
+        prepare_analysis(model, broker)
+    assert broker.filters == []
+    assert model.calls == 0
+
+
+def test_destination_fields_never_stringify_untrusted_objects():
+    class Secret:
+        def __str__(self):
+            raise AssertionError("must not stringify descriptor")
+
+    class UntrustedLLM(FakeLLM):
+        def destination(self):
+            row = super().destination()
+            row["model"] = Secret()
+            return row
+
+    model = UntrustedLLM()
+    with pytest.raises(ValueError, match="llm_destination_unproven"):
+        llm_destination(model)
+    assert model.calls == 0
