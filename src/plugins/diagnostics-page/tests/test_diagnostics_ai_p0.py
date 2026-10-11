@@ -428,6 +428,7 @@ def test_ai_preview_forwards_all_visible_filters_before_explicit_consent():
     assert preview["scope"] == {
         "source": "app_log", "module": "cifereca.sync",
         "severity": "warning", "since": "2026-10-11T00:00:00+00:00",
+        "include_snapshot": False,
     }
     assert '"module": "cifereca.sync"' in preview["prompt"]
     assert preview["bytes"] == len(preview["prompt"].encode("utf-8"))
@@ -523,3 +524,102 @@ def test_ai_json_export_is_user_initiated_and_invalidated_with_current_report():
     )[0]
     assert 'ai_json = ""' in invalidate
     assert "ai_export_json.set_sensitive(False)" in invalidate
+
+
+def test_opt_in_snapshot_includes_nested_redacted_detail_and_public_provenance():
+    class BrokerWithSnapshot(FakeBroker):
+        def __init__(self, events):
+            super().__init__(events)
+            self.snapshot_calls = 0
+
+        def snapshot(self):
+            self.snapshot_calls += 1
+            return [{
+                "timestamp": "2026-10-11T05:15:00Z",
+                "source": "core_events", "component": "scheduler",
+                "plugin_id": "cifereca.sync", "status": "partial",
+                "detail": {
+                    "phase": "fetch", "reason": "provider_timeout",
+                    "authorization": "Bearer PRIVATE_AUTH",
+                    "credentials": {"token": "PRIVATE_TOKEN"},
+                    "user": "alice@example.com",
+                    "local_path": "/home/private/secret.log",
+                },
+                "raw_private_field": "NEVER_IN_PREVIEW",
+            }]
+
+        def active_checks(self):
+            raise AssertionError("active checks must never run")
+
+    model = FakeLLM(remote=True)
+    broker = BrokerWithSnapshot([event()])
+    default = prepare_analysis(model, broker)
+    assert broker.snapshot_calls == 0
+    assert default["structured_count"] == 0
+    preview = prepare_analysis(model, broker, include_snapshot=True)
+    assert broker.snapshot_calls == 1
+    assert preview["scope"]["include_snapshot"] is True
+    assert preview["structured_count"] == 1
+    assert preview["count"] == 1
+    assert preview["sample_truncated"] is False
+    for visible in ("scheduler", "provider_timeout", "fetch", "partial", "core_events"):
+        assert visible in preview["prompt"]
+    for secret in ("PRIVATE_AUTH", "PRIVATE_TOKEN", "alice@example.com",
+                   "/home/private", "raw_private_field", "NEVER_IN_PREVIEW"):
+        assert secret not in preview["prompt"]
+    assert len(preview["prompt"].encode("utf-8")) <= 3000
+    assert model.calls == 0
+
+
+def test_structured_only_preview_is_possible_when_event_feed_empty():
+    class SnapshotBroker(FakeBroker):
+        def snapshot(self):
+            return [{"component": "core", "detail": {"phase": "idle"}}]
+
+    model = FakeLLM()
+    preview = prepare_analysis(model, SnapshotBroker([]), include_snapshot=True)
+    assert preview["count"] == 0 and preview["structured_count"] == 1
+    assert "idle" in preview["prompt"]
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert result["ok"] and result["structured_count"] == 1 and model.calls == 1
+    exported = json.loads(export_analysis_json(result))
+    assert exported["evidence"]["structured_count"] == 1
+
+
+def test_structured_consent_is_invalid_after_changing_scope():
+    class SnapshotBroker(FakeBroker):
+        def snapshot(self):
+            return [{"component": "core", "status": "ok"}]
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, SnapshotBroker([event()]), include_snapshot=True)
+    preview["scope"]["include_snapshot"] = False
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
+
+
+@pytest.mark.parametrize("invalid", [None, "yes", 1, [], {}])
+def test_include_snapshot_rejects_invalid_type_before_broker(invalid):
+    model = FakeLLM()
+    broker = FakeBroker([event()])
+    with pytest.raises(ValueError, match="unsupported_structured_scope"):
+        prepare_analysis(model, broker, include_snapshot=invalid)
+    assert broker.filters == [] and model.calls == 0
+
+
+def test_snapshot_not_available_prevents_implicit_fallback():
+    model = FakeLLM()
+    with pytest.raises(ValueError, match="structured_diagnostics_unavailable"):
+        prepare_analysis(model, FakeBroker([event()]), include_snapshot=True)
+    assert model.calls == 0
+
+
+def test_snapshot_ui_is_opt_in_and_invalidates_approval():
+    from pathlib import Path
+    source = (Path(__file__).parents[1] /
+              "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert 'ai_snapshot.set_active(False)' in source
+    assert 'include_snapshot=selected_snapshot' in source
+    assert 'ai_snapshot.connect("toggled", invalidate_ai)' in source
+    assert 'Gtk.Button(label="Copier JSON IA")' in source
