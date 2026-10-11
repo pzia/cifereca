@@ -69,6 +69,56 @@ def _public_structured_detail(raw: Any) -> dict[str, Any]:
     if type(retryable) is bool:
         safe["retryable"] = retryable
     return safe
+
+
+# A Core snapshot's top-level metadata can also contain unstructured
+# titles, personal names or provider payloads. Do not infer safety from its
+# "public" provenance: only send exact operational fields and tokens.
+_STRUCTURED_TOP_LEVEL = _STRUCTURED_DETAIL_VALUES | frozenset({
+    "core", "core_events", "app_log", "scheduler", "runtime", "diagnostics",
+    "database", "plugin", "provider", "worker", "service", "network",
+    "cache", "adapter", "startup", "shutdown",
+})
+
+
+def _public_structured_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Whitelist snapshot scalars without visiting arbitrary child objects."""
+    row: dict[str, Any] = {}
+    timestamp = item.get("timestamp")
+    if type(timestamp) is str and len(timestamp) <= 40:
+        try:
+            instant = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if instant.tzinfo is not None and instant.utcoffset() is not None:
+                row["timestamp"] = instant.astimezone(timezone.utc).isoformat(
+                    timespec="seconds",
+                )
+        except (ValueError, OverflowError):
+            pass
+    source = item.get("source")
+    if type(source) is str and source in ("core_events", "app_log"):
+        row["source"] = source
+    for key in ("component", "status", "operation"):
+        value = item.get(key)
+        if type(value) is str and value.casefold() in _STRUCTURED_TOP_LEVEL:
+            row[key] = value.casefold()
+    severity = item.get("severity")
+    if type(severity) is str and severity in (
+        "debug", "info", "warning", "error", "critical",
+    ):
+        row["severity"] = severity
+    plugin_id = item.get("plugin_id")
+    if type(plugin_id) is str and plugin_id.startswith("cifereca."):
+        # Only canonical Core module IDs with a known operational suffix.
+        module = plugin_id[len("cifereca."):]
+        if module in _STRUCTURED_TOP_LEVEL:
+            row["plugin_id"] = plugin_id
+    if "detail" in item:
+        detail = _public_structured_detail(item.get("detail"))
+        if detail:
+            row["detail"] = detail
+    # The free-form 'message' field is intentionally excluded, even though
+    # the generic regex-based redactor can handle known secret patterns.
+    return row
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
 # Every field later copied from an approved preview into a user-facing
@@ -337,28 +387,15 @@ def prepare_analysis(
         records = snapshot()
         if not isinstance(records, (list, tuple)):
             raise ValueError("structured_diagnostics_unavailable")
-        fields = (
-            "timestamp", "source", "component", "plugin_id", "severity",
-            "status", "message", "operation", "detail",
-        )
         # Diagnostics.snapshot() exposes the Core's append-ordered deque.
         # Sample the *latest* records, newest first, so a full history or
         # a tight byte budget does not hide the incident being investigated.
         for item in reversed(records[-_MAX_STRUCTURED:]):
             if not isinstance(item, Mapping):
                 continue
-            row = {field: item.get(field) for field in fields if field in item}
+            row = _public_structured_row(item)
             if not row:
                 continue
-            # Never forward arbitrary nested Core detail to an LLM, even
-            # after regex masking. Book titles and personal names may not
-            # look like secrets. Permit only closed-vocabulary telemetry.
-            if "detail" in row:
-                detail = _public_structured_detail(row["detail"])
-                if detail:
-                    row["detail"] = detail
-                else:
-                    del row["detail"]
             safe = redacted_detail(row)
             candidate = structured + [safe]
             if _prompt_bytes(header + evidence_body(filtered, candidate, {})) > _MAX_PROMPT:
