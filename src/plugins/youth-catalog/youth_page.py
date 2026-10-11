@@ -30,7 +30,7 @@ KIND_LABELS = {
     "interest": "Âge d’intérêt",
     "reading": "Âge de lecture",
     "publisher": "Âge éditeur",
-    "inferred": "Âge inféré",
+    "inferred": "Âge estimé (non confirmé par une source)",
 }
 KIND_VALUES = tuple(KIND_LABELS)
 _SPLIT = re.compile(r"[,;]")
@@ -137,7 +137,7 @@ def age_badge(age_range: object) -> str:
         "interest": "Intérêt ",
         "reading": "Lecture ",
         "publisher": "Éditeur ",
-        "inferred": "Inféré ",
+        "inferred": "Estimé ",
     }.get(kind, "")
     return f"{prefix}{bounds} ans"
 
@@ -366,6 +366,7 @@ def parse_themes(value: object) -> tuple[str, ...]:
 class FilterState:
     query: str = ""
     age: int | None = None
+    minimum_age: int | None = None
     age_kind: str = ""
     source_id: str = ""
     language: str = ""
@@ -638,26 +639,59 @@ class YouthView:
         self.identity.connect("notify::selected", lambda *_: self.identity_changed())
         self.widget.append(self.identity)
 
-        filters = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5)
-        self.widget.append(filters)
-        self.query = Gtk.Entry(placeholder_text="Titre, auteur ou thème — cache local")
-        self.age = Gtk.DropDown.new_from_strings(["Tous les âges"] + [f"{age} ans" for age in range(18)])
-        self.age_kind = Gtk.DropDown.new_from_strings([KIND_LABELS[value] for value in KIND_VALUES])
-        self.source = Gtk.DropDown.new_from_strings(["Toutes les sources"])
-        self.source.set_tooltip_text("Filtre le cache Jeunesse ; « Toutes les sources » ne lance aucune collecte.")
-        self.language = Gtk.Entry(placeholder_text="Langue (fr, en…)")
-        self.format = Gtk.Entry(placeholder_text="Format (epub, pdf…)")
-        self.book_type = Gtk.Entry(placeholder_text="Type (fiction, documentaire…)")
-        self.themes = Gtk.Entry(placeholder_text="Thèmes, séparés par des virgules")
-        self.inferred = Gtk.CheckButton(label="Inclure les âges inférés", active=False)
-        for widget in (self.query, self.age, self.age_kind, self.source, self.language, self.format, self.book_type, self.themes, self.inferred):
-            filters.append(widget)
-        for entry in (self.query, self.language, self.format, self.book_type, self.themes):
-            entry.connect("changed", lambda *_: self.filters_changed())
+        # Search-first hierarchy, with optional facets populated from the
+        # current identity's *existing local cache* (never from a remote API).
+        primary = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.widget.append(primary)
+        self.query = Gtk.Entry(placeholder_text="Rechercher un livre, un auteur, un thème… dans les sources connues")
+        self.query.set_tooltip_text(
+            "Recherche locale parmi les notices Jeunesse déjà collectées de toutes les sources. "
+            "La collecte réseau reste une action distincte."
+        )
+        primary.append(self.query)
+        self.query.connect("changed", lambda *_: self.filters_changed())
         self.query.connect("activate", lambda *_: self.query_activated())
-        for dropdown in (self.age, self.age_kind, self.source):
+        basics = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        primary.append(basics)
+        self.age = Gtk.DropDown.new_from_strings(
+            ["Tous les âges publiés"] + [f"Âge minimum publié ≥ {value} ans" for value in range(18)]
+        )
+        self.age.set_tooltip_text(
+            "Seuil sur la borne minimale annoncée par la source : ≥ 10 inclut les livres 12+. "
+            "Cela ne veut PAS dire qu'un livre 12+ convient à un enfant de 10 ans. "
+            "Les tranches complètes et les types d'âge restent visibles dans les détails."
+        )
+        basics.append(self.age)
+        self.source = Gtk.DropDown.new_from_strings(["Toutes les sources"])
+        self.source.set_tooltip_text(
+            "Filtre facultatif des notices déjà connues. Toutes les sources n'effectue aucune collecte distante."
+        )
+        basics.append(self.source)
+        for dropdown in (self.age, self.source):
             dropdown.connect("notify::selected", lambda *_: self.filters_changed())
-        self.inferred.connect("toggled", lambda *_: self.filters_changed())
+
+        self.advanced_filters = Gtk.Expander(label="Filtres complémentaires · langue, format, type, thèmes")
+        self.advanced_filters.set_expanded(False)
+        self.widget.append(self.advanced_filters)
+        facet_box = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=4)
+        self.advanced_filters.set_child(facet_box)
+        self._facet_values = {
+            "language": ("",), "format": ("",), "book_type": ("",), "themes": ("",),
+        }
+        self._facet_labels = {
+            "language": "Toutes les langues", "format": "Tous les formats",
+            "book_type": "Tous les types", "themes": "Tous les thèmes",
+        }
+        self._updating_facets = False
+        for attr in ("language", "format", "book_type", "themes"):
+            dropdown = Gtk.DropDown.new_from_strings([self._facet_labels[attr]])
+            dropdown.set_tooltip_text(
+                "Facette locale issue des notices de ce profil ; aucune saisie ni recherche réseau."
+            )
+            setattr(self, attr, dropdown)
+            dropdown.connect("notify::selected", lambda *_: self._facet_changed())
+            facet_box.append(dropdown)
+        self._refresh_facets()
 
         actions = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE)
         self.widget.append(actions)
@@ -769,6 +803,7 @@ class YouthView:
             )
 
     def identity_changed(self):
+        self._refresh_facets()
         self.filters_changed()
         self.refresh_source_diagnostics()
 
@@ -836,6 +871,7 @@ class YouthView:
         ]))
         selected = next((index for index, row in enumerate(rows) if str(row.get("identity_id")) == current), 0)
         self.identity.set_selected(selected)
+        self._refresh_facets()
         self.filters_changed()
         self.refresh_source_diagnostics()
         return False
@@ -863,6 +899,46 @@ class YouthView:
         row = self.selected_source()
         return str(row.plugin_id) if row else ""
 
+    def _facet_changed(self):
+        if not getattr(self, "_updating_facets", False):
+            self.filters_changed()
+
+    def _facet_value(self, name):
+        dropdown = getattr(self, name, None)
+        values = getattr(self, "_facet_values", {}).get(name, ("",))
+        selected = dropdown.get_selected() if dropdown is not None else 0
+        return values[selected] if 0 <= selected < len(values) else ""
+
+    def _refresh_facets(self):
+        if not getattr(self, "_facet_values", None) or not self.catalog:
+            return
+        identity = self.identity_id()
+        try:
+            # Query-free cache search only; do not use a remote collection or
+            # borrow an index/metadata of a different identity.
+            books = tuple(self.catalog.search_cached(identity)) if identity else ()
+        except Exception:
+            books = ()
+        choices = {
+            "language": sorted({book.language for book in books if book.language}),
+            "format": sorted({value for book in books for value in book.formats if value}),
+            "book_type": sorted({book.book_type for book in books if book.book_type}),
+            "themes": sorted({value for book in books for value in book.themes if value}),
+        }
+        self._updating_facets = True
+        try:
+            for name, items in choices.items():
+                previous = self._facet_value(name)
+                values = ("",) + tuple(items[:200])
+                dropdown = getattr(self, name)
+                dropdown.set_model(self.Gtk.StringList.new(
+                    [self._facet_labels[name]] + list(values[1:])
+                ))
+                self._facet_values[name] = values
+                dropdown.set_selected(values.index(previous) if previous in values else 0)
+        finally:
+            self._updating_facets = False
+
     def age_value(self):
         index = self.age.get_selected()
         return index - 1 if 1 <= index <= 18 else None
@@ -870,18 +946,16 @@ class YouthView:
     def filter_state(self):
         source = self.selected_source()
         source_id = source_info(source)[0] if source else ""
-        kind_index = self.age_kind.get_selected()
-        kind = KIND_VALUES[kind_index] if kind_index < len(KIND_VALUES) else ""
         return FilterState(
             query=self.query.get_text().strip(),
-            age=self.age_value(),
-            age_kind=kind,
+            minimum_age=self.age_value(),
+            age_kind="",  # The age kind is evidence for detail, not an end-user control.
             source_id=source_id,
-            language=self.language.get_text().strip(),
-            format=self.format.get_text().strip(),
-            book_type=self.book_type.get_text().strip(),
-            themes=parse_themes(self.themes.get_text()),
-            include_inferred=self.inferred.get_active(),
+            language=self._facet_value("language"),
+            format=self._facet_value("format"),
+            book_type=self._facet_value("book_type"),
+            themes=(self._facet_value("themes"),) if self._facet_value("themes") else (),
+            include_inferred=False,
         )
 
     def filters_changed(self):
@@ -952,6 +1026,7 @@ class YouthView:
             identity,
             state.query,
             age=state.age,
+            minimum_age=state.minimum_age,
             age_kind=state.age_kind,
             source_id=state.source_id,
             language=state.language,
@@ -1318,6 +1393,7 @@ class YouthView:
         if cursor:
             message += " · page suivante disponible"
         self.status.set_label(message)
+        self._refresh_facets()
         self.render_cached()
         self.refresh_source_diagnostics()
 

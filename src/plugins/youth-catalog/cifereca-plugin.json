@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.youth-catalog",
-    "version": "0.4.15",
+    "version": "0.4.18",
     "name": "Jeunesse",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -27,11 +27,11 @@
     {
       "id": "catalog.youth",
       "type": "catalog.youth",
-      "version": "0.4.15",
+      "version": "0.4.18",
       "entrypoint": "youth_catalog:PLUGIN",
       "display_name": "Jeunesse",
       "description": "Catalogue jeunesse multi-source filtrable par âge et type d’âge.",
-      "help_text": "Moteur du catalogue Jeunesse : conserve les libellés d’âge source, agrège uniquement sur preuve bibliographique forte, expose recherche locale et lookup cache par ISBN/provider+identifiant/URL, et accepte des enrichissements bibliographiques explicites sans modifier la provenance d’âge. Aucune collecte distante implicite.",
+      "help_text": "Moteur du catalogue Jeunesse : conserve les libellés d’âge source, agrège uniquement sur preuve bibliographique forte, expose recherche locale et lookup cache par ISBN/provider+identifiant/URL, et accepte des enrichissements bibliographiques explicites sans modifier la provenance d’âge. Aucune collecte distante implicite. Filtre complémentaire minimum_age sur la borne minimale publiée, distinct de l'ancien filtre ponctuel age. Il n'établit aucune adéquation de lecture pour l'âge N.",
       "enabled_by_default": false,
       "priority": -50,
       "instantiation": "singleton_public",
@@ -46,11 +46,11 @@
     {
       "id": "ui.page.youth",
       "type": "ui.page",
-      "version": "0.4.15",
+      "version": "0.4.18",
       "entrypoint": "youth_page:PLUGIN",
       "display_name": "Jeunesse — recherche",
       "description": "Recherche spécialisée par âge sur le cache Jeunesse et collecte explicite des sources activées.",
-      "help_text": "Page proche de Recherche avec filtres âge/type/source/langue/format/type/thèmes. Les changements de filtres ne lisent que le cache. Collecte jeunesse et enrichissement bibliographique sont deux actions distantes séparées et toujours explicites.",
+      "help_text": "Page proche de Recherche avec filtres âge/type/source/langue/format/type/thèmes. Les changements de filtres ne lisent que le cache. Collecte jeunesse et enrichissement bibliographique sont deux actions distantes séparées et toujours explicites. Champ de recherche unique ; filtres Langue, Format, Type et Thèmes sous forme de facettes locales repliées. Seuil « âge minimum publié ≥ N ans » documenté : 12+ n'est PAS nécessairement adapté à un enfant de 10 ans. Types et provenance d'âge conservés dans le détail, estimations non confirmées exclues par défaut. Pas de réseau implicite.",
       "enabled_by_default": false,
       "priority": -50,
       "instantiation": "singleton_public",

@@ -77,7 +77,7 @@ def test_badges_fit_compact_age_chips_without_hiding_kind():
         (YouthAgeRange(8, 12, "interest"), "Intérêt 8–12 ans"),
         (YouthAgeRange(10, 12, "reading"), "Lecture 10–12 ans"),
         (YouthAgeRange(8, 12, "publisher"), "Éditeur 8–12 ans"),
-        (YouthAgeRange(8, 12, "inferred"), "Inféré 8–12 ans"),
+        (YouthAgeRange(8, 12, "inferred"), "Estimé 8–12 ans"),
         (YouthAgeRange(17, None), "17+ ans"),
         (NS(age_min=None, age_max=6, age_kind="recommended"), "≤6 ans"),
         (YouthAgeRange(9, 9), "9 ans"),
