@@ -157,6 +157,13 @@ def test_youth_922_real_gtk_filter_help_is_explicit_and_1366_only():
         '"filter_help_missing_labels"', '"filter_help_missing_tooltips"',
         '"filter_help_lost_labels_after_input"', "assert not requests",
         '"00-jeunesse-controles-1366"', '"01-jeunesse-controles-saisie-1366"',
+        '"02-jeunesse-navigation-clavier-1366"',
+        "def filter_help_tab_step(phase, index):",
+        "def filter_help_tab_record(phase, index):",
+        "def filter_help_keyboard_finish():",
+        'device.key("Shift_L", True)', 'keys("Tab")',
+        '"filter_help_keyboard"', '"missing_controls"',
+        'assert not requests, "Tab/Shift+Tab ne doivent jamais déclencher de collecte"',
     ):
         assert token in script or token in runner_script
 

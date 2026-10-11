@@ -359,10 +359,87 @@ def main() -> int:
         result["filter_help_lost_labels_after_input"] = lost_labels
         result["filter_help_misleading_text"] = misleading_help
         result["filter_help_no_remote_requests"] = True
-        assert not (missing_tooltips or missing_labels or lost_labels or misleading_help), (
-            "UX P1 #922 : la fiche Jeunesse exige 10 aides et noms permanents ; "
-            f"tooltips={missing_tooltips}, labels={missing_labels}, "
-            f"labels_perdus={lost_labels}, contexte={misleading_help}"
+        # Continue through real XTEST Tab/Shift+Tab before the #922
+        # acceptance assertion, so the red gate still publishes focus evidence.
+        result["filter_help_keyboard"] = {
+            "start": filter_help_focus_name(),
+            "back_from_search": [],
+            "forward_from_search": [],
+            "back_from_last_filter": [],
+        }
+        filter_help_tab_step("back_from_search", 0)
+
+    def filter_help_focus_name():
+        """Inspect actual GtkWindow focus, including a Gtk.Entry's inner GtkText."""
+        focused = window.get_focus()
+        if focused is None:
+            return "none"
+        for name, control in filter_help_widgets().items():
+            if control is focused or control.is_ancestor(focused):
+                return name
+        return "other:" + focused.__gtype__.name
+
+    def filter_help_tab_step(phase, index):
+        """Only XTEST key presses drive the keyboard probe (no synthetic focus)."""
+        budgets = {
+            "back_from_search": 8,
+            "forward_from_search": 45,
+            "back_from_last_filter": 45,
+        }
+        if index >= budgets[phase]:
+            if phase == "back_from_search":
+                # Anchor on the same entry after testing the preceding stops.
+                result["filter_help_keyboard"]["reanchor_search"] = device.click_widget(page.view.query)
+                later(90, lambda: filter_help_tab_step("forward_from_search", 0))
+            elif phase == "forward_from_search":
+                # Gtk.CheckButton is used only as a starting point; Shift+Tab
+                # navigation itself remains real keyboard input.
+                anchored = page.view.inferred.grab_focus()
+                assert anchored is not False, "Impossible de focaliser le filtre âges inférés"
+                later(90, lambda: filter_help_tab_step("back_from_last_filter", 0))
+            else:
+                filter_help_keyboard_finish()
+            return
+        backwards = phase != "forward_from_search"
+        if backwards:
+            device.key("Shift_L", True)
+        keys("Tab")
+        if backwards:
+            device.key("Shift_L", False)
+        later(35, lambda: filter_help_tab_record(phase, index))
+
+    def filter_help_tab_record(phase, index):
+        result["filter_help_keyboard"][phase].append(filter_help_focus_name())
+        filter_help_tab_step(phase, index + 1)
+
+    def filter_help_keyboard_finish():
+        keyboard = result["filter_help_keyboard"]
+        reached = set(
+            keyboard["back_from_search"] +
+            keyboard["forward_from_search"] +
+            keyboard["back_from_last_filter"] +
+            [keyboard["start"]]
+        )
+        keyboard["reached"] = sorted(reached.intersection(filter_help_widgets()))
+        keyboard["missing_controls"] = [
+            name for name in filter_help_widgets() if name not in reached
+        ]
+        keyboard["no_remote_requests"] = not requests
+        assert not requests, "Tab/Shift+Tab ne doivent jamais déclencher de collecte"
+        capture("02-jeunesse-navigation-clavier-1366")
+        assert not (
+            result["filter_help_missing_tooltips"] or
+            result["filter_help_missing_labels"] or
+            result["filter_help_lost_labels_after_input"] or
+            result["filter_help_misleading_text"] or
+            keyboard["missing_controls"]
+        ), (
+            "UX P1 #922 : contrôles nommés, aidés et navigables requis ; "
+            f"tooltips={result['filter_help_missing_tooltips']}, "
+            f"labels={result['filter_help_missing_labels']}, "
+            f"labels_perdus={result['filter_help_lost_labels_after_input']}, "
+            f"contexte={result['filter_help_misleading_text']}, "
+            f"clavier={keyboard['missing_controls']}"
         )
         result["status"] = "PASS"
         write_report()
