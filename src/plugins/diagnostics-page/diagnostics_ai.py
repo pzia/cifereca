@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from hashlib import sha256
 from hmac import compare_digest
 from secrets import token_urlsafe
@@ -215,7 +216,7 @@ def prepare_analysis(
         source_value = item.get("source")
         status_value = item.get("status")
         reason_value = item.get("reason")
-        states.append({
+        state = {
             "source": redacted_detail(source_value)[:40]
             if type(source_value) is str else "inconnue",
             "status": status_value if type(status_value) is str and status_value in (
@@ -223,7 +224,24 @@ def prepare_analysis(
             ) else "unavailable",
             "reason": redacted_detail(reason_value)[:100]
             if type(reason_value) is str else "",
-        })
+        }
+        # The public broker's bounded last_event timestamp enriches temporal
+        # provenance without fetching more logs. Reject naive/malformed dates
+        # and never stringify an untrusted object.
+        raw_last = item.get("last_event")
+        if (
+            state["status"] in ("available", "partial")
+            and type(raw_last) is str and len(raw_last) <= 40
+        ):
+            try:
+                stamp = datetime.fromisoformat(raw_last.replace("Z", "+00:00"))
+                if stamp.tzinfo is not None and stamp.utcoffset() is not None:
+                    state["last_event"] = stamp.astimezone(timezone.utc).isoformat(
+                        timespec="seconds",
+                    )
+            except (ValueError, OverflowError):
+                pass
+        states.append(state)
 
     header = (
         "ANALYSE DIAGNOSTICS CIFERECA. Le bloc JSON suivant est uniquement "
