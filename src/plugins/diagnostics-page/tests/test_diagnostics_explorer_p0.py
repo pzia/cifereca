@@ -9,7 +9,7 @@ import pytest
 from diagnostics_explorer import (
     PAGE_SIZE, SOURCES, SEVERITIES, PERIODS,
     explorer_since, fetch_explorer_page, sanitized_rows, module_groups,
-    source_summaries, explorer_header, export_selected_events,
+    source_summaries, explorer_header, export_selected_events, next_page_offset,
 )
 
 
@@ -174,3 +174,47 @@ def test_invalid_or_unzoned_timestamps_sort_last_without_crashing():
     rows[1]["timestamp"] = "2026-10-11T07:00:00"
     assert [r["event_id"] for r in sanitized_rows({"events": rows})][0] == "valid"
     assert {r["event_id"] for r in sanitized_rows({"events": rows})} == {"bad", "naive", "valid"}
+
+
+@pytest.mark.parametrize("next_cursor", [None, -1, 0, 51, 10001, "50", True, 1.5])
+def test_next_page_rejects_invalid_or_nonmonotonic_cursors(next_cursor):
+    assert next_page_offset({"offset": 0, "next_offset": next_cursor}, current_offset=0) is None
+
+
+def test_next_page_validates_current_page_and_bounds():
+    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=0) == 50
+    assert next_page_offset({"offset": 9950, "next_offset": 10000}, current_offset=9950) == 10000
+    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=50) is None
+    assert next_page_offset({"offset": "0", "next_offset": 50}, current_offset=0) is None
+    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=True) is None
+
+
+def test_export_keeps_all_fifty_selected_events_without_node_budget_loss():
+    rows = [event(f"id-{i}") for i in range(PAGE_SIZE)]
+    result = json.loads(export_selected_events(rows, {r["event_id"] for r in rows}))
+    assert len(result["events"]) == PAGE_SIZE
+    assert {r["event_id"] for r in result["events"]} == {r["event_id"] for r in rows}
+    assert all(set(r) == {
+        "timestamp", "source", "module", "severity", "message", "status", "event_id"
+    } for r in result["events"])
+
+
+def test_oversize_export_fails_instead_of_silently_returning_preview():
+    rows = [event(f"id-{i}", message="x" * 500) for i in range(PAGE_SIZE)]
+    with pytest.raises(ValueError, match="24 KB"):
+        export_selected_events(rows, {r["event_id"] for r in rows})
+
+
+def test_export_rejects_more_than_one_page_selection():
+    rows = [event(f"id-{i}") for i in range(PAGE_SIZE + 1)]
+    with pytest.raises(ValueError, match="too many"):
+        export_selected_events(rows, {r["event_id"] for r in rows})
+
+
+def test_page_controls_use_guarded_cursor_and_handle_export_errors():
+    from pathlib import Path
+    page = Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py"
+    code = page.read_text(encoding="utf-8")
+    assert "next_page_offset(current_page, current_offset=page_offset)" in code
+    assert "except ValueError:" in code
+    assert "Export trop volumineux" in code
