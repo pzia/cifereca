@@ -40,6 +40,14 @@ adapters/brokers gardent leur frontière et leur cycle actuel. Le JSON est un
 inventaire de référence à relire lors du lot concerné, pas un graphe exhaustif
 des imports dynamiques.
 
+Le lot sessions/collections (#1117) utilise `core/provider_sessions.py` :
+coordinateur interne sans état supplémentaire, recevant explicitement la
+façade qui possède registre, sessions, verrous et abonnements. Les 19 points
+d'entrée de façade délèguent en conservant signatures et descripteurs.
+Executor de recherche et logger TRACE sont injectés à chaque appel depuis
+`services`, donc les patchpoints existants restent actifs. Aucun scheduler
+ni cache parallèle ; `provider_collection_cache` garde son rôle.
+
 ## Preuves de comportement à conserver
 
 | Invariant | Suite de caractérisation | Effet observé |

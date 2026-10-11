@@ -21,6 +21,7 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
+from .core import provider_sessions
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
 from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
 from .catalog import LocalCatalog
@@ -472,112 +473,21 @@ class LibraryService:
 
     def attach_plugin_manager(self, manager: Any) -> list[str]:
         """Attach Plugin API services, preferring external providers/runtimes when ready."""
-        with self._virtual_reconcile_lock:
-            self._unbind_virtual_subscriptions()
-            self._virtual_collection_closed = False
-            self._plugin_manager = manager
-        attached: list[str] = []
-        try:
-            statuses = manager.candidates("provider.library")
-        except Exception:
-            return attached
-        from .providers.base import ProviderPlugin
-        for status in statuses:
-            service = manager.service(status.descriptor.id)
-            if isinstance(service, ProviderPlugin):
-                self.registry.register(service, replace=True)
-                self._provider_plugin_ids[service.descriptor.id] = status.descriptor.id
-                attached.append(service.descriptor.id)
-        attached.extend(self.refresh_virtual_collections())
-        binder = getattr(manager, "subscribe_services", None)
-        if callable(binder):
-            try:
-                unsub = binder("provider.collection", self._queue_virtual_collection_refresh)
-                if callable(unsub):
-                    self._virtual_manager_unsubscribe = unsub
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual service subscription", "error",
-                    detail={"error_type": type(exc).__name__}, level="detailed",
-                )
-        if attached:
-            self.diagnostics.add("PLUGIN", "external providers attached", "ok", detail={"providers": attached}, level="detailed")
-        return attached
+        return provider_sessions.attach_plugin_manager(self, manager)
 
     def _unbind_virtual_subscriptions(self) -> None:
         """Disconnect previous parent/manager callbacks on replacement or close."""
-        unsubscribers = [
-            *(unsub for _, unsub in self._virtual_parent_subscriptions.values()),
-            self._virtual_manager_unsubscribe,
-        ]
-        self._virtual_parent_subscriptions.clear()
-        self._virtual_manager_unsubscribe = None
-        for unsubscribe in unsubscribers:
-            if callable(unsubscribe):
-                try:
-                    unsubscribe()
-                except Exception:
-                    pass
+        return provider_sessions._unbind_virtual_subscriptions(self)
 
     def _sync_virtual_subscriptions(self, services: dict[str, object]) -> None:
-        for parent, (old_service, unsubscribe) in list(self._virtual_parent_subscriptions.items()):
-            if services.get(parent) is old_service:
-                continue
-            self._virtual_parent_subscriptions.pop(parent, None)
-            try:
-                unsubscribe()
-            except Exception:
-                pass
-        for parent, service in services.items():
-            if parent in self._virtual_parent_subscriptions:
-                continue
-            subscribe = getattr(service, "subscribe", None)
-            if not callable(subscribe):
-                continue
-            try:
-                unsubscribe = subscribe(self._queue_virtual_collection_refresh)
-                if callable(unsubscribe):
-                    self._virtual_parent_subscriptions[parent] = (service, unsubscribe)
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual inventory subscription", "error",
-                    detail={"parent": parent, "error_type": type(exc).__name__},
-                    level="detailed",
-                )
+        return provider_sessions._sync_virtual_subscriptions(self, services)
 
     def _queue_virtual_collection_refresh(self) -> None:
         """Coalesce bursts; re-read the latest cached snapshot on a Core worker."""
-        with self._virtual_schedule_lock:
-            if self._virtual_collection_closed:
-                return
-            if self._virtual_refresh_pending:
-                self._virtual_refresh_again = True
-                return
-            self._virtual_refresh_pending = True
-        try:
-            _SEARCH_EXECUTOR.submit(self._drain_virtual_collection_events)
-        except RuntimeError:
-            with self._virtual_schedule_lock:
-                self._virtual_refresh_pending = False
+        return provider_sessions._queue_virtual_collection_refresh(self, executor=_SEARCH_EXECUTOR)
 
     def _drain_virtual_collection_events(self) -> None:
-        while True:
-            with self._virtual_schedule_lock:
-                if self._virtual_collection_closed:
-                    self._virtual_refresh_pending = False
-                    return
-                self._virtual_refresh_again = False
-            try:
-                self.refresh_virtual_collections(connect_changed=True)
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual notification", "error",
-                    detail={"error_type": type(exc).__name__}, level="detailed",
-                )
-            with self._virtual_schedule_lock:
-                if not self._virtual_refresh_again or self._virtual_collection_closed:
-                    self._virtual_refresh_pending = False
-                    return
+        return provider_sessions._drain_virtual_collection_events(self)
 
     def subscribe_virtual_sources(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Observe accepted inventory changes. Callback runs on the caller/worker.
@@ -585,48 +495,11 @@ class LibraryService:
         GTK consumers must marshal UI changes using GLib.idle_add.
         Invalid snapshots and duplicate notifications do not emit an update.
         """
-        with self._virtual_reconcile_lock:
-            if callback not in self._virtual_change_callbacks:
-                self._virtual_change_callbacks.append(callback)
-
-        def unsubscribe() -> None:
-            with self._virtual_reconcile_lock:
-                if callback in self._virtual_change_callbacks:
-                    self._virtual_change_callbacks.remove(callback)
-        return unsubscribe
+        return provider_sessions.subscribe_virtual_sources(self, callback)
 
     def _connect_changed_virtual_provider(self, provider_id: str) -> None:
         """Connect only one newly published public adapter; keep other sessions."""
-        plugin = self.registry.maybe_get(provider_id)
-        if plugin is None:
-            return
-        key = self._session_key(provider_id, "__public__")
-        if key in self._sessions:
-            return
-        session = None
-        try:
-            session = plugin.create_session(
-                credential_id="__public__", label=plugin.descriptor.display_name,
-                credentials={}, options={}, config=self.config, storage=self.storage,
-                diagnostics=self.diagnostics,
-            )
-            if session.provider_id != provider_id:
-                raise ProviderConfigurationError("virtual session provider mismatch")
-            session.connect()
-            self._sessions[key] = session
-            self._session_errors.pop(key, None)
-        except Exception as exc:
-            if session is not None:
-                try:
-                    session.close()
-                except Exception:
-                    pass
-            self._session_errors[key] = type(exc).__name__
-            self.diagnostics.add(
-                "PLUGIN", "virtual provider connection", "error",
-                detail={"provider": provider_id, "error_type": type(exc).__name__},
-                level="detailed",
-            )
+        return provider_sessions._connect_changed_virtual_provider(self, provider_id)
 
     def refresh_virtual_collections(self, *, connect_changed: bool = False) -> list[str]:
         """Reconcile cached inventories without any implicit discovery HTTP.
@@ -635,145 +508,7 @@ class LibraryService:
         children. An explicit call can defer connections to connect_configured.
         Unrelated provider sessions and local catalogue/history remain intact.
         """
-        with self._virtual_reconcile_lock:
-            if self._virtual_collection_closed:
-                return []
-            manager = self._plugin_manager
-            if manager is None:
-                return []
-            try:
-                statuses = manager.candidates("provider.collection")
-            except Exception:
-                return []
-            before = dict(self._virtual_parent_by_provider)
-            previous_plugins = {
-                provider_id: self.registry.maybe_get(provider_id)
-                for provider_id in before
-            }
-            previous_snapshots = {
-                parent: self.registry.virtual_snapshot(parent)
-                for parent in set(before.values())
-            }
-            live_parents: set[str] = set()
-            active_services: dict[str, object] = {}
-            attached: list[str] = []
-            for status in statuses:
-                parent_id = status.descriptor.id
-                live_parents.add(parent_id)
-                service = manager.service(parent_id)
-                active_services[parent_id] = service
-                persisted = None
-                try:
-                    persisted = self._virtual_snapshot_store.load(parent_id)
-                except Exception as exc:
-                    # Corrupt/tampered disk data must never become providers.
-                    self.diagnostics.add(
-                        "PLUGIN", "saved virtual inventory invalid", "error",
-                        detail={"parent": parent_id, "error_type": type(exc).__name__},
-                        level="detailed",
-                    )
-                try:
-                    children = self.registry.reconcile_collection(
-                        parent_id, service, minimum_snapshot=persisted,
-                    )
-                except Exception as exc:
-                    self.diagnostics.add(
-                        "PLUGIN", "virtual provider inventory rejected", "error",
-                        detail={"parent": parent_id, "error_type": type(exc).__name__},
-                        level="detailed",
-                    )
-                    # Prefer the latest in-memory valid inventory; otherwise
-                    # recover the last validated SQLite checkpoint. Do not
-                    # replace it or erase books if discovery is unavailable.
-                    known = self.registry.virtual_snapshot(parent_id)
-                    if known is not None:
-                        # No new inventory was accepted: keep existing adapters
-                        # but do not report a publication or a false change.
-                        continue
-                    if persisted is None:
-                        continue
-                    try:
-                        children = self.registry.reconcile_collection(
-                            parent_id, service, snapshot_override=persisted,
-                            minimum_snapshot=persisted,
-                        )
-                    except Exception as offline_exc:
-                        self.diagnostics.add(
-                            "PLUGIN", "virtual inventory restore failed", "error",
-                            detail={"parent": parent_id,
-                                    "error_type": type(offline_exc).__name__},
-                            level="detailed",
-                        )
-                        continue
-                    self.diagnostics.add(
-                        "PLUGIN", "virtual inventory restored from SQLite", "ok",
-                        detail={"parent": parent_id,
-                                "generation": persisted.discovery_generation},
-                        level="detailed",
-                    )
-                else:
-                    accepted = self.registry.virtual_snapshot(parent_id)
-                    # A failed disk write never rolls back a valid in-memory
-                    # publication. SQLite is the durable checkpoint, however,
-                    # so only report success after metadata_set returns.
-                    if accepted is not None and accepted != persisted:
-                        try:
-                            self._virtual_snapshot_store.save(accepted)
-                        except Exception as save_exc:
-                            self.diagnostics.add(
-                                "PLUGIN", "virtual inventory checkpoint failed", "error",
-                                detail={"parent": parent_id,
-                                        "error_type": type(save_exc).__name__},
-                                level="detailed",
-                            )
-                attached.extend(children)
-            for parent in set(before.values()) - live_parents:
-                self.registry.retire_collection(parent)
-            self._sync_virtual_subscriptions(active_services)
-            new_mapping = {
-                provider_id: parent
-                for parent in live_parents
-                for provider_id in self.registry.virtual_ids(parent)
-            }
-            stale_ids = {
-                pid for pid, old in previous_plugins.items()
-                if pid not in new_mapping or self.registry.maybe_get(pid) is not old
-            }
-            for old_id in stale_ids:
-                for key, session in list(self._sessions.items()):
-                    if session.provider_id == old_id:
-                        self._sessions.pop(key, None)
-                        try:
-                            session.close()
-                        except Exception:
-                            pass
-                if old_id not in new_mapping:
-                    self._provider_plugin_ids.pop(old_id, None)
-            for provider_id, parent in new_mapping.items():
-                self._provider_plugin_ids[provider_id] = parent
-            self._virtual_parent_by_provider = new_mapping
-            if connect_changed:
-                for provider_id in sorted(new_mapping):
-                    if (provider_id in stale_ids
-                            or self._session_key(provider_id, "__public__") not in self._sessions):
-                        self._connect_changed_virtual_provider(provider_id)
-            # A catalog-generation increment invalidates search cache keys even
-            # when the Python adapter itself has not changed.
-            snapshots_changed = any(
-                self.registry.virtual_snapshot(parent) != previous_snapshots.get(parent)
-                for parent in live_parents | set(previous_snapshots)
-            )
-            changed = bool(stale_ids or set(new_mapping) != set(before) or snapshots_changed)
-            listeners = tuple(self._virtual_change_callbacks) if changed else ()
-        for callback in listeners:
-            try:
-                callback()
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual inventory observer", "error",
-                    detail={"error_type": type(exc).__name__}, level="detailed",
-                )
-        return attached
+        return provider_sessions.refresh_virtual_collections(self, connect_changed=connect_changed)
 
     @property
     def plugin_manager(self) -> Any | None:
@@ -781,89 +516,22 @@ class LibraryService:
         return self._plugin_manager
 
     def _provider_plugin_status(self, provider_id: str) -> Any | None:
-        manager = self._plugin_manager
-        plugin_id = self._provider_plugin_ids.get(str(provider_id))
-        if manager is None or not plugin_id:
-            return None
-        try:
-            return manager.status(plugin_id)
-        except Exception:
-            return None
+        return provider_sessions._provider_plugin_status(self, provider_id)
 
     def _provider_enabled_for_identity(self, provider_id: str, identity_id: str | None = None) -> bool:
-        status = self._provider_plugin_status(provider_id)
-        if status is None:
-            return str(provider_id) not in self._provider_plugin_ids
-        if not status.enabled or status.state != "ready":
-            return False
-        if (
-            provider_id not in self._virtual_parent_by_provider
-            and getattr(status.descriptor, "instantiation", "multiple") != "singleton_public"
-        ):
-            return True
-        identity = identity_id or (self.current_identity.identity_id if self.current_identity else "default")
-        try:
-            if not self._plugin_manager.enabled_for_identity(status.descriptor.id, identity):
-                return False
-            if provider_id in self._virtual_parent_by_provider:
-                state = getattr(self._plugin_manager, "state", None)
-                if state is not None:
-                    override = state.identity_enabled_override(provider_id, identity)
-                    return True if override is None else bool(override)
-            return True
-        except Exception:
-            return False
+        return provider_sessions._provider_enabled_for_identity(self, provider_id, identity_id)
 
     def provider_descriptors(self):
-        return self.registry.descriptors()
+        return provider_sessions.provider_descriptors(self)
 
     def provider_diagnostic_state(self) -> dict[str, Any]:
-        try:
-            adept = self.kobo_adept_state()
-        except Exception as exc:
-            adept = {"available": False, "error": str(exc)}
-        return {
-            "plugins": self.registry.diagnostic_state(),
-            "sessions": [session.diagnostic_state() for session in self._sessions.values() if session.credential_id != "legacy"],
-            "errors": dict(self._session_errors),
-            "kobo_adept": adept,
-        }
+        return provider_sessions.provider_diagnostic_state(self)
 
     def close(self) -> None:
-        with self._virtual_schedule_lock:
-            self._virtual_collection_closed = True
-        with self._virtual_reconcile_lock:
-            self._unbind_virtual_subscriptions()
-            self._virtual_change_callbacks.clear()
-        seen: set[int] = set()
-        for session in list(self._sessions.values()):
-            if id(session) in seen:
-                continue
-            seen.add(id(session))
-            try:
-                session.close()
-            except Exception:
-                pass
-        try:
-            self.storage.close()
-        except Exception:
-            pass
+        return provider_sessions.close(self)
 
     def disconnect_configured(self) -> None:
-        for key, session in list(self._sessions.items()):
-            try:
-                session.close()
-            except Exception:
-                pass
-            self._sessions.pop(key, None)
-        self._session_errors = {}
-        self._active_session_key = None
-        self.primary = self._local_account()
-        self.accounts = [self.primary]
-        self.current_account = self.primary
-        self.last_loans = []
-        self.last_history = []
-        self.last_bookings = []
+        return provider_sessions.disconnect_configured(self)
 
     def connect_configured(self) -> dict[str, Any]:
         """Connect all enabled provider identities from local preferences.
@@ -873,193 +541,19 @@ class LibraryService:
         must be available for the current account-oriented GUI. Anonymous
         catalogue-only providers will be included once their plugin is ready.
         """
-        started_all = time.monotonic()
-        _TRACE_LOG.info("TRACE connect-configured begin current_identity=%s", getattr(getattr(self, "current_identity", None), "identity_id", None))
-        self.disconnect_configured()
-        all_accounts: list[Account] = []
-        connected: list[str] = []
-        errors: dict[str, str] = {}
-
-        rows = self.config.provider_accounts(enabled_only=True)
-        configured_provider_ids = {str(row.get("provider") or "").strip().lower() for row in rows if isinstance(row, dict)}
-        # Plugin API v1: a ready provider with no credential fields is a public
-        # anonymous source.  Do not require a provider-specific config migration
-        # or a fake account row merely to make it searchable.
-        for plugin in self.registry.all():
-            descriptor = plugin.descriptor
-            provider_id = str(descriptor.id or "").strip().lower()
-            plugin_status = self._provider_plugin_status(provider_id)
-            instantiation = ("singleton_public" if provider_id in self._virtual_parent_by_provider else
-                             getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple"))
-            if (
-                provider_id
-                and descriptor.state == "ready"
-                and not descriptor.credential_fields
-                and provider_id not in configured_provider_ids
-                and instantiation != "singleton_public"
-            ):
-                rows.append({
-                    "id": f"{provider_id}-public",
-                    "provider": provider_id,
-                    "label": descriptor.display_name,
-                    "enabled": True,
-                    "anonymous": True,
-                    "credentials": {},
-                    "options": {},
-                })
-        # singleton/public providers are global plugin instances, not fake
-        # credentials attached to the default Identity. One ephemeral session is
-        # connected and per-Identity visibility is enforced at query time.
-        for plugin in self.registry.all():
-            provider_id = str(plugin.descriptor.id or "").strip().lower()
-            plugin_status = self._provider_plugin_status(provider_id)
-            if (
-                not provider_id or plugin.descriptor.state != "ready" or plugin.descriptor.credential_fields
-                or (provider_id not in self._virtual_parent_by_provider
-                    and getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple") != "singleton_public")
-            ):
-                continue
-            credential_id = "__public__"
-            session = plugin.create_session(
-                credential_id=credential_id, label=plugin.descriptor.display_name, credentials={}, options={},
-                config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-            )
-            key = self._session_key(provider_id, credential_id)
-            try:
-                session.connect()
-                self._sessions[key] = session
-                connected.append(key)
-                self.diagnostics.add(
-                    "PLUGIN", "public provider connected", "ok",
-                    detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
-                )
-            except Exception as exc:
-                try:
-                    session.close()
-                except Exception:
-                    pass
-                errors[key] = str(exc)
-
-        _TRACE_LOG.info("TRACE connect-configured enabled-rows=%s", len(rows))
-        for row in rows:
-            provider_id = str(row.get("provider") or "").strip().lower()
-            credential_id = str(row.get("id") or "").strip()
-            identity_id = str(row.get("identity_id") or (self.current_identity.identity_id if self.current_identity else "default")).strip()
-            if not provider_id or not credential_id:
-                continue
-            item_started = time.monotonic()
-            _TRACE_LOG.info("TRACE provider prepare provider=%s credential=%s identity=%s", provider_id, credential_id, identity_id)
-            plugin = self.registry.maybe_get(provider_id)
-            if plugin is None:
-                errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
-                continue
-            if plugin.descriptor.state != "ready":
-                # Skeletons are visible to the GUI/docs but never perform I/O.
-                continue
-            session = plugin.create_session(
-                credential_id=credential_id,
-                label=str(row.get("label") or plugin.descriptor.display_name),
-                credentials=dict(row.get("credentials") or {}),
-                options=dict(row.get("options") or {}),
-                config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-            )
-            key = self._session_key(provider_id, credential_id)
-            try:
-                _TRACE_LOG.info("TRACE provider connect begin provider=%s credential=%s identity=%s", provider_id, credential_id, identity_id)
-                accounts = session.connect()
-                _TRACE_LOG.info("TRACE provider connect end provider=%s credential=%s accounts=%s dt=%.3fs", provider_id, credential_id, len(accounts), time.monotonic()-item_started)
-                self._sessions[key] = session
-                connection_id = self.storage.provider_connection_put({
-                    "identity_id": identity_id, "provider_id": provider_id, "credential_id": credential_id,
-                    "label": str(row.get("label") or plugin.descriptor.display_name), "enabled": True,
-                })
-                for account in accounts:
-                    account.identity_id = identity_id
-                    self.storage.provider_account_put({
-                        "connection_id": connection_id, "identity_id": identity_id, "provider_id": provider_id,
-                        "credential_id": credential_id, "account_id": account.unique_id,
-                        "label": account.display_name or ("Compte principal" if account.is_primary else "Compte lié"),
-                        "is_primary": account.is_primary,
-                        "metadata": {"barcode": account.barcode},
-                    })
-                all_accounts.extend(accounts)
-                connected.append(key)
-                self.diagnostics.add(
-                    "PLUGIN", "provider connected", "ok",
-                    detail={"provider": provider_id, "credential_id": credential_id, "accounts": len(accounts)},
-                )
-            except Exception as exc:
-                _TRACE_LOG.exception("TRACE provider connect error provider=%s credential=%s identity=%s dt=%.3fs", provider_id, credential_id, identity_id, time.monotonic()-item_started)
-                try:
-                    session.close()
-                except Exception:
-                    pass
-                errors[key] = str(exc)
-                self.diagnostics.add(
-                    "PLUGIN", "provider connect", "error",
-                    detail={"provider": provider_id, "credential_id": credential_id, "error": type(exc).__name__, "message": str(exc)},
-                )
-
-        self._session_errors = errors
-        if not all_accounts:
-            # Local-first cifereca is usable without any provider. Plugin
-            # installation/configuration and the local Library remain available.
-            self.primary = self._local_account()
-            self.accounts = [self.primary]
-            self.current_account = self.primary
-            self._active_session_key = None
-            self.last_loans = []
-            return {"accounts": self.accounts, "identities": self.identities, "loans": [], "connected": connected, "errors": errors}
-
-        self.accounts = all_accounts
-        self.current_account = all_accounts[0]
-        self.current_identity = self.identity_by_id(self.current_account.identity_id) or self.current_identity
-        self._active_session_key = self._session_key(self.current_account.provider_id, self.current_account.credential_id)
-        self.primary = self.current_account
-        loans = self.refresh_identity_loans(force=True)
-        return {"accounts": self.accounts, "identities": self.identities, "loans": loans, "connected": connected, "errors": errors}
+        return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
 
     def login(self, username: str, password: str) -> dict[str, Any]:
-        raise ProviderConfigurationError(
-            "La connexion legacy Paris a été retirée de cifereca 0.9.2 ; configurez le plugin provider.paris."
-        )
+        return provider_sessions.login(self, username, password)
 
     def select_account(self, unique_id: str, provider_id: str | None = None, credential_id: str | None = None) -> Account:
-        for account in self.accounts:
-            if account.unique_id != unique_id:
-                continue
-            if provider_id and account.provider_id != provider_id:
-                continue
-            if credential_id and account.credential_id != credential_id:
-                continue
-            self.current_account = account
-            self._account_context_epoch += 1
-            self.current_identity = self.identity_by_id(account.identity_id) or self.current_identity
-            key = self._session_key(account.provider_id, account.credential_id)
-            if key in self._sessions:
-                self._active_session_key = key
-            return account
-        return self.current_account
+        return provider_sessions.select_account(self, unique_id, provider_id, credential_id)
 
     def _session_for_account(self, account: Account | None = None) -> ProviderSession:
-        account = account or self.current_account
-        key = self._session_key(account.provider_id, account.credential_id)
-        session = self._sessions.get(key)
-        if session is None:
-            raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
-        return session
+        return provider_sessions._session_for_account(self, account)
 
     def _session_for_source(self, provider_id: str, credential_id: str | None = None) -> ProviderSession:
-        if not self._provider_enabled_for_identity(provider_id):
-            raise ProviderConfigurationError(f"Provider désactivé ou indisponible: {provider_id}")
-        if credential_id:
-            key = self._session_key(provider_id, credential_id)
-            if key in self._sessions:
-                return self._sessions[key]
-        for session in self._sessions.values():
-            if session.provider_id == provider_id and session.connected:
-                return session
-        raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
+        return provider_sessions._session_for_source(self, provider_id, credential_id)
 
     def _key(self, kind: str, suffix: str = "") -> str:
         account = self.current_account
