@@ -66,7 +66,7 @@ def session(client):
 def test_current_category_endpoint_and_real_product_path_contract():
     assert FREE_LIBRARY == "https://www.baen.com/catalog/category/view/s/free-library/id/2012"
     assert BaenSession._search_params("a desert", 1, 50) == {
-        "p": 2, "product_list_limit": 48,
+        "p": 2, "product_list_limit": 36,
     }
     assert public_product_url("/1632.html") == "https://www.baen.com/1632.html"
     assert public_product_url("/a-desert-called-peace.html") == (
@@ -108,7 +108,7 @@ def test_search_returns_only_attested_free_category_books_on_current_page():
         assert all(b.downloadable is False and b.owned is False for b in titles)
         assert all(b.metadata["catalog_scope"] == "public_page_only" for b in titles)
         assert client.calls[0][0] == FREE_LIBRARY
-        assert client.calls[0][1]["params"] == {"p": 1, "product_list_limit": 48}
+        assert client.calls[0][1]["params"] == {"p": 1, "product_list_limit": 36}
         # This is only a *page-local* filter, never a claim that Baen's
         # entire catalog was searched server-side.
         assert [b.title for b in provider.search("desert")] == ["A Desert Called Peace"]
