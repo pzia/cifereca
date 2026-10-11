@@ -90,3 +90,24 @@ pour distinguer le calcul de l'application UI sans prétendre valider GTK.
 La barre d'actions est regroupée par intention **Explorer**, **Chercher**, **Parcours** ; les extrémités **Proche** et **Surprenant** ainsi que la valeur 0–100 sont visibles. Le panneau de détail ne prétend plus qu'il n'existe aucun voisin lorsque la liste du composant commun est vide : les voisins se trouvent dans une grille distincte avec un compteur explicite.
 
 Chaque carte sépare titre, auteur, raison principale attestée si disponible, nombre de raisons complémentaires, statut d'accès et présence d'indice inféré. Un clic sur la carte visite le livre sélectionné sans accès réseau. Les actions explicites de recherche et actualisation conservent leurs budgets historiques (300 notices locales, 100 résultats distants). La recette visuelle et clavier relève du rôle UX à **1366 et 1600 px**, sans réintroduire de tests de basse résolution.
+
+
+## Cycle de vie du cache Constellations — #700 (0.3.3)
+
+Le cache déterministe de `ConstellationService.graph_for(identity_id, books,
+freshness_token=...)` conserve au maximum **8 graphes** pour des identités
+distinctes, par ordre de dernière consultation (*LRU*). Les graphes sont
+relativement volumineux lorsque de nombreux livres partagent des facettes
+comme la langue ; cette borne limite la rétention mémoire après des
+changements répétés de profils.
+
+L'absence de jeton de fraîcheur ne permet toujours aucune réutilisation du
+graphe en cache ; chaque jeton nouveau provoque un recalcul. Une identité
+différente ne peut jamais reprendre un graphe d'un autre profil. En outre,
+`activate()` et `deactivate()` purgent désormais tous les graphes
+du singleton : une réactivation avec le même identifiant et le même jeton
+mais un contexte Core différent ne réutilise pas d'anciennes données.
+
+Classement, preuves d'arête, promenade, sécurité de téléchargement et
+politique de requêtes externes inchangés. Tests hors réseau :
+`tests/test_cache_lifecycle_p2.py`.

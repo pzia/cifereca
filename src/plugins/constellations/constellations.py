@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections import OrderedDict
 from typing import Any, Iterable, Mapping, Sequence
 import math
 import re
@@ -583,8 +584,12 @@ class ConstellationGraph:
 
 
 class ConstellationService:
+    # Each graph holds an adjacency matrix-sized relation set in dense cases.
+    # Bound retention across identity switches, independent of graph size.
+    MAX_CACHED_IDENTITIES = 8
+
     def __init__(self) -> None:
-        self._cache: dict[str, tuple[str, ConstellationGraph]] = {}
+        self._cache: OrderedDict[str, tuple[str, ConstellationGraph]] = OrderedDict()
 
     def graph_for(self, identity_id: str, books: Iterable[object], *, freshness_token: str = "") -> ConstellationGraph:
         identity = _text(identity_id)
@@ -592,10 +597,14 @@ class ConstellationService:
         cacheable = bool(identity and token)
         current = self._cache.get(identity) if cacheable else None
         if current is not None and current[0] == token:
+            self._cache.move_to_end(identity)
             return current[1]
         graph = ConstellationGraph(books)
         if cacheable:
             self._cache[identity] = (token, graph)
+            self._cache.move_to_end(identity)
+            while len(self._cache) > self.MAX_CACHED_IDENTITIES:
+                self._cache.popitem(last=False)
         elif identity:
             # A caller that cannot attest freshness must never inherit an older graph.
             self._cache.pop(identity, None)
@@ -614,9 +623,13 @@ class ConstellationsPlugin:
         self.context: object | None = None
 
     def activate(self, context: object) -> None:
+        # Singleton plugins can be reactivated with a distinct Core context
+        # whose identities/tokens may collide with a prior session.
+        self.service.invalidate()
         self.context = context
 
     def deactivate(self) -> None:
+        self.service.invalidate()
         self.context = None
 
     def graph(self, identity_id: str, books: Iterable[object], *, freshness_token: str = "") -> ConstellationGraph:
