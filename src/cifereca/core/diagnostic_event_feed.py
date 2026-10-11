@@ -92,6 +92,10 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     events: list[dict[str, Any]] = []
     observed = False
     partial = False
+    # Assign ordinal per PUBLIC signature in chronological file order.
+    # The location (.0/.1/.2/.3) and line offset are not event identity:
+    # both change whenever a log is rotated or the bounded tail shifts.
+    public_occurrences: dict[tuple[str, str, str, str], int] = {}
     for index in (3, 2, 1, 0):
         path = Path(str(log_path) + (f".{index}" if index else ""))
         lines, status = _log_lines(path)
@@ -131,13 +135,24 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 if part.lower() not in (_STRUCTURED_TERMS | {"core", "diagnostics", "ui", "service", "worker"}):
                     break
                 safe_parts.append(part.lower())
+            module = ".".join(safe_parts)[:90]
+            severity = match["level"].lower()
+            public_message = message[:240]
+            identity = (ts, module, severity, public_message)
+            ordinal = public_occurrences.get(identity, 0)
+            public_occurrences[identity] = ordinal + 1
+            # Hash only already-published fields: never include raw body text
+            # or any potentially private log path in the pseudonymous ID.
+            public_identity = "\\0".join(
+                (module, severity, public_message, str(ordinal))
+            )
             events.append({
                 "timestamp": ts,
                 "source": "app_log",
-                "module": ".".join(safe_parts)[:90],
-                "severity": match["level"].lower(),
-                "message": message[:240],
-                "event_id": _event_id("app_log", ts, f"{index}:{line_number}:{message}"),
+                "module": module,
+                "severity": severity,
+                "message": public_message,
+                "event_id": _event_id("app_log", ts, public_identity),
             })
     status = "partial" if partial else ("available" if observed else "unavailable")
     return events, {"source": "app_log", "status": "partial" if partial else (status if events else ("empty" if observed else "unavailable")),
