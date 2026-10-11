@@ -76,6 +76,8 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
     # Redact the complete broker value before applying the UI's display limit.
     # Cutting first could turn token=PRIVATE into token=PRI and expose a prefix.
     from cifereca_diagnostics_page import redacted_detail
+    if not isinstance(search, str) or len(search) > 500:
+        raise ValueError("invalid diagnostics search")
     results: list[dict[str, str]] = []
     events = payload.get("events")
     if not isinstance(events, (list, tuple)):
@@ -184,7 +186,10 @@ def next_page_offset(payload: Mapping[str, Any], *, current_offset: int) -> int 
         return None
     if type(following) is not int:
         return None
-    if current_offset < following <= min(10000, current_offset + PAGE_SIZE):
+    total = payload.get("total")
+    if type(total) is not int or total < 0:
+        return None
+    if current_offset < following <= min(10000, current_offset + PAGE_SIZE) and following < total:
         return following
     return None
 
