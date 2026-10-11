@@ -17,8 +17,6 @@ AGE_KINDS = {"interest", "reading", "recommended", "publisher", "inferred"}
 KNOWN_AGE_SOURCES = {
     "milan": "Éditions Milan",
     "ecole-loisirs": "L'École des loisirs",
-    "booktrust": "BookTrust",
-    "usborne": "Usborne",
 }
 KNOWN_BIBLIOGRAPHY_PLUGINS = {"youth.bibliography.openlibrary": "Open Library"}
 COLLECTION_STATES = {

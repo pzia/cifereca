@@ -20,13 +20,14 @@ def row(state="empty_unverified", **pipeline):
     }
 
 
-def test_four_age_sources_are_included_even_when_not_installed():
+def test_only_supported_age_sources_are_included_without_reactivating_retired_plugins():
     snapshot = YouthCatalogIndex().source_diagnostics("reader-identity")
     sources = {x["source_id"]: x for x in snapshot}
-    for source in ("booktrust", "milan", "ecole-loisirs", "usborne"):
+    for source in ("milan", "ecole-loisirs"):
         assert sources[source]["family"] == "age"
         assert sources[source]["collection_state"] == "not_tested"
         assert sources[source]["plugin_state"] == "not_installed"
+    assert "booktrust" not in sources and "usborne" not in sources
     assert sources["youth.bibliography.openlibrary"]["family"] == "bibliography"
 
 

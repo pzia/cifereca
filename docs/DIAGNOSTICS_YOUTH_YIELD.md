@@ -1,9 +1,11 @@
 # Diagnostics P0 #907 — rendement des sources Jeunesse
 
-Les quatre sources d'âge connues sont visibles dans l'état cache-only, même
-en l'absence de plugin installé : BookTrust, Milan, École des loisirs,
-Usborne. Open Library reste une famille **bibliographie**, distincte de
-l'attestation d'âge. L'état activé d'un plugin ne prouve pas la santé du site.
+Les deux sources d'âge actuellement prises en charge (Milan et École
+des loisirs) sont visibles dans l'état cache-only, même en l'absence de
+plugin installé. **BookTrust et Usborne sont retirés (#957)** : le diagnostic
+ne les réintroduit ni dans la liste des sources connues, ni dans les plugins
+installables. Open Library demeure une famille **bibliographie** distincte
+de l'attestation d'âge. L'état activé d'un plugin ne prouve pas la santé du site.
 
 Chaque collecte **explicitement demandée** enregistre déjà son état
 `record_collection` ; le diagnostic Jeunesse ajoute une cause de rendement

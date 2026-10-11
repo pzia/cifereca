@@ -909,10 +909,10 @@ class DiagnosticsPagePlugin:
                 ai_status.set_text("Analyse IA indisponible ou annulée ; aucun diagnostic confirmé")
                 return False
             ai_result = (
-                "# Analyse générée par IA — hypothèses NON vérifiées\\n"
-                + f"Modèle : {result['provider']} / {result['model']}\\n"
-                + f"Provenance : {result['evidence_count']} événements Core expurgés\\n"
-                + f"Limites : {result['limitations']}\\n\\n"
+                "# Analyse générée par IA — hypothèses NON vérifiées\n"
+                + f"Modèle : {result['provider']} / {result['model']}\n"
+                + f"Provenance : {result['evidence_count']} événements Core expurgés\n"
+                + f"Limites : {result['limitations']}\n\n"
                 + result["text"]
             )
             ai_report.get_buffer().set_text(ai_result)
