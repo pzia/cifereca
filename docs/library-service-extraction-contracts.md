@@ -48,6 +48,12 @@ Executor de recherche et logger TRACE sont injectés à chaque appel depuis
 `services`, donc les patchpoints existants restent actifs. Aucun scheduler
 ni cache parallèle ; `provider_collection_cache` garde son rôle.
 
+Le lot recherche (#1118) délègue 19 méthodes à `core/search_orchestration.py`.
+Il réutilise ranking/recherche et provider_stream existants. Executor, logger
+et type de façade (pour les anciens appels statiques non liés) sont injectés
+explicitement ; pas de réimport inverse. Le cache TTL, backpressure et l'ordre
+des callbacks restent portés par le corps de l'orchestration déplacée.
+
 ## Preuves de comportement à conserver
 
 | Invariant | Suite de caractérisation | Effet observé |
