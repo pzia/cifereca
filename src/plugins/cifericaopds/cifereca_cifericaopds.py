@@ -18,7 +18,7 @@ from tempfile import NamedTemporaryFile
 from threading import RLock
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from cifereca.plugin_api import (
     ProviderCapabilities, ProviderDescriptor, ProviderPlugin, ProviderSession,
@@ -94,12 +94,31 @@ class JsonClient:
             self.timeout = min(20.0, max(0.5, seconds))
         except (TypeError, ValueError, OverflowError):
             raise ContractUnavailable("invalid configured timeout") from None
-        self._opener = build_opener(NoRedirects())
+        # No proxies from HTTP_PROXY/HTTPS_PROXY or platform settings:
+        # even requests to a loopback fixture must remain on loopback.
+        self._opener = build_opener(ProxyHandler({}), NoRedirects())
 
     def get(self, endpoint: str, *, params=None):
-        if not endpoint.startswith("/api/v1/") or "?" in endpoint or "#" in endpoint:
+        # Do not let child providers turn this candidate read-only transport
+        # into a general-purpose HTTP client.
+        if endpoint == "/api/v1/sources":
+            if params is not None:
+                raise ContractUnavailable("unexpected discovery parameters")
+            query_string = ""
+        elif endpoint == "/api/v1/search":
+            if not isinstance(params, dict) or set(params) != {"source_id", "q"}:
+                raise ContractUnavailable("invalid search parameters")
+            source_id, query = params["source_id"], params["q"]
+            if not isinstance(source_id, str) or not re.fullmatch(
+                    r"[a-z0-9][a-z0-9_-]{0,63}", source_id):
+                raise ContractUnavailable("invalid candidate source id")
+            if not isinstance(query, str) or len(query) > 300 or any(
+                    ord(ch) < 32 or ord(ch) == 127 for ch in query):
+                raise ContractUnavailable("invalid candidate query")
+            query_string = "?" + urlencode({"source_id": source_id, "q": query})
+        else:
             raise ContractUnavailable("endpoint not allowed")
-        url = self.base_url + endpoint + ("?" + urlencode(params) if params else "")
+        url = self.base_url + endpoint + query_string
         request = Request(url, headers={
             "Accept": "application/json", "User-Agent": "cifereca-cifericaopds/0.1"
         })
