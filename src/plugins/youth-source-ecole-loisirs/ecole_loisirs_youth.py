@@ -224,6 +224,8 @@ class _ProductCards(HTMLParser):
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         classes = set(a.get("class", "").split())
+        if tag in {"script", "style", "noscript", "svg"}:
+            return
         if self.card is None:
             if tag == "div" and "product-item" in classes:
                 self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": "", "cover_url": ""}
@@ -255,7 +257,7 @@ class _ProductCards(HTMLParser):
                 self.card[self.field[0]].append(value)
 
     def handle_endtag(self, tag):
-        if self.card is None:
+        if self.card is None or tag in {"script", "style", "noscript", "svg"}:
             return
         if self.field and self.field[1] == len(self.stack):
             self.field = None
@@ -532,7 +534,23 @@ class EcoleLoisirsYouthSource:
         diagnostic = {"query_mode": "remote", "request_count": 0}
         html = self._get(url, diagnostic=diagnostic)
         rows = parse_catalogue_cards(html, limit=limit, diagnostic=diagnostic)
-        return {"items": rows, "next_cursor": "",
+        next_page = ""
+        # Pagination is only reported; fetching it requires another explicit call.
+        for kind, _label, href in _tokens(html):
+            if kind != "link":
+                continue
+            target = _allowed_url(href)
+            if not target or urlsplit(target).path != "/catalogue/romans":
+                continue
+            params = parse_qs(urlsplit(target).query)
+            try:
+                proposed = int((params.get("page") or [""])[0])
+            except ValueError:
+                continue
+            if proposed == page + 1 and proposed <= 100 and params.get("search") == [_text(query)[:_MAX_QUERY_CHARS]]:
+                next_page = str(proposed)
+                break
+        return {"items": rows, "next_cursor": next_page,
                 "fresh_for_seconds": 86400, "collection_request_count": 1,
                 "collection_pipeline": diagnostic}
 
