@@ -126,3 +126,39 @@ def test_html_link_discovery_does_not_activate_source_or_query_network():
 def test_broken_noniterable_metasearch_is_not_treated_as_network_fallback():
     assert discover_feeds("livres", lambda *_: 123, limit=2) == ()
     assert discover_feeds("", lambda *_: (_ for _ in ()), limit=2) == ()
+
+
+def test_metasearch_iterator_failure_keeps_last_valid_preview_no_error_text():
+    def rows():
+        yield {"url": "https://reviews.example/page/1",
+               "feed_url": "https://reviews.example/rss/first"}
+        yield {"url": "https://reviews.example/page/2"}  # no feed
+        raise RuntimeError("Authorization: Bearer PRIVATE_TOKEN")
+
+    result = discover_feeds("roman", lambda *_: rows(), limit=3)
+    assert [item.url for item in result] == ["https://reviews.example/rss/first"]
+    assert "PRIVATE_TOKEN" not in repr(result)
+
+
+def test_broken_individual_row_does_not_hide_later_valid_feed():
+    class Malicious:
+        @property
+        def url(self):
+            raise RuntimeError("api_key=PRIVATE_TOKEN")
+
+    rows = [
+        Malicious(),
+        {"url": "https://reviews.example/ok", "feed_url": "/rss/healthy"},
+    ]
+    result = discover_feeds("roman", lambda *_: iter(rows), limit=2)
+    assert len(result) == 1
+    assert result[0].url == "https://reviews.example/rss/healthy"
+    assert "PRIVATE_TOKEN" not in repr(result)
+
+
+def test_metasearch_generator_can_fail_before_first_result_without_leak():
+    def fail():
+        raise RuntimeError("Authorization: Bearer SECRET")
+        yield None
+
+    assert discover_feeds("roman", lambda *_: fail(), limit=2) == ()
