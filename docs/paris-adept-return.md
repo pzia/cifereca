@@ -36,6 +36,22 @@ vérification manuelle, sans rejouer la commande.
 `verify_loan_return(loan)` ne lance aucune première restitution.
 Les livres déjà stockés et l'historique ne sont jamais supprimés.
 
+## Présentation des résultats dans Mes emprunts
+
+Un processus terminé sans exception **n'est pas une preuve de restitution**.
+La confirmation visuelle est affichée uniquement si :
+- le retour ADEPT est confirmé **et** le prêt est absent d'un inventaire Paris complet ;
+- ou, pour une action PNB distincte, si l'inventaire Paris confirme l'absence.
+
+Si ADEPT a restitué la licence mais Paris montre encore le prêt, l'interface
+indique explicitement « licence restituée, prêt toujours actif à Paris » et
+rappelle qu'aucun second retour Paris automatique n'a été fait. Si
+l'inventaire est indisponible ou que le profil est ambigu, elle présente
+« action requise » et **ne déclare jamais le prêt restitué**.
+
+Une simple réponse `success=true` du fournisseur PNB ou un worker terminé
+avec `status=partial` ne génère pas de notification de succès.
+
 ## Limites et critères de recette
 
 - Les deux inventaires doivent être complets et concerner le même compte

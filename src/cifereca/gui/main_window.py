@@ -44,6 +44,7 @@ from .loan_view import (
 from .recent_time import format_recent_timestamp
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
+from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
 from .plugin_manager_page import PluginManagerPage
@@ -3498,12 +3499,22 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.connect("response", on_response)
         dialog.present()
 
+    def _return_loan_result(self, result: Any, *, channel: str) -> None:
+        """The background task completed; the loan return may still be partial."""
+        self.refresh_loans(True)
+        kind, message = loan_return_feedback(result, channel=channel)
+        if kind == "confirmed":
+            self.toast(message, 6)
+        else:
+            code = result.get("code") if isinstance(result, dict) else None
+            self.show_attention(message, code=str(code or "loan_return_unconfirmed"))
+
     def _return_loan(self, loan: Loan, control: Gtk.Widget) -> None:
         self.runner.submit(
             "Vérification de restitution ADEPT…",
             lambda: self.service.return_loan_prefer_adept(loan),
-            lambda _r: self.refresh_loans(True),
-            control=control, success_toast="État de restitution actualisé",
+            lambda result: self._return_loan_result(result, channel="adept"),
+            control=control,
             priority=TaskPriority.USER_ACTION, kind="loan-return",
         )
 
@@ -3511,8 +3522,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.runner.submit(
             "Vérification de restitution Paris (PNB)…",
             lambda: self.service.return_digital(loan, explicit_retry=True),
-            lambda _r: self.refresh_loans(True),
-            control=control, success_toast="État de restitution Paris actualisé",
+            lambda result: self._return_loan_result(result, channel="pnb"),
+            control=control,
             priority=TaskPriority.USER_ACTION, kind="loan-return",
         )
 
