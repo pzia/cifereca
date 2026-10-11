@@ -22,6 +22,9 @@ def public_product_url(href: str) -> str:
     if not isinstance(href, str) or not href or len(href) > 512:
         return ""
     try:
+        raw = urlsplit(href)
+        if any(component in (".", "..") for component in raw.path.split("/")):
+            return ""
         value = urljoin(BASE, href)
         parts = urlsplit(value)
         if (parts.scheme != "https" or parts.hostname not in ("www.baen.com", "baen.com")
