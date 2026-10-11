@@ -92,3 +92,33 @@ provenance sont conservés.
 Les âges inférés sont exclus du filtre par défaut ; `include_inferred=True`
 constitue un opt-in explicite. Les notices sans âge attesté restent dans le
 cache mais ne satisfont pas un filtre d'âge. Aucun accès réseau n'est ajouté.
+
+
+
+## Qualification HTML éditeurs — Rageot #952 / Bayard #950
+
+La commande ci-dessous est **manuelle**, facultative et ne s'exécute ni à
+l'installation ni pendant les tests. Elle enregistre une **réponse brute non
+nettoyée**, uniquement pour les URL officielles explicitement autorisées dans
+`tools/capture_publisher_html.py` ; HTTP 200, URL finale exacte, `text/html`,
+taille plafonnée, refus des challenges et des redirections.
+
+```bash
+cd src/plugins/youth-catalog
+python tools/capture_publisher_html.py rageot-catalog --output-dir /tmp/cifereca-sources
+python tools/capture_publisher_html.py rageot-page-2 --output-dir /tmp/cifereca-sources
+python tools/capture_publisher_html.py rageot-age-8 --output-dir /tmp/cifereca-sources
+python tools/capture_publisher_html.py rageot-book --output-dir /tmp/cifereca-sources
+python tools/capture_publisher_html.py bayard-book --output-dir /tmp/cifereca-sources
+```
+
+Chaque capture produit `<label>.raw.html` (permissions privées) et
+`<label>.capture.json` (URL attestée et SHA-256 des octets reçus).
+**Ne jamais ajouter les fichiers `raw.html` au dépôt sans nettoyage et
+revue manuelle** : supprimer scripts, traceurs, paramètres/IDs de session,
+données personnelles et éléments non nécessaires ; conserver uniquement
+une fixture minimale du DOM d'origine et sa provenance. Une réponse
+inaccessible ou redirigée n'est pas une preuve de DOM. Avant toute
+implémentation d'adaptateur, comparer également au moins deux fiches,
+qualifier les âges *propres à l'édition* et rejeter les produits hors livre.
+Aucune supposition de DOM commun avec Milan.
