@@ -234,11 +234,13 @@ class _ProductCards(HTMLParser):
             return
         if self.card is None:
             if tag == "div" and "product-item" in classes:
-                self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": "", "cover_url": ""}
+                self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": "", "cover_url": "", "cover_seen": False}
                 self.stack = [tag]
             return
         if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
             self.stack.append(tag)
+        if tag == "img":
+            self.card["cover_seen"] = True
         if tag == "img" and not self.card["cover_url"]:
             for candidate in (a.get("data-src"), a.get("src"), (a.get("srcset") or "").split(",")[0].strip().split(" ")[0]):
                 url = _allowed_url(candidate)
@@ -315,9 +317,15 @@ def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
         if len(out) >= max(1, min(int(limit), 40)):
             break
     if diagnostic is not None:
-        diagnostic.update({"cards_detected": len(parser.cards), "candidate_count": len(seen),
-                           "age_qualified_count": len(out), "returned_items": len(out),
-                           "missing_isbn": len(out)})
+        diagnostic.update({
+            "cards_detected": len(parser.cards), "cards_complete": len(out),
+            "candidate_count": len(seen), "analyzed_count": len(seen),
+            "age_qualified_count": len(out), "returned_items": len(out),
+            "missing_isbn": len(out), "isbn_valid_count": 0,
+            "author_count": sum(len(row["authors"]) for row in out),
+            "covers_seen": sum(bool(card["cover_seen"]) for card in parser.cards),
+            "cover_urls_valid": sum(bool(row.get("cover_url")) for row in out),
+        })
     return tuple(out)
 
 
@@ -587,6 +595,7 @@ class EcoleLoisirsYouthSource:
                 raise InvalidCatalogueStructureError(
                     "Ecole des loisirs paginated catalogue has no qualifying product cards"
                 )
+            diagnostic["pages_available"] = int(bool(next_page))
             diagnostic["total_ms"] = max(0, int((perf_counter() - started) * 1000))
             self._last_diagnostic.update({
                 "phase": "complete", "state": "items" if rows else "empty_unverified",
