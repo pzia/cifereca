@@ -1,6 +1,6 @@
 # Recette UX Diagnostics P0 — preuves GTK4 exécutées (#1011)
 
-**Statut au 11 octobre 2026 : cinq scénarios E2E PASS sur runner GitHub
+**Statut au 11 octobre 2026 : six scénarios E2E PASS sur runner GitHub
 standard Ubuntu 24.04**, à 1366 × 900 et 1600 × 1000 ; la recette exhaustive D01–D16
 reste ouverte. Les scénarios de navigation sont proposés dans la
 [PR UX #1146](https://github.com/pzia/cifereca/pull/1146) et ne sont **pas
@@ -112,6 +112,27 @@ Le gate PR CI reste **rouge pour un `XPASS(strict)` distinct**
 du test explorateur #1013 ([run #38137558186](https://github.com/pzia/cifereca/actions/runs/38137558186)).
 **Aucune fusion tant que les gates requis sont rouges**.
 
+## Volume et provenance D06–D12 — recette du 11/10/2026
+
+**[E2E Smoke #38141639752](https://github.com/pzia/cifereca/actions/runs/38141639752) : SUCCESS.** Artefact [#11702993418](https://github.com/pzia/cifereca/actions/runs/38141639752/artifacts/11702993418). Le nouveau scénario `diagnostics-volume-1366` est **PASS**, avec **8 assertions** et **6 PNG SHA-256 vérifiés** à 1366×900, sur le vrai widget GTK et un broker déterministe sans réseau.
+
+- **D06 partiel :** total virtuel de 10 000 événements ; **50 lignes par requête**, pagination offset 0 → 50, limite de widgets vérifiée. Six requêtes au broker, **300 lignes construites** (les données ne sont pas injectées intégralement dans GTK). Le scroll utilisateur et la réactivité sous charge de 10 000 éléments physiques ne sont pas démontrés.
+- **D09 partiel :** filtre module ADEPT et Paris, puis Kobo ; changement de période « 7 jours » effectivement transmis comme borne `since`. Les modules `core.sync` et `plugins.read` sont visibles au premier affichage. Les seules catégories de *source* proposées par cette interface sont `core_events` / `app_log` ; ne pas confondre ces sources avec les services métier.
+- **D10 :** événement **ADEPT code 10**, traces libgourou indiquées absentes ; aucune cause Adobe inventée.
+- **D11 :** événement **Paris « retour demandé et accepté »**, sans conclure à la disparition du prêt.
+- **D08 partiel :** chemin long confidentiel absent des libellés de la liste ; le **détail complet expurgé** doit encore être vérifié.
+- **D12 partiel :** deux références de profils fictifs distinctes s'affichent après dépliage des groupes Paris ; **aucune corrélation de prêts entre identités n'est attestée** par le broker.
+
+Les six captures `00-10000-evenements-premiere-page.png` à
+`05-periode-7-jours.png` sont archivées avec `screen.json`. La recette
+utilise la véritable interface GTK4, mais des identités et événements
+**totalement simulés** ; ni connexion Kobo/Paris/ADEPT, ni envoi LLM.
+
+**Limites restantes :** D07 et D08 complets, provenance inter-sources D09,
+corrélation D12, export D13 et `Esc` D15. **#1011 reste ouvert.**
+Le CI général de #1146 reste bloqué indépendamment du E2E GTK : ne pas fusionner
+sans levée des gates requis.
+
 ## Exécuter sur un runner GTK préparé
 
 Depuis la racine du dépôt, avec `xvfb-run`, GTK4/libadwaita,
@@ -123,6 +144,7 @@ dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigatio
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-large-1600
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-states-1366
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-slow-1366
+dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-volume-1366
 ```
 
 `CIFERECA_E2E_PYTHON` peut sélectionner le Python de la recette ;
@@ -171,7 +193,7 @@ avec le rapport JSON ; écran **1366 × 900**.
 
 Ces PASS ne couvrent pas, à eux seuls, les **D01–D16** de
 [la matrice de recette](DIAGNOSTICS_P0_RECETTE_1011.md) : données
-extrêmes (10 000 événements), erreur broker, réseau négatif
+extrêmes au-delà de la pagination virtuelle (10 000 événements sans 10 000 widgets), réseau négatif
 instrumenté, redimensionnement/1600 px, parcours complet clavier
 `Tab`/`Shift+Tab`/`Esc`, export support sur disque, navigation
 avec plugin réellement installé et comptes/identités isolés.
