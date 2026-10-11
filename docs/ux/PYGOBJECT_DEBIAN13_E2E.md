@@ -38,3 +38,20 @@ sur délai réseau) : les paquets ne peuvent pas être installés ici. Aucune
 installation réussie ni capture GTK n'est revendiquée.
 
 Aucun workflow GitHub Actions n'est ajouté.
+
+## Alternative demandée : dépôts officiels Ubuntu
+
+Pour Ubuntu **24.04 LTS** (*noble*), un second script installe PyGObject
+depuis les dépôts Ubuntu configurés **dans cet OS** :
+
+```bash
+sudo bash environnements/setup-gtk4-e2e-ubuntu2404.sh
+/usr/bin/python3 e2e/run.py --python /usr/bin/python3 --scenario diagnostics-1366
+```
+
+Le script **refuse** de s'exécuter sur Debian : installer des paquets Ubuntu
+directement dans Debian 13 peut casser les ABI GTK/GObject et le gestionnaire
+APT. Utiliser un hôte Ubuntu, une VM ou un conteneur Ubuntu 24.04 disposant
+d'un affichage Xvfb et d'un accès réseau. Le conteneur actif est Debian 13,
+sans Docker/Podman/Proot et sans résolution DNS même vers
+`archive.ubuntu.com` ; le script Ubuntu n'a donc pas été exécuté ici.
