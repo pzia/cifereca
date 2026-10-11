@@ -872,7 +872,9 @@ class DiagnosticsPagePlugin:
                 destination = llm_destination(self.llm)
                 selected_source = SOURCES[int(source_selector.get_selected())]
                 selected_period = PERIODS[int(period_selector.get_selected())]
-            except (ValueError, TypeError) as exc:
+                selected_module = module_filter.get_text().strip()
+                selected_severity = SEVERITIES[int(severity_selector.get_selected())]
+            except (ValueError, TypeError, IndexError) as exc:
                 ai_status.set_text("Destination IA indisponible : " + type(exc).__name__)
                 return
             ai_generation += 1
@@ -889,6 +891,7 @@ class DiagnosticsPagePlugin:
                 from diagnostics_explorer import explorer_since
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
+                    module=selected_module, severity=selected_severity,
                     since=explorer_since(selected_period),
                 )
 
@@ -923,11 +926,16 @@ class DiagnosticsPagePlugin:
                 ai_send.set_sensitive(False)
                 return False
             dest = preview["destination"]
+            scope = preview["scope"]
             locality = "DISTANT — données envoyées hors machine" if dest["remote"] else "LOCAL"
             ai_status.set_text(
                 f"{locality} · {dest['provider']} · modèle {dest['model']} · "
                 f"hôte {dest['host']} · {preview['count']} événements · "
-                f"{preview['chars']} caractères. "
+                f"{preview['bytes']} octets UTF-8. "
+                f"Périmètre demandé : {scope['source']} · "
+                f"{scope['module'] or 'tous modules'} · "
+                f"{scope['severity'] or 'tous niveaux'} · "
+                f"depuis {scope['since'] or 'tout historique'}. "
                 "Le modèle produit des hypothèses, jamais une preuve."
             )
             ai_input.get_buffer().set_text(preview["prompt"])
@@ -1032,7 +1040,9 @@ class DiagnosticsPagePlugin:
         ai_cancel.connect("clicked", cancel_ai)
         ai_export.connect("clicked", copy_ai)
         source_selector.connect("notify::selected", invalidate_ai)
+        severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
+        module_filter.connect("changed", invalidate_ai)
 
         def render(*_args) -> None:
             clear_container(status_grid)
