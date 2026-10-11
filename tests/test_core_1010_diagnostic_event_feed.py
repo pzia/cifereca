@@ -157,3 +157,17 @@ def test_truncated_log_without_matching_records_is_partial(tmp_path):
     assert rows["sources"][0]["status"] == "partial"
     assert rows["sources"][0]["reason"] == "log_tail_bounded"
     assert rows["status"] == "partial"
+
+
+def test_unknown_trace_tokens_are_never_exported(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] TRACE secretcustomer sessionid phase=ok",
+        "2026-10-11 07:00:01,000 INFO cifereca.sync [Worker] TRACE sync source phase=ok",
+    )
+    rows = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert rows["total"] == 2
+    assert rows["events"][0]["message"].startswith("[contenu libre masqué")
+    assert rows["events"][1]["message"] == "TRACE sync source phase=ok"
+    assert "secretcustomer" not in json.dumps(rows)
+    assert "sessionid" not in json.dumps(rows)
