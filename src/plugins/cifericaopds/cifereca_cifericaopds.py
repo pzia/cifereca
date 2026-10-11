@@ -320,9 +320,11 @@ class CifericaCollection:
         self._show_synthetic = False
         self._session_epochs = {}
         self._active = False
+        self._activation_generation = 0
 
     def activate(self, context):
         with self._lock:
+            self._activation_generation += 1
             # Invalidate sessions from previous activations, including cases
             # where the new cache advertises identical upstream revisions.
             for sid in self._session_epochs:
@@ -352,6 +354,7 @@ class CifericaCollection:
 
     def deactivate(self):
         with self._lock:
+            self._activation_generation += 1
             self._active = False
             for sid in self._session_epochs:
                 self._session_epochs[sid] += 1
@@ -367,10 +370,14 @@ class CifericaCollection:
     def refresh(self, *, explicit=True):
         if explicit is not True:
             raise ContractUnavailable("discovery must be explicit")
-        if not self._active or self._directory is None:
-            raise ContractUnavailable("plugin is not active")
-        if self._mode == "fixture":
-            path = self._directory / "fixture-sources.json"
+        with self._lock:
+            if not self._active or self._directory is None:
+                raise ContractUnavailable("plugin is not active")
+            activation = self._activation_generation
+            directory = self._directory
+            mode = self._mode
+        if mode == "fixture":
+            path = directory / "fixture-sources.json"
             if path.stat().st_size > MAX_JSON_BYTES:
                 raise ContractUnavailable("oversized local source fixture")
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -380,11 +387,13 @@ class CifericaCollection:
         if not isinstance(data, dict):
             raise ContractUnavailable("invalid candidate inventory")
         with self._lock:
+            if not self._active or self._activation_generation != activation:
+                raise ContractUnavailable("plugin changed during source refresh")
             accepted = candidate_inventory(data, self._snapshot,
                                            show_synthetic=self._show_synthetic)
             if accepted == self._snapshot:
                 return accepted
-            path = self._directory / "inventory.json"
+            path = directory / "inventory.json"
             temp = path.with_suffix(".tmp")
             try:
                 temp.write_text(json.dumps(asdict(accepted), ensure_ascii=False,
