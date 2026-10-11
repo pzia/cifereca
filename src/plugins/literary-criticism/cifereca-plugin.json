@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.3.4",
+    "version": "0.3.5",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -26,11 +26,11 @@
     {
       "id": "literary.criticism",
       "type": "criticism.index",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "entrypoint": "literary_criticism:PLUGIN",
       "display_name": "Critique littéraire",
       "description": "Agrège des critiques publiques, les déduplique et les rattache aux livres par preuves explicables.",
-      "help_text": "Index de critiques avec preuves ISBN, URL ou titre/auteur ; les éditions contradictoires restent des suggestions. Aucune collecte implicite. Toute collecte exclusivement invalide conserve le dernier cache valide et sa fraîcheur ; erreurs de source sous forme de catégories expurgées.",
+      "help_text": "Index de critiques avec preuves ISBN, URL ou titre/auteur ; les éditions contradictoires restent des suggestions. Aucune collecte implicite. Toute collecte exclusivement invalide conserve le dernier cache valide et sa fraîcheur ; erreurs de source sous forme de catégories expurgées. Pages de sources bornées à la limite demandée, rejet des réponses hors budget ou structurellement incorrectes avant mutation du cache et fraîcheur externe plafonnée à sept jours.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
