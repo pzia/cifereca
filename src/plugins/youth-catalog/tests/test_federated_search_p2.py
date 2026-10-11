@@ -121,7 +121,7 @@ def test_infinite_page_limited_to_n_plus_one_and_discarded_atomically():
     )
     assert result.results[0].error == "limit_exceeded"
     assert result.results[0].rows == ()
-    assert observations == PAGE_LIMIT + 1
+    assert observations[0] == PAGE_LIMIT + 1
 
 
 def test_cursor_loop_or_invalid_second_page_never_commits_partial_rows():
