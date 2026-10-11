@@ -21,7 +21,6 @@ from cifereca.plugin_api import (
 from youth_catalog import (InvalidYouthSourcePage, _extract_page,
                            collection_failure_diagnostic, normalize_isbn,
                            safe_ingest_rejection_categories)
-from youth_llm import rewrite_themes
 
 
 KIND_LABELS = {
@@ -1007,6 +1006,14 @@ class YouthView:
         themes = tuple(getattr(book, "themes", ()) or ())
         if not themes:
             self._llm_hint.set_label("Aucun thème attesté disponible pour une reformulation.")
+            return
+        # The historic GTK smoke installs a minimal page/catalogue ZIP with no
+        # optional modules. Import only on explicit AI action; production plugin
+        # packages include youth_llm.py in the normal complete ZIP.
+        try:
+            from youth_llm import rewrite_themes
+        except ImportError:
+            self._llm_hint.set_label("Module IA facultatif indisponible. Aucun âge modifié.")
             return
         context = self.plugin.context
         service = context.service("llm") if context is not None else None
