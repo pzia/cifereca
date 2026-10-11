@@ -387,7 +387,8 @@ def test_pseudonym_reference_is_unchanged_when_bounded_tail_shifts(tmp_path):
         Diagnostics(), log_path=log, source="app_log",
     )
     assert before["sources"][0]["status"] == "partial"
-    last_reference = before["events"][-1]["event_id"]
+    before_ids = {row["event_id"] for row in before["events"]}
+    assert len(before_ids) == 200
 
     # A new line shifts the 32 KiB window, not the old line's actual offset.
     with log.open("a", encoding="utf-8") as handle:
@@ -396,8 +397,11 @@ def test_pseudonym_reference_is_unchanged_when_bounded_tail_shifts(tmp_path):
         Diagnostics(), log_path=log, source="app_log",
     )
     assert after["sources"][0]["status"] == "partial"
-    assert after["events"][-2]["event_id"] == last_reference
-    assert len({row["event_id"] for row in after["events"]}) == len(after["events"])
+    after_ids = {row["event_id"] for row in after["events"]}
+    assert len(after_ids) == 200
+    # All 199 unchanged lines survive; only the oldest leaves the bounded
+    # page while the newly appended event appears.
+    assert len(before_ids & after_ids) == 199
 
 
 def test_log_event_reference_hash_does_not_publish_inode_or_file_offset(tmp_path):
