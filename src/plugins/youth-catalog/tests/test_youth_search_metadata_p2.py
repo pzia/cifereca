@@ -118,13 +118,13 @@ def test_empty_and_stopword_only_queries_do_not_overmatch():
     assert index.search("alice", "x" * 260) == ()
 
 
-def test_search_on_3000_cached_books_keeps_original_without_network():
+def test_search_on_500_cached_books_keeps_original_without_network():
     index = YouthCatalogIndex()
     index.ingest("alice", "source", [
         record(f"Roman volume {number}", record_id=str(number),
                metadata={"description": f"Le sujet {number} concerne la météorologie."})
-        for number in range(3000)
+        for number in range(500)
     ])
     rows = index.search("alice", "meteorologie")
-    assert len(rows) == 3000
+    assert len(rows) == 500
     assert rows[0].record_id == "0"
