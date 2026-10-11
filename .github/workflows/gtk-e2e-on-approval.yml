@@ -42,8 +42,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD
+          # e2e/run.py sets HOME to an isolated fixture, so ~/.gitconfig
+          # from the preparation step is not visible to the probe process.
+          # Git protected configuration passed via env survives that change.
+          echo "GIT_CONFIG_COUNT=1" >> "$GITHUB_ENV"
+          echo "GIT_CONFIG_KEY_0=safe.directory" >> "$GITHUB_ENV"
+          echo "GIT_CONFIG_VALUE_0=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          git -c "safe.directory=$GITHUB_WORKSPACE" -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD
 
       - name: Préflight GTK4, PyGObject, libadwaita et Xvfb
         shell: bash
@@ -72,10 +77,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          /usr/bin/python3 e2e/run.py \
+          if ! /usr/bin/python3 e2e/run.py \
             --python /usr/bin/python3 \
             --scenario diagnostics-1366 \
-            --out e2e-artifacts
+            --out e2e-artifacts; then
+            echo "::group::Diagnostics stderr expurgé"
+            cat e2e-artifacts/diagnostics-1366/stderr.log || true
+            echo "::endgroup::"
+            echo "::group::Diagnostics summary"
+            cat e2e-artifacts/summary.json || true
+            echo "::endgroup::"
+            exit 1
+          fi
           /usr/bin/python3 - <<'PY'
           import json
           from pathlib import Path
