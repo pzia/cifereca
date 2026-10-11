@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -20,9 +21,15 @@ PLUGIN = (
 def _module():
     """Import only the locally shipped plugin; no GTK window is opened."""
     spec = importlib.util.spec_from_file_location("diagnostics_redaction_boundary", PLUGIN)
-    module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
-    spec.loader.exec_module(module)
+    module = importlib.util.module_from_spec(spec)
+    # The page imports its peer diagnostics_explorer module since #1031.
+    # Test the actual page without requiring an installed plugin package.
+    sys.path.insert(0, str(PLUGIN.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
 
 
