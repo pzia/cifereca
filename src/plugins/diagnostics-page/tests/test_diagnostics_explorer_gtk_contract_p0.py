@@ -49,9 +49,17 @@ def test_pagination_search_and_copy_never_request_raw_logs():
     assert 'journals_previous.connect("clicked", previous_events)' in src
     assert 'journals_next.connect("clicked", next_events)' in src
     assert 'journals_copy.connect("clicked", copy_selected)' in src
-    assert 'display.get_clipboard().set(export_selected_events(rows, selected))' in src
-    assert 'next_offset = current_page.get("next_offset")' in src
-    assert 'int(next_offset) > 10000' in src
+    # Preserve the export contract even when the UI now catches oversized
+    # selections: only sanitized visible rows may reach the clipboard.
+    assert 'selected = selected_event_ids.intersection(visible_ids)' in src
+    assert 'exported = export_selected_events(rows, selected)' in src
+    assert 'except ValueError:' in src
+    assert 'host.toast("Export trop volumineux : réduire la sélection")' in src
+    assert 'display.get_clipboard().set(exported)' in src
+    # Pagination must use the validated monotonic/bounded broker cursor.
+    assert 'next_offset = next_page_offset(current_page, current_offset=page_offset)' in src
+    assert 'if next_offset is None:' in src
+    assert 'page_offset = next_offset' in src
     assert 'search=search_filter.get_text().strip()' in src
 
 
