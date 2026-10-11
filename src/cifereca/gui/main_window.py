@@ -6165,7 +6165,7 @@ class MainWindow(Adw.ApplicationWindow):
             draft.set("diagnostics.level", levels[level_drop.get_selected()])
             draft.set("experimental_actions", exp_switch.get_active())
             ai_restart_required = False
-            if settings_revisions["ai"] != saved_settings_revisions["ai"]:
+            if settings_revisions.get("ai", 0) != saved_settings_revisions.get("ai", 0):
                 try:
                     new_ai_settings = read_ai_settings()
                 except LLMSettingsError as exc:
