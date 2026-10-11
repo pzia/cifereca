@@ -298,11 +298,16 @@ def prepare_analysis(
         if not isinstance(safe_report, Mapping):
             raise ValueError("support_report_unavailable")
         for key, value in list(safe_report.items())[:32]:
+            if not isinstance(key, str):
+                continue
+            # A broker's assertion that checks were skipped is control
+            # metadata, not evidence. An empty checks list is not a health
+            # check result and must not inflate the section count.
+            if key in ("checks_executed", "checks"):
+                continue
             if len(support_sections) >= _MAX_SUPPORT_FIELDS:
                 truncated = True
                 break
-            if not isinstance(key, str):
-                continue
             # Never include raw logs or opaque payloads by default, even if
             # a future Core report adds them as public-looking sections.
             if any(word in key.casefold() for word in (
