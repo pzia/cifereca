@@ -76,6 +76,13 @@ routes n'est attestée sur le serveur réel**.
 - Le mode HTTP refuse les redirections, les URL contenant des identifiants,
   les chemins d'origine, et HTTP en dehors de loopback ; délais et tailles
   bornés, réponse JSON strictement typée.
+- Le cache conserve l'inventaire **complet** et validé du serveur,
+  tandis que la vue publiée est filtrée localement par `show_synthetic`
+  (désactivé par défaut). Changer cette option puis redémarrer ne nécessite
+  pas d'accès HTTP ni d'incrément de génération côté serveur ; les sources
+  synthétiques masquées ne sont pas republiées. Un ancien cache qui avait
+  déjà effacé ses sources synthétiques peut nécessiter une nouvelle
+  génération de découverte pour les reconstituer.
 - \`source_id\` limité au namespace du Core ; \`synthetic.merged\` est un
   **kind**, pas un identifiant avec points. Exemple : source \`merged\`.
 - Les secrets, droits, URLs signées et capacités non implémentées ne sont
