@@ -57,11 +57,11 @@ def setup(tmp_path, *, paris_active=False):
 
 
 def stub_adept(service, *, already_returned=False, failure=False):
-    count = {"mutations": 0, "inventory": 0}
+    count = {"mutations": 0, "successful_mutations": 0, "inventory": 0}
     def loans(profile):
         assert profile == "bob-cli"
         count["inventory"] += 1
-        returned = already_returned or count["mutations"] > 0
+        returned = already_returned or count["successful_mutations"] > 0
         return {"loans": [{
             "id": "adobe-loan-01", "returned": returned,
             "expired": False, "token_present": not returned,
@@ -75,6 +75,7 @@ def stub_adept(service, *, already_returned=False, failure=False):
         assert request.metadata["adept_profile_name"] == "bob-cli"
         if failure:
             raise RuntimeError("offline Adobe")
+        count["successful_mutations"] += 1
         return {"ok": True, "metadata": {"runtime_result": {
             "ok": True, "operation": "loan_return",
             "loan_id": "adobe-loan-01", "profile": "bob-cli",
