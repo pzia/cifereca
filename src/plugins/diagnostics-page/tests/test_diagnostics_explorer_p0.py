@@ -313,3 +313,9 @@ def test_export_does_not_stringify_untrusted_broker_values():
     assert len(exported["events"]) == 1
     assert exported["events"][0]["message"] == ""
     assert exported["events"][0]["event_id"] == "safe-id"
+
+
+def test_export_rejects_invalid_unicode_without_crashing_ui():
+    rows = [event("invalid", message="bad-\\ud800-surrogate")]
+    with pytest.raises(ValueError, match="invalid Unicode"):
+        export_selected_events(rows, {"invalid"})
