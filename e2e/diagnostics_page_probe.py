@@ -363,21 +363,58 @@ def main():
         assert "EXEMPLE-PRIVE-UX" not in contents
         report["checks"]["long_redacted_report_1600"] = True
         resize = find_button("Agrandir")
-        assert resize.grab_focus() is not False
-        assert resize.has_focus(), "Agrandir n'a pas de focus clavier"
-        # Physical keyboard activation, not a GObject signal.
-        press("space")
-        assert resize.get_label() == "Réduire"
-        assert scrollers[0].get_size_request()[1] == 560
-        later(lambda: verify_tab(resize, wraps[0], scrollers[0]), 180)
+        # Journals paging can leave the report below the visible viewport.
+        # Scroll the real outer page to the actual GTK button allocation
+        # before asking for keyboard focus: no guessed pixel coordinates.
+        content = page[0].get_child()
+        ok, bounds = resize.compute_bounds(content)
+        assert ok, "Position GTK du bouton Agrandir introuvable"
+        outer = page[0].get_vadjustment()
+        destination = max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        ))
+        outer.set_value(destination)
+        report["outer_scroll_to_report"] = round(destination, 2)
+        report["stage"] = "scroll_to_report_button"
+        later(lambda: focus_report_resize(resize, wraps[0], scrollers[0]), 200)
 
-    def verify_tab(resize, wrap, scroller):
-        assert resize.has_focus(), "Le focus n'a pas été préservé après Space"
+    def focus_report_resize(resize, wrap, scroller):
+        report["stage"] = "focus_report_resize"
+        focused = resize.grab_focus()
+        assert focused is not False, "Agrandir refuse le focus clavier GTK"
+        until(lambda: resize.has_focus(),
+              lambda: activate_report_resize(resize, wrap, scroller), seconds=4)
+
+    def activate_report_resize(resize, wrap, scroller):
+        report["stage"] = "activate_resize_space_xtest"
+        assert resize.has_focus(), "Agrandir n'a pas de focus clavier"
+        # A real XTEST key event changes the GTK button and its scroller.
+        press("space")
+        until(lambda: resize.get_label() == "Réduire" and
+              scroller.get_size_request()[1] == 560,
+              lambda: tab_forward(resize, wrap, scroller), seconds=4)
+
+    def tab_forward(resize, wrap, scroller):
+        report["stage"] = "tab_forward_xtest"
+        assert resize.has_focus(), "Le focus a quitté le bouton après Space"
         press("Tab")
+        until(lambda: wrap.has_focus(),
+              lambda: tab_backward(resize, wrap, scroller), seconds=4)
+
+    def tab_backward(resize, wrap, scroller):
+        report["stage"] = "shift_tab_back_xtest"
         assert wrap.has_focus(), "Tab ne rejoint pas Retour à la ligne"
         device[0].key("Shift_L", True)
-        press("Tab")
-        device[0].key("Shift_L", False)
+        try:
+            press("Tab")
+        finally:
+            device[0].key("Shift_L", False)
+        until(lambda: resize.has_focus(),
+              lambda: verify_tab(resize, scroller), seconds=4)
+
+    def verify_tab(resize, scroller):
+        report["stage"] = "verify_scroll_independent"
         assert resize.has_focus(), "Shift+Tab ne revient pas à Agrandir/Réduire"
         report["checks"]["tab_shift_tab_and_space_xtest"] = True
         screenshot("04-report-keyboard-1600")
