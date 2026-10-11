@@ -912,3 +912,135 @@ def test_synthetic_source_never_visible_when_disabled_on_offline_restart(tmp_pat
     assert {x.plugin_id for x in restart.snapshot().children} == {"cifericaopds.alpha"}
     with pytest.raises(ContractUnavailable):
         restart.create_provider("merged")
+
+
+
+def test_snapshot_unavailable_after_deactivation_despite_prior_cache(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    collection = CifericaCollection().activate(context(tmp_path))
+    collection.refresh()
+    assert collection.snapshot().children[0].source_id == "alpha"
+    callback = []
+    collection.subscribe(lambda: callback.append("stale"))
+    collection.deactivate()
+    with pytest.raises(ContractUnavailable, match="no active validated inventory"):
+        collection.snapshot()
+    with pytest.raises(ContractUnavailable):
+        collection.create_provider("alpha")
+    # The cache persists for a fresh explicit activation, but the retired
+    # service may neither expose it nor retain its old subscriber.
+    collection.activate(context(tmp_path))
+    assert collection.snapshot().children[0].source_id == "alpha"
+    updated = inventory("beta", generation=2)
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(updated))
+    collection.refresh()
+    assert callback == []
+
+
+def test_slow_first_activation_cannot_overwrite_newer_activation(tmp_path, monkeypatch):
+    import cifereca_cifericaopds as module
+    from dataclasses import asdict
+    from threading import Event, Thread
+
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_context = context(first_dir, show_synthetic=True)
+    second_context = context(second_dir, show_synthetic=False)
+    (first_dir / "inventory.json").write_text(json.dumps(asdict(
+        candidate_inventory(inventory("first"), None),
+    )))
+    (second_dir / "inventory.json").write_text(json.dumps(asdict(
+        candidate_inventory(inventory("second"), None),
+    )))
+    original_read = module._read_local_json
+    entered, release = Event(), Event()
+
+    def blocked_read(path, *, label, optional=False):
+        if path.parent == first_dir and label == "inventory":
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("test activation was not released")
+        return original_read(path, label=label, optional=optional)
+
+    monkeypatch.setattr(module, "_read_local_json", blocked_read)
+    collection = CifericaCollection()
+    errors = []
+
+    def first_activate():
+        try:
+            collection.activate(first_context)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = Thread(target=first_activate, daemon=True)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        collection.activate(second_context)
+        assert [x.source_id for x in collection.snapshot().children] == ["second"]
+    finally:
+        release.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], ContractUnavailable)
+    assert str(errors[0]) == "plugin changed during activation"
+    assert [x.source_id for x in collection.snapshot().children] == ["second"]
+    assert collection._directory == second_dir
+
+
+def test_deactivate_during_activation_does_not_resurrect_plugin(tmp_path, monkeypatch):
+    import cifereca_cifericaopds as module
+    from threading import Event, Thread
+
+    ctx = context(tmp_path)
+    entered, release = Event(), Event()
+    original_read = module._read_local_json
+
+    def blocked_read(path, *, label, optional=False):
+        entered.set()
+        if not release.wait(5):
+            raise AssertionError("test activation was not released")
+        return original_read(path, label=label, optional=optional)
+
+    monkeypatch.setattr(module, "_read_local_json", blocked_read)
+    collection = CifericaCollection()
+    errors = []
+
+    def activate():
+        try:
+            collection.activate(ctx)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = Thread(target=activate, daemon=True)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        collection.deactivate()
+        with pytest.raises(ContractUnavailable):
+            collection.snapshot()
+    finally:
+        release.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], ContractUnavailable)
+    assert collection._active is False
+    assert collection._directory is None
+    with pytest.raises(ContractUnavailable):
+        collection.refresh()
+
+
+def test_failed_reactivation_does_not_publish_previous_snapshot(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    collection = CifericaCollection().activate(context(tmp_path))
+    collection.refresh()
+    with pytest.raises(ContractUnavailable, match="unknown plugin mode"):
+        collection.activate(context(tmp_path, mode="unsupported"))
+    with pytest.raises(ContractUnavailable):
+        collection.snapshot()
+    with pytest.raises(ContractUnavailable):
+        collection.create_provider("alpha")
+    # User may still recover by activating the same previously accepted cache.
+    collection.activate(context(tmp_path))
+    assert [x.source_id for x in collection.snapshot().children] == ["alpha"]
