@@ -71,3 +71,25 @@ def test_cover_safety_and_explicit_catalogue_route():
     assert book["cover_url"] == "https://www.ecoledesloisirs.fr/images/un-loup.jpg"
     assert book["description"] == "Résumé publié"
     assert "isbn13" not in book
+
+
+def test_catalogue_pagination_is_reported_without_auto_fetch():
+    import httpx
+    from ecole_loisirs_youth import EcoleLoisirsYouthSource
+    calls = []
+    html = (
+        '<div class="product-item"><a href="/livre/loup">'
+        '<span class="card-title">Loup</span></a>'
+        '<div class="card-infos">Age : 8 à 11 ans</div></div>'
+        '<a href="/catalogue/romans?page=1&amp;type=romans&amp;search=loup">Suivant</a>'
+    )
+    def respond(request):
+        calls.append(request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(respond)))
+    first = source.search_catalogue("loup")
+    assert len(first["items"]) == 1
+    assert first["next_cursor"] == "1"
+    assert len(calls) == 1
+    source.search_catalogue("loup", page=int(first["next_cursor"]))
+    assert len(calls) == 2
