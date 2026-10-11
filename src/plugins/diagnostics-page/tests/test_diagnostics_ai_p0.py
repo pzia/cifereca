@@ -1140,3 +1140,64 @@ def test_long_ai_redaction_marker_is_atomic_and_export_is_identical(private, mar
     # already-redacted string after the second presentation redaction.
     from cifereca_diagnostics_page import redacted_detail
     assert redacted_detail(safe, max_text=4000) == safe
+
+
+@pytest.mark.parametrize("field, value", [
+    ("count", 500),
+    ("structured_count", 3),
+    ("support_fields", 8),
+    ("total_available", 999999),
+    ("sample_truncated", True),
+    ("source_states", [{"source": "fake", "status": "available", "reason": ""}]),
+    ("chars", 0),
+    ("bytes", 0),
+    ("generated", True),
+    ("limitations", "Toutes les sources sont disponibles, analyse prouvée."),
+])
+def test_approved_ai_preview_refuses_mutated_evidence_metadata(field, value):
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    assert preview["source_states"][0]["status"] == "partial"
+    preview[field] = value
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
+
+
+def test_approved_ai_preview_rejects_nested_provenance_change_without_network():
+    model = FakeLLM()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    preview["source_states"][0]["status"] = "available"
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
+
+
+def test_approved_ai_preview_rejects_unserializable_and_cyclic_metadata():
+    model = FakeLLM()
+    for hostile in (object(),):
+        preview = prepare_analysis(model, FakeBroker([event()]))
+        preview["source_states"].append(hostile)
+        with pytest.raises(ValueError, match="explicit_consent_required"):
+            analyze_with_consent(
+                model, preview, approval_id=preview["approval_id"],
+            )
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    preview["source_states"].append(preview["source_states"])
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
+
+
+def test_approved_ai_preview_preserves_exact_metadata_when_untouched():
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    report = analyze_with_consent(
+        model, preview, approval_id=preview["approval_id"],
+    )
+    assert report["ok"] is True and model.calls == 1
+    assert report["source_states"] == preview["source_states"]
+    assert report["sample_truncated"] == preview["sample_truncated"]
+    assert report["limitations"] == preview["limitations"]
+    exported = json.loads(export_analysis_json(report))
+    assert exported["evidence"]["source_states"] == preview["source_states"]
