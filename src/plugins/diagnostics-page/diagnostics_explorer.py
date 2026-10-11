@@ -171,9 +171,23 @@ def next_page_offset(payload: Mapping[str, Any], *, current_offset: int) -> int 
     return None
 
 
+def selectable_event_ids(rows: list[dict[str, str]]) -> set[str]:
+    """Only distinct, nonempty event references identify a selectable row."""
+    counts: dict[str, int] = {}
+    for row in rows[:PAGE_SIZE]:
+        if not isinstance(row, dict):
+            continue
+        event_id = row.get("event_id")
+        if type(event_id) is str and event_id:
+            counts[event_id] = counts.get(event_id, 0) + 1
+    return {event_id for event_id, count in counts.items() if count == 1}
+
+
 def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> str:
     """Export the COMPLETE selected page or fail explicitly; never truncate."""
     from cifereca_diagnostics_page import redacted_detail
+    if not event_ids.issubset(selectable_event_ids(rows)):
+        raise ValueError("ambiguous or unidentified event selection")
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     selected = [
         {
