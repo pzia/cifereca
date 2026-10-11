@@ -6,7 +6,7 @@ import zipfile
 from cifereca.acquisition import Acquisition
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.models import Loan
+from cifereca.models import Loan, Account
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -42,6 +42,7 @@ def _service(tmp_path: Path) -> LibraryService:
         "credential_id": "p",
         "label": "Paris",
     })
+    service.accounts.append(Account(unique_id="primary", provider_id="paris", credential_id="p", identity_id="default"))
     service.storage.adept_profile_binding_set("identity", "default", "profile-hb")
     service.kobo_profiles = lambda: [{
         "profile_id": "profile-hb",

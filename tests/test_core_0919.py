@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock,patch
 from cifereca.core import CiferecaCore
-from cifereca.models import Loan
+from cifereca.models import Loan, Account
 from cifereca.acquisition import Acquisition
 from cifereca.plugin_api import AttentionRequired
 from cifereca.locking import LockBusyError
@@ -20,6 +20,7 @@ class Core0919(unittest.TestCase):
   self.core.config.set('library.directory',str(self.root/'EBooks'))
   self.loan=Loan(id='paris-loan',provider='DILICOM',medium='digital',record_id='book',title='Livre',source_provider='paris',source_credential='reader',source_account_id='account',identity_id='default',due_at='2099-01-01T00:00:00Z')
   self.storage.provider_connection_put({'identity_id':'default','provider_id':'paris','credential_id':'reader','label':'Paris'})
+  self.service.accounts.append(Account(unique_id='account',provider_id='paris',credential_id='reader',identity_id='default'))
   self.storage.adept_profile_binding_set('identity','default','stable-profile')
   self.service.can_download_loan=Mock(return_value=True)
   self.service.kobo_profiles=Mock(return_value=[{'profile_id':'stable-profile','name':'hb','fetch_capable':True}])

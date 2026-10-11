@@ -50,6 +50,9 @@ SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀ�
 
 _TRACE_LOG = logging.getLogger("cifereca")
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cifereca-search")
+# Serialize automatic loan check-and-record within this process. Opening sync
+# additionally holds the existing cross-process acquisition lock.
+_AUTOMATIC_LOAN_GUARD = Lock()
 
 class LibraryService:
     """Application service orchestrating provider plugins.
@@ -4282,7 +4285,34 @@ class LibraryService:
             raise ProviderConfigurationError("Ce prêt ne permet pas une acquisition numérique")
         try:
             with InterProcessLock(acquisition_lock_file()):
-                identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+                bound_identity_id = self.storage.identity_for_connection(
+                    loan.source_provider, loan.source_credential
+                )
+                identity = self.identity_by_id(bound_identity_id)
+                if identity is None:
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": "adept_identity_unproven", "retry": "explicit_only",
+                    }
+                if str(loan.source_provider).lower() == "paris" and (
+                    self._borrower_identity_conflict(
+                        self.accounts, provider_id=loan.source_provider,
+                        account_id=loan.source_account_id,
+                        identity_id=identity.identity_id,
+                        credential_id=loan.source_credential,
+                    )
+                    or self._cross_identity_loan_conflict(
+                        self.storage.acquisitions(provider_id=loan.source_provider),
+                        provider_loan_id=loan.id, identity_id=identity.identity_id,
+                        entitlements=self.storage.entitlements(
+                            provider_id=loan.source_provider, state="active"
+                        ),
+                    )
+                ):
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+                    }
                 previous = [r for r in self.storage.acquisitions(provider_id=loan.source_provider)
                             if r.get("identity_id") == identity.identity_id and r.get("credential_id") == loan.source_credential
                             and str(r.get("account_id") or "") == str(loan.source_account_id or "")
@@ -4301,7 +4331,103 @@ class LibraryService:
         except LockBusyError as exc:
             raise AttentionRequired("Une acquisition ou synchronisation est déjà en cours. Réessayez après sa fin.", code="acquisition_busy") from exc
 
+    @staticmethod
+    def _borrower_identity_conflict(
+        accounts: Any, *, provider_id: str, account_id: str | None,
+        identity_id: str, credential_id: str | None = None,
+    ) -> bool:
+        """Fail closed unless the borrower is bound to the requested identity.
+
+        Paris uses the literal "primary" for its main-account provenance,
+        while the provider account can have unique_id="". These values
+        identify a borrower only inside the exact provider connection.
+        """
+        if account_id is None:
+            return True
+        borrower = str(account_id).strip()
+        provider = str(provider_id).lower()
+        matching = [
+            account for account in accounts
+            if str(account.provider_id).lower() == provider
+        ]
+        if borrower in {"", "primary"}:
+            if not credential_id:
+                return True
+            matching = [
+                account for account in matching
+                if str(account.credential_id) == str(credential_id)
+                and bool(account.is_primary)
+                and (borrower == "primary" or str(account.unique_id or "") == "")
+            ]
+            return len(matching) != 1 or str(matching[0].identity_id) != identity_id
+
+        matching = [
+            account for account in matching
+            if str(account.unique_id or "").strip() == borrower
+        ]
+        if credential_id is not None and not any(
+            str(account.credential_id) == str(credential_id)
+            and str(account.identity_id) == identity_id
+            for account in matching
+        ):
+            return True
+        return {str(account.identity_id) for account in matching} != {identity_id}
+
+    @staticmethod
+    def _cross_identity_loan_conflict(
+        acquisitions: Any, *, provider_loan_id: str, identity_id: str,
+        entitlements: Any = (),
+    ) -> bool:
+        """Reject a Paris loan recorded under another identity in either ledger.
+
+        A currently active entitlement is also a trace of the same upstream
+        loan; it does not prove that identity is the rightful ADEPT owner.
+        """
+        loan_key = str(provider_loan_id or "").strip()
+        if not loan_key:
+            return True
+        acquired_elsewhere = any(
+            str((row.get("metadata") or {}).get("provider_loan_id") or "").strip() == loan_key
+            and str(row.get("identity_id") or "") != identity_id
+            and str(row.get("strategy") or "") == "loan_auto"
+            for row in acquisitions
+        )
+        return acquired_elsewhere or any(
+            str(row.get("loan_id") or "").strip() == loan_key
+            and str(row.get("identity_id") or "") != identity_id
+            for row in entitlements
+        )
+
     def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
+        """Serialize automatic acquisition across threads and processes per loan.
+
+        Do not reuse the global acquisition lock: opening_sync already holds it.
+        The loan-scoped lock also covers other callers running in another process.
+        """
+        loan_id = str(loan.id or "").strip()
+        if not loan_id:
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_loan_identity_unproven", "retry": "explicit_only",
+            }
+        loan_key = hashlib.sha256(
+            (str(loan.source_provider).lower() + "\\0" + loan_id).encode("utf-8")
+        ).hexdigest()[:32]
+        lock_path = acquisition_lock_file().with_name(
+            "cifereca-loan-" + loan_key + ".lock"
+        )
+        try:
+            with _AUTOMATIC_LOAN_GUARD, InterProcessLock(lock_path):
+                return self._acquire_active_loan_automatically_guarded(
+                    loan, force_refresh=force_refresh
+                )
+        except LockBusyError:
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "acquisition_busy", "retry": "explicit_only",
+            }
+
+    def _acquire_active_loan_automatically_guarded(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Acquire one active digital loan and fulfill ACSM through Kobo-Adept.
 
         Provider download remains responsible for obtaining the ACSM. Paris owns
@@ -4313,10 +4439,45 @@ class LibraryService:
             "TRACE download loan_auto begin loan_id=%s item_id=%s title=%r provider=%s credential=%s account=%s direct_url_present=%s",
             loan.id, loan.record_id, loan.title, loan.source_provider, loan.source_credential, loan.source_account_id, bool(loan.ebook_url),
         )
-        identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+        # DRM must never inherit the currently selected identity when a provider
+        # connection has no persisted owner. Keep this fail-closed at the
+        # automatic acquisition boundary; unrelated UI navigation may still
+        # use the historical identity_for_connection fallback.
+        bound_identity_id = self.storage.identity_for_connection(
+            loan.source_provider, loan.source_credential
+        )
+        identity = self.identity_by_id(bound_identity_id)
+        if identity is None:
+            _TRACE_LOG.warning(
+                "TRACE download loan_auto blocked reason=unbound_connection_identity provider=%s",
+                loan.source_provider,
+            )
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_identity_unproven",
+                "reason": "unbound_connection_identity",
+                "retry": "explicit_only",
+            }
         _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
+        entitlement_inventory = self.storage.entitlements(
+            provider_id=loan.source_provider, state="active"
+        )
+        if str(loan.source_provider).lower() == "paris" and self._cross_identity_loan_conflict(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_loan_id=loan.id, identity_id=identity.identity_id,
+            entitlements=entitlement_inventory,
+        ):
+            _TRACE_LOG.warning(
+                "TRACE download loan_auto blocked reason=cross_identity_loan provider=%s",
+                loan.source_provider,
+            )
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_loan_identity_conflict",
+                "reason": "cross_identity_loan", "retry": "explicit_only",
+            }
         entitlement_rows = [
-            row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
+            row for row in entitlement_inventory
             if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
         ]
         entitlement_id = entitlement_rows[0]["entitlement_id"] if entitlement_rows else None
@@ -4490,6 +4651,31 @@ class LibraryService:
             if acquisition.kind == "acsm" and acquisition.acsm_path is not None:
                 retained_acsm = acquisition.acsm_path
                 failure_executor = "kobo-adept"
+                # A linked Paris account can be exposed by multiple credentials.
+                # A shared account id with competing Cifereca identities is not
+                # sufficient evidence of which Adobe profile activated the loan.
+                if str(loan.source_provider).lower() == "paris" and self._borrower_identity_conflict(
+                    self.accounts, provider_id=loan.source_provider,
+                    account_id=loan.source_account_id,
+                    identity_id=identity.identity_id,
+                    credential_id=loan.source_credential,
+                ):
+                    code = "adept_borrower_ambiguous"
+                    self.storage.acquisition_put({
+                        **ledger_base, "status": "attention_required",
+                        "strategy": "loan_auto", "executor": "kobo-adept",
+                        "attention_code": code,
+                        "metadata": {**previous_meta, "provider_loan_id": loan.id,
+                                     "acsm_staging_path": str(retained_acsm)},
+                    })
+                    _TRACE_LOG.warning(
+                        "TRACE download loan_auto blocked reason=ambiguous_borrower_account provider=%s",
+                        loan.source_provider,
+                    )
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": code, "retry": "explicit_only",
+                    }
                 try:
                     profile_name, profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
                 except AdeptProfileResolutionError as exc:
