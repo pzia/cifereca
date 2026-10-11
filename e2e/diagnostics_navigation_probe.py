@@ -95,6 +95,7 @@ def main() -> int:
     window = [None]
     device = [None]
     rc = [1]
+    diagnostics_deadline = [None]
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -190,19 +191,26 @@ def main() -> int:
         assert w.nav_rows["diagnostics"].get_mapped()
         report["checks"]["physical_configuration_group_expansion"] = True
         report["pointer_actions"].append(device[0].click_widget(w.nav_rows["diagnostics"]))
+        diagnostics_deadline[0] = monotonic() + 9
         await_route("diagnostics", diagnostics_open)
 
     def diagnostics_open():
         w = window[0]
-        assert w.nav_list.get_selected_row() is w.nav_rows["diagnostics"]
-        assert w.header_subtitle.get_text() == "Diagnostics"
-        assert w._plugin_page_widgets["diagnostics"].get_mapped()
-        assert labels_have("Rapport support")
-        assert labels_have("Journaux par composant")
-        assert labels_have("État système")
-        assert labels_have("50 événements affichés")
+        visible = {
+            "selected": w.nav_list.get_selected_row() is w.nav_rows["diagnostics"],
+            "subtitle": w.header_subtitle.get_text() == "Diagnostics",
+            "mapped": w._plugin_page_widgets["diagnostics"].get_mapped(),
+            "report": labels_have("Rapport support"),
+            "journals": labels_have("Journaux par composant"),
+            "system": labels_have("État système"),
+            "page_loaded": labels_have("50 événements affichés"),
+            "one_query": len(broker.event_queries) == 1,
+        }
+        if not all(visible.values()) and monotonic() < diagnostics_deadline[0]:
+            later(160, diagnostics_open)
+            return
+        assert all(visible.values()), f"Diagnostics incomplet après navigation: {visible}"
         assert broker.checks == 0, "Diagnostic actif déclenché à la navigation"
-        assert len(broker.event_queries) == 1
         report["checks"]["real_diagnostics_route_and_visible_content"] = True
         report["checks"]["no_implicit_active_diagnostics"] = True
         capture("02-real-diagnostics-route")
