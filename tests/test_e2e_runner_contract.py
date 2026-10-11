@@ -111,6 +111,12 @@ def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
         "D03_explicit_retry_recovers",
         "D04_active_check_does_not_block_GTK",
         "D04_finished_and_button_reenabled",
+        "D14_three_distinct_sections_visible",
+        "D14_ai_absent_and_explicit_send_disabled",
+        "D14_support_active_and_ai_states_independent_during_check",
+        "D14_active_result_not_confused_with_ai",
+        "D14_support_report_freshness_explicit",
+
         "D02_explicit_zero_anomaly_with_period",
         "D04_full_mainwindow_navigation",
         "diagnostics_states_probe",
