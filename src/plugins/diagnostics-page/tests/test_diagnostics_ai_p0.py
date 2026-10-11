@@ -693,3 +693,87 @@ def test_ai_gtk_preview_reports_source_coverage_without_claiming_transmission():
     assert 'preview.get("sample_truncated")' in text
     assert 'source_warnings' in text
     assert "Sources limitées" in text
+
+
+def test_broker_total_exposes_incomplete_24_event_page_through_report():
+    class PagedBroker(FakeBroker):
+        def events(self, **kwargs):
+            row = super().events(**kwargs)
+            row["events"] = [
+                {"event_id": f"ref-{i}", "message": "ok"} for i in range(24)
+            ]
+            row["total"] = 500
+            return row
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, PagedBroker([]))
+    assert preview["count"] == 24
+    assert preview["total_available"] == 500
+    assert preview["sample_truncated"] is True
+    assert "500 événements disponibles" in preview["limitations"]
+    assert model.calls == 0
+
+    report = analyze_with_consent(model, preview,
+                                  approval_id=preview["approval_id"])
+    assert report["ok"] is True and model.calls == 1
+    assert report["total_available"] == 500
+    assert report["sample_truncated"] is True
+    assert "échantillon partiel" in report["limitations"]
+    exported = json.loads(export_analysis_json(report))
+    assert exported["evidence"]["sample_count"] == 24
+    assert exported["evidence"]["total_available"] == 500
+    assert exported["evidence"]["sample_truncated"] is True
+
+
+def test_incomplete_sources_remain_disclosed_in_ai_report_and_json():
+    class IncompleteBroker(FakeBroker):
+        def events(self, **kwargs):
+            row = super().events(**kwargs)
+            row["sources"] = [
+                {"source": "app_log", "status": "partial",
+                 "reason": "rotation du journal"},
+                {"source": "core_events", "status": "unavailable",
+                 "reason": "token=PRIVATE_REASON"},
+            ]
+            return row
+
+    model = FakeLLM()
+    preview = prepare_analysis(model, IncompleteBroker([event()]))
+    result = analyze_with_consent(model, preview,
+                                  approval_id=preview["approval_id"])
+    assert "app_log (partial)" in result["limitations"]
+    assert "core_events (unavailable)" in result["limitations"]
+    exported = export_analysis_json(result)
+    parsed = json.loads(exported)
+    assert [s["status"] for s in parsed["evidence"]["source_states"]] == [
+        "partial", "unavailable",
+    ]
+    assert "PRIVATE_REASON" not in exported
+
+
+@pytest.mark.parametrize("untrusted", [
+    None, True, -1, "500", 1.25, object(),
+])
+def test_invalid_broker_totals_never_become_numeric_coverage(untrusted):
+    class BadTotalBroker(FakeBroker):
+        def events(self, **kwargs):
+            row = super().events(**kwargs)
+            row["total"] = untrusted
+            return row
+
+    preview = prepare_analysis(FakeLLM(), BadTotalBroker([event()]))
+    assert preview["count"] == 1
+    assert preview["total_available"] is None
+    assert preview["sample_truncated"] is False
+
+
+def test_huge_core_total_flags_partial_without_exporting_unbounded_count():
+    class HugeTotalBroker(FakeBroker):
+        def events(self, **kwargs):
+            row = super().events(**kwargs)
+            row["total"] = 100_000_000
+            return row
+
+    preview = prepare_analysis(FakeLLM(), HugeTotalBroker([event()]))
+    assert preview["total_available"] is None
+    assert preview["sample_truncated"] is True
