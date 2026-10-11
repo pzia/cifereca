@@ -9,7 +9,7 @@ import pytest
 from diagnostics_explorer import (
     PAGE_SIZE, SOURCES, SEVERITIES, PERIODS,
     explorer_since, fetch_explorer_page, sanitized_rows, module_groups,
-    source_summaries, explorer_header, export_selected_events,
+    source_summaries, explorer_header, export_selected_events, next_page_offset,
 )
 
 
@@ -202,3 +202,114 @@ def test_source_summary_ignores_malformed_source_containers_and_values():
     assert source_summaries({"sources": [{"source": Secret(), "status": Secret()}]}) == [
         {"source": "inconnue", "status": "unavailable", "label": "Indisponible"},
     ]
+
+
+@pytest.mark.parametrize("module", [None, 123, [], "x" * 91])
+def test_invalid_module_rejected_before_broker_call(module):
+    broker = Broker()
+    with pytest.raises(ValueError):
+        fetch_explorer_page(broker, module=module)
+    assert broker.calls == []
+
+
+@pytest.mark.parametrize("total,offset", [
+    ("unknown", "none"), (None, None), ([], {}), (float("inf"), float("nan")),
+])
+def test_malformed_header_counts_do_not_crash(total, offset):
+    header = explorer_header({"sources": [{"source": "app_log"}],
+                              "total": total, "offset": offset}, [])
+    assert "0 événements affichés" in header
+    assert "page à partir de" in header
+
+@pytest.mark.parametrize("next_cursor", [None, -1, 0, 51, 10001, "50", True, 1.5])
+def test_next_page_rejects_invalid_or_nonmonotonic_cursors(next_cursor):
+    assert next_page_offset({"offset": 0, "next_offset": next_cursor}, current_offset=0) is None
+
+
+def test_next_page_validates_current_page_and_bounds():
+    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=0) == 50
+    assert next_page_offset({"offset": 9950, "next_offset": 10000}, current_offset=9950) == 10000
+    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=50) is None
+    assert next_page_offset({"offset": "0", "next_offset": 50}, current_offset=0) is None
+    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=True) is None
+
+
+def test_export_keeps_all_fifty_selected_events_without_node_budget_loss():
+    rows = [event(f"id-{i}") for i in range(PAGE_SIZE)]
+    result = json.loads(export_selected_events(rows, {r["event_id"] for r in rows}))
+    assert len(result["events"]) == PAGE_SIZE
+    assert {r["event_id"] for r in result["events"]} == {r["event_id"] for r in rows}
+    assert all(set(r) == {
+        "timestamp", "source", "module", "severity", "message", "status", "event_id"
+    } for r in result["events"])
+
+
+def test_oversize_export_fails_instead_of_silently_returning_preview():
+    rows = [event(f"id-{i}", message="x" * 500) for i in range(PAGE_SIZE)]
+    with pytest.raises(ValueError, match="24 KB"):
+        export_selected_events(rows, {r["event_id"] for r in rows})
+
+
+def test_export_rejects_more_than_one_page_selection():
+    rows = [event(f"id-{i}") for i in range(PAGE_SIZE + 1)]
+    with pytest.raises(ValueError, match="too many"):
+        export_selected_events(rows, {r["event_id"] for r in rows})
+
+
+def test_page_controls_use_guarded_cursor_and_handle_export_errors():
+    from pathlib import Path
+    page = Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py"
+    code = page.read_text(encoding="utf-8")
+    assert "next_page_offset(current_page, current_offset=page_offset)" in code
+    assert "except ValueError:" in code
+    assert "Export trop volumineux" in code
+
+def test_failed_refresh_clears_stale_events_before_showing_error():
+    from pathlib import Path
+    page = Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py"
+    code = page.read_text(encoding="utf-8")
+    start = code.index("        def load_events(")
+    end = code.index("        def reset_events(", start)
+    refresh = code[start:end]
+    failure = refresh[refresh.index("            except Exception as exc:"):]
+    assert 'current_page = {' in failure
+    assert '"events": [], "sources": []' in failure
+    assert "display_events()" in failure
+    assert failure.index("display_events()") < failure.index("Source indisponible")
+
+
+def test_refresh_invalidates_previous_page_before_async_request():
+    from pathlib import Path
+    ui = (Path(__file__).resolve().parents[1] /
+          "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    refresh = ui.split("        def load_events(", 1)[1].split("        def reset_events(", 1)[0]
+    clear = refresh.index('            selected_event_ids.clear()')
+    blank = refresh.index('            current_page = {', clear)
+    rerender = refresh.index('            display_events()', blank)
+    submit = refresh.index('                handle = self.tasks.submit(', rerender)
+    assert clear < blank < rerender < submit
+
+
+def test_header_ignores_objects_with_custom_integer_conversion():
+    class Untrusted:
+        def __int__(self):
+            raise AssertionError("must not call custom __int__")
+    result = explorer_header({
+        "sources": [{"source": "app_log"}],
+        "total": Untrusted(), "offset": Untrusted(),
+    }, [])
+    assert "0 disponibles" in result
+    assert "page à partir de 1" in result
+
+
+def test_export_does_not_stringify_untrusted_broker_values():
+    class Untrusted:
+        def __str__(self):
+            raise AssertionError("never stringify broker objects")
+
+    rows = [{"event_id": "safe-id", "message": Untrusted(),
+             "timestamp": "2026-10-11T07:00:00+02:00", "source": "app_log"}]
+    exported = json.loads(export_selected_events(rows, {"safe-id"}))
+    assert len(exported["events"]) == 1
+    assert exported["events"][0]["message"] == ""
+    assert exported["events"][0]["event_id"] == "safe-id"

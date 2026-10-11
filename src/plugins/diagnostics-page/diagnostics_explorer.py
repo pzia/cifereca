@@ -49,6 +49,8 @@ def fetch_explorer_page(
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if source not in SOURCES or severity not in SEVERITIES:
         raise ValueError("unsupported diagnostics filter")
+    if not isinstance(module, str) or len(module) > 90:
+        raise ValueError("invalid diagnostics module")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
         raise ValueError("invalid diagnostics offset")
     return broker.events(
@@ -134,8 +136,17 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
-    total = max(0, int(payload.get("total") or 0))
-    offset = max(0, int(payload.get("offset") or 0))
+    def bounded_count(value: Any) -> int:
+        # The broker contract uses numeric counts. Do not call __int__
+        # on arbitrary objects supplied by a malformed broker response.
+        if type(value) is int:
+            return min(10000, max(0, value))
+        if type(value) is str and len(value) <= 6 and value.isdecimal():
+            return min(10000, int(value))
+        return 0
+
+    total = bounded_count(payload.get("total"))
+    offset = bounded_count(payload.get("offset"))
     shown = len(rows)
     if not payload.get("sources"):
         return "Sources non alimentées — aucune donnée disponible"
@@ -143,16 +154,41 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
     return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}"
 
 
+def next_page_offset(payload: Mapping[str, Any], *, current_offset: int) -> int | None:
+    """Only a monotonically increasing, bounded broker cursor is navigable."""
+    if not isinstance(payload, Mapping) or type(current_offset) is not int:
+        return None
+    returned_offset = payload.get("offset")
+    following = payload.get("next_offset")
+    if type(returned_offset) is not int or returned_offset != current_offset:
+        return None
+    if type(following) is not int:
+        return None
+    if current_offset < following <= min(10000, current_offset + PAGE_SIZE):
+        return following
+    return None
+
+
 def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> str:
-    """Export only selected public fields and provenance; never raw logs."""
-    from cifereca_diagnostics_page import format_diagnostic_detail
+    """Export the COMPLETE selected page or fail explicitly; never truncate."""
+    from cifereca_diagnostics_page import redacted_detail
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     selected = [
-        {field: str(row.get(field) or "")[:500] for field in fields}
-        for row in rows if row.get("event_id") in event_ids
-    ][:PAGE_SIZE]
-    return format_diagnostic_detail(
-        {"notice": "Événements expurgés du Core ; pas de corrélation de tâches prouvée",
-         "events": selected},
-        "json",
-    )
+        {
+            field: redacted_detail(value[:500] if isinstance(value, str) else "")
+            for field in fields
+            for value in (row.get(field),)
+        }
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("event_id"), str)
+        and row["event_id"] in event_ids
+    ]
+    if len(selected) > PAGE_SIZE:
+        raise ValueError("too many selected events for one export")
+    result = json.dumps({
+        "notice": "Événements expurgés du Core ; pas de corrélation de tâches prouvée",
+        "events": selected,
+    }, ensure_ascii=False, indent=2, allow_nan=False)
+    if len(result.encode("utf-8")) > 24_000:
+        raise ValueError("diagnostic export exceeds the 24 KB limit")
+    return result
