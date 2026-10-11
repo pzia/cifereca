@@ -174,3 +174,31 @@ def test_invalid_or_unzoned_timestamps_sort_last_without_crashing():
     rows[1]["timestamp"] = "2026-10-11T07:00:00"
     assert [r["event_id"] for r in sanitized_rows({"events": rows})][0] == "valid"
     assert {r["event_id"] for r in sanitized_rows({"events": rows})} == {"bad", "naive", "valid"}
+
+
+def test_malformed_event_collection_is_ignored_without_iterating_mapping_keys():
+    for bad in ("untrusted", {"message": "SECRET"}, 12, object()):
+        assert sanitized_rows({"events": bad}) == []
+
+
+def test_malformed_event_values_are_not_stringified_or_exposed():
+    class Secret:
+        def __str__(self):
+            raise AssertionError("unexpected object stringification")
+    rows = sanitized_rows({"events": [{"timestamp": Secret(), "message": Secret(),
+                                       "event_id": "safe", "module": 12}]})
+    assert len(rows) == 1
+    assert rows[0]["message"] == ""
+    assert rows[0]["timestamp"] == ""
+    assert rows[0]["module"] == ""
+
+
+def test_source_summary_ignores_malformed_source_containers_and_values():
+    for bad in ("unexpected", {"source": "secret"}, 12, object()):
+        assert source_summaries({"sources": bad}) == []
+    class Secret:
+        def __str__(self):
+            raise AssertionError("unexpected object stringification")
+    assert source_summaries({"sources": [{"source": Secret(), "status": Secret()}]}) == [
+        {"source": "inconnue", "status": "unavailable", "label": "Indisponible"},
+    ]
