@@ -430,7 +430,7 @@ def test_ai_preview_forwards_all_visible_filters_before_explicit_consent():
     assert preview["scope"] == {
         "source": "app_log", "module": "cifereca.sync",
         "severity": "warning", "since": "2026-10-11T00:00:00+00:00",
-        "include_snapshot": False,
+        "include_snapshot": False, "include_support_report": False,
     }
     assert '"module": "cifereca.sync"' in preview["prompt"]
     assert preview["bytes"] == len(preview["prompt"].encode("utf-8"))
@@ -870,3 +870,107 @@ def test_ai_free_text_filter_is_redacted_in_llm_prompt_but_query_is_preserved(mo
     with pytest.raises(ValueError, match="explicit_consent_required"):
         analyze_with_consent(model, preview, approval_id=preview["approval_id"])
     assert model.calls == 0
+
+
+def test_optional_support_report_expurgated_and_never_read_without_opt_in():
+    class SupportBroker(FakeBroker):
+        def __init__(self, events):
+            super().__init__(events)
+            self.support_calls = 0
+
+        def support_report(self, *, verbose=False):
+            assert verbose is False
+            self.support_calls += 1
+            return {
+                "summary": "statut partiel",
+                "checks": {"step": "ready", "authorization": "Bearer PRIVATE_AUTH"},
+                "source": "alice@example.com",
+                "raw_log": "NEVER_READ_RAW_LOG",
+            }
+
+        def active_checks(self):
+            raise AssertionError("Never run active checks for an AI preview")
+
+    model = FakeLLM(remote=True)
+    broker = SupportBroker([event(ref="ref-support")])
+    default = prepare_analysis(model, broker)
+    assert broker.support_calls == 0 and default["support_fields"] == 0
+    assert model.calls == 0
+
+    preview = prepare_analysis(model, broker, include_support_report=True)
+    assert broker.support_calls == 1
+    assert preview["scope"]["include_support_report"] is True
+    assert preview["support_fields"] >= 2
+    assert "statut partiel" in preview["prompt"]
+    assert "ready" in preview["prompt"]
+    assert "ref-support" in preview["prompt"]
+    for forbidden in ("PRIVATE_AUTH", "alice@example.com",
+                      "NEVER_READ_RAW_LOG", "raw_log"):
+        assert forbidden not in preview["prompt"]
+    assert preview["bytes"] <= 3000
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert result["support_fields"] == preview["support_fields"]
+    exported = json.loads(export_analysis_json(result))
+    assert exported["evidence"]["support_fields"] == result["support_fields"]
+    assert model.calls == 1
+
+
+def test_support_report_only_and_modifying_consent_scope_is_forbidden():
+    class ReportBroker(FakeBroker):
+        def support_report(self, *, verbose=False):
+            return {"summary": "Synchronisation partielle"}
+
+    model = FakeLLM()
+    broker = ReportBroker([])
+    preview = prepare_analysis(model, broker, include_support_report=True)
+    assert preview["count"] == 0
+    assert preview["structured_count"] == 0
+    assert preview["support_fields"] == 1
+    assert "Synchronisation partielle" in preview["prompt"]
+    preview["scope"]["include_support_report"] = False
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
+
+
+@pytest.mark.parametrize("invalid", [None, "true", 1, [], {}])
+def test_support_report_selection_rejects_invalid_types_before_broker(invalid):
+    model = FakeLLM()
+    broker = FakeBroker([event()])
+    with pytest.raises(ValueError, match="unsupported_support_scope"):
+        prepare_analysis(model, broker, include_support_report=invalid)
+    assert broker.filters == [] and model.calls == 0
+
+
+def test_missing_support_report_fail_closed_only_if_explicitly_selected():
+    model = FakeLLM()
+    broker = FakeBroker([event()])
+    prepare_analysis(model, broker)
+    with pytest.raises(ValueError, match="support_report_unavailable"):
+        prepare_analysis(model, broker, include_support_report=True)
+    assert model.calls == 0
+
+
+def test_support_report_is_lowest_priority_and_bounded_after_core_evidence():
+    class HugeReportBroker(FakeBroker):
+        def support_report(self, *, verbose=False):
+            return {f"extra_{i}": "X" * 800 for i in range(20)}
+
+    model = FakeLLM()
+    broker = HugeReportBroker([event(ref=f"ref-{i}") for i in range(3)])
+    preview = prepare_analysis(model, broker, include_support_report=True)
+    assert preview["count"] == 3
+    assert all(f"ref-{i}" in preview["prompt"] for i in range(3))
+    assert preview["sample_truncated"] is True
+    assert preview["support_fields"] < 8
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+
+
+def test_support_report_ui_is_disabled_by_default_and_invalidates_approval():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] / "cifereca_diagnostics_page.py").read_text()
+    assert 'ai_support_report.set_active(False)' in page
+    assert 'include_support_report=selected_support_report' in page
+    assert 'ai_support_report.connect("toggled", invalidate_ai)' in page
+    assert "f\"{preview['support_fields']} rubriques support" in page
