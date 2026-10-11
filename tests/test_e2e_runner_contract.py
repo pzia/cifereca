@@ -234,6 +234,27 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
 
 
 
+
+def test_youth_milan_real_gtk_actions_track_collection_cursor_outage_and_selection():
+    """#923 real GTK must follow offline Milan's actual state transitions."""
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert "def audit_milan_action_states(stage, expected):" in source
+    assert 'result.setdefault("milan_action_states_923", []).append({' in source
+    assert "button.get_sensitive()" in source
+    assert "button.get_tooltip_text()" in source
+    for stage in (
+        "empty-all-sources", "milan-selected-no-results", "milan-first-page",
+        "milan-book-selected", "milan-terminal-page",
+        "milan-outage-cache-retained", "milan-filtered-empty",
+        "milan-recovered",
+    ):
+        assert f'audit_milan_action_states("{stage}",' in source
+    assert 'assert requests == [], "Opening Milan page triggered remote HTTP"' in source
+    assert 'assert not requests, "Selecting Milan triggered remote HTTP"' in source
+    assert 'assert len(requests) == 13, f"Outage requires exactly one new explicit call:' in source
+
+
+
 def test_youth_no_source_action_gtk_is_disabled_and_explained_without_click():
     """UX #923: preserve a screenshot and prove the widget's disabled state."""
     source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
