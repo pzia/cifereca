@@ -28,7 +28,7 @@ def test_missing_sources_are_explicit_and_offline(tmp_path, monkeypatch):
     assert isinstance(broker, DiagnosticsBroker)
     result = broker.events()
     assert result["events"] == []
-    assert result["status"] == "empty"
+    assert result["status"] == "unavailable"
     assert [(x["source"], x["status"]) for x in result["sources"]] == [
         ("core_events", "disabled"), ("app_log", "unavailable"),
     ]
@@ -168,3 +168,19 @@ def test_identical_log_lines_have_distinct_event_ids(tmp_path):
     assert result["total"] == 3
     assert len({event["event_id"] for event in result["events"]}) == 3
     assert len({event["message"] for event in result["events"]}) == 1
+
+
+def test_all_unavailable_or_disabled_sources_not_reported_empty(tmp_path):
+    disabled = Diagnostics(enabled=False)
+    rows = query_diagnostic_events(disabled, log_path=tmp_path / "missing")
+    assert rows["events"] == []
+    assert rows["status"] == "unavailable"
+    assert [row["status"] for row in rows["sources"]] == ["disabled", "unavailable"]
+
+
+def test_available_but_empty_source_remains_empty(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log, "non diagnostic record")
+    rows = query_diagnostic_events(Diagnostics(enabled=False), log_path=log)
+    assert rows["status"] == "empty"
+    assert rows["sources"][1]["status"] == "empty"
