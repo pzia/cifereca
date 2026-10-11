@@ -195,9 +195,16 @@ def test_all_unavailable_or_disabled_sources_not_reported_empty(tmp_path):
 def test_available_but_empty_source_remains_empty(tmp_path):
     log = tmp_path / "cifereca.log"
     make_log(log, "non diagnostic record")
-    rows = query_diagnostic_events(Diagnostics(enabled=False), log_path=log)
-    assert rows["status"] == "empty"
-    assert rows["sources"][1]["status"] == "empty"
+    single = query_diagnostic_events(
+        Diagnostics(enabled=False), log_path=log, source="app_log",
+    )
+    assert single["status"] == "empty"
+    assert single["sources"][0]["status"] == "empty"
+    mixed = query_diagnostic_events(Diagnostics(enabled=False), log_path=log)
+    assert mixed["status"] == "partial"
+    assert [state["status"] for state in mixed["sources"]] == [
+        "disabled", "empty",
+    ]
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -628,3 +635,53 @@ def test_source_without_public_events_has_no_misleading_last_timestamp(tmp_path)
         Diagnostics(enabled=False), log_path=tmp_path / "no-log",
     )
     assert all("last_event" not in row for row in missing["sources"])
+
+
+def test_core_disabled_with_app_log_events_means_partial(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log, "2026-10-11 07:00:00,000 INFO cifereca.sync "
+                  "[Worker] TRACE sync source status=ok")
+    page = query_diagnostic_events(
+        Diagnostics(enabled=False), log_path=log, source="all",
+    )
+    assert page["total"] == 1 and page["status"] == "partial"
+    assert [state["status"] for state in page["sources"]] == [
+        "disabled", "available",
+    ]
+    assert page["events"][0]["source"] == "app_log"
+
+
+def test_missing_log_with_core_event_means_partial(tmp_path):
+    diag = Diagnostics()
+    diag.add("SYNC", "sync source", "ok")
+    page = query_diagnostic_events(
+        diag, log_path=tmp_path / "log-missing", source="all",
+    )
+    assert page["total"] == 1 and page["status"] == "partial"
+    assert [state["status"] for state in page["sources"]] == [
+        "available", "unavailable",
+    ]
+    assert page["events"][0]["source"] == "core_events"
+
+
+def test_unavailable_source_alone_remains_unavailable(tmp_path):
+    absent = query_diagnostic_events(
+        Diagnostics(), log_path=tmp_path / "absent", source="app_log",
+    )
+    assert absent["total"] == 0 and absent["status"] == "unavailable"
+    disabled = query_diagnostic_events(
+        Diagnostics(enabled=False), log_path=tmp_path / "absent",
+        source="core_events",
+    )
+    assert disabled["status"] == "unavailable"
+
+
+def test_all_sources_present_remains_available(tmp_path):
+    diag = Diagnostics()
+    diag.add("SYNC", "sync source", "ok")
+    log = tmp_path / "cifereca.log"
+    make_log(log, "2026-10-11 07:00:00,000 INFO cifereca.sync "
+                  "[Worker] TRACE sync source status=ok")
+    result = query_diagnostic_events(diag, log_path=log)
+    assert result["status"] == "available" and result["total"] == 2
+    assert {x["status"] for x in result["sources"]} == {"available"}
