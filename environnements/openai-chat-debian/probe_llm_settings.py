@@ -225,24 +225,44 @@ def main():
         assert server.failures == 0
         report["checks"]["explicit_synthetic_loopback_probe"] = True
         capture("02-tested")
+        save_buttons = [
+            w for w in walk(window[0]) if isinstance(w, Gtk.Button)
+            and w.get_label() == "Enregistrer" and w.get_sensitive()
+        ]
+        assert save_buttons, "Bouton Enregistrer sensible absent"
+        save_buttons[0].emit("clicked")
+        wait_until(
+            lambda: core.config.get("llm.enabled") is True
+                    and core.config.path.exists(),
+            after_save,
+        )
+
+    def after_save():
+        saved = json.loads(core.config.path.read_text(encoding="utf-8"))
+        assert saved["llm"]["enabled"] is True
+        assert saved["llm"]["model"] == "modele-test"
+        assert saved["llm"]["allow_remote"] is False
+        assert saved["llm"]["api_key_env"] == ""
+        report["checks"]["atomic_save_and_reloaded_config"] = True
+        capture("03-saved")
         # Changing to a remote destination must revoke global consent.
         allow_remote[0].set_active(True)
         endpoint[0].set_text("https://exemple.invalid/v1/chat/completions")
         assert not allow_remote[0].get_active()
         assert server.calls == ["synthetic_request"]
         report["checks"]["endpoint_change_revokes_remote_consent"] = True
-        capture("03-remote-revoked")
+        capture("04-remote-revoked")
         button(page[0], "Annuler les modifications").emit("clicked")
         later(200, check_reset)
 
     def check_reset():
-        assert not enabled[0].get_active()
-        assert endpoint[0].get_text() == ""
-        assert model[0].get_text() == ""
+        assert enabled[0].get_active()
+        assert endpoint[0].get_text().startswith("http://127.0.0.1:")
+        assert model[0].get_text() == "modele-test"
         assert not allow_remote[0].get_active()
         assert len(server.calls) == 1
-        report["checks"]["cancel_restores_disabled_state"] = True
-        capture("04-reset")
+        report["checks"]["cancel_restores_last_saved_values"] = True
+        capture("05-reset")
         finish()
 
     def activate(_app):
