@@ -295,3 +295,57 @@ def test_ai_consent_refuses_mutated_oversize_multibyte_prompt():
     with pytest.raises(ValueError, match="preview_invalid"):
         analyze_with_consent(model, preview, approval_id=preview["approval_id"])
     assert model.calls == 0
+
+
+
+def test_ai_response_cannot_spoof_disclosed_model_or_provider():
+    class ForgedProvenance(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True,
+                text="Analyse sans référence démontrée.",
+                provider="fake-provider token=PRIVATE_PROVIDER",
+                model="fake-model password=PRIVATE_MODEL",
+            )
+
+    model = ForgedProvenance(remote=True)
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 1
+    assert result["ok"] is True
+    assert result["model"] == preview["destination"]["model"]
+    assert result["provider"] == preview["destination"]["provider"]
+    assert result["provenance"] == "destination_disclosed_not_independently_verified"
+    assert "PRIVATE_" not in json.dumps(result)
+
+
+def test_ai_empty_or_untrusted_response_never_claims_a_generated_analysis():
+    class BadText:
+        def __str__(self):
+            raise AssertionError("Must not stringify LLM objects")
+
+    class MalformedModel(FakeLLM):
+        def __init__(self, text):
+            super().__init__()
+            self.returned_text = text
+
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, text=self.returned_text,
+                provider="openai-compatible", model="qa-llm",
+            )
+
+    for invalid in ("", " \n\t", BadText()):
+        model = MalformedModel(invalid)
+        preview = prepare_analysis(model, FakeBroker([event()]))
+        result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+        assert result == {"ok": False, "reason": "invalid_llm_response"}
+        assert model.calls == 1
+
+
+def test_ai_report_identifies_disclosed_destination_not_verified_backend():
+    from pathlib import Path
+    ui_source = (Path(__file__).parents[1] / "cifereca_diagnostics_page.py").read_text()
+    assert "Destination annoncée : {result['provider']} / {result['model']}" in ui_source
