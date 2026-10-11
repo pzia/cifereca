@@ -33,7 +33,13 @@ de champs non secrets sur liste blanche (`phase`, `status`, `outcome`…).
 Un message libre est remplacé par « contenu libre masqué ». Pour les
 Diagnostics structurés, seuls les mots opérationnels autorisés sont diffusés,
 pas les détails ni les valeurs potentiellement personnelles. Les empreintes
-d'événements ne réintroduisent aucune valeur brute.
+d'événements ne réintroduisent aucune valeur brute. Pour les journaux,
+l'identifiant pseudonymisé repose sur le périphérique, l'inode et
+la position en octets de la ligne, **hachés sans divulgation de ces
+métadonnées**. Il reste stable lorsque le journal est renommé lors
+d'une rotation classique et que la ligne demeure dans la fenêtre
+de lecture ; une rotation par copie/troncature ou un remplacement
+du fichier n'offre pas cette garantie.
 
 **Limites connues :** le flux est un **snapshot borné**, pas une archive
 historique globale. Lorsque le journal est tronqué ou rotaté, son état est
