@@ -312,6 +312,11 @@ def main():
         assert LONG_PATH not in visible, "Chemin privé complet visible dans liste"
         report["checks"]["D08_long_path_redacted_list_and_stable_layout"] = True
         report["audits"]["D08_complete_redacted_long_detail_available"] = False
+        # The data has loaded but GTK must still paint the frame: do not
+        # photograph the transient "Actualisation en cours" state.
+        later(kobo_details_stage, 230)
+
+    def kobo_details_stage():
         screenshot("04-kobo-erreur-chemin-long")
         # The actual detailed journal view is built from sanitized_rows(),
         # which may intentionally drop unknown broker keys including 'detail'.
@@ -334,6 +339,9 @@ def main():
             "La fixture est attendue sans detail brut dans sanitized_rows()"
         )
         report["checks"]["D08_real_detail_panel_available_and_redacted"] = True
+        later(kobo_detail_visible, 260)
+
+    def kobo_detail_visible():
         screenshot("04b-kobo-detail-rendered")
         # Filter period is really sent as a bounded UTC 'since' query.
         selectors = [w for w in widgets(Gtk.DropDown) if w.get_tooltip_text() == "Période de la consultation"]
@@ -419,6 +427,21 @@ def main():
         checks = [w for w in walk(line) if isinstance(w, Gtk.CheckButton)]
         assert len(checks) == 1
         checks[0].set_active(True)
+        # Make the selected profile visible inside the journals viewport for
+        # screenshot evidence. The clipboard assertion remains independent.
+        scroller = rows[0].get_parent()
+        while scroller is not None and not isinstance(scroller, Gtk.ScrolledWindow):
+            scroller = scroller.get_parent()
+        assert scroller is not None, "Conteneur GTK des journaux introuvable"
+        ok, rect = rows[0].compute_bounds(scroller.get_child())
+        assert ok, "Position du profil A introuvable"
+        adjustment = scroller.get_vadjustment()
+        scroll_to = max(0, min(
+            float(rect.get_y()) - 30,
+            adjustment.get_upper() - adjustment.get_page_size(),
+        ))
+        adjustment.set_value(scroll_to)
+        report["audits"]["D12_profileA_in_view_scroll_y"] = round(scroll_to, 2)
         btn = find_button("Copier la sélection")
         assert btn.get_sensitive()
         btn.emit("clicked")
