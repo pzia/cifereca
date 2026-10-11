@@ -39,6 +39,20 @@ def test_themes_only_not_source_ages_or_book_identity():
     assert len(theme_request(("A" * 300,)).prompt) <= 170
 
 
+def test_source_age_labels_are_never_included_in_llm_prompt():
+    request = theme_request(("science", "Dès 8 ans", "lecture 7+", "étoiles", "huit ans"))
+    assert request is not None
+    assert "science" in request.prompt and "étoiles" in request.prompt
+    assert "8 ans" not in request.prompt and "7+" not in request.prompt
+    assert "huit ans" not in request.prompt
+    assert theme_request(("3 ans", "livre 6+")) is None
+
+
+def test_generated_digit_claim_is_rejected_even_without_age_unit():
+    service = Service(LLMResult(ok=True, generated=True, text="Accessible dès 8+"))
+    assert rewrite_themes(service, ("astronomie",), enabled=True, consent=True) is None
+
+
 def test_double_opt_in_and_no_theme_never_call_llm():
     service = Service()
     themes = ("écologie",)
