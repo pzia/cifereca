@@ -258,7 +258,20 @@ def main():
         report["checks"]["D10_adept_code10_no_invented_adobe_cause"] = True
         report["checks"]["D09_adept_module_filter"] = True
         screenshot("02-adept-code10-absence-preuve")
-        query_module("paris", "Paris retour demandé et accepté", paris_case)
+        query_module("paris", "paris.lending", paris_loaded)
+
+    def paris_loaded():
+        # Info-level groups are collapsed by default, unlike error groups.
+        # The user must open the group before reading its event chronology.
+        groups = [
+            w for w in widgets(Gtk.Expander)
+            if (w.get_label() or "").startswith("paris.lending · ")
+        ]
+        assert len(groups) == 2, ("groupes de provenance Paris", len(groups))
+        for group in groups:
+            group.set_expanded(True)
+        until(lambda: seen("Paris retour demandé et accepté")
+              and seen("profil-pseudo-A") and seen("profil-pseudo-B"), paris_case)
 
     def paris_case():
         assert broker.requests[-1]["module"] == "paris"
