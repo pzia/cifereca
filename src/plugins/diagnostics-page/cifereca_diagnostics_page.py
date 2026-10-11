@@ -1031,6 +1031,7 @@ class DiagnosticsPagePlugin:
                 return False
             cited = result.get("references_matched") or ()
             unknown_refs = result.get("references_unknown") or ()
+            ambiguous_refs = result.get("references_ambiguous") or ()
             citations = (
                 "\n".join(
                     f"- {row['event_id']} · {row['timestamp']} · {row['source']}"
@@ -1042,6 +1043,11 @@ class DiagnosticsPagePlugin:
                 "\nRéférences non retrouvées : " + ", ".join(unknown_refs)
                 if unknown_refs else ""
             )
+            ambiguity = (
+                "\nRéférences ambiguës (ID dupliqué, source non attribuable) : "
+                + ", ".join(ambiguous_refs)
+                if ambiguous_refs else ""
+            )
             ai_result = (
                 "# Analyse générée par IA — hypothèses NON vérifiées\n"
                 + f"Destination annoncée : {result['provider']} / {result['model']}\n"
@@ -1051,7 +1057,7 @@ class DiagnosticsPagePlugin:
                 + "## Analyse du modèle (inférée)\n"
                 + result["text"]
                 + "\n\n## Références d’événements présentes dans l’extrait\n"
-                + citations + unsupported
+                + citations + unsupported + ambiguity
                 + "\nLa correspondance d’un identifiant ne prouve PAS "
                   "la véracité de l’affirmation associée.\n"
             )
