@@ -205,12 +205,26 @@ def test_source_summary_ignores_malformed_source_containers_and_values():
 
 
 @pytest.mark.parametrize("module", [None, 123, [], "x" * 91])
+def test_invalid_module_rejected_before_broker_call(module):
+    broker = Broker()
+    with pytest.raises(ValueError):
+        fetch_explorer_page(broker, module=module)
+    assert broker.calls == []
+
 
 @pytest.mark.parametrize("total,offset", [
     ("unknown", "none"), (None, None), ([], {}), (float("inf"), float("nan")),
 ])
+def test_malformed_header_counts_do_not_crash(total, offset):
+    header = explorer_header({"sources": [{"source": "app_log"}],
+                              "total": total, "offset": offset}, [])
+    assert "0 événements affichés" in header
+    assert "page à partir de" in header
 
 @pytest.mark.parametrize("next_cursor", [None, -1, 0, 51, 10001, "50", True, 1.5])
+def test_next_page_rejects_invalid_or_nonmonotonic_cursors(next_cursor):
+    assert next_page_offset({"offset": 0, "next_offset": next_cursor}, current_offset=0) is None
+
 
 def test_next_page_validates_current_page_and_bounds():
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=0) == 50
@@ -218,6 +232,7 @@ def test_next_page_validates_current_page_and_bounds():
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=50) is None
     assert next_page_offset({"offset": "0", "next_offset": 50}, current_offset=0) is None
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=True) is None
+
 
 def test_export_keeps_all_fifty_selected_events_without_node_budget_loss():
     rows = [event(f"id-{i}") for i in range(PAGE_SIZE)]
@@ -228,15 +243,18 @@ def test_export_keeps_all_fifty_selected_events_without_node_budget_loss():
         "timestamp", "source", "module", "severity", "message", "status", "event_id"
     } for r in result["events"])
 
+
 def test_oversize_export_fails_instead_of_silently_returning_preview():
     rows = [event(f"id-{i}", message="x" * 500) for i in range(PAGE_SIZE)]
     with pytest.raises(ValueError, match="24 KB"):
         export_selected_events(rows, {r["event_id"] for r in rows})
 
+
 def test_export_rejects_more_than_one_page_selection():
     rows = [event(f"id-{i}") for i in range(PAGE_SIZE + 1)]
     with pytest.raises(ValueError, match="too many"):
         export_selected_events(rows, {r["event_id"] for r in rows})
+
 
 def test_page_controls_use_guarded_cursor_and_handle_export_errors():
     from pathlib import Path
