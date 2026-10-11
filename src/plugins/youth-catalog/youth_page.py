@@ -1078,8 +1078,12 @@ class YouthView:
             # ISBN is a bibliographic *lookup* only. It does not establish
             # inventory, ownership, availability or a direct notice link.
             identifiers = getattr(self.selected_book, "identifiers", {})
-            raw_isbn = identifiers.get("isbn", "") if isinstance(identifiers, Mapping) else ""
-            isbn = normalize_isbn(raw_isbn)
+            getter = getattr(identifiers, "get", None)
+            raw_isbn = getter("isbn", "") if callable(getter) else ""
+            # The public host bridge can reuse this method without importing
+            # the whole Youth module. No normalization is needed when the
+            # selected row provides no ISBN mapping.
+            isbn = normalize_isbn(raw_isbn) if raw_isbn else ""
             if isbn:
                 actions.append(UiBookDetailAction(
                     id="search-library-isbn",
