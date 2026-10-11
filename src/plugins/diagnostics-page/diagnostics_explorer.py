@@ -137,12 +137,13 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
     def bounded_count(value: Any) -> int:
-        try:
-            if isinstance(value, bool):
-                return 0
-            return min(10000, max(0, int(value)))
-        except (ValueError, TypeError, OverflowError):
-            return 0
+        # The broker contract uses numeric counts. Do not call __int__
+        # on arbitrary objects supplied by a malformed broker response.
+        if type(value) is int:
+            return min(10000, max(0, value))
+        if type(value) is str and len(value) <= 6 and value.isdecimal():
+            return min(10000, int(value))
+        return 0
 
     total = bounded_count(payload.get("total"))
     offset = bounded_count(payload.get("offset"))
