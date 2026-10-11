@@ -496,7 +496,7 @@ class EcoleLoisirsYouthSource:
 
     def _get(self, url: str, *, diagnostic: dict[str, object] | None = None) -> str:
         allowed = _allowed_url(url)
-        if not allowed or urlsplit(allowed).path != "/recherche-avancee":
+        if not allowed or urlsplit(allowed).path not in {"/recherche-avancee", "/catalogue/romans"}:
             raise ValueError("only l'école des loisirs advanced search is allowed")
         self._last_diagnostic["request_count"] = int(self._last_diagnostic.get("request_count", 0)) + 1
         counter = self._call_requests.get()
@@ -522,6 +522,19 @@ class EcoleLoisirsYouthSource:
         if len(response.content) > 2_000_000:
             raise RuntimeError("l'école des loisirs response exceeds 2 MB")
         return response.text
+
+    def search_catalogue(self, query: str, *, page: int = 0, limit: int = 40) -> Mapping[str, object]:
+        """Explicit catalogue route; a single page, no background detail crawl."""
+        if type(page) is not int or not 0 <= page <= 100:
+            raise ValueError("invalid catalogue page")
+        params = urlencode({"type": "romans", "search": _text(query)[:_MAX_QUERY_CHARS], "page": page})
+        url = BASE + "/catalogue/romans?" + params
+        diagnostic = {"query_mode": "remote", "request_count": 0}
+        html = self._get(url, diagnostic=diagnostic)
+        rows = parse_catalogue_cards(html, limit=limit, diagnostic=diagnostic)
+        return {"items": rows, "next_cursor": "",
+                "fresh_for_seconds": 86400, "collection_request_count": 1,
+                "collection_pipeline": diagnostic}
 
     def search(self, query: str, *, cursor: str | None = None, limit: int = 40) -> Mapping[str, object]:
         try:
