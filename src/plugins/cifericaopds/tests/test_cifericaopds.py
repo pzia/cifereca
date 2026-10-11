@@ -11,7 +11,7 @@ import pytest
 
 from cifereca.plugin_api import ProviderCollection, ProviderPlugin
 from cifereca_cifericaopds import (
-    CifericaCollection, ContractUnavailable, PARENT_ID, candidate_inventory,
+    CifericaCollection, ContractUnavailable, JsonClient, PARENT_ID, candidate_inventory,
     candidate_results, safe_base_url,
 )
 
@@ -150,7 +150,10 @@ def test_https_or_loopback():
 @pytest.fixture
 def mocked_candidate_server():
     calls = []
-    state = {"bad": False, "redirect": False, "sources": inventory("alpha", "beta")}
+    state = {
+        "bad": False, "redirect": False, "sources": inventory("alpha", "beta"),
+        "raw": None, "content_type": "application/json", "status": 200,
+    }
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -167,9 +170,10 @@ def mocked_candidate_server():
                 return
             data = (state["sources"] if self.path == "/api/v1/sources"
                     else {"items": [{"id": "book", "title": "Livre HTTP"}]})
-            payload = json.dumps(data).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            payload = (state["raw"] if state["raw"] is not None
+                       else json.dumps(data).encode())
+            self.send_response(state["status"])
+            self.send_header("Content-Type", state["content_type"])
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -514,3 +518,327 @@ def test_refresh_during_http_search_discards_inflight_response(tmp_path):
     with pytest.raises(ContractUnavailable, match="inactive or changed"):
         session.search("book")
     assert len(calls) == 1
+
+
+def test_parent_deactivation_revokes_sessions_even_if_reactivated(tmp_path):
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(inventory("alpha", generation=1)))
+    (tmp_path / "fixture-results.json").write_text(json.dumps({
+        "alpha": {"items": [{"id": "1", "title": "Livre Alpha"}]},
+    }))
+    ctx = context(tmp_path)
+    coll = CifericaCollection().activate(ctx)
+    coll.refresh()
+    provider = coll.create_provider("alpha")
+    old = provider.create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    assert len(old.search("Livre")) == 1
+    coll.deactivate()
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        old.search("Livre")
+    with pytest.raises(ContractUnavailable):
+        coll.create_provider("alpha")
+    with pytest.raises(ContractUnavailable):
+        coll.refresh()
+    coll.activate(ctx)
+    assert coll.snapshot().discovery_generation == 1
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        old.search("Livre")
+    fresh = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    assert len(fresh.search("Livre")) == 1
+
+
+def test_refresh_finishing_after_parent_deactivation_is_not_published(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    baseline = (tmp_path / "inventory.json").read_bytes()
+    coll._mode = "candidate_v02"
+    seen = []
+
+    def stale_get(endpoint):
+        seen.append(endpoint)
+        coll.deactivate()
+        return inventory("alpha", "beta", generation=2)
+
+    coll._client = NS(get=stale_get)
+    with pytest.raises(ContractUnavailable, match="changed during source refresh"):
+        coll.refresh()
+    assert seen == ["/api/v1/sources"]
+    assert (tmp_path / "inventory.json").read_bytes() == baseline
+    with pytest.raises(ContractUnavailable):
+        coll.create_provider("beta")
+
+
+@pytest.mark.parametrize("invalid_bytes", [
+    b'{"api_major":',
+    b'{"api_major": NaN}',
+    b'\xff\xfe{"api_major": 1}',
+    b' ' * (1024 * 1024 + 1),
+])
+def test_broken_source_fixture_does_not_replace_last_valid_inventory(
+    tmp_path, invalid_bytes,
+):
+    sources = tmp_path / "fixture-sources.json"
+    sources.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    expected = coll.refresh()
+    baseline = (tmp_path / "inventory.json").read_bytes()
+
+    sources.write_bytes(invalid_bytes)
+    with pytest.raises(ContractUnavailable) as exc:
+        coll.refresh()
+    assert "fixture-sources" not in str(exc.value)
+    assert str(tmp_path) not in str(exc.value)
+    assert coll.snapshot() == expected
+    assert (tmp_path / "inventory.json").read_bytes() == baseline
+
+
+@pytest.mark.parametrize("invalid_bytes", [
+    b'{"alpha": { "items":',
+    b'{"alpha": {"items": [NaN]}}',
+    b'\xff\xfe',
+    b' ' * (1024 * 1024 + 1),
+])
+def test_broken_results_fixture_fails_closed_and_remains_local(
+    tmp_path, invalid_bytes,
+):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    (tmp_path / "fixture-results.json").write_bytes(invalid_bytes)
+    with pytest.raises(ContractUnavailable) as exc:
+        session.search("livre")
+    assert str(tmp_path) not in str(exc.value)
+    assert coll.snapshot().children[0].source_id == "alpha"
+
+
+def test_missing_source_fixture_is_typed_error_without_losing_cache(tmp_path):
+    sources = tmp_path / "fixture-sources.json"
+    sources.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    saved = coll.refresh()
+    sources.unlink()
+    with pytest.raises(ContractUnavailable, match="missing local source fixture"):
+        coll.refresh()
+    assert coll.snapshot() == saved
+    assert (tmp_path / "inventory.json").exists()
+
+
+def test_corrupted_cached_inventory_does_not_break_activation(tmp_path):
+    ctx = context(tmp_path)
+    cache = tmp_path / "inventory.json"
+    for payload in (b'{', b'\xff', b' ' * (1024 * 1024 + 1), b'null'):
+        cache.write_bytes(payload)
+        coll = CifericaCollection().activate(ctx)
+        with pytest.raises(ContractUnavailable, match="no validated inventory"):
+            coll.snapshot()
+        coll.deactivate()
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(ctx)
+    coll.refresh()
+    assert coll.snapshot().children[0].source_id == "alpha"
+
+
+def test_local_fixture_symlink_is_rejected_without_leaking_target(tmp_path):
+    private = tmp_path / "private.json"
+    private.write_text(json.dumps(inventory("alpha", generation=1)))
+    sources = tmp_path / "fixture-sources.json"
+    try:
+        sources.symlink_to(private)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink is not supported on this test system")
+    coll = CifericaCollection().activate(context(tmp_path))
+    with pytest.raises(ContractUnavailable, match="unreadable local source JSON"):
+        coll.refresh()
+    assert private.read_text().startswith('{"api_major"')
+
+
+def test_result_fixture_is_optional_but_invalid_directory_is_not(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    assert session.search("livre") == []
+    (tmp_path / "fixture-results.json").mkdir()
+    with pytest.raises(ContractUnavailable):
+        session.search("livre")
+
+
+def test_inventory_publication_is_private_and_does_not_follow_stale_tmp(tmp_path):
+    import os
+    private = tmp_path / "private.txt"
+    private.write_text("DO NOT OVERWRITE")
+    # Legacy fixed-name temp file could have been redirected to a target.
+    (tmp_path / "inventory.tmp").symlink_to(private)
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    assert private.read_text() == "DO NOT OVERWRITE"
+    assert (tmp_path / "inventory.json").is_file()
+    assert not list(tmp_path.glob(".cifericaopds-inventory-*.tmp"))
+    if os.name == "posix":
+        assert (tmp_path / "inventory.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_inventory_publish_keeps_previous_snapshot_and_cleans_tmp(
+    tmp_path, monkeypatch,
+):
+    import cifereca_cifericaopds as adapter
+    sources = tmp_path / "fixture-sources.json"
+    sources.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    original = coll.refresh()
+    original_bytes = (tmp_path / "inventory.json").read_bytes()
+    sources.write_text(json.dumps(inventory("alpha", "beta", generation=2)))
+
+    def fail_replace(*_args, **_kwargs):
+        raise PermissionError("private filesystem path")
+
+    monkeypatch.setattr(adapter.os, "replace", fail_replace)
+    with pytest.raises(ContractUnavailable, match="local inventory persistence unavailable") as exc:
+        coll.refresh()
+    assert "private filesystem path" not in str(exc.value)
+    assert coll.snapshot() == original
+    assert (tmp_path / "inventory.json").read_bytes() == original_bytes
+    assert not list(tmp_path.glob(".cifericaopds-inventory-*.tmp"))
+
+
+
+@pytest.mark.parametrize("body", [
+    b'{"api_major":NaN,"sources":[]}',
+    b'{"api_major":Infinity,"sources":[]}',
+    b'{"api_major":1e999,"sources":[]}',
+    b'{"api_major":1,"api_major":1,"sources":[]}',
+    b'{"sources":[{"source_id":"alpha","source_id":"beta"}]}',
+    b'\xff\xfe',
+    b'{"incomplete":',
+    b' ' * (1024 * 1024 + 1),
+])
+def test_candidate_http_strict_json_preserves_good_inventory(
+    tmp_path, mocked_candidate_server, body,
+):
+    url, calls, state = mocked_candidate_server
+    coll = CifericaCollection().activate(context(
+        tmp_path, mode="candidate_v02", base_url=url,
+    ))
+    accepted = coll.refresh()
+    baseline = (tmp_path / "inventory.json").read_bytes()
+    state["raw"] = body
+    with pytest.raises(ContractUnavailable) as exc:
+        coll.refresh()
+    assert exc.value.__cause__ is None
+    assert coll.snapshot() == accepted
+    assert (tmp_path / "inventory.json").read_bytes() == baseline
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(("status", "content_type"), [
+    (503, "application/json"),
+    (401, "application/json"),
+    (200, "text/html"),
+    (200, "application/problem+json"),
+])
+def test_candidate_http_wrong_status_or_media_type_fails_closed(
+    tmp_path, mocked_candidate_server, status, content_type,
+):
+    url, calls, state = mocked_candidate_server
+    coll = CifericaCollection().activate(context(
+        tmp_path, mode="candidate_v02", base_url=url,
+    ))
+    state["status"] = status
+    state["content_type"] = content_type
+    with pytest.raises(ContractUnavailable) as exc:
+        coll.refresh()
+    assert exc.value.__cause__ is None
+    with pytest.raises(ContractUnavailable):
+        coll.snapshot()
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("timeout", [
+    None, "invalid", "nan", float("inf"), float("-inf"), True, False,
+])
+def test_candidate_http_rejects_invalid_timeout_before_request(tmp_path, timeout):
+    with pytest.raises(ContractUnavailable, match="invalid configured timeout") as exc:
+        CifericaCollection().activate(context(
+            tmp_path, mode="candidate_v02", timeout_seconds=timeout,
+        ))
+    assert exc.value.__cause__ is None
+
+
+def test_local_inventory_rejects_duplicate_keys_and_nonfinite_float(tmp_path):
+    ctx = context(tmp_path)
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(ctx)
+    old = coll.refresh()
+    old_bytes = (tmp_path / "inventory.json").read_bytes()
+    for body in (
+        b'{"api_major":1,"api_major":1,"sources":[]}',
+        b'{"api_major":1,"discovery_generation":1e999,"sources":[]}',
+    ):
+        fixture.write_bytes(body)
+        with pytest.raises(ContractUnavailable) as exc:
+            coll.refresh()
+        assert "local source JSON" in str(exc.value)
+        assert coll.snapshot() == old
+        assert (tmp_path / "inventory.json").read_bytes() == old_bytes
+
+
+
+@pytest.mark.parametrize(("endpoint", "params"), [
+    ("/api/v1/sources", {"q": "secret"}),
+    ("/api/v1/search", None),
+    ("/api/v1/search", {"source_id": "alpha"}),
+    ("/api/v1/search", {"source_id": "alpha", "q": "Livre", "token": "secret"}),
+    ("/api/v1/search", {"source_id": "alpha/beta", "q": "Livre"}),
+    ("/api/v1/search", {"source_id": "alpha", "q": "token\nprivate"}),
+    ("/api/v1/search", {"source_id": "alpha", "q": "a" * 301}),
+    ("/api/v1/search/../secrets", None),
+    ("/api/v1/private", None),
+    ("/api/v1/sources?api_key=secret", None),
+])
+def test_candidate_http_restricts_endpoints_and_query_schema(
+    mocked_candidate_server, endpoint, params,
+):
+    url, calls, _state = mocked_candidate_server
+    client = JsonClient(url)
+    with pytest.raises(ContractUnavailable):
+        client.get(endpoint, params=params)
+    assert calls == []
+
+
+def test_candidate_http_bypasses_untrusted_environment_proxy(
+    mocked_candidate_server, monkeypatch,
+):
+    url, calls, _state = mocked_candidate_server
+    monkeypatch.setenv("HTTP_PROXY", "http://malicious.invalid:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://malicious.invalid:8080")
+    monkeypatch.setenv("http_proxy", "http://malicious.invalid:8080")
+    client = JsonClient(url)
+    from urllib.request import ProxyHandler
+    handlers = [handler for handler in client._opener.handlers
+                if isinstance(handler, ProxyHandler)]
+    # urllib may omit an empty ProxyHandler from the built opener entirely.
+    assert not any(handler.proxies for handler in handlers)
+    assert client.get("/api/v1/sources")["api_major"] == 1
+    assert client.get("/api/v1/search", params={
+        "source_id": "alpha", "q": "Un livre",
+    })["items"][0]["title"] == "Livre HTTP"
+    assert calls == [
+        "/api/v1/sources",
+        "/api/v1/search?source_id=alpha&q=Un+livre",
+    ]

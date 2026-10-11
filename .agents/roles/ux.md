@@ -59,21 +59,24 @@ détecter l'hôte
   -> preuve + logs -> issue UX si défaut
 ```
 
-Sur Debian 13 réseau-isolé, **conserver le bootstrap rootless local**
-et, si un cache Debian 13 signé est disponible, faire
-`bootstrap.py --offline --deb-cache <chemin>`. GitHub peut servir uniquement
-de relais ponctuel de paquets, **pas** de plateforme d'exécution de la
-recette E2E. **Depuis le 11 octobre 2026, le budget GitHub Actions est
-bloqué : aucun nouveau workflow/relai/run ni relance automatique sans
-nouvelle autorisation après levée du blocage.** Si le cache manque,
-signaler « bloqué », pas « GTK validé ».
+**Décision du 11 octobre 2026 (actualisée) :** le propriétaire indique le
+passage du dépôt en public, le déblocage budgétaire et **autorise les tests
+E2E GTK sur runners GitHub standard**. Utiliser en premier le workflow
+`.github/workflows/e2e-smoke.yml`, sans ajouter un nouveau pipeline pour
+chaque scénario. Examiner les artefacts, les captures et le verdict des
+assertions avant d'annoncer un succès. Garder la frugalité des Actions.
 
-Avant un scénario `e2e/run.py` avec le runtime rootless, vérifier la
-**limitation de PYTHONPATH** documentée dans
-`environnements/E2E-UX.md` : le runner écrase aujourd'hui le chemin des
-bibliothèques GI du bootstrap dans les sous-processus. Pour le widget
-Diagnostics, employer la commande `headless` + `gtk-python` du guide ;
-pour un parcours applicatif, employer `datasetctl exec` et la vraie IHM.
+Pour une recette Debian 13 **locale et réseau-isolée**, conserver le bootstrap
+rootless avec `bootstrap.py --offline --deb-cache <chemin>`.
+GitHub peut y servir de **relais ponctuel de paquets** ; ne pas mélanger
+paquets Debian/Ubuntu. Les E2E sur runners standard constituent désormais
+un **mode de validation séparé**, qui n'installe rien localement.
+
+Sur le runtime local rootless, `e2e/run.py` écrase `PYTHONPATH`, mais
+`--python environnements/openai-chat-debian/gtk-python` réapplique
+`env.sh` dans le sous-processus. Sur runners standard, employer le venv
+`--system-site-packages` préparé par `E2E Smoke`. Pour un parcours
+applicatif complet, employer `datasetctl exec` et la vraie IHM.
 Ne jamais assimiler le self-test GTK, un probe widget, une capture visuelle
 et une recette fonctionnelle de la fenêtre complète.
 

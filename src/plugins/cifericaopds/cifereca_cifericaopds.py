@@ -10,12 +10,15 @@ from dataclasses import asdict
 from datetime import date
 import re
 import json
+import math
 import os
+import stat
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from threading import RLock
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from cifereca.plugin_api import (
     ProviderCapabilities, ProviderDescriptor, ProviderPlugin, ProviderSession,
@@ -54,16 +57,68 @@ def safe_base_url(raw: str) -> str:
     return urlunsplit((parts.scheme, host + (f":{port}" if port is not None else ""), "", "", ""))
 
 
+def _decode_strict_json(raw: bytes):
+    """Reject ambiguous or non-finite JSON before it enters local/HTTP state."""
+    def reject_constant(_value):
+        raise ValueError("invalid JSON numeric constant")
+
+    def reject_duplicate_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
+    def parse_finite_float(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("non-finite JSON number")
+        return result
+
+    return json.loads(
+        raw.decode("utf-8"), parse_constant=reject_constant,
+        parse_float=parse_finite_float, object_pairs_hook=reject_duplicate_fields,
+    )
+
+
 class JsonClient:
     def __init__(self, base_url, timeout=4):
         self.base_url = safe_base_url(base_url)
-        self.timeout = min(20.0, max(0.5, float(timeout)))
-        self._opener = build_opener(NoRedirects())
+        try:
+            if isinstance(timeout, bool):
+                raise ValueError("invalid timeout")
+            seconds = float(timeout)
+            if not math.isfinite(seconds):
+                raise ValueError("invalid timeout")
+            self.timeout = min(20.0, max(0.5, seconds))
+        except (TypeError, ValueError, OverflowError):
+            raise ContractUnavailable("invalid configured timeout") from None
+        # No proxies from HTTP_PROXY/HTTPS_PROXY or platform settings:
+        # even requests to a loopback fixture must remain on loopback.
+        self._opener = build_opener(ProxyHandler({}), NoRedirects())
 
     def get(self, endpoint: str, *, params=None):
-        if not endpoint.startswith("/api/v1/") or "?" in endpoint or "#" in endpoint:
+        # Do not let child providers turn this candidate read-only transport
+        # into a general-purpose HTTP client.
+        if endpoint == "/api/v1/sources":
+            if params is not None:
+                raise ContractUnavailable("unexpected discovery parameters")
+            query_string = ""
+        elif endpoint == "/api/v1/search":
+            if not isinstance(params, dict) or set(params) != {"source_id", "q"}:
+                raise ContractUnavailable("invalid search parameters")
+            source_id, query = params["source_id"], params["q"]
+            if not isinstance(source_id, str) or not re.fullmatch(
+                    r"[a-z0-9][a-z0-9_-]{0,63}", source_id):
+                raise ContractUnavailable("invalid candidate source id")
+            if not isinstance(query, str) or len(query) > 300 or any(
+                    ord(ch) < 32 or ord(ch) == 127 for ch in query):
+                raise ContractUnavailable("invalid candidate query")
+            query_string = "?" + urlencode({"source_id": source_id, "q": query})
+        else:
             raise ContractUnavailable("endpoint not allowed")
-        url = self.base_url + endpoint + ("?" + urlencode(params) if params else "")
+        url = self.base_url + endpoint + query_string
         request = Request(url, headers={
             "Accept": "application/json", "User-Agent": "cifereca-cifericaopds/0.1"
         })
@@ -75,17 +130,84 @@ class JsonClient:
                 if content_type != "application/json":
                     raise ContractUnavailable("invalid JSON content type")
                 raw = response.read(MAX_JSON_BYTES + 1)
-        except (HTTPError, URLError, OSError, TimeoutError) as exc:
-            raise ContractUnavailable("server unavailable") from exc
+        except (HTTPError, URLError, OSError, TimeoutError):
+            # Do not chain a transport exception: its repr may contain
+            # URL query parameters, hostname or configuration secrets.
+            raise ContractUnavailable("server unavailable") from None
         if len(raw) > MAX_JSON_BYTES:
             raise ContractUnavailable("oversized JSON response")
         try:
-            result = json.loads(raw)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise ContractUnavailable("invalid server JSON") from exc
+            result = _decode_strict_json(raw)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise ContractUnavailable("invalid server JSON") from None
         if not isinstance(result, dict):
             raise ContractUnavailable("JSON object required")
         return result
+
+
+def _read_local_json(path: Path, *, label: str, optional: bool = False):
+    """Bounded, no-symlink JSON read; never include local paths in failures.
+
+    The file size is checked on the opened descriptor, not with a separate
+    path.stat(), to prevent accidental unbounded reads after a file swap.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        # Also refuse symlinks on systems without O_NOFOLLOW.
+        if path.is_symlink():
+            raise ContractUnavailable(f"unreadable local {label} JSON")
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        if optional:
+            return None
+        raise ContractUnavailable(f"missing local {label} fixture") from None
+    except OSError:
+        raise ContractUnavailable(f"unreadable local {label} JSON") from None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            file_status = os.fstat(handle.fileno())
+            if not stat.S_ISREG(file_status.st_mode):
+                raise ContractUnavailable(f"invalid local {label} file")
+            if file_status.st_size > MAX_JSON_BYTES:
+                raise ContractUnavailable(f"oversized local {label} JSON")
+            raw = handle.read(MAX_JSON_BYTES + 1)
+    except OSError:
+        raise ContractUnavailable(f"unreadable local {label} JSON") from None
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractUnavailable(f"oversized local {label} JSON")
+    try:
+        # Use exactly the same strict JSON grammar for local and HTTP data.
+        return _decode_strict_json(raw)
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise ContractUnavailable(f"invalid local {label} JSON") from None
+
+
+def _persist_inventory(path: Path, snapshot) -> None:
+    """Publish a private inventory atomically; never follow a known tmp path."""
+    raw = json.dumps(asdict(snapshot), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractUnavailable("oversized local inventory JSON")
+    temp_name = None
+    try:
+        # Randomized, exclusive temporary file in the same directory ensures
+        # os.replace() is atomic and avoids following a pre-existing .tmp link.
+        with NamedTemporaryFile(
+            mode="wb", prefix=".cifericaopds-inventory-", suffix=".tmp",
+            dir=path.parent, delete=False,
+        ) as handle:
+            temp_name = handle.name
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except OSError:
+        raise ContractUnavailable("local inventory persistence unavailable") from None
+    finally:
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
 
 
 def _text(value, label, maximum=512):
@@ -266,11 +388,9 @@ class CifericaSession(ProviderSession):
         sid = self.provider_id.removeprefix("cifericaopds.")
         if self._mode == "fixture":
             path = self._directory / "fixture-results.json"
-            if not path.exists():
+            data = _read_local_json(path, label="results", optional=True)
+            if data is None:
                 return []
-            if path.stat().st_size > MAX_JSON_BYTES:
-                raise ContractUnavailable("oversized local results fixture")
-            data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or not isinstance(data.get(sid, {"items": []}), dict):
                 raise ContractUnavailable("invalid local results fixture")
             values = candidate_results(data.get(sid, {"items": []}), self.provider_id)
@@ -319,8 +439,18 @@ class CifericaCollection:
         self._mode = "fixture"
         self._show_synthetic = False
         self._session_epochs = {}
+        self._active = False
+        self._activation_generation = 0
 
     def activate(self, context):
+        with self._lock:
+            self._activation_generation += 1
+            # Invalidate sessions from previous activations, including cases
+            # where the new cache advertises identical upstream revisions.
+            for sid in self._session_epochs:
+                self._session_epochs[sid] += 1
+            self._snapshot = None
+            self._active = False
         cfg = dict(context.config)
         self._mode = cfg.get("mode", "fixture")
         if self._mode not in ("fixture", "candidate_v02"):
@@ -330,19 +460,28 @@ class CifericaCollection:
         self._show_synthetic = bool(cfg.get("show_synthetic", False))
         self._directory = context.data_directory
         path = self._directory / "inventory.json"
-        if path.is_file() and path.stat().st_size <= MAX_JSON_BYTES:
-            try:
+        try:
+            cached = _read_local_json(path, label="inventory", optional=True)
+            if cached is not None:
                 self._snapshot = validate_provider_collection_snapshot(
-                    json.loads(path.read_text(encoding="utf-8")),
-                    parent_plugin_id=PARENT_ID,
+                    cached, parent_plugin_id=PARENT_ID,
                 )
-            except (ValueError, TypeError, OSError):
-                self._snapshot = None
+        except (ContractUnavailable, ValueError, TypeError, RecursionError):
+            # A damaged cache cannot prevent the plugin from activating.
+            # It is neither published nor overwritten before an explicit refresh.
+            self._snapshot = None
+        with self._lock:
+            self._active = True
         return self
 
     def deactivate(self):
         with self._lock:
+            self._activation_generation += 1
+            self._active = False
+            for sid in self._session_epochs:
+                self._session_epochs[sid] += 1
             self._callbacks.clear()
+            self._directory = None
 
     def snapshot(self):
         with self._lock:
@@ -353,32 +492,28 @@ class CifericaCollection:
     def refresh(self, *, explicit=True):
         if explicit is not True:
             raise ContractUnavailable("discovery must be explicit")
-        if self._directory is None:
-            raise ContractUnavailable("plugin is not active")
-        if self._mode == "fixture":
-            path = self._directory / "fixture-sources.json"
-            if path.stat().st_size > MAX_JSON_BYTES:
-                raise ContractUnavailable("oversized local source fixture")
-            data = json.loads(path.read_text(encoding="utf-8"))
+        with self._lock:
+            if not self._active or self._directory is None:
+                raise ContractUnavailable("plugin is not active")
+            activation = self._activation_generation
+            directory = self._directory
+            mode = self._mode
+        if mode == "fixture":
+            path = directory / "fixture-sources.json"
+            data = _read_local_json(path, label="source")
         else:
             # Experimental candidate route, not an assertion about upstream v0.2.
             data = self._client.get("/api/v1/sources")
         if not isinstance(data, dict):
             raise ContractUnavailable("invalid candidate inventory")
         with self._lock:
+            if not self._active or self._activation_generation != activation:
+                raise ContractUnavailable("plugin changed during source refresh")
             accepted = candidate_inventory(data, self._snapshot,
                                            show_synthetic=self._show_synthetic)
             if accepted == self._snapshot:
                 return accepted
-            path = self._directory / "inventory.json"
-            temp = path.with_suffix(".tmp")
-            try:
-                temp.write_text(json.dumps(asdict(accepted), ensure_ascii=False,
-                                           sort_keys=True), encoding="utf-8")
-                os.replace(temp, path)
-            finally:
-                if temp.exists():
-                    temp.unlink()
+            _persist_inventory(directory / "inventory.json", accepted)
             previous = {row.source_id: row for row in self._snapshot.children} if self._snapshot else {}
             current = {row.source_id: row for row in accepted.children}
             for source_id in previous.keys() | current.keys():
@@ -397,7 +532,7 @@ class CifericaCollection:
         """Inspect current validated local inventory and source incarnation."""
         with self._lock:
             snapshot = self._snapshot
-            if snapshot is None or self._session_epochs.get(source_id, 0) != epoch:
+            if not self._active or snapshot is None or self._session_epochs.get(source_id, 0) != epoch:
                 return False
             return any(
                 child.source_id == source_id
@@ -411,8 +546,8 @@ class CifericaCollection:
     def create_provider(self, source_id):
         with self._lock:
             snapshot = self._snapshot
-            if snapshot is None:
-                raise ContractUnavailable("no local source inventory")
+            if not self._active or snapshot is None:
+                raise ContractUnavailable("no active local source inventory")
             child = next((row for row in snapshot.children
                           if row.source_id == source_id and row.status == "ready"), None)
             epoch = self._session_epochs.get(source_id, 0)

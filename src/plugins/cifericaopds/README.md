@@ -62,6 +62,17 @@ routes n'est attestée sur le serveur réel**.
 
 ## Sécurité, limites et reprise
 
+- Le JSON de la route HTTP candidate est soumis au même parseur strict
+  que les fixtures : UTF-8, pas de clés dupliquées ni de constantes/flottants
+  non finis, taille et type MIME bornés. La configuration du délai rejette
+  les valeurs invalides ou non finies. Les exceptions de transport ne sont
+  pas chaînées dans les erreurs publiques afin de ne pas exposer de requêtes
+  ou paramètres sensibles. Le dernier inventaire sain est préservé.
+- Le transport candidat ignore les proxies issus de l'environnement et
+  du système afin de ne pas relayer par accident les requêtes du serveur
+  local. Les deux seules routes HTTP GET permises sont `/api/v1/sources`
+  sans paramètre et `/api/v1/search` avec `source_id` validé et `q`
+  borné ; toute autre route ou clé est refusée localement, sans réseau.
 - Le mode HTTP refuse les redirections, les URL contenant des identifiants,
   les chemins d'origine, et HTTP en dehors de loopback ; délais et tailles
   bornés, réponse JSON strictement typée.
@@ -79,6 +90,16 @@ routes n'est attestée sur le serveur réel**.
   de recherche et de nouveau avant d'en publier les résultats. Une réponse
   devenue périmée pendant une requête HTTP en cours est jetée ; ceci ne
   constitue pas une annulation réseau native.
+- En mode fixture, la lecture des JSON locaux est limitée à **1 Mio par
+  fichier**, refuse liens symboliques, formats invalides, encodages non UTF-8,
+  valeurs numériques JSON non standard et fichiers spéciaux. Les erreurs
+  sont typées sans recopier chemins ni contenu. Un cache d'inventaire
+  endommagé ne bloque pas l'activation ; un échec de `refresh()` préserve
+  le dernier inventaire sain.
+- L'inventaire accepté est écrit dans un fichier temporaire aléatoire privé
+  (permissions restreintes), puis publié atomiquement. Une erreur d'écriture
+  ne remplace ni le cache précédent ni le snapshot en mémoire. Les fixtures
+  de résultats manquantes restent volontairement équivalentes à zéro résultat.
 - La recherche peut fonctionner en mode fixture sans serveur. En mode HTTP
   candidat, l'indisponibilité HTTP produit une erreur explicite ; l'inventaire
   validé reste inchangé. Les notices précédemment indexées restent dans Core.

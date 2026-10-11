@@ -80,14 +80,21 @@ Le cache doit contenir `.gtk4-cache-profile.json` et les fichiers `.deb`,
 et avoir été créé par `bootstrap.py --download-only`. Le fichier de
 lock documente versions et SHA-256. Ne pas forcer une dépendance manquante.
 
-**Décision du 11 octobre 2026 : budget GitHub Actions bloqué.**
-GitHub n'était utilisé **qu'en relais réseau ponctuel pour télécharger
-les paquets**, et **pas pour exécuter la recette E2E**.
-Ne déclencher **aucun** workflow ou relais automatique tant que la
-restriction budgétaire n'a pas été levée et qu'un nouvel accord n'a pas
-été donné. La procédure modèle reste
-[`openai-chat-debian/github-cache-relay.yml.example`](openai-chat-debian/github-cache-relay.yml.example) ;
-elle n'est pas un workflow actif. Voir [issue #1011](https://github.com/pzia/cifereca/issues/1011).
+**Mise à jour du 11 octobre 2026 :** le propriétaire indique avoir rendu
+le dépôt public et levé le blocage budgétaire GitHub Actions. Il **autorise
+l'exécution des scénarios E2E GTK sur les runners standard GitHub**.
+La suspension antérieure est donc levée pour ces validations, **sans multiplier
+les workflows** : utiliser [`E2E Smoke`](../.github/workflows/e2e-smoke.yml)
+sur `ubuntu-24.04` avec le venv `--system-site-packages` et les dépendances
+GTK4 installées par `scripts/ci-install-gtk-e2e-runtime.sh`.
+Les résultats, logs et captures sont publiés comme artefacts ; un PASS
+de l'infrastructure n'est pas un PASS des scénarios.
+
+Sur un *hôte Debian 13 local sans DNS*, GitHub peut **séparément** servir de
+relais réseau pour les paquets nécessaires au bootstrap rootless, avec
+[`openai-chat-debian/github-cache-relay.yml.example`](openai-chat-debian/github-cache-relay.yml.example).
+Ce relais est facultatif pour les tests exécutés directement sur GitHub ;
+ne pas recréer de workflows concurrents. Voir [issue #1011](https://github.com/pzia/cifereca/issues/1011).
 
 Sans réseau **ni** cache, documenter le blocage : ne pas annoncer
 d'installation ou de capture réussie.
@@ -114,7 +121,7 @@ Cifereca ; ne pas assembler une vidéo à partir de PNG.
 La fonction `datasetctl snapshot` cible encore l'ancien harnais à
 `.venv` : ne pas la confondre avec la recette Debian 13 rootless.
 
-## 5. Tests `e2e/` : distinguer runner système et runtime rootless
+## 5. Tests `e2e/` : runners GitHub, Python système et runtime rootless
 
 Le runner [`e2e/run.py`](../e2e/run.py) construit un HOME/XDG
 **temporaire par scénario**, utilise `xvfb-run`, lance les probes
@@ -129,12 +136,19 @@ Avec un **Python système possédant déjà GI** et les dépendances GTK
   --scenario diagnostics-1366
 ```
 
-**Limitation vérifiée dans le code au 11/10/2026 :** `e2e/run.py`
-remplace `PYTHONPATH` par le seul dossier `src/` lors du lancement du
-probe. Cela **écarte la bibliothèque GI rootless** exportée par
-`openai-chat-debian/env.sh`. Ne pas présenter l'appel ci-dessus comme
-validé avec le Python du runtime rootless. Un correctif du runner et sa
-recette sont nécessaires pour unifier ce chemin.
+**Point technique :** `e2e/run.py` remplace `PYTHONPATH` par `src/`
+dans le sous-processus. Sur un runtime local rootless, transmettre le
+lanceur `gtk-python` comme `--python` rétablit toutefois
+`env.sh` **dans le sous-processus**, après ce remplacement. Vérifier les
+imports et le PASS réel avant de conclure. Sur le runner Ubuntu standard,
+le venv `--system-site-packages` rend `gi` accessible sans ce lanceur :
+
+```bash
+CIFERECA_E2E_PYTHON=/CHEMIN/DU/VENV/bin/python \
+  dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-1366
+```
+
+Ce chemin de validation est implémenté par le workflow `E2E Smoke`.
 
 ### Recette immédiate du widget Diagnostics avec le harnais rootless
 

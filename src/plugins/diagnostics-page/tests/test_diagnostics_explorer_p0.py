@@ -503,3 +503,43 @@ def test_journals_ui_shows_optional_expurgated_source_reasons():
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
     assert 'state.get("reason")' in page
     assert 'source_summaries(current_page)' in page
+
+
+def test_source_summaries_normalize_only_valid_last_event_dates():
+    states = source_summaries({"sources": [
+        {"source": "core_events", "status": "available",
+         "last_event": "2026-10-11T14:00:00+02:00"},
+        {"source": "app_log", "status": "partial",
+         "last_event": "2026-10-11T11:30:00Z"},
+    ]})
+    assert states[0]["last_event"] == "2026-10-11T12:00:00+00:00"
+    assert states[1]["last_event"] == "2026-10-11T11:30:00+00:00"
+    assert states[1]["status"] == "partial"
+
+
+@pytest.mark.parametrize("invalid", [
+    "2026-10-11T12:00:00", "yesterday", "2026-10-11T00:00:00Z secret",
+    "X" * 1000, None, 123, {}, [],
+])
+def test_source_summaries_ignore_untrusted_last_event(invalid):
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("untrusted source metadata stringified")
+
+    payload = {"sources": [
+        {"source": "app_log", "status": "unavailable",
+         "last_event": invalid},
+        {"source": "core_events", "status": "empty",
+         "last_event": Hostile()},
+    ]}
+    states = source_summaries(payload)
+    assert "last_event" not in states[0]
+    assert "last_event" not in states[1]
+
+
+def test_journals_show_last_published_event_from_broker():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert "dernier événement publié : {state['last_event']}" in page
+    assert "source_summaries(current_page)" in page

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UX #1011: vrai widget GTK4 Diagnostics, brokers simulés, Xvfb 1366.
+"""UX #1011: vrai widget GTK4 Diagnostics, brokers simulés, Xvfb 1366/1600.
 
 Recette d'intégration du plugin (pas une preuve de toute la fenêtre Cifereca).
 Aucune identité ou service distant n'est utilisé.
@@ -146,7 +146,7 @@ class Host:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366,))
+    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -177,7 +177,7 @@ def main():
 
     def screenshot(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
-        assert image.width == args.width, image.size
+        assert image.size == (args.width, 1000 if args.width == 1600 else 900), image.size
         assert image.getbbox() is not None, "capture entièrement vide"
         path = out / (stage + ".png")
         image.save(path)
@@ -329,10 +329,224 @@ def main():
         assert plugin.llm is None
         report["checks"]["pagination_50_then_15"] = True
         screenshot("03-journals-second-page")
+        if args.width == 1600:
+            later(extended_keyboard, 120)
+            return
+        pass_scenario()
+
+    def pass_scenario():
         report["status"] = "PASS"
         save()
         rc[0] = 0
         app.quit()
+
+    def press(key):
+        device[0].key(key, True)
+        device[0].key(key, False)
+
+    def extended_keyboard():
+        # Deliberately keep the 1366 baseline unchanged: this adds only
+        # a large-display, long-report and physical keyboard exercise.
+        assert args.width == 1600
+        assert window[0].get_width() <= args.width
+        expander = find_expander("Ouvrir le rapport support")
+        assert expander.get_expanded(), "Rapport refermé pendant la navigation"
+        scrollers = [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)]
+        texts = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        wraps = [w for w in walk(expander) if isinstance(w, Gtk.CheckButton)
+                 and w.get_label() == "Retour à la ligne"]
+        assert len(scrollers) == len(texts) == len(wraps) == 1
+        text = texts[0].get_buffer()
+        contents = text.get_text(text.get_start_iter(), text.get_end_iter(), False)
+        assert contents.count("Événement fictif.") >= 250, "Rapport multipage absent"
+        assert "SECRET-UX-TEST" not in contents
+        assert "EXEMPLE-PRIVE-UX" not in contents
+        report["checks"]["long_redacted_report_1600"] = True
+        resize = find_button("Agrandir")
+        # Journals paging can leave the report below the visible viewport.
+        # Scroll the real outer page to the actual GTK button allocation
+        # before asking for keyboard focus: no guessed pixel coordinates.
+        content = page[0].get_child()
+        ok, bounds = resize.compute_bounds(content)
+        assert ok, "Position GTK du bouton Agrandir introuvable"
+        outer = page[0].get_vadjustment()
+        destination = max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        ))
+        outer.set_value(destination)
+        report["outer_scroll_to_report"] = round(destination, 2)
+        report["stage"] = "scroll_to_report_button"
+        later(lambda: focus_report_resize(resize, wraps[0], scrollers[0]), 200)
+
+    def focus_report_resize(resize, wrap, scroller):
+        report["stage"] = "focus_report_resize"
+        focused = resize.grab_focus()
+        assert focused is not False, "Agrandir refuse le focus clavier GTK"
+        until(lambda: resize.has_focus(),
+              lambda: activate_report_resize(resize, wrap, scroller), seconds=4)
+
+    def activate_report_resize(resize, wrap, scroller):
+        report["stage"] = "activate_resize_space_xtest"
+        assert resize.has_focus(), "Agrandir n'a pas de focus clavier"
+        # A real XTEST key event changes the GTK button and its scroller.
+        press("space")
+        until(lambda: resize.get_label() == "Réduire" and
+              scroller.get_size_request()[1] == 560,
+              lambda: tab_forward(resize, wrap, scroller), seconds=4)
+
+    def tab_forward(resize, wrap, scroller):
+        report["stage"] = "tab_forward_xtest"
+        assert resize.has_focus(), "Le focus a quitté le bouton après Space"
+        press("Tab")
+        until(lambda: wrap.has_focus(),
+              lambda: tab_backward(resize, wrap, scroller), seconds=4)
+
+    def tab_backward(resize, wrap, scroller):
+        report["stage"] = "shift_tab_back_xtest"
+        assert wrap.has_focus(), "Tab ne rejoint pas Retour à la ligne"
+        device[0].key("Shift_L", True)
+        try:
+            press("Tab")
+        finally:
+            device[0].key("Shift_L", False)
+        until(lambda: resize.has_focus(),
+              lambda: verify_tab(resize, scroller), seconds=4)
+
+    def verify_tab(resize, scroller):
+        report["stage"] = "verify_scroll_independent"
+        assert resize.has_focus(), "Shift+Tab ne revient pas à Agrandir/Réduire"
+        report["checks"]["tab_shift_tab_and_space_xtest"] = True
+        screenshot("04-report-keyboard-1600")
+        adjustment = scroller.get_vadjustment()
+        bottom = max(0, adjustment.get_upper() - adjustment.get_page_size())
+        assert bottom > 500, ("Rapport sans défilement interne", bottom)
+        outer = page[0].get_vadjustment()
+        outer_before = outer.get_value()
+        adjustment.set_value(bottom)
+        later(lambda: verify_scrolled(scroller, outer_before, bottom), 200)
+
+    def verify_scrolled(scroller, outer_before, bottom):
+        adjustment = scroller.get_vadjustment()
+        assert adjustment.get_value() >= bottom - 3, (
+            "Bas du rapport inaccessible", adjustment.get_value(), bottom
+        )
+        outer = page[0].get_vadjustment()
+        assert abs(outer.get_value() - outer_before) <= 4, (
+            "Défilement interne modifie la page", outer_before, outer.get_value()
+        )
+        report["checks"]["independent_scroll_to_report_end"] = True
+        report["scroll"] = {
+            "inner_bottom": round(bottom, 2),
+            "inner_value": round(adjustment.get_value(), 2),
+            "outer_before": round(outer_before, 2),
+            "outer_after": round(outer.get_value(), 2),
+        }
+        screenshot("05-report-bottom-1600")
+        assert broker.checks == 0 and plugin.llm is None
+        # D16: resize the *visible* GTK window; Xvfb remains 1600x1000.
+        report["stage"] = "resize_visible_window_narrow"
+        report["window_before_resize"] = [
+            window[0].get_width(), window[0].get_height()
+        ]
+        window[0].set_default_size(1240, 800)
+        until(
+            lambda: window[0].get_width() <= 1280
+            and window[0].get_height() <= 820,
+            resized_narrow,
+            seconds=6,
+        )
+
+    def resized_narrow():
+        report["stage"] = "validate_resize_narrow"
+        window_width = window[0].get_width()
+        window_height = window[0].get_height()
+        assert window_width >= 760, ("Fenêtre trop petite", window_width)
+        assert window_height >= 540, ("Fenêtre trop basse", window_height)
+        assert page[0].get_mapped() and find_label("Rapport support")
+        assert find_label("Journaux par composant")
+        horizontal = page[0].get_hadjustment()
+        overflow = max(0, horizontal.get_upper() - horizontal.get_page_size())
+        assert overflow < 5, ("Débordement horizontal global", overflow)
+        report["window_narrow"] = [window_width, window_height]
+        report["horizontal_overflow_narrow"] = round(overflow, 2)
+        screenshot("06-live-resized-narrow-1600")
+        window[0].set_default_size(1560, 870)
+        until(
+            lambda: window[0].get_width() >= 1510
+            and window[0].get_height() >= 840,
+            resized_wide,
+            seconds=6,
+        )
+
+    def resized_wide():
+        report["stage"] = "validate_resize_wide"
+        assert page[0].get_mapped() and find_label("Rapport support")
+        assert window[0].get_width() > report["window_narrow"][0]
+        report["window_wide_again"] = [
+            window[0].get_width(), window[0].get_height()
+        ]
+        report["checks"]["live_resize_narrow_and_wide_without_global_horizontal_overflow"] = True
+        screenshot("07-live-resized-wide-1600")
+        # UX audit, not a PASS for D13/D15: record actual capabilities without
+        # converting missing product functionality into a green assertion.
+        report["stage"] = "audit_escape_and_file_export"
+        expander = find_expander("Ouvrir le rapport support")
+        report["audit"] = {"report_open_before_escape": expander.get_expanded()}
+        focus = find_button("Réduire")
+        outer = page[0].get_vadjustment()
+        content = page[0].get_child()
+        ok, bounds = focus.compute_bounds(content)
+        assert ok
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: audit_escape(focus, expander), 170)
+
+    def audit_escape(focus, expander):
+        assert focus.grab_focus() is not False
+        until(lambda: focus.has_focus(),
+              lambda: send_escape(expander), seconds=4)
+
+    def send_escape(expander):
+        report["stage"] = "observe_escape_xtest"
+        press("Escape")
+        later(lambda: finish_audit(expander), 260)
+
+    def finish_audit(expander):
+        report["stage"] = "finish_audit"
+        reduced = find_button("Agrandir") if any(
+            isinstance(w, Gtk.Button) and w.get_label() == "Agrandir"
+            for w in walk(page[0])
+        ) else None
+        esc_closes_enlargement = (
+            reduced is not None or not expander.get_expanded()
+        )
+        export_buttons = [
+            (w.get_label() or "", w.get_tooltip_text() or "")
+            for w in walk(page[0]) if isinstance(w, Gtk.Button)
+            and ("export" in ((w.get_label() or "") + " " +
+                             (w.get_tooltip_text() or "")).casefold()
+                 or "enregistrer" in ((w.get_label() or "") + " " +
+                                     (w.get_tooltip_text() or "")).casefold())
+        ]
+        report["audit"].update({
+            "escape_collapses_or_reduces_report": esc_closes_enlargement,
+            "report_open_after_escape": expander.get_expanded(),
+            "file_export_action_present": bool(export_buttons),
+            "file_export_actions": export_buttons,
+            "scope": "Observation de la vraie UI; aucun export de fichier simulé",
+        })
+        report["unmet_criteria"] = [
+            key for key, ok in (
+                ("D15: Escape ferme l'agrandissement", esc_closes_enlargement),
+                ("D13: export support explicite vers un fichier", bool(export_buttons)),
+            ) if not ok
+        ]
+        screenshot("08-escape-export-audit-1600")
+        assert broker.checks == 0 and plugin.llm is None
+        pass_scenario()
 
     class Application(Gtk.Application):
         def __init__(self):
@@ -341,7 +555,7 @@ def main():
         def do_activate(self):
             window[0] = Gtk.ApplicationWindow(application=self)
             window[0].set_title("Diagnostics UX GTK isolé")
-            window[0].set_default_size(args.width - 40, 790)
+            window[0].set_default_size(args.width - 40, 870 if args.width == 1600 else 790)
             device[0] = X11Input()
             page[0] = plugin._build(host)
             window[0].set_child(page[0])
@@ -356,7 +570,7 @@ def main():
 
     app = Application()
     GLib.timeout_add_seconds(
-        35, lambda: (fail("Timeout GTK 35s"), False)[1]
+        65, lambda: (fail("Timeout GTK 65s"), False)[1]
         if report["status"] == "RUNNING" else False)
     app.run([sys.argv[0]])
     if not (out / "screen.json").exists():

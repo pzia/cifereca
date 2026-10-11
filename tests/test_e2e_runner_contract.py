@@ -50,6 +50,144 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert marker in source
 
 
+def test_diagnostics_structured_real_gtk_redacts_and_preserves_types():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-structured-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-structured"
+    assert scenario["fixture"] == "startup"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_structured_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "D07_readable_preserves_false_zero_null_empty_and_unicode",
+        "D07_json_indented_typed_and_redacted",
+        "D07_raw_matches_json_without_secret",
+        "D13_ctrl_c_selection_expurgated",
+        'physical("c")',
+        'device[0].key("Control_L", True)',
+        'get_has_selection()',
+        'json.loads(body)',
+        'report["unmet_criteria"]',
+    ):
+        assert marker in source
+
+
+def test_diagnostics_volume_real_gtk_bounded_broker_and_provenance():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-volume-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-volume"
+    assert scenario["width"] == 1366
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    source = (ROOT / "e2e/diagnostics_volume_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "TOTAL = 10000",
+        "D06_10000_events_50_rows_bounded",
+        "D06_stable_pagination_next_50",
+        "D09_period_changes_broker_query",
+        "D10_adept_code10_no_invented_adobe_cause",
+        "D11_paris_return_requested_not_confirmed",
+        "D12_link_proven_by_broker",
+        'report["unmet_criteria"]',
+    ):
+        assert marker in source
+
+
+def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
+    runner = _module()
+    state = runner.SCENARIOS["diagnostics-states-1366"]
+    assert state["runner"] == "gtk-diagnostics-states"
+    assert state["fixture"] == "startup"
+    assert state["plugin"] == "ui.page.diagnostics"
+    assert state["width"] == 1366
+    probe = (ROOT / "e2e/diagnostics_states_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "D01_no_sources_not_healthy",
+        "D02_zero_events_vs_source_available",
+        "D03_error_contextualized_and_ui_responsive",
+        "D03_explicit_retry_recovers",
+        "D04_active_check_does_not_block_GTK",
+        "D04_finished_and_button_reenabled",
+        "D02_explicit_zero_anomaly_with_period",
+        "D04_full_mainwindow_navigation",
+        "diagnostics_states_probe",
+    ):
+        if marker != "diagnostics_states_probe":
+            assert marker in probe
+        else:
+            assert "gtk-diagnostics-states" in RUNNER.read_text(encoding="utf-8")
+    assert 'Thread(target=worker' in probe
+    assert 'device[0].click_widget(check)' in probe
+    assert 'report["unmet_criteria"]' in probe
+
+
+def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-large-1600"]
+    assert scenario["runner"] == "gtk-diagnostics"
+    assert scenario["width"] == 1600
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    source = (ROOT / "e2e/diagnostics_page_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "independent_scroll_to_report_end",
+        "long_redacted_report_1600",
+        "tab_shift_tab_and_space_xtest",
+        'press("Tab")',
+        'press("space")',
+        "outer_before",
+    ):
+        assert marker in source
+
+
+def test_navigation_waits_for_real_gtk_crossfade_before_screenshots():
+    source = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'get_property("transition-running")' in source
+    assert 'if visible and not fading:' in source
+    assert 'later(120, callback)' in source
+
+
+def test_d04_slow_check_real_mainwindow_navigation_contract():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-navigation-slow-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-navigation"
+    assert scenario["width"] == 1366
+    assert scenario["slow_check"] is True
+    script = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for assertion in (
+        "D04_explicit_async_check_started",
+        "D04_physical_library_navigation_during_pending_check",
+        "D04_async_check_completes_offscreen",
+        "D04_check_result_visible_on_return",
+        "SlowNavigationBroker(Broker)",
+        'device[0].click_widget(buttons[0])',
+        "StateTasks() if args.slow_check",
+    ):
+        assert assertion in script
+
+
+def test_diagnostics_navigation_targets_real_mainwindow_and_pointer_events():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-navigation-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-navigation"
+    assert scenario["fixture"] == "startup"
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "Pages().pages()",
+        "self.diagnostics_page.pages()",
+        'click_widget(w.nav_rows["library"])',
+        'click_widget(w.nav_rows["diagnostics"])',
+        "Configuration / Technique",
+        "physical_return_to_library",
+        'report["status"] = "PASS"',
+    ):
+        assert marker in source
+
+
 def test_reference_scenario_runs_real_cifereca_without_plugins():
     runner = _module()
     scenario = runner.SCENARIOS["startup"]
