@@ -98,6 +98,9 @@ def _read_local_json(path: Path, *, label: str, optional: bool = False):
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
+        # Also refuse symlinks on systems without O_NOFOLLOW.
+        if path.is_symlink():
+            raise ContractUnavailable(f"unreadable local {label} JSON")
         fd = os.open(path, flags)
     except FileNotFoundError:
         if optional:
@@ -117,12 +120,12 @@ def _read_local_json(path: Path, *, label: str, optional: bool = False):
         raise ContractUnavailable(f"unreadable local {label} JSON") from None
     if len(raw) > MAX_JSON_BYTES:
         raise ContractUnavailable(f"oversized local {label} JSON")
+    def reject_nonstandard_number(_value):
+        raise ValueError("nonstandard JSON number")
+
     try:
         # Reject non-standard float literals rather than silently accepting NaN.
-        return json.loads(
-            raw.decode("utf-8"),
-            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
-        )
+        return json.loads(raw.decode("utf-8"), parse_constant=reject_nonstandard_number)
     except (UnicodeDecodeError, ValueError, RecursionError):
         raise ContractUnavailable(f"invalid local {label} JSON") from None
 
