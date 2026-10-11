@@ -1,4 +1,4 @@
-# Cifereca EPUB/PDF Optimizer 0.3.1
+# Cifereca EPUB/PDF Optimizer 0.3.4
 
 Compatible avec **Plugin API >=1.4,<2** (source de vérité : `cifereca-plugin.json`). Le moteur est publié comme `document.transformer` et les profils comme services publics `device.profile`.
 
