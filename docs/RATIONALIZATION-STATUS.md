@@ -1,6 +1,6 @@
 # État de rationalisation CIFERECA
 
-État de référence documentaire : 7 octobre 2026.
+État de référence documentaire : 11 octobre 2026.
 
 Ce fichier est l'index de référence pour la rationalisation. Les handoffs historiques restent utiles pour leur contexte, mais ne doivent pas être lus comme une description automatiquement à jour du tree courant.
 
@@ -35,6 +35,9 @@ Ne pas restaurer en bloc :
 La répartition actuelle est décrite dans [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md).
 
 ## Rationalisation en cours
+
+La modularisation P0 de `src/cifereca/services.py` et `src/cifereca/gui/main_window.py` est suivie par les épics [#1049](https://github.com/pzia/cifereca/issues/1049) et [#1051](https://github.com/pzia/cifereca/issues/1051), et leurs lots #1116–#1132. Aucun découpage monolithique simultané Core/CoreUI.
+
 
 ### Triage des tests historiques 0.9.21 → 0.9.33
 
@@ -75,16 +78,9 @@ Paris est désormais entièrement porté par `src/plugins/provider-paris/`. Numi
 
 ## Simulation
 
-État :
+`simulation/` est **l'unique banc fonctionnel existant et la cible canonique**. Les anciens paragraphes décrivant une migration `simulation/` → `simulation/` étaient contradictoires ; aucune copie ni suppression globale de ce répertoire n'est requise.
 
-- `simulation/` existe et reste l'environnement fonctionnel simulé actuel ;
-- `simulation/` n'existe pas encore.
-
-Cible :
-
-- une seule référence future sous `simulation/` ;
-- migration progressive des faux services, fixtures et profils utiles ;
-- suppression de `simulation/` lorsque ses consommateurs sont migrés.
+Rationaliser les jeux de données et faux services **à l'intérieur** du banc existant, en conservant tests, consommateurs et preuve de couverture. Les dépendances OS/GTK appartiennent à `environnements/`.
 
 Voir [SIMULATION.md](SIMULATION.md).
 
@@ -113,8 +109,8 @@ En cas de contradiction, l'état réel du tree, [ARCHITECTURE.md](ARCHITECTURE.m
 ## Prochaines étapes de rationalisation
 
 1. poursuivre le triage historique `0921 → 0933` ;
-2. décider et exécuter la migration `simulation/` → `simulation/` ;
+2. consolider les fixtures et faux services déjà dans `simulation/` ;
 3. poursuivre la rationalisation de `builtin_ui` et Kobo dans des PR de code séparées ;
-4. traiter le déplacement physique des plugins seulement avec packaging/tests adaptés ;
+4. conserver les plugins fonctionnels sous `src/plugins/` comme source unique et ne déplacer un package que si packaging/tests le requièrent ;
 5. nettoyer la hiérarchie legacy Recommendations ;
 6. enrichir éventuellement l'inspection EPUB Core avant toute suppression du validateur strict Numilog.
