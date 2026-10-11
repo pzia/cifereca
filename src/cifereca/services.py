@@ -4294,25 +4294,26 @@ class LibraryService:
                         "status": "attention_required", "loan_id": loan.id,
                         "code": "adept_identity_unproven", "retry": "explicit_only",
                     }
-                if str(loan.source_provider).lower() == "paris" and (
-                    self._borrower_identity_conflict(
-                        self.accounts, provider_id=loan.source_provider,
-                        account_id=loan.source_account_id,
-                        identity_id=identity.identity_id,
-                        credential_id=loan.source_credential,
+                if str(loan.source_provider).lower() == "paris":
+                    _, borrower_code = self._paris_adept_identity_for_loan(
+                        loan, connection_identity_id=identity.identity_id,
                     )
-                    or self._cross_identity_loan_conflict(
+                    if borrower_code:
+                        return {
+                            "status": "attention_required", "loan_id": loan.id,
+                            "code": borrower_code, "retry": "explicit_only",
+                        }
+                    if self._cross_identity_loan_conflict(
                         self.storage.acquisitions(provider_id=loan.source_provider),
                         provider_loan_id=loan.id, identity_id=identity.identity_id,
                         entitlements=self.storage.entitlements(
                             provider_id=loan.source_provider, state="active"
                         ),
-                    )
-                ):
-                    return {
-                        "status": "attention_required", "loan_id": loan.id,
-                        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
-                    }
+                    ):
+                        return {
+                            "status": "attention_required", "loan_id": loan.id,
+                            "code": "adept_loan_identity_conflict", "retry": "explicit_only",
+                        }
                 previous = [r for r in self.storage.acquisitions(provider_id=loan.source_provider)
                             if r.get("identity_id") == identity.identity_id and r.get("credential_id") == loan.source_credential
                             and str(r.get("account_id") or "") == str(loan.source_account_id or "")
@@ -4372,6 +4373,95 @@ class LibraryService:
         ):
             return True
         return {str(account.identity_id) for account in matching} != {identity_id}
+
+    def bind_paris_borrower_adept(
+        self, *, credential_id: str, account_id: str, borrower_identity_id: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        """Explicitly confirm the ADEPT owner of a linked Paris borrower.
+
+        This operation must be initiated by an authorized user, never by sync,
+        and never by guessing from the connected/current UI identity.
+        """
+        matches = [
+            account for account in self.accounts
+            if str(account.provider_id).lower() == "paris"
+            and str(account.credential_id) == str(credential_id)
+            and not account.is_primary
+            and str(account.unique_id or "").strip() == str(account_id or "").strip()
+        ]
+        if (
+            len(matches) != 1 or not str(account_id or "").strip()
+            or str(matches[0].identity_id) != self.storage.identity_for_connection("paris", credential_id)
+        ):
+            raise ValueError("linked Paris borrower not uniquely identified for connection")
+        owner = self.identity_by_id(borrower_identity_id)
+        if owner is None:
+            raise ValueError("unknown ADEPT borrower identity")
+        profile_id = self.storage.adept_profile_binding_get("identity", owner.identity_id)
+        if not profile_id:
+            raise ValueError("ADEPT borrower identity has no stable profile binding")
+        self.storage.paris_borrower_adept_binding_put(
+            credential_id=credential_id, account_id=account_id,
+            borrower_identity_id=owner.identity_id, profile_id=profile_id,
+            confirmed=confirmed,
+        )
+        return self.storage.paris_borrower_adept_binding_get(
+            credential_id=credential_id, account_id=account_id,
+        )
+
+    def _paris_adept_identity_for_loan(
+        self, loan: Loan, *, connection_identity_id: str,
+    ) -> tuple[str | None, str | None]:
+        """Resolve the Adobe borrower separately from the Paris connection.
+
+        The primary borrower may use its proven connection identity. A linked
+        borrower needs an explicit pinned grant, even if its account happens to
+        be displayed under the same Cifereca identity as the connection.
+        """
+        if loan.source_account_id is None:
+            return None, "adept_borrower_ambiguous"
+        borrower = str(loan.source_account_id).strip()
+        credential = str(loan.source_credential or "").strip()
+        if not credential:
+            return None, "adept_borrower_ambiguous"
+        matches = [
+            account for account in self.accounts
+            if str(account.provider_id).lower() == "paris"
+            and str(account.credential_id) == credential
+            and (
+                (borrower == "primary" and account.is_primary)
+                or str(account.unique_id or "").strip() == borrower
+            )
+        ]
+        if len(matches) != 1 or str(matches[0].identity_id) != connection_identity_id:
+            return None, "adept_borrower_ambiguous"
+        if matches[0].is_primary:
+            if self._borrower_identity_conflict(
+                self.accounts, provider_id="paris",
+                account_id=borrower, identity_id=connection_identity_id,
+                credential_id=credential,
+            ):
+                return None, "adept_borrower_ambiguous"
+            return connection_identity_id, None
+
+        if not borrower or borrower == "primary":
+            return None, "adept_borrower_ambiguous"
+        binding = self.storage.paris_borrower_adept_binding_get(
+            credential_id=credential, account_id=borrower,
+        )
+        if binding is None:
+            return None, "adept_borrower_binding_required"
+        if str(binding.get("connection_identity_id") or "") != connection_identity_id:
+            return None, "adept_borrower_connection_changed"
+        owner = str(binding.get("borrower_identity_id") or "")
+        pinned = str(binding.get("profile_id") or "")
+        if not owner or self.identity_by_id(owner) is None or not pinned:
+            return None, "adept_borrower_profile_changed"
+        current = self.storage.adept_profile_binding_get("identity", owner)
+        if current != pinned or binding.get("confirmed_by") != "explicit":
+            return None, "adept_borrower_profile_changed"
+        return owner, None
 
     @staticmethod
     def _cross_identity_loan_conflict(
@@ -4459,6 +4549,19 @@ class LibraryService:
                 "retry": "explicit_only",
             }
         _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
+        if str(loan.source_provider).lower() == "paris":
+            _, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=identity.identity_id,
+            )
+            if borrower_code:
+                _TRACE_LOG.warning(
+                    "TRACE download loan_auto blocked reason=%s provider=%s",
+                    borrower_code, loan.source_provider,
+                )
+                return {
+                    "status": "attention_required", "loan_id": loan.id,
+                    "code": borrower_code, "retry": "explicit_only",
+                }
         entitlement_inventory = self.storage.entitlements(
             provider_id=loan.source_provider, state="active"
         )
@@ -4651,16 +4754,16 @@ class LibraryService:
             if acquisition.kind == "acsm" and acquisition.acsm_path is not None:
                 retained_acsm = acquisition.acsm_path
                 failure_executor = "kobo-adept"
-                # A linked Paris account can be exposed by multiple credentials.
-                # A shared account id with competing Cifereca identities is not
-                # sufficient evidence of which Adobe profile activated the loan.
-                if str(loan.source_provider).lower() == "paris" and self._borrower_identity_conflict(
-                    self.accounts, provider_id=loan.source_provider,
-                    account_id=loan.source_account_id,
-                    identity_id=identity.identity_id,
-                    credential_id=loan.source_credential,
-                ):
-                    code = "adept_borrower_ambiguous"
+                # Check the pinned borrower grant again immediately before ADEPT:
+                # provider staging can take time, and a grant may be revoked.
+                adept_borrower_identity_id = identity.identity_id
+                borrower_code = None
+                if str(loan.source_provider).lower() == "paris":
+                    adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                        loan, connection_identity_id=identity.identity_id,
+                    )
+                if borrower_code:
+                    code = borrower_code
                     self.storage.acquisition_put({
                         **ledger_base, "status": "attention_required",
                         "strategy": "loan_auto", "executor": "kobo-adept",
@@ -4677,7 +4780,7 @@ class LibraryService:
                         "code": code, "retry": "explicit_only",
                     }
                 try:
-                    profile_name, profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
+                    profile_name, profile_source = self.resolve_adept_profile_for_identity(adept_borrower_identity_id)
                 except AdeptProfileResolutionError as exc:
                     self.storage.acquisition_put({
                         **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
@@ -4691,8 +4794,8 @@ class LibraryService:
                     )
                     return {"status": "attention_required", "loan_id": loan.id, "code": exc.code, "error": str(exc)}
                 _TRACE_LOG.info(
-                    "TRACE download adept profile-resolved loan_id=%s identity=%s profile=%s source=%s",
-                    loan.id, identity.identity_id, profile_name, profile_source,
+                    "TRACE download adept profile-resolved loan_id=%s connection_identity=%s borrower_identity=%s profile=%s source=%s",
+                    loan.id, identity.identity_id, adept_borrower_identity_id, profile_name, profile_source,
                 )
                 # 0.13.3+ distinguishes a reader-backed profile from one that
                 # can actually execute ACSM/libgourou operations. Only block
@@ -4759,7 +4862,7 @@ class LibraryService:
                     loan.id, profile_name, acquisition.acsm_path.name, adept_destination, acsm_format, format_source,
                 )
                 adept_started = time.monotonic()
-                originating_profile_id = self._originating_adept_profile_id(identity.identity_id, profile_name)
+                originating_profile_id = self._originating_adept_profile_id(adept_borrower_identity_id, profile_name)
                 result = self.execute_acquisition_request(request)
                 from .adept_binding import capture_binding
                 adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
