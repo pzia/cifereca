@@ -198,3 +198,17 @@ def test_available_but_empty_source_remains_empty(tmp_path):
     rows = query_diagnostic_events(Diagnostics(enabled=False), log_path=log)
     assert rows["status"] == "empty"
     assert rows["sources"][1]["status"] == "empty"
+
+
+def test_fifo_log_is_rejected_without_blocking(tmp_path):
+    import stat
+    import time
+    fifo = tmp_path / "cifereca.log"
+    if not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"):
+        pytest.skip("POSIX nonblocking FIFO unavailable")
+    os.mkfifo(fifo)
+    started = time.monotonic()
+    result = query_diagnostic_events(Diagnostics(), log_path=fifo, source="app_log")
+    assert time.monotonic() - started < 2.0
+    assert result["events"] == []
+    assert result["sources"][0]["status"] == "unavailable"
