@@ -1,6 +1,6 @@
 # Architecture CIFERECA — état actuel, cible et rationalisation
 
-État documentaire : 7 octobre 2026.
+État documentaire : 11 octobre 2026.
 
 Ce document décrit la structure du dépôt. Il distingue volontairement **l'état réel actuel**, **la cible structurelle** et **les travaux encore nécessaires**.
 
@@ -82,8 +82,7 @@ Voir [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md).
 
 ## 5. Simulation et environnements
 
-- `simulation/` : simulation fonctionnelle actuelle.
-- `simulation/` : cible future, actuellement absente.
+- `simulation/` : simulation fonctionnelle **actuelle et canonique**, avec faux services, fixtures et tests ; aucune seconde arborescence cible.
 - `environnements/` : recettes machine/runtime, distinctes des faux services fonctionnels.
 
 Voir [SIMULATION.md](SIMULATION.md).
@@ -94,9 +93,9 @@ Les sujets suivants restent hors du présent lot documentaire :
 
 1. maintenir `src/plugins/` comme unique source canonique des plugins fonctionnels ;
 2. extraire ou supprimer progressivement `src/cifereca/builtin_ui/` ;
-3. maintenir Paris exclusivement dans `src/plugins/provider-paris/` ;
+3. maintenir le client HTTP/PNB Paris exclusivement dans `src/plugins/provider-paris/` (orchestration générique d'acquisition et de restitution dans le Core) ;
 4. extraire le code fournisseur encore présent sous `src/cifereca/kobo/` ;
-5. créer effectivement `simulation/` et y migrer les éléments utiles de `simulation/` ;
+5. rationaliser les faux services et fixtures **dans** `simulation/`, sans migration vers un chemin identique ;
 6. poursuivre la rationalisation des tests historiques sans restauration transitive ;
 7. supprimer le code historique uniquement dans des PR dédiées après preuve d'équivalence.
 
