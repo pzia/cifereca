@@ -145,3 +145,15 @@ def test_mixed_sources_have_stable_pseudonym_ids_and_no_raw_message(tmp_path):
     assert len({r["event_id"] for r in page["events"]}) == 2
     assert all(len(r["event_id"]) == 16 for r in page["events"])
     assert [s["source"] for s in page["sources"]] == ["core_events", "app_log"]
+
+
+def test_truncated_log_without_matching_records_is_partial(tmp_path):
+    log = tmp_path / "cifereca.log"
+    # A truncated tail may contain no parseable entries: it is not proof
+    # that the source is empty or that the history is complete.
+    log.write_text("unparseable private content\\n" * 3000, encoding="utf-8")
+    rows = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert rows["events"] == []
+    assert rows["sources"][0]["status"] == "partial"
+    assert rows["sources"][0]["reason"] == "log_tail_bounded"
+    assert rows["status"] == "partial"
