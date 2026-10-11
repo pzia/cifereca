@@ -134,6 +134,26 @@ def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
     assert 'report["unmet_criteria"]' in probe
 
 
+def test_diagnostics_1366_physical_keyboard_module_filters():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-1366"]
+    assert scenario["runner"] == "gtk-diagnostics"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_page_probe.py").read_text(encoding="utf-8")
+    for expected in (
+        "D15_typing_does_not_implicitly_query",
+        "D15_tab_and_shift_tab_between_filters_xtest",
+        "D15_enter_applies_filter_and_resets_pagination",
+        "D15_ctrl_a_delete_return_restores_results",
+        'device[0].type_text("paris")',
+        'press("Return")',
+        'press("BackSpace")',
+        'device[0].key("Control_L", True)',
+        'broker.event_queries[-1]["offset"] == 0',
+    ):
+        assert expected in source
+
+
 def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
     runner = _module()
     scenario = runner.SCENARIOS["diagnostics-large-1600"]
