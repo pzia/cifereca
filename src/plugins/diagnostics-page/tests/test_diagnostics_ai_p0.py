@@ -1201,3 +1201,48 @@ def test_approved_ai_preview_preserves_exact_metadata_when_untouched():
     assert report["limitations"] == preview["limitations"]
     exported = json.loads(export_analysis_json(report))
     assert exported["evidence"]["source_states"] == preview["source_states"]
+
+
+def test_passive_support_metadata_does_not_falsely_mark_complete_sample_truncated():
+    class CompleteSupport(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert verbose is False and include_checks is False
+            return {
+                "format": 1,
+                "result": "ok",
+                "core": {"version": "0.9"},
+                "runtime": {"status": "ok"},
+                "database": {"status": "ok"},
+                "config": {"status": "ok"},
+                "plugins": {"status": "ok"},
+                "checks_executed": False,
+                "checks": [],
+            }
+
+    llm = FakeLLM()
+    preview = prepare_analysis(llm, CompleteSupport([]), include_support_report=True)
+    assert preview["count"] == 0
+    assert preview["support_fields"] == 7
+    assert preview["sample_truncated"] is False
+    assert '"checks_executed"' not in preview["prompt"]
+    assert '"checks"' not in preview["prompt"]
+    assert llm.calls == 0
+    report = analyze_with_consent(llm, preview, approval_id=preview["approval_id"])
+    assert report["sample_truncated"] is False
+    assert json.loads(export_analysis_json(report))["evidence"]["sample_truncated"] is False
+
+
+def test_passive_support_more_than_eight_eligible_sections_remains_truncated():
+    class ExpandedSupport(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert include_checks is False
+            return {
+                "checks_executed": False,
+                "checks": [],
+                **{f"section_{i}": "ok" for i in range(9)},
+            }
+
+    preview = prepare_analysis(FakeLLM(), ExpandedSupport([]),
+                               include_support_report=True)
+    assert preview["support_fields"] == 8
+    assert preview["sample_truncated"] is True
