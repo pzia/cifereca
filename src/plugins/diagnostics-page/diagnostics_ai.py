@@ -262,4 +262,55 @@ def analyze_with_consent(
         "reference_status": "matched_ids_not_verified_facts" if matched else "no_known_event_cited",
         "evidence_count": preview["count"],
         "limitations": preview["limitations"],
+        "scope": dict(scope),
     }
+
+
+def export_analysis_json(analysis: Mapping[str, Any]) -> str:
+    """Export only redacted, bounded IA inference with its verified scope.
+
+    This is an optional user-initiated clipboard export, never a log dump,
+    request prompt, private credential or independent confirmation.
+    """
+    from cifereca_diagnostics_page import redacted_detail
+
+    if (
+        not isinstance(analysis, Mapping)
+        or analysis.get("ok") is not True
+        or analysis.get("generated") is not True
+        or analysis.get("source") != "llm_inference_not_proven"
+        or type(analysis.get("text")) is not str
+        or not analysis["text"]
+    ):
+        raise ValueError("invalid_diagnostics_ai_report")
+    report = {
+        "schema": "cifereca.diagnostics.ai.v1",
+        "generated_by_ai": True,
+        "claim_status": "inferences_not_verified",
+        "notice": "Références appariées par ID, affirmations non vérifiées.",
+        "destination_disclosed": {
+            "provider": analysis.get("provider"),
+            "model": analysis.get("model"),
+            "remote": analysis.get("remote"),
+            "provenance": analysis.get("provenance"),
+        },
+        "scope_requested": analysis.get("scope"),
+        "analysis": analysis["text"],
+        "evidence": {
+            "sample_count": analysis.get("evidence_count"),
+            "matched_references": analysis.get("references_matched"),
+            "unknown_references": analysis.get("references_unknown"),
+            "reference_status": analysis.get("reference_status"),
+        },
+        "limitations": analysis.get("limitations"),
+    }
+    # Whitelisted fields only, redacted again as a last clipboard boundary.
+    safe = redacted_detail(report)
+    serialized = json.dumps(safe, ensure_ascii=False, indent=2, allow_nan=False)
+    try:
+        size = len(serialized.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ValueError("invalid_diagnostics_ai_report_unicode") from exc
+    if size > 24_000:
+        raise ValueError("diagnostics_ai_report_exceeds_24kb")
+    return serialized

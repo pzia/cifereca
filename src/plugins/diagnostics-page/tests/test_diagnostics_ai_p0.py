@@ -7,6 +7,7 @@ import pytest
 from cifereca.plugin_api import LLMResult
 from diagnostics_ai import (
     llm_destination, prepare_analysis, analyze_with_consent,
+    export_analysis_json,
 )
 
 
@@ -476,3 +477,49 @@ def test_ai_ui_uses_four_visible_broker_filters_and_invalidates_consent():
     ):
         assert signal in ui
     assert "f\"{preview['bytes']} octets UTF-8. \"" in ui
+
+
+def test_ai_structured_json_report_exposes_only_redacted_inferences():
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, FakeBroker([event(ref="ref-1")]),
+                               source="app_log", module="cifereca.sync")
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    result["limitations"] = "mail alice@example.com token=PRIVATE_LIMIT"
+    result["scope"]["module"] = "token=PRIVATE_MODULE"
+    exported = export_analysis_json(result)
+    obj = json.loads(exported)
+    assert obj["schema"] == "cifereca.diagnostics.ai.v1"
+    assert obj["generated_by_ai"] is True
+    assert obj["claim_status"] == "inferences_not_verified"
+    assert obj["destination_disclosed"]["remote"] is True
+    assert obj["evidence"]["sample_count"] == 1
+    assert "ref-1" not in obj["analysis"]  # no fabricated citation
+    assert all(needle not in exported for needle in (
+        "PRIVATE_LIMIT", "PRIVATE_MODULE", "alice@example.com",
+        "credential_id", "raw_log", "approval_id", "_approval_state",
+    ))
+    assert len(exported.encode("utf-8")) <= 24_000
+    assert model.calls == 1
+
+
+@pytest.mark.parametrize("invalid", [None, [], {}, {"ok": True},
+                                   {"ok": False, "generated": True}])
+def test_ai_json_report_rejects_nonapproved_or_invalid_payload(invalid):
+    with pytest.raises(ValueError, match="invalid_diagnostics_ai_report"):
+        export_analysis_json(invalid)
+
+
+def test_ai_json_export_is_user_initiated_and_invalidated_with_current_report():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert 'Gtk.Button(label="Copier Markdown IA")' in page
+    assert 'Gtk.Button(label="Copier JSON IA")' in page
+    assert "ai_json = export_analysis_json(result)" in page
+    assert "ai_export_json.set_sensitive(bool(ai_json))" in page
+    assert "ai_export_json.connect(\"clicked\", copy_ai_json)" in page
+    invalidate = page.split("        def invalidate_ai(", 1)[1].split(
+        "        def prepare_ai(", 1
+    )[0]
+    assert 'ai_json = ""' in invalidate
+    assert "ai_export_json.set_sensitive(False)" in invalidate
