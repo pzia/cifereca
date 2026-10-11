@@ -1,0 +1,7 @@
+Demande utilisateur confirmée le 2026-10-11 : déclencher une seule recette GTK Diagnostics 1366 via GitHub Actions.
+
+Nouvel essai UX GTK validé par « next » (2026-10-11 09:37 Europe/Paris), après correctif safe.directory ; exécution unique.
+
+Recette GTK après correction de GIT_CONFIG_COUNT pour HOME XDG isolé (nouvel essai unique autorisé par next).
+
+GO : relai cache APT Debian 13 uniquement, bootstrap rootless et tests locaux (2026-10-11).
