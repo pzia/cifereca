@@ -1,4 +1,5 @@
 """Constellations page and contextual action, using public Plugin API only."""
+from collections.abc import Mapping
 from cifereca.plugin_api import (UiPageContribution, UiActionContribution,
     UiBookDetailPresentation, DetailSection, DetailField, DocumentLink)
 from constellation_view_model import (node_from_row, merge_nodes, neighbours, relation,
@@ -61,6 +62,11 @@ class View:
         self.nodes, self.local, self.cache = (), (), {}
         self.nav, self.center, self.path = Navigation(), None, ()
         self.generation, self.task, self.disposed = 0, None, False
+        config = getattr(plugin.context, 'config', {}) or {}
+        self._semantic_enabled = config.get('llm_semantic_hypotheses') is True if isinstance(config, Mapping) else False
+        self._semantic_generation, self._semantic_task = 0, None
+        self._semantic_candidate = None
+        self._semantic_button, self._semantic_note = None, None
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.status = Gtk.Label(label='Choisissez un profil pour explorer sa bibliothèque.', wrap=True, xalign=0)
         self.widget.append(self.status)
@@ -104,6 +110,14 @@ class View:
         explore.append(self.button('Précédent', lambda: self.move(-1)))
         explore.append(self.button('Suivant', lambda: self.move(1)))
         explore.append(self.button('Ouvrir la fiche Bibliothèque', self.open_book))
+        if self._semantic_enabled:
+            self._semantic_button = self.button('Piste sémantique (IA)', self.propose_semantic)
+            self._semantic_button.set_sensitive(False)
+            self._semantic_button.set_tooltip_text(
+                'Clic explicite : compare seulement des sujets attestés entre deux notices sans lien confirmé. '
+                'Le service IA configuré peut être distant ; aucune arête réelle n’est créée.'
+            )
+            explore.append(self._semantic_button)
 
         search = group('Chercher')
         self.query = Gtk.Entry(placeholder_text='Requête catalogue — envoi explicite')
@@ -123,6 +137,13 @@ class View:
         self.widget.append(self.master.widget)
         self.neighbours_summary = Gtk.Label(label='Aucun voisin proposé', wrap=True, xalign=0)
         self.widget.append(self.neighbours_summary)
+        if self._semantic_enabled:
+            self._semantic_note = Gtk.Label(
+                label='IA facultative : aucune hypothèse calculée ni relation ajoutée.',
+                wrap=True, xalign=0,
+            )
+            self._semantic_note.set_selectable(True)
+            self.widget.append(self._semantic_note)
         self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=3, min_children_per_line=1)
         scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=200)
         scroll.set_child(self.flow)
@@ -302,9 +323,94 @@ class View:
             self.render()
         self.run_calculation(lambda control: replace_step(path, index, nodes), apply, 'Remplacement d’étape')
 
+    def _reset_semantic(self):
+        self._semantic_generation += 1
+        handle, self._semantic_task = self._semantic_task, None
+        if handle is not None:
+            handle.cancel()
+        self._semantic_candidate = None
+        if self._semantic_button is not None:
+            self._semantic_button.set_sensitive(False)
+            self._semantic_note.set_label(
+                'IA facultative : aucune piste calculée. Le graphe déterministe reste inchangé.'
+            )
+
+    def propose_semantic(self):
+        """Opt-in hypothesis only; never append an edge or modify ranking."""
+        if not self._semantic_enabled or self._semantic_task is not None or self.disposed:
+            return
+        center, candidate = self.center, self._semantic_candidate
+        identity = self.identity_id()
+        if center is None or candidate is None or not identity:
+            return
+        context = self.plugin.context
+        service = context.service('llm') if context is not None else None
+        tasks = context.broker('tasks') if context is not None else None
+        if service is None or tasks is None:
+            self._semantic_note.set_label('Service IA non configuré. Le graphe reste consultable.')
+            return
+        try:
+            from semantic_llm import propose_semantic_link
+        except ImportError:
+            self._semantic_note.set_label('Extension IA indisponible. Le graphe reste consultable.')
+            return
+        self._semantic_generation += 1
+        generation = self._semantic_generation
+        self._semantic_button.set_sensitive(False)
+        self._semantic_note.set_label('Proposition volontaire en cours… Aucun lien ajouté au graphe.')
+        try:
+            handle = tasks.submit(
+                lambda control: propose_semantic_link(
+                    service, center, candidate, enabled=True, consent=True, control=control,
+                ),
+                label='Hypothèse sémantique Constellations', kind='constellations.llm',
+            )
+        except Exception:
+            self._semantic_note.set_label('IA indisponible. Voisinage inchangé.')
+            self._semantic_button.set_sensitive(True)
+            return
+        self._semantic_task = handle
+
+        def completed(result_handle):
+            if result_handle.control.cancelled():
+                return
+            try:
+                hint = result_handle.result()
+            except Exception:
+                hint = None
+
+            def apply():
+                if (self.disposed or self.plugin.context is None
+                        or generation != self._semantic_generation
+                        or identity != self.identity_id()
+                        or self.center is None or self.center.key != center.key):
+                    return False
+                self._semantic_task = None
+                self._semantic_button.set_sensitive(True)
+                if hint is None:
+                    self._semantic_note.set_label(
+                        'Aucune piste IA exploitable. Les relations attestées restent inchangées.'
+                    )
+                else:
+                    self._semantic_note.set_label(
+                        'Piste sémantique inférée — NON attestée, hors graphe : '
+                        + center.book.title + ' → ' + candidate.book.title
+                        + ' · ' + hint.text
+                        + f' · {hint.provider}/{hint.model}'
+                        + (' · distant' if hint.remote else ' · local')
+                        + '. Ne confirme aucune relation ni droit.'
+                    )
+                return False
+
+            self.GLib.idle_add(apply)
+
+        handle.add_done_callback(completed)
+
     def render(self):
         if not hasattr(self, 'flow'):
             return
+        if hasattr(self, '_semantic_generation'):
+            self._reset_semantic()
         child = self.flow.get_first_child()
         while child:
             self.flow.remove(child); child = self.flow.get_first_child()
@@ -325,6 +431,15 @@ class View:
         edges = neighbours(self.nodes, node, mode=mode, surprise=self.surprise.get_value()/100,
             theme=self.signal.get_text(), mood=self.signal.get_text(), profile=self.local)
         self.neighbours_summary.set_label(neighbour_count_label(edges))
+        if self._semantic_button is not None:
+            try:
+                from semantic_llm import pick_unlinked_pair
+                self._semantic_candidate = pick_unlinked_pair(self.nodes, node)
+            except ImportError:
+                self._semantic_candidate = None
+            self._semantic_button.set_sensitive(self._semantic_candidate is not None)
+            if self._semantic_candidate is not None:
+                self._semantic_note.set_label('IA facultative : cliquer pour examiner une notice sans lien attesté, sans changer le graphe.')
         if not edges:
             self.flow.append(self.Gtk.Label(
                 label='Aucun lien proposé pour ce mode. Choisissez un autre livre ou cherchez en ligne.',
@@ -364,6 +479,8 @@ class View:
                 self.flow.append(self.button('Remplacer étape ' + str(i+1), lambda index=i: self.replace(index)))
 
     def dispose(self):
+        if hasattr(self, '_semantic_generation'):
+            self._reset_semantic()
         self.disposed = True; self.generation += 1
         if self.task:
             self.task.cancel()
