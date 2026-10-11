@@ -832,8 +832,8 @@ def test_candidate_http_bypasses_untrusted_environment_proxy(
     from urllib.request import ProxyHandler
     handlers = [handler for handler in client._opener.handlers
                 if isinstance(handler, ProxyHandler)]
-    assert len(handlers) == 1
-    assert handlers[0].proxies == {}
+    # urllib may omit an empty ProxyHandler from the built opener entirely.
+    assert not any(handler.proxies for handler in handlers)
     assert client.get("/api/v1/sources")["api_major"] == 1
     assert client.get("/api/v1/search", params={
         "source_id": "alpha", "q": "Un livre",
