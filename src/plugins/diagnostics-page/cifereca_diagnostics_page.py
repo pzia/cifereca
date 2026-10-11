@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from cifereca.plugin_api import UiPageContribution
-from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent
+from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent, export_analysis_json
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, source_summaries, explorer_header,
@@ -420,12 +420,15 @@ class DiagnosticsPagePlugin:
         ai_send = Gtk.Button(label="Autoriser et analyser")
         ai_send.set_sensitive(False)
         ai_cancel = Gtk.Button(label="Annuler")
-        ai_export = Gtk.Button(label="Copier l’analyse IA")
+        ai_export = Gtk.Button(label="Copier Markdown IA")
         ai_export.set_sensitive(False)
+        ai_export_json = Gtk.Button(label="Copier JSON IA")
+        ai_export_json.set_sensitive(False)
         ai_controls.append(ai_prepare)
         ai_controls.append(ai_send)
         ai_controls.append(ai_cancel)
         ai_controls.append(ai_export)
+        ai_controls.append(ai_export_json)
         outer.append(ai_controls)
         ai_status = Gtk.Label(label="IA non configurée ou non consultée", xalign=0)
         ai_status.set_wrap(True)
@@ -847,24 +850,27 @@ class DiagnosticsPagePlugin:
 
         ai_preview = None
         ai_result = ""
+        ai_json = ""
         ai_generation = 0
 
         def invalidate_ai(*_args):
-            nonlocal ai_preview, ai_result, ai_generation
+            nonlocal ai_preview, ai_result, ai_json, ai_generation
             ai_generation += 1
             ai_preview = None
             ai_result = ""
+            ai_json = ""
             if self._ai_handle is not None and not self._ai_handle.done():
                 self._ai_handle.cancel()
             ai_prepare.set_sensitive(True)
             ai_send.set_sensitive(False)
             ai_export.set_sensitive(False)
+            ai_export_json.set_sensitive(False)
             ai_input.get_buffer().set_text("")
             ai_report.get_buffer().set_text("")
             ai_status.set_text("Aperçu à actualiser avant toute nouvelle analyse")
 
         def prepare_ai(_button):
-            nonlocal ai_generation, ai_preview, ai_result
+            nonlocal ai_generation, ai_preview, ai_result, ai_json
             if self.llm is None:
                 ai_status.set_text("Service IA désactivé : aucun envoi.")
                 return
@@ -881,10 +887,12 @@ class DiagnosticsPagePlugin:
             token = ai_generation
             ai_preview = None
             ai_result = ""
+            ai_json = ""
             ai_input.get_buffer().set_text("")
             ai_report.get_buffer().set_text("")
             ai_send.set_sensitive(False)
             ai_export.set_sensitive(False)
+            ai_export_json.set_sensitive(False)
             ai_status.set_text("Préparation locale de l’aperçu expurgé…")
 
             def worker(_control):
@@ -903,6 +911,7 @@ class DiagnosticsPagePlugin:
                 ai_status.set_text("Aperçu IA indisponible : tâche non démarrée")
                 ai_send.set_sensitive(False)
                 ai_export.set_sensitive(False)
+                ai_export_json.set_sensitive(False)
                 return
             self._ai_handle = handle
 
@@ -967,6 +976,7 @@ class DiagnosticsPagePlugin:
                 ai_send.set_sensitive(False)
                 ai_export.set_sensitive(False)
                 ai_status.set_text("Analyse IA indisponible : planification impossible")
+                ai_export_json.set_sensitive(False)
                 return
             self._ai_handle = handle
 
@@ -982,7 +992,7 @@ class DiagnosticsPagePlugin:
             self._ai_handle.add_done_callback(completed)
 
         def finish_ai(token, result, error):
-            nonlocal ai_result
+            nonlocal ai_result, ai_json
             if token != ai_generation:
                 return False
             ai_prepare.set_sensitive(True)
@@ -1016,6 +1026,11 @@ class DiagnosticsPagePlugin:
             )
             ai_report.get_buffer().set_text(ai_result)
             ai_export.set_sensitive(True)
+            try:
+                ai_json = export_analysis_json(result)
+            except (ValueError, TypeError):
+                ai_json = ""
+            ai_export_json.set_sensitive(bool(ai_json))
             ai_status.set_text("Analyse IA générée ; vérifier toutes les références avant décision.")
             return False
 
@@ -1035,10 +1050,19 @@ class DiagnosticsPagePlugin:
                 display.get_clipboard().set(ai_result)
                 host.toast("Analyse IA expurgée copiée (hypothèses non vérifiées)")
 
+        def copy_ai_json(_button):
+            if not ai_json:
+                return
+            display = Gdk.Display.get_default()
+            if display is not None:
+                display.get_clipboard().set(ai_json)
+                host.toast("Rapport IA JSON expurgé copié (inférences non vérifiées)")
+
         ai_prepare.connect("clicked", prepare_ai)
         ai_send.connect("clicked", send_ai)
         ai_cancel.connect("clicked", cancel_ai)
         ai_export.connect("clicked", copy_ai)
+        ai_export_json.connect("clicked", copy_ai_json)
         source_selector.connect("notify::selected", invalidate_ai)
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
