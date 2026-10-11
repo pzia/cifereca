@@ -156,3 +156,21 @@ def test_no_task_correlation_is_fabricated_from_unrelated_event_ids():
     assert len(groups) == 1
     assert len(groups[0]["events"]) == 2
     assert all("correlation_id" not in row for row in groups[0]["events"])
+
+
+@pytest.mark.parametrize("module", [None, 123, [], "x" * 91])
+def test_invalid_module_rejected_before_broker_call(module):
+    broker = Broker()
+    with pytest.raises(ValueError):
+        fetch_explorer_page(broker, module=module)
+    assert broker.calls == []
+
+
+@pytest.mark.parametrize("total,offset", [
+    ("unknown", "none"), (None, None), ([], {}), (float("inf"), float("nan")),
+])
+def test_malformed_header_counts_do_not_crash(total, offset):
+    header = explorer_header({"sources": [{"source": "app_log"}],
+                              "total": total, "offset": offset}, [])
+    assert "0 événements affichés" in header
+    assert "page à partir de" in header
