@@ -279,16 +279,21 @@ def prepare_analysis(
         if len(records) > _MAX_STRUCTURED:
             truncated = True
 
-    # The Core's existing support_report() is read-only, distinct from
-    # running active_checks(). Never fetch this report without explicit opt-in.
+    # The Core's support_report() runs active_checks() by default.
+    # Opt out explicitly to avoid triggering those operations from an AI preview.
+    # An older broker without include_checks support must fail closed.
     # Redact the whole public mapping before inspecting any key or value.
     if include_support_report:
         report_method = getattr(diagnostics_broker, "support_report", None)
         if not callable(report_method):
             raise ValueError("support_report_unavailable")
-        report = report_method(verbose=False)
+        report = report_method(verbose=False, include_checks=False)
         if not isinstance(report, Mapping):
             raise ValueError("support_report_unavailable")
+        # Never display a report that actually ran active checks. This marker
+        # is produced by the public Core broker, not the LLM.
+        if report.get("checks_executed") is not False:
+            raise ValueError("support_report_not_passive")
         safe_report = redacted_detail(report)
         if not isinstance(safe_report, Mapping):
             raise ValueError("support_report_unavailable")
