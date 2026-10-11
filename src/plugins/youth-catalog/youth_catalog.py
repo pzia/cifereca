@@ -17,6 +17,8 @@ AGE_KINDS = {"interest", "reading", "recommended", "publisher", "inferred"}
 KNOWN_AGE_SOURCES = {
     "milan": "Éditions Milan",
     "ecole-loisirs": "L'École des loisirs",
+    "booktrust": "BookTrust",
+    "usborne": "Usborne",
 }
 KNOWN_BIBLIOGRAPHY_PLUGINS = {"youth.bibliography.openlibrary": "Open Library"}
 COLLECTION_STATES = {
@@ -133,6 +135,113 @@ def sanitize_collection_pipeline(value: object) -> dict[str, object]:
     if reasons:
         out["rejection_reasons"] = reasons
     return out
+
+
+def source_yield_diagnostic(row: Mapping[str, object]) -> dict[str, object]:
+    """Explain observed collection yield, never infer provider availability.
+
+    Input is a cache-only, per-identity source_diagnostics projection. Never
+    copy URLs, HTML, bibliographic metadata or identity IDs into the result.
+    """
+    state = str(row.get("collection_state") or "not_tested")
+    family = str(row.get("family") or "age")
+    pipeline = sanitize_collection_pipeline(row.get("pipeline"))
+    accepted = row.get("accepted")
+    rejected = row.get("rejected")
+    counts = {
+        key: pipeline[key] for key in (
+            "anchor_count", "product_link_count", "candidate_count",
+            "analyzed_count", "isbn_valid_count", "age_qualified_count",
+            "age_unknown_count", "returned_items", "effective_limit",
+            "html_bytes", "http_ms", "parse_ms", "total_ms",
+        ) if key in pipeline
+    }
+    for key, value in (("accepted", accepted), ("rejected", rejected),
+                       ("received_count", row.get("received_count")),
+                       ("request_count", row.get("request_count")),
+                       ("requested_limit", row.get("requested_limit"))):
+        if type(value) is int and 0 <= value <= 100_000:
+            counts[key] = value
+    reasons = dict(pipeline.get("rejection_reasons") or {})
+    explanation = "non_teste"
+    confidence = "unknown"
+    if family == "bibliography":
+        explanation = "bibliographie_sans_preuve_age"
+    elif state in {"http_error", "timeout", "error", "cancelled"}:
+        explanation = {
+            "http_error": "http_echec", "timeout": "delai_depasse",
+            "error": "transport_ou_source_echec", "cancelled": "annule",
+        }[state]
+        confidence = "observed"
+    elif state == "invalid" or reasons.get("unexpected_markup", 0):
+        explanation = "structure_invalide_ou_rejet"
+        confidence = "observed" if state == "invalid" else "inferred"
+    elif state == "items" and type(accepted) is int and accepted > 0:
+        explanation = "notices_qualifiees"
+        confidence = "observed"
+    elif state == "empty_unverified":
+        candidates = pipeline.get("candidate_count")
+        anchors = pipeline.get("anchor_count")
+        isbn = pipeline.get("isbn_valid_count")
+        ages = pipeline.get("age_qualified_count")
+        returned = pipeline.get("returned_items")
+        if type(candidates) is int and candidates > 0:
+            if isbn == 0:
+                explanation = "candidats_sans_isbn_atteste"
+            elif ages == 0:
+                explanation = "candidats_sans_age_atteste"
+            else:
+                explanation = "perte_apres_qualification_a_examiner"
+            confidence = "inferred"
+        elif candidates == 0 and type(anchors) is int and anchors > 0:
+            explanation = "ancres_sans_fiches_reconnues"
+            confidence = "inferred"
+        elif candidates == 0 and anchors == 0:
+            explanation = "aucune_ancre_ni_fiche_reconnue"
+            confidence = "inferred"
+        elif type(returned) is int and returned > 0:
+            explanation = "notices_exclues_apres_source"
+            confidence = "inferred"
+        else:
+            explanation = "vide_non_verifie"
+    return {
+        "cause": explanation, "confidence": confidence,
+        "counts": counts, "rejection_reasons": reasons,
+        "state": state if state in COLLECTION_STATES | {"not_tested"} else "unknown",
+        "family": family if family in {"age", "bibliography", "discovery"} else "unknown",
+        "query_mode": pipeline.get("query_mode", "unknown"),
+        "html_sha256_prefix": pipeline.get("html_sha256_prefix", ""),
+        "truncated_by_limit": pipeline.get("truncated_by_limit") is True,
+    }
+
+
+def youth_source_support_snapshot(rows: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    """Bounded, public-only export; no identity, HTML or URL values."""
+    records = []
+    for row in rows:
+        if len(records) >= 30:
+            break
+        if not isinstance(row, Mapping):
+            continue
+        raw_id = str(row.get("source_id") or "")
+        source = raw_id if re.fullmatch(r"[a-z0-9._-]{1,50}", raw_id) else "unknown"
+        records.append({
+            "source_id": source,
+            "plugin_state": str(row.get("plugin_state") or "unknown")[:35]
+                if str(row.get("plugin_state") or "unknown") in {
+                    "ready", "disabled", "not_installed", "incompatible", "degraded"
+                } else "unknown",
+            "enabled": row.get("enabled") is True,
+            "cache_count": min(100_000, max(0, int(row.get("cache_count") or 0)))
+                if type(row.get("cache_count")) is int else None,
+            **source_yield_diagnostic(row),
+        })
+    return {
+        "report": "jeunesse_sources_cache_only",
+        "scope": "sources_sans_identite",
+        "sources": records,
+        "limitations": "Etat cache local, sans vérification HTTP ni preuve d'âge déduite.",
+    }
 
 
 def _field(value: object, name: str, default: object = "") -> object:

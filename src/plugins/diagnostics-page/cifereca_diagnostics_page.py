@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from cifereca.plugin_api import UiPageContribution
+from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, source_summaries, explorer_header,
@@ -225,11 +226,15 @@ class DiagnosticsPagePlugin:
         self.diagnostics = None
         self.tasks = None
         self._check_handle = None
+        self._ai_handle = None
+        self.llm = None
 
     def activate(self, context):
         self.context = context
         self.diagnostics = context.broker("diagnostics")
         self.tasks = context.broker("tasks")
+        service = getattr(context, "service", None)
+        self.llm = service("llm") if callable(service) else None
         if self.diagnostics is None or self.tasks is None:
             raise RuntimeError("brokers diagnostics/tasks indisponibles")
         return self
@@ -366,6 +371,53 @@ class DiagnosticsPagePlugin:
         journals_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         journals_scroll.set_child(journals_box)
         outer.append(journals_scroll)
+
+        ai_title = Gtk.Label(label="Analyse IA (facultative)", xalign=0)
+        ai_title.add_css_class("heading")
+        outer.append(ai_title)
+        ai_notice = Gtk.Label(
+            label="Aucune donnée transmise par défaut. Prévisualiser les événements expurgés, "
+                  "vérifier la destination, puis autoriser chaque analyse explicitement.",
+            xalign=0,
+        )
+        ai_notice.set_wrap(True)
+        outer.append(ai_notice)
+        ai_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ai_prepare = Gtk.Button(label="Prévisualiser pour l’IA")
+        ai_send = Gtk.Button(label="Autoriser et analyser")
+        ai_send.set_sensitive(False)
+        ai_cancel = Gtk.Button(label="Annuler")
+        ai_export = Gtk.Button(label="Copier l’analyse IA")
+        ai_export.set_sensitive(False)
+        ai_controls.append(ai_prepare)
+        ai_controls.append(ai_send)
+        ai_controls.append(ai_cancel)
+        ai_controls.append(ai_export)
+        outer.append(ai_controls)
+        ai_status = Gtk.Label(label="IA non configurée ou non consultée", xalign=0)
+        ai_status.set_wrap(True)
+        outer.append(ai_status)
+        ai_expander = Gtk.Expander(label="Données expurgées proposées à l’IA")
+        ai_expander.set_expanded(False)
+        ai_scroller = Gtk.ScrolledWindow()
+        ai_scroller.set_min_content_height(150)
+        ai_scroller.set_size_request(-1, 220)
+        ai_input = Gtk.TextView()
+        ai_input.set_editable(False)
+        ai_input.set_monospace(True)
+        ai_input.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        ai_scroller.set_child(ai_input)
+        ai_expander.set_child(ai_scroller)
+        outer.append(ai_expander)
+        ai_report = Gtk.TextView()
+        ai_report.set_editable(False)
+        ai_report.set_monospace(True)
+        ai_report.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        ai_report_scroll = Gtk.ScrolledWindow()
+        ai_report_scroll.set_min_content_height(160)
+        ai_report_scroll.set_size_request(-1, 280)
+        ai_report_scroll.set_child(ai_report)
+        outer.append(ai_report_scroll)
 
         diag_title = Gtk.Label(label="Diagnostics", xalign=0)
         diag_title.add_css_class("heading")
@@ -737,6 +789,160 @@ class DiagnosticsPagePlugin:
         journals_previous.set_sensitive(False)
         journals_next.set_sensitive(False)
 
+        ai_preview = None
+        ai_result = ""
+        ai_generation = 0
+
+        def invalidate_ai(*_args):
+            nonlocal ai_preview, ai_result, ai_generation
+            ai_generation += 1
+            ai_preview = None
+            ai_result = ""
+            if self._ai_handle is not None and not self._ai_handle.done():
+                self._ai_handle.cancel()
+            ai_prepare.set_sensitive(True)
+            ai_send.set_sensitive(False)
+            ai_export.set_sensitive(False)
+            ai_input.get_buffer().set_text("")
+            ai_report.get_buffer().set_text("")
+            ai_status.set_text("Aperçu à actualiser avant toute nouvelle analyse")
+
+        def prepare_ai(_button):
+            nonlocal ai_generation, ai_preview
+            if self.llm is None:
+                ai_status.set_text("Service IA désactivé : aucun envoi.")
+                return
+            try:
+                destination = llm_destination(self.llm)
+                selected_source = SOURCES[int(source_selector.get_selected())]
+                selected_period = PERIODS[int(period_selector.get_selected())]
+            except (ValueError, TypeError) as exc:
+                ai_status.set_text("Destination IA indisponible : " + type(exc).__name__)
+                return
+            ai_generation += 1
+            token = ai_generation
+            ai_preview = None
+            ai_send.set_sensitive(False)
+            ai_export.set_sensitive(False)
+            ai_status.set_text("Préparation locale de l’aperçu expurgé…")
+
+            def worker(_control):
+                from diagnostics_explorer import explorer_since
+                return prepare_analysis(
+                    self.llm, broker, source=selected_source,
+                    since=explorer_since(selected_period),
+                )
+
+            handle = self.tasks.submit(
+                worker, label="Aperçu local Diagnostics IA", kind="diagnostics",
+            )
+            self._ai_handle = handle
+
+            def completed(done_handle):
+                from gi.repository import GLib
+                try:
+                    result = done_handle.result()
+                except Exception as exc:
+                    GLib.idle_add(finish_preview, token, None, type(exc).__name__)
+                else:
+                    GLib.idle_add(finish_preview, token, result, None)
+
+            handle.add_done_callback(completed)
+
+        def finish_preview(token, preview, error):
+            nonlocal ai_preview
+            if token != ai_generation:
+                return False
+            if error is not None or not isinstance(preview, Mapping):
+                ai_status.set_text("Aperçu IA indisponible : aucune donnée transmise")
+                ai_send.set_sensitive(False)
+                return False
+            dest = preview["destination"]
+            locality = "DISTANT — données envoyées hors machine" if dest["remote"] else "LOCAL"
+            ai_status.set_text(
+                f"{locality} · {dest['provider']} · modèle {dest['model']} · "
+                f"hôte {dest['host']} · {preview['count']} événements · "
+                f"{preview['chars']} caractères. "
+                "Le modèle produit des hypothèses, jamais une preuve."
+            )
+            ai_input.get_buffer().set_text(preview["prompt"])
+            ai_expander.set_expanded(True)
+            ai_preview = preview
+            ai_send.set_sensitive(True)
+            return False
+
+        def send_ai(_button):
+            nonlocal ai_preview, ai_generation
+            if ai_preview is None:
+                return
+            selected = ai_preview
+            ai_preview = None  # single-use consent per request
+            ai_send.set_sensitive(False)
+            ai_prepare.set_sensitive(False)
+            ai_status.set_text("Analyse IA en cours (requête autorisée)…")
+            token = ai_generation
+            self._ai_handle = self.tasks.submit(
+                lambda control: analyze_with_consent(
+                    self.llm, selected, approval_id=selected["approval_id"],
+                    control=control,
+                ),
+                label="Analyse Diagnostics IA explicite", kind="diagnostics",
+            )
+
+            def completed(done_handle):
+                from gi.repository import GLib
+                try:
+                    result = done_handle.result()
+                except Exception as exc:
+                    GLib.idle_add(finish_ai, token, None, type(exc).__name__)
+                else:
+                    GLib.idle_add(finish_ai, token, result, None)
+
+            self._ai_handle.add_done_callback(completed)
+
+        def finish_ai(token, result, error):
+            nonlocal ai_result
+            if token != ai_generation:
+                return False
+            ai_prepare.set_sensitive(True)
+            if error or not isinstance(result, Mapping) or not result.get("ok"):
+                ai_status.set_text("Analyse IA indisponible ou annulée ; aucun diagnostic confirmé")
+                return False
+            ai_result = (
+                "# Analyse générée par IA — hypothèses NON vérifiées\\n"
+                + f"Modèle : {result['provider']} / {result['model']}\\n"
+                + f"Provenance : {result['evidence_count']} événements Core expurgés\\n"
+                + f"Limites : {result['limitations']}\\n\\n"
+                + result["text"]
+            )
+            ai_report.get_buffer().set_text(ai_result)
+            ai_export.set_sensitive(True)
+            ai_status.set_text("Analyse IA générée ; vérifier toutes les références avant décision.")
+            return False
+
+        def cancel_ai(_button):
+            invalidate_ai()
+            ai_prepare.set_sensitive(True)
+            handle = self._ai_handle
+            if handle is not None and not handle.done():
+                handle.cancel()
+            ai_status.set_text("Analyse annulée côté interface (requête distante éventuellement déjà envoyée)")
+
+        def copy_ai(_button):
+            if not ai_result:
+                return
+            display = Gdk.Display.get_default()
+            if display is not None:
+                display.get_clipboard().set(ai_result)
+                host.toast("Analyse IA expurgée copiée (hypothèses non vérifiées)")
+
+        ai_prepare.connect("clicked", prepare_ai)
+        ai_send.connect("clicked", send_ai)
+        ai_cancel.connect("clicked", cancel_ai)
+        ai_export.connect("clicked", copy_ai)
+        source_selector.connect("notify::selected", invalidate_ai)
+        period_selector.connect("notify::selected", invalidate_ai)
+
         def render(*_args) -> None:
             clear_container(status_grid)
             clear_container(diag_box)
@@ -875,6 +1081,13 @@ class DiagnosticsPagePlugin:
             except Exception:
                 pass
         self._event_handle = None
+        if getattr(self, "_ai_handle", None) is not None:
+            try:
+                self._ai_handle.cancel()
+            except Exception:
+                pass
+        self._ai_handle = None
+        self.llm = None
         self.tasks = None
         self.diagnostics = None
         self.context = None

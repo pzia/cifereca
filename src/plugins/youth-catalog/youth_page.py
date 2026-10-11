@@ -20,7 +20,8 @@ from cifereca.plugin_api import (
 )
 from youth_catalog import (InvalidYouthSourcePage, _extract_page,
                            collection_failure_diagnostic, normalize_isbn,
-                           safe_ingest_rejection_categories)
+                           safe_ingest_rejection_categories,
+                           source_yield_diagnostic, youth_source_support_snapshot)
 
 
 KIND_LABELS = {
@@ -530,6 +531,14 @@ def source_diagnostic_presentation(rows):
                     labels.append(f"{reasons['other']} autres")
                 if labels:
                     line += " (" + ", ".join(labels) + ")"
+        diagnostic = source_yield_diagnostic(row)
+        cause = diagnostic["cause"]
+        if cause != "not_teste":
+            line += " · rendement : " + str(cause).replace("_", " ")
+            if diagnostic["confidence"] == "inferred":
+                line += " (hypothèse, à vérifier)"
+        if diagnostic["truncated_by_limit"]:
+            line += " · collecte partielle (limite de source)"
         lines.append(line)
     return headline, tuple(lines)
 
@@ -669,8 +678,14 @@ class YouthView:
         self.diagnostic_expander.set_tooltip_text(
             "Par profil : état des plugins, dernier essai et cache. Aucune collecte automatique."
         )
+        diagnostic_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.diagnostic_copy = Gtk.Button(label="Copier le diagnostic des sources (expurgé)")
+        self.diagnostic_copy.set_tooltip_text("Copie seulement des compteurs et causes sûres depuis le cache, sans réseau")
+        self.diagnostic_copy.connect("clicked", self.copy_source_diagnostics)
+        diagnostic_container.append(self.diagnostic_copy)
         self.diagnostic_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.diagnostic_expander.set_child(self.diagnostic_rows_box)
+        diagnostic_container.append(self.diagnostic_rows_box)
+        self.diagnostic_expander.set_child(diagnostic_container)
         self.widget.append(self.diagnostic_expander)
 
         self.master = host.build_book_master_detail(
@@ -781,6 +796,25 @@ class YouthView:
         for line in lines:
             container.append(self.Gtk.Label(label=line, wrap=True, xalign=0))
         return False
+
+    def copy_source_diagnostics(self, _button):
+        """Explicit, cache-only, cross-source export without identity or ISBN."""
+        import json
+        from gi.repository import Gdk
+        try:
+            broker = self.plugin.context.broker("diagnostics")
+            inventory_fn = getattr(broker, "inventory", None)
+            inventory = tuple(inventory_fn()) if callable(inventory_fn) else ()
+            rows = self.catalog.source_diagnostics(self.identity_id(), inventory=inventory)
+            safe = youth_source_support_snapshot(rows)
+            display = Gdk.Display.get_default()
+            if display is None:
+                self.status.set_label("Presse-papiers indisponible ; aucune collecte déclenchée.")
+                return
+            display.get_clipboard().set(json.dumps(safe, ensure_ascii=False, indent=2))
+            self.status.set_label("Diagnostic Jeunesse expurgé copié (cache local uniquement).")
+        except Exception:
+            self.status.set_label("Copie du diagnostic indisponible ; cache conservé.")
 
     def _identity_rows(self):
         broker = self.plugin.context.broker("identities")
@@ -1253,6 +1287,28 @@ class YouthView:
                 stage="ingest",
                 duration_ms=duration_ms, next_cursor_present=bool(cursor),
             )
+        # Emit a fixed-shape technical event only after this user-triggered
+        # collection; never log the query, user identity, title, URL or HTML.
+        diagnostic_report = getattr(self.plugin.context, "report_diagnostic", None)
+        if callable(diagnostic_report):
+            from youth_catalog import sanitize_collection_pipeline
+            state = "items" if report.accepted else "invalid" if report.rejected else "empty_unverified"
+            try:
+                diagnostic_report(
+                    "Jeunesse source collection outcome",
+                    "ok" if report.accepted else "warning",
+                    detail={
+                        "state": state,
+                        "accepted": min(100000, max(0, report.accepted)),
+                        "rejected": min(100000, max(0, report.rejected)),
+                        "pipeline": sanitize_collection_pipeline(
+                            raw.get("collection_pipeline") if isinstance(raw, Mapping) else None
+                        ),
+                    },
+                    level="normal",
+                )
+            except Exception:
+                pass  # A diagnostic event must never break ingestion.
         self.next_cursor = cursor
         self.next_source_plugin = str(source_plugin) if cursor else ""
         message = f"{report.accepted} notice(s) reçue(s) de {label or source_id}"
