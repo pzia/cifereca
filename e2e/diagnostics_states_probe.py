@@ -367,6 +367,84 @@ def main():
         report["audits"]["D14_support_report_freshness_explicit"] = False
         report["audits"]["D14_three_states_after_real_broker_coverage"] = False
         capture("05-verification-lente-terminee")
+        # D16: resize the *visible GTK window* on the 1366x900 Xvfb
+        # display, not the Xvfb screen itself. Do not infer mobile support.
+        report["D16_window_before_resize"] = [
+            window[0].get_width(), window[0].get_height()
+        ]
+        window[0].set_default_size(1240, 760)
+        until(lambda: window[0].get_width() <= 1260
+              and window[0].get_height() <= 790,
+              resized_narrow, seconds=7)
+
+    def measure_actions():
+        outer = page[0]
+        adjustment = outer.get_hadjustment()
+        overflow = max(0, adjustment.get_upper() - adjustment.get_page_size())
+        controls = [
+            button_tooltip("Actualiser les diagnostics"),
+            button_tooltip("Vérifier les services configurés et runtimes"),
+            button_tooltip("Copier le diagnostic support expurgé"),
+        ]
+        assert all(button.get_mapped() and button.get_sensitive()
+                   for button in controls), "Action Diagnostics inaccessible"
+        content = outer.get_child()
+        measured = []
+        for button in controls:
+            ok, bounds = button.compute_bounds(content)
+            assert ok, "Action sans allocation GTK"
+            assert bounds.get_width() > 0 and bounds.get_height() > 0
+            measured.append({
+                "tooltip": button.get_tooltip_text(),
+                "x": round(bounds.get_x(), 2),
+                "width": round(bounds.get_width(), 2),
+            })
+        return round(overflow, 2), measured
+
+    def resized_narrow():
+        assert window[0].get_width() >= 1140
+        assert window[0].get_height() >= 650
+        assert page[0].get_mapped()
+        assert has("Rapport support") and has("Analyse IA")
+        overflow, buttons = measure_actions()
+        report["D16_narrow_window"] = {
+            "size": [window[0].get_width(), window[0].get_height()],
+            "horizontal_overflow": overflow,
+            "action_geometry": buttons,
+        }
+        assert overflow < 5, ("Scroll horizontal global inattendu", overflow)
+        report["checks"]["D16_1366_display_narrow_no_horizontal_overflow"] = True
+        # No service trigger: just focus an existing visible control while
+        # keeping the previously completed active-check result intact.
+        refresh = button_tooltip("Actualiser les diagnostics")
+        assert refresh.grab_focus() is not False
+        until(lambda: refresh.has_focus(),
+              narrow_actions_focus, seconds=4)
+
+    def narrow_actions_focus():
+        assert has("Contrôle local fictif terminé")
+        assert has("IA non configurée ou non consultée")
+        report["checks"]["D16_narrow_actions_keyboard_reachable"] = True
+        capture("06-fenetre-1240-sur-ecran-1366")
+        window[0].set_default_size(1300, 790)
+        until(lambda: window[0].get_width() >= 1280
+              and window[0].get_height() >= 770,
+              resized_restored, seconds=7)
+
+    def resized_restored():
+        overflow, buttons = measure_actions()
+        report["D16_restored_window"] = {
+            "size": [window[0].get_width(), window[0].get_height()],
+            "horizontal_overflow": overflow,
+            "action_geometry": buttons,
+        }
+        assert overflow < 5, ("Débordement au retour", overflow)
+        assert has("Contrôle local fictif terminé")
+        assert broker[0].checks == 1
+        assert len(broker[0].event_queries) == 1
+        assert plugin[0].llm is None
+        report["checks"]["D16_restore_without_losing_diagnostics_state"] = True
+        capture("07-fenetre-restauree-1300")
         report["unmet_criteria"] = [
             key for key, ok in (
                 ("D02: pas d'erreur observée explicite et daté",
@@ -377,6 +455,7 @@ def main():
                  report["audits"]["D14_support_report_freshness_explicit"]),
             ) if not ok
         ]
+        report["audits"]["D16_full_multi_monitor_coverage"] = False
         report["status"] = "PASS"
         save()
         rc[0] = 0

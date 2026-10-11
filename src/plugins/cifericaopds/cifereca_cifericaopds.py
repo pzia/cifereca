@@ -446,37 +446,60 @@ class CifericaCollection:
         self._activation_generation = 0
 
     def activate(self, context):
+        # Retire the previous incarnation before any potentially blocking
+        # configuration/cache I/O. Only the latest activation may publish.
         with self._lock:
             self._activation_generation += 1
-            # Invalidate sessions from previous activations, including cases
-            # where the new cache advertises identical upstream revisions.
+            activation = self._activation_generation
             for sid in self._session_epochs:
                 self._session_epochs[sid] += 1
+            self._active = False
             self._snapshot = None
             self._full_snapshot = None
-            self._active = False
+            self._client = None
+            self._directory = None
+            # Subscriptions from a retired Core instance must not observe
+            # discoveries made under a replacement configuration/identity.
+            self._callbacks.clear()
+
         cfg = dict(context.config)
-        self._mode = cfg.get("mode", "fixture")
-        if self._mode not in ("fixture", "candidate_v02"):
+        mode = cfg.get("mode", "fixture")
+        if mode not in ("fixture", "candidate_v02"):
             raise ContractUnavailable("unknown plugin mode")
-        self._client = JsonClient(cfg.get("base_url", "http://127.0.0.1:8788"),
-                                  cfg.get("timeout_seconds", 4))
-        self._show_synthetic = bool(cfg.get("show_synthetic", False))
-        self._directory = context.data_directory
-        path = self._directory / "inventory.json"
+        client = JsonClient(cfg.get("base_url", "http://127.0.0.1:8788"),
+                            cfg.get("timeout_seconds", 4))
+        show_synthetic = bool(cfg.get("show_synthetic", False))
+        directory = context.data_directory
+        full_snapshot = None
+        visible_snapshot = None
         try:
-            cached = _read_local_json(path, label="inventory", optional=True)
+            cached = _read_local_json(
+                directory / "inventory.json", label="inventory", optional=True,
+            )
             if cached is not None:
-                self._full_snapshot = validate_provider_collection_snapshot(
+                full_snapshot = validate_provider_collection_snapshot(
                     cached, parent_plugin_id=PARENT_ID,
                 )
-                self._snapshot = self._visible_snapshot(self._full_snapshot)
+                visible_snapshot = self._visible_snapshot(
+                    full_snapshot, show_synthetic=show_synthetic,
+                )
         except (ContractUnavailable, ValueError, TypeError, RecursionError):
-            # A damaged cache cannot prevent the plugin from activating.
-            # It is neither published nor overwritten before an explicit refresh.
-            self._full_snapshot = None
-            self._snapshot = None
+            # An invalid cache must not break activation or leak private paths.
+            # An explicit refresh is required before any source is published.
+            full_snapshot = None
+            visible_snapshot = None
+
         with self._lock:
+            if self._activation_generation != activation:
+                # A later activate()/deactivate() retired this invocation.
+                # Never revive it or overwrite its chosen cache and endpoint.
+                raise ContractUnavailable("plugin changed during activation")
+            self._mode = mode
+            self._client = client
+            self._show_synthetic = show_synthetic
+            self._directory = directory
+            self._full_snapshot = full_snapshot
+            self._snapshot = visible_snapshot
             self._active = True
         return self
 
@@ -488,15 +511,20 @@ class CifericaCollection:
                 self._session_epochs[sid] += 1
             self._callbacks.clear()
             self._directory = None
+            self._client = None
+            self._full_snapshot = None
+            self._snapshot = None
 
     def snapshot(self):
         with self._lock:
-            if self._snapshot is None:
-                raise ContractUnavailable("no validated inventory; explicit refresh required")
+            if not self._active or self._snapshot is None:
+                raise ContractUnavailable("no validated inventory; plugin inactive or explicit refresh required")
             return self._snapshot
 
-    def _visible_snapshot(self, full):
-        if full is None or self._show_synthetic:
+    def _visible_snapshot(self, full, *, show_synthetic=None):
+        if show_synthetic is None:
+            show_synthetic = self._show_synthetic
+        if full is None or show_synthetic:
             return full
         return replace(full, children=tuple(
             row for row in full.children if row.kind != "synthetic.merged"

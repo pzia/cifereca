@@ -87,6 +87,12 @@ routes n'est attestée sur le serveur réel**.
   **kind**, pas un identifiant avec points. Exemple : source \`merged\`.
 - Les secrets, droits, URLs signées et capacités non implémentées ne sont
   jamais projetés dans \`SearchResult\`.
+- L'activation est transactionnelle : lecture et validation du cache sont
+  préparées hors verrou, puis publiées uniquement si aucune activation ou
+  désactivation plus récente n'est intervenue. Les anciens abonnements,
+  sessions et snapshots sont invalidés à chaque changement de cycle de vie.
+  Après désactivation, `snapshot()` ne republie jamais l'ancien inventaire ;
+  une nouvelle activation peut toujours le relire depuis le cache local.
 - Les sessions existantes sont invalidées lorsque leur source passe à
   `disabled`, `removed`, perd `catalog.search`, ou change de révision ou
   génération de catalogue. Même une réapparition sous la même révision exige
