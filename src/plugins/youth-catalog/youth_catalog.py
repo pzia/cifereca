@@ -1039,6 +1039,7 @@ class YouthCatalogIndex:
         query: str = "",
         *,
         age: int | None = None,
+        minimum_age: int | None = None,
         age_kind: str = "",
         source_id: str = "",
         language: str = "",
@@ -1064,7 +1065,22 @@ class YouthCatalogIndex:
                 continue
             if wanted_themes and not wanted_themes.issubset(set(book.themes)):
                 continue
-            if age is not None:
+            if minimum_age is not None:
+                # Product semantics: titles whose *attested published lower
+                # bound* is at least N. This is NOT a suitability claim for
+                # a child aged N: a 12+ book remains 12+, not "suitable at 10".
+                # Point-age searches still use contains(age) for other callers.
+                if not type(minimum_age) is int or not 0 <= minimum_age <= 17:
+                    continue
+                matches = [
+                    rng for rng in book.age_ranges
+                    if rng.age_min is not None and rng.age_min >= minimum_age
+                    and (not kind or rng.age_kind == kind)
+                    and (include_inferred or rng.age_kind != "inferred")
+                ]
+                if not matches:
+                    continue
+            elif age is not None:
                 matches = [
                     rng for rng in book.age_ranges
                     if rng.contains(int(age)) and (not kind or rng.age_kind == kind)
