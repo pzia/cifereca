@@ -1449,7 +1449,7 @@ def test_959_links_are_only_navigation_not_edition_holdings_evidence():
         friendly_url="https://example.org/notice/42",
     )
     detail = detail_presentation(book)
-    assert [(link.title, link.url) for link in detail.links] == [
+    assert [(link.label, link.url) for link in detail.links] == [
         ("Voir la notice publique", "https://example.org/notice/42"),
     ]
-    assert all("disponib" not in link.title.casefold() for link in detail.links)
+    assert all("disponib" not in link.label.casefold() for link in detail.links)
