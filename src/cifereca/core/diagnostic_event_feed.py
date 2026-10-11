@@ -180,6 +180,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
     except (AttributeError, ValueError, TypeError):
         return [], {"source": "core_events", "status": "unavailable", "reason": "snapshot_unavailable"}
     events: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    duplicate_offsets: dict[str, int] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -205,6 +207,20 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         terms = [word for word in re.findall(r"[a-zA-Z]+", operation.lower())
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
+        base_id = _event_id("core_events", stamp, category + ":" + operation)
+        event_id = base_id
+        # Two records may share the same timestamp/category/operation.
+        # Preserve the historical hash of a unique record, but avoid false
+        # reference provenance when two published records collide.
+        duplicate_number = duplicate_offsets.get(base_id, 0)
+        while event_id in used_ids:
+            duplicate_number += 1
+            event_id = _event_id(
+                "core_events", stamp,
+                f"{category}:{operation}:duplicate:{duplicate_number}",
+            )
+        used_ids.add(event_id)
+        duplicate_offsets[base_id] = duplicate_number
         events.append({
             "timestamp": stamp,
             "source": "core_events",
@@ -214,7 +230,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "status": status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
                        else "unknown",
-            "event_id": _event_id("core_events", stamp, category + ":" + operation),
+            "event_id": event_id,
         })
     return events, {"source": "core_events", "status": "available" if events else "empty",
                     "reason": "" if events else "no_recorded_events"}
