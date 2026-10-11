@@ -64,11 +64,14 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
     if not isinstance(payload, Mapping):
         return []
     results: list[dict[str, str]] = []
-    for raw in tuple(payload.get("events") or ())[:PAGE_SIZE]:
+    events = payload.get("events")
+    if not isinstance(events, (list, tuple)):
+        return []
+    for raw in events[:PAGE_SIZE]:
         if not isinstance(raw, Mapping):
             continue
         safe = {
-            key: str(raw.get(key) or "")[:500]
+            key: raw.get(key, "")[:500] if isinstance(raw.get(key), str) else ""
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
         # Full text search is explicitly local to this 50-item broker page.
@@ -110,12 +113,19 @@ def module_groups(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
 
 def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
     states = []
-    for raw in tuple(payload.get("sources") or ())[:4]:
+    if not isinstance(payload, Mapping):
+        return states
+    sources = payload.get("sources")
+    if not isinstance(sources, (list, tuple)):
+        return states
+    for raw in sources[:4]:
         if not isinstance(raw, Mapping):
             continue
-        status = str(raw.get("status") or "unavailable")
+        status = raw.get("status")
+        if not isinstance(status, str):
+            status = "unavailable"
         states.append({
-            "source": str(raw.get("source") or "inconnue")[:40],
+            "source": raw["source"][:40] if isinstance(raw.get("source"), str) else "inconnue",
             "status": status if status in SOURCE_STATES else "unavailable",
             "label": SOURCE_STATES.get(status, SOURCE_STATES["unavailable"]),
         })
