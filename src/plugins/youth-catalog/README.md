@@ -122,3 +122,42 @@ inaccessible ou redirigée n'est pas une preuve de DOM. Avant toute
 implémentation d'adaptateur, comparer également au moins deux fiches,
 qualifier les âges *propres à l'édition* et rejeter les produits hors livre.
 Aucune supposition de DOM commun avec Milan.
+
+
+## Recherche fédérée Jeunesse au clic — P2 #1028 (0.4.19)
+
+Un bouton autonome **« Rechercher dans toutes les sources Jeunesse »**
+interroge, **uniquement au clic**, les sources actives exposant `browse`
+ou `search`. Pas de HTTP pendant la saisie, l'ouverture, le choix du profil
+ou des filtres. Le bouton de collecte d'une source et sa pagination sont
+inchangés. L'opération utilise `context.broker("tasks")` et deux workers
+concurrents au maximum.
+
+**Budgets de protection :** au plus 8 sources, 2 pages/source,
+50 notices/page, 2 connexions simultanées. Une page dépassant la limite,
+une réponse mal formée, une boucle de curseur ou un fournisseur défaillant
+rejette sa source sans effacer son cache valide ; les autres sources
+continuent. Les exceptions fournisseurs ne sont jamais réaffichées.
+L'état donne les sources interrogées, indisponibles/ignorées et les
+notices admises. Les pages précédentes ne sont pas collectées sans clic ;
+la deuxième page, quand attestée, est récupérée dans la même demande
+explicitement bornée. Aucun lien d'acquisition n'est appelé.
+
+Les réponses sont ingérées **progressivement sur le thread GTK** dans
+l'identité active, après contrôle de génération/recherche/profil et du
+signal d'annulation. Les workers ne mutent jamais le cache directement.
+La déduplication bibliographique et les preuves d'âge sont celles du
+cache Jeunesse existant ; aucune inférence ou rapprochement par simple
+titre ne provient de la fédération. Un seuil `minimum_age` publié
+n'est **pas converti en âge exact** dans les API amont hétérogènes :
+le filtrage réellement disponible est réappliqué localement après
+ingestion. La source peut ne pas exposer tous les champs recherchés.
+
+**Limites :** un lot source invalide n'applique pas de résultats partiels
+de cette source ; source non compatible/inactive ignorée sans bloquer
+les autres. La pertinence des textes et les explications des matchs sont
+suivies dans #1032/#1023 (Core), la simplification des filtres #1029
+est dans une PR distincte. Les scénarios UX GTK 1366/1600 et le cumul
+des deux PR Jeunesse devront être validés par le merger/UX.
+
+Tests hors réseau : `tests/test_federated_search_p2.py`.

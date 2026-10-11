@@ -663,6 +663,16 @@ class YouthView:
         self.widget.append(actions)
         self._action_buttons = {}
         actions.append(self.button("Collecter cette source", self.collect))
+        # Keep the four legacy single-source actions in _action_buttons:
+        # E2E and public affordance tests depend on that stable registry.
+        self.federated_button = Gtk.Button(
+            label="Rechercher dans toutes les sources Jeunesse",
+        )
+        self.federated_button.set_tooltip_text(
+            "Réseau seulement au clic : 8 sources au plus, 2 connexions, 2 pages de 50 notices."
+        )
+        self.federated_button.connect("clicked", lambda *_: self.collect_federated())
+        actions.append(self.federated_button)
         actions.append(self.button("Plus de résultats", self.more))
         actions.append(self.button("Enrichir la bibliographie", self.enrich_bibliography))
         actions.append(self.button("Ouvrir la fiche Bibliothèque", self.open_selected))
@@ -671,6 +681,11 @@ class YouthView:
             wrap=True, xalign=0,
         )
         self.widget.append(self.actions_hint)
+        self.federated_status = Gtk.Label(
+            label="Recherche fédérée non lancée. Aucune requête automatique.",
+            wrap=True, xalign=0,
+        )
+        self.widget.append(self.federated_status)
 
         # Only local state and the public plugin-inventory broker are read.
         # Collapse by default to preserve the original 1024px reading viewport.
@@ -758,6 +773,25 @@ class YouthView:
             enabled, reason = states[label]
             button.set_sensitive(enabled)
             button.set_tooltip_text(reason)
+        federated_button = getattr(self, "federated_button", None)
+        if federated_button is not None:
+            # Check only static capabilities; importing the new optional
+            # coordinator or making HTTP calls during render is forbidden.
+            eligible = any(
+                getattr(row, "enabled", True) is not False
+                and getattr(getattr(row, "service", row), "enabled", True) is not False
+                and any(callable(getattr(getattr(row, "service", row), method, None))
+                        for method in ("browse", "search", "browse_with_cancellation"))
+                for row in getattr(self, "sources", ())
+            )
+            enabled = bool(identity and not busy and eligible)
+            federated_button.set_sensitive(enabled)
+            federated_button.set_tooltip_text(
+                "Réseau uniquement au clic : 8 sources max, 2 connexions simultanées, "
+                "2 pages de 50 notices par source."
+                if enabled else
+                "Sélectionnez un profil avec des sources Jeunesse actives et compatibles."
+            )
         hint = getattr(self, "actions_hint", None)
         if hint is not None:
             hint.set_label(
@@ -1144,6 +1178,11 @@ class YouthView:
 
     def collect(self):
         self._remote_request("")
+
+    def collect_federated(self):
+        """Click-only network federation. No network on typing/filtering."""
+        from youth_federation_ui import run_federated_action
+        run_federated_action(self)
 
     def more(self):
         if not self.next_cursor or self.next_source_plugin != self.selected_source_plugin():
