@@ -211,3 +211,16 @@ def test_malformed_filter_types_fail_before_reading_logs(tmp_path, monkeypatch, 
     monkeypatch.setattr(feed, "_source_logs", forbidden)
     with pytest.raises(ValueError):
         feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", **kwargs)
+
+
+def test_log_namespace_must_have_exact_cifereca_boundary(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO ciferecaevil [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:01,000 INFO cifereca-private [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:02,000 INFO cifereca [Worker] TRACE sync source status=ok",
+        "2026-10-11 07:00:03,000 INFO cifereca.sync [Worker] TRACE sync source status=ok",
+    )
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert [row["module"] for row in result["events"]] == ["cifereca", "cifereca.sync"]
+    assert result["total"] == 2
