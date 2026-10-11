@@ -11,7 +11,7 @@ from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_conse
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, source_summaries, explorer_header,
-    next_page_offset, export_selected_events,
+    next_page_offset, selectable_event_ids, export_selected_events,
 )
 
 # The broker provides already-redacted data. This is a second, stricter
@@ -620,6 +620,8 @@ class DiagnosticsPagePlugin:
                 current_page, search=search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
             )
+            valid_ids = selectable_event_ids(rows)
+            selected_event_ids.intersection_update(valid_ids)
             states = source_summaries(current_page)
             if states:
                 journals_sources.set_text("  ·  ".join(
@@ -645,9 +647,12 @@ class DiagnosticsPagePlugin:
                     select = Gtk.CheckButton()
                     select.set_tooltip_text("Sélectionner cet événement pour copie expurgée")
                     event_id = row["event_id"]
-                    select.set_active(event_id in selected_event_ids)
+                    select.set_sensitive(event_id in valid_ids)
+                    select.set_active(event_id in valid_ids and event_id in selected_event_ids)
 
                     def on_select(button, event_ref=event_id):
+                        if event_ref not in valid_ids:
+                            return
                         if button.get_active():
                             selected_event_ids.add(event_ref)
                         else:
@@ -795,7 +800,7 @@ class DiagnosticsPagePlugin:
                 current_page, search=search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
             )
-            visible_ids = {row["event_id"] for row in rows}
+            visible_ids = selectable_event_ids(rows)
             selected = selected_event_ids.intersection(visible_ids)
             if not selected:
                 host.toast("Sélectionner un événement visible")
