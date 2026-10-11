@@ -316,19 +316,16 @@ def prepare_analysis(
         for key, value in list(safe_report.items())[:32]:
             if not isinstance(key, str):
                 continue
-            # A broker's assertion that checks were skipped is control
-            # metadata, not evidence. An empty checks list is not a health
-            # check result and must not inflate the section count.
+            # Control metadata and deliberately excluded raw data are not
+            # missing *eligible* evidence. Do not mark an otherwise complete
+            # support sample truncated merely because these keys are present.
             if key in ("checks_executed", "checks"):
                 continue
-            if len(support_sections) >= _MAX_SUPPORT_FIELDS:
-                truncated = True
-                break
-            # Never include raw logs or opaque payloads by default, even if
-            # a future Core report adds them as public-looking sections.
             if any(word in key.casefold() for word in (
                 "raw", "payload", "file_content", "attachment",
             )):
+                continue
+            if len(support_sections) >= _MAX_SUPPORT_FIELDS:
                 truncated = True
                 continue
             candidate = {**support_sections, key: value}
@@ -338,7 +335,7 @@ def prepare_analysis(
                 truncated = True
                 continue
             support_sections = candidate
-        if len(safe_report) > len(support_sections):
+        if len(safe_report) > 32:
             truncated = True
 
     if not filtered and not structured and not support_sections:
