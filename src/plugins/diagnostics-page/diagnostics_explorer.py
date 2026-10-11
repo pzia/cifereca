@@ -49,6 +49,8 @@ def fetch_explorer_page(
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if source not in SOURCES or severity not in SEVERITIES:
         raise ValueError("unsupported diagnostics filter")
+    if not isinstance(module, str) or len(module) > 90:
+        raise ValueError("invalid diagnostics module")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
         raise ValueError("invalid diagnostics offset")
     return broker.events(
@@ -115,8 +117,16 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
-    total = max(0, int(payload.get("total") or 0))
-    offset = max(0, int(payload.get("offset") or 0))
+    def bounded_count(value: Any) -> int:
+        try:
+            if isinstance(value, bool):
+                return 0
+            return min(10000, max(0, int(value)))
+        except (ValueError, TypeError, OverflowError):
+            return 0
+
+    total = bounded_count(payload.get("total"))
+    offset = bounded_count(payload.get("offset"))
     shown = len(rows)
     if not payload.get("sources"):
         return "Sources non alimentées — aucune donnée disponible"
