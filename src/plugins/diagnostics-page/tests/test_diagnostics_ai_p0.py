@@ -1317,3 +1317,79 @@ def test_public_source_last_event_ignores_malformed_data(malformed):
     assert all("last_event" not in state for state in preview["source_states"])
     assert "PRIVATE_KEY" not in preview["prompt"]
     assert model.calls == 0
+
+
+def test_ai_structured_detail_never_exports_unknown_names_titles_or_identifiers():
+    class PersonalMetadataBroker(FakeBroker):
+        def snapshot(self):
+            return [{
+                "component": "sync",
+                "status": "partial",
+                "detail": {
+                    "phase": "fetch", "reason": "provider_timeout",
+                    "count": 2, "duration_ms": 125, "retryable": False,
+                    "title": "Mon livre privé et identifiable",
+                    "borrower": "Alexandre Bernard",
+                    "loan_id": "ABC-123",
+                    "customer": "Jean Martin",
+                    "reason_detail": "Profil Alexandre Bernard",
+                    "operation": "return-loan-Alexandre",
+                    "note": {"library": "Médiathèque privée"},
+                },
+            }]
+
+    model = FakeLLM(remote=True)
+    broker = PersonalMetadataBroker([event(ref="ref-safe")])
+    default = prepare_analysis(model, broker)
+    assert default["structured_count"] == 0
+    preview = prepare_analysis(model, broker, include_snapshot=True)
+    assert preview["structured_count"] == 1
+    for token in ("fetch", "provider_timeout", "retryable", "duration_ms", "125"):
+        assert token in preview["prompt"]
+    for secret in (
+        "Mon livre privé", "Alexandre", "Bernard", "Jean Martin",
+        "ABC-123", "Médiathèque", "return-loan",
+        "reason_detail", "loan_id", "borrower", "customer",
+    ):
+        assert secret not in preview["prompt"]
+    assert model.calls == 0
+    assert preview["bytes"] <= 3000
+
+
+@pytest.mark.parametrize("detail", [
+    {"phase": "alice", "reason": "user_alice", "count": True},
+    {"phase": "FETCH", "reason": "provider_timeout?borrower=Jean", "attempts": 10**50},
+    {"operation": "loan_detailed_person", "count": -10000},
+    {"title": "an identifying book title", "loan": {"name": "Alice"}},
+    None, [], "private nested text",
+])
+def test_ai_structured_detail_unknown_values_are_not_sent(detail):
+    class StrictBroker(FakeBroker):
+        def snapshot(self):
+            return [{"component": "core", "detail": detail}]
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, StrictBroker([]), include_snapshot=True)
+    assert preview["structured_count"] == 1
+    assert '"detail"' not in preview["prompt"]
+    assert "alice" not in preview["prompt"].lower()
+    assert "borrower" not in preview["prompt"].lower()
+    assert "identifying" not in preview["prompt"].lower()
+    assert model.calls == 0
+
+
+def test_ai_structured_detail_cannot_stringify_unknown_objects():
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("must not stringify nested sensitive objects")
+        def __repr__(self):
+            raise AssertionError("must not repr nested sensitive objects")
+
+    class HostileBroker(FakeBroker):
+        def snapshot(self):
+            return [{"component": "core",
+                     "detail": {"phase": Hostile(), "loan_info": Hostile()}}]
+
+    preview = prepare_analysis(FakeLLM(), HostileBroker([]), include_snapshot=True)
+    assert preview["structured_count"] == 1
+    assert '"detail"' not in preview["prompt"]
