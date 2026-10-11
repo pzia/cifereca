@@ -325,7 +325,7 @@ def next_cursor(html: object, *, current_page: int) -> str:
 
 def _next_value(rows: tuple[tuple[str, str, str], ...], label_names: set[str]) -> str:
     for index, (kind, value, _href) in enumerate(rows):
-        if kind != "text" or _fold(value) not in label_names:
+        if kind not in {"text", "heading"} or _fold(value) not in label_names:
             continue
         for next_kind, next_value, _next_href in rows[index + 1:index + 5]:
             if next_kind in {"text", "heading"}:
