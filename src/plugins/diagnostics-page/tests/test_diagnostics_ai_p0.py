@@ -878,12 +878,15 @@ def test_optional_support_report_expurgated_and_never_read_without_opt_in():
             super().__init__(events)
             self.support_calls = 0
 
-        def support_report(self, *, verbose=False):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert include_checks is False
             assert verbose is False
             self.support_calls += 1
             return {
                 "summary": "statut partiel",
-                "checks": {"step": "ready", "authorization": "Bearer PRIVATE_AUTH"},
+                "checks_executed": False,
+                "checks": [],
+                "runtime": {"step": "ready", "authorization": "Bearer PRIVATE_AUTH"},
                 "source": "alice@example.com",
                 "raw_log": "NEVER_READ_RAW_LOG",
             }
@@ -917,8 +920,9 @@ def test_optional_support_report_expurgated_and_never_read_without_opt_in():
 
 def test_support_report_only_and_modifying_consent_scope_is_forbidden():
     class ReportBroker(FakeBroker):
-        def support_report(self, *, verbose=False):
-            return {"summary": "Synchronisation partielle"}
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert include_checks is False
+            return {"checks_executed": False, "summary": "Synchronisation partielle"}
 
     model = FakeLLM()
     broker = ReportBroker([])
@@ -953,8 +957,12 @@ def test_missing_support_report_fail_closed_only_if_explicitly_selected():
 
 def test_support_report_is_lowest_priority_and_bounded_after_core_evidence():
     class HugeReportBroker(FakeBroker):
-        def support_report(self, *, verbose=False):
-            return {f"extra_{i}": "X" * 800 for i in range(20)}
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert include_checks is False
+            return {
+                "checks_executed": False,
+                **{f"extra_{i}": "X" * 800 for i in range(20)},
+            }
 
     model = FakeLLM()
     broker = HugeReportBroker([event(ref=f"ref-{i}") for i in range(3)])
@@ -974,3 +982,30 @@ def test_support_report_ui_is_disabled_by_default_and_invalidates_approval():
     assert 'include_support_report=selected_support_report' in page
     assert 'ai_support_report.connect("toggled", invalidate_ai)' in page
     assert "f\"{preview['support_fields']} rubriques support" in page
+
+
+def test_support_report_refuses_any_backend_that_cannot_prove_passive_collection():
+    class LegacyReportBroker(FakeBroker):
+        def support_report(self, *, verbose=False):
+            raise AssertionError("legacy support reporter must not be invoked")
+
+    class MislabelledReportBroker(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert include_checks is False
+            return {"summary": "diagnostic", "checks_executed": True}
+
+    model = FakeLLM()
+    for broker in (LegacyReportBroker([event()]),
+                   MislabelledReportBroker([event()])):
+        with pytest.raises((TypeError, ValueError)):
+            prepare_analysis(model, broker, include_support_report=True)
+    assert model.calls == 0
+
+
+def test_ai_support_report_always_requests_passive_core_mode():
+    from pathlib import Path
+    code = (Path(__file__).parents[1] / "diagnostics_ai.py").read_text(
+        encoding="utf-8"
+    )
+    assert "report_method(verbose=False, include_checks=False)" in code
+    assert 'report.get("checks_executed") is not False' in code

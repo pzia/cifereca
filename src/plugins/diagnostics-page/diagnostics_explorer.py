@@ -166,6 +166,18 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
         # output. Keep the original three-field contract when no reason exists.
         if reason and status in ("empty", "disabled", "unavailable", "partial"):
             state["reason"] = reason
+        # Dates are metadata from the Core, never arbitrary display strings.
+        # Validate timezone and normalise UTC; do not stringify hostile types.
+        raw_last = raw.get("last_event")
+        if type(raw_last) is str and len(raw_last) <= 40:
+            try:
+                instant = datetime.fromisoformat(raw_last.replace("Z", "+00:00"))
+                if instant.tzinfo is not None:
+                    state["last_event"] = instant.astimezone(timezone.utc).isoformat(
+                        timespec="seconds",
+                    )
+            except (ValueError, OverflowError):
+                pass
         states.append(state)
     return states
 

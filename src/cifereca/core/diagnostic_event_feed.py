@@ -108,6 +108,13 @@ def _log_lines(
         return [], "unavailable", None
 
 
+def _latest_published_event(events: list[dict[str, Any]]) -> str | None:
+    """Newest public event in Core's bounded source window, not file mtime."""
+    if not events:
+        return None
+    return max(_stamp(event["timestamp"]) for event in events).isoformat()
+
+
 def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     events: list[dict[str, Any]] = []
     observed = False
@@ -159,14 +166,28 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "message": message[:240],
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
+                # A file can be overwritten on the same inode/offset.
+                # Include every published event discriminator so a change of
+                # severity or sanitized module cannot reuse an old reference.
                 "event_id": _event_id(
                     "app_log", ts,
-                    f"{identity[0]}:{identity[1]}:{byte_offset}:{message}",
+                    f"{identity[0]}:{identity[1]}:{byte_offset}:"
+                    f"{match['level']}:{'.'.join(safe_parts)}:{message}",
                 ),
             })
     status = "partial" if partial else ("available" if observed else "unavailable")
-    return events, {"source": "app_log", "status": "partial" if partial else (status if events else ("empty" if observed else "unavailable")),
-                    "reason": "log_tail_bounded" if partial else ("no_matching_events" if observed and not events else "")}
+    state = {
+        "source": "app_log",
+        "status": "partial" if partial else (
+            status if events else ("empty" if observed else "unavailable")
+        ),
+        "reason": "log_tail_bounded" if partial else (
+            "no_matching_events" if observed and not events else ""
+        ),
+    }
+    if events:
+        state["last_event"] = _latest_published_event(events)
+    return events, state
 
 
 def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -232,8 +253,14 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                        else "unknown",
             "event_id": event_id,
         })
-    return events, {"source": "core_events", "status": "available" if events else "empty",
-                    "reason": "" if events else "no_recorded_events"}
+    state = {
+        "source": "core_events",
+        "status": "available" if events else "empty",
+        "reason": "" if events else "no_recorded_events",
+    }
+    if events:
+        state["last_event"] = _latest_published_event(events)
+    return events, state
 
 
 def query_diagnostic_events(
