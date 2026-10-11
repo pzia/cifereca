@@ -29,7 +29,7 @@ KIND_LABELS = {
     "interest": "Âge d’intérêt",
     "reading": "Âge de lecture",
     "publisher": "Âge éditeur",
-    "inferred": "Âge inféré",
+    "inferred": "Âge estimé (non confirmé par une source)",
 }
 KIND_VALUES = tuple(KIND_LABELS)
 _SPLIT = re.compile(r"[,;]")
@@ -136,7 +136,7 @@ def age_badge(age_range: object) -> str:
         "interest": "Intérêt ",
         "reading": "Lecture ",
         "publisher": "Éditeur ",
-        "inferred": "Inféré ",
+        "inferred": "Estimé (non confirmé) ",
     }.get(kind, "")
     return f"{prefix}{bounds} ans"
 
