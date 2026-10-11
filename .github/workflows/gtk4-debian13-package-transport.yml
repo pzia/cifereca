@@ -1,0 +1,44 @@
+name: GTK4 Debian 13 package transport (manual)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    timeout-minutes: 12
+    steps:
+      - name: Fetch Debian 13 GTK packages into isolated APT cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -o APT::Update::Error-Mode=any
+          apt-get install -y --no-install-recommends ca-certificates
+          mkdir -p /bundle/debs
+          apt-get install --download-only -y --reinstall --no-install-recommends \
+            python3-gi python3-gi-cairo python3-pil \
+            gir1.2-gtk-4.0 gir1.2-adw-1 \
+            xvfb xauth dbus-x11 libxtst6 libx11-6
+          cp /var/cache/apt/archives/*.deb /bundle/debs/
+          test -n "$(find /bundle/debs -name '*.deb' -print -quit)"
+          (cd /bundle/debs && sha256sum ./*.deb > SHA256SUMS)
+          printf '%s\n' 'Debian 13 trixie packages; source: Debian official APT mirrors' \
+            'Downloaded on GitHub-hosted Debian trixie container' \
+            'This set is NOT guaranteed to satisfy a differently provisioned machine.' \
+            > /bundle/debs/README.txt
+          (cd /bundle && tar -czf /tmp/gtk4-debian13-debs.tar.gz debs)
+          sha256sum /tmp/gtk4-debian13-debs.tar.gz > /tmp/gtk4-debian13-debs.tar.gz.sha256
+      - name: Upload portable package bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtk4-debian13-debs
+          path: |
+            /tmp/gtk4-debian13-debs.tar.gz
+            /tmp/gtk4-debian13-debs.tar.gz.sha256
+          retention-days: 3
+          if-no-files-found: error
