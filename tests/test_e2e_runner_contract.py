@@ -50,6 +50,24 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert marker in source
 
 
+def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-large-1600"]
+    assert scenario["runner"] == "gtk-diagnostics"
+    assert scenario["width"] == 1600
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    source = (ROOT / "e2e/diagnostics_page_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "independent_scroll_to_report_end",
+        "long_redacted_report_1600",
+        "tab_shift_tab_and_space_xtest",
+        'press("Tab")',
+        'press("space")',
+        "outer_before",
+    ):
+        assert marker in source
+
+
 def test_diagnostics_navigation_targets_real_mainwindow_and_pointer_events():
     runner = _module()
     scenario = runner.SCENARIOS["diagnostics-navigation-1366"]
