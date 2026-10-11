@@ -28,10 +28,14 @@ def formatter():
     return module.format_diagnostic_detail
 
 
-@pytest.mark.xfail(strict=True, reason="#1012: mapping keys are cut at 160 before redaction")
 @pytest.mark.parametrize("mode", ("readable", "json", "raw"))
 @pytest.mark.parametrize("sensitive", (
-    "alice@example.com",
+    pytest.param(
+        "alice@example.com",
+        marks=pytest.mark.xfail(
+            strict=True, reason="#1012: email fragment crosses mapping-key preview cut"
+        ),
+    ),
     "https://example.org/path?token=confidential",
     "/home/alice/private/book.epub",
 ))
