@@ -1147,7 +1147,7 @@ def test_long_ai_redaction_marker_is_atomic_and_export_is_identical(private, mar
     ("structured_count", 3),
     ("support_fields", 8),
     ("total_available", 999999),
-    ("sample_truncated", False),
+    ("sample_truncated", True),
     ("source_states", [{"source": "fake", "status": "available", "reason": ""}]),
     ("chars", 0),
     ("bytes", 0),
