@@ -1,18 +1,9 @@
 name: E2E Smoke
 
+# UX E2E is deliberately outside routine PR CI; invoke only for an
+# approved exploratory / acceptance run. Its dataset and GTK assets remain.
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'e2e/**'
-      - 'src/cifereca/gui/**'
-      - 'src/plugins/youth-catalog/**'
-      - 'src/plugins/youth-source-milan/**'
-      - 'simulation/youth_sources/**'
-      - 'simulation/milan/**'
-      - 'scripts/ci-install-gtk-e2e-runtime.sh'
-      - '.github/workflows/e2e-smoke.yml'
-      - 'tests/test_e2e_runner_contract.py'
 
 permissions:
   contents: read
