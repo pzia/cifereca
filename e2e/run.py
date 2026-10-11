@@ -64,6 +64,13 @@ SCENARIOS = {
         "width": 1366,
         "library_search": True,
     },
+    "diagnostics-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 : vrai widget GTK Diagnostics 1366, brokers isolés, JSON, rapport, pagination, sans LLM.",
+        "runner": "gtk-diagnostics",
+        "width": 1366,
+    },
     "startup": {
         "plugin": "core",
         "fixture": "startup",
@@ -195,6 +202,13 @@ def main() -> int:
                     *(["--editions"] if scenario.get("editions") else []),
                     *(["--library-search"] if scenario.get("library_search") else []),
                 ]
+            elif scenario.get("runner") == "gtk-diagnostics":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/diagnostics_page_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]
                 command = [
@@ -235,7 +249,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-youth"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-detail"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
