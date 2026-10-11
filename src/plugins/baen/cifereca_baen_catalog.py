@@ -61,7 +61,11 @@ class FreeLibraryCards(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         classes = set(str(attrs.get("class") or "").lower().split())
-        self.depth += 1
+        # HTML void elements (img/input/meta/br/...) have no closing tag.
+        # Counting them as nesting levels would incorrectly leak card scope.
+        if tag not in ("area", "base", "br", "col", "embed", "hr", "img",
+                       "input", "link", "meta", "param", "source", "track", "wbr"):
+            self.depth += 1
         if self.card_depth == 0 and (
                 ("product-item" in classes and tag in ("li", "article", "div"))
                 or ("product-item-info" in classes and tag in ("div", "article"))):
@@ -69,12 +73,12 @@ class FreeLibraryCards(HTMLParser):
         if tag != "a" or self.anchor_depth:
             return
         href = public_product_url(attrs.get("href") or "")
-        is_product_link = (
+        is_product_link = self.card_depth and (
             "product-item-link" in classes
             or "product-name-link" in classes
-            or ("product-item-name" in classes and self.card_depth)
+            or "product-item-name" in classes
         )
-        if href and (is_product_link or (self.card_depth and "product" in classes)):
+        if href and is_product_link:
             self.anchor_depth = self.depth
             self.anchor_url = href
             self.text_parts = []
