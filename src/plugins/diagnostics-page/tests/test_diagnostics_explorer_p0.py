@@ -324,3 +324,69 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+@pytest.mark.parametrize("search", [[], {}, 123, object()])
+def test_invalid_local_search_rejected_cleanly(search):
+    with pytest.raises(ValueError, match="search"):
+        sanitized_rows({"events": [event("safe")]}, search=search)
+
+
+@pytest.mark.parametrize("sort", [None, 1, [], "descending"])
+def test_invalid_sort_direction_rejected_cleanly(sort):
+    with pytest.raises(ValueError, match="sort"):
+        sanitized_rows({"events": [event("safe")]}, newest_first=sort)
+
+
+@pytest.mark.parametrize("payload", [None, [], "unexpected", 123, object()])
+def test_header_refuses_non_mapping_broker_response(payload):
+    assert explorer_header(payload, []) == (
+        "Sources non alimentées — aucune donnée disponible"
+    )
+
+
+def test_export_rejects_invalid_unicode_without_crashing_ui():
+    rows = [event("invalid", message="bad-\ud800-surrogate")]
+    with pytest.raises(ValueError, match="invalid Unicode"):
+        export_selected_events(rows, {"invalid"})
+
+
+def test_export_redacts_secret_crossing_500_character_cutoff():
+    text = "x" * 480 + " token=SUPERPRIVATESECRET-" + "z" * 40
+    row = event("bounded", message=text)
+    payload = json.loads(export_selected_events([row], {"bounded"}))
+    message = payload["events"][0]["message"]
+    assert "SUPERPRIVATE" not in message
+    assert "token=<expurgé>" in message
+    assert len(message) <= 500
+
+
+def test_normalizer_redacts_before_500_character_display_cutoff():
+    # The UI must not publish a cut token prefix, even if the broker is malformed.
+    text = "x" * 490 + " token=SUPERPRIVATESECRET-" + "z" * 40
+    rows = sanitized_rows({"events": [event("bounded", message=text)]})
+    assert len(rows) == 1
+    shown = rows[0]["message"]
+    assert "SUPERPRIVATE" not in shown
+    assert "token=SUP" not in shown
+    assert len(shown) <= 500
+
+
+@pytest.mark.parametrize("now", [0, False, "", {}, [], object()])
+def test_period_refuses_invalid_clock_values(now):
+    with pytest.raises(ValueError, match="reference time"):
+        explorer_since("day", now=now)
+
+
+def test_module_groups_fail_closed_on_malformed_fields():
+    rows = [None, {}, {"module": [], "source": {}, "severity": []},
+            {"module": "valid", "source": "app_log", "severity": "error"}]
+    groups = module_groups(rows)
+    assert len(groups) == 2
+    assert next(group for group in groups if group["module"] == "valid")["severity"] == "error"
+    assert next(group for group in groups if group["module"] == "Inconnu")["severity"] == "unknown"
+
+
+def test_module_groups_are_page_bounded():
+    rows = [event(str(i), module="m" + str(i)) for i in range(PAGE_SIZE + 10)]
+    assert sum(group["count"] for group in module_groups(rows)) == PAGE_SIZE

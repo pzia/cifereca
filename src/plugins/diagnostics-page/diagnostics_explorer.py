@@ -30,7 +30,9 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
         raise ValueError("unknown diagnostic period")
     if period == "all":
         return None
-    current = now or datetime.now(timezone.utc)
+    if now is not None and not isinstance(now, datetime):
+        raise ValueError("invalid diagnostic reference time")
+    current = datetime.now(timezone.utc) if now is None else now
     if current.tzinfo is None:
         raise ValueError("timezone required")
     delta = {
@@ -67,6 +69,13 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
     """Normalize only Core-published fields; omit unexpected keys entirely."""
     if not isinstance(payload, Mapping):
         return []
+    if not isinstance(search, str):
+        raise ValueError("invalid diagnostics search")
+    if not isinstance(newest_first, bool):
+        raise ValueError("invalid diagnostics sort order")
+    # Redact the complete broker value before applying the UI's display limit.
+    # Cutting first could turn token=PRIVATE into token=PRI and expose a prefix.
+    from cifereca_diagnostics_page import redacted_detail
     results: list[dict[str, str]] = []
     events = payload.get("events")
     if not isinstance(events, (list, tuple)):
@@ -75,7 +84,7 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         if not isinstance(raw, Mapping):
             continue
         safe = {
-            key: raw.get(key, "")[:500] if isinstance(raw.get(key), str) else ""
+            key: redacted_detail(raw[key])[:500] if isinstance(raw.get(key), str) else ""
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
         # Full text search is explicitly local to this 50-item broker page.
@@ -101,12 +110,19 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
 def module_groups(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     """Hierarchy by module+source with severity/count; no inferred correlation."""
     groups: dict[tuple[str, str], list[dict[str, str]]] = {}
-    for row in rows:
-        key = (row.get("module") or "Inconnu", row.get("source") or "Inconnue")
+    for row in rows[:PAGE_SIZE]:
+        if not isinstance(row, dict):
+            continue
+        module = row.get("module")
+        source = row.get("source")
+        key = (
+            module[:90] if isinstance(module, str) and module else "Inconnu",
+            source[:40] if isinstance(source, str) and source else "Inconnue",
+        )
         groups.setdefault(key, []).append(row)
     answer = []
     for (module, source), items in sorted(groups.items(), key=lambda pair: pair[0]):
-        levels = {item["severity"] for item in items}
+        levels = {item.get("severity") for item in items if isinstance(item.get("severity"), str)}
         severity = next((level for level in _LEVELS if level in levels), "unknown")
         answer.append({
             "module": module, "source": source, "count": len(items),
@@ -138,6 +154,8 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
+    if not isinstance(payload, Mapping):
+        return "Sources non alimentées — aucune donnée disponible"
     def bounded_count(value: Any) -> int:
         # The broker contract uses numeric counts. Do not call __int__
         # on arbitrary objects supplied by a malformed broker response.
@@ -177,7 +195,7 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     selected = [
         {
-            field: redacted_detail(value[:500] if isinstance(value, str) else "")
+            field: redacted_detail(value)[:500] if isinstance(value, str) else ""
             for field in fields
             for value in (row.get(field),)
         }
@@ -191,6 +209,10 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
         "notice": "Événements expurgés du Core ; pas de corrélation de tâches prouvée",
         "events": selected,
     }, ensure_ascii=False, indent=2, allow_nan=False)
-    if len(result.encode("utf-8")) > 24_000:
+    try:
+        size = len(result.encode("utf-8"))
+    except UnicodeError as exc:
+        raise ValueError("diagnostic export contains invalid Unicode") from exc
+    if size > 24_000:
         raise ValueError("diagnostic export exceeds the 24 KB limit")
     return result
