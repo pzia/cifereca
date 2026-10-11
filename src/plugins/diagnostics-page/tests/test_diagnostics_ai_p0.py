@@ -1462,3 +1462,39 @@ def test_ai_structured_detail_cannot_stringify_unknown_objects():
     preview = prepare_analysis(FakeLLM(), HostileBroker([]), include_snapshot=True)
     assert preview["structured_count"] == 1
     assert '"detail"' not in preview["prompt"]
+
+
+@pytest.mark.parametrize("hidden, secret", [
+    ("token\\x1b[31m=PRIVATE_ANSI", "PRIVATE_ANSI"),
+    ("password\\x00=PRIVATE_NUL", "PRIVATE_NUL"),
+    ("Bearer \\u202ePRIVATE_BIDI", "PRIVATE_BIDI"),
+    ("alice\\u200b@example.com", "alice@example.com"),
+    ("https://example.org/LOAN\\u2066/secret?token=PRIVATE_URL", "PRIVATE_URL"),
+])
+def test_diagnostics_format_neutralizes_controls_before_secret_masking(hidden, secret):
+    from cifereca_diagnostics_page import (
+        redacted_ai_response, format_diagnostic_detail,
+    )
+    private = hidden.encode("utf-8").decode("unicode_escape")
+    safe = redacted_ai_response("Preuve : " + private + "\\nConstat : partial")
+    assert secret not in safe
+    assert "Constat : partial" in safe
+    assert "\\x1b" not in safe
+    assert "\\x00" not in safe
+    assert "\\u202e" not in safe
+    assert "\\u200b" not in safe
+    assert "\\u2066" not in safe
+    blob = format_diagnostic_detail({"message": private}, "json")
+    assert secret not in blob
+    assert "\\u001b" not in blob
+    assert "\\u202e" not in blob
+
+
+def test_diagnostics_format_keeps_newlines_but_removes_bidi_override_and_ansi():
+    from cifereca_diagnostics_page import (
+        redacted_ai_response, format_diagnostic_detail,
+    )
+    source = "Chapitre 1\\nÉvénement\\x1b[2J\\u202e secret"
+    expected = "Chapitre 1\\nÉvénement secret"
+    assert redacted_ai_response(source) == expected
+    assert "Événement secret" in format_diagnostic_detail(source, "raw")
