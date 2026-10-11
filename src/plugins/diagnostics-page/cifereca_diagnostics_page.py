@@ -28,7 +28,7 @@ _DIAGNOSTIC_SECRET_VALUE = re.compile(
 # Authentication headers may contain schemes followed by several secret fields.
 # Mask the entire value, not merely the first whitespace-delimited token.
 _DIAGNOSTIC_AUTH_HEADER = re.compile(
-    r"(?im)\\b((?:proxy-)?authorization|x-api-key)\\s*[:=][^\\r\\n]*"
+    r"(?im)\b((?:proxy-)?authorization|x-api-key)\s*[:=][^\r\n]*"
 )
 _DIAGNOSTIC_URL = re.compile(r"(?i)https?://[^\s<>]+")
 _DIAGNOSTIC_MAIL = re.compile(r"(?i)\b[a-z0-9_.+%-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
