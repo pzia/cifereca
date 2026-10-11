@@ -168,3 +168,17 @@ def test_identical_log_lines_have_distinct_event_ids(tmp_path):
     assert result["total"] == 3
     assert len({event["event_id"] for event in result["events"]}) == 3
     assert len({event["message"] for event in result["events"]}) == 1
+
+
+def test_unknown_trace_tokens_are_never_exported(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] TRACE secretcustomer sessionid phase=ok",
+        "2026-10-11 07:00:01,000 INFO cifereca.sync [Worker] TRACE sync source phase=ok",
+    )
+    rows = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert rows["total"] == 2
+    assert rows["events"][0]["message"].startswith("[contenu libre masqué")
+    assert rows["events"][1]["message"] == "TRACE sync source phase=ok"
+    assert "secretcustomer" not in json.dumps(rows)
+    assert "sessionid" not in json.dumps(rows)
