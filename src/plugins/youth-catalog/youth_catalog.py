@@ -753,7 +753,7 @@ def _search_fold(value: object) -> str:
     """Accent, punctuation and apostrophe insensitive matching, local only."""
     text = unicodedata.normalize("NFKD", _text(value).casefold())
     unaccented = "".join(ch for ch in text if not unicodedata.combining(ch))
-    return re.sub(r"[^\\w]+", " ", unaccented, flags=re.UNICODE).strip()
+    return re.sub(r"[^\w]+", " ", unaccented, flags=re.UNICODE).strip()
 
 
 def _search_score(book: YouthBook, query: str) -> int:
