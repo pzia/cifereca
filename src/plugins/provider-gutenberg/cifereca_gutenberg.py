@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections import OrderedDict
 import html
 import logging
+from datetime import date
 import re
 import time
 from pathlib import Path
@@ -46,6 +47,30 @@ MAX_REQUESTED_PAGES = 101
 _EPUB_REL = "http://opds-spec.org/acquisition"
 _EBOOK_RE = re.compile(r"(?:urn:gutenberg:|/ebooks/)(\d+)", re.I)
 _LOG = logging.getLogger("cifereca.plugin.provider.gutenberg")
+
+
+def _attested_date(value: str | None) -> str | None:
+    """Accept a precise OPDS date, without inferring an edition publication.
+
+    Atom published/updated refer to the feed entry, never the print book.
+    Dublin Core issued is the bibliographic publication date only if it
+    contains a valid ISO year, year-month or full date.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if len(text) == 4 and text.isascii() and text.isdecimal():
+        return text if 1 <= int(text) <= 9999 else None
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}", text):
+        year, month = (int(piece) for piece in text.split("-"))
+        return text if 1 <= year <= 9999 and 1 <= month <= 12 else None
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", text):
+        try:
+            date.fromisoformat(text)
+        except ValueError:
+            return None
+        return text
+    return None
 
 
 def _safe_url(value: str) -> str:
@@ -252,7 +277,13 @@ class GutenbergSession(ProviderSession):
             authors = [self._text(a.find(f"{{{ATOM}}}name")) for a in entry.findall(f"{{{ATOM}}}author")]
             author = ", ".join(x for x in authors if x) or None
             description = description_element(entry.find(f"{{{ATOM}}}content")) or description_element(entry.find(f"{{{ATOM}}}summary"))
-            published = self._text(entry.find(f"{{{ATOM}}}published")) or self._text(entry.find(f"{{{ATOM}}}updated"))
+            # OPDS 1.2: atom:published is when the feed entry became
+            # accessible, atom:updated is the entry's last revision. Neither
+            # establishes the publication date of the described ebook.
+            # Only an explicit dcterms:issued may populate published_at.
+            issued = _attested_date(self._text(entry.find(f"{{{DCTERMS}}}issued")))
+            entry_published = _attested_date(self._text(entry.find(f"{{{ATOM}}}published")))
+            entry_updated = _attested_date(self._text(entry.find(f"{{{ATOM}}}updated")))
             language = normalize_language_tag(self._text(entry.find(f"{{{DCTERMS}}}language")))
             rights = self._text(entry.find(f"{{{ATOM}}}rights"))
             categories = [
@@ -334,7 +365,9 @@ class GutenbergSession(ProviderSession):
                 "title": title,
                 "author": author,
                 "description": description,
-                "published": published,
+                "published": issued,
+                "opds_entry_published": entry_published,
+                "opds_entry_updated": entry_updated,
                 "language": language,
                 "rights": rights,
                 "subjects": subjects,
@@ -390,6 +423,14 @@ class GutenbergSession(ProviderSession):
                 metadata={
                     "language": row["language"],
                     "rights": row["rights"],
+                    # Keep provenance distinct and never fabricate a print
+                    # edition's year from the Atom feed update timestamp.
+                    **({"publication_date_evidence": "opds.dcterms.issued"}
+                       if row.get("published") else {}),
+                    **({"opds_entry_published": row["opds_entry_published"]}
+                       if row.get("opds_entry_published") else {}),
+                    **({"opds_entry_updated": row["opds_entry_updated"]}
+                       if row.get("opds_entry_updated") else {}),
                     "subjects": list(row["subjects"]),
                     "bookshelves": list(row.get("bookshelves") or []),
                     "opds_detail_url": row.get("detail_url"),
