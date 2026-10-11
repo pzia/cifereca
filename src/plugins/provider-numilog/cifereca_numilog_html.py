@@ -103,7 +103,7 @@ def public_book_url(value, base_url=LIBRARY):
             return None
         path = parsed.path
         public = re.fullmatch(
-            r'/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\\.ebook',
+            r'/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook',
             path,flags=re.I,
         )
         legacy = re.fullmatch(
