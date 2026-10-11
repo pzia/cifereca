@@ -26,7 +26,7 @@ sys.path[:0] = [
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gio, GLib, Gtk
+from gi.repository import Gdk, Gio, GLib, Gtk
 from PIL import ImageGrab
 from diagnostics_page_probe import Broker, Context, Host, Tasks, walk
 
@@ -285,6 +285,22 @@ def main():
         pseudo_B = seen("profil-pseudo-B")
         report["audits"]["D12_distinct_pseudonymous_loan_profiles_visible"] = pseudo_A and pseudo_B
         report["audits"]["D12_link_proven_by_broker"] = False
+        # The public event provenance separates the two synthetic profiles,
+        # but does not prove a cross-profile loan join. Never infer it.
+        assert pseudo_A and pseudo_B, "Les profils pseudonymes ne sont pas séparés"
+        sources = {
+            group.get_label().split(" · ")[1]
+            for group in widgets(Gtk.Expander)
+            if (group.get_label() or "").startswith("paris.lending · ")
+        }
+        assert sources == {"app_log", "core_events"}, sources
+        origin = [row for row in labels() if row.startswith("Source : ")]
+        assert any("Source : core_events · Module : paris.lending" in row for row in origin)
+        assert any("Source : app_log · Module : paris.lending" in row for row in origin)
+        assert any("Référence : ux-evt-00006" in row for row in origin)
+        assert any("Référence : ux-evt-00011" in row for row in origin)
+        report["checks"]["D09_event_provenance_source_module_reference_visible"] = True
+        report["checks"]["D12_pseudonymous_profiles_displayed_separately"] = True
         screenshot("03-paris-retour-profils")
         query_module("kobo", "Erreur fictive longue", kobo_case)
 
@@ -296,7 +312,58 @@ def main():
         assert LONG_PATH not in visible, "Chemin privé complet visible dans liste"
         report["checks"]["D08_long_path_redacted_list_and_stable_layout"] = True
         report["audits"]["D08_complete_redacted_long_detail_available"] = False
+        # The data has loaded but GTK must still paint the frame: do not
+        # photograph the transient "Actualisation en cours" state.
+        later(kobo_details_stage, 230)
+
+    def kobo_details_stage():
         screenshot("04-kobo-erreur-chemin-long")
+        # The actual detailed journal view is built from sanitized_rows(),
+        # which may intentionally drop unknown broker keys including 'detail'.
+        # Audit the rendered Gtk.TextView rather than assuming a broker field
+        # remains consultable. This is an honest unresolved UX criterion.
+        # Target specifically the *long error* (event 00002), not the
+        # first generic Kobo row sorted newest-first in the same group.
+        error_labels = [
+            w for w in widgets(Gtk.Label)
+            if "Erreur fictive longue" in (w.get_text() or "")
+        ]
+        assert len(error_labels) == 1, ("Erreur Kobo ciblée", len(error_labels))
+        item = error_labels[0].get_parent().get_parent()
+        panes = [
+            w for w in walk(item)
+            if isinstance(w, Gtk.Expander) and w.get_label() == "Détails expurgés"
+        ]
+        assert len(panes) == 1, "Détail de l'erreur Kobo introuvable"
+        panes[0].set_expanded(True)
+        views = [w for w in walk(panes[0]) if isinstance(w, Gtk.TextView)]
+        assert len(views) == 1
+        buffer = views[0].get_buffer()
+        detail_text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+        assert "event_id:" in detail_text and "message:" in detail_text
+        assert LONG_PATH not in detail_text
+        report["audits"]["D08_raw_detail_field_preserved"] = "detail:" in detail_text
+        assert not report["audits"]["D08_raw_detail_field_preserved"], (
+            "La fixture est attendue sans detail brut dans sanitized_rows()"
+        )
+        report["checks"]["D08_real_detail_panel_available_and_redacted"] = True
+        journal_scroll = error_labels[0].get_parent()
+        while journal_scroll is not None and not isinstance(journal_scroll, Gtk.ScrolledWindow):
+            journal_scroll = journal_scroll.get_parent()
+        assert journal_scroll is not None
+        ok, rect = error_labels[0].compute_bounds(journal_scroll.get_child())
+        assert ok
+        adjustment = journal_scroll.get_vadjustment()
+        target = max(0, min(
+            float(rect.get_y()) - 45,
+            adjustment.get_upper() - adjustment.get_page_size(),
+        ))
+        adjustment.set_value(target)
+        report["audits"]["D08_long_error_in_view_scroll_y"] = round(target, 2)
+        later(kobo_detail_visible, 260)
+
+    def kobo_detail_visible():
+        screenshot("04b-kobo-detail-rendered")
         # Filter period is really sent as a bounded UTC 'since' query.
         selectors = [w for w in widgets(Gtk.DropDown) if w.get_tooltip_text() == "Période de la consultation"]
         assert len(selectors) == 1
@@ -315,11 +382,120 @@ def main():
         screenshot("05-periode-7-jours")
         report["audits"]["D09_all_domain_source_provenance_complete"] = False
         report["audits"]["D08_long_path_text_end_to_end_consultable"] = False
+        # The only public source categories are core_events and app_log.
+        # Verify a real GTK source switch and the absence of misattribution.
+        dropdowns = [
+            w for w in widgets(Gtk.DropDown)
+            if w.get_tooltip_text() == "Source des événements"
+        ]
+        assert len(dropdowns) == 1
+        before = len(broker.requests)
+        dropdowns[0].set_selected(2)  # app_log, not a made-up Kobo source
+        until(
+            lambda: len(broker.requests) > before
+            and broker.requests[-1]["source"] == "app_log"
+            and not seen("Actualisation en cours")
+            and seen("kobo.catalog"),
+            source_filtered,
+        )
+
+    def source_filtered():
+        assert broker.requests[-1]["module"] == "kobo"
+        assert broker.requests[-1]["source"] == "app_log"
+        groups = [
+            w.get_label() or "" for w in widgets(Gtk.Expander)
+            if (w.get_label() or "").startswith("kobo.catalog · ")
+        ]
+        assert groups and all("· app_log ·" in row for row in groups), groups
+        assert not any("· core_events ·" in row for row in groups)
+        report["checks"]["D09_source_filter_no_cross_source_attribution"] = True
+        screenshot("06-filtre-source-journal-applicatif")
+        src = [
+            w for w in widgets(Gtk.DropDown)
+            if w.get_tooltip_text() == "Source des événements"
+        ][0]
+        previous = len(broker.requests)
+        src.set_selected(0)
+        until(
+            lambda: len(broker.requests) > previous
+            and broker.requests[-1]["source"] == "all"
+            and not seen("Actualisation en cours")
+            and seen("Erreur fictive longue"),
+            lambda: query_module("paris", "paris.lending", paris_copy_loaded),
+        )
+
+    def paris_copy_loaded():
+        groups = [
+            w for w in widgets(Gtk.Expander)
+            if (w.get_label() or "").startswith("paris.lending · ")
+        ]
+        assert len(groups) == 2, ("groupes Paris", len(groups))
+        for group in groups:
+            group.set_expanded(True)
+        until(
+            lambda: seen("profil-pseudo-A") and seen("profil-pseudo-B"),
+            copy_one_profile,
+        )
+
+    def copy_one_profile():
+        # Select the actual row for profile A in the GTK event list.
+        rows = [
+            w for w in widgets(Gtk.Label)
+            if "profil-pseudo-A" in (w.get_text() or "")
+        ]
+        assert len(rows) == 1, len(rows)
+        line = rows[0].get_parent()
+        checks = [w for w in walk(line) if isinstance(w, Gtk.CheckButton)]
+        assert len(checks) == 1
+        checks[0].set_active(True)
+        # Make the selected profile visible inside the journals viewport for
+        # screenshot evidence. The clipboard assertion remains independent.
+        scroller = rows[0].get_parent()
+        while scroller is not None and not isinstance(scroller, Gtk.ScrolledWindow):
+            scroller = scroller.get_parent()
+        assert scroller is not None, "Conteneur GTK des journaux introuvable"
+        ok, rect = rows[0].compute_bounds(scroller.get_child())
+        assert ok, "Position du profil A introuvable"
+        adjustment = scroller.get_vadjustment()
+        scroll_to = max(0, min(
+            float(rect.get_y()) - 30,
+            adjustment.get_upper() - adjustment.get_page_size(),
+        ))
+        adjustment.set_value(scroll_to)
+        report["audits"]["D12_profileA_in_view_scroll_y"] = round(scroll_to, 2)
+        btn = find_button("Copier la sélection")
+        assert btn.get_sensitive()
+        btn.emit("clicked")
+        GLib.timeout_add(240, read_copy)
+
+    def read_copy():
+        def done(clipboard, task):
+            try:
+                copied = clipboard.read_text_finish(task)
+                payload = json.loads(copied)
+                assert len(payload["events"]) == 1
+                event = payload["events"][0]
+                assert event["event_id"] == "ux-evt-00006", event["event_id"]
+                assert event["source"] == "core_events"
+                assert event["module"] == "paris.lending"
+                assert "profil-pseudo-A" in event["message"]
+                assert "profil-pseudo-B" not in copied
+                assert "SECRET-FICTIF" not in copied
+                report["checks"]["D12_copy_one_identity_without_mixing_profiles"] = True
+                report["audits"]["D12_broker_link_between_profiles_proven"] = False
+                screenshot("07-copie-un-seul-profil")
+                finish()
+            except Exception as exc:
+                fail(f"Copie identité : {type(exc).__name__}: {exc}")
+        Gdk.Display.get_default().get_clipboard().read_text_async(None, done)
+        return False
+
+    def finish():
         assert broker.checks == 0 and plugin.llm is None
         report["unmet_criteria"] = [
-            "D08: détail complet du chemin long expurgé à vérifier",
-            "D09: provenance exhaustive Core/Paris/Kobo/ADEPT/plugins avec catégories limitées",
-            "D12: corrélation entre les deux identités non prouvée par broker",
+            "D08: champ detail du broker absent dans le volet d'événement — remédiation produit",
+            "D09: seules catégories Core/app_log disponibles, provenance métier par module uniquement",
+            "D12: aucune corrélation inter-identités attestée par broker ; copie unitaire isolée seulement",
         ]
         report["status"] = "PASS"
         save()
