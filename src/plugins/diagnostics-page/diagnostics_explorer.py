@@ -174,8 +174,14 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
     from cifereca_diagnostics_page import redacted_detail
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     selected = [
-        {field: redacted_detail(str(row.get(field) or "")) for field in fields}
-        for row in rows if row.get("event_id") in event_ids
+        {
+            field: redacted_detail(value[:500] if isinstance(value, str) else "")
+            for field in fields
+            for value in (row.get(field),)
+        }
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("event_id"), str)
+        and row["event_id"] in event_ids
     ]
     if len(selected) > PAGE_SIZE:
         raise ValueError("too many selected events for one export")
