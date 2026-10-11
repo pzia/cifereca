@@ -86,6 +86,14 @@ SCENARIOS = {
         "runner": "gtk-diagnostics-states",
         "width": 1366,
     },
+    "diagnostics-navigation-slow-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "D04 : vraie MainWindow, clic XTEST vérification lente, navigation Bibliothèque et retour",
+        "runner": "gtk-diagnostics-navigation",
+        "width": 1366,
+        "slow_check": True,
+    },
     "diagnostics-navigation-1366": {
         "plugin": "ui.page.diagnostics",
         "fixture": "startup",
@@ -253,6 +261,7 @@ def main() -> int:
                     xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
                     args.python, str(ROOT / "e2e/diagnostics_navigation_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                    *(["--slow-check"] if scenario.get("slow_check") else []),
                 ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]
