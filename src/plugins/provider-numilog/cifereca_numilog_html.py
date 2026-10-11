@@ -93,6 +93,11 @@ def public_book_url(value, base_url=LIBRARY):
     if '\\' in value:
         return None
     try:
+        raw = urlsplit(value)
+        # URL-joining removes dot segments, which must not let a disguised
+        # account/private path become a public book page by normalization.
+        if any(part in ('.','..') for part in raw.path.split('/')):
+            return None
         parsed = urlsplit(urljoin(base_url,value))
         base = urlsplit(base_url)
         candidate = urlunsplit((parsed.scheme,parsed.netloc,parsed.path,"",""))
