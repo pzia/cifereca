@@ -724,6 +724,14 @@ class DiagnosticsPagePlugin:
                     kind="diagnostics",
                 )
             except Exception as exc:
+                # A failed refresh must not leave an earlier page visible as
+                # though it were the result of the current filters.
+                nonlocal current_page
+                current_page = {
+                    "events": [], "sources": [], "total": 0,
+                    "offset": page_offset, "next_offset": None,
+                }
+                display_events()
                 journals_summary.set_text(
                     f"Source indisponible : {type(exc).__name__}"
                 )
