@@ -569,9 +569,12 @@ def main():
         report["stage"] = "D05_xtest_mousewheel_inside_report"
         inner = scroller.get_vadjustment()
         assert inner.get_upper() - inner.get_page_size() > 400
-        # The pointer must be inside the actually rendered TextView. A real
-        # pointer click positions it there; it is not counted as a wheel event.
-        report["wheel_pointer"] = device[0].click_widget(view)
+        # Gtk.TextView can allocate a taller rectangle than the clipped
+        # viewport. Its geometric centre can be near/below the window edge,
+        # causing the outer page to handle a real XTEST wheel event instead.
+        # Target the Gtk.ScrolledWindow viewport itself, whose visible centre
+        # is unambiguous. Keep the strict outer-scroll assertion unchanged.
+        report["wheel_pointer"] = device[0].click_widget(scroller)
         inner.set_value(0)
         outer_before = page[0].get_vadjustment().get_value()
         report["wheel_outer_before"] = round(outer_before, 2)
