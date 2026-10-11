@@ -236,3 +236,17 @@ def test_line_limit_marks_history_partial_even_below_byte_limit(tmp_path):
     assert result["sources"][0]["status"] == "partial"
     assert result["status"] == "partial"
     assert result["sources"][0]["reason"] == "log_tail_bounded"
+
+
+def test_fifo_log_is_rejected_without_blocking(tmp_path):
+    import stat
+    import time
+    fifo = tmp_path / "cifereca.log"
+    if not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"):
+        pytest.skip("POSIX nonblocking FIFO unavailable")
+    os.mkfifo(fifo)
+    started = time.monotonic()
+    result = query_diagnostic_events(Diagnostics(), log_path=fifo, source="app_log")
+    assert time.monotonic() - started < 2.0
+    assert result["events"] == []
+    assert result["sources"][0]["status"] == "unavailable"

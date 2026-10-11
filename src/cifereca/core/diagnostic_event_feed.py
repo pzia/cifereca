@@ -54,7 +54,7 @@ def _event_id(source: str, timestamp: str, detail: str) -> str:
 def _log_lines(path: Path) -> tuple[list[str], str]:
     """Read at most 32 KiB from an existing regular, non-symlink file."""
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as handle:
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
