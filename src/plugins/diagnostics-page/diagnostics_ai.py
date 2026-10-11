@@ -274,7 +274,8 @@ def analyze_with_consent(
         not isinstance(gate, _OneUseApproval)
         or not isinstance(refs, tuple)
         or not isinstance(scope, dict)
-        or set(scope) != {"source", "module", "severity", "since"}
+        or set(scope) != {"source", "module", "severity", "since", "include_snapshot"}
+        or type(scope.get("include_snapshot")) is not bool
     ):
         raise ValueError("explicit_consent_required")
     fingerprint = _fingerprint(prompt, destination, refs, scope)
