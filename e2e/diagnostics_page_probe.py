@@ -26,6 +26,9 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 from PIL import ImageGrab
 
+sys.path.insert(0, str(ROOT / "environnements/openai-chat-debian"))
+from x11_input import X11Input
+
 
 def walk(widget):
     yield widget
@@ -161,6 +164,7 @@ def main():
     window = [None]
     page = [None]
     rc = [1]
+    device = [None]
 
     def save():
         report["seconds"] = round(monotonic() - start, 2)
@@ -286,7 +290,32 @@ def main():
         assert "SECRET-UX-TEST" not in payload
         report["checks"]["json_structured_and_redacted"] = True
         screenshot("02-structured-json")
-        next_page()
+        copied_detail = [
+            w for w in walk(page[0]) if isinstance(w, Gtk.Button)
+            and w.get_tooltip_text() == "Copier le détail expurgé actuellement affiché"
+        ]
+        assert copied_detail, "Bouton de copie expurgée absent"
+        button = copied_detail[0]
+        # The widget is keyboard activated via real XTEST events, not signal emission.
+        assert button.grab_focus() is not False
+        assert button.has_focus(), "Le focus clavier doit être visible sur Copier"
+        device[0].key("space", True)
+        device[0].key("space", False)
+        report["checks"]["copy_button_keyboard_xtest"] = True
+        expected = payload
+
+        def clipboard_done(clipboard, task):
+            try:
+                actual = clipboard.read_text_finish(task)
+                assert actual == expected, "Presse-papiers différent du JSON affiché"
+                assert "EXEMPLE-PRIVE-UX" not in actual
+                assert "SECRET-UX-TEST" not in actual
+                report["checks"]["clipboard_exact_redacted_json"] = True
+                later(next_page)
+            except Exception as exc:
+                fail(f"Clipboard: {type(exc).__name__}: {exc}")
+
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(None, clipboard_done), 250)
 
     def next_page():
         find_button("Suivant").emit("clicked")
@@ -313,6 +342,7 @@ def main():
             window[0] = Gtk.ApplicationWindow(application=self)
             window[0].set_title("Diagnostics UX GTK isolé")
             window[0].set_default_size(args.width - 40, 790)
+            device[0] = X11Input()
             page[0] = plugin._build(host)
             window[0].set_child(page[0])
             window[0].present()
@@ -320,6 +350,8 @@ def main():
 
         def do_shutdown(self):
             plugin.deactivate()
+            if device[0] is not None:
+                device[0].close()
             Gio.Application.do_shutdown(self)
 
     app = Application()
