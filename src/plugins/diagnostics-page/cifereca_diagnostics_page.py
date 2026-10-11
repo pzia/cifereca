@@ -19,7 +19,7 @@ from diagnostics_explorer import (
 _DIAGNOSTIC_SECRET_KEY = re.compile(
     r"pass(?:word)?|cookie|token|secret|authorization|bearer|barcode|readerid|"
     r"credential[_-]?id|account[_-]?id|identity[_-]?id|profile[_-]?id|"
-    r"acsm|licen[sc]e|private[_-]?key|(^|_)path$|filename|payload|headers?", re.I
+    r"acsm|licen[sc]e|(?:api|access|private)[_-]?key|(^|_)path$|filename|payload|headers?", re.I
 )
 _DIAGNOSTIC_SECRET_VALUE = re.compile(
     r"(?i)\b(password|cookie|token|secret|authorization|barcode|readerid)"
