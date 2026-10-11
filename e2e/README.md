@@ -254,3 +254,13 @@ toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
 fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
 sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
+
+### MainWindow preparation baseline (#1123)
+
+`mainwindow-baseline-1366` and `mainwindow-baseline-1600` reuse the real
+Diagnostics navigation probe with the two-identity local search fixture.
+They add XTEST keyboard focus and identity round-trip, then normal window
+closure and refusal of new runner work. Async Diagnostics is simulated;
+this proves shell responsiveness, not live provider/LLM behavior.
+Run each through `e2e/run.py --scenario <name>` on an existing GTK runtime.
+No new workflow or network account is required.

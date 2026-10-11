@@ -34,6 +34,18 @@ SCENARIOS = {
         "runner": "gtk-detail",
         "width": 1366,
     },
+    "mainwindow-baseline-1366": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P0 #1123: MainWindow, async navigation, keyboard, two identities and normal close.",
+        "runner": "gtk-diagnostics-navigation", "width": 1366,
+        "slow_check": True, "window_baseline": True,
+    },
+    "mainwindow-baseline-1600": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P0 #1123: same MainWindow contracts at 1600x1000.",
+        "runner": "gtk-diagnostics-navigation", "width": 1600,
+        "slow_check": True, "window_baseline": True,
+    },
     "youth-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
@@ -286,10 +298,11 @@ def main() -> int:
             elif scenario.get("runner") == "gtk-diagnostics-navigation":
                 width = scenario["width"]
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
                     args.python, str(ROOT / "e2e/diagnostics_navigation_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                     *(["--slow-check"] if scenario.get("slow_check") else []),
+                    *(["--window-baseline"] if scenario.get("window_baseline") else []),
                 ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]

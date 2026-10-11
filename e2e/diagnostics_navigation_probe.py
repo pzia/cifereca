@@ -85,8 +85,9 @@ class IsolatedContributions:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--width", type=int, choices=(1366,), required=True)
+    parser.add_argument("--width", type=int, choices=(1366, 1600), required=True)
     parser.add_argument("--slow-check", action="store_true")
+    parser.add_argument("--window-baseline", action="store_true")
     args = parser.parse_args()
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
         raise SystemExit("GTK/X11/Xvfb required")
@@ -101,8 +102,8 @@ def main() -> int:
     started = monotonic()
     report = {
         "status": "RUNNING",
-        "scenario": "diagnostics-navigation-slow-1366" if args.slow_check
-                    else "diagnostics-navigation-1366",
+        "scenario": f"diagnostics-navigation-slow-{args.width}" if args.slow_check
+                    else f"diagnostics-navigation-{args.width}",
         "width": args.width, "git_sha": sha, "backend": "GTK4/X11/XTEST",
         "scope": "real MainWindow and real Diagnostics page contribution, simulated brokers",
         "checks": {}, "screenshots": [], "pointer_actions": [],
@@ -121,7 +122,7 @@ def main() -> int:
 
     def capture(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
-        assert image.size == (args.width, 900), image.size
+        assert image.size == (args.width, 1000 if args.width == 1600 else 900), image.size
         assert image.getbbox() is not None
         file = out / (stage + ".png")
         image.save(file)
@@ -313,6 +314,65 @@ def main() -> int:
         assert broker.checks == (1 if args.slow_check else 0)
         report["checks"]["physical_return_to_library"] = True
         capture("03-return-library")
+        if args.window_baseline:
+            begin_baseline()
+            return
+        finish()
+
+    def begin_baseline():
+        w = window[0]
+        assert w.service.current_identity.identity_id == "camille"
+        assert w.identity_dropdown.get_model().get_n_items() == 2
+        report["window_size"] = [w.get_width(), w.get_height()]
+        assert w.identity_dropdown.grab_focus()
+        device[0].key("Tab", True); device[0].key("Tab", False)
+        later(180, focus_after_tab)
+
+    def focus_after_tab():
+        w = window[0]
+        assert w.get_focus() is not None
+        report["checks"]["window_keyboard_focus"] = True
+        assert w.identity_dropdown.grab_focus()
+        device[0].key("space", True); device[0].key("space", False)
+        later(220, lambda: select_identity_key("End", verify_second_identity))
+
+    def select_identity_key(key, callback):
+        for k in [key, "Return"]:
+            device[0].key(k, True); device[0].key(k, False)
+        later(500, callback)
+
+    def verify_second_identity():
+        w = window[0]
+        assert w.service.current_identity.identity_id == "alex"
+        assert w.identity_dropdown.get_selected() == 1
+        assert w.view_stack.get_visible_child_name() == "library"
+        report["checks"]["physical_second_identity_context"] = True
+        capture("06-second-identity-library")
+        assert w.identity_dropdown.grab_focus()
+        device[0].key("space", True); device[0].key("space", False)
+        later(220, lambda: select_identity_key("Home", verify_first_identity))
+
+    def verify_first_identity():
+        w = window[0]
+        assert w.service.current_identity.identity_id == "camille"
+        assert w.identity_dropdown.get_selected() == 0
+        assert w.view_stack.get_visible_child_name() == "library"
+        report["checks"]["physical_identity_context_restored"] = True
+        capture("07-first-identity-restored")
+        w.close()
+        assert w._closed
+        from cifereca.task_queue import TaskPriority
+        try:
+            w.runner.pool.submit(TaskPriority.NORMAL, lambda: None)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("Closed task runner accepted new work")
+        assert w.service._virtual_collection_closed
+        report["checks"]["normal_close_releases_runner_and_service"] = True
+        finish()
+
+    def finish():
         report["status"] = "PASS"
         save()
         rc[0] = 0
@@ -326,7 +386,7 @@ def main() -> int:
             try:
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
                 window[0] = w
-                w.set_default_size(args.width - 40, 780)
+                w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
                 w.plugin_manager = IsolatedContributions(page_plugin)
                 w._rebuild_plugin_pages()
                 w.present()
