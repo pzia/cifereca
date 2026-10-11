@@ -39,7 +39,13 @@ de l'identité interne du fichier ouvert (périphérique/inode et position
 absolue en octets). Elle reste stable lors du renommage standard
 `cifereca.log` vers `cifereca.log.1` et lors du déplacement de la fenêtre
 de lecture bornée, sans exposer ces métadonnées dans l'API. Des lignes
-identiques demeurent distinctes. **Limite :** une rotation par copie,
+identiques demeurent distinctes. Pour les diagnostics structurés, deux
+enregistrements avec la même date, catégorie et opération reçoivent
+également des identifiants distincts dans le snapshot publié (désambiguïsation
+par ordre d'apparition). La stabilité n'est garantie que tant que ces
+enregistrements restent présents dans cette même fenêtre du Core ;
+l'éviction des premières entrées peut renuméroter des doublons.
+**Limite :** une rotation par copie,
 restauration ou réécriture du fichier peut changer cette empreinte ; elle
 n'est pas un identifiant global ou une preuve de corrélation métier.
 
