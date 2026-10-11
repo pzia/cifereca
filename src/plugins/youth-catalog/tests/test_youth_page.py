@@ -1354,3 +1354,30 @@ def test_youth_detail_typed_fields_do_not_merge_authors_and_subjects():
     assert len([f for f in fields if f.id.startswith("format-")]) == 2
     assert len([f for f in fields if f.id.startswith("source-")]) == 2
     assert next(f for f in fields if f.id == "isbn").kind == "isbn"
+
+
+def test_923_core_bridge_partial_host_has_no_action_updater():
+    # Core #906 extracts selected() against a light host, not a real GTK View.
+    # This must not break the previously supported callback contract.
+    seen, emptied = [], []
+    partial = NS(
+        rows={"a": youth_book(record_id="a", title="Un livre")},
+        host=NS(),
+        master=NS(show_detail=seen.append, empty_detail=lambda: emptied.append(True)),
+    )
+    YouthView.selected(partial, NS(key="a"))
+    assert len(seen) == 1 and partial.selected_book is partial.rows["a"]
+    YouthView.selected(partial, None)
+    assert emptied == [True] and partial.selected_book is None
+
+
+def test_923_real_view_selected_refreshes_action_availability():
+    calls = []
+    view = object.__new__(YouthView)
+    view.rows = {"a": youth_book(record_id="a", title="Une histoire")}
+    view.host = NS()
+    view.master = NS(show_detail=lambda _: None, empty_detail=lambda: None)
+    view.update_action_availability = lambda: calls.append("refresh")
+    view.selected(NS(key="a"))
+    view.selected(None)
+    assert calls == ["refresh", "refresh"]
