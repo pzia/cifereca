@@ -68,24 +68,44 @@ def _event_id(source: str, timestamp: str, detail: str) -> str:
     return sha256((source + "\0" + timestamp + "\0" + detail).encode()).hexdigest()[:16]
 
 
-def _log_lines(path: Path) -> tuple[list[str], str]:
-    """Read at most 32 KiB from an existing regular, non-symlink file."""
+def _log_lines(
+    path: Path,
+) -> tuple[list[tuple[int, str]], str, tuple[int, int] | None]:
+    """Read a 32 KiB tail with absolute byte positions and file identity.
+
+    (device, inode, byte offset) survives a rename to cifereca.log.1 on
+    POSIX filesystems. It is never exposed outside the hashed event_id.
+    """
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                return [], "unavailable"
-            length = os.fstat(handle.fileno()).st_size
-            start = max(0, length - _MAX_BYTES_PER_LOG)
+            identity = os.fstat(handle.fileno())
+            if not stat.S_ISREG(identity.st_mode):
+                return [], "unavailable", None
+            start = max(0, identity.st_size - _MAX_BYTES_PER_LOG)
             handle.seek(start)
             data = handle.read(_MAX_BYTES_PER_LOG)
-            text = data.decode("utf-8", errors="replace").splitlines()
-            if start and text:
-                text.pop(0)  # first line may be a partial record
-            return text[-_MAX_EVENTS_PER_FILE:], "partial" if start or len(text) > _MAX_EVENTS_PER_FILE else "available"
+            lines: list[tuple[int, str]] = []
+            offset = start
+            # Split bytes before decoding: Unicode replacement characters must
+            # not change the original absolute offsets, even after truncation.
+            for raw_line in data.splitlines(keepends=True):
+                lines.append((
+                    offset, raw_line.decode("utf-8", errors="replace").rstrip("\r\n"),
+                ))
+                offset += len(raw_line)
+            if start and lines:
+                lines.pop(0)  # the first record may start mid-line
+            status = (
+                "partial" if start or len(lines) > _MAX_EVENTS_PER_FILE
+                else "available"
+            )
+            return lines[-_MAX_EVENTS_PER_FILE:], status, (
+                identity.st_dev, identity.st_ino,
+            )
     except (OSError, ValueError):
-        return [], "unavailable"
+        return [], "unavailable", None
 
 
 def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -94,12 +114,12 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     partial = False
     for index in (3, 2, 1, 0):
         path = Path(str(log_path) + (f".{index}" if index else ""))
-        lines, status = _log_lines(path)
-        if status == "unavailable":
+        lines, status, identity = _log_lines(path)
+        if status == "unavailable" or identity is None:
             continue
         observed = True
         partial |= status == "partial"
-        for line_number, line in enumerate(lines):
+        for byte_offset, line in lines:
             match = _LOG_LINE.match(line)
             if not match or not (match["logger"] == "cifereca" or match["logger"].startswith("cifereca.")):
                 continue
@@ -137,7 +157,12 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
-                "event_id": _event_id("app_log", ts, f"{index}:{line_number}:{message}"),
+                # Neither the rotation suffix nor a moving tail line index
+                # participates in the ID. Distinct lines remain distinct.
+                "event_id": _event_id(
+                    "app_log", ts,
+                    f"{identity[0]}:{identity[1]}:{byte_offset}:{message}",
+                ),
             })
     status = "partial" if partial else ("available" if observed else "unavailable")
     return events, {"source": "app_log", "status": "partial" if partial else (status if events else ("empty" if observed else "unavailable")),
