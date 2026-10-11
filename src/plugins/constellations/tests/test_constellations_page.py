@@ -70,3 +70,25 @@ def test_stable_book_ids_take_precedence_over_title_similarity():
     a=normalize_book({'book_id':'a','title':'Same','authors':['Same']})
     b=normalize_book({'book_id':'b','title':'Same','authors':['Same']})
     assert a.key!=b.key
+
+
+def test_762_neighbour_cards_keep_main_reason_and_inferred_evidence():
+    from constellations_page import neighbour_card_fields, neighbour_count_label
+    target = NS(book=BookRef('related', 'Neighbour', ('Writer',)),
+                availability=('empruntable',))
+    mixed = NS(target=target, reasons=(
+        'Inféré : Sujet : nature', 'Auteur : writer', 'Série : recent',
+    ))
+    certain = neighbour_card_fields(mixed)
+    assert certain['title'] == 'Neighbour'
+    assert certain['authors'] == 'Writer'
+    assert certain['access'] == 'empruntable'
+    assert certain['reason'] == 'Auteur : writer'
+    assert certain['other_reasons'] == 2
+    assert certain['inferred'] is True
+    only_inferred = neighbour_card_fields(NS(target=target, reasons=('Inféré : Projet : nature',)))
+    assert only_inferred['reason'].startswith('Inféré')
+    assert neighbour_count_label((mixed, NS(target=target, reasons=('Auteur : writer',)))).startswith(
+        '2 voisin(s) proposé(s) · 1'
+    )
+    assert neighbour_count_label(()) == 'Aucun voisin proposé avec les paramètres actuels'
