@@ -864,7 +864,7 @@ class DiagnosticsPagePlugin:
             ai_status.set_text("Aperçu à actualiser avant toute nouvelle analyse")
 
         def prepare_ai(_button):
-            nonlocal ai_generation, ai_preview
+            nonlocal ai_generation, ai_preview, ai_result
             if self.llm is None:
                 ai_status.set_text("Service IA désactivé : aucun envoi.")
                 return
@@ -878,6 +878,9 @@ class DiagnosticsPagePlugin:
             ai_generation += 1
             token = ai_generation
             ai_preview = None
+            ai_result = ""
+            ai_input.get_buffer().set_text("")
+            ai_report.get_buffer().set_text("")
             ai_send.set_sensitive(False)
             ai_export.set_sensitive(False)
             ai_status.set_text("Préparation locale de l’aperçu expurgé…")
@@ -889,9 +892,15 @@ class DiagnosticsPagePlugin:
                     since=explorer_since(selected_period),
                 )
 
-            handle = self.tasks.submit(
-                worker, label="Aperçu local Diagnostics IA", kind="diagnostics",
-            )
+            try:
+                handle = self.tasks.submit(
+                    worker, label="Aperçu local Diagnostics IA", kind="diagnostics",
+                )
+            except Exception:
+                ai_status.set_text("Aperçu IA indisponible : tâche non démarrée")
+                ai_send.set_sensitive(False)
+                ai_export.set_sensitive(False)
+                return
             self._ai_handle = handle
 
             def completed(done_handle):
@@ -937,13 +946,21 @@ class DiagnosticsPagePlugin:
             ai_prepare.set_sensitive(False)
             ai_status.set_text("Analyse IA en cours (requête autorisée)…")
             token = ai_generation
-            self._ai_handle = self.tasks.submit(
-                lambda control: analyze_with_consent(
-                    self.llm, selected, approval_id=selected["approval_id"],
-                    control=control,
-                ),
-                label="Analyse Diagnostics IA explicite", kind="diagnostics",
-            )
+            try:
+                handle = self.tasks.submit(
+                    lambda control: analyze_with_consent(
+                        self.llm, selected, approval_id=selected["approval_id"],
+                        control=control,
+                    ),
+                    label="Analyse Diagnostics IA explicite", kind="diagnostics",
+                )
+            except Exception:
+                ai_prepare.set_sensitive(True)
+                ai_send.set_sensitive(False)
+                ai_export.set_sensitive(False)
+                ai_status.set_text("Analyse IA indisponible : planification impossible")
+                return
+            self._ai_handle = handle
 
             def completed(done_handle):
                 from gi.repository import GLib
