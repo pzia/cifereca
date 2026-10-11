@@ -233,6 +233,20 @@ def test_youth_enter_observation_uses_real_xtest_and_never_marks_issue_fixed():
     assert '"05c-youth-keypad-enter-gtk-observation"' in source
 
 
+
+def test_youth_no_source_action_gtk_is_disabled_and_explained_without_click():
+    """UX #923: preserve a screenshot and prove the widget's disabled state."""
+    source = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    assert "def inspect_collect_without_source():" in source
+    assert 'assert not button.get_sensitive()' in source
+    assert 'reason = button.get_tooltip_text() or ""' in source
+    assert 'page.view.actions_hint.get_mapped()' in source
+    assert 'assert requests == [], "Disabled no-source action must not start HTTP"' in source
+    assert '"no_source_action_state"' in source
+    assert '"07-no-source-feedback"' in source
+
+
+
 def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():
     runner = _module()
     for width in (1366,):

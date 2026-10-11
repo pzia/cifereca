@@ -1009,10 +1009,10 @@ def main() -> int:
         )
         result["detail_provenance"] = shown
         capture("06-keyboard-search-detail")
-        later(160, click_collect_without_source)
+        later(160, inspect_collect_without_source)
 
-    def click_collect_without_source():
-        """XTEST no-source action: explicit feedback, no implicit remote request."""
+    def inspect_collect_without_source():
+        """#923: no source means a disabled GTK action, not a clickable error."""
         assert not page.view.sources, "No remote youth provider should be installed"
 
         def find_collect(widget):
@@ -1028,16 +1028,33 @@ def main() -> int:
 
         button = find_collect(page.view.widget)
         assert button is not None and button.get_mapped(), "Collect action is not visible"
-        result["no_source_click"] = device.click_widget(button)
+        assert not button.get_sensitive(), "No-source collect action must be disabled"
+        reason = button.get_tooltip_text() or ""
+        assert "source Jeunesse" in reason and "collecte" in reason, reason
+        assert page.view.actions_hint.get_mapped(), "The no-source help must be visible"
+        hint = page.view.actions_hint.get_text()
+        assert "Toutes les sources" in hint and "cache" in hint.lower(), hint
+        assert requests == [], "Disabled no-source action must not start HTTP"
+        result["no_source_action_state"] = {
+            "enabled": button.get_sensitive(),
+            "tooltip": reason,
+            "hint": hint,
+            "status_before": page.view.status.get_text(),
+            "requests_before": len(requests),
+        }
+        # Do not synthesize a click on an insensitive widget: that is precisely
+        # the obsolete behavior which made the GTK E2E red after #923.
         later(200, verify_no_source)
 
     def verify_no_source():
-        message = page.view.status.get_text()
-        assert "Choisissez une source Jeunesse avant de collecter." in message, message
+        assert requests == [], "No remote request without a source"
+        assert page.view.status.get_text() == result["no_source_action_state"]["status_before"], (
+            "Inspecting an unavailable action must not inject a click or change status"
+        )
         assert_rows("interest-eight")
         assert page.view.selected_book is not None
         assert page.view.selected_book.record_id == "interest-eight"
-        result["no_source_feedback"] = message
+        result["no_source_feedback"] = result["no_source_action_state"]["hint"]
         capture("07-no-source-feedback")
         page.view.age.set_selected(0)
         page.view.query.set_text("Age inconnu")
