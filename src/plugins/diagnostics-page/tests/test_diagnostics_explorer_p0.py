@@ -227,8 +227,8 @@ def test_next_page_rejects_invalid_or_nonmonotonic_cursors(next_cursor):
 
 
 def test_next_page_validates_current_page_and_bounds():
-    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=0) == 50
-    assert next_page_offset({"offset": 9950, "next_offset": 10000}, current_offset=9950) == 10000
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 100}, current_offset=0) == 50
+    assert next_page_offset({"offset": 9950, "next_offset": 10000, "total": 10001}, current_offset=9950) == 10000
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=50) is None
     assert next_page_offset({"offset": "0", "next_offset": 50}, current_offset=0) is None
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=True) is None
