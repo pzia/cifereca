@@ -21,7 +21,7 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
-from .core import provider_sessions
+from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
 from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
 from .catalog import LocalCatalog
@@ -1041,182 +1041,43 @@ class LibraryService:
         halves/tokens.  The set is deliberately bounded to avoid turning one UI
         search into an unbounded burst of provider calls.
         """
-        original = re.sub(r"\s+", " ", str(query or "")).strip()[:180]
-        if not original:
-            return []
-        raw_tokens = re.findall(r"[0-9A-Za-zÀ-ÖØ-öø-ÿŒœ'-]+", original)
-        stop = {"a", "au", "aux", "d", "de", "des", "du", "et", "l", "la", "le", "les", "un", "une"}
-        tokens = [t for t in raw_tokens if len(cls._history_fold(t)) >= 2 and cls._history_fold(t) not in stop]
-        if len(tokens) < 2:
-            return [original]
-
-        variants: list[str] = [original]
-        if len(tokens) == 2:
-            # Longest term first: for "Zola Germinal", "Germinal" is normally
-            # the most discriminating fallback.
-            variants.extend(sorted(tokens, key=lambda value: (-len(value), tokens.index(value))))
-        else:
-            midpoint = max(1, len(tokens) // 2)
-            variants.append(" ".join(tokens[:midpoint]))
-            variants.append(" ".join(tokens[midpoint:]))
-            variants.extend(sorted(tokens, key=lambda value: (-len(value), tokens.index(value)))[:2])
-
-        out: list[str] = []
-        seen: set[str] = set()
-        for value in variants:
-            value = re.sub(r"\s+", " ", value).strip()[:180]
-            key = cls._history_fold(value)
-            if key and key not in seen:
-                seen.add(key)
-                out.append(value)
-        return out[:5]
+        return search_orchestration._search_query_variants(cls, query)
 
     @classmethod
     def _search_relevance(cls, query: str, row: SearchResult) -> int:
-        tokens = [x for x in cls._history_fold(query).split() if len(x) >= 2]
-        if not tokens:
-            return 0
-        title = cls._history_fold(row.title)
-        author = cls._history_fold(row.author)
-        combined = f"{title} {author}".strip()
-        score = 0
-        matched = sum(1 for token in tokens if token in combined)
-        score += matched * 20
-        score += sum(8 for token in tokens if token in title)
-        score += sum(6 for token in tokens if token in author)
-        if matched == len(tokens):
-            score += 60
-        folded_query = cls._history_fold(query)
-        if folded_query and folded_query in combined:
-            score += 30
-        return score
+        return search_orchestration._search_relevance(cls, query, row)
 
     @staticmethod
     def _normalized_language_values(value: Any) -> list[str]:
-        if isinstance(value, dict):
-            values: list[Any] = []
-            for key in ("code", "id", "value", "name"):
-                if key in value:
-                    values.append(value[key])
-            if not values:
-                values.extend(value.values())
-        elif isinstance(value, (list, tuple, set)):
-            values = list(value)
-        else:
-            values = [value]
-        out: list[str] = []
-        for raw in values:
-            text = str(raw or "").strip().lower().replace("_", "-")
-            if not text:
-                continue
-            # Keep ISO-ish codes stable while tolerating provider values such as
-            # fr-FR. Human language names are left untouched and simply won't
-            # match the configured short codes unless a provider normalizes them.
-            code = text.split("-", 1)[0]
-            if code not in out:
-                out.append(code)
-        return out
+        return search_orchestration._normalized_language_values(value)
 
     def _search_preference_score(self, row: SearchResult) -> int:
-        identity = self.current_identity
-        if identity is None:
-            return 0
-        metadata = row.metadata if isinstance(row.metadata, dict) else {}
-        languages: list[str] = []
-        for key in ("language", "languages", "lang", "dc_language", "dc:language"):
-            if key in metadata:
-                for code in self._normalized_language_values(metadata.get(key)):
-                    if code not in languages:
-                        languages.append(code)
-        prefs = identity.preferences
-        score = 0
-        for index, preferred in enumerate(prefs.reading_languages):
-            code = str(preferred or "").strip().lower().split("-", 1)[0]
-            if code and code in languages:
-                score += max(1, len(prefs.reading_languages) - index) * 10
-                break
-        if prefs.prefer_original_language and languages:
-            originals: list[str] = []
-            for key in ("original_language", "originalLanguage", "language_original"):
-                if key in metadata:
-                    originals.extend(self._normalized_language_values(metadata.get(key)))
-            if originals and any(code in originals for code in languages):
-                score += 5
-        return score
+        return search_orchestration._search_preference_score(self, row)
 
     def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> str:
         """Translate provider availability into a user-actionable label."""
-        if item.source_provider == "kobo":
-            if item.owned:
-                return "Dans ma bibliothèque Kobo · téléchargeable" if self.can_direct_download(item) else "Dans ma bibliothèque Kobo"
-            if item.price:
-                return f"Catalogue Kobo · {item.price} {item.currency or ''}".strip()
-            return "Catalogue Kobo"
-        if self.can_direct_download(item):
-            return "Téléchargement direct"
-        label = str(detail.availability_label or detail.availability_status or "—").strip()
-        status = self._history_fold(detail.availability_status)
-        folded_label = self._history_fold(label)
-        available = status in {"available", "disponible"} or (
-            folded_label.startswith("disponible") and not folded_label.startswith("indisponible")
-        )
-        if item.source_provider == "paris" and item.medium == "digital" and available:
-            return "Disponible à l’emprunt"
-        return label or "—"
+        return search_orchestration.availability_display_label(self, item, detail)
 
     def searchable_providers(self) -> list[tuple[str, str]]:
         """Connected provider ids/display names usable by the global search UI."""
-        seen: set[str] = set()
-        out: list[tuple[str, str]] = []
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search or session.provider_id in seen:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            seen.add(session.provider_id)
-            out.append((session.provider_id, session.descriptor.display_name))
-        return out
+        return search_orchestration.searchable_providers(self)
 
     @staticmethod
     def _session_search_capabilities(session: ProviderSession) -> ProviderSearchCapabilities:
         """Resolve search capabilities while tolerating legacy/provider test doubles."""
-        contract = getattr(session, "search_capabilities", None)
-        if contract is None:
-            contract = getattr(getattr(session, "descriptor", None), "search_capabilities", None)
-        return contract if isinstance(contract, ProviderSearchCapabilities) else ProviderSearchCapabilities()
+        return search_orchestration._session_search_capabilities(session)
 
     def provider_search_capabilities(self) -> dict[str, ProviderSearchCapabilities]:
         """Return declared search limits for connected providers, keyed by provider id."""
-        result: dict[str, ProviderSearchCapabilities] = {}
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            result.setdefault(session.provider_id, self._session_search_capabilities(session))
-        return result
+        return search_orchestration.provider_search_capabilities(self)
 
     @staticmethod
     def _search_contract_warning(session: ProviderSession, field: str, scope: str) -> str:
-        contract = LibraryService._session_search_capabilities(session)
-        if not contract.supports_field(field):
-            return f"{session.descriptor.display_name}: champ de recherche non pris en charge ({field})"
-        if not contract.supports_scope(scope):
-            return f"{session.descriptor.display_name}: périmètre de recherche non pris en charge ({scope})"
-        return ""
+        return search_orchestration._search_contract_warning(session, field, scope, facade_type=LibraryService)
 
     @classmethod
     def _field_match(cls, field: str, query: str, row: SearchResult) -> bool:
-        field = str(field or "all").lower()
-        if field == "all" or field in {"isbn", "subject"}:
-            # ISBN/sujet are forwarded to providers that understand them. The
-            # common model does not yet expose normalized values to post-filter.
-            return True
-        tokens = [x for x in cls._history_fold(query).split() if len(x) >= 2]
-        if not tokens:
-            return True
-        target = cls._history_fold(row.title if field == "title" else row.author if field == "author" else "")
-        return all(token in target for token in tokens)
+        return search_orchestration._field_match(cls, field, query, row)
 
     def _without_redundant_merged(
         self, sessions: list[ProviderSession], *, field: str, scope: str,
@@ -1229,179 +1090,10 @@ class LibraryService:
         (or together via an explicit opt-in). Only origins able to satisfy the
         requested field/scope suppress their sibling aggregate.
         """
-        if include_redundant_merged or len(sessions) < 2:
-            return sessions
-        original_parents: set[str] = set()
-        for session in sessions:
-            entry = self.registry.virtual_entry(session.provider_id)
-            if entry is None or entry.kind == "synthetic.merged":
-                continue
-            parent = self.registry.virtual_parent(session.provider_id)
-            if parent and not self._search_contract_warning(session, field, scope):
-                original_parents.add(parent)
-        if not original_parents:
-            return sessions
-        return [
-            session for session in sessions
-            if not (
-                (entry := self.registry.virtual_entry(session.provider_id)) is not None
-                and entry.kind == "synthetic.merged"
-                and self.registry.virtual_parent(session.provider_id) in original_parents
-            )
-        ]
+        return search_orchestration._without_redundant_merged(self, sessions, field=field, scope=scope, include_redundant_merged=include_redundant_merged)
 
     def search(self, query: str, scope: str = "all", force: bool = False, *, provider_id: str = "all", field: str = "all", content_types: tuple[str, ...] | list[str] | None = None, include_redundant_merged: bool = False) -> list[SearchResult]:
-        provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
-        # Search is global: one connected session per provider is queried,
-        # independently of the reader account currently selected in the GUI.
-        searchable: list[ProviderSession] = []
-        seen_provider: set[str] = set()
-        requested_provider = str(provider_id or "all").strip().lower()
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            if requested_provider != "all" and session.provider_id != requested_provider:
-                continue
-            if session.provider_id in seen_provider:
-                continue
-            seen_provider.add(session.provider_id)
-            searchable.append(session)
-        searchable = self._without_redundant_merged(
-            searchable, field=field, scope=provider_scope,
-            include_redundant_merged=include_redundant_merged,
-        )
-        provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
-        identity = self.current_identity
-        pref_key = ""
-        if identity is not None:
-            pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
-        virtual_versions = ",".join(
-            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
-            for session in searchable
-            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
-        )
-        virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
-        cache_key = hashlib.sha256(
-            f"search-v7\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
-        ).hexdigest()
-        ttl = int(self.config.get("cache.search_seconds", 21600))
-        if not force:
-            cached = self.storage.cache_get("search", cache_key)
-            if isinstance(cached, list):
-                self.last_search = [SearchResult(**x) for x in cached]
-                # Never leak a warning from a previous, unrelated search.
-                self.last_search_warnings = []
-                self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(self.last_search), "q_len": len(query), "providers": provider_key})
-                return self.last_search
-
-        rows: list[SearchResult] = []
-        warnings: list[str] = []
-        variants = self._search_query_variants(query)
-        for session in searchable:
-            provider_rows: list[SearchResult] = []
-            provider_seen: set[tuple[str, str, str]] = set()
-            contract_warning = LibraryService._search_contract_warning(session, field, provider_scope)
-            if contract_warning:
-                warnings.append(contract_warning)
-                continue
-            primary_ok = False
-            for attempt, variant in enumerate(variants):
-                # Loose fallbacks are needed only when the exact query produced
-                # no strong title/author match. This keeps normal searches fast.
-                if attempt > 0 and primary_ok:
-                    break
-                try:
-                    try:
-                        import inspect
-                        parameters = inspect.signature(session.search).parameters
-                        kwargs = {"field": field}
-                        if "content_types" in parameters:
-                            kwargs["content_types"] = tuple(content_types or ())
-                        session_rows = session.search(variant, provider_scope, **kwargs)
-                    except TypeError as exc:
-                        # 0.4 keeps source compatibility with small third-party
-                        # provider prototypes that still implement the 0.3 signature.
-                        if "field" not in str(exc) or "unexpected keyword" not in str(exc):
-                            raise
-                        session_rows = session.search(variant, provider_scope)
-                    for row in session_rows:
-                        key = (row.source_provider, row.docbase, row.record_id)
-                        if key not in provider_seen:
-                            provider_seen.add(key)
-                            provider_rows.append(row)
-                    concrete = getattr(session, "client", None)
-                    partial_failure = False
-                    for source in (session, concrete):
-                        for warning in list(getattr(source, "last_search_warnings", []) or []):
-                            warnings.append(f"{session.descriptor.display_name}: {warning}")
-                            partial_failure = True
-                    if partial_failure:
-                        break
-                    if attempt == 0 and provider_rows:
-                        primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
-                except Exception as exc:
-                    # An exact-query failure should not prevent a looser retry.
-                    if attempt == 0 or len(variants) == 1:
-                        warnings.append(f"{session.descriptor.display_name}: {exc}")
-                    self.diagnostics.add(
-                        "PLUGIN", "search", "error",
-                        detail={
-                            "provider": session.provider_id,
-                            "attempt": attempt + 1,
-                            "q_len": len(variant),
-                            "error": type(exc).__name__,
-                            "message": str(exc),
-                        },
-                    )
-                    from .search_failures import is_technical_search_error
-                    if is_technical_search_error(exc):
-                        break
-            if field in {"title", "author"}:
-                provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
-            if str(scope or "all").casefold() == "unknown":
-                from .core.search import support_kind
-                provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
-            rows.extend(provider_rows)
-
-        # Stable de-duplication across plugins; source provider remains visible.
-        unique: dict[tuple[str, str, str], SearchResult] = {}
-        for row in rows:
-            unique[(row.source_provider, row.docbase, row.record_id)] = row
-        rows = list(unique.values())
-        preference_scores = {id(row): self._search_preference_score(row) for row in rows}
-        if len(variants) > 1 or any(preference_scores.values()):
-            # Relevance remains authoritative; identity preferences only rank
-            # otherwise comparable results and never hide other languages.
-            rows.sort(
-                key=lambda row: (
-                    self._search_relevance(query, row) if len(variants) > 1 else 0,
-                    preference_scores.get(id(row), 0),
-                ),
-                reverse=True,
-            )
-        warnings = list(dict.fromkeys(warnings))
-        try:
-            self._mirror_remote_results(rows)
-        except Exception as exc:
-            _TRACE_LOG.warning("TRACE catalog mirror search error=%s", exc)
-        if not warnings:
-            self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
-        self.last_search = rows
-        self.last_search_warnings = warnings
-        self.diagnostics.add(
-            "SEARCH", "federated",
-            detail={
-                "providers": provider_key,
-                "field": field,
-                "results": len(rows),
-                "variants": len(variants),
-                "fallback": len(variants) > 1,
-            },
-            level="detailed",
-        )
-        return rows
+        return search_orchestration.search(self, query, scope, force, provider_id=provider_id, field=field, content_types=content_types, include_redundant_merged=include_redundant_merged, logger=_TRACE_LOG, facade_type=LibraryService)
 
     def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str = "all", content_types: tuple[str, ...] = ()) -> tuple[list[SearchResult], list[str], str, str]:
         """Search one provider without mutating shared result state.
@@ -1409,64 +1101,7 @@ class LibraryService:
         This is deliberately safe to run in parallel with *other* provider sessions;
         a given session is still called sequentially for its own query variants.
         """
-        provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
-        provider_rows: list[SearchResult] = []
-        provider_seen: set[tuple[str, str, str]] = set()
-        warnings: list[str] = []
-        contract_warning = LibraryService._search_contract_warning(session, field, provider_scope)
-        if contract_warning:
-            return [], [contract_warning], "", ""
-        variants = self._search_query_variants(query)
-        primary_ok = False
-        terminal_error_code = terminal_error_message = ""
-        for attempt, variant in enumerate(variants):
-            if attempt > 0 and primary_ok:
-                break
-            try:
-                try:
-                    import inspect
-                    parameters = inspect.signature(session.search).parameters
-                    kwargs = {"field": field}
-                    if "content_types" in parameters:
-                        kwargs["content_types"] = tuple(content_types or ())
-                    session_rows = session.search(variant, provider_scope, **kwargs)
-                except TypeError as exc:
-                    if "field" not in str(exc) or "unexpected keyword" not in str(exc):
-                        raise
-                    session_rows = session.search(variant, provider_scope)
-                for row in session_rows:
-                    key = (row.source_provider, row.docbase, row.record_id)
-                    if key not in provider_seen:
-                        provider_seen.add(key); provider_rows.append(row)
-                concrete = getattr(session, "client", None)
-                partial_failure = False
-                for source in (session, concrete):
-                    for warning in list(getattr(source, "last_search_warnings", []) or []):
-                        warnings.append(f"{session.descriptor.display_name}: {warning}")
-                        partial_failure = True
-                if partial_failure:
-                    break
-                if attempt == 0 and provider_rows:
-                    primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
-            except Exception as exc:
-                if attempt == 0 or len(variants) == 1:
-                    terminal_error_code = type(exc).__name__
-                    terminal_error_message = str(exc)
-                    warnings.append(f"{session.descriptor.display_name}: {exc}")
-                self.diagnostics.add(
-                    "PLUGIN", "search", "error",
-                    detail={"provider": session.provider_id, "attempt": attempt + 1, "q_len": len(variant),
-                            "error": type(exc).__name__, "message": str(exc)},
-                )
-                from .search_failures import is_technical_search_error
-                if is_technical_search_error(exc):
-                    break
-        if field in {"title", "author"}:
-            provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
-        if str(scope or "all").casefold() == "unknown":
-            from .core.search import support_kind
-            provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
-        return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
+        return search_orchestration._search_provider_session(self, session, query, scope, field=field, content_types=content_types, facade_type=LibraryService)
 
     def _search_virtual_stream_session(
         self, session: ProviderSession, query: str, scope: str, *,
@@ -1475,36 +1110,7 @@ class LibraryService:
         control: Any,
     ) -> tuple[list[SearchResult], list[str], str, str]:
         """Worker-only optional stream. Gaps/errors do not poison the cache."""
-        try:
-            outcome = consume_provider_stream(
-                session.search_stream(
-                    query, scope, field=field, content_types=content_types,
-                    control=control,
-                ),
-                provider_id=session.provider_id, catalog_generation=generation,
-                publish=publish, cancelled=cancelled,
-            )
-            rows = list(outcome.rows)
-            if field in {"title", "author"}:
-                rows = [row for row in rows if self._field_match(field, query, row)]
-            if str(scope or "all").casefold() == "unknown":
-                from .core.search import support_kind
-                rows = [row for row in rows if support_kind(asdict(row)) == "unknown"]
-            return rows, list(outcome.warnings), outcome.error_code, outcome.error_message
-        except SearchStreamCancelled:
-            return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"
-        except SearchStreamFailure as exc:
-            publish(ProviderSearchEvent(
-                session.provider_id, generation, 0, "reset",
-                message="resync after invalid/incomplete stream",
-            ))
-            # Rebuild from a complete catalogue query; do not reuse partial
-            # stream results after a dropped message.
-            return self._search_provider_session(
-                session, query, scope, field=field, content_types=content_types,
-            )
-        except Exception as exc:
-            return [], [f"{session.descriptor.display_name}: stream error"], type(exc).__name__, type(exc).__name__
+        return search_orchestration._search_virtual_stream_session(self, session, query, scope, field=field, content_types=content_types, generation=generation, publish=publish, cancelled=cancelled, control=control)
 
     def search_progressive(
         self, query: str, scope: str = "all", force: bool = False, *,
@@ -1525,221 +1131,12 @@ class LibraryService:
         are already selected, preventing duplicated remote work. Explicit
         ``include_redundant_merged=True`` opts in to both.
         """
-        from datetime import datetime, timezone
-        from .plugin_api import CatalogSearchBatch, CatalogSearchSummary
-
-        started_dt = datetime.now(timezone.utc)
-        started_mono = time.monotonic()
-        with self._search_generation_lock:
-            self._search_generation += 1
-            search_generation = self._search_generation
-        requested = {str(x).strip().lower() for x in (provider_ids or ()) if str(x).strip() and str(x).strip().lower() != "local"}
-        single = str(provider_id or "all").strip().lower()
-        if single != "all": requested.add(single)
-        searchable: list[ProviderSession] = []
-        seen_provider: set[str] = set()
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            if requested and session.provider_id not in requested:
-                continue
-            if session.provider_id in seen_provider:
-                continue
-            seen_provider.add(session.provider_id); searchable.append(session)
-        searchable = self._without_redundant_merged(
-            searchable, field=field, scope=scope,
-            include_redundant_merged=include_redundant_merged,
-        )
-        searchable.sort(key=lambda row: row.provider_id)
-        provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
-        identity = self.current_identity
-        pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
-        types = tuple(sorted(content_types or ()))
-        virtual_versions = ",".join(
-            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
-            for session in searchable
-            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
-        )
-        cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
-        ttl = int(self.config.get("cache.search_seconds", 21600))
-
-        def emit(batch):
-            if on_batch is None: return
-            try: on_batch(batch)
-            except Exception as exc:
-                self.diagnostics.add("SEARCH", "progress callback", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-
-        if not force:
-            cached = self.storage.cache_get("search", cache_key)
-            if isinstance(cached, list):
-                rows = [SearchResult(**x) for x in cached]
-                groups: dict[str, list[SearchResult]] = {}
-                for row in rows: groups.setdefault(str(row.source_provider or "unknown"), []).append(row)
-                for pid in sorted(groups):
-                    emit(CatalogSearchBatch(pid, self.provider_display_name(pid), tuple(groups[pid]), cached=True))
-                self.last_search = rows; self.last_search_warnings = []
-                completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                return CatalogSearchSummary(query, len(rows), len(groups), len(groups), 0, False, (), started_dt.isoformat(timespec="seconds"), completed)
-
-        aggregate: list[SearchResult] = []
-        warnings: list[str] = []
-        failed = completed_count = 0
-        cancelled = False
-        futures = {}
-        streamed: dict[str, int] = {}
-        event_queue: Queue[ProviderSearchEvent] = Queue(maxsize=512)
-
-        def request_cancelled() -> bool:
-            with self._search_generation_lock:
-                if search_generation != self._search_generation:
-                    return True
-            return bool(control is not None and callable(getattr(control, "cancelled", None)) and control.cancelled())
-
-        def publish_from_provider(event: ProviderSearchEvent) -> None:
-            # Bounded queue enforces backpressure on a noisy provider.
-            while not request_cancelled():
-                try:
-                    event_queue.put(event, timeout=0.05)
-                    return
-                except Full:
-                    continue
-
-        def drain_stream_events() -> None:
-            while True:
-                try:
-                    event = event_queue.get_nowait()
-                except Empty:
-                    return
-                if on_event is None or request_cancelled():
-                    continue
-                entry = self.registry.virtual_entry(event.provider_id)
-                if entry is None or entry.catalog_generation != event.catalog_generation:
-                    continue
-                try:
-                    on_event(event)
-                except Exception as exc:
-                    self.diagnostics.add(
-                        "SEARCH", "stream callback", "error",
-                        detail={"provider": event.provider_id, "error": type(exc).__name__},
-                    )
-
-        if searchable:
-            for session in searchable:
-                entry = self.registry.virtual_entry(session.provider_id)
-                if (
-                    entry is not None
-                    and "catalog.search.stream" in entry.capabilities
-                    and isinstance(session, ProviderSearchStream)
-                ):
-                    streamed[session.provider_id] = entry.catalog_generation
-                    future = _SEARCH_EXECUTOR.submit(
-                        self._search_virtual_stream_session, session, query, scope,
-                        field=field, content_types=tuple(content_types or ()),
-                        generation=entry.catalog_generation,
-                        publish=publish_from_provider, cancelled=request_cancelled,
-                        control=control,
-                    )
-                else:
-                    future = _SEARCH_EXECUTOR.submit(
-                        self._search_provider_session, session, query, scope,
-                        field=field, content_types=tuple(content_types or ()),
-                    )
-                futures[future] = (session, time.monotonic())
-            pending = set(futures)
-            while pending:
-                if request_cancelled():
-                    cancelled = True
-                    for future in pending:
-                        future.cancel()
-                    break
-                if control is not None:
-                    try:
-                        check = getattr(control, "check_cancelled", None)
-                        if callable(check):
-                            check()
-                    except Exception:
-                        cancelled = True
-                        for future in pending:
-                            future.cancel()
-                        break
-                drain_stream_events()
-                done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
-                if not done:
-                    continue
-                for future in done:
-                    session, provider_started = futures[future]
-                    try:
-                        provider_rows, provider_warnings, error_code, error_message = future.result()
-                    except Exception as exc:
-                        provider_rows, provider_warnings = [], [f"{session.descriptor.display_name}: {exc}"]
-                        error_code, error_message = type(exc).__name__, str(exc)
-                    # An inventory revision during a search invalidates any
-                    # partial results from the former generation.
-                    expected = streamed.get(session.provider_id)
-                    if expected is not None:
-                        entry = self.registry.virtual_entry(session.provider_id)
-                        if entry is None or entry.catalog_generation != expected:
-                            cancelled = True
-                            provider_rows = []
-                            provider_warnings = []
-                            error_code = "StreamStale"
-                            error_message = "source generation changed"
-                    aggregate.extend(provider_rows)
-                    warnings.extend(provider_warnings)
-                    completed_count += 1
-                    if error_code and not provider_rows:
-                        failed += 1
-                    if not cancelled:
-                        emit(CatalogSearchBatch(
-                            session.provider_id, session.descriptor.display_name, tuple(provider_rows),
-                            tuple(provider_warnings), error_code, error_message, False,
-                            int((time.monotonic() - provider_started) * 1000),
-                        ))
-                    if control is not None and callable(getattr(control, "report", None)):
-                        try:
-                            control.report(current=completed_count, total=len(searchable),
-                                           message=f"Recherche · {session.descriptor.display_name}")
-                        except Exception:
-                            pass
-            if not cancelled:
-                drain_stream_events()
-        if request_cancelled():
-            cancelled = True
-
-        unique: dict[tuple[str, str, str], SearchResult] = {}
-        for row in aggregate: unique[(row.source_provider, row.docbase, row.record_id)] = row
-        rows = list(unique.values())
-        variants = self._search_query_variants(query)
-        preference_scores = {id(row): self._search_preference_score(row) for row in rows}
-        if len(variants) > 1 or any(preference_scores.values()):
-            rows.sort(key=lambda row: (self._search_relevance(query, row) if len(variants) > 1 else 0, preference_scores.get(id(row), 0)), reverse=True)
-        warnings = list(dict.fromkeys(warnings))
-        if not cancelled:
-            try: self._mirror_remote_results(rows)
-            except Exception as exc: _TRACE_LOG.warning("TRACE catalog mirror progressive search error=%s", exc)
-        if not cancelled and not warnings and failed == 0:
-            self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
-        self.last_search = rows; self.last_search_warnings = warnings
-        self.diagnostics.add("SEARCH", "progressive federated", detail={"providers": provider_key, "field": field, "results": len(rows), "completed": completed_count, "failed": failed, "cancelled": cancelled, "dt_ms": int((time.monotonic()-started_mono)*1000)}, level="detailed")
-        completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        return CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
+        return search_orchestration.search_progressive(self, query, scope, force, provider_id=provider_id, provider_ids=provider_ids, field=field, content_types=content_types, on_batch=on_batch, control=control, on_event=on_event, include_redundant_merged=include_redundant_merged, executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG)
 
     def search_local_library(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        from .core.search import LocalLibrarySearch
-
-        resolved_identity = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        rows = LocalLibrarySearch(self.library_entries).search(
-            query, identity_id=resolved_identity, scope=scope, field=field,
-        )
-        _TRACE_LOG.info(
-            "TRACE search local identity=%s query_len=%s scope=%s field=%s results=%s",
-            resolved_identity, len(str(query or "")), scope, field, len(rows),
-        )
-        return rows
+        return search_orchestration.search_local_library(self, query, scope, field=field, identity_id=identity_id, logger=_TRACE_LOG)
 
     def search_known_catalog(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
@@ -1752,18 +1149,7 @@ class LibraryService:
         rights and progressively mirrored catalogue facts. ``search()`` remains
         the explicit online extension operation.
         """
-        from .core.search import KnownCatalogSearch
-
-        resolved_identity = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
-            query, identity_id=resolved_identity, scope=scope, field=field,
-            providers=provider_ids, content_types=content_types,
-        )
-        _TRACE_LOG.info(
-            "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
-            resolved_identity, len(str(query or "")), scope, field, len(rows),
-        )
-        return rows
+        return search_orchestration.search_known_catalog(self, query, scope, field=field, identity_id=identity_id, provider_ids=provider_ids, content_types=content_types, logger=_TRACE_LOG)
 
     @staticmethod
     def filter_loaded_search_results(
@@ -1772,47 +1158,11 @@ class LibraryService:
         content_types: list[str] | tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         """Apply current Search controls without network or cache mutation."""
-        from .core.search import filter_loaded_results
-        return filter_loaded_results(
-            rows, query, providers=provider_ids, content_types=content_types, scope=scope, field=field,
-        )
+        return search_orchestration.filter_loaded_search_results(rows, query, field=field, scope=scope, provider_ids=provider_ids, content_types=content_types)
 
     def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None = None) -> int:
         """Persist progressively discovered remote catalog metadata (0.8.3)."""
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        if not identity_id:
-            return 0
-        now = int(time.time())
-        keyed: list[tuple[str, SearchResult, str]] = []
-        for row in rows:
-            state = "remote_owned" if row.owned else ("available_to_buy" if row.source_provider == "kobo" and row.price else ("available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else "remote_catalog"))
-            key = hashlib.sha256(f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}".encode()).hexdigest()
-            keyed.append((key, row, state))
-        existing_by_id = self.storage.catalog_entries_by_ids([key for key, _row, _state in keyed])
-        upserts: list[dict[str, Any]] = []
-        for key, row, state in keyed:
-            existing = existing_by_id.get(key)
-            if existing and existing.get("local_state") == "local":
-                continue
-            raw_meta = dict(row.metadata or {})
-            allowed_meta = {
-                name: raw_meta.get(name)
-                for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "rights", "dates")
-                if raw_meta.get(name) not in (None, "", [], {})
-            }
-            upserts.append({
-                "catalog_entry_id": key, "title": row.title, "author": row.author, "media_format": row.format,
-                "identity_id": identity_id, "provider_id": row.source_provider, "item_id": row.record_id, "local_state": state,
-                "metadata": {
-                    **allowed_meta, "docbase": row.docbase, "scenario": row.scenario, "cover_url": row.thumbnail_url, "product_url": row.friendly_url,
-                    "price": row.price, "currency": row.currency, "source_credential": row.source_credential,
-                    "source_collection": row.source_collection, "publisher": row.publisher or allowed_meta.get("publisher"),
-                    "published_at": row.published_at, "type": row.type, "medium": row.medium,
-                    "mirrored_at": now, "description": row.description,
-                },
-            })
-        self.storage.catalog_entries_upsert_many(upserts)
-        return len(upserts)
+        return search_orchestration._mirror_remote_results(self, rows, identity_id=identity_id)
 
     def mirror_personal_libraries(self) -> dict[str, int]:
         """Refresh enumerable personal libraries and acquire qualified Numilog EPUBs.
