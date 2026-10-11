@@ -1,0 +1,1 @@
+Demande utilisateur confirmée le 2026-10-11 : déclencher une seule recette GTK Diagnostics 1366 via GitHub Actions.
