@@ -156,3 +156,21 @@ def test_no_task_correlation_is_fabricated_from_unrelated_event_ids():
     assert len(groups) == 1
     assert len(groups[0]["events"]) == 2
     assert all("correlation_id" not in row for row in groups[0]["events"])
+
+
+def test_sort_uses_utc_instant_not_offset_lexicography():
+    earlier = event("earlier")
+    later = event("later")
+    earlier["timestamp"] = "2026-10-11T10:00:00+02:00"  # 08:00Z
+    later["timestamp"] = "2026-10-11T09:30:00+00:00"    # 09:30Z
+    payload = {"events": [earlier, later]}
+    assert [r["event_id"] for r in sanitized_rows(payload)] == ["later", "earlier"]
+    assert [r["event_id"] for r in sanitized_rows(payload, newest_first=False)] == ["earlier", "later"]
+
+
+def test_invalid_or_unzoned_timestamps_sort_last_without_crashing():
+    rows = [event("bad"), event("naive"), event("valid")]
+    rows[0]["timestamp"] = "invalid"
+    rows[1]["timestamp"] = "2026-10-11T07:00:00"
+    assert [r["event_id"] for r in sanitized_rows({"events": rows})][0] == "valid"
+    assert {r["event_id"] for r in sanitized_rows({"events": rows})} == {"bad", "naive", "valid"}

@@ -77,8 +77,17 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         ).casefold():
             continue
         results.append(safe)
-    results.sort(key=lambda row: (row["timestamp"], row["event_id"]),
-                 reverse=newest_first)
+    def chronological_key(row: dict[str, str]) -> tuple[datetime, str]:
+        try:
+            instant = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+            if instant.tzinfo is None:
+                raise ValueError("missing timezone")
+            instant = instant.astimezone(timezone.utc)
+        except (ValueError, OverflowError):
+            instant = datetime.min.replace(tzinfo=timezone.utc)
+        return instant, row["event_id"]
+
+    results.sort(key=chronological_key, reverse=newest_first)
     return results
 
 
