@@ -324,3 +324,9 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+@pytest.mark.parametrize("now", [0, False, "", {}, [], object()])
+def test_period_refuses_invalid_clock_values(now):
+    with pytest.raises(ValueError, match="reference time"):
+        explorer_since("day", now=now)
