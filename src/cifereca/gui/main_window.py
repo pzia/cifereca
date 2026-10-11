@@ -34,6 +34,10 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .settings_context import settings_action_state
+from .llm_settings import (
+    LLMSettingsError, normalize_llm_settings, destination_summary,
+    env_key_is_set, probe_llm_connection,
+)
 from .diagnostic_presentation import diagnostic_plugin_rows
 from .loan_view import (
     LOAN_FILTER_LABELS,
@@ -5388,7 +5392,8 @@ class MainWindow(Adw.ApplicationWindow):
         tab_scroll.set_child(switcher); settings_root.append(tab_scroll); settings_root.append(tabs)
         sections = {}
         for key, label in (("accounts", "Identités et comptes"), ("library", "Bibliothèque"),
-                           ("sync", "Synchronisation"), ("interface", "Interface"), ("diagnostic", "Diagnostic")):
+                           ("sync", "Synchronisation"), ("interface", "Interface"),
+                           ("ai", "Intelligence artificielle"), ("diagnostic", "Diagnostic")):
             section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
             sections[key] = section; tabs.add_titled(section, key, label)
 
@@ -5723,6 +5728,223 @@ class MainWindow(Adw.ApplicationWindow):
         })
         from .action_widgets import mirror_sensitivity
         mirror_sensitivity(save, save_bottom); mirror_sensitivity(reconnect, reconnect_bottom)
+        # Independent, opt-in Core LLM settings. No backend contact on entry.
+        ai_box = sections["ai"]
+        ai_cfg = self.config.get("llm", {})
+        if not isinstance(ai_cfg, dict):
+            ai_cfg = {}
+        ai_group = Adw.PreferencesGroup()
+        ai_group.set_title("Service IA commun aux plugins")
+        ai_box.append(ai_group)
+        ai_enable_row = Adw.ActionRow()
+        ai_enable_row.set_title("Activer les fonctions d’intelligence artificielle")
+        ai_enable_row.set_subtitle("Désactivé par défaut. Aucun appel réseau à l’ouverture.")
+        ai_enabled = Gtk.Switch()
+        ai_enabled.set_valign(Gtk.Align.CENTER)
+        ai_enabled.set_active(ai_cfg.get("enabled") is True)
+        ai_enable_row.add_suffix(ai_enabled)
+        ai_group.add(ai_enable_row)
+
+        ai_provider = Adw.ActionRow()
+        ai_provider.set_title("Protocole pris en charge")
+        ai_provider.set_subtitle("OpenAI Chat Completions compatible (local ou HTTPS)")
+        ai_group.add(ai_provider)
+        ai_endpoint = Adw.EntryRow()
+        ai_endpoint.set_title("Endpoint complet (…/v1/chat/completions)")
+        ai_endpoint.set_text(str(ai_cfg.get("endpoint") or ""))
+        ai_group.add(ai_endpoint)
+        ai_preset = Gtk.Button(label="Préremplir l’endpoint Ollama local")
+        ai_preset.set_tooltip_text("N’installe ni ne démarre aucun serveur")
+        ai_preset.connect(
+            "clicked", lambda *_: ai_endpoint.set_text(
+                "http://127.0.0.1:11434/v1/chat/completions"
+            ),
+        )
+        ai_box.append(ai_preset)
+        ai_model = Adw.EntryRow()
+        ai_model.set_title("Modèle installé sur le serveur")
+        ai_model.set_text(str(ai_cfg.get("model") or ""))
+        ai_group.add(ai_model)
+
+        ai_remote_row = Adw.ActionRow()
+        ai_remote_row.set_title("Autoriser les requêtes vers un serveur distant")
+        ai_remote_row.set_subtitle(
+            "HTTPS obligatoire ; les plugins demandent toujours leur propre consentement."
+        )
+        ai_remote = Gtk.Switch()
+        ai_remote.set_valign(Gtk.Align.CENTER)
+        ai_remote.set_active(ai_cfg.get("allow_remote") is True)
+        ai_remote_row.add_suffix(ai_remote)
+        ai_group.add(ai_remote_row)
+
+        ai_key = Adw.EntryRow()
+        ai_key.set_title("Nom de variable d’environnement pour la clé (facultatif)")
+        ai_key.set_text(str(ai_cfg.get("api_key_env") or ""))
+        ai_key.set_tooltip_text("Saisir uniquement le NOM de variable, jamais la clé")
+        ai_group.add(ai_key)
+        ai_timeout = Adw.EntryRow()
+        ai_timeout.set_title("Délai maximum en secondes (0,2 à 15)")
+        ai_timeout.set_text(str(ai_cfg.get("timeout_seconds", 5)))
+        ai_group.add(ai_timeout)
+        ai_input_limit = Adw.EntryRow()
+        ai_input_limit.set_title("Taille maximum d’entrée (caractères)")
+        ai_input_limit.set_text(str(ai_cfg.get("max_input_chars", 4000)))
+        ai_group.add(ai_input_limit)
+        ai_output_limit = Adw.EntryRow()
+        ai_output_limit.set_title("Maximum de jetons de réponse")
+        ai_output_limit.set_text(str(ai_cfg.get("max_output_tokens", 256)))
+        ai_group.add(ai_output_limit)
+
+        ai_notice = Gtk.Label(
+            label=("La clé n’est jamais enregistrée : seul son nom de variable est sauvegardé. "
+                   "Une analyse peut coûter de l’argent chez un fournisseur distant. "
+                   "Sauvegarder la configuration requiert un redémarrage de Cifereca."),
+            xalign=0,
+        )
+        ai_notice.set_wrap(True)
+        add_css(ai_notice, "caption", "dim-label")
+        ai_box.append(ai_notice)
+        ai_status = Gtk.Label(label="Désactivé" if not ai_enabled.get_active() else "Configuré (non testé)", xalign=0)
+        ai_status.set_wrap(True)
+        ai_box.append(ai_status)
+        ai_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ai_test = Gtk.Button(label="Tester la connexion")
+        ai_reset = Gtk.Button(label="Annuler les modifications")
+        ai_buttons.append(ai_test)
+        ai_buttons.append(ai_reset)
+        ai_box.append(ai_buttons)
+
+        def read_ai_settings():
+            return normalize_llm_settings({
+                "enabled": ai_enabled.get_active(),
+                "provider": "openai-compatible",
+                "endpoint": ai_endpoint.get_text(),
+                "model": ai_model.get_text(),
+                "allow_remote": ai_remote.get_active(),
+                "api_key_env": ai_key.get_text(),
+                "timeout_seconds": ai_timeout.get_text(),
+                "max_input_chars": ai_input_limit.get_text(),
+                "max_output_tokens": ai_output_limit.get_text(),
+            })
+
+        ai_probe_version = [0]
+
+        def ai_setting_changed(*_args):
+            ai_probe_version[0] += 1
+            host, remote = destination_summary({
+                "endpoint": ai_endpoint.get_text(),
+                "model": ai_model.get_text(),
+                "enabled": ai_enabled.get_active(),
+                "allow_remote": ai_remote.get_active(),
+                "api_key_env": ai_key.get_text(),
+                "timeout_seconds": ai_timeout.get_text(),
+                "max_input_chars": ai_input_limit.get_text(),
+                "max_output_tokens": ai_output_limit.get_text(),
+            })
+            ai_status.set_text(
+                "Désactivé (modifications non enregistrées)"
+                if not ai_enabled.get_active() else
+                f"Non testé · {'distant' if remote else 'local'} · {host} · "
+                f"clé d’environnement {'définie' if env_key_is_set({'api_key_env': ai_key.get_text()}) else 'absente'}"
+            )
+
+        def endpoint_changed(*_args):
+            # Editing the endpoint revokes a previously granted remote opt-in.
+            if ai_remote.get_active():
+                ai_remote.set_active(False)
+            ai_setting_changed()
+
+        ai_endpoint.connect("notify::text", endpoint_changed)
+        for widget, signal in (
+            (ai_enabled, "notify::active"), (ai_remote, "notify::active"),
+            (ai_model, "notify::text"), (ai_key, "notify::text"),
+            (ai_timeout, "notify::text"), (ai_input_limit, "notify::text"),
+            (ai_output_limit, "notify::text"),
+        ):
+            widget.connect(signal, ai_setting_changed)
+
+        def reset_ai(_button):
+            ai_enabled.set_active(ai_cfg.get("enabled") is True)
+            ai_endpoint.set_text(str(ai_cfg.get("endpoint") or ""))
+            ai_model.set_text(str(ai_cfg.get("model") or ""))
+            ai_remote.set_active(ai_cfg.get("allow_remote") is True)
+            ai_key.set_text(str(ai_cfg.get("api_key_env") or ""))
+            ai_timeout.set_text(str(ai_cfg.get("timeout_seconds", 5)))
+            ai_input_limit.set_text(str(ai_cfg.get("max_input_chars", 4000)))
+            ai_output_limit.set_text(str(ai_cfg.get("max_output_tokens", 256)))
+            settings_revisions["ai"] = saved_settings_revisions["ai"]
+            ai_status.set_text("Modifications annulées ; aucun test réseau lancé")
+            update_settings_actions()
+
+        ai_reset.connect("clicked", reset_ai)
+
+        def submit_ai_probe(settings, *, confirmed=False):
+            ai_probe_version[0] += 1
+            version = ai_probe_version[0]
+            ai_status.set_text("Test synthétique en cours…")
+            def done(result):
+                if version == ai_probe_version[0]:
+                    host, _ = destination_summary(settings)
+                    ai_status.set_text(f"{result} · {host} · modèle {settings['model']}")
+            def failed(_exc):
+                if version == ai_probe_version[0]:
+                    ai_status.set_text("Test non concluant ; vérifier la configuration")
+            try:
+                self.runner.submit(
+                    "Test connexion IA synthétique",
+                    lambda: probe_llm_connection(settings, remote_confirmed=confirmed),
+                    done, failed, control=ai_test,
+                    priority=TaskPriority.USER_ACTION, kind="settings",
+                )
+            except Exception:
+                ai_test.set_sensitive(True)
+                ai_status.set_text("Impossible de démarrer le test")
+
+        def test_ai_connection(_button):
+            try:
+                settings = read_ai_settings()
+            except LLMSettingsError as exc:
+                ai_status.set_text(str(exc))
+                return
+            if not settings["enabled"]:
+                ai_status.set_text("Activer la fonction IA pour tester la connexion")
+                return
+            host, remote = destination_summary(settings)
+            if remote:
+                confirmation_version = ai_probe_version[0]
+                confirm = Adw.MessageDialog.new(
+                    self, "Tester la connexion distante ?",
+                    f"Une requête synthétique sera envoyée à {host} avec le modèle "
+                    f"{settings['model']}. Ce test peut être facturé. "
+                    "Aucune notice ou donnée personnelle ne sera envoyée.",
+                )
+                confirm.add_response("cancel", "Annuler")
+                confirm.add_response("accept", "Autoriser ce test")
+                confirm.set_default_response("cancel")
+                confirm.set_close_response("cancel")
+                def confirmed_probe(_dialog, response):
+                    if response != "accept":
+                        return
+                    # Never send to a stale destination after edits while
+                    # the confirmation dialog was open.
+                    if confirmation_version != ai_probe_version[0]:
+                        ai_status.set_text("Paramètres modifiés : renouveler la confirmation")
+                        return
+                    try:
+                        if read_ai_settings() != settings:
+                            ai_status.set_text("Paramètres modifiés : renouveler la confirmation")
+                            return
+                    except LLMSettingsError:
+                        ai_status.set_text("Configuration IA invalide")
+                        return
+                    submit_ai_probe(settings, confirmed=True)
+                confirm.connect("response", confirmed_probe)
+                confirm.present()
+                return
+            submit_ai_probe(settings)
+
+        ai_test.connect("clicked", test_ai_connection)
+
         tabs.connect("notify::visible-child-name", update_settings_actions)
         track_all_settings_widgets()
         update_settings_actions()
@@ -5942,6 +6164,16 @@ class MainWindow(Adw.ApplicationWindow):
             draft.set("diagnostics.enabled", diag_switch.get_active())
             draft.set("diagnostics.level", levels[level_drop.get_selected()])
             draft.set("experimental_actions", exp_switch.get_active())
+            ai_restart_required = False
+            if settings_revisions.get("ai", 0) != saved_settings_revisions.get("ai", 0):
+                try:
+                    new_ai_settings = read_ai_settings()
+                except LLMSettingsError as exc:
+                    self.show_error(str(exc), "Configuration IA invalide")
+                    return False
+                ai_restart_required = new_ai_settings != self.config.get("llm", {})
+                draft.set("llm", new_ai_settings)
+
             try:
                 backup_interval = max(15, int(backup_interval_row.get_text().strip() or "60"))
             except ValueError as exc:
@@ -5972,6 +6204,16 @@ class MainWindow(Adw.ApplicationWindow):
                 from ..logging_utils import set_diagnostics_level
                 set_diagnostics_level(self.diagnostics.level)
                 message = "Configuration enregistrée"
+                if ai_restart_required:
+                    # Cancel/reset must now restore the newly saved values.
+                    ai_cfg.clear()
+                    ai_cfg.update(new_ai_settings)
+                    message = "Configuration IA enregistrée — redémarrage nécessaire"
+                    ai_status.set_text(
+                        "Enregistré · redémarrer Cifereca pour actualiser "
+                        "le service IA partagé par les plugins"
+                    )
+
                 if result.get("migrated"):
                     message = f"Répertoire déplacé · {result['collisions']} collision(s) préservée(s) · bibliothèque actualisée"
                     self.refresh_library(False); self.refresh_recent(); self._render_dashboard()

@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
@@ -160,6 +161,15 @@ def _event(path: Path, scenario: str, event: str, **detail) -> None:
         handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
+    """One retry only for Xvfb/GDK display initialization (never test assertions)."""
+    return (
+        returncode != 0
+        and "Gtk couldn't be initialized" in output
+        and "GDK_IS_DISPLAY" in output
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Runner E2E GTK reproductible CIFERECA")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS))
@@ -237,6 +247,22 @@ def main() -> int:
                     command, cwd=ROOT, env=env, check=False,
                     stdout=stdout, stderr=stderr, text=True,
                 )
+                # An occasional Xvfb handover race can leave GTK without a
+                # display (GDK_IS_DISPLAY), even when the previous GTK
+                # scenario passed. Retry exactly once in a new Xvfb session,
+                # retaining the original log and recording the retry.
+                if name in {"startup", "core-navigation"} and completed.returncode:
+                    stdout.flush()
+                    first_output = stdout_path.read_text(encoding="utf-8")
+                    if retryable_x11_startup_failure(completed.returncode, first_output):
+                        _event(trace_path, name, "xvfb_display_retry", attempt=2)
+                        stdout.write("\n--- X11 display initialization retry (once) ---\n")
+                        stdout.flush()
+                        time.sleep(1)
+                        completed = subprocess.run(
+                            command, cwd=ROOT, env=env, check=False,
+                            stdout=stdout, stderr=stderr, text=True,
+                        )
             for log_path in (stdout_path, stderr_path):
                 log_path.write_text(
                     _redact(log_path.read_text(encoding="utf-8"), env),
