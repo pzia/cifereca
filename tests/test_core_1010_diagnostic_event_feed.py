@@ -360,12 +360,12 @@ def test_log_event_ids_survive_rename_rotation_and_new_active_log(tmp_path):
         Diagnostics(), log_path=log, source="app_log",
     )["events"]
     assert len(after) == 4
-    assert [row["event_id"] for row in after[:3]] == [
-        row["event_id"] for row in before
-    ]
-    assert after[3]["event_id"] not in {
-        row["event_id"] for row in before
-    }
+    # A new file may carry the same timestamp: the broker sorts ties
+    # by pseudonym ID, so never infer which row occupies index 3.
+    original_ids = {row["event_id"] for row in before}
+    after_ids = {row["event_id"] for row in after}
+    assert original_ids.issubset(after_ids)
+    assert len(after_ids - original_ids) == 1
     assert all(len(row["event_id"]) == 16 for row in after)
     assert all(
         "inode" not in row and "path" not in row and "byte_offset" not in row
