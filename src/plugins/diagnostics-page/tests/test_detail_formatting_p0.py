@@ -84,3 +84,13 @@ def test_null_false_zero_and_empty_containers_remain_distinct():
 def test_unknown_mode_refused():
     with pytest.raises(ValueError):
         format_diagnostic_detail({"x": 1}, "unsafe")
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_quoted_secret_values_with_spaces_are_fully_masked(mode):
+    data = {"message": 'token="mot de passe privé" cookie=\'session longue privée\' password=ordinary'}
+    shown = format_diagnostic_detail(data, mode)
+    for leaked in ("mot de passe privé", "session longue privée", "ordinary"):
+        assert leaked not in shown
+    assert "token=<expurgé>" in shown
+    assert "cookie=<expurgé>" in shown
