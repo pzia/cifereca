@@ -16,16 +16,17 @@ et SHA-256 concordants. Voir [la fiche de preuves GTK](DIAGNOSTICS_GTK_PROBE_101
 | --- | --- | --- |
 | Widget `diagnostics-1366` | 6 checks PASS, 4 PNG ; lecture rapport, agrandissement, JSON expurgé, copie clavier XTEST/presse-papiers, pagination 50→15, aucune activation IA/check implicite | widget isolé et brokers simulés ; pas d'export fichier, scroll extrême ni batterie clavier complète |
 | Navigation `diagnostics-navigation-1366` | 6 checks PASS, 4 PNG ; vraie `MainWindow`, clics XTEST Bibliothèque → groupe Configuration → Diagnostics → Bibliothèque ; route, titre et contenu visibles | contribution réelle montée avec doubles de gestionnaire de plugins et brokers ; pas d'installation ZIP ni de profil utilisateur réel |
-| Grand écran `diagnostics-large-1600` | 9 checks PASS, 6 PNG ; rapport long 250 lignes, Space/Tab/Shift+Tab XTEST, scroll rapport 3724/3724 px, page externe stable à 1286 px | widget isolé ; défilement via ajustement GTK et non molette ; `Esc`, export, redimensionnement dynamique non vérifiés |
+| Grand écran `diagnostics-large-1600` | **10 checks PASS, 9 PNG** ; rapport long 250 lignes, Space/Tab/Shift+Tab XTEST, scroll rapport 3724/3724 px, page externe stable à 1286 px, redimensionnement GTK 1560→1240→1560 px, sans débordement horizontal | widget isolé, molette non testée ; **Escape et export fichier observés non satisfaits** ([#1158](https://github.com/pzia/cifereca/issues/1158)) |
 
 **Avancement D01–D16 :** preuves partielles pour **D05** (rapport
 multipage et scroll interne jusqu'au bas, mais pas focus de retour complet),
 **D07** (un JSON expurgé, pas tous les types limites), **D13**
 (copie presse-papiers, mais pas sélection `Ctrl+C` ni export disque),
 **D14** (aucune IA ou vérification active implicite, pas tous les statuts),
-**D15** (Space/Tab/Shift+Tab physiques au niveau du rapport, pas toute
-l'interface, pas `Esc`) et **D16** (screenshots à 1366 et 1600 px,
-pas de redimensionnement dynamique).
+**D15** (Space/Tab/Shift+Tab physiques au niveau du rapport mais
+`Escape` n'abandonne pas l'agrandissement : **défaut produit #1158**)
+et **D16** (vrai redimensionnement 1560×870 → 1240×800 → 1560×870
+sans débordement global, mais autres géométries et interactions non exercées).
 Les **D01–D04, D06, D08–D12** ainsi que les parties manquantes
 des précédents restent à vérifier. Ne pas cocher l'ensemble de la matrice,
 ni clôturer #1011 sur ces seuls scénarios.
@@ -42,6 +43,22 @@ est toujours soumise au CI ordinaire ; l'inventaire de plugins non classés
 est suivi dans [#1148](https://github.com/pzia/cifereca/issues/1148).
 Le PASS E2E **ne** permet **pas** de fusionner une PR dont le CI requis
 est rouge.
+
+## Dernier verdict GTK — 11 octobre 2026
+
+Le [run E2E #38136016404](https://github.com/pzia/cifereca/actions/runs/38136016404)
+est **SUCCESS**, [artefact #11700768842](https://github.com/pzia/cifereca/actions/runs/38136016404/artifacts/11700768842) :
+`diagnostics-large-1600` **10 checks PASS**, 9 captures avec SHA-256,
+et `diagnostics-1366` ainsi que `diagnostics-navigation-1366`
+toujours PASS (17 PNG Diagnostics au total).
+
+Le rapport grand écran **distingue** ses validations passantes et
+`unmet_criteria` : **D13 export du rapport expurgé sur disque absent**,
+**D15 Escape n'abandonne pas l'agrandissement**.
+Ces deux écarts sont décrits dans le ticket Plugins/CoreUI
+[#1158](https://github.com/pzia/cifereca/issues/1158).
+Ils **interdisent de considérer D13/D15 clos**, malgré le succès du
+harnais. La PR #1146 reste soumise aux gates CI ordinaires.
 
 ## Architecture d'information
 
