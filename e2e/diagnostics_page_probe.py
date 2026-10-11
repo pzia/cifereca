@@ -344,6 +344,23 @@ def main():
         assert plugin.llm is None
         report["checks"]["pagination_50_then_15"] = True
         screenshot("03-journals-second-page")
+        # Changing a server-side source filter must reset the offset to zero.
+        selectors = [
+            w for w in walk(page[0]) if isinstance(w, Gtk.DropDown)
+            and w.get_tooltip_text() == "Source des événements"
+        ]
+        assert len(selectors) == 1, "Source dropdown absent or ambiguous"
+        selectors[0].set_selected(1)  # Événements Core
+        until(lambda: len(broker.event_queries) >= 3 and
+              broker.event_queries[-1]["source"] == "core_events" and
+              broker.event_queries[-1]["offset"] == 0 and
+              find_label("50 événements affichés"), filtered)
+
+    def filtered():
+        assert broker.event_queries[-1]["limit"] == 50
+        assert broker.checks == 0
+        report["checks"]["source_filter_resets_pagination"] = True
+        screenshot("04-source-filter-reset")
         report["status"] = "PASS"
         save()
         rc[0] = 0
