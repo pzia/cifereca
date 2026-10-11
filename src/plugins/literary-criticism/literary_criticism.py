@@ -403,8 +403,17 @@ def _merge_duplicate(existing: CriticismArticle, incoming: CriticismArticle) -> 
 
 def _extract_collection(raw: object) -> tuple[Iterable[object], str, int]:
     if isinstance(raw, Mapping):
-        items = raw.get("items") or ()
-        cursor = _text(raw.get("next_cursor"))
+        # Missing items is legacy empty response; explicit null/string/object
+        # is malformed, not evidence that an existing feed became empty.
+        items = raw.get("items", ())
+        cursor_raw = raw.get("next_cursor")
+        if cursor_raw is None:
+            cursor = ""
+        elif (isinstance(cursor_raw, str) and len(cursor_raw) <= 512
+              and all(ord(ch) >= 32 and ord(ch) != 127 for ch in cursor_raw)):
+            cursor = cursor_raw.strip()
+        else:
+            raise ValueError("invalid cursor")
         try:
             fresh_for = int(raw.get("fresh_for_seconds") or 0)
         except (TypeError, ValueError):
@@ -621,11 +630,34 @@ class LiteraryCriticismPlugin:
         try:
             raw = source.collect(cursor=cursor, limit=bounded)  # type: ignore[attr-defined]
             items, next_cursor, fresh_for = _extract_collection(raw)
+            # A provider can ignore the requested page limit, yield forever,
+            # or supply malformed pagination. Reject the *whole* page before
+            # changing the cached index; never accidentally treat it as empty.
+            if (not isinstance(next_cursor, str) or len(next_cursor) > 512
+                    or any(ord(ch) < 32 or ord(ch) == 127 for ch in next_cursor)):
+                return CollectionReport(
+                    source_id=info.source_id, errors=("collect: invalid_cursor",),
+                    fresh_until=self.index.fresh_until(info.source_id),
+                )
+            if items is None or isinstance(items, (str, bytes, Mapping)):
+                return CollectionReport(
+                    source_id=info.source_id, errors=("collect: invalid_items",),
+                    fresh_until=self.index.fresh_until(info.source_id),
+                )
+            from itertools import islice
+            page = tuple(islice(iter(items), bounded + 1))
+            if len(page) > bounded:
+                return CollectionReport(
+                    source_id=info.source_id, errors=("collect: limit_exceeded",),
+                    fresh_until=self.index.fresh_until(info.source_id),
+                )
             report = self.index.ingest(
                 info.source_id,
-                items,
+                page,
                 replace_source=replace_source,
-                fresh_for_seconds=fresh_for,
+                # A third-party feed must not mint an effectively eternal
+                # freshness proof or overflow datetime on the worker.
+                fresh_for_seconds=min(fresh_for, 7 * 24 * 3600),
             )
             return replace(report, next_cursor=next_cursor)
         except Exception:
