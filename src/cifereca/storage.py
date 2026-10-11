@@ -1635,6 +1635,29 @@ class Storage:
             row,
         ))
 
+    def paris_borrower_adept_bindings(
+        self, *, credential_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List locally confirmed bindings only, without contacting Paris/Adobe."""
+        query = (
+            "SELECT credential_id,account_id,connection_identity_id,"
+            "borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
+            "FROM paris_borrower_adept_bindings"
+        )
+        params: tuple[str, ...] = ()
+        if credential_id is not None:
+            query += " WHERE credential_id=?"
+            params = (str(credential_id).strip(),)
+        query += " ORDER BY credential_id,account_id"
+        with self._lock, self._connect() as db:
+            rows = db.execute(query, params).fetchall()
+        fields = (
+            "credential_id", "account_id", "connection_identity_id",
+            "borrower_identity_id", "profile_id", "confirmed_by",
+            "confirmed_at", "updated_at",
+        )
+        return [dict(zip(fields, row)) for row in rows]
+
     def paris_borrower_adept_binding_delete(
         self, *, credential_id: str, account_id: str,
     ) -> None:
