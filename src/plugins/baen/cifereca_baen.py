@@ -1,10 +1,11 @@
 from __future__ import annotations
 import hashlib, html, re
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
+from cifereca_baen_catalog import FREE_LIBRARY, catalog_cards, MAX_PAGE_SIZE
 import httpx
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
-BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
+BASE='https://www.baen.com/'; FREE=FREE_LIBRARY
 DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Fonds public qualifié ; achats et bibliothèque privée à qualifier.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
@@ -14,10 +15,10 @@ class BaenSession(ProviderSession):
     def close(self): self.client.close();self.connected=False;self._accounts=[]
     @staticmethod
     def _search_params(query, page, page_size=50):
-        params={'page':max(0,int(page))+1,'pageSize':int(page_size),'hideBundles':0,'hideEarcs':0}
-        query=' '.join(str(query or '').split())
-        if query: params['q']=query
-        return params
+        # Magento public category: p/product_list_limit. Free Library text
+        # matching is applied only locally to the returned page.
+        return {'p':max(0,min(100,int(page)))+1,
+                'product_list_limit':max(12,min(MAX_PAGE_SIZE,int(page_size)))}
     @staticmethod
     def _detail_metadata(text):
         title_match=re.search(r'<title[^>]*>\s*(.*?)\s+by\s+(.*?)\s+-\s+WebScription Ebook\s*</title>',str(text or ''),re.I|re.S)
@@ -50,17 +51,29 @@ class BaenSession(ProviderSession):
     def search(self,query,scope='all',page=0,field='all'):
         if not self.connected: raise ProviderError('Baen : connecter le catalogue')
         if scope == 'physical': return []
-        try:r=self.client.get(FREE,params=self._search_params(query,page,self.page_size));r.raise_for_status()
-        except httpx.HTTPError as e: raise ProviderError('Baen : catalogue inaccessible') from e
-        out=[]; seen=set()
-        for href,body in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',r.text,re.I|re.S):
-            plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(body)).split())
-            if not plain or plain.lower() in {'more...','buy'} or '/allbooks/' not in href: continue
-            detail=urljoin(BASE,href)
-            if detail in seen: continue
-            seen.add(detail); rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
-            out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
-        return out[:self.page_size]
+        try:
+            response=self.client.get(FREE,params=self._search_params(query,page,self.page_size))
+            response.raise_for_status()
+            if getattr(response,'url',None):
+                final=urlsplit(str(response.url))
+                if (final.scheme!='https' or final.hostname not in ('www.baen.com','baen.com')
+                        or not final.path.rstrip('/').endswith('/catalog/category/view/s/free-library/id/2012')):
+                    raise ProviderError('Baen : catalogue déplacé ou accès non public')
+            cards=catalog_cards(response.text,limit=min(MAX_PAGE_SIZE,self.page_size))
+        except httpx.HTTPError as exc:
+            raise ProviderError('Baen : catalogue inaccessible') from exc
+        except ValueError:
+            raise ProviderError('Baen : structure du catalogue public non reconnue') from None
+        # The Baen public category is not proven to implement a server-side
+        # text search. Do not pretend an unmatched page exhausts the catalog.
+        words=' '.join(str(query or '').casefold().split()).split()
+        out=[]
+        for detail,title in cards:
+            if words and not all(word in title.casefold() for word in words):
+                continue
+            rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
+            out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=title,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False,metadata={'metadata_evidence':'baen.free_library_catalog','catalog_scope':'public_page_only'}))
+        return out
     def holdings(self,item,search_terms=''):
         if item.source_provider==self.provider_id and item.friendly_url:
             try:
