@@ -1023,27 +1023,44 @@ class YouthView:
         presentation = detail_presentation(self.selected_book)
         title = _text(getattr(self.selected_book, "title", ""))
         search = getattr(self.host, "search_books", None)
-        if callable(search) and 2 <= len(title) <= 512:
+        if callable(search):
             identity_id = self.identity_id()
-            presentation = replace(presentation, actions=(
-                *presentation.actions,
-                UiBookDetailAction(
+            actions = list(presentation.actions)
+            if 2 <= len(title) <= 512:
+                actions.append(UiBookDetailAction(
                     id="search-library",
-                    title="Rechercher en bibliothèque",
+                    title="Rechercher en bibliothèque (titre)",
                     icon_name="system-search-symbolic",
                     callback=lambda q=title, identity=identity_id: self._search_library(
-                        q, identity,
+                        q, identity, field="title",
                     ),
-                ),
-            ))
+                ))
+            # ISBN is a bibliographic *lookup* only. It does not establish
+            # inventory, ownership, availability or a direct notice link.
+            identifiers = getattr(self.selected_book, "identifiers", {})
+            raw_isbn = identifiers.get("isbn", "") if isinstance(identifiers, Mapping) else ""
+            isbn = normalize_isbn(raw_isbn)
+            if isbn:
+                actions.append(UiBookDetailAction(
+                    id="search-library-isbn",
+                    title="Rechercher cette édition par ISBN",
+                    icon_name="system-search-symbolic",
+                    callback=lambda q=isbn, identity=identity_id: self._search_library(
+                        q, identity, field="isbn",
+                    ),
+                ))
+            if actions:
+                presentation = replace(presentation, actions=tuple(actions))
         self.master.show_detail(presentation)
         refresh_actions()
 
-    def _search_library(self, query: str, identity_id: str) -> None:
-        """Local catalogue only. Reject cross-identity navigation explicitly."""
+    def _search_library(self, query: str, identity_id: str, *, field: str = "title") -> None:
+        """Explicit local search; no proof of holdings or automatic network I/O."""
+        if field not in {"title", "isbn"}:
+            return
         method = getattr(self.host, "search_books", None)
         if not callable(method) or not method(
-            query, field="title", online=False, identity_id=identity_id,
+            query, field=field, online=False, identity_id=identity_id,
         ):
             self.host.toast("Recherche impossible : vérifiez le profil sélectionné.")
 
