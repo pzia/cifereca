@@ -56,7 +56,8 @@ jobs:
           xvfb-run -a -s "-screen 0 1366x900x24" /usr/bin/python3 - <<'PY'
           import gi
           gi.require_version("Gdk", "4.0")
-          from gi.repository import Gdk
+          from gi.repository import Gdk, Gtk
+          Gtk.init()
           assert Gdk.Display.get_default() is not None, "Xvfb/Gdk indisponible"
           print("Xvfb / Gdk OK")
           PY
