@@ -403,8 +403,17 @@ def _merge_duplicate(existing: CriticismArticle, incoming: CriticismArticle) -> 
 
 def _extract_collection(raw: object) -> tuple[Iterable[object], str, int]:
     if isinstance(raw, Mapping):
-        items = raw.get("items") or ()
-        cursor = _text(raw.get("next_cursor"))
+        # Missing items is legacy empty response; explicit null/string/object
+        # is malformed, not evidence that an existing feed became empty.
+        items = raw.get("items", ())
+        cursor_raw = raw.get("next_cursor")
+        if cursor_raw is None:
+            cursor = ""
+        elif (isinstance(cursor_raw, str) and len(cursor_raw) <= 512
+              and all(ord(ch) >= 32 and ord(ch) != 127 for ch in cursor_raw)):
+            cursor = cursor_raw.strip()
+        else:
+            raise ValueError("invalid cursor")
         try:
             fresh_for = int(raw.get("fresh_for_seconds") or 0)
         except (TypeError, ValueError):
@@ -630,7 +639,7 @@ class LiteraryCriticismPlugin:
                     source_id=info.source_id, errors=("collect: invalid_cursor",),
                     fresh_until=self.index.fresh_until(info.source_id),
                 )
-            if isinstance(items, (str, bytes, Mapping)):
+            if items is None or isinstance(items, (str, bytes, Mapping)):
                 return CollectionReport(
                     source_id=info.source_id, errors=("collect: invalid_items",),
                     fresh_until=self.index.fresh_until(info.source_id),
