@@ -96,6 +96,15 @@ def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
         assert marker in source
 
 
+def test_navigation_waits_for_real_gtk_crossfade_before_screenshots():
+    source = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'get_property("transition-running")' in source
+    assert 'if visible and not fading:' in source
+    assert 'later(120, callback)' in source
+
+
 def test_d04_slow_check_real_mainwindow_navigation_contract():
     runner = _module()
     scenario = runner.SCENARIOS["diagnostics-navigation-slow-1366"]
