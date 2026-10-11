@@ -82,7 +82,7 @@ def _attested_atom_timestamp(value: str | None) -> str | None:
         return text
     if "T" not in text or not re.fullmatch(
         r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-        r"(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})", text,
+        r"(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})", text,
     ):
         return None
     try:
