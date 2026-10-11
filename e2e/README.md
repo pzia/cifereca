@@ -104,8 +104,9 @@ et l'absence de requête réseau. Il traverse également les contrôles avec
 de vraies touches XTEST Tab/Shift+Tab, journalise les focus GTK réels (y
 compris GtkText interne) et contrôle qu'aucune collecte n'est induite.
 Le rapport screen.json et trois captures documentent les dix champs, le
-parcours clavier et toute absence d'aide. Un contrôle non atteint est signalé
-sans déduire son accessibilité de la seule capture visuelle.
+parcours clavier et toute absence d'aide. Un contrôle non atteint ou un
+double arrêt Tab anonyme sur un Gtk.FlowBoxChild non interactif est signalé,
+sans déduire l'accessibilité de la seule capture visuelle.
 
 **Test d'acceptation intentionnellement bloquant tant que le plugin n'a pas
 ajouté les libellés et tooltips du P1 #922.** Les anciens scénarios Jeunesse

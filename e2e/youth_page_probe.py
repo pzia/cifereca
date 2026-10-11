@@ -426,6 +426,21 @@ def main() -> int:
         keyboard["missing_controls"] = [
             name for name in filter_help_widgets() if name not in reached
         ]
+        # Gtk.FlowBoxChild must not create an extra anonymous Tab stop
+        # before each interactive control (#338 was fixed in QueryControls,
+        # but this Youth-specific FlowBox is a separate GTK surface).
+        forward = keyboard["forward_from_search"]
+        backward = keyboard["back_from_last_filter"]
+        forward_end = forward.index("Âges inférés")
+        backward_end = backward.index("Recherche")
+        keyboard["anonymous_forward_filter_stops"] = [
+            index + 1 for index, name in enumerate(forward[:forward_end + 1])
+            if name == "other:GtkFlowBoxChild"
+        ]
+        keyboard["anonymous_backward_filter_stops"] = [
+            index + 1 for index, name in enumerate(backward[:backward_end + 1])
+            if name == "other:GtkFlowBoxChild"
+        ]
         keyboard["no_remote_requests"] = not requests
         assert not requests, "Tab/Shift+Tab ne doivent jamais déclencher de collecte"
         capture("02-jeunesse-navigation-clavier-1366")
@@ -434,14 +449,18 @@ def main() -> int:
             result["filter_help_missing_labels"] or
             result["filter_help_lost_labels_after_input"] or
             result["filter_help_misleading_text"] or
-            keyboard["missing_controls"]
+            keyboard["missing_controls"] or
+            keyboard["anonymous_forward_filter_stops"] or
+            keyboard["anonymous_backward_filter_stops"]
         ), (
             "UX P1 #922 : contrôles nommés, aidés et navigables requis ; "
             f"tooltips={result['filter_help_missing_tooltips']}, "
             f"labels={result['filter_help_missing_labels']}, "
             f"labels_perdus={result['filter_help_lost_labels_after_input']}, "
             f"contexte={result['filter_help_misleading_text']}, "
-            f"clavier={keyboard['missing_controls']}"
+            f"clavier={keyboard['missing_controls']}, "
+            f"arrêts_anon_allée={keyboard['anonymous_forward_filter_stops']}, "
+            f"arrêts_anon_retour={keyboard['anonymous_backward_filter_stops']}"
         )
         result["status"] = "PASS"
         write_report()

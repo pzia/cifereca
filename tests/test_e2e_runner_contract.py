@@ -164,6 +164,9 @@ def test_youth_922_real_gtk_filter_help_is_explicit_and_1366_only():
         'device.key("Shift_L", True)', 'keys("Tab")',
         'focused.is_ancestor(control)',
         '"filter_help_keyboard"', '"missing_controls"',
+        '"anonymous_forward_filter_stops"',
+        '"anonymous_backward_filter_stops"',
+        'if name == "other:GtkFlowBoxChild"',
         'assert not requests, "Tab/Shift+Tab ne doivent jamais déclencher de collecte"',
     ):
         assert token in script or token in runner_script
