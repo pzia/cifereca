@@ -1,110 +1,51 @@
-# Diagnostic GTK Cifereca — exécution distante, jamais automatique sur une PR.
-# Le push de cette définition NE déclenche PAS de job : seule une modification
-# de .github/gtk-e2e-run-request.txt le peut, après accord explicite utilisateur.
-name: UX GTK Diagnostics Debian 13 (sur accord)
-
+# Temporary network relay for the already documented rootless Debian 13 recipe.
+# Runs only on PR synchronization changing the authorization sentinel.
+name: Debian 13 GTK dependency relay (temporary)
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [synchronize]
     paths:
       - .github/gtk-e2e-run-request.txt
-
 permissions:
   contents: read
-
 jobs:
-  diagnostics:
-    name: GTK4 / Xvfb / diagnostics-1366
+  bundle:
+    name: Download Debian GTK debs for local rootless bootstrap
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     container:
       image: debian:trixie
-    timeout-minutes: 15
-
     steps:
-      - name: Installer les dépendances dans le conteneur éphémère Debian 13
-        shell: bash
+      - name: Debian prerequisites
         run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
+          set -eu
           apt-get update -o APT::Update::Error-Mode=any
-          apt-get install -y --no-install-recommends \
-            ca-certificates git python3 python3-gi python3-gi-cairo \
-            gir1.2-gtk-4.0 gir1.2-adw-1 python3-pil \
-            python3-httpx python3-packaging xvfb xauth dbus-x11 \
-            libxtst6 libx11-6 fonts-dejavu-core
-
-      - name: Récupérer les sources Cifereca
-        uses: actions/checkout@v4
+          apt-get install -y --no-install-recommends ca-certificates python3 dpkg tar xz-utils git debian-archive-keyring
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      - name: Autoriser uniquement le checkout GitHub comme répertoire sûr
+      - name: Run documented downloader (no GTK test on runner)
         shell: bash
         run: |
           set -euo pipefail
-          # e2e/run.py sets HOME to an isolated fixture, so ~/.gitconfig
-          # from the preparation step is not visible to the probe process.
-          # Git protected configuration passed via env survives that change.
-          echo "GIT_CONFIG_COUNT=1" >> "$GITHUB_ENV"
-          echo "GIT_CONFIG_KEY_0=safe.directory" >> "$GITHUB_ENV"
-          echo "GIT_CONFIG_VALUE_0=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          git -c "safe.directory=$GITHUB_WORKSPACE" -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD
-
-      - name: Préflight GTK4, PyGObject, libadwaita et Xvfb
-        shell: bash
-        run: |
-          set -euo pipefail
-          /usr/bin/python3 - <<'PY'
-          import gi
-          gi.require_version("Gtk", "4.0")
-          gi.require_version("Adw", "1")
-          from gi.repository import Gtk, Adw
-          from PIL import ImageGrab
-          import httpx, packaging
-          print("GTK", Gtk.get_major_version(), Gtk.get_minor_version())
-          print("PyGObject", gi.__file__)
-          PY
-          xvfb-run -a -s "-screen 0 1366x900x24" /usr/bin/python3 - <<'PY'
-          import gi
-          gi.require_version("Gdk", "4.0")
-          from gi.repository import Gdk, Gtk
-          Gtk.init()
-          assert Gdk.Display.get_default() is not None, "Xvfb/Gdk indisponible"
-          print("Xvfb / Gdk OK")
-          PY
-
-      - name: Exécuter la véritable recette UX Diagnostics
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! /usr/bin/python3 e2e/run.py \
-            --python /usr/bin/python3 \
-            --scenario diagnostics-1366 \
-            --out e2e-artifacts; then
-            echo "::group::Diagnostics stderr expurgé"
-            cat e2e-artifacts/diagnostics-1366/stderr.log || true
-            echo "::endgroup::"
-            echo "::group::Diagnostics summary"
-            cat e2e-artifacts/summary.json || true
-            echo "::endgroup::"
-            exit 1
-          fi
-          /usr/bin/python3 - <<'PY'
-          import json
-          from pathlib import Path
-          report = json.loads(Path("e2e-artifacts/diagnostics-1366/screen.json").read_text())
-          summary = json.loads(Path("e2e-artifacts/summary.json").read_text())
-          assert report["status"] == "PASS", report
-          assert len(summary) == 1 and summary[0]["returncode"] == 0, summary
-          assert report["screenshots"], "Captures GTK manquantes"
-          print("GTK Diagnostics PASS", report["checks"])
-          PY
-
-      - name: Publier captures et rapport même en cas d'échec
-        if: always()
+          mkdir -p .gtk-deb-cache
+          python3 environnements/openai-chat-debian/bootstrap.py --download-only --deb-cache "$GITHUB_WORKSPACE/.gtk-deb-cache"
+          test -f .gtk-deb-cache/.gtk4-cache-profile.json
+          test "$(find .gtk-deb-cache -name '*.deb' | wc -l)" -gt 10
+          tar -czf /tmp/gtk4-debian13-rootless-offline.tar.gz -C "$GITHUB_WORKSPACE" .gtk-deb-cache
+          # Local workspace here is only the source carrier for the offline
+          # host; GTK execution always happens locally, not in Actions.
+          tar --exclude=.git --exclude=.gtk-deb-cache -czf /tmp/cifereca-gtk-source.tar.gz -C "$GITHUB_WORKSPACE" .
+          sha256sum /tmp/gtk4-debian13-rootless-offline.tar.gz /tmp/cifereca-gtk-source.tar.gz > /tmp/SHA256SUMS
+      - name: Upload offline bundle only
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ux-gtk-diagnostics-1366
-          path: e2e-artifacts/
-          if-no-files-found: warn
+          name: gtk4-debian13-offline-relay
+          path: |
+            /tmp/gtk4-debian13-rootless-offline.tar.gz
+            /tmp/cifereca-gtk-source.tar.gz
+            /tmp/SHA256SUMS
           retention-days: 2
+          compression-level: 0
+          if-no-files-found: error
