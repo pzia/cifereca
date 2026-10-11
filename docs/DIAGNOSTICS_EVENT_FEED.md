@@ -15,7 +15,11 @@ feed = broker.events(
 La réponse est un dictionnaire `status / sources / events / total / next_offset /
 read_only / bounded`. Chaque source expose un statut explicite : `available`,
 `empty`, `disabled`, `unavailable`, `partial`, avec une raison lorsqu'elle
-est connue. Chaque événement expose `timestamp`, `source`, `module`,
+est connue. Le champ facultatif `last_event` est l'horodatage UTC du **dernier
+événement publié par cette source dans la fenêtre bornée du Core**, calculé
+avant les filtres et la pagination. Il est absent si aucun événement publiable
+n'a été trouvé ; il ne prouve ni l'exhaustivité de l'historique ni la fraîcheur
+du fichier brut. Chaque événement expose `timestamp`, `source`, `module`,
 `severity`, `message` (résumé expurgé), `event_id` pseudonymisé.
 Les valeurs `status` des Diagnostics structurés sont normalisées.
 

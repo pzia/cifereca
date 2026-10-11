@@ -653,7 +653,11 @@ class DiagnosticsPagePlugin:
             if states:
                 journals_sources.set_text("  ·  ".join(
                     f"{state['source']} : {state['label']}" +
-                    (f" — {state['reason']}" if state.get("reason") else "")
+                    (f" — {state['reason']}" if state.get("reason") else "") +
+                    (
+                        f" · dernier événement publié : {state['last_event']}"
+                        if state.get("last_event") else ""
+                    )
                     for state in states
                 ))
             else:
