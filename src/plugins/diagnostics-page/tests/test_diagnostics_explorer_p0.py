@@ -10,6 +10,7 @@ from diagnostics_explorer import (
     PAGE_SIZE, SOURCES, SEVERITIES, PERIODS,
     explorer_since, fetch_explorer_page, sanitized_rows, module_groups,
     source_summaries, explorer_header, export_selected_events, next_page_offset,
+    selectable_event_ids,
 )
 
 
@@ -400,3 +401,41 @@ def test_search_rejects_excessive_input():
 def test_cursor_respects_broker_total():
     assert next_page_offset({"offset": 0, "next_offset": 50, "total": 50}, current_offset=0) is None
     assert next_page_offset({"offset": 0, "next_offset": 50, "total": 51}, current_offset=0) == 50
+
+
+def test_selection_requires_unique_nonempty_event_ids():
+    rows = [event(""), event("collision"), event("collision"), event("unique")]
+    assert selectable_event_ids(rows) == {"unique"}
+    for invalid in ("", "collision"):
+        with pytest.raises(ValueError, match="ambiguous"):
+            export_selected_events(rows, {invalid})
+    payload = json.loads(export_selected_events(rows, {"unique"}))
+    assert [row["event_id"] for row in payload["events"]] == ["unique"]
+
+
+def test_selection_disabled_for_ambiguous_references_in_ui():
+    from pathlib import Path
+    page = (Path(__file__).resolve().parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert "select.set_sensitive(event_id in valid_ids)" in page
+    assert "visible_ids = selectable_event_ids(rows)" in page
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_diagnostic_detail_respects_24k_utf8_byte_budget(mode):
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    data = {f"field_{i:02d}": "é" * 400 for i in range(48)}
+    text = format_diagnostic_detail(data, mode)
+    assert len(text.encode("utf-8")) <= 24_000
+    if mode == "json":
+        assert json.loads(text)["truncated"] is True
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_diagnostic_detail_handles_invalid_unicode(mode):
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    result = format_diagnostic_detail({"message": "bad-" + chr(0xD800)}, mode)
+    assert len(result.encode("utf-8")) <= 24_000
+    assert "bad-" not in result
+    if mode == "json":
+        assert json.loads(result)["truncated"] is True
