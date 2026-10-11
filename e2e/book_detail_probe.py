@@ -295,6 +295,111 @@ def main():
         report["library_expanded"] = expander.get_expanded()
         capture("03-library-shared-detail")
         assert len(report["online_calls"]) == 1
+        # Audit the real GTK rendering sink after the known Search/Library
+        # path. These extra local rows are deliberately *not* passed through
+        # upstream metadata normalization, to test the final UI boundary.
+        later(80, audit_mixed_security_values)
+
+
+    def reset_library_detail_for_security_audit():
+        """Only clear the probe's panel view; no product code or remote service."""
+        p = panel("library")
+        child = p.content.get_first_child()
+        while child is not None:
+            next_child = child.get_next_sibling()
+            p.content.remove(child)
+            child = next_child
+        return p
+
+    def security_detail_expanders():
+        return [
+            widget for widget in walk(panel("library").content)
+            if isinstance(widget, Adw.ExpanderRow) and widget.get_title() == "Détail"
+        ]
+
+    def audit_mixed_security_values():
+        """Real GTK: the final sink must not count fields rejected as secrets."""
+        assert report["online_calls"] and len(report["online_calls"]) == 1
+        p = reset_library_detail_for_security_audit()
+        p._group("Détail", [
+            ("Auteur", "Alice Exemple"),
+            ("Lien signé", "https://example.test/notice?token=do-not-display"),
+            ("Auteur", "Bob Exemple"),
+            ("Sujet", "nature"),
+            ("Authentification", "Bearer must-never-display"),
+        ])
+        expanded = security_detail_expanders()
+        assert len(expanded) == 1, "The three public rows require a visible GTK detail group"
+        expanded[0].set_expanded(True)
+        adj = p.body_scroll.get_vadjustment()
+        adj.set_value(max(0, adj.get_upper() - adj.get_page_size()))
+        later(260, audit_mixed_security_values_rendered)
+
+    def audit_mixed_security_values_rendered():
+        expanded = security_detail_expanders()
+        assert len(expanded) == 1
+        expander = expanded[0]
+        rows = [
+            widget for widget in walk(expander)
+            if isinstance(widget, Adw.ActionRow) and widget is not expander
+        ]
+        public = [(str(widget.get_title()), str(widget.get_subtitle())) for widget in rows]
+        prohibited = (
+            "do-not-display", "must-never-display",
+            "Lien signé", "Authentification",
+        )
+        rendered_text = repr(public)
+        report["security_detail_mixed_942"] = {
+            "source_fields": 5,
+            "allowed_fields": 3,
+            "rendered_fields": len(rows),
+            "announced_subtitle": str(expander.get_subtitle()),
+            "public_rows": public,
+            "private_visible": any(word in rendered_text for word in prohibited),
+            "unprompted_online_calls": len(report["online_calls"]) != 1,
+        }
+        capture("04-library-detail-mixed-safety-gtk")
+        assert not report["security_detail_mixed_942"]["private_visible"], (
+            "Sensitive URL/token must never appear in GTK detail"
+        )
+        assert public == [
+            ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
+            ("Sujet", "nature"),
+        ], f"Safe multivalued metadata differs from source: {public!r}"
+        later(80, audit_all_private_values)
+
+    def audit_all_private_values():
+        """Real GTK: no empty expander should reveal an all-rejected section."""
+        p = reset_library_detail_for_security_audit()
+        p._group("Détail", [
+            ("Lien signé", "https://example.test/notice?token=do-not-display"),
+            ("Authentification", "Bearer must-never-display"),
+        ])
+        later(250, audit_all_private_values_rendered)
+
+    def audit_all_private_values_rendered():
+        expanded = security_detail_expanders()
+        report["security_detail_all_private_942"] = {
+            "source_fields": 2,
+            "allowed_fields": 0,
+            "expander_count": len(expanded),
+            "announced_subtitles": [str(widget.get_subtitle()) for widget in expanded],
+            "unprompted_online_calls": len(report["online_calls"]) != 1,
+        }
+        capture("05-library-detail-all-private-gtk")
+        mixed = report["security_detail_mixed_942"]
+        private = report["security_detail_all_private_942"]
+        assert len(report["online_calls"]) == 1, "Detail creation triggered network search"
+        assert mixed["rendered_fields"] == mixed["allowed_fields"]
+        assert mixed["announced_subtitle"] == "3 champ(s) bibliographiques", (
+            "The GTK detail announced raw fields instead of visible safe rows: "
+            f"{mixed['announced_subtitle']!r}"
+        )
+        assert private["expander_count"] == 0, (
+            "All-rejected private metadata created a misleading empty detail"
+        )
+        report["checks"]["security_detail_visible_counter_942"] = True
+        report["checks"]["security_detail_all_private_hidden_942"] = True
         report["status"] = "PASS"
         save()
         rc[0] = 0
