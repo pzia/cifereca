@@ -516,19 +516,24 @@ def _attested_public_notice_url(raw: object) -> str:
     """Only public, canonical HTTPS links without user/session parameters."""
     if not isinstance(raw, str) or len(raw) > 2048 or not raw.strip():
         return ""
-    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+    # Reject URL grammar ambiguities before presenting an attested public link.
+    if (any(ord(ch) < 33 or ord(ch) == 127 for ch in raw)
+            or any(ch in raw for ch in '<>\\?#')):
         return ""
     try:
         parts = urlsplit(raw)
         host = parts.hostname
         port = parts.port
-        if (parts.scheme.lower() != "https" or not host or parts.username
-                or parts.password or parts.query or parts.fragment
-                or port not in (None, 443)):
+        if (parts.scheme.lower() != "https" or not host
+                or parts.username is not None or parts.password is not None
+                or parts.query or parts.fragment or port not in (None, 443)
+                or "%" in host):
             return ""
         host = host.lower().rstrip(".")
-        if (not host or host == "localhost" or host.endswith((".local", ".localhost"))
-                or "." not in host):
+        if (not host or host == "localhost" or "." not in host
+                or host.endswith((".local", ".localhost", ".internal",
+                                   ".lan", ".home.arpa"))
+                or any(not label for label in host.split("."))):
             return ""
         try:
             address = ip_address(host)
