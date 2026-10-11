@@ -98,7 +98,9 @@ class FreeLibraryCards(HTMLParser):
             self.text_parts = []
         if self.card_depth and self.depth == self.card_depth:
             self.card_depth = 0
-        self.depth = max(0, self.depth - 1)
+        if tag not in ("area", "base", "br", "col", "embed", "hr", "img",
+                       "input", "link", "meta", "param", "source", "track", "wbr"):
+            self.depth = max(0, self.depth - 1)
 
 
 def catalog_cards(document: str, *, limit: int = 36) -> tuple[tuple[str, str], ...]:
