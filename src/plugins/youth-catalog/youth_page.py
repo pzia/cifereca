@@ -1029,7 +1029,7 @@ class YouthView:
             if 2 <= len(title) <= 512:
                 actions.append(UiBookDetailAction(
                     id="search-library",
-                    title="Rechercher en bibliothèque (titre)",
+                    title="Rechercher en bibliothèque",
                     icon_name="system-search-symbolic",
                     callback=lambda q=title, identity=identity_id: self._search_library(
                         q, identity, field="title",
