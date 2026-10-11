@@ -701,6 +701,13 @@ class DiagnosticsPagePlugin:
             page_generation += 1
             generation = page_generation
             selected_event_ids.clear()
+            # Invalidate the previous snapshot immediately, including when
+            # a local search change happens while the new query is pending.
+            current_page = {
+                "events": [], "sources": [], "total": 0,
+                "offset": page_offset, "next_offset": None,
+            }
+            display_events()
             journals_summary.set_text("Actualisation en cours…")
             journals_previous.set_sensitive(False)
             journals_next.set_sensitive(False)
