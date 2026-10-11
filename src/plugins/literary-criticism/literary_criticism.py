@@ -321,6 +321,8 @@ def discover_feeds(
             title = _text(_field(row, "title"))
             for field_name in ("feed_url", "feed_urls"):
                 for raw_url in _limited_feed_values(_field(row, field_name)):
+                    if not isinstance(raw_url, str) or not 0 < len(raw_url) <= 2048:
+                        continue
                     url = canonical_url(raw_url, base_url=page_url)
                     if url and url not in seen:
                         seen.add(url)
