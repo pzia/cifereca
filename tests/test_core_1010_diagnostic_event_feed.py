@@ -168,3 +168,16 @@ def test_identical_log_lines_have_distinct_event_ids(tmp_path):
     assert result["total"] == 3
     assert len({event["event_id"] for event in result["events"]}) == 3
     assert len({event["message"] for event in result["events"]}) == 1
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"module": 123}, {"module": "x" * 91}, {"severity": 123},
+    {"since": 123}, {"until": []},
+])
+def test_malformed_filter_types_fail_before_reading_logs(tmp_path, monkeypatch, kwargs):
+    from cifereca.core import diagnostic_event_feed as feed
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("unvalidated request must not read logs")
+    monkeypatch.setattr(feed, "_source_logs", forbidden)
+    with pytest.raises(ValueError):
+        feed.query_diagnostic_events(Diagnostics(), log_path=tmp_path / "absent", **kwargs)
