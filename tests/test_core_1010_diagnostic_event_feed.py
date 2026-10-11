@@ -182,3 +182,15 @@ def test_unknown_trace_tokens_are_never_exported(tmp_path):
     assert rows["events"][1]["message"] == "TRACE sync source phase=ok"
     assert "secretcustomer" not in json.dumps(rows)
     assert "sessionid" not in json.dumps(rows)
+
+
+def test_line_limit_marks_history_partial_even_below_byte_limit(tmp_path):
+    log = tmp_path / "cifereca.log"
+    line = "2026-10-11 07:00:00,000 INFO cifereca.sync [Worker] TRACE sync source status=ok"
+    make_log(log, *([line] * 201))
+    assert log.stat().st_size < 32768
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert result["total"] == 200
+    assert result["sources"][0]["status"] == "partial"
+    assert result["status"] == "partial"
+    assert result["sources"][0]["reason"] == "log_tail_bounded"
