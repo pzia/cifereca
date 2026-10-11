@@ -5,7 +5,7 @@ La documentation de référence de l'architecture actuelle, de la cible et des t
 Repères rapides :
 
 - le Core applicatif vit sous `src/cifereca/` ;
-- les plugins fonctionnels vivent actuellement sous `plugins/<plugin>/` ;
+- les plugins fonctionnels vivent actuellement sous `src/plugins/<plugin>/` ;
 - `src/cifereca/plugins/` contient le framework/loader/manager de plugins, pas les plugins fonctionnels ;
 - `src/cifereca/builtin_ui/`, `src/cifereca/paris/` et `src/cifereca/kobo/` restent des zones historiques à rationaliser ;
 - `bundled_plugins/` et `integrations/` ne sont plus des sources actives ;
