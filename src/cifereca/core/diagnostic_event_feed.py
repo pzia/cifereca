@@ -187,7 +187,7 @@ def query_diagnostic_events(
     Log content is intentionally *not* an unredacted viewer. The caller may
     only select sources and filters, never a filesystem path.
     """
-    if source not in {"all", "core_events", "app_log"}:
+    if not isinstance(source, str) or source not in {"all", "core_events", "app_log"}:
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
