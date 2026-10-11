@@ -189,6 +189,9 @@ def main():
         tabs = w._settings_tabs
         tabs.set_visible_child_name("ai")
         page[0] = tabs.get_visible_child()
+        later(200, after_navigation)
+
+    def after_navigation():
         assert page[0].get_mapped()
         enabled[0] = switch(page[0], "Activer les fonctions d’intelligence artificielle")
         allow_remote[0] = switch(page[0], "Autoriser les requêtes vers un serveur distant")
@@ -209,6 +212,7 @@ def main():
             f"http://127.0.0.1:{server.server_port}/v1/chat/completions"
         )
         model[0].grab_focus()
+        device[0].select_all_delete()
         device[0].type_text("modele-test")
         later(350, verify_local)
 
@@ -233,7 +237,8 @@ def main():
         save_buttons[0].emit("clicked")
         wait_until(
             lambda: core.config.get("llm.enabled") is True
-                    and core.config.path.exists(),
+                    and core.config.path.exists()
+                    and any("redémarrer" in text for text in all_status()),
             after_save,
         )
 
