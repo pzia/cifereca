@@ -547,3 +547,25 @@ def test_parent_deactivation_revokes_sessions_even_if_reactivated(tmp_path):
         options={}, config=None, storage=None, diagnostics=None,
     )
     assert len(fresh.search("Livre")) == 1
+
+
+def test_refresh_finishing_after_parent_deactivation_is_not_published(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    baseline = (tmp_path / "inventory.json").read_bytes()
+    coll._mode = "candidate_v02"
+    seen = []
+
+    def stale_get(endpoint):
+        seen.append(endpoint)
+        coll.deactivate()
+        return inventory("alpha", "beta", generation=2)
+
+    coll._client = NS(get=stale_get)
+    with pytest.raises(ContractUnavailable, match="changed during source refresh"):
+        coll.refresh()
+    assert seen == ["/api/v1/sources"]
+    assert (tmp_path / "inventory.json").read_bytes() == baseline
+    with pytest.raises(ContractUnavailable):
+        coll.create_provider("beta")
