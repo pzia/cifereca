@@ -38,6 +38,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Autoriser uniquement le checkout GitHub comme répertoire sûr
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD
+
       - name: Préflight GTK4, PyGObject, libadwaita et Xvfb
         shell: bash
         run: |
