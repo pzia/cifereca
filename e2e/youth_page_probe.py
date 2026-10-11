@@ -375,7 +375,9 @@ def main() -> int:
         if focused is None:
             return "none"
         for name, control in filter_help_widgets().items():
-            if control is focused or control.is_ancestor(focused):
+            # GTK: gtk_widget_is_ancestor(widget, ancestor) expects the
+            # *focused descendant* first, not the parent control.
+            if control is focused or focused.is_ancestor(control):
                 return name
         return "other:" + focused.__gtype__.name
 

@@ -162,6 +162,7 @@ def test_youth_922_real_gtk_filter_help_is_explicit_and_1366_only():
         "def filter_help_tab_record(phase, index):",
         "def filter_help_keyboard_finish():",
         'device.key("Shift_L", True)', 'keys("Tab")',
+        'focused.is_ancestor(control)',
         '"filter_help_keyboard"', '"missing_controls"',
         'assert not requests, "Tab/Shift+Tab ne doivent jamais déclencher de collecte"',
     ):
