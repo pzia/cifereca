@@ -159,6 +159,17 @@ def test_truncated_log_without_matching_records_is_partial(tmp_path):
     assert rows["status"] == "partial"
 
 
+def test_identical_log_lines_have_distinct_event_ids(tmp_path):
+    log = tmp_path / "cifereca.log"
+    line = "2026-10-11 07:00:00,000 WARNING cifereca.sync [Worker] TRACE sync source status=partial"
+    make_log(log, line, line)
+    make_log(tmp_path / "cifereca.log.1", line)
+    result = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert result["total"] == 3
+    assert len({event["event_id"] for event in result["events"]}) == 3
+    assert len({event["message"] for event in result["events"]}) == 1
+
+
 def test_unknown_trace_tokens_are_never_exported(tmp_path):
     log = tmp_path / "cifereca.log"
     make_log(log,
