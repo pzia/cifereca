@@ -139,3 +139,5 @@ def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
     assert "probe_llm_connection(settings, remote_confirmed=confirmed)" in source
     assert "self.runner.submit(" in source
     assert "Aucune notice ou donnée personnelle ne sera envoyée" in source
+    assert "confirmation_version != ai_probe_version[0]" in source
+    assert "ai_cfg.update(new_ai_settings)" in source
