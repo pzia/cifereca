@@ -284,9 +284,11 @@ def test_ai_preview_skips_malformed_source_metadata_without_stringifying():
         {"source": "app_log", "status": "partial"},
     ]))
     assert preview["source_states"] == [
-        {"source": "", "status": ""},
-        {"source": "app_log", "status": "partial"},
+        {"source": "inconnue", "status": "unavailable", "reason": ""},
+        {"source": "app_log", "status": "partial", "reason": ""},
     ]
+    assert "Secret" not in preview["prompt"]
+    assert model.calls == 0
 
 
 def test_ai_consent_refuses_mutated_oversize_multibyte_prompt():
@@ -623,3 +625,71 @@ def test_snapshot_ui_is_opt_in_and_invalidates_approval():
     assert 'include_snapshot=selected_snapshot' in source
     assert 'ai_snapshot.connect("toggled", invalidate_ai)' in source
     assert 'Gtk.Button(label="Copier JSON IA")' in source
+
+
+def test_structured_opt_in_never_displaces_primary_event_evidence():
+    class LargeSnapshotBroker(FakeBroker):
+        def snapshot(self):
+            return [
+                {"component": "runtime", "message": "S" * 700}
+                for _ in range(4)
+            ]
+
+    records = [event("évidence prioritaire", f"ref-{i}") for i in range(3)]
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, LargeSnapshotBroker(records),
+                               include_snapshot=True)
+    assert preview["count"] == 3
+    assert all(f"ref-{i}" in preview["prompt"] for i in range(3))
+    assert preview["structured_count"] < 4
+    assert preview["sample_truncated"] is True
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+
+
+def test_broker_source_status_and_reason_redacted_before_prompt_and_ui():
+    class PartialBroker(FakeBroker):
+        def events(self, **kwargs):
+            feed = super().events(**kwargs)
+            feed["sources"] = [
+                {"source": "alice@example.com", "status": "partial",
+                 "reason": "token=PRIVATE_STATUS_KEY"},
+                {"source": "app_log", "status": "unavailable",
+                 "reason": "journal rotaté"},
+            ]
+            return feed
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, PartialBroker([event()]))
+    assert [state["status"] for state in preview["source_states"]] == [
+        "partial", "unavailable",
+    ]
+    assert "courriel expurgé" in preview["prompt"]
+    assert "journal rotaté" in preview["prompt"]
+    assert "PRIVATE_STATUS_KEY" not in preview["prompt"]
+    assert "alice@example.com" not in preview["prompt"]
+    assert model.calls == 0
+
+
+def test_broker_overfilled_page_is_disclosed_as_partial_sample():
+    class Overfilled(FakeBroker):
+        def events(self, **kwargs):
+            response = super().events(**kwargs)
+            response["events"] = [event("ok", f"ref-{i}") for i in range(25)]
+            return response
+
+    model = FakeLLM()
+    preview = prepare_analysis(model, Overfilled([]))
+    assert preview["count"] <= 24
+    assert preview["sample_truncated"] is True
+    assert model.calls == 0
+
+
+def test_ai_gtk_preview_reports_source_coverage_without_claiming_transmission():
+    from pathlib import Path
+    text = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert "DISTANT — aucun envoi avant autorisation" in text
+    assert 'preview.get("sample_truncated")' in text
+    assert 'source_warnings' in text
+    assert "Sources limitées" in text
