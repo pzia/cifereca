@@ -3465,16 +3465,55 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def confirm_return(self, loan: Loan, control: Gtk.Widget) -> None:
-        dialog = Adw.MessageDialog.new(self, "Rendre ce livre numérique ?", "Cette action libère le prêt avant son échéance si DILICOM l'autorise.")
-        dialog.add_response("cancel", "Annuler"); dialog.add_response("ok", "Rendre maintenant")
-        dialog.set_response_appearance("ok", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.connect("response", lambda _d, response: self._return_loan(loan, control) if response == "ok" else None)
+        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
+            dialog = Adw.MessageDialog.new(self, "Rendre ce livre numérique ?", "Confirmer la demande de restitution au fournisseur.")
+            dialog.add_response("cancel", "Annuler")
+            dialog.add_response("provider", "Restituer")
+            dialog.set_response_appearance("provider", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.connect(
+                "response",
+                lambda _d, response: self._return_loan_pnb(loan, control)
+                if response == "provider" else None,
+            )
+            dialog.present()
+            return
+
+        dialog = Adw.MessageDialog.new(
+            self, "Restituer ce prêt numérique ?",
+            "ADEPT restitue la licence Adobe d’origine, puis vérifie Paris. "
+            "Paris (PNB) est une action séparée, qui ne peut être déclenchée automatiquement.",
+        )
+        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("adept", "Restituer la licence ADEPT")
+        dialog.add_response("pnb", "Restituer à Paris (PNB)")
+        dialog.set_response_appearance("adept", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_response_appearance("pnb", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def on_response(_dialog, response):
+            if response == "adept":
+                self._return_loan(loan, control)
+            elif response == "pnb":
+                self._return_loan_pnb(loan, control)
+
+        dialog.connect("response", on_response)
         dialog.present()
 
     def _return_loan(self, loan: Loan, control: Gtk.Widget) -> None:
         self.runner.submit(
-            "Vérification de restitution…", lambda: self.service.return_loan_prefer_adept(loan), lambda _r: self.refresh_loans(True),
-            control=control, success_toast="État de restitution actualisé", priority=TaskPriority.USER_ACTION, kind="loan-return",
+            "Vérification de restitution ADEPT…",
+            lambda: self.service.return_loan_prefer_adept(loan),
+            lambda _r: self.refresh_loans(True),
+            control=control, success_toast="État de restitution actualisé",
+            priority=TaskPriority.USER_ACTION, kind="loan-return",
+        )
+
+    def _return_loan_pnb(self, loan: Loan, control: Gtk.Widget) -> None:
+        self.runner.submit(
+            "Vérification de restitution Paris (PNB)…",
+            lambda: self.service.return_digital(loan, explicit_retry=True),
+            lambda _r: self.refresh_loans(True),
+            control=control, success_toast="État de restitution Paris actualisé",
+            priority=TaskPriority.USER_ACTION, kind="loan-return",
         )
 
     # ---------- search ----------
