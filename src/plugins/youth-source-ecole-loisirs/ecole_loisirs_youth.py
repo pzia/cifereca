@@ -528,33 +528,79 @@ class EcoleLoisirsYouthSource:
         return response.text
 
     def search_catalogue(self, query: str, *, page: int = 0, limit: int = 40) -> Mapping[str, object]:
-        """Explicit catalogue route; a single page, no background detail crawl."""
+        """One explicit publisher catalogue page; never fetch book detail pages."""
         if type(page) is not int or not 0 <= page <= 100:
             raise ValueError("invalid catalogue page")
-        params = urlencode({"type": "romans", "search": _text(query)[:_MAX_QUERY_CHARS], "page": page})
-        url = BASE + "/catalogue/romans?" + params
-        diagnostic = {"query_mode": "remote", "request_count": 0}
-        html = self._get(url, diagnostic=diagnostic)
-        rows = parse_catalogue_cards(html, limit=limit, diagnostic=diagnostic)
-        next_page = ""
-        # Pagination is only reported; fetching it requires another explicit call.
-        for kind, _label, href in _tokens(html):
-            if kind != "link":
-                continue
-            target = _allowed_url(href)
-            if not target or urlsplit(target).path != "/catalogue/romans":
-                continue
-            params = parse_qs(urlsplit(target).query)
+        bounded = max(1, min(int(limit), 40))
+        term = _text(query)[:_MAX_QUERY_CHARS]
+        started = perf_counter()
+        self._last_diagnostic = {
+            "source": "ecole-loisirs", "page": page,
+            "attempted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "requested_limit": bounded, "text_filter_present": bool(term),
+            "phase": "listing", "request_count": 0,
+        }
+        token = self._call_requests.set(0)
+        diagnostic: dict[str, object] = {"query_mode": "remote", "effective_limit": bounded}
+        try:
+            params = urlencode({"type": "romans", "search": term, "page": page})
+            url = BASE + "/catalogue/romans?" + params
+            http_started = perf_counter()
             try:
-                proposed = int((params.get("page") or [""])[0])
-            except ValueError:
-                continue
-            if proposed == page + 1 and proposed <= 100 and params.get("search") == [_text(query)[:_MAX_QUERY_CHARS]]:
-                next_page = str(proposed)
-                break
-        return {"items": rows, "next_cursor": next_page,
-                "fresh_for_seconds": 86400, "collection_request_count": 1,
-                "collection_pipeline": diagnostic}
+                html = self._get(url, diagnostic=diagnostic)
+            finally:
+                diagnostic["http_ms"] = max(0, int((perf_counter() - http_started) * 1000))
+            self._last_diagnostic["phase"] = "parsing"
+            parse_started = perf_counter()
+            try:
+                rows = parse_catalogue_cards(html, limit=bounded, diagnostic=diagnostic)
+                links = _tokens(html)
+            finally:
+                diagnostic["parse_ms"] = max(0, int((perf_counter() - parse_started) * 1000))
+            next_page = ""
+            for kind, _label, href in links:
+                if kind != "link":
+                    continue
+                target = _allowed_url(href)
+                if not target or urlsplit(target).path != "/catalogue/romans":
+                    continue
+                values = parse_qs(urlsplit(target).query)
+                if values.get("search") != [term] or values.get("type") != ["romans"]:
+                    continue
+                try:
+                    proposed = int((values.get("page") or [""])[0])
+                except ValueError:
+                    continue
+                if proposed == page + 1 and proposed <= 100:
+                    next_page = str(proposed)
+                    break
+            if next_page and not rows:
+                raise InvalidCatalogueStructureError(
+                    "Ecole des loisirs paginated catalogue has no qualifying product cards"
+                )
+            diagnostic["total_ms"] = max(0, int((perf_counter() - started) * 1000))
+            self._last_diagnostic.update({
+                "phase": "complete", "state": "items" if rows else "empty_unverified",
+                "returned_items": len(rows), "next_cursor_present": bool(next_page),
+                "duration_ms": diagnostic["total_ms"],
+            })
+            self._publish_diagnostic("ok" if rows else "empty")
+            return {"items": rows, "next_cursor": next_page, "fresh_for_seconds": 86400,
+                    "collection_request_count": self._call_requests.get(),
+                    "collection_pipeline": dict(diagnostic)}
+        except Exception as exc:
+            exc.collection_request_count = self._call_requests.get()
+            exc.collection_pipeline = dict(diagnostic)
+            self._last_diagnostic.update({
+                "phase": "error",
+                "state": "invalid" if isinstance(exc, InvalidCatalogueStructureError) else "error",
+                "error_type": type(exc).__name__,
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("error")
+            raise
+        finally:
+            self._call_requests.reset(token)
 
     def browse(self, *, age: int | None = None, themes: tuple[str, ...] = (),
                text_filter: str = "", cursor: str | None = None,
