@@ -4303,6 +4303,9 @@ class LibraryService:
                     or self._cross_identity_loan_conflict(
                         self.storage.acquisitions(provider_id=loan.source_provider),
                         provider_loan_id=loan.id, identity_id=identity.identity_id,
+                        entitlements=self.storage.entitlements(
+                            provider_id=loan.source_provider, state="active"
+                        ),
                     )
                 ):
                     return {
@@ -4345,17 +4348,27 @@ class LibraryService:
 
     @staticmethod
     def _cross_identity_loan_conflict(
-        acquisitions: Any, *, provider_loan_id: str, identity_id: str
+        acquisitions: Any, *, provider_loan_id: str, identity_id: str,
+        entitlements: Any = (),
     ) -> bool:
-        """A recorded Paris loan transaction under another identity forbids replay."""
+        """Reject a Paris loan recorded under another identity in either ledger.
+
+        A currently active entitlement is also a trace of the same upstream
+        loan; it does not prove that identity is the rightful ADEPT owner.
+        """
         loan_key = str(provider_loan_id or "").strip()
         if not loan_key:
             return True
-        return any(
+        acquired_elsewhere = any(
             str((row.get("metadata") or {}).get("provider_loan_id") or "").strip() == loan_key
             and str(row.get("identity_id") or "") != identity_id
             and str(row.get("strategy") or "") == "loan_auto"
             for row in acquisitions
+        )
+        return acquired_elsewhere or any(
+            str(row.get("loan_id") or "").strip() == loan_key
+            and str(row.get("identity_id") or "") != identity_id
+            for row in entitlements
         )
 
     def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
@@ -4419,9 +4432,13 @@ class LibraryService:
                 "retry": "explicit_only",
             }
         _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
+        entitlement_inventory = self.storage.entitlements(
+            provider_id=loan.source_provider, state="active"
+        )
         if str(loan.source_provider).lower() == "paris" and self._cross_identity_loan_conflict(
             self.storage.acquisitions(provider_id=loan.source_provider),
             provider_loan_id=loan.id, identity_id=identity.identity_id,
+            entitlements=entitlement_inventory,
         ):
             _TRACE_LOG.warning(
                 "TRACE download loan_auto blocked reason=cross_identity_loan provider=%s",
@@ -4433,7 +4450,7 @@ class LibraryService:
                 "reason": "cross_identity_loan", "retry": "explicit_only",
             }
         entitlement_rows = [
-            row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
+            row for row in entitlement_inventory
             if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
         ]
         entitlement_id = entitlement_rows[0]["entitlement_id"] if entitlement_rows else None
