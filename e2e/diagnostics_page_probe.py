@@ -543,7 +543,111 @@ def main():
         assert buffer.get_has_selection(), "La sélection a disparu à la réouverture"
         report["checks"]["D05_reexpand_preserves_focus_and_selection"] = True
         screenshot("09-report-reexpanded-enter-1600")
-        begin_escape_audit()
+        # D05: use a genuine XTEST mouse-wheel event, not a direct GTK
+        # adjustment assignment. A direct assignment is only used to reset
+        # the test position and bring the control into the outer viewport.
+        later(prepare_wheel_scroll, 130)
+
+    def prepare_wheel_scroll():
+        report["stage"] = "D05_prepare_physical_wheel"
+        expander = find_expander("Ouvrir le rapport support")
+        scrollers = [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)]
+        views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(scrollers) == len(views) == 1
+        scroller, view = scrollers[0], views[0]
+        content = page[0].get_child()
+        ok, bounds = scroller.compute_bounds(content)
+        assert ok, "Rapport scroller not allocated"
+        outer = page[0].get_vadjustment()
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 70,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: send_wheel_scroll(scroller, view), 260)
+
+    def send_wheel_scroll(scroller, view):
+        report["stage"] = "D05_xtest_mousewheel_inside_report"
+        inner = scroller.get_vadjustment()
+        assert inner.get_upper() - inner.get_page_size() > 400
+        # The pointer must be inside the actually rendered TextView. A real
+        # pointer click positions it there; it is not counted as a wheel event.
+        report["wheel_pointer"] = device[0].click_widget(view)
+        inner.set_value(0)
+        outer_before = page[0].get_vadjustment().get_value()
+        report["wheel_outer_before"] = round(outer_before, 2)
+        for _ in range(4):
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, True, 0)
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, False, 0)
+        device[0].x11.XSync(device[0].display, False)
+        until(lambda: inner.get_value() > 8,
+              lambda: verify_wheel_scroll(scroller, view, outer_before),
+              seconds=5)
+
+    def verify_wheel_scroll(scroller, view, outer_before):
+        report["stage"] = "D05_verify_xtest_wheel"
+        inner = scroller.get_vadjustment()
+        outer = page[0].get_vadjustment()
+        assert inner.get_value() > 8, "XTEST wheel did not scroll inside report"
+        assert abs(outer.get_value() - outer_before) <= 5, (
+            "Mouse wheel unexpectedly scrolled whole Diagnostics page",
+            outer_before, outer.get_value(),
+        )
+        report["wheel_inner_after"] = round(inner.get_value(), 2)
+        report["wheel_outer_after"] = round(outer.get_value(), 2)
+        report["checks"]["D05_xtest_wheel_keeps_outer_page_fixed"] = True
+        screenshot("09b-report-physical-wheel-1600")
+        select_support_report(view)
+
+    def select_support_report(view):
+        # D13: use physical Ctrl+C on the actual SUPPORT TextView, not the
+        # already-tested structured diagnostic detail TextView.
+        report["stage"] = "D13_select_support_text"
+        buffer = view.get_buffer()
+        begin = buffer.get_start_iter()
+        end = buffer.get_iter_at_offset(160)
+        buffer.select_range(end, begin)
+        assert buffer.get_has_selection()
+        ok, sel_start, sel_end = buffer.get_selection_bounds()
+        assert ok
+        expected = buffer.get_text(sel_start, sel_end, False)
+        assert "RAPPORT SUPPORT EXPURGÉ" in expected
+        assert "SECRET-UX-TEST" not in expected
+        assert "EXEMPLE-PRIVE-UX" not in expected
+        assert view.grab_focus() is not False
+        until(lambda: view.has_focus(),
+              lambda: copy_support_xtest(view, expected), seconds=5)
+
+    def copy_support_xtest(view, expected):
+        report["stage"] = "D13_ctrl_c_support_report_xtest"
+        assert view.has_focus()
+        device[0].key("Control_L", True)
+        try:
+            press("c")
+        finally:
+            device[0].key("Control_L", False)
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+            None,
+            lambda clipboard, task: support_clipboard_done(
+                clipboard, task, expected
+            ),
+        ), 260)
+
+    def support_clipboard_done(clipboard, task, expected):
+        try:
+            actual = clipboard.read_text_finish(task)
+            assert actual == expected, (
+                "Le presse-papiers ne contient pas exactement la sélection support",
+                repr((actual or "")[:100]),
+            )
+            assert "SECRET-UX-TEST" not in actual
+            report["checks"]["D13_support_textview_ctrl_c_exact_selection"] = True
+            report["support_selection_length"] = len(actual)
+            screenshot("09c-support-report-ctrl-c-1600")
+            # Existing Escape/export audits remain negative until #1158
+            # delivers an actual UI feature; retain these as unmet criteria.
+            later(begin_escape_audit, 130)
+        except Exception as exc:
+            fail(f"D13 support clipboard: {type(exc).__name__}: {exc}")
 
     def begin_escape_audit():
         # Esc and file export remain separate observations; neither should be
