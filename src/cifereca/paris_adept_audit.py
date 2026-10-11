@@ -80,7 +80,7 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
             row["adept_profile_id"] = None
             if account is None:
                 row["binding_state"] = "unknown_borrower"
-            elif account in {"", "primary"}:
+            elif account in {"", "primary"} and (credential, "primary") not in grants:
                 row["borrower_identity_id"] = connection_identity
                 row["adept_profile_id"] = profile(connection_identity or "")
                 row["binding_state"] = (
@@ -89,7 +89,7 @@ def build_paris_adept_audit(storage: Any, *, credential_id: str | None = None) -
                     else "primary_unproven"
                 )
             else:
-                grant = grants.get((credential, account))
+                grant = grants.get((credential, "primary" if account in {"", "primary"} else account))
                 if grant is None:
                     row["binding_state"] = "binding_required"
                 else:
