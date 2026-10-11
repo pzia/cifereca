@@ -84,3 +84,19 @@ def test_null_false_zero_and_empty_containers_remain_distinct():
 def test_unknown_mode_refused():
     with pytest.raises(ValueError):
         format_diagnostic_detail({"x": 1}, "unsafe")
+
+
+def test_redacted_key_collisions_preserve_all_values_without_original_names():
+    detail = {
+        "alice@example.com": "first",
+        "bob@example.com": "second",
+        "token": "never reveal this",
+    }
+    safe = redacted_detail(detail)
+    assert len(safe) == 3
+    assert sorted(v for v in safe.values() if v != "<expurgé>") == ["first", "second"]
+    assert len(set(safe)) == 3
+    shown = format_diagnostic_detail(detail, mode="json")
+    assert len(json.loads(shown)) == 3
+    assert "alice@example.com" not in shown and "bob@example.com" not in shown
+    assert "never reveal this" not in shown
