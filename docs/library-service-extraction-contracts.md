@@ -1,0 +1,261 @@
+# Contrats de LibraryService avant extraction — lot 0 (#1116)
+
+La façade `from cifereca.services import LibraryService` reste le point d'entrée.
+Cet inventaire couvre les 196 méthodes de la baseline. Le fixture
+`tests/fixtures/library_service_facade.json` gèle leurs signatures et types de
+descripteurs, y compris les méthodes privées appelées non liées par les tests.
+Une extraction peut les déléguer ou les hériter ; le test ne dépend pas du
+fichier qui porte physiquement leur corps. Une nouvelle méthode est permise.
+Un changement intentionnel d'API exige une revue explicite du fixture.
+
+Le JSON associé donne pour chaque méthode les attributs `self`, imports globaux
+et callsites candidats (recherche statique, pas preuve de dispatch dynamique).
+Les compteurs ci-dessous renvoient à cette liste complète. Les destinations
+sont des propositions : réutiliser les modules déjà présents et garder les
+contrats avant de créer un module supplémentaire.
+
+## Frontières et ordre
+
+Propriétaire Core pour chaque lot : #1117 sessions/collections ; #1118 recherche ;
+#1119 catalogue/historique/couvertures/materialization ; #1120 acquisition/retour ;
+#1121 backup Kobo ; #1122 opening-sync/dashboard. Garder configuration/identités
+et l'assemblage dans la façade. Chaque extraction reste indépendante et
+réversible. Les orchestrateurs déjà séparés (provider_stream, provider_search,
+materialization, return_adept_orchestrator, sync_state) sont réutilisés.
+
+Ne déplacer les locks qu'avec une injection depuis la façade : les tests patchent
+`cifereca.services.InterProcessLock` et `acquisition_lock_file`, et les méthodes
+appelées non liées reçoivent parfois un SimpleNamespace. Un import capturé dans
+un nouveau module casserait ce contrat. Conserver le même chemin de verrou
+interprocessus entre acquisitions automatique/manuelle, sync et retour.
+Le thread principal reçoit seulement des projections via TaskRunner/GUI ; aucun
+import GTK/PyGObject dans ces modules. Les subscriptions de collections et
+workers de recherche doivent être annulés avant fermeture des sessions.
+Ne déplacer aucun contrat public plugin vers un module privé.
+
+Sens des dépendances : façade → helpers Core → contrats/models/storage.
+Un helper ne doit pas réimporter LibraryService ; fournir un protocole ou des
+callbacks injectés pour ses besoins de façade. Les imports différés des
+adapters/brokers gardent leur frontière et leur cycle actuel. Le JSON est un
+inventaire de référence à relire lors du lot concerné, pas un graphe exhaustif
+des imports dynamiques.
+
+## Preuves de comportement à conserver
+
+| Invariant | Suite de caractérisation | Effet observé |
+|---|---|---|
+| Identité UI différente | test_core_632_service_identity_snapshots.py, test_core_library_read_identity_scope.py | scopes explicites, pas fallback UI |
+| Recherche / annulation / gap | test_core_0968_provider_stream.py | annulation, cache, reset sûr, résultat borné |
+| Deux connexions Paris | test_paris_borrower_adept_binding.py, test_adept_borrower_identity_guard.py | grant par connexion, conflit avant mutation |
+| Lock ADEPT commun | test_adept_borrower_identity_guard.py, test_core_0984_adept_first_paris_reconcile.py | busy ne lance ni fulfillment ni second retour |
+| Restitution sans second POST | test_core_0984_adept_first_paris_reconcile.py, test_core_0982_loan_return_reconciliation.py | retour Adobe confirmé puis Paris lu sans cache |
+| Échec persistant / reprise explicite | test_core_0977_adept_retry_guard.py, test_core_0913.py | deux ouvertures sans retry automatique, ACSM conservé |
+| Sync partielle et reprise | test_core_0978_source_state.py, test_sync_state_contract.py | dernier succès préservé, aucune réussite inventée |
+| Backup / ledger | test_kobo_backup_guard.py, test_kobo_sync_modes.py | artefact valide réutilisé, lock et fraîcheur conservés |
+
+Les payloads, codes AttentionRequired/ProviderConfigurationError, états SQLite,
+calls réseau et fichiers sont affirmés dans ces suites comportementales : ne
+les remplacer ni par le seul snapshot de signatures ni par des assertions AST.
+Import headless et API façade font l'objet de tests supplémentaires dédiés.
+Aucune migration, opération réseau réelle ou changement métier dans ce lot.
+
+## Matrice complète
+
+| Méthode | Lot | Destination proposée | self.* | Callsites candidats | Risque import/lock/thread |
+|---|---|---|---:|---:|---|
+| `__init__` | #1116 | `services.py + identities.py` | 42 | 71 | Lock, RLock |
+| `_identity_directory_engine` | #1116 | `services.py + identities.py` | 3 | 0 | — |
+| `_recover_identity_directory_migration` | #1116 | `services.py + identities.py` | 3 | 0 | InterProcessLock, acquisition_lock_file |
+| `save_diagnostic_preferences` | #1116 | `services.py + identities.py` | 2 | 2 | — |
+| `can_download_loan` | #1116 | `services.py + identities.py` | 1 | 2 | — |
+| `save_configuration` | #1116 | `services.py + identities.py` | 8 | 4 | InterProcessLock, acquisition_lock_file |
+| `change_identity_directory` | #1116 | `services.py + identities.py` | 3 | 3 | InterProcessLock, acquisition_lock_file |
+| `_sync_identity_configuration` | #1116 | `services.py + identities.py` | 4 | 0 | — |
+| `identity_by_id` | #1116 | `services.py + identities.py` | 1 | 4 | — |
+| `identity_for_connection` | #1116 | `services.py + identities.py` | 4 | 5 | — |
+| `accounts_for_identity` | #1116 | `services.py + identities.py` | 2 | 2 | — |
+| `sync_source_id` | #1116 | `services.py + identities.py` | 0 | 1 | — |
+| `sync_source_enabled` | #1116 | `services.py + identities.py` | 2 | 1 | — |
+| `select_identity` | #1116 | `services.py + identities.py` | 7 | 6 | — |
+| `library_identity_provider_dir` | #1116 | `services.py + identities.py` | 3 | 4 | — |
+| `_migrate_legacy_flat_kobo_files` | #1116 | `services.py + identities.py` | 4 | 0 | — |
+| `adept_profile_choices` | #1116 | `services.py + identities.py` | 3 | 1 | — |
+| `resolve_adept_profile_for_identity` | #1116 | `services.py + identities.py` | 6 | 0 | — |
+| `resolve_adept_profile` | #1116 | `services.py + identities.py` | 2 | 1 | — |
+| `_local_account` | #1116 | `services.py + identities.py` | 1 | 0 | — |
+| `_session_key` | #1116 | `services.py + identities.py` | 0 | 12 | — |
+| `active_session` | #1116 | `services.py + identities.py` | 2 | 0 | — |
+| `attach_plugin_manager` | #1117 | `core/provider_sessions.py` | 10 | 6 | — |
+| `_unbind_virtual_subscriptions` | #1117 | `core/provider_sessions.py` | 2 | 0 | — |
+| `_sync_virtual_subscriptions` | #1117 | `core/provider_sessions.py` | 3 | 0 | — |
+| `_queue_virtual_collection_refresh` | #1117 | `core/provider_sessions.py` | 5 | 0 | — |
+| `_drain_virtual_collection_events` | #1117 | `core/provider_sessions.py` | 6 | 0 | — |
+| `subscribe_virtual_sources` | #1117 | `core/provider_sessions.py` | 2 | 1 | — |
+| `_connect_changed_virtual_provider` | #1117 | `core/provider_sessions.py` | 7 | 0 | — |
+| `refresh_virtual_collections` | #1117 | `core/provider_sessions.py` | 13 | 2 | — |
+| `plugin_manager` | #1117 | `core/provider_sessions.py` | 1 | 4 | — |
+| `_provider_plugin_status` | #1117 | `core/provider_sessions.py` | 2 | 1 | — |
+| `_provider_enabled_for_identity` | #1117 | `core/provider_sessions.py` | 5 | 1 | — |
+| `provider_descriptors` | #1117 | `core/provider_sessions.py` | 1 | 4 | — |
+| `provider_diagnostic_state` | #1117 | `core/provider_sessions.py` | 4 | 2 | — |
+| `close` | #1117 | `core/provider_sessions.py` | 7 | 145 | — |
+| `disconnect_configured` | #1117 | `core/provider_sessions.py` | 10 | 0 | — |
+| `connect_configured` | #1117 | `core/provider_sessions.py` | 20 | 8 | — |
+| `login` | #1117 | `core/provider_sessions.py` | 0 | 5 | — |
+| `select_account` | #1117 | `core/provider_sessions.py` | 8 | 3 | — |
+| `_session_for_account` | #1117 | `core/provider_sessions.py` | 3 | 0 | — |
+| `_session_for_source` | #1117 | `core/provider_sessions.py` | 3 | 5 | — |
+| `_key` | #1117 | `core/provider_sessions.py` | 1 | 2 | — |
+| `_loans_for_account` | #1117 | `core/provider_sessions.py` | 4 | 4 | — |
+| `refresh_loans` | #1117 | `core/provider_sessions.py` | 5 | 3 | — |
+| `refresh_identity_loans` | #1117 | `core/provider_sessions.py` | 6 | 2 | — |
+| `public_catalogue_target` | #1117 | `core/provider_sessions.py` | 2 | 2 | — |
+| `public_catalogue_url` | #1117 | `core/provider_sessions.py` | 0 | 2 | — |
+| `_provider_loan_active_for_acquisition` | #1117 | `core/provider_sessions.py` | 2 | 0 | — |
+| `refresh_adept_inventory` | #1117 | `core/provider_sessions.py` | 2 | 1 | InterProcessLock, acquisition_lock_file |
+| `refresh_history` | #1117 | `core/provider_sessions.py` | 8 | 4 | — |
+| `_history_fold` | #1119 | `core/library_history.py + core/covers.py` | 0 | 0 | — |
+| `_history_cover_score` | #1119 | `core/library_history.py + core/covers.py` | 0 | 0 | — |
+| `_history_search_queries` | #1119 | `core/library_history.py + core/covers.py` | 0 | 0 | — |
+| `resolve_history_thumbnail` | #1119 | `core/library_history.py + core/covers.py` | 6 | 1 | — |
+| `refresh_bookings` | #1119 | `core/library_history.py + core/covers.py` | 6 | 3 | — |
+| `provider_display_name` | #1119 | `core/library_history.py + core/covers.py` | 1 | 2 | — |
+| `_search_query_variants` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 1 | — |
+| `_search_relevance` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 0 | — |
+| `_normalized_language_values` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 0 | — |
+| `_search_preference_score` | #1118 | `core/provider_search.py + core/provider_stream.py` | 2 | 1 | — |
+| `availability_display_label` | #1118 | `core/provider_search.py + core/provider_stream.py` | 2 | 2 | — |
+| `searchable_providers` | #1118 | `core/provider_search.py + core/provider_stream.py` | 2 | 7 | — |
+| `_session_search_capabilities` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 0 | — |
+| `provider_search_capabilities` | #1118 | `core/provider_search.py + core/provider_stream.py` | 3 | 2 | — |
+| `_search_contract_warning` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 1 | — |
+| `_field_match` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 0 | — |
+| `_without_redundant_merged` | #1118 | `core/provider_search.py + core/provider_stream.py` | 2 | 1 | — |
+| `search` | #1118 | `core/provider_search.py + core/provider_stream.py` | 15 | 86 | — |
+| `_search_provider_session` | #1118 | `core/provider_search.py + core/provider_stream.py` | 4 | 1 | — |
+| `_search_virtual_stream_session` | #1118 | `core/provider_search.py + core/provider_stream.py` | 2 | 0 | — |
+| `search_progressive` | #1118 | `core/provider_search.py + core/provider_stream.py` | 19 | 9 | Queue, wait |
+| `search_local_library` | #1118 | `core/provider_search.py + core/provider_stream.py` | 2 | 0 | — |
+| `search_known_catalog` | #1118 | `core/provider_search.py + core/provider_stream.py` | 3 | 3 | — |
+| `filter_loaded_search_results` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 0 | — |
+| `_mirror_remote_results` | #1119 | `core/library_materialization.py + materialization.py` | 2 | 3 | — |
+| `mirror_personal_libraries` | #1119 | `core/library_materialization.py + materialization.py` | 6 | 1 | — |
+| `_acquire_personal_library_item` | #1119 | `core/library_materialization.py + materialization.py` | 3 | 0 | — |
+| `recent_acquisitions` | #1119 | `core/library_materialization.py + materialization.py` | 4 | 3 | — |
+| `local_book_path` | #1119 | `core/library_materialization.py + materialization.py` | 3 | 3 | — |
+| `local_placement_for_source` | #1119 | `core/library_materialization.py + materialization.py` | 2 | 3 | — |
+| `local_placements_for_sources` | #1119 | `core/library_materialization.py + materialization.py` | 2 | 2 | — |
+| `materialize_to_identity` | #1119 | `core/library_materialization.py + materialization.py` | 5 | 4 | — |
+| `holdings` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 7 | — |
+| `renew` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 2 | — |
+| `_return_loan_identity` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 0 | — |
+| `loan_return_state` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 2 | — |
+| `verify_return_digital` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 1 | — |
+| `verify_paris_return_inventory` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 0 | — |
+| `_adobe_return_inventory_confirmed` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 4 | 0 | — |
+| `_return_operation_lock_file` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | acquisition_lock_file |
+| `return_loan_prefer_adept` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 2 | InterProcessLock |
+| `_return_loan_prefer_adept_guarded` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 7 | 0 | — |
+| `verify_loan_return` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 1 | — |
+| `return_digital` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 3 | InterProcessLock |
+| `_return_digital_guarded` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 7 | 0 | — |
+| `pnb_preferences` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 3 | — |
+| `content_type_for` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 3 | — |
+| `default_downloads_dir` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 1 | — |
+| `_kobo_adapter` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 2 | — |
+| `_required_plugin_service` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 0 | — |
+| `_http_plain_transport_proof` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 0 | — |
+| `execute_acquisition_request` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 4 | 19 | — |
+| `_originating_adept_profile_id` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 4 | 1 | — |
+| `_adept_return_capability` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 0 | — |
+| `_adept_acquisition_path` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 0 | — |
+| `_adept_inventory_candidates` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 0 | — |
+| `_reconcile_adept_acquisition` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 9 | 0 | — |
+| `adept_loan_choices` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 7 | 3 | — |
+| `attach_adept_loan` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 9 | 3 | InterProcessLock, acquisition_lock_file |
+| `reconcile_adept_acquisition` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 3 | InterProcessLock, acquisition_lock_file |
+| `_reconcile_identity_adept_inventory` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 3 | — |
+| `adept_return_for_artifact` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 2 | — |
+| `return_adept_acquisition` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 5 | InterProcessLock, acquisition_lock_file |
+| `_return_adept_acquisition` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 8 | 0 | — |
+| `execute_drm_mutation` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 1 | — |
+| `_import_acsm_impl` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 9 | 0 | — |
+| `import_acsm` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 4 | 5 | — |
+| `runtime_diagnostic` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 6 | — |
+| `kobo_adept_state` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 4 | — |
+| `kobo_profiles` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 4 | — |
+| `_adept_profile_ref` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 0 | — |
+| `_adept_profile_name` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 0 | — |
+| `_adept_profile_row` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 1 | 0 | — |
+| `_adept_profile_cli_name` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 0 | — |
+| `can_direct_download` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 2 | — |
+| `_kobo_adept_format` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_candidate_media_format` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_candidate_drm` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_candidate_handling` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_candidate_profile` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_candidate_source` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_candidate_requires_authorization` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_acsm_candidate` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 2 | — |
+| `_kobo_candidate` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 2 | — |
+| `_kobo_delegated_candidate` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_canonical_drm` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 0 | — |
+| `_kobo_url_format` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_delegated_request` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_kobo_kdrm_context` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 1 | — |
+| `_observed_backup_artifact` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 2 | — |
+| `_kobo_artifact_plausible` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 0 | — |
+| `_kobo_record_candidate_paths` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 0 | — |
+| `_kobo_destination` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 1 | — |
+| `_execute_kobo_acquisition` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 0 | 5 | — |
+| `_acquire_direct_item_impl` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 7 | 0 | — |
+| `acquire_direct_item` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 4 | 11 | — |
+| `obtain_search_item` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 3 | 2 | — |
+| `prepare_direct_download` | #1120 | `core/loan_acquisition.py + return_adept_orchestrator.py` | 2 | 0 | — |
+| `library_dir` | #1119 | `core/library_catalog.py` | 1 | 1 | — |
+| `catalog_scan` | #1119 | `core/library_catalog.py` | 3 | 15 | — |
+| `catalog_entries` | #1119 | `core/library_catalog.py` | 2 | 14 | — |
+| `catalog_index_path` | #1119 | `core/library_catalog.py` | 2 | 4 | — |
+| `library_entries` | #1119 | `core/library_catalog.py` | 5 | 13 | — |
+| `_persist_active_loans` | #1120 | `core/loan_acquisition.py` | 1 | 8 | — |
+| `_loan_destination_name` | #1120 | `core/loan_acquisition.py` | 0 | 1 | — |
+| `_provider_attention_code` | #1120 | `core/loan_acquisition.py` | 0 | 0 | — |
+| `_diagnose_adept_binding` | #1120 | `core/loan_acquisition.py` | 1 | 0 | — |
+| `adept_return_status_for_loan` | #1120 | `core/loan_acquisition.py` | 7 | 3 | — |
+| `reacquire_digital_loan` | #1120 | `core/loan_acquisition.py` | 7 | 3 | InterProcessLock, acquisition_lock_file |
+| `_borrower_identity_conflict` | #1120 | `core/loan_acquisition.py` | 0 | 1 | — |
+| `bind_paris_borrower_adept` | #1120 | `core/loan_acquisition.py` | 3 | 5 | — |
+| `_paris_adept_identity_for_loan` | #1120 | `core/loan_acquisition.py` | 4 | 1 | — |
+| `_cross_identity_loan_conflict` | #1120 | `core/loan_acquisition.py` | 0 | 1 | — |
+| `_acquire_active_loan_automatically` | #1120 | `core/loan_acquisition.py` | 1 | 11 | InterProcessLock, acquisition_lock_file |
+| `_acquire_active_loan_automatically_guarded` | #1120 | `core/loan_acquisition.py` | 19 | 3 | — |
+| `_synchronize_account_source_impl` | #1122 | `core/opening_sync.py + sync_state.py` | 5 | 0 | — |
+| `synchronize_account_source` | #1122 | `core/opening_sync.py + sync_state.py` | 2 | 1 | — |
+| `preview_library_filename` | #1122 | `core/opening_sync.py + sync_state.py` | 2 | 2 | — |
+| `opening_sync` | #1122 | `core/opening_sync.py + sync_state.py` | 2 | 8 | InterProcessLock, acquisition_lock_file |
+| `_opening_sync_locked` | #1122 | `core/opening_sync.py + sync_state.py` | 25 | 1 | — |
+| `_record_action` | #1122 | `core/opening_sync.py + sync_state.py` | 2 | 2 | — |
+| `action_statistics` | #1122 | `core/opening_sync.py + sync_state.py` | 1 | 0 | — |
+| `_record_loan_statistics` | #1122 | `core/opening_sync.py + sync_state.py` | 1 | 1 | — |
+| `identity_statistics` | #1122 | `core/opening_sync.py + sync_state.py` | 3 | 6 | — |
+| `dashboard_state` | #1122 | `core/opening_sync.py + sync_state.py` | 7 | 4 | — |
+| `acquisition_ledger_records` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 1 | 1 | — |
+| `reconcile_acquisitions` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 3 | 2 | — |
+| `kobo_backup_records` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 1 | 0 | — |
+| `kobo_backup_enabled` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 1 | 4 | — |
+| `kobo_backup_interval_minutes` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 1 | 0 | — |
+| `_kobo_backup_target_dir` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 5 | 2 | — |
+| `_manifest_author` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 0 | 0 | — |
+| `_kobo_backup_error_info` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 0 | 0 | — |
+| `kobo_backup_diagnostic` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 1 | 2 | — |
+| `_kobo_backup_due` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 2 | 0 | — |
+| `sync_kobo_backup` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 1 | 8 | InterProcessLock, acquisition_lock_file |
+| `kobo_unlinked_local_count` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 2 | 1 | — |
+| `_sync_kobo_backup_locked` | #1121 | `core/kobo_backup.py + acquisition_engine.py` | 16 | 1 | — |
+| `_account_for_loan` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 2 | 1 | — |
+| `_acquisition_work_dir` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 1 | 1 | — |
+| `_cleanup_acsm_after_success` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 0 | 1 | — |
+| `_cleanup_old_acsm_work` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 2 | 0 | — |
+| `acquire_digital_loan` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 7 | 7 | — |
+| `prepare_digital_download` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 1 | 1 | — |
+| `_download_filename` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 0 | 0 | — |
