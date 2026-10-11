@@ -17,6 +17,8 @@ et SHA-256 concordants. Voir [la fiche de preuves GTK](DIAGNOSTICS_GTK_PROBE_101
 | Widget `diagnostics-1366` | 6 checks PASS, 4 PNG ; lecture rapport, agrandissement, JSON expurgé, copie clavier XTEST/presse-papiers, pagination 50→15, aucune activation IA/check implicite | widget isolé et brokers simulés ; pas d'export fichier, scroll extrême ni batterie clavier complète |
 | Navigation `diagnostics-navigation-1366` | 6 checks PASS, 4 PNG ; vraie `MainWindow`, clics XTEST Bibliothèque → groupe Configuration → Diagnostics → Bibliothèque ; route, titre et contenu visibles | contribution réelle montée avec doubles de gestionnaire de plugins et brokers ; pas d'installation ZIP ni de profil utilisateur réel |
 | Grand écran `diagnostics-large-1600` | **10 checks PASS, 9 PNG** ; rapport long 250 lignes, Space/Tab/Shift+Tab XTEST, scroll rapport 3724/3724 px, page externe stable à 1286 px, redimensionnement GTK 1560→1240→1560 px, sans débordement horizontal | widget isolé, molette non testée ; **Escape et export fichier observés non satisfaits** ([#1158](https://github.com/pzia/cifereca/issues/1158)) |
+| États `diagnostics-states-1366` | 6 checks PASS, 6 PNG ; sources non alimentées, source disponible sans événement, broker indisponible, retry explicite et contrôle lent réactif | D02 : synthèse zéro anomalie datée absente ([#1161](https://github.com/pzia/cifereca/issues/1161)) ; widget isolé, brokers simulés |
+| Navigation lente `diagnostics-navigation-slow-1366` | 10 checks PASS, 7 PNG ; vraie MainWindow, 7 gestes XTEST, lancement volontaire d'un contrôle puis navigation Bibliothèque et retour avec résultat visible | test asynchrone simulé, sans serveur distant ni installation ZIP |
 
 **Avancement D01–D16 :** preuves partielles pour **D05** (rapport
 multipage et scroll interne jusqu'au bas, mais pas focus de retour complet),
@@ -27,8 +29,13 @@ multipage et scroll interne jusqu'au bas, mais pas focus de retour complet),
 `Escape` n'abandonne pas l'agrandissement : **défaut produit #1158**)
 et **D16** (vrai redimensionnement 1560×870 → 1240×800 → 1560×870
 sans débordement global, mais autres géométries et interactions non exercées).
-Les **D01–D04, D06, D08–D12** ainsi que les parties manquantes
-des précédents restent à vérifier. Ne pas cocher l'ensemble de la matrice,
+**D01** et **D03** disposent maintenant de preuves GTK sur des brokers
+simulés. **D02** reste **partiel**, car l'absence d'erreur observée sur
+une période n'est pas explicitement affichée ([#1161](https://github.com/pzia/cifereca/issues/1161)).
+**D04** couvre la réactivité et le retour au résultat via une vraie
+MainWindow avec tâches simulées et navigation XTEST, pas un runtime externe réel.
+Les **D06 et D08–D12**, ainsi que les parties manquantes des autres
+critères, restent à exercer. Ne pas cocher l'ensemble de la matrice,
 ni clôturer #1011 sur ces seuls scénarios.
 
 **Run le plus récent :** [E2E Smoke #38135244581](https://github.com/pzia/cifereca/actions/runs/38135244581)
@@ -43,6 +50,20 @@ est toujours soumise au CI ordinaire ; l'inventaire de plugins non classés
 est suivi dans [#1148](https://github.com/pzia/cifereca/issues/1148).
 Le PASS E2E **ne** permet **pas** de fusionner une PR dont le CI requis
 est rouge.
+
+## Nouvelle campagne D01–D04 du 11 octobre 2026
+
+[E2E Smoke #38137261745](https://github.com/pzia/cifereca/actions/runs/38137261745)
+**SUCCESS global**. [Artefact #11701626785](https://github.com/pzia/cifereca/actions/runs/38137261745/artifacts/11701626785).
+`diagnostics-states-1366` : 6 checks PASS, 6 captures ; 
+`diagnostics-navigation-slow-1366` : 10 checks PASS, 7 captures.
+Les **13 SHA-256 sont conformes** et les trois scénarios Diagnostics
+antérieurs restent PASS. Aucun accès réseau/LLM implicite n'est exercé.
+
+Le CI général sur ce même HEAD est encore **FAIL** en raison du
+`XPASS(strict)` du test #1013
+([run #38137261748](https://github.com/pzia/cifereca/actions/runs/38137261748),
+1862 tests réussis). **Aucun contournement de ce gate.**
 
 ## Dernier verdict GTK — 11 octobre 2026
 
