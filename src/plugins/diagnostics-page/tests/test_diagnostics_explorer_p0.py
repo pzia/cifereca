@@ -324,3 +324,9 @@ def test_malformed_selector_types_fail_without_broker_access(filters):
     with pytest.raises(ValueError):
         fetch_explorer_page(broker, **filters)
     assert broker.calls == []
+
+
+def test_local_search_is_bounded_before_examining_events():
+    with pytest.raises(ValueError, match="search"):
+        sanitized_rows({"events": [event("safe")]}, search="x" * 501)
+    assert len(sanitized_rows({"events": [event("safe")]}, search="x" * 500)) == 0
