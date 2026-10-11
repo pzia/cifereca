@@ -207,7 +207,10 @@ def query_diagnostic_events(
     page = events[offset:offset + limit]
     return {
         "status": "partial" if any(st["status"] == "partial" for st in states) else (
-            "available" if total else "empty"
+            "available" if total else (
+                "unavailable" if all(st["status"] in {"disabled", "unavailable"} for st in states)
+                else "empty"
+            )
         ),
         "sources": states,
         "events": page,
