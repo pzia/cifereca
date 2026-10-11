@@ -1,19 +1,152 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
+import math
+import re
 from typing import Any
 
 from cifereca.plugin_api import UiPageContribution
 
+# The broker provides already-redacted data. This is a second, stricter
+# presentation boundary: neither UI modes nor clipboard may expose raw secrets.
+_DIAGNOSTIC_SECRET_KEY = re.compile(
+    r"pass(?:word)?|cookie|token|secret|authorization|bearer|barcode|readerid|"
+    r"credential[_-]?id|account[_-]?id|identity[_-]?id|profile[_-]?id|"
+    r"acsm|licen[sc]e|private[_-]?key|(^|_)path$|filename|payload|headers?", re.I
+)
+_DIAGNOSTIC_SECRET_VALUE = re.compile(
+    r"(?i)\b(password|cookie|token|secret|authorization|barcode|readerid)"
+    r"\s*[:=]\s*[^\s,;]+"
+)
+_DIAGNOSTIC_URL = re.compile(r"(?i)https?://[^\s<>]+")
+_DIAGNOSTIC_MAIL = re.compile(r"(?i)\b[a-z0-9_.+%-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
+_DIAGNOSTIC_PATH = re.compile(
+    r"(?:/home/|/Users/|/run/user/)[^\s,;]+|[A-Za-z]:\\Users\\[^\s,;]+"
+)
+_MAX_DETAIL_BYTES = 24_000
+_MAX_DETAIL_NODES = 300
+_MAX_DETAIL_DEPTH = 7
+_MAX_DETAIL_CHILDREN = 50
+_MAX_DETAIL_TEXT = 800
+
+
+def _redacted_text(value: str) -> str:
+    text = value[:_MAX_DETAIL_TEXT]
+    text = _DIAGNOSTIC_URL.sub("<URL expurgée>", text)
+    text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
+    text = _DIAGNOSTIC_PATH.sub("<chemin expurgé>", text)
+    text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
+    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
+    return text + ("… [tronqué]" if len(value) > _MAX_DETAIL_TEXT else "")
+
+
+def redacted_detail(value: Any) -> Any:
+    """Snapshot JSON-compatible values with depth, count and length limits.
+
+    Unknown objects are never introspected or stringified; cycles are stopped.
+    Stable key ordering is applied only to supported scalar dictionary keys.
+    """
+    budget = [_MAX_DETAIL_NODES]
+    stack: set[int] = set()
+
+    def walk(item: Any, depth: int) -> Any:
+        if budget[0] <= 0 or depth > _MAX_DETAIL_DEPTH:
+            return "<limite atteinte>"
+        budget[0] -= 1
+        if item is None or isinstance(item, bool) or isinstance(item, int):
+            return item
+        if isinstance(item, float):
+            return item if math.isfinite(item) else "<nombre non fini>"
+        if isinstance(item, str):
+            return _redacted_text(item)
+        if not isinstance(item, (Mapping, list, tuple)):
+            return "<type non pris en charge>"
+        if id(item) in stack:
+            return "<référence circulaire>"
+        stack.add(id(item))
+        try:
+            if isinstance(item, Mapping):
+                pairs = []
+                for key, child in item.items():
+                    if type(key) not in (str, int, float, bool):
+                        continue
+                    name = str(key)[:160]
+                    pairs.append((name, child))
+                pairs.sort(key=lambda pair: pair[0].casefold())
+                result = {}
+                for name, child in pairs[:_MAX_DETAIL_CHILDREN]:
+                    safe_name = _redacted_text(name)
+                    result[safe_name] = (
+                        "<expurgé>" if _DIAGNOSTIC_SECRET_KEY.search(name)
+                        else walk(child, depth + 1)
+                    )
+                if len(pairs) > _MAX_DETAIL_CHILDREN:
+                    result["[suite]"] = "<éléments supplémentaires masqués>"
+                return result
+            children = [walk(child, depth + 1) for child in item[:_MAX_DETAIL_CHILDREN]]
+            if len(item) > _MAX_DETAIL_CHILDREN:
+                children.append("<éléments supplémentaires masqués>")
+            return children
+        finally:
+            stack.remove(id(item))
+
+    return walk(value, 0)
+
+
+def _readable_lines(value: Any, indent: int = 0) -> list[str]:
+    pad = "  " * indent
+    if isinstance(value, dict):
+        if not value:
+            return [pad + "{}"]
+        rows = []
+        for key, child in value.items():
+            if isinstance(child, (dict, list)):
+                rows.append(pad + str(key) + ":")
+                rows.extend(_readable_lines(child, indent + 1))
+            else:
+                rows.append(pad + str(key) + ": " + json.dumps(child, ensure_ascii=False))
+        return rows
+    if isinstance(value, list):
+        if not value:
+            return [pad + "[]"]
+        rows = []
+        for child in value:
+            if isinstance(child, (dict, list)):
+                rows.append(pad + "–")
+                rows.extend(_readable_lines(child, indent + 1))
+            else:
+                rows.append(pad + "– " + json.dumps(child, ensure_ascii=False))
+        return rows
+    return [pad + (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))]
+
+
+def format_diagnostic_detail(value: Any, mode: str = "readable") -> str:
+    """Three selectable representations of the SAME redacted snapshot."""
+    if mode not in {"readable", "json", "raw"}:
+        raise ValueError("unknown diagnostic display mode")
+    safe = redacted_detail(value)
+    if mode == "readable":
+        text = "\n".join(_readable_lines(safe))
+    elif mode == "json":
+        text = json.dumps(safe, ensure_ascii=False, indent=2, allow_nan=False)
+    elif isinstance(safe, str):
+        text = safe
+    else:
+        text = json.dumps(safe, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    if len(text) > _MAX_DETAIL_BYTES:
+        if mode == "json":
+            return json.dumps({
+                "notice": "Aperçu JSON limité à 24 Kio",
+                "truncated": True,
+                "preview": text[:_MAX_DETAIL_BYTES // 2],
+            }, ensure_ascii=False, indent=2)
+        return text[:_MAX_DETAIL_BYTES] + "\n… [affichage limité]"
+    return text
+
 
 def _safe_text(value: Any) -> str:
-    if value is None:
-        return "—"
-    if isinstance(value, bool):
-        return "Oui" if value else "Non"
-    if isinstance(value, (str, int, float)):
-        return str(value)
-    return str(value)
+    return format_diagnostic_detail(value, "readable")
 
 
 def public_inventory(diagnostics_broker) -> list[dict[str, Any]]:
@@ -181,6 +314,59 @@ class DiagnosticsPagePlugin:
                 container.remove(child)
                 child = nxt
 
+        def add_detail_view(container, value: Any) -> None:
+            # A single redacted snapshot drives every mode and the clipboard.
+            safe = redacted_detail(value)
+            expander = Gtk.Expander(label="Détails expurgés")
+            expander.set_expanded(False)
+            wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            label = Gtk.Label(label="Vue :", xalign=0)
+            selector = Gtk.DropDown.new_from_strings(
+                ["Lisible", "JSON indenté", "Brut expurgé"]
+            )
+            selector.set_tooltip_text("Représentation des mêmes données expurgées")
+            copy_detail = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+            copy_detail.set_tooltip_text("Copier le détail expurgé actuellement affiché")
+            controls.append(label)
+            controls.append(selector)
+            controls.append(copy_detail)
+            wrapper.append(controls)
+
+            detail_scroll = Gtk.ScrolledWindow()
+            detail_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            detail_scroll.set_min_content_height(160)
+            detail_scroll.set_size_request(-1, 250)
+            detail_view = Gtk.TextView()
+            detail_view.set_editable(False)
+            detail_view.set_cursor_visible(False)
+            detail_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            detail_view.set_monospace(True)
+            detail_scroll.set_child(detail_view)
+            wrapper.append(detail_scroll)
+
+            def visible_text() -> str:
+                modes = ("readable", "json", "raw")
+                selected = min(int(selector.get_selected()), len(modes) - 1)
+                return format_diagnostic_detail(safe, modes[selected])
+
+            def change_view(*_args) -> None:
+                detail_view.get_buffer().set_text(visible_text())
+
+            def copy_view(_button) -> None:
+                display = Gdk.Display.get_default()
+                if display is None:
+                    host.toast("Presse-papiers indisponible")
+                    return
+                display.get_clipboard().set(visible_text())
+                host.toast("Détail expurgé copié")
+
+            selector.connect("notify::selected", change_view)
+            copy_detail.connect("clicked", copy_view)
+            change_view()
+            expander.set_child(wrapper)
+            container.append(expander)
+
         def add_status(key: str, value: Any) -> None:
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             card.add_css_class("card")
@@ -190,12 +376,18 @@ class DiagnosticsPagePlugin:
             caption = Gtk.Label(label=str(key), xalign=0)
             caption.add_css_class("caption")
             caption.set_wrap(True)
-            value_label = Gtk.Label(label=_safe_text(value), xalign=0)
-            value_label.set_wrap(True)
-            value_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            value_label.set_selectable(True)
             card.append(caption)
-            card.append(value_label)
+            if isinstance(value, (Mapping, list, tuple)):
+                summary = Gtk.Label(label="Données structurées", xalign=0)
+                summary.add_css_class("dim-label")
+                card.append(summary)
+                add_detail_view(card, value)
+            else:
+                value_label = Gtk.Label(label=_safe_text(value), xalign=0)
+                value_label.set_wrap(True)
+                value_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                value_label.set_selectable(True)
+                card.append(value_label)
             status_grid.insert(card, -1)
 
         def add_diag(row: Mapping[str, Any]) -> None:
@@ -203,27 +395,25 @@ class DiagnosticsPagePlugin:
             card.add_css_class("card")
             for margin in ("top", "bottom", "start", "end"):
                 getattr(card, "set_margin_" + margin)(8)
-            title = str(row.get("message") or row.get("operation") or row.get("id") or "Diagnostic")
+            title = _safe_text(row.get("message") or row.get("operation") or row.get("id") or "Diagnostic")
             heading = Gtk.Label(label=title, xalign=0)
             heading.set_wrap(True)
             heading.add_css_class("heading")
             card.append(heading)
             meta_parts = []
-            for key in ("status", "level", "plugin_id", "source"):
-                value = row.get(key)
+            for key in ("timestamp", "component", "status", "severity", "level", "plugin_id", "source", "operation"):
+                if key not in row:
+                    continue
+                value = row[key]
                 if value not in (None, ""):
-                    meta_parts.append(f"{key}: {value}")
+                    meta_parts.append(f"{key}: {_safe_text(value)}")
             if meta_parts:
                 meta = Gtk.Label(label=" · ".join(meta_parts), xalign=0)
                 meta.add_css_class("dim-label")
                 meta.set_wrap(True)
                 card.append(meta)
-            detail = row.get("detail")
-            if detail:
-                detail_label = Gtk.Label(label=_safe_text(detail), xalign=0)
-                detail_label.set_wrap(True)
-                detail_label.set_selectable(True)
-                card.append(detail_label)
+            if "detail" in row:
+                add_detail_view(card, row["detail"])
             diag_box.append(card)
 
         def render(*_args) -> None:
@@ -290,10 +480,11 @@ class DiagnosticsPagePlugin:
                 title = Gtk.Label(label=str(row.get("message") or "Vérification"), xalign=0)
                 title.add_css_class("heading")
                 card.append(title)
-                detail = Gtk.Label(label=f"{status} · {_safe_text(row.get('detail'))}", xalign=0)
-                detail.set_wrap(True)
-                detail.set_selectable(True)
-                card.append(detail)
+                result_state = Gtk.Label(label=_safe_text(status), xalign=0)
+                result_state.set_selectable(True)
+                card.append(result_state)
+                if "detail" in row:
+                    add_detail_view(card, row["detail"])
                 check_box.append(card)
             host.toast("Vérification terminée")
             return False
