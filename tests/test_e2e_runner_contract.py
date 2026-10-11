@@ -96,6 +96,27 @@ def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
         assert marker in source
 
 
+def test_d04_slow_check_real_mainwindow_navigation_contract():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-navigation-slow-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-navigation"
+    assert scenario["width"] == 1366
+    assert scenario["slow_check"] is True
+    script = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for assertion in (
+        "D04_explicit_async_check_started",
+        "D04_physical_library_navigation_during_pending_check",
+        "D04_async_check_completes_offscreen",
+        "D04_check_result_visible_on_return",
+        "SlowNavigationBroker(Broker)",
+        'device[0].click_widget(buttons[0])',
+        "StateTasks() if args.slow_check",
+    ):
+        assert assertion in script
+
+
 def test_diagnostics_navigation_targets_real_mainwindow_and_pointer_events():
     runner = _module()
     scenario = runner.SCENARIOS["diagnostics-navigation-1366"]
