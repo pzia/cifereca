@@ -90,3 +90,32 @@ pour distinguer le calcul de l'application UI sans prétendre valider GTK.
 La barre d'actions est regroupée par intention **Explorer**, **Chercher**, **Parcours** ; les extrémités **Proche** et **Surprenant** ainsi que la valeur 0–100 sont visibles. Le panneau de détail ne prétend plus qu'il n'existe aucun voisin lorsque la liste du composant commun est vide : les voisins se trouvent dans une grille distincte avec un compteur explicite.
 
 Chaque carte sépare titre, auteur, raison principale attestée si disponible, nombre de raisons complémentaires, statut d'accès et présence d'indice inféré. Un clic sur la carte visite le livre sélectionné sans accès réseau. Les actions explicites de recherche et actualisation conservent leurs budgets historiques (300 notices locales, 100 résultats distants). La recette visuelle et clavier relève du rôle UX à **1366 et 1600 px**, sans réintroduire de tests de basse résolution.
+
+
+## Pistes sémantiques facultatives par IA — #783 (0.3.2)
+
+Configuration `llm_semantic_hypotheses=false` par défaut. Quand cette
+fonction est activée, le bouton « Piste sémantique (IA) » n'est utilisable
+que pour un centre et un **candidat sans arête déterministe attestée**,
+disposant chacun d'au moins un sujet explicite. Aucun calcul IA ne se lance
+au chargement, à la navigation ou en modifiant un curseur.
+
+Un clic peut adresser au service public `context.service("llm")` uniquement
+les sujets attestés des deux notices (six au plus par livre, 60 caractères
+par sujet). **Titres, auteurs, identités, chemins, accès et bibliothèque
+entière ne sont pas transmis.** Le service configuré peut être distant.
+
+Le texte de la réponse, demandé sous forme `Hypothèse : …`, apparaît
+dans une zone séparée **« Piste sémantique inférée — NON attestée, hors
+graphe »** avec les titres locaux (jamais transmis), la provenance
+fournisseur/modèle et l'état distant/local. Ce texte **ne devient jamais**
+une arête, une raison attestée, un score, un parcours ni une preuve
+d'accès ou d'identité. La désactivation de l'option suffit à supprimer
+la fonctionnalité de l'interface ; l'algorithme déterministe reste
+toujours disponible.
+
+Service absent, quota, refus, annulation ou changement de centre :
+aucune modification du graphe, abandon des réponses tardives.
+Une intégration future d'arêtes sémantiques navigables exigerait un
+contrat de typage, de persistance et de validation distinct. Le service
+réel dépend du Core #778. Tests offline : `tests/test_semantic_llm_p2.py`.
