@@ -6,9 +6,9 @@ Le catalogue public Milan est paginé et les fiches produit publient expliciteme
 
 ## Stratégie
 
-La recherche textuelle utilise désormais la route publique attestée \`/recherche/books/?text=...\`. La navigation sans recherche conserve le catalogue historique ; un curseur numérique explicite maintient la compatibilité avec une collecte locale déjà commencée.
+La recherche textuelle utilise désormais la route publique attestée `/recherche/books/?text=...`. La navigation sans recherche conserve le catalogue historique ; un curseur numérique explicite maintient la compatibilité avec une collecte locale déjà commencée.
 
-1. charge une page publique `/livres/` ou `/livres/page/N/` ;
+1. interroge `/recherche/books/?text=...` pour une recherche, ou `/livres/` et `/livres/page/N/` sans recherche ;
 2. extrait les liens produit ;
 3. ne refiltre **pas** par titre les résultats de la recherche distante (la recherche peut porter sur d'autres attributs) ; conserve le filtrage local pour les anciens curseurs numériques ;
 4. ouvre au plus 8 fiches produit ;
@@ -33,8 +33,8 @@ Aucun âge n'est déduit de la collection (`Littérature 9-12 ans`, etc.), du r�
 ## Réseau
 
 - HTTPS uniquement ;
-- domaine `editionsmilan.com` uniquement ;
-- chemins catalogue / produit uniquement ;
+- requêtes exclusivement sur `editionsmilan.com` ; couvertures HTTPS publiques autorisées sur `imagine.bayard.io` sans téléchargement par le plugin ;
+- chemins de catalogue, recherche ou fiche produit uniquement ;
 - redirections désactivées ;
 - proxy d'environnement désactivé ;
 - réponses HTML limitées à 2 Mo ;
@@ -50,4 +50,4 @@ Ces tests techniques ne prouvent ni l'accessibilité actuelle du site public Mil
 
 ## État #946 (P2)
 
-Les tests de recherche/fiche utilisent des exemples HTML **synthétiques** alignés sur les champs rapportés le 10/10/2026. Ce ne sont pas des captures brutes ou des fixtures HTML certifiées du site : la confrontation au DOM réel reste à réaliser avec les captures de source expurgées. La normalisation commune \`YouthBook\` conserve notamment couverture et année, mais **ne conserve pas encore la totalité de \`metadata\`, \`description\` et \`illustrators\`** ; voir la dépendance Core/détail #942. Ne pas déclarer cette recette bout-en-bout close.
+Les tests de recherche/fiche utilisent des exemples HTML **synthétiques** alignés sur les champs rapportés le 10/10/2026. Ce ne sont pas des captures brutes ou des fixtures HTML certifiées du site : la confrontation au DOM réel reste à réaliser avec les captures de source expurgées. La normalisation commune `YouthBook` conserve notamment couverture et année, mais **ne conserve pas encore la totalité de `metadata`, `description` et `illustrators`** ; voir la dépendance Core/détail #942. Ne pas déclarer cette recette bout-en-bout close.
