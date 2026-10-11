@@ -417,9 +417,10 @@ def analyze_with_consent(
         return {"ok": False, "reason": "unavailable"}
     if type(response.text) is not str or not response.text.strip():
         return {"ok": False, "reason": "invalid_llm_response"}
-    from cifereca_diagnostics_page import format_diagnostic_detail
-    # Redact the complete response before any presentation cut.
-    safe_answer = format_diagnostic_detail(response.text, "raw")
+    from cifereca_diagnostics_page import redacted_ai_response
+    # Redact the entire response before any cut. The generic Diagnostics
+    # formatter has an 800-character field cap, too short for an IA analysis.
+    safe_answer = redacted_ai_response(response.text)
     matched, unknown, ambiguous = _referenced_evidence(safe_answer, refs)
     return {
         "ok": True, "generated": True,
@@ -430,7 +431,7 @@ def analyze_with_consent(
         "provider": destination["provider"],
         "provenance": "destination_disclosed_not_independently_verified",
         "remote": destination["remote"],
-        "text": safe_answer[:4000],
+        "text": safe_answer,
         "references_matched": matched,
         "references_unknown": unknown,
         "references_ambiguous": ambiguous,
@@ -495,7 +496,9 @@ def export_analysis_json(analysis: Mapping[str, Any]) -> str:
         "limitations": analysis.get("limitations"),
     }
     # Whitelisted fields only, redacted again as a last clipboard boundary.
-    safe = redacted_detail(report)
+    # Preserve the already-expurgated response; generic views keep their
+    # 800-character default field cap.
+    safe = redacted_detail(report, max_text=4000)
     serialized = json.dumps(safe, ensure_ascii=False, indent=2, allow_nan=False)
     try:
         size = len(serialized.encode("utf-8"))

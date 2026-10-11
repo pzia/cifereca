@@ -42,7 +42,7 @@ _MAX_DETAIL_CHILDREN = 50
 _MAX_DETAIL_TEXT = 800
 
 
-def _redacted_text(value: str) -> str:
+def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT) -> str:
     # A partial email, URL or token can straddle the preview cut. Redact
     # complete values BEFORE truncating anything shown or copied to the UI.
     # Fail closed on oversized untrusted text to bound regex scanning.
@@ -54,12 +54,54 @@ def _redacted_text(value: str) -> str:
     text = _DIAGNOSTIC_AUTH_HEADER.sub(r"\1=<expurgé>", text)
     text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
     text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
-    return text[:_MAX_DETAIL_TEXT] + (
-        "… [tronqué]" if len(text) > _MAX_DETAIL_TEXT else ""
-    )
+    if len(text) <= max_chars:
+        return text
+    cut = max_chars
+    # Do not slice through a redaction marker. An incomplete "<exp..." can
+    # be rewritten differently by the JSON export's second redaction pass,
+    # causing the report and exported evidence to disagree.
+    for marker in (
+        "<expurgé>", "<URL expurgée>", "<courriel expurgé>",
+        "<chemin expurgé>",
+    ):
+        start = text.find(
+            marker, max(0, max_chars - 32), max_chars + len(marker) + 32,
+        )
+        if start >= 0 and start <= max_chars < start + len(marker):
+            cut = start + len(marker)
+            break
+        if max_chars < start <= max_chars + 32:
+            # The cut would land inside the key or URL label immediately
+            # preceding a marker. Drop that incomplete label rather than
+            # publishing a fragment that the second redaction changes.
+            boundary = text.rfind(" ", max(0, max_chars - 64), start)
+            cut = boundary if boundary >= 0 else max(0, max_chars - 32)
+            break
+    # A newline prevents an Authorization header from absorbing the
+    # truncation notice during the clipboard export's second pass.
+    return text[:cut] + "\n… [tronqué]"
 
 
-def redacted_detail(value: Any) -> Any:
+def redacted_ai_response(value: str) -> str:
+    """Preserve a bounded multi-paragraph LLM answer without relaxing UI caps.
+
+    Redact the *entire* response before cutting it, so long tokens or signed
+    URLs cannot leak a surviving prefix. Invalid Unicode is never exported.
+    """
+    if type(value) is not str:
+        raise ValueError("invalid_llm_response")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError("invalid_llm_response_unicode") from exc
+    return _redacted_text(value, max_chars=3960)
+
+
+def redacted_detail(
+    value: Any, *, max_text: int = _MAX_DETAIL_TEXT,
+) -> Any:
+    if type(max_text) is not int or not 1 <= max_text <= 4000:
+        raise ValueError("invalid_diagnostics_text_budget")
     """Snapshot JSON-compatible values with depth, count and length limits.
 
     Unknown objects are never introspected or stringified; cycles are stopped.
@@ -77,7 +119,7 @@ def redacted_detail(value: Any) -> Any:
         if isinstance(item, float):
             return item if math.isfinite(item) else "<nombre non fini>"
         if isinstance(item, str):
-            return _redacted_text(item)
+            return _redacted_text(item, max_chars=max_text)
         if not isinstance(item, (Mapping, list, tuple)):
             return "<type non pris en charge>"
         if id(item) in stack:

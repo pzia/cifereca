@@ -1258,7 +1258,7 @@ def test_906_selected_book_searches_known_catalog_once_with_original_title():
     YouthView.selected(view, NS(key="a"))
     assert calls == []  # No implicit remote or local search on selection
     assert len(shown) == 1
-    assert len(shown[0].actions) == 1
+    assert len(shown[0].actions) == 2
     action = shown[0].actions[0]
     assert action.id == "search-library"
     assert action.title == "Rechercher en bibliothèque"
@@ -1267,6 +1267,13 @@ def test_906_selected_book_searches_known_catalog_once_with_original_title():
     assert calls == [(("C'est quoi, l'écologie ?",), {
         "field": "title", "online": False, "identity_id": "alice",
     })]
+    isbn_action = shown[0].actions[1]
+    assert isbn_action.id == "search-library-isbn"
+    assert "ISBN" in isbn_action.title
+    isbn_action.callback()
+    assert calls[1] == (("9780306406157",), {
+        "field": "isbn", "online": False, "identity_id": "alice",
+    })
     assert toasts == []
 
 
@@ -1382,6 +1389,40 @@ def test_923_real_view_selected_refreshes_action_availability():
     view.selected(None)
     assert calls == ["refresh", "refresh"]
 
+
+
+def test_959_invalid_or_absent_isbn_exposes_only_legacy_title_lookup():
+    seen = []
+    view = object.__new__(YouthView)
+    view.master = NS(show_detail=seen.append, empty_detail=lambda: None)
+    view.host = NS(search_books=lambda *a, **k: True)
+    view.identity_id = lambda: "alice"
+    for raw in ("3127020507597", "9780306406158", "", None):
+        view.rows = {"book": youth_book(identifiers={"isbn": raw})}
+        YouthView.selected(view, NS(key="book"))
+        assert [action.id for action in seen[-1].actions] == ["search-library"]
+
+
+def test_959_isbn_lookup_is_explicit_identity_scoped_and_offline():
+    calls, shown, toasts = [], [], []
+    view = object.__new__(YouthView)
+    view.rows = {
+        "book": youth_book(title="Deux éditions", identifiers={"isbn": "9780306406157"}),
+    }
+    view.master = NS(show_detail=shown.append, empty_detail=lambda: None)
+    view.host = NS(
+        search_books=lambda *a, **kw: calls.append((a, kw)) or False,
+        toast=toasts.append,
+    )
+    view.identity_id = lambda: "bob"
+    YouthView.selected(view, NS(key="book"))
+    assert calls == []
+    shown[0].actions[1].callback()
+    assert calls == [(("9780306406157",), {
+        "field": "isbn", "online": False, "identity_id": "bob",
+    })]
+    assert len(toasts) == 1
+    assert "profil" in toasts[0]
 
 
 @pytest.mark.parametrize("unsafe_url", [
