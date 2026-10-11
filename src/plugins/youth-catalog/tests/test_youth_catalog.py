@@ -1205,3 +1205,35 @@ def test_confirmed_merge_retains_two_distinct_publishers_without_double_counting
         row("Livre", isbn="9780306406157", publishers=["Milan", "Autre"]),
     ])
     assert index.entries("alice")[0].publishers == ("Milan", "Bayard", "Autre")
+
+
+def test_youth_publisher_collection_and_synopsis_survive_normalization_and_merge():
+    from youth_catalog import _merge
+    first = normalize_record({
+        "title": "Un loup à ma porte",
+        "record_id": "loup-a-ma-porte",
+        "source_item_id": "loup-a-ma-porte",
+        "notice_url": "https://www.ecoledesloisirs.fr/livre/loup-a-ma-porte",
+        "age_ranges": [{
+            "age_min": 13, "age_max": None, "age_kind": "publisher",
+            "source_label": "13 ans et +", "source_id": "ecole-loisirs",
+        }],
+        "collection": "Medium 14+",
+        "description": "Résumé public de l'éditeur",
+        "cover_url": "https://www.ecoledesloisirs.fr/images/cover.webp",
+    }, source_id="ecole-loisirs")
+    assert first.collection == "Medium 14+"
+    assert first.description == "Résumé public de l'éditeur"
+    assert first.identifiers["source_item_id"] == "loup-a-ma-porte"
+    assert "isbn" not in first.identifiers
+    assert first.age_ranges[0].age_min == 13
+    assert first.age_ranges[0].age_max is None
+    assert first.cover_url.endswith("/images/cover.webp")
+    second = normalize_record({
+        "title": "Un loup à ma porte",
+        "record_id": "loup-a-ma-porte",
+        "source_item_id": "loup-a-ma-porte",
+        "notice_url": "https://www.ecoledesloisirs.fr/livre/loup-a-ma-porte",
+    }, source_id="ecole-loisirs")
+    assert _merge(second, first).description == first.description
+    assert _merge(second, first).collection == first.collection
