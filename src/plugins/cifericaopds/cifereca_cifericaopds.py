@@ -13,6 +13,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from threading import RLock
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -124,6 +125,34 @@ def _read_local_json(path: Path, *, label: str, optional: bool = False):
         )
     except (UnicodeDecodeError, ValueError, RecursionError):
         raise ContractUnavailable(f"invalid local {label} JSON") from None
+
+
+def _persist_inventory(path: Path, snapshot) -> None:
+    """Publish a private inventory atomically; never follow a known tmp path."""
+    raw = json.dumps(asdict(snapshot), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractUnavailable("oversized local inventory JSON")
+    temp_name = None
+    try:
+        # Randomized, exclusive temporary file in the same directory ensures
+        # os.replace() is atomic and avoids following a pre-existing .tmp link.
+        with NamedTemporaryFile(
+            mode="wb", prefix=".cifericaopds-inventory-", suffix=".tmp",
+            dir=path.parent, delete=False,
+        ) as handle:
+            temp_name = handle.name
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except OSError:
+        raise ContractUnavailable("local inventory persistence unavailable") from None
+    finally:
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
 
 
 def _text(value, label, maximum=512):
@@ -429,15 +458,7 @@ class CifericaCollection:
                                            show_synthetic=self._show_synthetic)
             if accepted == self._snapshot:
                 return accepted
-            path = directory / "inventory.json"
-            temp = path.with_suffix(".tmp")
-            try:
-                temp.write_text(json.dumps(asdict(accepted), ensure_ascii=False,
-                                           sort_keys=True), encoding="utf-8")
-                os.replace(temp, path)
-            finally:
-                if temp.exists():
-                    temp.unlink()
+            _persist_inventory(directory / "inventory.json", accepted)
             previous = {row.source_id: row for row in self._snapshot.children} if self._snapshot else {}
             current = {row.source_id: row for row in accepted.children}
             for source_id in previous.keys() | current.keys():
