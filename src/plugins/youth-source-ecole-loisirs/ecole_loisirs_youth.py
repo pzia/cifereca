@@ -230,8 +230,6 @@ class _ProductCards(HTMLParser):
             return
         a = dict(attrs)
         classes = set(a.get("class", "").split())
-        if tag in {"script", "style", "noscript", "svg"}:
-            return
         if self.card is None:
             if tag == "div" and "product-item" in classes:
                 self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": "", "cover_url": "", "cover_seen": False}
@@ -269,6 +267,9 @@ class _ProductCards(HTMLParser):
             self._ignored -= 1
             return
         if self._ignored or self.card is None:
+            return
+        # HTMLParser also emits an end callback for self-closing void tags.
+        if tag in {"img", "br", "input", "hr", "meta", "link", "source"}:
             return
         if self.field and self.field[1] == len(self.stack):
             self.field = None
