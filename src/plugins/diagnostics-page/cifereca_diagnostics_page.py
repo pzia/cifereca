@@ -295,6 +295,30 @@ def _run_once_on_first_map(widget, callback):
         on_map(widget)
 
 
+def _install_report_escape(Gtk, Gdk, container, scroller, resize):
+    """Reduce only this report; preserve its buffer, selection and focus."""
+    controller = Gtk.EventControllerKey()
+    # Catch Escape before a focused TextView consumes it. The controller is
+    # scoped to the report, so other Diagnostics controls keep their bindings.
+    controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def key_pressed(_controller, keyval, _keycode, state):
+        modified = state & (
+            Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.META_MASK
+        )
+        if keyval != Gdk.KEY_Escape or modified:
+            return False
+        if resize.get_label() != "Réduire":
+            return False
+        scroller.set_size_request(-1, 320)
+        resize.set_label("Agrandir")
+        return True
+
+    controller.connect("key-pressed", key_pressed)
+    container.add_controller(controller)
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
@@ -564,6 +588,9 @@ class DiagnosticsPagePlugin:
 
         report_resize.connect("clicked", toggle_report_size)
         report_wrap.connect("toggled", toggle_report_wrap)
+        _install_report_escape(
+            Gtk, Gdk, report_container, report_scroll, report_resize,
+        )
 
         def clear_container(container) -> None:
             child = container.get_first_child()
