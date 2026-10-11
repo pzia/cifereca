@@ -66,7 +66,7 @@ def _log_lines(path: Path) -> tuple[list[str], str]:
             text = data.decode("utf-8", errors="replace").splitlines()
             if start and text:
                 text.pop(0)  # first line may be a partial record
-            return text[-_MAX_EVENTS_PER_FILE:], "partial" if start else "available"
+            return text[-_MAX_EVENTS_PER_FILE:], "partial" if start or len(text) > _MAX_EVENTS_PER_FILE else "available"
     except (OSError, ValueError):
         return [], "unavailable"
 
