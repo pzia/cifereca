@@ -28,14 +28,17 @@ Pour toute demande impliquant une vraie interface GTK, une capture, une
 démonstration ou une vidéo, ne pas commencer par recréer l'IHM. Lire dans cet
 ordre :
 
-1. `environnements/README.md` — arbre de décision de l'environnement ;
-2. `environnements/openai-chat-debian/README.md` si l'hôte est Debian 13 /
+1. **`environnements/E2E-UX.md` — guide canonique obligatoire : choix
+   de l'hôte, commandes de recette, niveaux de preuve, pièges rootless,
+   politique de coût et résolution des pannes ;**
+2. `environnements/README.md` — arbre de décision de l'environnement ;
+3. `environnements/openai-chat-debian/README.md` si l'hôte est Debian 13 /
    Python 3.13 ;
-3. `environnements/chatgpt-work/README.md` si l'hôte est Ubuntu 24.04 /
+4. `environnements/chatgpt-work/README.md` si l'hôte est Ubuntu 24.04 /
    Python 3.12 ;
-4. `simulation/README.md` et `simulation/datasetctl.py` pour les profils,
+5. `simulation/README.md` et `simulation/datasetctl.py` pour les profils,
    faux services, données et XDG isolés ;
-5. `e2e/README.md` pour les scénarios déjà automatisés.
+6. `e2e/README.md` pour les scénarios déjà automatisés.
 
 Le rôle UX doit préférer les outils versionnés existants à une recette ad hoc.
 
@@ -56,12 +59,23 @@ détecter l'hôte
   -> preuve + logs -> issue UX si défaut
 ```
 
-Sur Debian 13 réseau-isolé, si le bootstrap échoue seulement sur le DNS des
-miroirs Debian, utiliser GitHub comme relais plutôt que d'abandonner GTK :
-faire exécuter `bootstrap.py --download-only` dans `debian:trixie` sur un
-runner GitHub, publier le cache avec `actions/upload-artifact`, récupérer
-l'artefact via les outils GitHub de l'agent, puis exécuter le bootstrap local
-avec `--offline`. Le cache `.deb` reste un artefact et n'est pas versionné.
+Sur Debian 13 réseau-isolé, **conserver le bootstrap rootless local**
+et, si un cache Debian 13 signé est disponible, faire
+`bootstrap.py --offline --deb-cache <chemin>`. GitHub peut servir uniquement
+de relais ponctuel de paquets, **pas** de plateforme d'exécution de la
+recette E2E. **Depuis le 11 octobre 2026, le budget GitHub Actions est
+bloqué : aucun nouveau workflow/relai/run ni relance automatique sans
+nouvelle autorisation après levée du blocage.** Si le cache manque,
+signaler « bloqué », pas « GTK validé ».
+
+Avant un scénario `e2e/run.py` avec le runtime rootless, vérifier la
+**limitation de PYTHONPATH** documentée dans
+`environnements/E2E-UX.md` : le runner écrase aujourd'hui le chemin des
+bibliothèques GI du bootstrap dans les sous-processus. Pour le widget
+Diagnostics, employer la commande `headless` + `gtk-python` du guide ;
+pour un parcours applicatif, employer `datasetctl exec` et la vraie IHM.
+Ne jamais assimiler le self-test GTK, un probe widget, une capture visuelle
+et une recette fonctionnelle de la fenêtre complète.
 
 Pour une vidéo, filmer le display Xvfb réel avec FFmpeg `x11grab`. Une vidéo
 reconstruite avec PIL, une maquette de l'interface, un terminal filmé ou le

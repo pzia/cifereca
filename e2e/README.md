@@ -1,9 +1,16 @@
 # Tests E2E GTK
 
-Le runner canonique est :
+**Lire d'abord [environnements/E2E-UX.md](../environnements/E2E-UX.md)**
+avant d'exécuter ces scénarios : le guide explique l'environnement rootless,
+la simulation, les différents niveaux de preuve et la suspension du relais
+GitHub pour budget.
+
+
+Pour les hôtes avec GTK4/PyGObject installés et accessibles au Python du
+scénario, le runner est :
 
 ```bash
-python e2e/run.py
+python3 e2e/run.py
 ```
 
 Il lance la vraie application CIFERECA sous Xvfb, avec HOME/XDG isolés, puis attend
@@ -44,6 +51,18 @@ Core seul, maintien du processus et apparition effective d'une surface GTK rendu
 `Connecter les sources`, attend explicitement la stabilisation puis exige un
 changement visuel significatif avant d'accepter la capture. L'écran Xvfb est
 fixé à `1280x1024x24` afin que les coordonnées du scénario restent déterministes.
+
+## Attention : runtime Debian rootless
+
+`environnements/openai-chat-debian/gtk-python` utilise les dépendances
+isolées sous `runtime/root`. **`e2e/run.py` remplace actuellement
+`PYTHONPATH` par `src/` dans l'environnement du probe** : invoquer
+simplement ce runner avec le runtime rootless peut échouer avec
+`ModuleNotFoundError: gi` malgré un `check_import.py` réussi.
+Ne pas présenter ces deux opérations comme équivalentes. Le guide
+[`environnements/E2E-UX.md`](../environnements/E2E-UX.md#5-tests-e2e--distinguer-runner-système-et-runtime-rootless)
+décrit une commande `headless` + `gtk-python` pour le widget Diagnostics
+et ses limites. L'unification du runner reste à traiter séparément.
 
 ## Dépendances Linux
 
