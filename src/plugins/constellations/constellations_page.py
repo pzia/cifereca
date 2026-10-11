@@ -282,10 +282,11 @@ class View:
         back = getattr(self, 'back_button', None)
         forward = getattr(self, 'forward_button', None)
         origin = getattr(self, 'origin_button', None)
-        if back is not None:
-            back.set_sensitive(self.nav.position > 0)
-        if forward is not None:
-            forward.set_sensitive(0 <= self.nav.position < len(self.nav.history) - 1)
+        navigation = getattr(self, 'nav', None)
+        if back is not None and navigation is not None:
+            back.set_sensitive(navigation.position > 0)
+        if forward is not None and navigation is not None:
+            forward.set_sensitive(0 <= navigation.position < len(navigation.history) - 1)
         if origin is not None:
             origin.set_sensitive(getattr(self, 'origin_book', None) is not None)
         if not self.center:
