@@ -50,6 +50,27 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert marker in source
 
 
+def test_diagnostics_navigation_targets_real_mainwindow_and_pointer_events():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-navigation-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-navigation"
+    assert scenario["fixture"] == "startup"
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "Pages().pages()",
+        "page_plugin.pages()",
+        'click_widget(w.nav_rows["library"])',
+        'click_widget(w.nav_rows["diagnostics"])',
+        "Configuration / Technique",
+        "physical_return_to_library",
+        'report["status"] = "PASS"',
+    ):
+        assert marker in source
+
+
 def test_reference_scenario_runs_real_cifereca_without_plugins():
     runner = _module()
     scenario = runner.SCENARIOS["startup"]
