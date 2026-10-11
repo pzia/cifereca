@@ -1381,3 +1381,75 @@ def test_923_real_view_selected_refreshes_action_availability():
     view.selected(NS(key="a"))
     view.selected(None)
     assert calls == ["refresh", "refresh"]
+
+
+
+@pytest.mark.parametrize("unsafe_url", [
+    "http://127.0.0.1:8080/private",
+    "https://localhost/book",
+    "https://library.local/notice",
+    "https://192.168.1.7/book",
+    "http://169.254.1.1/link",
+    "http://[::1]/book",
+    "https://example.org:8443/book",
+    "https://example.org/book?access_token=SECRET",
+    "https://example.org/book?%61ccess_token=SECRET",
+    "https://example.org/book?api_key=SECRET",
+    "https://example.org/book?X-Amz-Signature=SECRET",
+    "https://example.org/book?session_id=SECRET",
+    "https://example.org/book?next=person%40example.org",
+    "https://example.org/book#private-session",
+    "https://example.org/book\nX-Private: value",
+    "https://example.org/book with spaces",
+    "https://example.org/book<unsafe>",
+    "https://user:secret@example.org/book",
+    "ftp://example.org/book",
+    "https://example.org/book?" + "&".join(f"key{i}=ok" for i in range(40)),
+    "https://example.org/" + "a" * 2049,
+])
+def test_959_public_notice_urls_reject_local_private_signed_or_malformed(unsafe_url):
+    assert public_url(unsafe_url) == ""
+
+
+@pytest.mark.parametrize("safe_url", [
+    "https://example.org/book/42",
+    "https://example.org/book/42?utm_source=publisher",
+    "https://covers.openlibrary.org/b/id/42-M.jpg?width=180",
+    "http://example.org/catalogue/42",
+])
+def test_959_safe_public_links_are_not_needlessly_removed(safe_url):
+    assert public_url(safe_url) == safe_url
+
+
+def test_959_detail_and_list_do_not_expose_private_links_or_cover_urls():
+    unsafe = "https://example.org/notice?access_token=private-key"
+    book = youth_book(
+        friendly_url=unsafe,
+        notice_url="https://catalogue.example.org/notice/42",
+        cover_url="http://127.0.0.1:8000/signed-cover",
+    )
+    detail = detail_presentation(book)
+    assert len(detail.links) == 1
+    assert detail.links[0].url == "https://catalogue.example.org/notice/42"
+    assert detail.thumbnail_url is None
+    assert list_entry(book).thumbnail_url is None
+    assert "private-key" not in str(detail.links)
+    blocked = youth_book(
+        friendly_url=unsafe, notice_url="https://example.org/notice?api_key=hidden",
+        cover_url="https://example.org/cover?X-Amz-Signature=hidden",
+    )
+    assert detail_presentation(blocked).links == ()
+    assert detail_presentation(blocked).thumbnail_url is None
+    assert list_entry(blocked).thumbnail_url is None
+
+
+def test_959_links_are_only_navigation_not_edition_holdings_evidence():
+    book = youth_book(
+        notice_url="https://example.org/notice/42",
+        friendly_url="https://example.org/notice/42",
+    )
+    detail = detail_presentation(book)
+    assert [(link.title, link.url) for link in detail.links] == [
+        ("Voir la notice publique", "https://example.org/notice/42"),
+    ]
+    assert all("disponib" not in link.title.casefold() for link in detail.links)
