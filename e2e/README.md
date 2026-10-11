@@ -264,3 +264,13 @@ closure and refusal of new runner work. Async Diagnostics is simulated;
 this proves shell responsiveness, not live provider/LLM behavior.
 Run each through `e2e/run.py --scenario <name>` on an existing GTK runtime.
 No new workflow or network account is required.
+
+### Shared book-detail comparison at 1600 (#1124)
+
+The existing `e2e/book_detail_probe.py` accepts `--width 1366` and `--width 1600`.
+Use the matching Xvfb screen (1366x900 or 1600x1000) and the local
+`search-filters` fixture through the existing GTK environment. The same
+MainWindow probe checks multivalued Search/Library metadata, independent
+subject clipboard copy and the explicit typed ISBN action without remote I/O.
+It does not certify live account behavior or resolve the pre-existing duplicate
+author copy tooltips. Preserve source hashes with before/after reports.
