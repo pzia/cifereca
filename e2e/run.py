@@ -72,6 +72,13 @@ SCENARIOS = {
         "runner": "gtk-diagnostics",
         "width": 1366,
     },
+    "diagnostics-large-1600": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 : vrai GTK 1600x1000, rapport support multipage, scroll indépendant, Tab/Shift+Tab/Space XTEST.",
+        "runner": "gtk-diagnostics",
+        "width": 1600,
+    },
     "diagnostics-navigation-1366": {
         "plugin": "ui.page.diagnostics",
         "fixture": "startup",
@@ -222,7 +229,7 @@ def main() -> int:
             elif scenario.get("runner") == "gtk-diagnostics":
                 width = scenario["width"]
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
                     args.python, str(ROOT / "e2e/diagnostics_page_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
