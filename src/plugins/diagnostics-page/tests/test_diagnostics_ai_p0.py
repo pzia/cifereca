@@ -153,3 +153,94 @@ def test_gui_has_preview_and_separate_per_analysis_consent_click():
     assert "self.tasks.submit(" in src
     assert "GLib.idle_add(finish_ai" in src
     assert "model produces" not in src
+
+ 
+
+def test_one_use_approval_replay_and_copy_are_refused_even_after_success():
+    model = FakeLLM()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    copy = dict(preview)  # A shallow copy must not reset approval state.
+    first = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert first["ok"]
+    with pytest.raises(ValueError, match="consent_already_used"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    with pytest.raises(ValueError, match="consent_already_used"):
+        analyze_with_consent(model, copy, approval_id=copy["approval_id"])
+    assert model.calls == 1
+
+
+def test_expired_approval_and_preview_tampering_never_contact_model():
+    model = FakeLLM()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    preview["prompt"] += " injected"
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
+    fresh = prepare_analysis(model, FakeBroker([event()]))
+    fresh["_approval_state"].created -= 301
+    with pytest.raises(ValueError, match="consent_expired"):
+        analyze_with_consent(model, fresh, approval_id=fresh["approval_id"])
+    assert model.calls == 0
+
+
+def test_concurrent_approval_is_consumed_only_once_before_model_execution():
+    from concurrent.futures import ThreadPoolExecutor
+    model = FakeLLM()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    def attempt(_index):
+        try:
+            return analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+        except ValueError as exc:
+            return str(exc)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        answers = list(executor.map(attempt, range(8)))
+    assert sum(isinstance(x, dict) and x.get("ok") for x in answers) == 1
+    assert sum(x == "consent_already_used" for x in answers) == 7
+    assert model.calls == 1
+
+
+def test_ids_matched_not_claims_verified_and_unknown_refs_flagged():
+    class CitingModel(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible", model="qa-llm",
+                text=(
+                    "Hypothèse ref-1 : retour vérifié. "
+                    "Références extérieures ref-999 et 0123456789abcdef."
+                ),
+            )
+    model = CitingModel()
+    preview = prepare_analysis(model, FakeBroker([event(ref="ref-1")]))
+    response = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert response["reference_status"] == "matched_ids_not_verified_facts"
+    assert response["references_matched"] == [
+        {"event_id": "ref-1", "timestamp": "2026-10-11T05:20:00+00:00", "source": "app_log"}
+    ]
+    assert response["references_unknown"] == ["0123456789abcdef", "ref-999"]
+    assert response["source"] == "llm_inference_not_proven"
+
+
+def test_long_llm_output_is_redacted_before_truncation():
+    class LongModel(FakeLLM):
+        def generate(self, request, *, control=None):
+            self.calls += 1
+            return LLMResult(
+                True, generated=True, provider="openai-compatible", model="qa-llm",
+                text=("a" * 790) + " token=PRIVATE_ACCESS_12345678 " + "b" * 250,
+            )
+    model = LongModel()
+    preview = prepare_analysis(model, FakeBroker([event()]))
+    response = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert "PRIVATE_ACCESS" not in response["text"]
+    assert len(response["text"]) <= 4000
+    assert model.calls == 1
+
+
+def test_ui_displays_only_matched_references_with_explicit_disclaimer():
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "cifereca_diagnostics_page.py").read_text()
+    assert "result.get(\"references_matched\")" in src
+    assert "result.get(\"references_unknown\")" in src
+    assert "ne prouve PAS" in src
+    assert "Aucun événement de l’extrait n’a été cité" in src

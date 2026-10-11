@@ -31,3 +31,27 @@ Pas de preuve de cause par simple code ADEPT/PNB. La recette UX GTK reste
 
 Aucune nouvelle GitHub Action ; les tests utilisent un modèle simulé
 sans connexion réseau.
+
+## Durcissement P0 — consentement à usage unique et références
+
+Chaque prévisualisation émet désormais un **jeton aléatoire distinct**, conservé
+uniquement en mémoire dans un état de consentement verrouillé. Le jeton
+expire après **5 minutes** et devient inutilisable immédiatement avant
+l'appel au modèle : double clic, deux threads, copie de la prévisualisation,
+timeout ou erreur ne peuvent pas réutiliser la même autorisation. Toute
+altération du texte prévisualisé, de la destination ou de la liste des
+références invalide cette autorisation. Refaire une analyse implique une
+**nouvelle prévisualisation et une nouvelle confirmation**.
+
+Les références citées par le texte généré sont désormais comparées aux
+identifiants exacts des événements effectivement transmis. Le rapport
+sépare « référence retrouvée dans l’extrait » et « référence inconnue ».
+**Même une référence retrouvée ne valide aucun raisonnement ni causalité**
+et les hypothèses du modèle restent explicitement non vérifiées. Le texte
+de sortie du LLM est expurgé **avant toute troncation** afin de ne pas
+laisser passer des préfixes d'URL ou de jetons coupés.
+
+Limitations conservées : la liste des événements est un extrait borné, pas
+une archive exhaustive ; le service LLM Core existant peut terminer un
+appel distant déjà émis malgré l'annulation de l'interface. Aucun
+nouveau service LLM, collecte réseau, journal de prompts ni workflow CI.

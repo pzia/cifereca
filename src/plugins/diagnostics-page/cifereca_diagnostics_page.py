@@ -912,12 +912,30 @@ class DiagnosticsPagePlugin:
             if error or not isinstance(result, Mapping) or not result.get("ok"):
                 ai_status.set_text("Analyse IA indisponible ou annulée ; aucun diagnostic confirmé")
                 return False
+            cited = result.get("references_matched") or ()
+            unknown_refs = result.get("references_unknown") or ()
+            citations = (
+                "\n".join(
+                    f"- {row['event_id']} · {row['timestamp']} · {row['source']}"
+                    for row in cited
+                )
+                if cited else "Aucun événement de l’extrait n’a été cité par identifiant."
+            )
+            unsupported = (
+                "\nRéférences non retrouvées : " + ", ".join(unknown_refs)
+                if unknown_refs else ""
+            )
             ai_result = (
                 "# Analyse générée par IA — hypothèses NON vérifiées\n"
                 + f"Modèle : {result['provider']} / {result['model']}\n"
                 + f"Provenance : {result['evidence_count']} événements Core expurgés\n"
                 + f"Limites : {result['limitations']}\n\n"
+                + "## Analyse du modèle (inférée)\n"
                 + result["text"]
+                + "\n\n## Références d’événements présentes dans l’extrait\n"
+                + citations + unsupported
+                + "\nLa correspondance d’un identifiant ne prouve PAS "
+                  "la véracité de l’affirmation associée.\n"
             )
             ai_report.get_buffer().set_text(ai_result)
             ai_export.set_sensitive(True)
