@@ -137,7 +137,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
     if not getattr(diagnostics, "enabled", True):
         return [], {"source": "core_events", "status": "disabled", "reason": "diagnostics_disabled"}
     try:
-        rows = diagnostics.snapshot()[-500:]
+        snapshot = diagnostics.snapshot()
+        if not isinstance(snapshot, (list, tuple)):
+            raise ValueError("snapshot must be a sequence")
+        rows = snapshot[-500:]
     except (AttributeError, ValueError, TypeError):
         return [], {"source": "core_events", "status": "unavailable", "reason": "snapshot_unavailable"}
     events: list[dict[str, Any]] = []
