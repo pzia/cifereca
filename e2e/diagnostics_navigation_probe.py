@@ -55,6 +55,9 @@ class IsolatedContributions:
     def statuses(self):
         return []
 
+    def diagnostic(self):
+        return []
+
     def package_inventory(self, *, include_expected=False):
         return []
 
@@ -222,14 +225,17 @@ def main() -> int:
             super().__init__(application_id="org.cifereca.DiagnosticsNavigationUXE2E")
 
         def do_activate(self):
-            w = MainWindow(self, core.config, core.library, core.diagnostics)
-            window[0] = w
-            w.set_default_size(args.width - 40, 780)
-            w.plugin_manager = IsolatedContributions(page_plugin)
-            w._rebuild_plugin_pages()
-            w.present()
-            device[0] = X11Input()
-            later(500, initial)
+            try:
+                w = MainWindow(self, core.config, core.library, core.diagnostics)
+                window[0] = w
+                w.set_default_size(args.width - 40, 780)
+                w.plugin_manager = IsolatedContributions(page_plugin)
+                w._rebuild_plugin_pages()
+                w.present()
+                device[0] = X11Input()
+                later(500, initial)
+            except Exception as exc:
+                fail(f"Activation MainWindow: {type(exc).__name__}: {exc}")
 
         def do_shutdown(self):
             if device[0] is not None:
