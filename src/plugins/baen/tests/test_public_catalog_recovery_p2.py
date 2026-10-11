@@ -18,7 +18,7 @@ CATALOG = """
 <div class="products wrapper grid products-grid">
   <ol class="products list items product-items">
     <li class="item product product-item">
-      <div class="product-item-info"><strong class="product name product-item-name">
+      <div class="product-item-info"><img src="/media/1632.jpg" alt=""><strong class="product name product-item-name">
         <a class="product-item-link" href="https://www.baen.com/1632.html">1632</a>
       </strong><a class="action tocart" href="/checkout/cart/add">Add to cart</a></div>
     </li>
@@ -30,7 +30,8 @@ CATALOG = """
       <a class="product-item-link" href="/1632.html">1632 duplicate</a></strong></li>
   </ol>
 </div>
-<footer><a class="product-item-link" href="javascript:alert(1)">Attack</a></footer>
+<footer><a class="product-item-link" href="/outside-the-product-card.html">Navigation</a>
+<a class="product-item-link" href="javascript:alert(1)">Attack</a></footer>
 </body></html>
 """
 
