@@ -274,7 +274,9 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
             metadata_fields.append(DetailField(
                 f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
             ))
-    link = public_url(getattr(book, "friendly_url", "") or getattr(book, "notice_url", ""))
+    # An unsafe friendly link must not hide an independently safe notice URL.
+    link = (public_url(getattr(book, "friendly_url", ""))
+            or public_url(getattr(book, "notice_url", "")))
     links = (DocumentLink("notice", "Voir la notice publique", link),) if link else ()
     sections = [DetailSection("ages", "Âges attestés", age_fields)]
     if metadata_fields:
