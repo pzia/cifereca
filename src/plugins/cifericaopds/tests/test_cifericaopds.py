@@ -150,7 +150,7 @@ def test_https_or_loopback():
 @pytest.fixture
 def mocked_candidate_server():
     calls = []
-    state = {"bad": False, "redirect": False}
+    state = {"bad": False, "redirect": False, "sources": inventory("alpha", "beta")}
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -165,7 +165,7 @@ def mocked_candidate_server():
                 self.send_response(503)
                 self.end_headers()
                 return
-            data = (inventory("alpha", "beta") if self.path == "/api/v1/sources"
+            data = (state["sources"] if self.path == "/api/v1/sources"
                     else {"items": [{"id": "book", "title": "Livre HTTP"}]})
             payload = json.dumps(data).encode()
             self.send_response(200)
@@ -286,3 +286,108 @@ def test_unverified_pagination_never_duplicates_first_page(tmp_path):
     with pytest.raises(ContractUnavailable):
         session.search("Premier", page="1")
     session.close()
+
+
+def test_existing_sessions_fail_closed_on_disable_remove_and_revision(tmp_path):
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(inventory("alpha", "beta", generation=1)))
+    (tmp_path / "fixture-results.json").write_text(json.dumps({
+        "alpha": {"items": [{"id": "1", "title": "Livre Alpha"}]},
+        "beta": {"items": [{"id": "2", "title": "Livre Beta"}]},
+    }))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+
+    def session(source_id):
+        result = coll.create_provider(source_id).create_session(
+            credential_id="__public__", label=source_id, credentials={},
+            options={}, config=None, storage=None, diagnostics=None,
+        )
+        result.connect()
+        return result
+
+    alpha = session("alpha")
+    beta = session("beta")
+    assert len(alpha.search("Livre")) == 1
+    assert len(beta.search("Livre")) == 1
+
+    # Disabling alpha does not revoke unrelated beta or erase saved inventory.
+    disabled = inventory("alpha", "beta", generation=2)
+    disabled["sources"][0]["status"] = "disabled"
+    # Do not revise beta: old beta sessions are still allowed to search.
+    disabled["sources"][1]["revision"] = "v1"
+    disabled["sources"][1]["catalog_generation"] = 1
+    fixture.write_text(json.dumps(disabled))
+    coll.refresh()
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        alpha.search("Livre")
+    with pytest.raises(ContractUnavailable):
+        coll.create_provider("alpha")
+    assert len(beta.search("Livre")) == 1
+
+    # Reappearing alpha requires a NEW provider/session.
+    fixture.write_text(json.dumps(inventory("alpha", "beta", generation=3)))
+    coll.refresh()
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        alpha.search("Livre")
+    current = session("alpha")
+    assert len(current.search("Livre")) == 1
+
+    # A new catalogue generation invalidates only prior sessions.
+    fixture.write_text(json.dumps(inventory("alpha", "beta", generation=4)))
+    coll.refresh()
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        current.search("Livre")
+    assert len(session("alpha").search("Livre")) == 1
+
+    retired = inventory("alpha", "beta", generation=5)
+    retired["sources"][0]["status"] = "removed"
+    fixture.write_text(json.dumps(retired))
+    coll.refresh()
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        current.search("Livre")
+    with pytest.raises(ContractUnavailable):
+        coll.create_provider("alpha")
+    assert (tmp_path / "inventory.json").exists()
+
+
+def test_metadata_only_virtual_source_cannot_search(tmp_path):
+    rows = inventory("alpha", generation=1)
+    rows["sources"][0]["capabilities"] = ["metadata.enrich"]
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(rows))
+    (tmp_path / "fixture-results.json").write_text(json.dumps({
+        "alpha": {"items": [{"id": "1", "title": "Livre Alpha"}]},
+    }))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    provider = coll.create_provider("alpha")
+    assert not provider.descriptor.capabilities.search
+    session = provider.create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        session.search("Livre")
+
+
+def test_removed_virtual_source_blocks_existing_session_http(tmp_path, mocked_candidate_server):
+    url, calls, state = mocked_candidate_server
+    coll = CifericaCollection().activate(context(
+        tmp_path, mode="candidate_v02", base_url=url,
+    ))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    session.connect()
+    assert len(session.search("Livre")) == 1
+    state["sources"] = inventory("alpha", "beta", generation=2)
+    state["sources"]["sources"][0]["status"] = "removed"
+    coll.refresh()
+    count = len(calls)
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        session.search("Livre")
+    assert len(calls) == count  # No network request from stale session.
+    with pytest.raises(ContractUnavailable):
+        coll.create_provider("alpha")
