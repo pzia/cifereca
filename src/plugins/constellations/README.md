@@ -111,3 +111,53 @@ mais un contexte Core différent ne réutilise pas d'anciennes données.
 Classement, preuves d'arête, promenade, sécurité de téléchargement et
 politique de requêtes externes inchangés. Tests hors réseau :
 `tests/test_cache_lifecycle_p2.py`.
+
+## Construction indexée du graphe — P2 #700 (0.3.4)
+
+La construction du graphe crée un index inversé sur les facettes **attestées**
+(auteurs, séries, thèmes, période, langue, longueur, format, humeur et éditeur).
+Une paire de notices sans facette commune n'est plus évaluée par
+`relation()` ; les paires candidates sont évaluées **exactement par la même
+fonction** qu'auparavant. Scores, ordre des raisons, directions, provenance,
+classements et promenades sont inchangés. Il n'y a aucun vecteur, LLM,
+lien inféré, accès réseau, nouvelle acquisition ni envoi de métadonnées.
+
+Ce travail élimine la comparaison quadratique pour les catalogues
+**clairsemés** (600 livres sans facette commune : zéro appel à `relation()`
+contre 179 700 avant), mais n'élimine pas la nature quadratique des graphes
+**denses** (ex. tous les livres de langue française) : chaque arête
+réellement attestée est encore conservée en mémoire. Un budget d'arêtes
+et sa validation UX relèvent d'une décision séparée.
+
+Tests offline `tests/test_facet_graph_index_p2.py` :
+parité exacte avec le double parcours naïf, cas clairsemé et dense,
+directions de voisinage et protection contre les faux liens entre
+types de facettes.
+
+## Refonte du point d'entrée : livre d'abord — #1042 (0.3.5)
+
+Le lecteur ouvre « Explorer les livres proches » dans la fiche d'un livre
+de Recherche ou de Bibliothèque. Le livre effectivement choisi, son identité
+lorsqu'elle est exposée et ses références documentaires restent le point
+de départ. La page présente le livre central et un maximum de **12 voisins**
+issus d'arêtes bibliographiques attestées : raisons, disponibilité et source
+restent visibles, sans inventer de liens. Un clic sur un voisin recentre
+la navigation ; « Livre précédent » / « Livre suivant » parcourent l'historique.
+
+La navigation directe vers la page **ne choisit plus le premier livre** :
+elle explique qu'il faut ouvrir une fiche puis l'action contextuelle.
+« Retour à la fiche d'origine » emploie la navigation publique
+`open_book_detail` avec la référence et l'identité du livre initial.
+Si l'hôte ne peut restaurer la fiche, un message non bloquant l'indique.
+
+Les contrôles de modes, proximité, recherche catalogue libre,
+sélection arbitraire et **tout parcours départ/arrivée** ont été retirés
+de l'interface P2 ; la promenade est une idée P3 #703 et non une action
+produit actuelle. Le moteur interne peut subsister mais n'est plus exposé.
+Aucun accès réseau, aucune acquisition ou modification de bibliothèque
+n'est déclenché en visitant les voisins.
+
+Cette PR apporte l'implémentation Plugin d'un premier parcours minimal ;
+la spécification et la recette UX indépendante depuis Recherche ET
+Bibliothèque, focus/clavier et vérification visuelle 1366/1600 restent
+au rôle UX (#1042/#706). Tests plugins : `tests/test_book_first_p2.py`.

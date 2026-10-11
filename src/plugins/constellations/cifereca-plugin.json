@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.constellations",
-    "version": "0.3.3",
+    "version": "0.3.5",
     "name": "Constellations",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "navigation.constellations",
       "type": "navigation.constellation",
-      "version": "0.3.3",
+      "version": "0.3.5",
       "entrypoint": "constellations:PLUGIN",
       "display_name": "Constellations",
       "description": "Navigation relationnelle explicable entre livres et promenades culturelles.",
-      "help_text": "Moteur de navigation relationnelle explicable. Déduplication forte par ISBN canonique ou provider+identifiant ; un titre+auteur faible ne rattache jamais une notice opaque à une édition identifiée. ISBN10/ISBN13 sont canonicalisés. Le cache n'est réutilisé qu'avec identité et freshness_token explicites. Aucun téléchargement, emprunt ou acquisition implicite. Cache de graphes par identité et jeton de fraîcheur borné à 8 profils en LRU ; purge automatique à la désactivation et lors d'un changement de contexte, sans collecte distante ni rétention cross-session.",
+      "help_text": "Moteur de navigation relationnelle explicable. Déduplication forte par ISBN canonique ou provider+identifiant ; un titre+auteur faible ne rattache jamais une notice opaque à une édition identifiée. ISBN10/ISBN13 sont canonicalisés. Le cache n'est réutilisé qu'avec identité et freshness_token explicites. Aucun téléchargement, emprunt ou acquisition implicite. Cache de graphes par identité et jeton de fraîcheur borné à 8 profils en LRU ; purge automatique à la désactivation et lors d'un changement de contexte, sans collecte distante ni rétention cross-session. Un index inversé de facettes attestées écarte les paires sans raison commune avant évaluation, sans changer les scores, preuves ni arêtes. Le point d'entrée P2 #1042 commence par une fiche livre sélectionnée ; la promenade départ/arrivée n'est pas exposée dans l'UI (P3 #703).",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
@@ -33,11 +33,11 @@
     {
       "id": "ui.page.constellations",
       "type": "ui.page",
-      "version": "0.3.3",
+      "version": "0.3.5",
       "entrypoint": "constellations_page:PLUGIN",
       "display_name": "Constellations — navigation",
-      "description": "Explorer les voisins d’un livre et construire une promenade.",
-      "help_text": "Commandes regroupées Explorer/Chercher/Parcours, curseur Proche–Surprenant, cartes de voisinage détaillant raisons attestées/inférées et statut d’accès. Lecture locale par profil ; recherche en ligne uniquement sur clic explicite.",
+      "description": "Depuis un livre de Recherche/Bibliothèque : explorer ses voisins expliqués de proche en proche.",
+      "help_text": "Cliquez « Explorer les livres proches » dans la fiche d'un livre. Le centre affiche des voisins attestés, chaque voisin devient le nouveau centre, avec retour dans l'historique et vers la fiche d'origine. Sans livre initial, aucune sélection arbitraire ; aucune collecte automatique. Le parcours départ/arrivée et ses variantes sont reportés en P3 (#703).",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",

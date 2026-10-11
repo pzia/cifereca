@@ -37,7 +37,6 @@ def _calls(method):
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="#1011 D05: report needs independent scroll")
 def test_1011_report_view_is_embedded_in_independent_scroller():
     build = _build_statements()
     assignments = [

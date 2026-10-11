@@ -1,6 +1,6 @@
 """UX P0 #1012: guard against partial secrets in diagnostic mapping keys.
 
-Strict xfail records the outstanding vulnerability without claiming a fix.
+Positive tests: all displayed/JSON mapping keys must be redacted before truncation.
 """
 from __future__ import annotations
 
@@ -30,12 +30,7 @@ def formatter():
 
 @pytest.mark.parametrize("mode", ("readable", "json", "raw"))
 @pytest.mark.parametrize("sensitive", (
-    pytest.param(
-        "alice@example.com",
-        marks=pytest.mark.xfail(
-            strict=True, reason="#1012: email fragment crosses mapping-key preview cut"
-        ),
-    ),
+    "alice@example.com",
     "https://example.org/path?token=confidential",
     "/home/alice/private/book.epub",
 ))
@@ -47,8 +42,16 @@ def test_key_crossing_160_character_boundary_never_discloses_fragment(mode, sens
     assert "/home/" not in shown
 
 
-@pytest.mark.xfail(strict=True, reason="#1012: JSON key must be redacted before truncation")
 def test_json_key_is_expurgated_before_preview_limit():
     key = "x" * 151 + "camille@example.com"
     obj = json.loads(formatter()({key: 0}, mode="json"))
     assert not any("camille@" in candidate for candidate in obj)
+
+
+@pytest.mark.parametrize("mode", ("readable", "json", "raw"))
+def test_oversized_mapping_key_is_never_processed_as_raw_diagnostic_content(mode):
+    key = "x" * 24_001 + "alice@example.com"
+    shown = formatter()({key: "safe"}, mode=mode)
+    assert "alice@" not in shown
+    assert "x" * 80 not in shown
+    assert "contenu masqué" in shown
