@@ -111,3 +111,23 @@ autre contenu privé ne doit fuiter dans le rapport d'erreur.
 
 Tests hors réseau : `tests/test_cache_resilience_p2.py`. Le plugin ne
 collecte jamais automatiquement à l'ouverture d'une fiche livre.
+
+## Pages de critiques bornées — P2 #709 (0.3.5)
+
+La limite donnée à `collect_source(limit=N)` (1 à 500) est aussi **vérifiée
+à la réception** : le plugin ne parcourt qu'au plus N+1 éléments d'un
+itérateur tiers et refuse sans ingestion une page trop grande
+(`collect: limit_exceeded`). Un objet, une chaîne, `null`, un curseur
+non conforme ou un fournisseur non itérable ne devient jamais une page
+vide donnant prétexte à supprimer un cache valide.
+
+Une page vide réellement attestée reste capable de remplacer une
+source, conformément au contrat précédent. Les expirations déclarées
+par une source sont plafonnées à sept jours pour éviter dates invalides
+ou fraîcheurs pratiquement infinies. Les exceptions brutes des
+fournisseurs ne sont pas divulguées dans les rapports.
+
+Pas de collecte au simple affichage d'une fiche ; la pagination
+multi-source reste explicitement plafonnée à cinq pages dans le worker.
+Tests déterministes sans réseau dans
+`tests/test_collection_page_bounds_p2.py`.
