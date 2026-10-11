@@ -82,15 +82,19 @@ def redacted_detail(value: Any) -> Any:
                 for key, child in item.items():
                     if type(key) not in (str, int, float, bool):
                         continue
-                    name = str(key)[:160]
+                    # Preserve the whole key until AFTER redaction. Cutting
+                    # before masking can expose partial emails or signed URLs.
+                    name = str(key)
                     pairs.append((name, child))
                 pairs.sort(key=lambda pair: pair[0].casefold())
                 result = {}
                 for name, child in pairs[:_MAX_DETAIL_CHILDREN]:
-                    safe_name = _redacted_text(name)
+                    safe_name = _redacted_text(name)[:160]
                     result[safe_name] = (
-                        "<expurgé>" if _DIAGNOSTIC_SECRET_KEY.search(name)
-                        else walk(child, depth + 1)
+                        "<expurgé>" if (
+                            len(name) > _MAX_DETAIL_BYTES
+                            or _DIAGNOSTIC_SECRET_KEY.search(name)
+                        ) else walk(child, depth + 1)
                     )
                 if len(pairs) > _MAX_DETAIL_CHILDREN:
                     result["[suite]"] = "<éléments supplémentaires masqués>"
