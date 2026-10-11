@@ -11,7 +11,7 @@ from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_conse
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, source_summaries, explorer_header,
-    export_selected_events,
+    next_page_offset, export_selected_events,
 )
 
 # The broker provides already-redacted data. This is a second, stricter
@@ -692,8 +692,7 @@ class DiagnosticsPagePlugin:
                 page_offset >= PAGE_SIZE
             )
             journals_next.set_sensitive(
-                current_page.get("next_offset") is not None
-                and int(current_page["next_offset"]) <= 10000
+                next_page_offset(current_page, current_offset=page_offset) is not None
             )
             journals_copy.set_sensitive(bool(selected_event_ids))
 
@@ -771,10 +770,10 @@ class DiagnosticsPagePlugin:
 
         def next_events(_button) -> None:
             nonlocal page_offset
-            next_offset = current_page.get("next_offset")
-            if next_offset is None or int(next_offset) > 10000:
+            next_offset = next_page_offset(current_page, current_offset=page_offset)
+            if next_offset is None:
                 return
-            page_offset = int(next_offset)
+            page_offset = next_offset
             load_events()
 
         def copy_selected(_button) -> None:
@@ -791,7 +790,12 @@ class DiagnosticsPagePlugin:
             if display is None:
                 host.toast("Presse-papiers indisponible")
                 return
-            display.get_clipboard().set(export_selected_events(rows, selected))
+            try:
+                exported = export_selected_events(rows, selected)
+            except ValueError:
+                host.toast("Export trop volumineux : réduire la sélection")
+                return
+            display.get_clipboard().set(exported)
             host.toast("Sélection expurgée copiée")
 
         journals_refresh.connect("clicked", reset_events)
