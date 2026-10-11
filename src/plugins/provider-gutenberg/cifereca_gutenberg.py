@@ -178,7 +178,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.17"
+        user_agent = "cifereca-gutenberg/1.2.18"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
