@@ -258,10 +258,16 @@ class CifericaSession(ProviderSession):
                 raise ContractUnavailable("invalid local results fixture")
             values = candidate_results(data.get(sid, {"items": []}), self.provider_id)
             q = str(query).strip().casefold()
-            return [x for x in values if q in x.title.casefold() or q in (x.author or "").casefold()]
-        # Explicit user search only. This GET schema is UNVERIFIED for real v0.2.
-        data = self._client.get("/api/v1/search", params={"source_id": sid, "q": str(query)})
-        return candidate_results(data, self.provider_id)
+            rows = [x for x in values if q in x.title.casefold() or q in (x.author or "").casefold()]
+        else:
+            # Explicit user search only; candidate HTTP is NOT a confirmed v0.2 API.
+            data = self._client.get("/api/v1/search", params={"source_id": sid, "q": str(query)})
+            rows = candidate_results(data, self.provider_id)
+        # A refresh can happen during HTTP I/O or fixture parsing. Never
+        # publish late results from a retired/revised source.
+        if not self._source_searchable():
+            raise ContractUnavailable("source changed during search; results discarded")
+        return rows
 
 
 class CifericaProvider(ProviderPlugin):
@@ -297,6 +303,9 @@ class CifericaCollection:
         self._client = None
         self._mode = "fixture"
         self._show_synthetic = False
+        # Local session epochs prevent silently reviving old sessions if
+        # a source is removed and later reintroduced with the same revision.
+        self._session_epochs = {}
 
     def activate(self, context):
         cfg = dict(context.config)
@@ -357,6 +366,11 @@ class CifericaCollection:
             finally:
                 if temp.exists():
                     temp.unlink()
+            previous = {row.source_id: row for row in self._snapshot.children} if self._snapshot else {}
+            current = {row.source_id: row for row in accepted.children}
+            for source_id in previous.keys() | current.keys():
+                if previous.get(source_id) != current.get(source_id):
+                    self._session_epochs[source_id] = self._session_epochs.get(source_id, 0) + 1
             self._snapshot = accepted
             subscribers = tuple(self._callbacks)
         for callback in subscribers:
@@ -366,11 +380,11 @@ class CifericaCollection:
                 pass
         return accepted
 
-    def _searchable(self, source_id, source_revision, catalog_generation):
-        """Consult only the most recent validated, in-memory inventory."""
+    def _searchable(self, source_id, source_revision, catalog_generation, epoch):
+        """Consult only the current inventory and source incarnation, no I/O."""
         with self._lock:
             snapshot = self._snapshot
-            if snapshot is None:
+            if snapshot is None or self._session_epochs.get(source_id, 0) != epoch:
                 return False
             return any(
                 child.source_id == source_id
@@ -388,6 +402,7 @@ class CifericaCollection:
                 raise ContractUnavailable("no local source inventory")
             child = next((row for row in snapshot.children
                           if row.source_id == source_id and row.status == "ready"), None)
+            epoch = self._session_epochs.get(source_id, 0)
         if child is None:
             raise ContractUnavailable("source absent or disabled")
         # A new provider binds to one accepted source revision. Older
@@ -396,7 +411,7 @@ class CifericaCollection:
             source_id, child.capabilities, client=self._client, mode=self._mode,
             directory=self._directory,
             source_searchable=lambda: self._searchable(
-                source_id, child.source_revision, child.catalog_generation),
+                source_id, child.source_revision, child.catalog_generation, epoch),
         )
 
     def subscribe(self, callback):
