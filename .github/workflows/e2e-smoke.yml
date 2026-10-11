@@ -83,6 +83,12 @@ jobs:
           CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-1366
 
+      - name: Replay Diagnostics slow check while navigating real MainWindow / XTEST
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-slow-1366
+
       - name: Replay Jeunesse P1 in a real virtual GTK4 environment
         if: ${{ !cancelled() }}
         env:
