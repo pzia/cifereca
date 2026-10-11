@@ -885,7 +885,8 @@ def test_optional_support_report_expurgated_and_never_read_without_opt_in():
             return {
                 "summary": "statut partiel",
                 "checks_executed": False,
-                "checks": {"step": "ready", "authorization": "Bearer PRIVATE_AUTH"},
+                "checks": [],
+                "runtime": {"step": "ready", "authorization": "Bearer PRIVATE_AUTH"},
                 "source": "alice@example.com",
                 "raw_log": "NEVER_READ_RAW_LOG",
             }
