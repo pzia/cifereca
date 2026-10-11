@@ -339,7 +339,7 @@ def test_diagnostic_detail_respects_24k_utf8_byte_budget(mode):
 @pytest.mark.parametrize("mode", ["readable", "json", "raw"])
 def test_diagnostic_detail_handles_invalid_unicode(mode):
     from cifereca_diagnostics_page import format_diagnostic_detail
-    result = format_diagnostic_detail({"message": "bad-\\ud800"}, mode)
+    result = format_diagnostic_detail({"message": "bad-" + chr(0xD800)}, mode)
     assert len(result.encode("utf-8")) <= 24_000
     assert "bad-" not in result
     if mode == "json":
