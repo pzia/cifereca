@@ -25,7 +25,6 @@ _MAX_EVENTS = 24
 _MAX_STRUCTURED = 4
 _MAX_SUPPORT_FIELDS = 8
 _APPROVAL_SECONDS = 300
-
 # Core snapshots may contain arbitrary provider/book/person metadata in
 # 'detail'. Recursive regex redaction alone cannot classify names or titles.
 # Only these operational value tokens are allowed into an LLM preview.
@@ -342,7 +341,10 @@ def prepare_analysis(
             "timestamp", "source", "component", "plugin_id", "severity",
             "status", "message", "operation", "detail",
         )
-        for item in records[:_MAX_STRUCTURED]:
+        # Diagnostics.snapshot() exposes the Core's append-ordered deque.
+        # Sample the *latest* records, newest first, so a full history or
+        # a tight byte budget does not hide the incident being investigated.
+        for item in reversed(records[-_MAX_STRUCTURED:]):
             if not isinstance(item, Mapping):
                 continue
             row = {field: item.get(field) for field in fields if field in item}
@@ -384,7 +386,21 @@ def prepare_analysis(
         safe_report = redacted_detail(report)
         if not isinstance(safe_report, Mapping):
             raise ValueError("support_report_unavailable")
-        for key, value in list(safe_report.items())[:32]:
+        # The generic redactor sorts keys alphabetically, which could
+        # exhaust the prompt budget on large config/core/plugin sections
+        # before the top-level operational result is ever shown.
+        # Prioritize public health status, then operational detail, while
+        # retaining the same 32-field and 3,000-byte bounds.
+        preferred = {
+            "result": 0, "runtime": 1, "database": 2,
+            "config": 3, "plugins": 4, "core": 5, "format": 6,
+        }
+        candidates = list(safe_report.items())[:32]
+        candidates.sort(key=lambda pair: (
+            preferred.get(pair[0], 99) if type(pair[0]) is str else 99,
+            pair[0] if type(pair[0]) is str else "",
+        ))
+        for key, value in candidates:
             if not isinstance(key, str):
                 continue
             # Control metadata and deliberately excluded raw data are not
