@@ -50,6 +50,34 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert marker in source
 
 
+def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
+    runner = _module()
+    state = runner.SCENARIOS["diagnostics-states-1366"]
+    assert state["runner"] == "gtk-diagnostics-states"
+    assert state["fixture"] == "startup"
+    assert state["plugin"] == "ui.page.diagnostics"
+    assert state["width"] == 1366
+    probe = (ROOT / "e2e/diagnostics_states_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "D01_no_sources_not_healthy",
+        "D02_zero_events_vs_source_available",
+        "D03_error_contextualized_and_ui_responsive",
+        "D03_explicit_retry_recovers",
+        "D04_active_check_does_not_block_GTK",
+        "D04_finished_and_button_reenabled",
+        "D02_explicit_zero_anomaly_with_period",
+        "D04_full_mainwindow_navigation",
+        "diagnostics_states_probe",
+    ):
+        if marker != "diagnostics_states_probe":
+            assert marker in probe
+        else:
+            assert "gtk-diagnostics-states" in RUNNER.read_text(encoding="utf-8")
+    assert 'Thread(target=worker' in probe
+    assert 'device[0].click_widget(check)' in probe
+    assert 'report["unmet_criteria"]' in probe
+
+
 def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
     runner = _module()
     scenario = runner.SCENARIOS["diagnostics-large-1600"]
