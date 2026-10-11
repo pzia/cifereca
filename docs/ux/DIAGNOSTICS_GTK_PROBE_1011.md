@@ -1,6 +1,6 @@
 # Recette UX Diagnostics P0 — preuves GTK4 exécutées (#1011)
 
-**Statut au 11 octobre 2026 : trois scénarios E2E PASS sur runner GitHub
+**Statut au 11 octobre 2026 : cinq scénarios E2E PASS sur runner GitHub
 standard Ubuntu 24.04**, à 1366 × 900 et 1600 × 1000 ; la recette exhaustive D01–D16
 reste ouverte. Les scénarios de navigation sont proposés dans la
 [PR UX #1146](https://github.com/pzia/cifereca/pull/1146) et ne sont **pas
@@ -57,6 +57,39 @@ Les 3 scénarios `diagnostics-1366`,
 restent PASS sur ce même run (total **17 PNG** diagnostics). Pas de
 recette d'export disque fictive et pas de faux PASS pour Escape.
 
+## D01–D04 : état des sources et navigation pendant contrôle lent
+
+La campagne [E2E Smoke #38137261745](https://github.com/pzia/cifereca/actions/runs/38137261745)
+est **SUCCESS global**. [Artefact #11701626785](https://github.com/pzia/cifereca/actions/runs/38137261745/artifacts/11701626785) :
+deux nouveaux rapports `screen.json=PASS`, **16 checks PASS / 13 PNG SHA-256
+vérifiés** (6/6 pour le widget multiétats, 10/7 pour la vraie MainWindow).
+Les trois anciens scénarios Diagnostics ont également réussi dans ce run.
+
+- **D01 PASS sur fixture isolée :** aucune source alimentée → état
+  « Sources non alimentées », sans santé faussement positive.
+- **D02 PARTIEL :** source disponible avec zéro événement correctement
+  différenciée de source absente, mais **aucune synthèse explicite
+  « pas d'erreur observée sur la période »**. Remédiation produit :
+  [#1161](https://github.com/pzia/cifereca/issues/1161).
+- **D03 PASS sur fixture isolée :** exception du broker exposée sous
+  « Source indisponible : RuntimeError », fenêtre GTK réactive,
+  puis nouvelle lecture sur action **Actualiser** explicite après
+  rétablissement, sans contrôle actif involontaire.
+- **D04 PASS sur brokers simulés :** contrôle actif déclenché par clic
+  XTEST, worker réellement différé sans blocage de la boucle GTK ;
+  dans la **vraie MainWindow**, navigation physique
+  Diagnostics → Bibliothèque pendant le contrôle, retour à Diagnostics
+  et résultat affiché, **une seule** vérification, **une seule** lecture
+  des événements. La navigation comporte sept gestes XTEST.
+  Ce test ne couvre pas un serveur ou un fournisseur distant réel.
+
+Les deux probes sont
+`diagnostics-states-1366` et `diagnostics-navigation-slow-1366`.
+Le rapport du premier signale `D04_full_mainwindow_navigation=false`
+parce qu'il teste **uniquement le widget** ; le deuxième rapport fournit
+la preuve complémentaire qui manquait. Le statut PASS d'un probe ne
+signifie jamais D01–D16 entièrement clos.
+
 ## Exécuter sur un runner GTK préparé
 
 Depuis la racine du dépôt, avec `xvfb-run`, GTK4/libadwaita,
@@ -66,6 +99,8 @@ PyGObject, Pillow et le Python venv `--system-site-packages` :
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-1366
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-1366
 dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-large-1600
+dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-states-1366
+dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-slow-1366
 ```
 
 `CIFERECA_E2E_PYTHON` peut sélectionner le Python de la recette ;
