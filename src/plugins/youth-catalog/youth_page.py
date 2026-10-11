@@ -938,15 +938,19 @@ class YouthView:
         self.update_action_availability()
 
     def selected(self, row):
+        # The public bridge may reuse this callback without the whole GTK view.
+        # A real YouthView always exposes the updater; a partial host may not.
+        updater = getattr(self, 'update_action_availability', None)
+        refresh_actions = updater if callable(updater) else lambda: None
         if row is None:
             self.selected_book = None
             self.master.empty_detail()
-            self.update_action_availability()
+            refresh_actions()
             return
         self.selected_book = self.rows.get(row.key)
         if self.selected_book is None:
             self.master.empty_detail()
-            self.update_action_availability()
+            refresh_actions()
             return
         presentation = detail_presentation(self.selected_book)
         title = _text(getattr(self.selected_book, "title", ""))
@@ -965,7 +969,7 @@ class YouthView:
                 ),
             ))
         self.master.show_detail(presentation)
-        self.update_action_availability()
+        refresh_actions()
 
     def _search_library(self, query: str, identity_id: str) -> None:
         """Local catalogue only. Reject cross-identity navigation explicitly."""
