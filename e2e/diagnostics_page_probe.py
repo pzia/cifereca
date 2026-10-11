@@ -74,6 +74,8 @@ class Broker:
         self.event_queries.append(dict(query))
         offset = int(query.get("offset", 0))
         limit = int(query.get("limit", 50))
+        module = str(query.get("module") or "").strip().casefold()
+        total = 65 if not module or "core.sync".startswith(module) else 0
         events = [
             {"event_id": f"evt-{i:03d}",
              "timestamp": f"2026-10-11T06:{i % 60:02d}:00+00:00",
@@ -81,11 +83,11 @@ class Broker:
              "severity": "error" if i == 51 else "info",
              "status": "partial" if i == 51 else "ok",
              "message": f"Événement fictif {i}"}
-            for i in range(offset, min(offset + limit, 65))
+            for i in range(offset, min(offset + limit, total))
         ]
         return {
-            "events": events, "offset": offset, "total": 65,
-            "next_offset": offset + len(events) if offset + len(events) < 65 else None,
+            "events": events, "offset": offset, "total": total,
+            "next_offset": offset + len(events) if offset + len(events) < total else None,
             "sources": [
                 {"source": "core_events", "status": "available"},
                 {"source": "app_log", "status": "unavailable"},
@@ -332,6 +334,94 @@ def main():
         if args.width == 1600:
             later(extended_keyboard, 120)
             return
+        # D15: keyboard-only module filtering, using actual XTEST events.
+        later(begin_keyboard_filter, 140)
+
+    def entry_with_placeholder(placeholder):
+        rows = [
+            w for w in walk(page[0])
+            if isinstance(w, Gtk.Entry)
+            and w.get_placeholder_text() == placeholder
+        ]
+        assert len(rows) == 1, (placeholder, len(rows))
+        return rows[0]
+
+    def begin_keyboard_filter():
+        assert args.width == 1366
+        assert len(broker.event_queries) == 2
+        module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
+        search = entry_with_placeholder("Rechercher dans cette page")
+        assert module.grab_focus() is not False
+        until(lambda: module.has_focus(),
+              lambda: type_keyboard_module(module, search), seconds=5)
+
+    def type_keyboard_module(module, search):
+        report["stage"] = "D15_type_physical_module_filter"
+        device[0].type_text("paris")
+        until(lambda: module.get_text() == "paris",
+              lambda: keyboard_tab_forward(module, search), seconds=5)
+
+    def keyboard_tab_forward(module, search):
+        # Typing should not fetch until Enter explicitly submits the filter.
+        assert len(broker.event_queries) == 2
+        report["checks"]["D15_typing_does_not_implicitly_query"] = True
+        press("Tab")
+        until(lambda: search.has_focus(),
+              lambda: keyboard_tab_backward(module), seconds=5)
+
+    def keyboard_tab_backward(module):
+        device[0].key("Shift_L", True)
+        try:
+            press("Tab")
+        finally:
+            device[0].key("Shift_L", False)
+        until(lambda: module.has_focus(),
+              keyboard_filter_submit, seconds=5)
+
+    def keyboard_filter_submit():
+        report["checks"]["D15_tab_and_shift_tab_between_filters_xtest"] = True
+        press("Return")
+        until(lambda: len(broker.event_queries) == 3
+              and broker.event_queries[-1]["module"] == "paris"
+              and broker.event_queries[-1]["offset"] == 0
+              and find_label("0 événements affichés"),
+              keyboard_filter_result, seconds=8)
+
+    def keyboard_filter_result():
+        assert find_label("Aucun événement sur cette page")
+        assert not find_button("Suivant").get_sensitive()
+        assert not find_button("Précédent").get_sensitive()
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["D15_enter_applies_filter_and_resets_pagination"] = True
+        screenshot("04-module-filter-enter-1366")
+        module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
+        assert module.grab_focus() is not False
+        until(lambda: module.has_focus(),
+              lambda: clear_keyboard_filter(module), seconds=5)
+
+    def clear_keyboard_filter(module):
+        device[0].key("Control_L", True)
+        try:
+            press("a")
+        finally:
+            device[0].key("Control_L", False)
+        press("BackSpace")
+        until(lambda: module.get_text() == "",
+              keyboard_filter_clear_submit, seconds=5)
+
+    def keyboard_filter_clear_submit():
+        assert len(broker.event_queries) == 3
+        press("Return")
+        until(lambda: len(broker.event_queries) == 4
+              and broker.event_queries[-1]["module"] == ""
+              and find_label("50 événements affichés"),
+              keyboard_filter_restored, seconds=8)
+
+    def keyboard_filter_restored():
+        assert find_button("Suivant").get_sensitive()
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["D15_ctrl_a_delete_return_restores_results"] = True
+        screenshot("05-module-filter-restored-1366")
         pass_scenario()
 
     def pass_scenario():
