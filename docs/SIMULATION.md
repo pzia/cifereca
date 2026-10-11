@@ -1,80 +1,36 @@
 # Simulation fonctionnelle CIFERECA
 
-État documentaire : 7 octobre 2026.
+État documentaire : 11 octobre 2026.
 
-## État actuel
+## Source canonique actuelle
 
-Le dépôt possède `simulation/`.
+**`simulation/` est déjà le banc de simulation fonctionnelle unique.** Aucun déplacement `simulation/ → simulation/` n'est à effectuer, et aucun autre répertoire de simulation concurrent n'est prévu.
 
-Il contient notamment :
+Le banc comprend notamment :
+- faux services BnF, Kobo, Paris, Numilog, OPDS et fournisseurs jeunesse ;
+- données et fixtures déterministes (y compris scénarios négatifs et volumes) ;
+- profils `simulation/profiles/*.toml` et états de services isolés ;
+- orchestration `simulation/datasetctl.py`, isolation XDG et health checks ;
+- tests `simulation/tests/`.
 
-- des faux services BnF, Kobo, Paris, Numilog, OPDS/Ebooks gratuits ;
-- des fixtures/livres déterministes ;
-- des profils TOML ;
-- `datasetctl.py` pour l'orchestration, l'isolation XDG et les health checks ;
-- des tests propres au banc de simulation.
+## Responsabilités et frontières
 
-Le dépôt ne possède pas encore de répertoire `simulation/`.
+La simulation fournit les protocoles simulés, les profils, les données, la latence, les erreurs reproductibles et les états fournisseurs. Elle ne doit pas embarquer de bootstrap GTK, de dépendances OS, de règles réelles de providers ni de logique métier Core.
 
-## Cible
+La recette machine appartient à `environnements/` (Debian 13 ou ChatGPT Work selon hôte), et les tests unitaires Core à `tests/`.
 
-`simulation/` doit devenir l'environnement fonctionnel simulé de référence.
+Exemple pour une recette UX :
+1. sélectionner l'environnement hôte via [`environnements/README.md`](../environnements/README.md) ;
+2. produire/valider un profil de simulation : `python3 simulation/datasetctl.py rebuild ux-small` puis `summary ux-small --json` ;
+3. lancer Cifereca sous Xvfb dans l'XDG isolé du profil ;
+4. mesurer le scénario et conserver captures, traces expurgées et résultat ;
+5. arrêter les faux services et nettoyer **uniquement les données générées**, pas les fixtures versionnées.
 
-La cible n'est pas de copier `simulation/` puis de maintenir deux systèmes. La migration doit aboutir à une seule référence :
+## Rationalisation continue
 
-```text
-simulation/  -- migration progressive -->  simulation/
-                                      \
-                                       -> suppression des éléments obsolètes
-```
+- Inventorier les fixtures/scénarios peu utilisés avant suppression, en recherchant leurs consommateurs (`tests/`, `e2e/`, scripts, plugins, docs).
+- Factoriser les faux services réellement communs **sans retirer leurs cas négatifs**.
+- Ne pas lancer de tests GTK dans les workflows CI ordinaires lorsque la recette UX a son cycle séparé.
+- Les caches `simulation/.runtime/` restent non versionnés ; la suppression de l'arborescence `simulation/` elle-même n'est pas prévue.
 
-## Responsabilités de la simulation
-
-La simulation fonctionnelle peut porter :
-
-- faux services versionnés ;
-- états fournisseur reproductibles ;
-- jeux de données et fixtures ;
-- profils/scénarios ;
-- orchestration de services ;
-- génération de configuration isolée ;
-- collecte de résultats fonctionnels ;
-- scénarios reproductibles d'erreur/latence/volume.
-
-Elle ne doit pas porter :
-
-- bootstrap GTK ou dépendances OS ;
-- logique applicative Cifereca ;
-- tests unitaires Core ;
-- règles fournisseur réelles qui doivent vivre dans les plugins.
-
-## Relation avec `environnements/`
-
-`environnements/` prépare la machine/runtime. La simulation prépare le monde fonctionnel autour de Cifereca.
-
-Exemple d'un E2E :
-
-1. `environnements/openai-chat-debian/` fournit GTK/Xvfb/D-Bus ;
-2. la simulation démarre les faux services et construit le profil ;
-3. Cifereca est lancé contre cet état isolé ;
-4. le scénario vérifie le comportement fonctionnel/UX.
-
-## Plan de migration de `simulation/`
-
-Aucun déplacement n'est effectué par le lot documentaire.
-
-Migration recommandée :
-
-1. inventorier les faux services et helpers encore utilisés ;
-2. définir l'interface de la future orchestration `simulation/` ;
-3. migrer les briques génériques (`fake_books`, profils, health checks) sans duplication ;
-4. migrer les protocoles fournisseur avec leurs tests ;
-5. mettre à jour les recettes E2E et les skills ;
-6. retirer les chemins `simulation/` devenus inutilisés ;
-7. supprimer `simulation/` lorsque plus aucun consommateur ne dépend de lui.
-
-## Règle pendant la transition
-
-Tant que `simulation/` n'existe pas, `simulation/` reste la référence fonctionnelle pratique.
-
-Ne pas créer un nouveau faux service dans une arborescence concurrente sans lot de migration explicite.
+Voir [`simulation/README.md`](../simulation/README.md), [`docs/TEST-ORGANIZATION.md`](TEST-ORGANIZATION.md) et [`environnements/README.md`](../environnements/README.md).
