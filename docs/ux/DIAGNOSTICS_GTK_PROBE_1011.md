@@ -90,6 +90,28 @@ parce qu'il teste **uniquement le widget** ; le deuxième rapport fournit
 la preuve complémentaire qui manquait. Le statut PASS d'un probe ne
 signifie jamais D01–D16 entièrement clos.
 
+## Captures de navigation stabilisées (preuve finale de cette tranche)
+
+Le run [E2E Smoke #38137558187](https://github.com/pzia/cifereca/actions/runs/38137558187)
+est **SUCCESS global**. L'[artefact #11701632376](https://github.com/pzia/cifereca/actions/runs/38137558187/artifacts/11701632376)
+confirme le PASS de `diagnostics-states-1366` (**6 checks, 6 PNG**)
+et de `diagnostics-navigation-slow-1366` (**10 checks, 7 PNG**).
+Les **13 empreintes SHA-256** ont été revérifiées.
+
+Une inspection des captures précédentes montrait des images saisies
+**pendant** le fondu `Gtk.Stack.CROSSFADE`, superposant
+Bibliothèque et Diagnostics sans refléter un état stabilisé.
+Le harnais attend désormais `transition-running=false` et un cycle
+d'affichage complémentaire avant les captures.
+La nouvelle image `03-library-while-diagnostics-check-pending.png`
+a été **visuellement examinée** : Bibliothèque est nette et la page
+Diagnostics n'apparaît plus en transparence. Cela améliore la fiabilité
+des preuves de navigation, sans correction produit.
+
+Le gate PR CI reste **rouge pour un `XPASS(strict)` distinct**
+du test explorateur #1013 ([run #38137558186](https://github.com/pzia/cifereca/actions/runs/38137558186)).
+**Aucune fusion tant que les gates requis sont rouges**.
+
 ## Exécuter sur un runner GTK préparé
 
 Depuis la racine du dépôt, avec `xvfb-run`, GTK4/libadwaita,
