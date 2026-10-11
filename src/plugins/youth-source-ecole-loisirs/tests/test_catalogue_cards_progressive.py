@@ -93,3 +93,54 @@ def test_catalogue_pagination_is_reported_without_auto_fetch():
     assert len(calls) == 1
     source.search_catalogue("loup", page=int(first["next_cursor"]))
     assert len(calls) == 2
+
+
+def test_ui_browse_calls_catalogue_not_advanced_and_keeps_age_per_card():
+    import httpx
+    from ecole_loisirs_youth import EcoleLoisirsYouthSource
+    requests = []
+    age_labels = ["6 à 8 ans"] * 9 + ["8 à 11 ans"] * 5 + ["11 à 13 ans"] * 3 + ["13 ans et +"] * 3
+    cards = []
+    for n, age in enumerate(age_labels):
+        cards.append(
+            f'<div class="product-item"><a href="/livre/loup-{n}">'
+            f'<div class="card-title">Livre loup {n}</div></a>'
+            f'<div class="card-author">Auteur {n}</div>'
+            f'<div class="card-infos"><li>Collection {n}</li><li>Age : {age}</li></div>'
+            '<img src="https://tracker.invalid/cover.jpg">'
+            '</div>'
+        )
+    html = '<section id="products-wrapper">' + ''.join(cards) + '</section>'
+    html += '<div class="product-item-thumb"><a href="/livre/loup-0">Double</a></div>'
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.browse(text_filter="loup", age=8, themes=("animal",), limit=40)
+    assert len(requests) == result["collection_request_count"] == 1
+    assert requests[0].url.path == "/catalogue/romans"
+    assert len(result["items"]) == 20
+    assert len({row["record_id"] for row in result["items"]}) == 20
+    assert [row["age_ranges"][0]["age_min"] for row in result["items"]] == [6]*9 + [8]*5 + [11]*3 + [13]*3
+    assert all("isbn13" not in row for row in result["items"])
+    assert all("cover_url" not in row for row in result["items"])
+    assert result["items"][0]["collection"] == "Collection 0"
+    assert result["collection_pipeline"]["cards_detected"] == 20
+    assert result["collection_pipeline"]["missing_isbn"] == 20
+    assert result["collection_pipeline"]["author_count"] == 20
+
+
+def test_browse_rejects_cursor_before_any_http():
+    import httpx
+    import pytest
+    from ecole_loisirs_youth import EcoleLoisirsYouthSource
+    requests = []
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(
+        lambda req: requests.append(req) or httpx.Response(200, text="<main>empty</main>")
+    )))
+    for cursor in ("-1", "0x12", "101", "1/../livre/secret"):
+        with pytest.raises(ValueError):
+            source.browse(text_filter="loup", cursor=cursor)
+    assert requests == []
