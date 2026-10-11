@@ -179,9 +179,13 @@ def partial_page(service=None):
 
 def test_preview_ui_does_not_submit_until_click(monkeypatch):
     page, service, tasks, idle = partial_page()
-    monkeypatch.setitem(sys.modules, "gi", NS(repository=NS(
-        GLib=NS(idle_add=lambda fn: idle.append(fn)),
-    )))
+    from types import ModuleType
+    gi = ModuleType("gi")
+    repository = ModuleType("gi.repository")
+    repository.GLib = NS(idle_add=lambda fn: idle.append(fn))
+    gi.repository = repository
+    monkeypatch.setitem(sys.modules, "gi", gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", repository)
     page._refresh_semantic_button()
     assert page._semantic_button.sensitive
     assert not service.calls and not tasks.handles
@@ -196,9 +200,13 @@ def test_preview_ui_does_not_submit_until_click(monkeypatch):
 
 def test_edit_cancels_and_stale_preview_cannot_reappear(monkeypatch):
     page, _service, tasks, idle = partial_page()
-    monkeypatch.setitem(sys.modules, "gi", NS(repository=NS(
-        GLib=NS(idle_add=lambda fn: idle.append(fn)),
-    )))
+    from types import ModuleType
+    gi = ModuleType("gi")
+    repository = ModuleType("gi.repository")
+    repository.GLib = NS(idle_add=lambda fn: idle.append(fn))
+    gi.repository = repository
+    monkeypatch.setitem(sys.modules, "gi", gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", repository)
     page._preview_semantic(None)
     tasks.handles[0].finish()
     page._semantic_source_buffer.text = PASSAGE + " Et ils revinrent."
