@@ -77,6 +77,12 @@ jobs:
           CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
         run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-states-1366
 
+      - name: Replay Diagnostics structured values D07 and Ctrl+C D13 on GTK4
+        if: ${{ !cancelled() }}
+        env:
+          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
+        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-structured-1366
+
       - name: Replay Diagnostics volume 10000 and provenance D06-D12 on GTK4
         if: ${{ !cancelled() }}
         env:

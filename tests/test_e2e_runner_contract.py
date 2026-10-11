@@ -50,6 +50,27 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert marker in source
 
 
+def test_diagnostics_structured_real_gtk_redacts_and_preserves_types():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-structured-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-structured"
+    assert scenario["fixture"] == "startup"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_structured_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "D07_readable_preserves_false_zero_null_empty_and_unicode",
+        "D07_json_indented_typed_and_redacted",
+        "D07_raw_matches_json_without_secret",
+        "D13_ctrl_c_selection_expurgated",
+        'physical("c")',
+        'device[0].key("Control_L", True)',
+        'get_has_selection()',
+        'json.loads(body)',
+        'report["unmet_criteria"]',
+    ):
+        assert marker in source
+
+
 def test_diagnostics_volume_real_gtk_bounded_broker_and_provenance():
     runner = _module()
     scenario = runner.SCENARIOS["diagnostics-volume-1366"]
