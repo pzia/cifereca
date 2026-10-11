@@ -79,11 +79,18 @@ SCENARIOS = {
         "runner": "gtk-diagnostics",
         "width": 1600,
     },
+    "diagnostics-structured-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 D07/D13 : types JSON null/false/0, Unicode, secrets expurgés, sélection GTK et Ctrl+C XTEST.",
+        "runner": "gtk-diagnostics-structured",
+        "width": 1366,
+    },
     "diagnostics-volume-1366": {
         "plugin": "ui.page.diagnostics",
         "fixture": "startup",
         "description": "P0 #1011 D06/D08-D12 : 10000 événements fictifs paginés, filtres source/module/période et provenance sans réseau.",
-        "runner": "gtk-diagnostics-volume",
+        "runner": "gtk-diagnostics-structured", "gtk-diagnostics-volume",
         "width": 1366,
     },
     "diagnostics-states-1366": {
@@ -253,6 +260,13 @@ def main() -> int:
                 command = [
                     xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
                     args.python, str(ROOT / "e2e/diagnostics_page_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-diagnostics-structured":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/diagnostics_structured_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
             elif scenario.get("runner") == "gtk-diagnostics-volume":
