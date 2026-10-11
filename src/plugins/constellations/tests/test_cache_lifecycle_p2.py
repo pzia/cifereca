@@ -18,8 +18,9 @@ def test_freshness_cache_is_isolated_by_identity_and_recency():
     a = service.graph_for("alice", (entry("a"),), freshness_token="v1")
     b = service.graph_for("bob", (entry("b"),), freshness_token="v1")
     assert service.graph_for("alice", (entry("replacement"),), freshness_token="v1") is a
-    assert service.graph_for("bob", (), freshness_token="v1") is b
     assert tuple(service._cache) == ("bob", "alice")
+    assert service.graph_for("bob", (), freshness_token="v1") is b
+    assert tuple(service._cache) == ("alice", "bob")
 
 
 def test_more_than_eight_identities_evicts_only_least_recently_used():
