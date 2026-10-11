@@ -90,8 +90,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # Export only known machine-generated TRACE categories and small
             # allowlisted status fields. Everything else remains private.
             trace = _TRACE.match(match["body"])
-            if trace:
-                message = "TRACE " + trace.group(1) + " " + trace.group(2)
+            if trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
+                message = "TRACE " + trace.group(1).lower() + " " + trace.group(2).lower()
                 suffix = match["body"][trace.end():]
                 pairs = _SAFE_FIELDS.findall(suffix)[:4]
                 if pairs:
@@ -213,7 +213,10 @@ def query_diagnostic_events(
     page = events[offset:offset + limit]
     return {
         "status": "partial" if any(st["status"] == "partial" for st in states) else (
-            "available" if total else "empty"
+            "available" if total else (
+                "unavailable" if all(st["status"] in {"disabled", "unavailable"} for st in states)
+                else "empty"
+            )
         ),
         "sources": states,
         "events": page,
