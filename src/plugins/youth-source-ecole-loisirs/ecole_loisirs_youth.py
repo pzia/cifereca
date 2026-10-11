@@ -220,8 +220,14 @@ class _ProductCards(HTMLParser):
         self.card = None
         self.cards = []
         self.field = None
+        self._ignored = 0
 
     def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._ignored += 1
+            return
+        if self._ignored:
+            return
         a = dict(attrs)
         classes = set(a.get("class", "").split())
         if tag in {"script", "style", "noscript", "svg"}:
@@ -251,13 +257,16 @@ class _ProductCards(HTMLParser):
             self.field = ("summary", len(self.stack))
 
     def handle_data(self, data):
-        if self.card is not None and self.field:
+        if self.card is not None and self.field and not self._ignored:
             value = _text(data)
             if value:
                 self.card[self.field[0]].append(value)
 
     def handle_endtag(self, tag):
-        if self.card is None or tag in {"script", "style", "noscript", "svg"}:
+        if tag in {"script", "style", "noscript", "svg"} and self._ignored:
+            self._ignored -= 1
+            return
+        if self._ignored or self.card is None:
             return
         if self.field and self.field[1] == len(self.stack):
             self.field = None
