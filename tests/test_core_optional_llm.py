@@ -225,3 +225,21 @@ def test_core_reserved_service_is_accessible_through_normal_plugin_resolution(tm
         assert service.available()
     finally:
         manager.close()
+
+def test_llm_http_failures_return_only_safe_status_reasons():
+    from urllib.error import HTTPError
+
+    for status, expected in [
+        (401, "auth_refused"), (403, "auth_refused"),
+        (404, "not_found"), (429, "rate_limited"),
+        (500, "backend_unavailable"),
+    ]:
+        def reject(request, *, timeout):
+            raise HTTPError("https://example.test/v1/chat/completions", status, "Not available", {}, None)
+
+        response = OptionalLLMService(_config(), opener=reject).generate(
+            LLMRequest("connection check"),
+        )
+        assert response.ok is False
+        assert response.reason == expected
+
