@@ -91,11 +91,21 @@ def llm_destination(llm: Any) -> dict[str, str | bool]:
     row = llm.destination()
     if not isinstance(row, Mapping) or row.get("available") is not True:
         raise ValueError("llm_unavailable")
-    model, provider, host = (str(row.get(k) or "") for k in ("model", "provider", "host"))
+    model, provider, host = (row.get(k) for k in ("model", "provider", "host"))
     remote = row.get("remote")
-    if not all((model, provider, host)) or type(remote) is not bool:
+    if type(remote) is not bool or not all(
+        type(value) is str and bool(value.strip())
+        for value in (model, provider, host)
+    ):
         raise ValueError("llm_destination_unproven")
     if any(len(x) > cap for x, cap in ((model, 128), (provider, 80), (host, 180))):
+        raise ValueError("llm_destination_unproven")
+    # Reject controls and bidi overrides from untrusted destination metadata.
+    if any(
+        ord(char) < 32 or ord(char) == 127 or 0x80 <= ord(char) <= 0x9F
+        or 0x202A <= ord(char) <= 0x202E or 0x2066 <= ord(char) <= 0x2069
+        for value in (model, provider, host) for char in value
+    ):
         raise ValueError("llm_destination_unproven")
     if any(c in host for c in ("/", "@", "?", "#", "\\", " ", ":")):
         raise ValueError("llm_destination_unproven")
