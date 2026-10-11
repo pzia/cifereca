@@ -518,7 +518,7 @@ class CifericaCollection:
     def snapshot(self):
         with self._lock:
             if not self._active or self._snapshot is None:
-                raise ContractUnavailable("no active validated inventory; explicit refresh required")
+                raise ContractUnavailable("no validated inventory; plugin inactive or explicit refresh required")
             return self._snapshot
 
     def _visible_snapshot(self, full, *, show_synthetic=None):
