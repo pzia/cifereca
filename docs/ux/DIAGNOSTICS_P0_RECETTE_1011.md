@@ -65,6 +65,16 @@ Le CI général sur ce même HEAD est encore **FAIL** en raison du
 ([run #38137261748](https://github.com/pzia/cifereca/actions/runs/38137261748),
 1862 tests réussis). **Aucun contournement de ce gate.**
 
+**Revalidation des captures D04 :** le [run final #38137558187](https://github.com/pzia/cifereca/actions/runs/38137558187)
+a stabilisé le fondu `Gtk.Stack` avant les captures de navigation
+([artefact #11701632376](https://github.com/pzia/cifereca/actions/runs/38137558187/artifacts/11701632376)).
+Les 6 assertions du widget D01–D04, les 10 assertions de navigation
+avec contrôle lent et les 13 SHA-256 des PNG sont conformes.
+La capture « Bibliothèque pendant vérification » a été examinée
+visuellement : plus de superposition des deux pages.
+Le verdict D02 reste partiel (#1161) ; la campagne D01–D16
+n'est **pas** clôturée.
+
 ## Dernier verdict GTK — 11 octobre 2026
 
 Le [run E2E #38136016404](https://github.com/pzia/cifereca/actions/runs/38136016404)
