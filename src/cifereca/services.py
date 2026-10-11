@@ -2832,7 +2832,34 @@ class LibraryService:
         except Exception:
             return False
 
+    @staticmethod
+    def _return_operation_lock_file(loan: Loan) -> Path:
+        """Coordinate Adobe and PNB mutations across threads and processes.
+
+        The lock is scoped by provider + upstream loan ID, not UI identity:
+        the same Paris loan may be exposed by two different connections.
+        No account identifiers or credentials are written in the lock path.
+        """
+        digest = hashlib.sha256(
+            (str(loan.source_provider).casefold() + "\\0" + str(loan.id or "")).encode("utf-8")
+        ).hexdigest()[:32]
+        return acquisition_lock_file().with_name(
+            "cifereca-return-" + digest + ".lock"
+        )
+
     def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
+        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
+            return self.return_digital(loan)
+        try:
+            with InterProcessLock(self._return_operation_lock_file(loan)):
+                return self._return_loan_prefer_adept_guarded(loan)
+        except LockBusyError:
+            return {
+                "status": "attention_required", "scope": "adobe_first_paris",
+                "code": "loan_return_busy", "retry": "verification_only",
+            }
+
+    def _return_loan_prefer_adept_guarded(self, loan: Loan) -> dict[str, Any]:
         """Adobe-first, then Paris inventory; never automatically send PNB POST.
 
         Durable claim is written *before* ADEPT. A retry, double-click or
@@ -2973,6 +3000,18 @@ class LibraryService:
         return self.return_loan_prefer_adept(loan)
 
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
+        if str(loan.source_provider).lower() != "paris":
+            return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
+        try:
+            with InterProcessLock(self._return_operation_lock_file(loan)):
+                return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
+        except LockBusyError:
+            return {
+                "status": "attention_required", "scope": "provider_pnb_only",
+                "code": "loan_return_busy", "retry": "verification_only",
+            }
+
+    def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
         """PNB provider return with an at-most-once POST until verified.
 
         An HTTP success only means REQUEST ACCEPTED. No Adobe return is made.
@@ -2987,6 +3026,18 @@ class LibraryService:
             session = self._session_for_source(loan.source_provider, loan.source_credential)
             return session.return_digital(loan, account)
         account, session, key = self._return_loan_identity(loan)
+        if self._cross_identity_loan_conflict(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_loan_id=loan.id, identity_id=account.identity_id,
+            entitlements=self.storage.entitlements(
+                provider_id=loan.source_provider, state="active"
+            ),
+        ):
+            return {
+                "status": "attention_required", "scope": "provider_pnb_only",
+                "code": "loan_return_identity_conflict",
+                "retry": "resolve_identity",
+            }
         from .core.return_adept_orchestrator import adept_return_key, public_state
         adobe_key = adept_return_key(
             loan.source_provider, loan.source_credential,
