@@ -1289,7 +1289,8 @@ class YouthView:
             )
         # Emit a fixed-shape technical event only after this user-triggered
         # collection; never log the query, user identity, title, URL or HTML.
-        diagnostic_report = getattr(self.plugin.context, "report_diagnostic", None)
+        plugin_context = getattr(getattr(self, "plugin", None), "context", None)
+        diagnostic_report = getattr(plugin_context, "report_diagnostic", None)
         if callable(diagnostic_report):
             from youth_catalog import sanitize_collection_pipeline
             state = "items" if report.accepted else "invalid" if report.rejected else "empty_unverified"
