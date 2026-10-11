@@ -783,8 +783,6 @@ class DiagnosticsPagePlugin:
             page_offset = next_offset
             load_events()
 
-        def copy_selected            load_events()
-
         def copy_selected(_button) -> None:
             rows = sanitized_rows(
                 current_page, search=search_filter.get_text().strip(),
