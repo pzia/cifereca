@@ -311,17 +311,14 @@ def main():
         visible = " ".join(labels())
         assert LONG_PATH not in visible, "Chemin privé complet visible dans liste"
         report["checks"]["D08_long_path_redacted_list_and_stable_layout"] = True
-        report["audits"]["D08_complete_redacted_long_detail_available"] = False
         # The data has loaded but GTK must still paint the frame: do not
         # photograph the transient "Actualisation en cours" state.
         later(kobo_details_stage, 230)
 
     def kobo_details_stage():
         screenshot("04-kobo-erreur-chemin-long")
-        # The actual detailed journal view is built from sanitized_rows(),
-        # which may intentionally drop unknown broker keys including 'detail'.
-        # Audit the rendered Gtk.TextView rather than assuming a broker field
-        # remains consultable. This is an honest unresolved UX criterion.
+        # The GTK projection includes bounded, redacted detail. Inspect the
+        # rendered TextView and verify both useful fields and absent secrets.
         # Target specifically the *long error* (event 00002), not the
         # first generic Kobo row sorted newest-first in the same group.
         error_labels = [
@@ -343,9 +340,12 @@ def main():
         assert "event_id:" in detail_text and "message:" in detail_text
         assert LONG_PATH not in detail_text
         report["audits"]["D08_raw_detail_field_preserved"] = "detail:" in detail_text
-        assert not report["audits"]["D08_raw_detail_field_preserved"], (
-            "La fixture est attendue sans detail brut dans sanitized_rows()"
-        )
+        assert report["audits"]["D08_raw_detail_field_preserved"]
+        assert 'path: "<expurgé>"' in detail_text
+        assert 'secret: "<expurgé>"' in detail_text
+        assert "SECRET-FICTIF-NE-PAS-AFFICHER" not in detail_text
+        assert len(detail_text) < 24000
+        report["audits"]["D08_complete_redacted_long_detail_available"] = True
         report["checks"]["D08_real_detail_panel_available_and_redacted"] = True
         journal_scroll = error_labels[0].get_parent()
         while journal_scroll is not None and not isinstance(journal_scroll, Gtk.ScrolledWindow):
@@ -493,7 +493,6 @@ def main():
     def finish():
         assert broker.checks == 0 and plugin.llm is None
         report["unmet_criteria"] = [
-            "D08: champ detail du broker absent dans le volet d'événement — remédiation produit",
             "D09: seules catégories Core/app_log disponibles, provenance métier par module uniquement",
             "D12: aucune corrélation inter-identités attestée par broker ; copie unitaire isolée seulement",
         ]
