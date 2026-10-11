@@ -193,8 +193,8 @@ def query_diagnostic_events(
         raise ValueError("diagnostic module must be a string of at most 90 characters")
     if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
         raise ValueError("unknown diagnostic severity")
-    if any(value is not None and not isinstance(value, str) for value in (since, until)):
-        raise ValueError("diagnostic date filters must be ISO-8601 strings")
+    if any(value is not None and (not isinstance(value, str) or len(value) > 64) for value in (since, until)):
+        raise ValueError("diagnostic date filters must be bounded ISO-8601 strings")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= _MAX_RESULTS:
         raise ValueError("diagnostic limit must be 1..100")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
