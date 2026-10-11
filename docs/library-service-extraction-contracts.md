@@ -54,6 +54,13 @@ et type de façade (pour les anciens appels statiques non liés) sont injectés
 explicitement ; pas de réimport inverse. Le cache TTL, backpressure et l'ordre
 des callbacks restent portés par le corps de l'orchestration déplacée.
 
+Le lot bibliothèque (#1119) distingue `core/library_projection.py` (11 lectures
+de bibliothèque/historique/couvertures) et `core/library_mutation.py` (4 actions
+explicites de matérialisation, scan, indexation et ledger). Les contrats AST de
+placement/source/couverture/date inspectent désormais leur implémentation ;
+leurs assertions sont conservées et complétées par des scénarios SQLite/fichiers
+réels (acquisition complète et exacte, copie absente/dupliquée, pas de scan/sync).
+
 ## Preuves de comportement à conserver
 
 | Invariant | Suite de caractérisation | Effet observé |
