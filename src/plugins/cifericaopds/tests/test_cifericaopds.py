@@ -514,3 +514,36 @@ def test_refresh_during_http_search_discards_inflight_response(tmp_path):
     with pytest.raises(ContractUnavailable, match="inactive or changed"):
         session.search("book")
     assert len(calls) == 1
+
+
+def test_parent_deactivation_revokes_sessions_even_if_reactivated(tmp_path):
+    fixture = tmp_path / "fixture-sources.json"
+    fixture.write_text(json.dumps(inventory("alpha", generation=1)))
+    (tmp_path / "fixture-results.json").write_text(json.dumps({
+        "alpha": {"items": [{"id": "1", "title": "Livre Alpha"}]},
+    }))
+    ctx = context(tmp_path)
+    coll = CifericaCollection().activate(ctx)
+    coll.refresh()
+    provider = coll.create_provider("alpha")
+    old = provider.create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    assert len(old.search("Livre")) == 1
+    coll.deactivate()
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        old.search("Livre")
+    with pytest.raises(ContractUnavailable):
+        coll.create_provider("alpha")
+    with pytest.raises(ContractUnavailable):
+        coll.refresh()
+    coll.activate(ctx)
+    assert coll.snapshot().discovery_generation == 1
+    with pytest.raises(ContractUnavailable, match="inactive or changed"):
+        old.search("Livre")
+    fresh = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    assert len(fresh.search("Livre")) == 1
