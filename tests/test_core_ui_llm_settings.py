@@ -131,7 +131,7 @@ def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
     assert '("ai", "Intelligence artificielle")' in source
     assert 'draft.set("llm", new_ai_settings)' in source
     assert "redémarrage nécessaire" in source
-    assert "if settings_revisions[\"ai\"] != saved_settings_revisions[\"ai\"]" in source
+    assert 'settings_revisions.get("ai", 0) != saved_settings_revisions.get("ai", 0)' in source
     assert "ai_endpoint.connect(\"notify::text\", endpoint_changed)" in source
     assert 'ai_remote.set_active(False)' in source
     assert 'Adw.MessageDialog.new(' in source
