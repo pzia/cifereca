@@ -1,0 +1,90 @@
+# Diagnostic GTK Cifereca — exécution distante, jamais automatique sur une PR.
+# Le push de cette définition NE déclenche PAS de job : seule une modification
+# de .github/gtk-e2e-run-request.txt le peut, après accord explicite utilisateur.
+name: UX GTK Diagnostics Debian 13 (sur accord)
+
+on:
+  push:
+    branches:
+      - ux/gtk-e2e-github-on-approval-20261011
+    paths:
+      - .github/gtk-e2e-run-request.txt
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    name: GTK4 / Xvfb / diagnostics-1366
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
+    timeout-minutes: 15
+
+    steps:
+      - name: Installer les dépendances dans le conteneur éphémère Debian 13
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -o APT::Update::Error-Mode=any
+          apt-get install -y --no-install-recommends \
+            ca-certificates git python3 python3-gi python3-gi-cairo \
+            gir1.2-gtk-4.0 gir1.2-adw-1 python3-pil \
+            python3-httpx python3-packaging xvfb xauth dbus-x11 \
+            libxtst6 libx11-6 fonts-dejavu-core
+
+      - name: Récupérer les sources Cifereca
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Préflight GTK4, PyGObject, libadwaita et Xvfb
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 - <<'PY'
+          import gi
+          gi.require_version("Gtk", "4.0")
+          gi.require_version("Adw", "1")
+          from gi.repository import Gtk, Adw
+          from PIL import ImageGrab
+          import httpx, packaging
+          print("GTK", Gtk.get_major_version(), Gtk.get_minor_version())
+          print("PyGObject", gi.__file__)
+          PY
+          xvfb-run -a -s "-screen 0 1366x900x24" /usr/bin/python3 - <<'PY'
+          import gi
+          gi.require_version("Gdk", "4.0")
+          from gi.repository import Gdk
+          assert Gdk.Display.get_default() is not None, "Xvfb/Gdk indisponible"
+          print("Xvfb / Gdk OK")
+          PY
+
+      - name: Exécuter la véritable recette UX Diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 e2e/run.py \
+            --python /usr/bin/python3 \
+            --scenario diagnostics-1366 \
+            --out e2e-artifacts
+          /usr/bin/python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("e2e-artifacts/diagnostics-1366/screen.json").read_text())
+          summary = json.loads(Path("e2e-artifacts/summary.json").read_text())
+          assert report["status"] == "PASS", report
+          assert len(summary) == 1 and summary[0]["returncode"] == 0, summary
+          assert report["screenshots"], "Captures GTK manquantes"
+          print("GTK Diagnostics PASS", report["checks"])
+          PY
+
+      - name: Publier captures et rapport même en cas d'échec
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-gtk-diagnostics-1366
+          path: e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 2
