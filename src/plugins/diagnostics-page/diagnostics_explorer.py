@@ -30,7 +30,9 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
         raise ValueError("unknown diagnostic period")
     if period == "all":
         return None
-    current = now or datetime.now(timezone.utc)
+    if now is not None and not isinstance(now, datetime):
+        raise ValueError("invalid diagnostic reference time")
+    current = datetime.now(timezone.utc) if now is None else now
     if current.tzinfo is None:
         raise ValueError("timezone required")
     delta = {
@@ -108,12 +110,19 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
 def module_groups(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     """Hierarchy by module+source with severity/count; no inferred correlation."""
     groups: dict[tuple[str, str], list[dict[str, str]]] = {}
-    for row in rows:
-        key = (row.get("module") or "Inconnu", row.get("source") or "Inconnue")
+    for row in rows[:PAGE_SIZE]:
+        if not isinstance(row, dict):
+            continue
+        module = row.get("module")
+        source = row.get("source")
+        key = (
+            module[:90] if isinstance(module, str) and module else "Inconnu",
+            source[:40] if isinstance(source, str) and source else "Inconnue",
+        )
         groups.setdefault(key, []).append(row)
     answer = []
     for (module, source), items in sorted(groups.items(), key=lambda pair: pair[0]):
-        levels = {item["severity"] for item in items}
+        levels = {item.get("severity") for item in items if isinstance(item.get("severity"), str)}
         severity = next((level for level in _LEVELS if level in levels), "unknown")
         answer.append({
             "module": module, "source": source, "count": len(items),
