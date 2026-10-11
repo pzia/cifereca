@@ -1268,8 +1268,8 @@ class YouthCatalogPlugin:
     ) -> IngestReport:
         """Collect one chosen source and record its outcome for this identity.
 
-        Reading source_diagnostics() never calls search(). Error messages stay
-        in the legacy IngestReport, not the sanitized diagnostic projection.
+        Reading source_diagnostics() never calls search(). Error codes in
+        IngestReport are fixed, never raw provider text or source payloads.
         """
         try:
             info = validate_source_contract(source)
