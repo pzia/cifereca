@@ -671,3 +671,42 @@ def test_result_fixture_is_optional_but_invalid_directory_is_not(tmp_path):
     (tmp_path / "fixture-results.json").mkdir()
     with pytest.raises(ContractUnavailable):
         session.search("livre")
+
+
+def test_inventory_publication_is_private_and_does_not_follow_stale_tmp(tmp_path):
+    import os
+    private = tmp_path / "private.txt"
+    private.write_text("DO NOT OVERWRITE")
+    # Legacy fixed-name temp file could have been redirected to a target.
+    (tmp_path / "inventory.tmp").symlink_to(private)
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    assert private.read_text() == "DO NOT OVERWRITE"
+    assert (tmp_path / "inventory.json").is_file()
+    assert not list(tmp_path.glob(".cifericaopds-inventory-*.tmp"))
+    if os.name == "posix":
+        assert (tmp_path / "inventory.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_inventory_publish_keeps_previous_snapshot_and_cleans_tmp(
+    tmp_path, monkeypatch,
+):
+    import cifereca_cifericaopds as adapter
+    sources = tmp_path / "fixture-sources.json"
+    sources.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    original = coll.refresh()
+    original_bytes = (tmp_path / "inventory.json").read_bytes()
+    sources.write_text(json.dumps(inventory("alpha", "beta", generation=2)))
+
+    def fail_replace(*_args, **_kwargs):
+        raise PermissionError("private filesystem path")
+
+    monkeypatch.setattr(adapter.os, "replace", fail_replace)
+    with pytest.raises(ContractUnavailable, match="local inventory persistence unavailable") as exc:
+        coll.refresh()
+    assert "private filesystem path" not in str(exc.value)
+    assert coll.snapshot() == original
+    assert (tmp_path / "inventory.json").read_bytes() == original_bytes
+    assert not list(tmp_path.glob(".cifericaopds-inventory-*.tmp"))
