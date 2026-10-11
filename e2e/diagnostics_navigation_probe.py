@@ -157,12 +157,21 @@ def main() -> int:
 
     def await_route(route, callback, max_wait=8):
         deadline = monotonic() + max_wait
+        stack = window[0].view_stack
 
         def check():
-            if window[0].view_stack.get_visible_child_name() == route:
-                callback()
+            # The route switches *before* the Gtk.Stack CROSSFADE ends.
+            # Never use a half-transparent blend as a screenshot of UX state.
+            visible = stack.get_visible_child_name() == route
+            fading = bool(stack.get_property("transition-running"))
+            if visible and not fading:
+                # One frame of settling after the transition-running flag.
+                later(120, callback)
             elif monotonic() > deadline:
-                raise AssertionError(f"Navigation {route!r} non observée")
+                raise AssertionError(
+                    f"Navigation {route!r} non stabilisée "
+                    f"(visible={visible}, transition={fading})"
+                )
             else:
                 later(90, check)
         later(140, check)
