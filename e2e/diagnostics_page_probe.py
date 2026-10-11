@@ -444,6 +444,108 @@ def main():
         }
         screenshot("05-report-bottom-1600")
         assert broker.checks == 0 and plugin.llm is None
+        # D16: resize the *visible* GTK window; Xvfb remains 1600x1000.
+        report["stage"] = "resize_visible_window_narrow"
+        report["window_before_resize"] = [
+            window[0].get_width(), window[0].get_height()
+        ]
+        window[0].set_default_size(1240, 800)
+        until(
+            lambda: window[0].get_width() <= 1280
+            and window[0].get_height() <= 820,
+            resized_narrow,
+            seconds=6,
+        )
+
+    def resized_narrow():
+        report["stage"] = "validate_resize_narrow"
+        window_width = window[0].get_width()
+        window_height = window[0].get_height()
+        assert window_width >= 760, ("Fenêtre trop petite", window_width)
+        assert window_height >= 540, ("Fenêtre trop basse", window_height)
+        assert page[0].get_mapped() and find_label("Rapport support")
+        assert find_label("Journaux par composant")
+        horizontal = page[0].get_hadjustment()
+        overflow = max(0, horizontal.get_upper() - horizontal.get_page_size())
+        assert overflow < 5, ("Débordement horizontal global", overflow)
+        report["window_narrow"] = [window_width, window_height]
+        report["horizontal_overflow_narrow"] = round(overflow, 2)
+        screenshot("06-live-resized-narrow-1600")
+        window[0].set_default_size(1560, 870)
+        until(
+            lambda: window[0].get_width() >= 1510
+            and window[0].get_height() >= 840,
+            resized_wide,
+            seconds=6,
+        )
+
+    def resized_wide():
+        report["stage"] = "validate_resize_wide"
+        assert page[0].get_mapped() and find_label("Rapport support")
+        assert window[0].get_width() > report["window_narrow"][0]
+        report["window_wide_again"] = [
+            window[0].get_width(), window[0].get_height()
+        ]
+        report["checks"]["live_resize_narrow_and_wide_without_global_horizontal_overflow"] = True
+        screenshot("07-live-resized-wide-1600")
+        # UX audit, not a PASS for D13/D15: record actual capabilities without
+        # converting missing product functionality into a green assertion.
+        report["stage"] = "audit_escape_and_file_export"
+        expander = find_expander("Ouvrir le rapport support")
+        report["audit"] = {"report_open_before_escape": expander.get_expanded()}
+        focus = find_button("Réduire")
+        outer = page[0].get_vadjustment()
+        content = page[0].get_child()
+        ok, bounds = focus.compute_bounds(content)
+        assert ok
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: audit_escape(focus, expander), 170)
+
+    def audit_escape(focus, expander):
+        assert focus.grab_focus() is not False
+        until(lambda: focus.has_focus(),
+              lambda: send_escape(expander), seconds=4)
+
+    def send_escape(expander):
+        report["stage"] = "observe_escape_xtest"
+        press("Escape")
+        later(lambda: finish_audit(expander), 260)
+
+    def finish_audit(expander):
+        report["stage"] = "finish_audit"
+        reduced = find_button("Agrandir") if any(
+            isinstance(w, Gtk.Button) and w.get_label() == "Agrandir"
+            for w in walk(page[0])
+        ) else None
+        esc_closes_enlargement = (
+            reduced is not None or not expander.get_expanded()
+        )
+        export_buttons = [
+            (w.get_label() or "", w.get_tooltip_text() or "")
+            for w in walk(page[0]) if isinstance(w, Gtk.Button)
+            and ("export" in ((w.get_label() or "") + " " +
+                             (w.get_tooltip_text() or "")).casefold()
+                 or "enregistrer" in ((w.get_label() or "") + " " +
+                                     (w.get_tooltip_text() or "")).casefold())
+        ]
+        report["audit"].update({
+            "escape_collapses_or_reduces_report": esc_closes_enlargement,
+            "report_open_after_escape": expander.get_expanded(),
+            "file_export_action_present": bool(export_buttons),
+            "file_export_actions": export_buttons,
+            "scope": "Observation de la vraie UI; aucun export de fichier simulé",
+        })
+        report["unmet_criteria"] = [
+            key for key, ok in (
+                ("D15: Escape ferme l'agrandissement", esc_closes_enlargement),
+                ("D13: export support explicite vers un fichier", bool(export_buttons)),
+            ) if not ok
+        ]
+        screenshot("08-escape-export-audit-1600")
+        assert broker.checks == 0 and plugin.llm is None
         pass_scenario()
 
     class Application(Gtk.Application):
@@ -468,7 +570,7 @@ def main():
 
     app = Application()
     GLib.timeout_add_seconds(
-        45, lambda: (fail("Timeout GTK 45s"), False)[1]
+        65, lambda: (fail("Timeout GTK 65s"), False)[1]
         if report["status"] == "RUNNING" else False)
     app.run([sys.argv[0]])
     if not (out / "screen.json").exists():
