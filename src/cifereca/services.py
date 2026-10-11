@@ -2575,6 +2575,9 @@ class LibraryService:
         connection owner for a linked account. Keep return actions unavailable
         when the source, loan transaction or origin profile is ambiguous.
         """
+        from .core.adept_return_origin import inventory_attests_return_origin
+
+        borrower_code = None
         is_paris = str(loan.source_provider).lower() == "paris"
         if is_paris:
             connection_identity_id = self.storage.identity_for_connection(
@@ -2586,9 +2589,6 @@ class LibraryService:
             borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
                 loan, connection_identity_id=identity.identity_id,
             )
-            if borrower_code:
-                return {"status": borrower_code, "return_available": False}
-            assert borrower_identity_id is not None
         else:
             identity = self.identity_for_connection(
                 loan.source_provider, loan.source_credential
@@ -2630,13 +2630,19 @@ class LibraryService:
             candidates.append(row)
 
         if not candidates:
-            return {"status": "no_acquisition", "return_available": False}
+            return {"status": borrower_code or "no_acquisition", "return_available": False}
         if len(candidates) != 1:
             return {"status": "adept_return_acquisition_ambiguous", "return_available": False}
 
         row = candidates[0]
         binding = (row.get("metadata") or {}).get("adept_binding") or {}
-        if is_paris and binding.get("adept_profile_id") and (
+        origin_attested = inventory_attests_return_origin(binding)
+        if borrower_code and not origin_attested:
+            return {"status": borrower_code, "return_available": False}
+        # Grants/current identity profile govern NEW fulfillment. Historical
+        # inventory attestation preserves a completed license's own origin.
+        # Exact Paris provenance and cross-identity/duplicate guards above stay.
+        if is_paris and not origin_attested and binding.get("adept_profile_id") and (
             self.storage.adept_profile_binding_get(
                 "identity", borrower_identity_id
             ) != binding["adept_profile_id"]
