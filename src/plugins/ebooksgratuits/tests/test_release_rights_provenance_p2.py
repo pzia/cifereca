@@ -143,6 +143,28 @@ def test_fragmented_html_and_comments_do_not_leak_raw_text_in_metadata():
         session.close()
 
 
+
+def test_non_visible_scripts_templates_cannot_fabricate_public_release_or_warning():
+    hidden = (
+        "<script>Parution le 01/01/1990. "
+        "Attention: téléchargement non autorisé dans certains pays.</script>"
+        "<style>.hidden:after { content: 'Parution le 01/01/1980'; }</style>"
+        "<template>Parution le 02/02/1970. "
+        "Attention: téléchargement non autorisé dans certains pays.</template>"
+    )
+    session = catalog_session("<ul>" + card(
+        "50", "Livre sans date réelle", release=hidden,
+    ) + "</ul>")
+    try:
+        item = session.search("")[0]
+        assert item.published_at is None
+        assert "ebook_release_date" not in item.metadata
+        assert "territorial_rights_warning" not in item.metadata
+        assert item.metadata["license_note"] == "Vérifier les droits selon le pays"
+    finally:
+        session.close()
+
+
 def test_source_filter_evidence_not_overwritten_by_release_evidence():
     session = catalog_session(fixture())
     try:
