@@ -30,7 +30,9 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
         raise ValueError("unknown diagnostic period")
     if period == "all":
         return None
-    current = now or datetime.now(timezone.utc)
+    if now is not None and not isinstance(now, datetime):
+        raise ValueError("invalid diagnostic reference time")
+    current = datetime.now(timezone.utc) if now is None else now
     if current.tzinfo is None:
         raise ValueError("timezone required")
     delta = {
