@@ -359,3 +359,14 @@ def test_export_redacts_secret_crossing_500_character_cutoff():
     assert "SUPERPRIVATE" not in message
     assert "token=<expurgé>" in message
     assert len(message) <= 500
+
+
+def test_normalizer_redacts_before_500_character_display_cutoff():
+    # The UI must not publish a cut token prefix, even if the broker is malformed.
+    text = "x" * 490 + " token=SUPERPRIVATESECRET-" + "z" * 40
+    rows = sanitized_rows({"events": [event("bounded", message=text)]})
+    assert len(rows) == 1
+    shown = rows[0]["message"]
+    assert "SUPERPRIVATE" not in shown
+    assert "token=SUP" not in shown
+    assert len(shown) <= 500
