@@ -569,3 +569,144 @@ def test_refresh_finishing_after_parent_deactivation_is_not_published(tmp_path):
     assert (tmp_path / "inventory.json").read_bytes() == baseline
     with pytest.raises(ContractUnavailable):
         coll.create_provider("beta")
+
+
+@pytest.mark.parametrize("invalid_bytes", [
+    b'{"api_major":',
+    b'{"api_major": NaN}',
+    b'\xff\xfe{"api_major": 1}',
+    b' ' * (1024 * 1024 + 1),
+])
+def test_broken_source_fixture_does_not_replace_last_valid_inventory(
+    tmp_path, invalid_bytes,
+):
+    sources = tmp_path / "fixture-sources.json"
+    sources.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    expected = coll.refresh()
+    baseline = (tmp_path / "inventory.json").read_bytes()
+
+    sources.write_bytes(invalid_bytes)
+    with pytest.raises(ContractUnavailable) as exc:
+        coll.refresh()
+    assert "fixture-sources" not in str(exc.value)
+    assert str(tmp_path) not in str(exc.value)
+    assert coll.snapshot() == expected
+    assert (tmp_path / "inventory.json").read_bytes() == baseline
+
+
+@pytest.mark.parametrize("invalid_bytes", [
+    b'{"alpha": { "items":',
+    b'{"alpha": {"items": [NaN]}}',
+    b'\xff\xfe',
+    b' ' * (1024 * 1024 + 1),
+])
+def test_broken_results_fixture_fails_closed_and_remains_local(
+    tmp_path, invalid_bytes,
+):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    (tmp_path / "fixture-results.json").write_bytes(invalid_bytes)
+    with pytest.raises(ContractUnavailable) as exc:
+        session.search("livre")
+    assert str(tmp_path) not in str(exc.value)
+    assert coll.snapshot().children[0].source_id == "alpha"
+
+
+def test_missing_source_fixture_is_typed_error_without_losing_cache(tmp_path):
+    sources = tmp_path / "fixture-sources.json"
+    sources.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    saved = coll.refresh()
+    sources.unlink()
+    with pytest.raises(ContractUnavailable, match="missing local source fixture"):
+        coll.refresh()
+    assert coll.snapshot() == saved
+    assert (tmp_path / "inventory.json").exists()
+
+
+def test_corrupted_cached_inventory_does_not_break_activation(tmp_path):
+    ctx = context(tmp_path)
+    cache = tmp_path / "inventory.json"
+    for payload in (b'{', b'\xff', b' ' * (1024 * 1024 + 1), b'null'):
+        cache.write_bytes(payload)
+        coll = CifericaCollection().activate(ctx)
+        with pytest.raises(ContractUnavailable, match="no validated inventory"):
+            coll.snapshot()
+        coll.deactivate()
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(ctx)
+    coll.refresh()
+    assert coll.snapshot().children[0].source_id == "alpha"
+
+
+def test_local_fixture_symlink_is_rejected_without_leaking_target(tmp_path):
+    private = tmp_path / "private.json"
+    private.write_text(json.dumps(inventory("alpha", generation=1)))
+    sources = tmp_path / "fixture-sources.json"
+    try:
+        sources.symlink_to(private)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink is not supported on this test system")
+    coll = CifericaCollection().activate(context(tmp_path))
+    with pytest.raises(ContractUnavailable, match="unreadable local source JSON"):
+        coll.refresh()
+    assert private.read_text().startswith('{"api_major"')
+
+
+def test_result_fixture_is_optional_but_invalid_directory_is_not(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    session = coll.create_provider("alpha").create_session(
+        credential_id="__public__", label="alpha", credentials={},
+        options={}, config=None, storage=None, diagnostics=None,
+    )
+    assert session.search("livre") == []
+    (tmp_path / "fixture-results.json").mkdir()
+    with pytest.raises(ContractUnavailable):
+        session.search("livre")
+
+
+def test_inventory_publication_is_private_and_does_not_follow_stale_tmp(tmp_path):
+    import os
+    private = tmp_path / "private.txt"
+    private.write_text("DO NOT OVERWRITE")
+    # Legacy fixed-name temp file could have been redirected to a target.
+    (tmp_path / "inventory.tmp").symlink_to(private)
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    coll = CifericaCollection().activate(context(tmp_path))
+    coll.refresh()
+    assert private.read_text() == "DO NOT OVERWRITE"
+    assert (tmp_path / "inventory.json").is_file()
+    assert not list(tmp_path.glob(".cifericaopds-inventory-*.tmp"))
+    if os.name == "posix":
+        assert (tmp_path / "inventory.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_inventory_publish_keeps_previous_snapshot_and_cleans_tmp(
+    tmp_path, monkeypatch,
+):
+    import cifereca_cifericaopds as adapter
+    sources = tmp_path / "fixture-sources.json"
+    sources.write_text(json.dumps(inventory("alpha", generation=1)))
+    coll = CifericaCollection().activate(context(tmp_path))
+    original = coll.refresh()
+    original_bytes = (tmp_path / "inventory.json").read_bytes()
+    sources.write_text(json.dumps(inventory("alpha", "beta", generation=2)))
+
+    def fail_replace(*_args, **_kwargs):
+        raise PermissionError("private filesystem path")
+
+    monkeypatch.setattr(adapter.os, "replace", fail_replace)
+    with pytest.raises(ContractUnavailable, match="local inventory persistence unavailable") as exc:
+        coll.refresh()
+    assert "private filesystem path" not in str(exc.value)
+    assert coll.snapshot() == original
+    assert (tmp_path / "inventory.json").read_bytes() == original_bytes
+    assert not list(tmp_path.glob(".cifericaopds-inventory-*.tmp"))
