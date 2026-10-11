@@ -284,9 +284,11 @@ def test_ai_preview_skips_malformed_source_metadata_without_stringifying():
         {"source": "app_log", "status": "partial"},
     ]))
     assert preview["source_states"] == [
-        {"source": "", "status": ""},
-        {"source": "app_log", "status": "partial"},
+        {"source": "inconnue", "status": "unavailable", "reason": ""},
+        {"source": "app_log", "status": "partial", "reason": ""},
     ]
+    assert "Secret" not in preview["prompt"]
+    assert model.calls == 0
 
 
 def test_ai_consent_refuses_mutated_oversize_multibyte_prompt():
