@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -17,7 +18,13 @@ def formatter():
     spec = importlib.util.spec_from_file_location("ux_diagnostics_key_boundary", PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # The diagnostics page imports its peer diagnostics_explorer module.
+    # Resolve it when testing the page from the source tree.
+    sys.path.insert(0, str(PATH.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module.format_diagnostic_detail
 
 
