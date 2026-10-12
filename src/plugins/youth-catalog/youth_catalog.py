@@ -24,6 +24,12 @@ COLLECTION_STATES = {
     "items", "empty_unverified", "invalid", "http_error",
     "timeout", "error", "cancelled",
 }
+_PUBLIC_SOURCE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,49}")
+
+
+def public_source_id(value: object) -> str:
+    """An opaque, non-personal plugin/source slug safe for public diagnostics."""
+    return value if type(value) is str and _PUBLIC_SOURCE_ID.fullmatch(value) else ""
 
 
 
@@ -185,8 +191,10 @@ def source_yield_diagnostic(row: Mapping[str, object]) -> dict[str, object]:
         ages = pipeline.get("age_qualified_count")
         returned = pipeline.get("returned_items")
         if type(candidates) is int and candidates > 0:
-            if isbn == 0:
-                explanation = "candidats_sans_isbn_atteste"
+            # ISBN can be legitimately absent (notably École des loisirs).
+            # Zero ISBNs alone cannot prove why no notices were accepted.
+            if reasons.get("isbn_invalid", 0):
+                explanation = "candidats_avec_isbn_rejete"
             elif ages == 0:
                 explanation = "candidats_sans_age_atteste"
             else:
@@ -222,8 +230,7 @@ def youth_source_support_snapshot(rows: Iterable[Mapping[str, object]]) -> dict[
             break
         if not isinstance(row, Mapping):
             continue
-        raw_id = str(row.get("source_id") or "")
-        source = raw_id if re.fullmatch(r"[a-z0-9._-]{1,50}", raw_id) else "unknown"
+        source = public_source_id(row.get("source_id")) or "unknown"
         records.append({
             "source_id": source,
             "plugin_state": str(row.get("plugin_state") or "unknown")[:35]
@@ -1131,18 +1138,27 @@ class YouthCatalogIndex:
                 continue
             if typ == "youth.bibliography" and not pid.startswith("youth.bibliography."):
                 continue
+            # Diagnostics are exported/copyable. Do not promote malformed
+            # runtime identifiers (emails, URLs, signed queries) to UI labels.
+            if not public_source_id(sid):
+                continue
             record = providers.setdefault(sid, {
                 "source_id": sid, "plugin_id": pid, "label": sid,
                 "family": "age" if typ == "youth.source" else "bibliography",
             })
+            package = _text(row.get("package_id"))
             record.update({
                 "plugin_state": _text(row.get("state"))[:40] or "unknown",
                 "enabled": bool(row.get("enabled")),
-                "package_id": _text(row.get("package_id"))[:128],
+                "package_id": (
+                    package if public_source_id(package) else ""
+                ),
             })
         cached = self._sources.get(identity, {})
         recent = self._collection_health.get(identity, {})
         for sid in set(cached) | set(recent):
+            if not public_source_id(sid):
+                continue
             if sid not in providers:
                 providers[sid] = {
                     "source_id": sid, "plugin_id": f"youth.source.{sid}",
