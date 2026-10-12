@@ -39,6 +39,7 @@ class HistoryCoverResolver:
         self.diagnostics = diagnostics
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cifereca-history-cover")
         self._lock = threading.Lock()
+        self._closed = False
         self._pending: dict[str, list[tuple[dict[str, bool], Callable[[str | None], None]]]] = {}
         self._memory: dict[str, tuple[str | None, str]] = {}
         self._stats = {
@@ -53,7 +54,17 @@ class HistoryCoverResolver:
         }
 
     def close(self) -> None:
+        with self._lock:
+            self._closed = True
         self.pool.shutdown(wait=False, cancel_futures=True)
+
+    def _deliver(self, holder, callback, value) -> bool:
+        # Cancellation may happen after the worker queued this idle callback.
+        with self._lock:
+            active = not self._closed and holder.get("active", False)
+        if active:
+            callback(value)
+        return False
 
     def stats(self) -> dict[str, int]:
         with self._lock:
@@ -81,9 +92,13 @@ class HistoryCoverResolver:
     ) -> _MetaRequest:
         holder = {"active": True}
         request = _MetaRequest(holder)
+        with self._lock:
+            if self._closed:
+                holder["active"] = False
+                return request
         title = str(title or "").strip()
         if not title:
-            GLib.idle_add(callback, default_url)
+            GLib.idle_add(self._deliver, holder, callback, default_url)
             return request
         key = self._key(provider, record_id, title, author, year)
         with self._lock:
@@ -91,7 +106,7 @@ class HistoryCoverResolver:
             if key in self._memory:
                 self._stats["memory_hit"] += 1
                 value, _status = self._memory[key]
-                GLib.idle_add(callback, value or default_url)
+                GLib.idle_add(self._deliver, holder, callback, value or default_url)
                 return request
             callbacks = self._pending.setdefault(key, [])
             callbacks.append((holder, callback))
@@ -125,7 +140,7 @@ class HistoryCoverResolver:
                 )
             for state, cb in callbacks:
                 if state.get("active"):
-                    GLib.idle_add(cb, value)
+                    GLib.idle_add(self._deliver, state, cb, value)
 
         future.add_done_callback(done)
         return request

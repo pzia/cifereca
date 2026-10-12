@@ -58,3 +58,42 @@ def test_duplicates_share_lookup_cancelled_observer_is_not_delivered_and_cache_i
     assert len(diagnostics) == 1
     resolver.close()
     assert resolver.pool.closed
+
+
+def test_cancellation_after_worker_completion_suppresses_queued_main_loop_delivery():
+    resolver_type, workers, idle = _resolver_types()
+    delivered = []
+    resolver = resolver_type(SimpleNamespace(resolve_history_thumbnail=lambda *args: ('cover', 'matched')),
+                             SimpleNamespace(add=lambda *args, **kw: None))
+    args = ('paris', 'book', 'Title', None, None, None)
+    request = resolver.request(*args, delivered.append)
+    future, fn, arguments = workers.pop(); future.set_result(fn(*arguments))
+    assert len(idle) == 1
+    request.cancel()
+    fn, arguments = idle.pop(); assert fn(*arguments) is False
+    assert delivered == []
+    cached = resolver.request(*args, delivered.append)
+    assert not workers and len(idle) == 1
+    cached.cancel()
+    fn, arguments = idle.pop(); fn(*arguments)
+    assert delivered == []
+    resolver.close()
+
+
+def test_empty_fallback_and_shutdown_are_guarded_at_delivery_time():
+    resolver_type, workers, idle = _resolver_types()
+    delivered = []
+    resolver = resolver_type(SimpleNamespace(resolve_history_thumbnail=lambda *args: ('cover', 'matched')),
+                             SimpleNamespace(add=lambda *args, **kw: None))
+    fallback = resolver.request('paris', None, '', None, None, 'fallback', delivered.append)
+    fallback.cancel()
+    fn, arguments = idle.pop(); fn(*arguments)
+    assert delivered == []
+    resolver.request('paris', 'book', 'Title', None, None, None, delivered.append)
+    future, fn, arguments = workers.pop(); future.set_result(fn(*arguments))
+    resolver.close()
+    fn, arguments = idle.pop(); fn(*arguments)
+    assert delivered == []
+    after = resolver.request('paris', 'other', 'Other', None, None, None, delivered.append)
+    assert after.holder['active'] is False
+    assert not workers and not idle
