@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .core import acsm_staging
+
 import logging
 import time
 import json
@@ -3606,54 +3608,23 @@ class LibraryService:
 
     def _acquisition_work_dir(self, identity_id: str, provider_id: str, loan_id: str | None = None) -> Path:
         """Return a mutable staging directory outside the user library tree."""
-        base = self.storage.path.parent / "acquisition-work" / safe_library_component(identity_id, "default") / safe_library_component(provider_id, "provider")
-        if loan_id:
-            base = base / safe_library_component(loan_id, "loan")
-        base.mkdir(parents=True, exist_ok=True)
-        return base
+        return acsm_staging.acquisition_work_dir(
+            storage_path=self.storage.path, identity_id=identity_id,
+            provider_id=provider_id, loan_id=loan_id,
+            component_name=safe_library_component,
+        )
 
     def _cleanup_acsm_after_success(self, path: Path | None, *, loan_id: str) -> None:
-        if path is None:
-            return
-        try:
-            path.unlink(missing_ok=True)
-            acsm_cache.forget(path)
-            _TRACE_LOG.info("TRACE download acsm cleanup loan_id=%s action=deleted file=%s", loan_id, path)
-            # Remove now-empty per-loan staging directories only.
-            parent = path.parent
-            try:
-                parent.rmdir()
-            except OSError:
-                pass
-        except OSError as exc:
-            _TRACE_LOG.warning("TRACE download acsm cleanup loan_id=%s action=keep reason=delete_failed error=%s file=%s", loan_id, type(exc).__name__, path)
+        return acsm_staging.cleanup_acsm_after_success(
+            path, loan_id=loan_id, forget=acsm_cache.forget, logger=_TRACE_LOG,
+        )
 
     def _cleanup_old_acsm_work(self, *, max_age_seconds: int | None = None) -> dict[str, int]:
-        root = self.storage.path.parent / "acquisition-work"
-        if max_age_seconds is None:
-            try:
-                retention_days = max(1, int(self.config.get("acquisition.acsm_retention_days", 7) or 7))
-            except (TypeError, ValueError):
-                retention_days = 7
-            max_age_seconds = retention_days * 24 * 3600
-        now = time.time()
-        deleted = kept = 0
-        if not root.is_dir():
-            return {"deleted": 0, "kept": 0}
-        for path in root.rglob("*.acsm"):
-            try:
-                age = now - path.stat().st_mtime
-                if age >= max_age_seconds:
-                    path.unlink()
-                    acsm_cache.forget(path)
-                    deleted += 1
-                else:
-                    kept += 1
-            except OSError:
-                kept += 1
-        if deleted:
-            _TRACE_LOG.info("TRACE download acsm cleanup-old deleted=%s kept=%s max_age_seconds=%s", deleted, kept, max_age_seconds)
-        return {"deleted": deleted, "kept": kept}
+        return acsm_staging.cleanup_old_acsm_work(
+            self.storage.path, max_age_seconds=max_age_seconds,
+            config_get=self.config.get, clock=time.time,
+            forget=acsm_cache.forget, logger=_TRACE_LOG,
+        )
 
     def acquire_digital_loan(self, loan: Loan, *, force_refresh: bool = False) -> Acquisition:
         started = time.monotonic()
