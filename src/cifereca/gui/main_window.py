@@ -49,6 +49,7 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_library_downloads import build_library_download_section
 from .settings_ai_section import build_ai_settings_section
 from .settings_diagnostics_section import build_settings_diagnostics_section
+from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
 from .window_close import close_window_resources
 from .loan_view import (
@@ -3598,29 +3599,15 @@ class MainWindow(Adw.ApplicationWindow):
         if previous is not None:
             previous.dispose()
         setattr(self, lifetime_name, page_lifetime)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        clamp = Adw.Clamp(); clamp.set_maximum_size(980); scroll.set_child(clamp)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        box.set_margin_top(22); box.set_margin_bottom(28); box.set_margin_start(18); box.set_margin_end(18)
-        clamp.set_child(box)
-        settings_heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); box.append(settings_heading)
-        title = Gtk.Label(label="Configuration et diagnostic", xalign=0); title.set_hexpand(True); title.set_wrap(True); add_css(title, "page-title"); settings_heading.append(title)
-        sub = Gtk.Label(label="Identités, sources, acquisitions automatiques, intégration KOBO-ADEPT et diagnostic.", xalign=0); add_css(sub, "dim-label"); box.append(sub)
-
-        settings_root = box
-        tabs = Gtk.Stack(); tabs.set_hexpand(True)
+        shell = build_settings_shell(Gtk=Gtk, Adw=Adw, add_css=add_css)
+        scroll = shell.scroll
+        box = shell.root
+        settings_root = shell.root
+        settings_heading = shell.heading
+        tabs = shell.tabs
+        sections = shell.sections
         if not standalone:
             self._settings_tabs = tabs
-        switcher = Gtk.StackSwitcher(); switcher.set_stack(tabs); switcher.add_css_class("settings-tabs")
-        tab_scroll = Gtk.ScrolledWindow(); tab_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        tab_scroll.set_child(switcher); settings_root.append(tab_scroll); settings_root.append(tabs)
-        sections = {}
-        for key, label in (("accounts", "Identités et comptes"), ("library", "Bibliothèque"),
-                           ("sync", "Synchronisation"), ("interface", "Interface"),
-                           ("ai", "Intelligence artificielle"), ("diagnostic", "Diagnostic")):
-            section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-            sections[key] = section; tabs.add_titled(section, key, label)
 
         settings_state = SettingsRevisionState(sections)
         tracked_settings_widgets: set[int] = set()
