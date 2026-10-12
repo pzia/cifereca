@@ -1321,13 +1321,14 @@ def test_passive_support_more_than_eight_eligible_sections_remains_truncated():
             return {
                 "checks_executed": False,
                 "checks": [],
+                "result": "ok",
                 **{f"section_{i}": "ok" for i in range(9)},
             }
 
     preview = prepare_analysis(FakeLLM(), ExpandedSupport([]),
                                include_support_report=True)
     # Unknown section names are not public operational evidence.
-    assert preview["support_fields"] == 0
+    assert preview["support_fields"] == 1
     assert preview["sample_truncated"] is False
 
 
