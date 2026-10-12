@@ -29,6 +29,7 @@ PUBLIC_SOURCE_REASONS = {
     "app_log": frozenset({"", "log_tail_bounded", "log_source_incomplete", "no_matching_events"}),
     "core_events": frozenset({
         "", "diagnostics_disabled", "snapshot_unavailable", "no_recorded_events",
+        "snapshot_records_incomplete",
     }),
 }
 
