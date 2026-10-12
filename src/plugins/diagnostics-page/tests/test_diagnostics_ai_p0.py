@@ -713,6 +713,38 @@ def test_source_reason_is_not_free_text_in_ai_preview(source, reason, expected):
     assert model.calls == 0
 
 
+def test_explorer_and_ai_share_the_same_public_source_boundary():
+    from diagnostics_explorer import public_source_evidence, source_summaries
+    fixture = [
+        {"source": "app_log", "status": "partial",
+         "reason": "log_tail_bounded"},
+        {"source": "core_events", "status": "unavailable",
+         "reason": "snapshot_unavailable"},
+        {"source": "Liseuse de Camille", "status": "partial",
+         "reason": "Alice Dupont"},
+    ]
+
+    class CoverageBroker(FakeBroker):
+        def events(self, **kwargs):
+            payload = super().events(**kwargs)
+            payload["sources"] = fixture
+            return payload
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, CoverageBroker([event()]))
+    gtk_rows = source_summaries({"sources": fixture})
+    for ai_row, gtk_row, raw in zip(preview["source_states"], gtk_rows, fixture):
+        assert ai_row == public_source_evidence(raw)
+        assert ai_row["source"] == gtk_row["source"]
+        assert ai_row["status"] == gtk_row["status"]
+        assert ai_row["reason"] == gtk_row.get("reason", "")
+    assert "Liseuse de Camille" not in preview["prompt"]
+    assert "Alice Dupont" not in preview["prompt"]
+    assert "Liseuse de Camille" not in repr(gtk_rows)
+    assert "Alice Dupont" not in repr(gtk_rows)
+    assert model.calls == 0
+
+
 def test_broker_overfilled_page_is_disclosed_as_partial_sample():
     class Overfilled(FakeBroker):
         def events(self, **kwargs):
