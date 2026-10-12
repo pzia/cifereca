@@ -15,10 +15,33 @@ def support_report_bytes(text):
     return data
 
 
+def diagnostic_json_bytes(value):
+    """Serialize a detail from the SAME bounded redacted renderer as GTK.
+
+    The caller supplies a diagnostic value, not arbitrary pre-encoded bytes.
+    This prevents the file action from bypassing the redaction boundary.
+    """
+    import json
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    encoded = format_diagnostic_detail(value, "json").encode("utf-8")
+    if len(encoded) > 24_000:
+        raise ValueError("diagnostic_json_too_large")
+    json.loads(encoded.decode("utf-8"))  # A JSON file is never a truncated fragment.
+    return encoded
+
+
 class SupportReportExport:
-    def __init__(self, Gtk, Gio, button, parent, text, toast):
+    def __init__(
+        self, Gtk, Gio, button, parent, text, toast, *,
+        filename="cifereca-diagnostic-support.txt",
+        title="Enregistrer le rapport support expurgé",
+        success_message="Rapport support expurgé enregistré",
+        prepare_bytes=support_report_bytes,
+    ):
         self.Gtk, self.Gio = Gtk, Gio
         self.button, self.parent, self.text, self.toast = button, parent, text, toast
+        self.filename, self.title = filename, title
+        self.success_message, self.prepare_bytes = success_message, prepare_bytes
         self.dialog = None
         self.cancellable = None
         self.closed = False
@@ -28,12 +51,12 @@ class SupportReportExport:
         if self.closed or self.dialog is not None or self.cancellable is not None:
             return
         try:
-            self.data = support_report_bytes(self.text())
+            self.data = self.prepare_bytes(self.text())
             self.dialog = self.Gtk.FileChooserNative.new(
-                "Enregistrer le rapport support expurgé", self.parent(),
+                self.title, self.parent(),
                 self.Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
             )
-            self.dialog.set_current_name("cifereca-diagnostic-support.txt")
+            self.dialog.set_current_name(self.filename)
             self.dialog.connect("response", self.response)
             self.button.set_sensitive(False)
             self.dialog.show()
@@ -70,7 +93,7 @@ class SupportReportExport:
         except Exception:
             message = "Export impossible : écriture non terminée"
         else:
-            message = "Rapport support expurgé enregistré"
+            message = self.success_message
         self._release()
         if not self.closed:
             self.toast(message)

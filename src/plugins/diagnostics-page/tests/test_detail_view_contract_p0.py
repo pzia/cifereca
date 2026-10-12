@@ -31,3 +31,17 @@ def test_active_checks_and_runtime_diagnostics_use_same_formatter():
     assert "def add_detail_view(container, value:" in src
     assert 'add_detail_view(card, row["detail"])' in src
     assert "add_detail_view(card, value)" in src
+
+
+
+def test_json_file_export_uses_same_safe_detail_snapshot_and_local_async_writer():
+    src = PAGE.read_text(encoding="utf-8")
+    assert 'Gtk.Button(label="Enregistrer JSON…")' in src
+    assert "lambda: safe" in src
+    assert "prepare_bytes=diagnostic_json_bytes" in src
+    assert "filename=\"cifereca-diagnostic.json\"" in src
+    assert 'save_json.connect("clicked", json_export.choose)' in src
+    assert 'expander.connect("unroot", on_detail_unroot)' in src
+    assert "json_export.close()" in src
+    assert "self._support_exports.append(json_export)" in src
+    assert "self._support_exports.remove(json_export)" in src

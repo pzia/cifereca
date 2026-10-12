@@ -14,7 +14,9 @@ from diagnostics_explorer import (
     next_page_offset, selectable_event_ids, export_selected_events,
     empty_observation,
 )
-from diagnostics_support import SupportReportExport, preserve_report_selection
+from diagnostics_support import (
+    SupportReportExport, diagnostic_json_bytes, preserve_report_selection,
+)
 
 # The broker provides already-redacted data. This is a second, stricter
 # presentation boundary: neither UI modes nor clipboard may expose raw secrets.
@@ -765,9 +767,12 @@ class DiagnosticsPagePlugin:
             selector.set_tooltip_text("Représentation des mêmes données expurgées")
             copy_detail = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
             copy_detail.set_tooltip_text("Copier le détail expurgé actuellement affiché")
+            save_json = Gtk.Button(label="Enregistrer JSON…")
+            save_json.set_tooltip_text("Exporter ce détail en JSON indenté expurgé vers un fichier local")
             controls.append(label)
             controls.append(selector)
             controls.append(copy_detail)
+            controls.append(save_json)
             wrapper.append(controls)
 
             detail_scroll = Gtk.ScrolledWindow()
@@ -798,8 +803,30 @@ class DiagnosticsPagePlugin:
                 display.get_clipboard().set(visible_text())
                 host.toast("Détail expurgé copié")
 
+            # Export always uses the same frozen and already-expurgated
+            # snapshot as the three detail views, even when the selector
+            # currently shows Lisible or Brut. No new Core broker call.
+            json_export = SupportReportExport(
+                Gtk, Gio, save_json, scroll.get_root, lambda: safe, host.toast,
+                filename="cifereca-diagnostic.json",
+                title="Enregistrer le détail JSON expurgé",
+                success_message="Détail JSON expurgé enregistré",
+                prepare_bytes=diagnostic_json_bytes,
+            )
+            self._support_exports.append(json_export)
+
+            def on_detail_unroot(*_args):
+                # Journal pagination and local search rebuild widgets often.
+                # Close pending dialogs/writes and release the stale exporter
+                # instead of retaining every old detail in the page lifetime.
+                json_export.close()
+                if json_export in self._support_exports:
+                    self._support_exports.remove(json_export)
+
+            expander.connect("unroot", on_detail_unroot)
             selector.connect("notify::selected", change_view)
             copy_detail.connect("clicked", copy_view)
+            save_json.connect("clicked", json_export.choose)
             change_view()
             expander.set_child(wrapper)
             container.append(expander)
