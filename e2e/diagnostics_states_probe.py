@@ -606,9 +606,25 @@ def main():
         until(
             lambda: len(broker[0].event_queries) > ai_refresh_queries_before[0]
             and not has("Actualisation en cours")
-            and any("event-ux-002" in label for label in labels()),
+            and d14_updated_event_visible(),
             d14_after_refresh, seconds=7,
         )
+
+    def d14_updated_event_visible():
+        # Journal groups are collapsed by default (warning severity), so the
+        # new event's provenance cannot be inspected until its *real GTK*
+        # expander has been opened. Do not infer revision 002 from counts.
+        groups = [
+            widget for widget in walk(page[0])
+            if isinstance(widget, Gtk.Expander)
+            and (widget.get_label() or "").startswith("core.sync · ")
+        ]
+        if not groups:
+            return False
+        for group in groups:
+            if not group.get_expanded():
+                group.set_expanded(True)
+        return any("event-ux-002" in label for label in labels())
 
     def d14_after_refresh():
         # The journal now displays revision 2. Inspect the *unchanged*
