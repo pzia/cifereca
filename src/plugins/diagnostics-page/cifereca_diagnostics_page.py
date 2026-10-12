@@ -343,74 +343,48 @@ def _scroll_report_adjustment(adjustment, delta: float, unit, Gdk) -> bool:
 
 
 def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
-    """Route wheel events at the window before the outer GTK scroll capture.
+    """Keep a wheel over the report inside its own scroller.
 
-    Use GTK's own widget picking, not a motion controller's hover state or
-    bounds against a native coordinate system. The picked widget must belong
-    to the report subtree; all other wheel events remain native.
+    Discrete X11/XTEST scroll events may expose no position at all through
+    Gdk.Event.get_position() or Gdk.Device.get_surface_at_position().
+    GTK's motion controller, attached before the outer scroller capture,
+    maintains a position in *root widget coordinates* instead. Hit-test
+    against the current visible widget tree, never cached allocation bounds.
+    Events outside the report or at its edge continue native propagation.
     """
+    pointer = [None]
+    tracking = Gtk.EventControllerMotion()
+    tracking.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def pointer_moved(_controller, x, y):
+        pointer[0] = (x, y)
+
+    def pointer_left(_controller):
+        pointer[0] = None
+
+    tracking.connect("enter", pointer_moved)
+    tracking.connect("motion", pointer_moved)
+    tracking.connect("leave", pointer_left)
+    root.add_controller(tracking)
+
     wheel = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.BOTH_AXES)
     wheel.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
-    def pointer_over_report(controller):
-        event = controller.get_current_event()
-        native = root.get_native()
-        dbg = __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1"
-        if dbg:
-            import sys
-            print("D05_ENTRY", "event", type(event).__name__ if event else None,
-                  "native", type(native).__name__ if native else None,
-                  "report_mapped", report_scroll.get_mapped(), file=sys.stderr, flush=True)
-        if event is None or native is None:
+    def over_report():
+        position = pointer[0]
+        if position is None:
             return False
-        located, x, y = event.get_position()
-        if dbg:
-            import sys
-            print("D05_EVENT_POSITION", located, x, y, file=sys.stderr, flush=True)
-        if not located:
-            device = controller.get_current_event_device()
-            if device is None:
-                return False
-            surface, x, y = device.get_surface_at_position()
-            if dbg:
-                import sys
-                print("D05_DEVICE_POSITION", type(surface).__name__ if surface else None,
-                      x, y, "event_surface", type(event.get_surface()).__name__ if event.get_surface() else None,
-                      file=sys.stderr, flush=True)
-            if surface is None or surface != event.get_surface():
-                return False
-        offset_x, offset_y = native.get_surface_transform()
-        picked = native.pick(x + offset_x, y + offset_y, Gtk.PickFlags.DEFAULT)
-        raw_picked = native.pick(x, y, Gtk.PickFlags.DEFAULT)
-        root_picked = root.pick(x - offset_x, y - offset_y, Gtk.PickFlags.DEFAULT)
-        over = False
-        widget = picked
-        while widget is not None:
-            if widget is report_scroll:
-                over = True
-                break
-            if widget is root:
-                break
-            widget = widget.get_parent()
-        if __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1":
-            import sys
-            ok, bounds = report_scroll.compute_bounds(native)
-            print("D05_PICK_DEBUG", {
-                "position": (round(x, 2), round(y, 2)),
-                "native_offset": (round(offset_x, 2), round(offset_y, 2)),
-                "native_pick": type(picked).__name__ if picked else None,
-                "unoffset_pick": type(raw_picked).__name__ if raw_picked else None,
-                "root_pick": type(root_picked).__name__ if root_picked else None,
-                "report_bounds": (round(bounds.get_x(), 2), round(bounds.get_y(), 2),
-                                  round(bounds.get_width(), 2), round(bounds.get_height(), 2)) if ok else None,
-                "over": over,
-            }, file=sys.stderr, flush=True)
-        return over
+        picked = root.pick(*position, Gtk.PickFlags.DEFAULT)
+        while picked is not None and picked is not root:
+            if picked is report_scroll:
+                return True
+            picked = picked.get_parent()
+        return False
 
     def on_wheel(controller, dx, dy):
         if not report_expander.get_expanded() or not report_scroll.get_mapped():
             return False
-        if not pointer_over_report(controller):
+        if not over_report():
             return False
         if controller.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK:
             dx, dy = dy, dx
