@@ -291,6 +291,29 @@ class LibraryService:
         identity = self.identity_by_id(identity_id)
         return identity or self.current_identity or self.identities[0]
 
+    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
+        """Read-only status of the normal Paris-primary/ADEPT configuration.
+
+        This is *not* an Adobe fulfillment authorization, and it does not
+        reinterpret historical loan provenance or exceptional borrower grants.
+        """
+        from .core.paris_adept_normal import normal_paris_adept_status
+
+        if self.identity_by_id(identity_id) is None:
+            return {
+                "identity_id": str(identity_id),
+                "status": "to_configure",
+                "reason": "unknown_identity",
+                "paris_label": None,
+                "adept_profile_id": None,
+            }
+        return normal_paris_adept_status(
+            identity_id=identity_id,
+            connections=self.storage.provider_connections(identity_id=identity_id),
+            accounts=self.accounts,
+            profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
+        )
+
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
         target = identity_id or (self.current_identity.identity_id if self.current_identity else None)
         return [account for account in self.accounts if target is None or account.identity_id == target]
