@@ -660,6 +660,30 @@ def main():
                 "D14 P0: actualisation explicite du broker laisse utilisable "
                 "un consentement IA établi sur les anciens événements"
             )
+        # Two *distinct rendered* screenshots: journal revision 2, then
+        # the stale preview/active authorization, with a settled GTK frame.
+        later(d14_capture_new_revision, 250)
+
+    def d14_capture_new_revision():
+        assert d14_updated_event_visible()
+        assert ai_fixture[0].calls == 0
+        capture("09a-d14-current-journal-revision-002")
+        send = ai_button("Autoriser et analyser")
+        content = page[0].get_child()
+        ok, bounds = send.compute_bounds(content)
+        assert ok and bounds.get_width() > 0 and bounds.get_height() > 0
+        adjustment = page[0].get_vadjustment()
+        adjustment.set_value(max(0.0, min(
+            float(bounds.get_y()) - 150,
+            max(0.0, adjustment.get_upper() - adjustment.get_page_size()),
+        )))
+        later(d14_capture_stale_approval, 300)
+
+    def d14_capture_stale_approval():
+        assert ai_fixture[0].calls == 0
+        assert ai_button("Autoriser et analyser").get_sensitive() == (
+            report["audits"]["D14_stale_consent_button_still_sensitive"]
+        )
         capture("09b-d14-stale-consent-after-refresh")
         # Existing correct behavior: changing the analysis scope invalidates
         # the preview. It must remain distinct from the refresh audit.
