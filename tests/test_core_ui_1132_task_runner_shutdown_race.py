@@ -79,8 +79,8 @@ def test_rejected_enqueue_restores_button_and_activity_count():
     assert runner._count == 0
     assert button.calls == [False]
     assert len(pending) == 2
-    for callback, args in pending:
-        assert callback(*args) is None if callback is pending[0][0] else callback(*args) is False
+    for index, (callback, args) in enumerate(pending):
+        assert callback(*args) is (None if index == 0 else False)
     assert button.calls == [False, True]
     assert [event[0] for event in events] == ["started", "finished"]
     assert events[-1][1][3] is False
