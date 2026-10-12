@@ -24,7 +24,7 @@ class SaveSettings(unittest.TestCase):
         editor={'id':Value('stable-id'),'label':Value('Hugues'),'directory':Value('hugues'),'adept_profile':Value(),'languages':Value('fr'),'prefer_vo':Value(active=False)}
         path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py';tree=ast.parse(path.read_text())
         nested={n.name:n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name in {'capture_settings_values','save_settings','save_and_reconnect'}}
-        ns={'__name__':'cifereca.gui.main_window','__package__':'cifereca.gui','self':self.window,'re':re,'shlex':shlex,'identity_editors':[editor],'account_editors':[],'descriptors':{},'public_ids':set(),'provider_download_editors':{},'levels':['normal'],'vault_profiles':['Android'],'TaskPriority':NS(USER_ACTION=0),'refresh_text':Mock(),'save':object(),'reconnect':object(),
+        ns={'__name__':'cifereca.gui.main_window','__package__':'cifereca.gui','self':self.window,'re':re,'shlex':shlex,'page_lifetime':NS(alive=True),'identity_editors':[editor],'account_editors':[],'descriptors':{},'public_ids':set(),'provider_download_editors':{},'levels':['normal'],'vault_profiles':['Android'],'TaskPriority':NS(USER_ACTION=0),'refresh_text':Mock(),'save':object(),'reconnect':object(),
             'settings_state':SettingsRevisionState(['accounts','library','sync','interface','ai','diagnostic']),
             'build_settings_draft':build_settings_draft,'SettingsValidationError':SettingsValidationError,
             'track_all_settings_widgets':Mock(),'update_settings_actions':Mock()}
