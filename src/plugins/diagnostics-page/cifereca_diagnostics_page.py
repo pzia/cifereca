@@ -322,6 +322,62 @@ def _install_report_escape(Gtk, Gdk, container, scroller, resize):
     container.add_controller(controller)
 
 
+def _scroll_report_adjustment(adjustment, delta: float, unit, Gdk) -> bool:
+    """Move only an inner GTK adjustment, without scrolling its parent.
+
+    Return False at an edge so GTK can chain the wheel to the page normally.
+    Match GTK4's wheel/page-size and surface scroll factors.
+    """
+    if not math.isfinite(delta) or not delta:
+        return False
+    page = adjustment.get_page_size()
+    lower = adjustment.get_lower()
+    upper = max(lower, adjustment.get_upper() - page)
+    value = adjustment.get_value()
+    factor = max(0.0, page) ** (2.0 / 3.0) if unit == Gdk.ScrollUnit.WHEEL else 2.5
+    new_value = min(upper, max(lower, value + delta * factor))
+    if abs(new_value - value) < 0.0001:
+        return False
+    adjustment.set_value(new_value)
+    return True
+
+
+def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
+    """Intercept a wheel before GTK's outer ScrolledWindow capture controller.
+
+    A controller on the nested scroll widget runs too late: GTK4 captures
+    scroll events in the outer ScrolledWindow first. The parent wrapper
+    dispatches only pointer-over-report events to the inner adjustment.
+    Keyboard navigation and wheel events elsewhere remain native GTK.
+    """
+    hover = Gtk.EventControllerMotion()
+    report_scroll.add_controller(hover)
+    wheel = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.BOTH_AXES)
+    wheel.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def on_wheel(controller, dx, dy):
+        if not report_expander.get_expanded() or not report_scroll.get_mapped():
+            return False
+        if not hover.contains_pointer():
+            return False
+        if controller.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK:
+            dx, dy = dy, dx
+        unit = controller.get_unit()
+        moved = False
+        if dy:
+            moved = _scroll_report_adjustment(
+                report_scroll.get_vadjustment(), dy, unit, Gdk,
+            )
+        if dx:
+            moved = _scroll_report_adjustment(
+                report_scroll.get_hadjustment(), dx, unit, Gdk,
+            ) or moved
+        return moved
+
+    wheel.connect("scroll", on_wheel)
+    root.add_controller(wheel)
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
@@ -366,6 +422,12 @@ class DiagnosticsPagePlugin:
         for margin in ("top", "bottom", "start", "end"):
             getattr(outer, "set_margin_" + margin)(18)
         scroll.set_child(outer)
+        # A parent capture controller must run before GTK4's outer scroller
+        # when a pointer wheel is inside the long support report.
+        page_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        scroll.set_hexpand(True)
+        scroll.set_vexpand(True)
+        page_root.append(scroll)
 
         intro = Gtk.Label(
             label="État technique expurgé fourni par le Core. Les plugins ne lisent ni fichiers internes, ni cookies, ni secrets."
@@ -596,6 +658,9 @@ class DiagnosticsPagePlugin:
         report_wrap.connect("toggled", toggle_report_wrap)
         _install_report_escape(
             Gtk, Gdk, report_container, report_scroll, report_resize,
+        )
+        _install_report_wheel(
+            Gtk, Gdk, page_root, report_scroll, report_expander,
         )
         preserve_report_selection(GLib, report_expander, export_view.get_buffer())
 
@@ -1339,7 +1404,7 @@ class DiagnosticsPagePlugin:
             load_events()
 
         _run_once_on_first_map(scroll, initial_load)
-        return scroll
+        return page_root
 
     def deactivate(self):
         for exporter in getattr(self, "_support_exports", ()):
