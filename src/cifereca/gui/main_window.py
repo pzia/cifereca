@@ -48,6 +48,7 @@ from .settings_account_editor import build_provider_account_editor
 from .settings_identity_editor import build_identity_settings_editor
 from .settings_library_downloads import build_library_download_section
 from .settings_ai_section import build_ai_settings_section
+from .settings_diagnostics_section import build_settings_diagnostics_section
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -4047,38 +4048,28 @@ class MainWindow(Adw.ApplicationWindow):
         track_all_settings_widgets()
         update_settings_actions()
 
+        diagnostic_ui = build_settings_diagnostics_section(
+            section=sections["diagnostic"], Gtk=Gtk, Adw=Adw,
+            adaptive_action_bar=AdaptiveActionBar,
+            action_button=self.action_button,
+        )
         box = sections["diagnostic"]
-        diag_group = Adw.PreferencesGroup(); diag_group.set_title("Diagnostic système"); box.append(diag_group)
-        diag_summary = Gtk.Label(xalign=0)
-        diag_summary.set_wrap(True); diag_group.add(diag_summary)
-        diag_filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        diag_filter_label = Gtk.Label(label="Afficher", xalign=0); diag_filter_label.set_hexpand(True)
-        diag_filter_row.append(diag_filter_label)
-        diag_filter = Gtk.DropDown.new_from_strings(["À examiner", "Tous"])
-        diag_filter.set_tooltip_text("Afficher uniquement les anomalies ou l’inventaire complet")
-        diag_filter_row.append(diag_filter); diag_group.add(diag_filter_row)
-        diag_issues_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        diag_group.add(diag_issues_box)
+        diag_summary = diagnostic_ui.summary
+        diag_filter = diagnostic_ui.filter
+        diag_issues_box = diagnostic_ui.issues_box
+        details_toggle = diagnostic_ui.details_toggle
+        diag_text = diagnostic_ui.text
+        diag_scroll = diagnostic_ui.scroll
+        refresh = diagnostic_ui.refresh
+        copy = diagnostic_ui.copy
+        export = diagnostic_ui.export
+        clear = diagnostic_ui.clear
 
-        details_toggle = Gtk.ToggleButton(label="Afficher les détails techniques")
-        details_toggle.set_halign(Gtk.Align.START); diag_group.add(details_toggle)
-        diag_text = Gtk.TextView(); diag_text.set_editable(False); diag_text.set_monospace(True); diag_text.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        diag_text.set_top_margin(10); diag_text.set_bottom_margin(10); diag_text.set_left_margin(10); diag_text.set_right_margin(10)
-        diag_scroll = Gtk.ScrolledWindow(); diag_scroll.set_min_content_height(330); diag_scroll.set_child(diag_text)
-        diag_scroll.set_visible(False); diag_group.add(diag_scroll)
         def toggle_diagnostic_details(button):
             visible = bool(button.get_active())
             diag_scroll.set_visible(visible)
             button.set_label("Masquer les détails techniques" if visible else "Afficher les détails techniques")
         details_toggle.connect("toggled", toggle_diagnostic_details)
-
-        buttons = AdaptiveActionBar(source=box); box.append(buttons)
-        refresh = self.action_button("Actualiser", "view-refresh-symbolic")
-        copy = self.action_button("Copier dans le presse-papiers", "edit-copy-symbolic", suggested=True)
-        export = self.action_button("Exporter le diagnostic", "document-save-symbolic")
-        export.set_tooltip_text("Enregistrer le rapport de diagnostic expurgé dans un fichier texte")
-        clear = self.action_button("Effacer", "edit-clear-symbolic")
-        buttons.append(refresh); buttons.append(copy); buttons.append(export); buttons.append(clear)
 
         def open_diagnostic_plugin(_button, plugin_id: str) -> None:
             self.navigate("plugins")
