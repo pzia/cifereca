@@ -100,7 +100,7 @@ jobs:
               echo "::endgroup::"
             done
           ' || status=$?
-          # Keep each scenario's logs/screenshots and publish a combined summary.
+          # Keep raw logs/screenshots only on this runner; public export is separately sanitized.
           /usr/bin/python3 - <<'PY'
           import json
           from pathlib import Path
@@ -116,28 +116,31 @@ jobs:
           PY
           exit "$status"
 
-      - name: Publish E2E summary
+      - name: Publish allowlisted E2E summary
         if: always()
         shell: bash
         run: |
+          # Fail closed: never print a raw summary, trace, log or screenshot.
+          status=0
+          python3 scripts/ci_publish_e2e_safe_summary.py || status=$?
           {
-            echo "## E2E GTK"
-            echo "Selected: ${{ steps.select.outputs.count }}/${{ steps.select.outputs.total }} (mode: ${{ steps.select.outputs.mode }})"
+            echo "## E2E GTK (public, allowlisted)"
             echo
-            if [ -f e2e-artifacts/summary.json ]; then
+            if [ -f e2e-public/summary.json ]; then
               echo '~~~json'
-              cat e2e-artifacts/summary.json
+              cat e2e-public/summary.json
               echo '~~~'
             else
-              echo "Aucun GTK demandé (documentation seule), ou échec avant le replay."
+              echo "Public summary unavailable."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
-      - name: Upload E2E debug artifacts
+      - name: Upload allowlisted E2E summary only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-core-debug
-          path: e2e-artifacts/
-          if-no-files-found: warn
-          retention-days: 7
+          name: e2e-core-public-summary
+          path: e2e-public/summary.json
+          if-no-files-found: ignore
+          retention-days: 2
