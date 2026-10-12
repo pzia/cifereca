@@ -1751,3 +1751,18 @@ def test_support_projection_does_not_stringify_untrusted_nested_fields():
     assert "error_type" not in preview["prompt"]
     assert "plugins" in preview["prompt"]
     assert preview["bytes"] <= 3000
+
+
+
+def test_support_version_rejects_arbitrary_person_names_in_build_metadata():
+    from diagnostics_ai import _public_support_report
+
+    row = _public_support_report({
+        "core": {"version": "0.9.7+CamilleDupont", "python": "3.12.4"},
+        "result": "ok",
+    })
+    assert row["core"] == {"python": "3.12.4"}
+    assert "Camille" not in repr(row)
+    assert _public_support_report({"core": {"version": "0.9.7.dev2"}})[
+        "core"
+    ] == {"version": "0.9.7.dev2"}
