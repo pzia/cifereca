@@ -48,12 +48,13 @@ def test_attention_rows_have_user_summary_and_bounded_technical_details():
 
 def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
     source = gui_source_text(ROOT / "src/cifereca/gui/main_window.py")
-    assert 'Gtk.DropDown.new_from_strings(["À examiner", "Tous"])' in source
-    assert 'diag_scroll.set_visible(False)' in source
+    section = gui_source_text(ROOT / "src/cifereca/gui/settings_diagnostics_section.py")
+    assert 'Gtk.DropDown.new_from_strings(["À examiner", "Tous"])' in section
+    assert 'diag_scroll.set_visible(False)' in section
     assert 'label="Ouvrir Plugins"' in source
     assert 'focus(plugin_id)' in source
-    assert 'Copier dans le presse-papiers' in source
-    assert 'Exporter le diagnostic' in source
+    assert 'Copier dans le presse-papiers' in section
+    assert 'Exporter le diagnostic' in section
     assert 'Gtk.FileChooserAction.SAVE' in source
 
 
