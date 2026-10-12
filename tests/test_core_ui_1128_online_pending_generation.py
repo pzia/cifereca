@@ -127,6 +127,6 @@ def test_window_captures_generation_and_clears_only_matching_pending_token():
                   and n.name == "run_search")
     src = ast.unparse(method)
     assert "self._online_pending_generation = generation" in src
-    assert "self._online_pending_token is pending_token" in src
+    assert "getattr(self, '_online_pending_token', None) is pending_token" in src
     assert "self._online_pending_generation = None" in src
     assert "not getattr(self, '_closed', False)" in src
