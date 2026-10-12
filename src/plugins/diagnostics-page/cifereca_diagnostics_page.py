@@ -343,30 +343,16 @@ def _scroll_report_adjustment(adjustment, delta: float, unit, Gdk) -> bool:
 
 
 def _install_report_wheel(Gtk, Gdk, GLib, root, outer_scroll, report_scroll, report_expander):
-    """Keep a wheel over the report inside its own scroller.
+    """Keep physical wheel events inside the hovered report viewport.
 
-    Discrete X11/XTEST scroll events may expose no position at all through
-    Gdk.Event.get_position() or Gdk.Device.get_surface_at_position().
-    GTK's motion controller, attached before the outer scroller capture,
-    maintains a position in *root widget coordinates* instead. Hit-test
-    against the current visible widget tree, never cached allocation bounds.
-    Events outside the report or at its edge continue native propagation.
+    A scroller-local GTK motion controller knows whether its subtree is under
+    the pointer, without guessing X11/surface coordinates from scroll events.
+    The root captures scroll before the GTK ancestor scroller can consume it.
+    At the report edge, propagation to the page remains normal.
     """
-    pointer = [None]
     tracking = Gtk.EventControllerMotion()
     tracking.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-
-    def pointer_moved(_controller, x, y):
-        pointer[0] = (x, y)
-
-    def pointer_left(_controller):
-        pointer[0] = None
-        release_guard()
-
-    tracking.connect("enter", pointer_moved)
-    tracking.connect("motion", pointer_moved)
-    tracking.connect("leave", pointer_left)
-    root.add_controller(tracking)
+    report_scroll.add_controller(tracking)
 
     # GTK4 may move the ancestor adjustment even after a nested wheel
     # handler returns TRUE. Keep the parent fixed during an actual inner
@@ -411,15 +397,10 @@ def _install_report_wheel(Gtk, Gdk, GLib, root, outer_scroll, report_scroll, rep
     wheel.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
     def over_report():
-        position = pointer[0]
-        if position is None:
-            return False
-        picked = root.pick(*position, Gtk.PickFlags.DEFAULT)
-        while picked is not None and picked is not root:
-            if picked is report_scroll:
-                return True
-            picked = picked.get_parent()
-        return False
+        # GTK tracks pointer crossing for the report and *all its children*.
+        # Unlike a cached root position, this also survives scrolling,
+        # resizing, text selection and a relocated XTEST pointer.
+        return tracking.contains_pointer()
 
     def on_wheel(controller, dx, dy):
         if not report_expander.get_expanded() or not report_scroll.get_mapped():

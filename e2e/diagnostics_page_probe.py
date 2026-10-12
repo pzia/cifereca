@@ -703,6 +703,12 @@ def main():
                 visible_bottom - visible_top, 2
             ),
         }
+        # Let GTK process the XTEST pointer crossing before the wheel. XSync
+        # flushes X11 but does not itself iterate the GTK/GLib event loop.
+        later(lambda: issue_wheel_scroll(scroller, view), 160)
+
+    def issue_wheel_scroll(scroller, view):
+        inner = scroller.get_vadjustment()
         inner.set_value(0)
         outer_before = page[0].get_vadjustment().get_value()
         report["wheel_outer_before"] = round(outer_before, 2)
