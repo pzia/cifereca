@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .settings_context import settings_action_state
+from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .llm_settings import (
@@ -4073,6 +4074,23 @@ class MainWindow(Adw.ApplicationWindow):
             choose_adept.set_tooltip_text("Lister les profils Adobe capables de récupérer les prêts ACSM")
             adept_row.add_suffix(choose_adept)
             choose_adept.connect("clicked", lambda button, entry=adept_row: self._choose_adept_profile(entry, button))
+            # P0 #1063: local normal path status only. Exceptional borrower
+            # grants and historical Adobe provenance belong to #976, not here.
+            normal_row = Adw.ActionRow()
+            normal_row.set_title("Parcours normal · Paris principal et ADEPT")
+            if data.get("id"):
+                normal_row.set_subtitle(
+                    normal_paris_adept_summary(
+                        self.service.normal_paris_adept_status(identity_id)
+                    )
+                )
+            else:
+                normal_row.set_subtitle("À configurer · enregistrez l’identité pour vérifier ses liaisons.")
+            normal_row.set_tooltip_text(
+                "État local enregistré, sans test Adobe ni connexion réseau. "
+                "Après modification, enregistrez et rouvrez les paramètres pour actualiser cet état."
+            )
+            group.add(normal_row)
             delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette identité de la configuration")
             delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
             editor = {"group": group, "id": id_row, "label": label_row, "directory": directory_row, "languages": languages_row, "prefer_vo": vo_switch, "adept_profile": adept_row, "deleted": False}
