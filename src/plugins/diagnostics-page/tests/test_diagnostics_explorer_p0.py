@@ -441,31 +441,54 @@ def test_diagnostic_detail_handles_invalid_unicode(mode):
         assert json.loads(result)["truncated"] is True
 
 
-def test_source_summaries_redact_entire_name_and_reason_before_display_cut():
+def test_source_summaries_only_publish_attested_core_reason_codes():
     payload = {
         "sources": [{
-            "source": "alice@example.com",
-            "status": "partial",
-            "reason": (
-                "journal rotaté : authorization=Bearer PRIVATE_TOKEN "
-                "https://example.org/path?token=PRIVATE_URL"
-            ),
+            "source": "alice@example.com", "status": "partial",
+            "reason": "journal rotaté : token=PRIVATE_TOKEN Alice Dupont",
         }, {
-            "source": "app_log",
-            "status": "unavailable",
+            "source": "app_log", "status": "unavailable",
             "reason": "/home/alice/private/cifereca.log",
+        }, {
+            "source": "core_events", "status": "disabled",
+            "reason": "diagnostics_disabled",
+        }, {
+            "source": "app_log", "status": "partial",
+            "reason": "log_tail_bounded",
         }],
     }
     states = source_summaries(payload)
-    assert len(states) == 2
-    assert states[0]["status"] == "partial"
-    assert "courriel expurgé" in states[0]["source"]
-    assert "journal rotaté" in states[0]["reason"]
-    assert "PRIVATE_TOKEN" not in repr(states)
-    assert "PRIVATE_URL" not in repr(states)
-    assert "alice@example.com" not in repr(states)
-    assert "/home/alice" not in repr(states)
-    assert "chemin expurgé" in states[1]["reason"]
+    assert states == [
+        {"source": "inconnue", "status": "partial",
+         "label": "Journal partiel (rotation / troncation)"},
+        {"source": "app_log", "status": "unavailable", "label": "Indisponible"},
+        {"source": "core_events", "status": "disabled", "label": "Désactivée",
+         "reason": "diagnostics_disabled"},
+        {"source": "app_log", "status": "partial",
+         "label": "Journal partiel (rotation / troncation)",
+         "reason": "log_tail_bounded"},
+    ]
+    for private in ("PRIVATE_TOKEN", "Alice Dupont", "/home/alice",
+                    "alice@example.com", "journal rotaté"):
+        assert private not in repr(states)
+
+
+@pytest.mark.parametrize("source,reason,expected", [
+    ("app_log", "log_tail_bounded", "log_tail_bounded"),
+    ("app_log", "no_matching_events", "no_matching_events"),
+    ("core_events", "diagnostics_disabled", "diagnostics_disabled"),
+    ("core_events", "snapshot_unavailable", "snapshot_unavailable"),
+    ("core_events", "no_recorded_events", "no_recorded_events"),
+    ("core_events", "log_tail_bounded", ""),
+    ("app_log", "snapshot_unavailable", ""),
+    ("app_log", "Liseuse de Camille", ""),
+])
+def test_source_reason_never_crosses_publisher_or_unknown_code_boundary(source, reason, expected):
+    states = source_summaries({"sources": [{
+        "source": source, "status": "partial", "reason": reason,
+    }]})
+    assert states[0].get("reason", "") == expected
+    assert reason == expected or reason not in repr(states)
 
 
 def test_source_summaries_never_stringify_malformed_reason_or_long_status():
@@ -494,7 +517,8 @@ def test_source_summaries_do_not_expose_partial_tokens_cut_at_display_bound():
     shown = repr(states)
     assert "PRIVATE_SUFFIX" not in shown
     assert "PRIVATE_HEADER" not in shown
-    assert "\\n" not in states[0]["reason"]
+    assert states[0]["source"] == "inconnue"
+    assert "reason" not in states[0]
 
 
 def test_journals_ui_shows_optional_expurgated_source_reasons():

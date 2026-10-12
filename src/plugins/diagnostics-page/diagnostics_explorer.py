@@ -22,6 +22,38 @@ SOURCE_STATES = {
     "partial": "Journal partiel (rotation / troncation)",
 }
 _LEVELS = ("critical", "error", "warning", "info", "debug")
+# The Core event broker currently publishes exactly these fixed source IDs
+# and reason codes. Free-form source labels and reasons can contain names
+# and titles that regex redaction cannot reliably recognise.
+PUBLIC_SOURCE_REASONS = {
+    "app_log": frozenset({"", "log_tail_bounded", "no_matching_events"}),
+    "core_events": frozenset({
+        "", "diagnostics_disabled", "snapshot_unavailable", "no_recorded_events",
+    }),
+}
+
+
+def public_source_evidence(raw: Mapping[str, Any]) -> dict[str, str]:
+    """Keep only typed Core coverage metadata for GTK and AI previews.
+
+    This is an exact allowlist, not an inference of remote or provider health.
+    Unknown broker values are neither stringified nor included in UI/LLM
+    reports, even when they contain no recognisable regex secret marker.
+    """
+    source = raw.get("source")
+    source_id = source if type(source) is str and source in PUBLIC_SOURCE_REASONS else "inconnue"
+    status = raw.get("status")
+    status_id = (
+        status if type(status) is str and status in SOURCE_STATES
+        else "unavailable"
+    )
+    reason = raw.get("reason")
+    reason_code = (
+        reason
+        if type(reason) is str and reason in PUBLIC_SOURCE_REASONS.get(source_id, ())
+        else ""
+    )
+    return {"source": source_id, "status": status_id, "reason": reason_code}
 
 
 def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
@@ -144,30 +176,19 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
     sources = payload.get("sources")
     if not isinstance(sources, (list, tuple)):
         return states
-    from cifereca_diagnostics_page import redacted_detail
-
-    def safe_text(value: Any, limit: int) -> str:
-        if type(value) is not str:
-            return ""
-        # Redact the complete original value before shortening it: cropping
-        # signed URLs, tokens or emails first could disclose their prefixes.
-        cleaned = redacted_detail(value)
-        return "".join(char if char.isprintable() else " " for char in cleaned).strip()[:limit]
-
     for raw in sources[:4]:
         if not isinstance(raw, Mapping):
             continue
-        status = raw.get("status")
-        if type(status) is not str or len(status) > 20 or status not in SOURCE_STATES:
-            status = "unavailable"
+        evidence = public_source_evidence(raw)
+        status = evidence["status"]
         state = {
-            "source": safe_text(raw.get("source"), 40) or "inconnue",
+            "source": evidence["source"],
             "status": status,
             "label": SOURCE_STATES[status],
         }
-        reason = safe_text(raw.get("reason"), 120)
-        # The availability reason is diagnostics data too, never raw broker
-        # output. Keep the original three-field contract when no reason exists.
+        reason = evidence["reason"]
+        # Only Core's fixed operational reason codes may be published.
+        # 'available' never advertises a failure reason.
         if reason and status in ("empty", "disabled", "unavailable", "partial"):
             state["reason"] = reason
         # Dates are metadata from the Core, never arbitrary display strings.
