@@ -3217,17 +3217,17 @@ class LibraryService:
                     raise ProviderConfigurationError(f"Artefact Kobo-Adept invalide: {actual_before_publish.reason or 'format inconnu'}")
                 actual_format = actual_before_publish.media_format
                 actual_suffix = ".pdf" if actual_format == "pdf" else ".epub"
-                if produced_path.suffix.casefold() != actual_suffix:
-                    corrected = produced_path.with_suffix(actual_suffix)
-                    if corrected.exists():
-                        corrected = corrected.with_name(corrected.stem + ".reacquired-" + uuid.uuid4().hex + corrected.suffix)
+                corrected = adept_acsm_plan.plan_produced_format_path(
+                    produced_path, actual_suffix, unique_suffix=lambda: uuid.uuid4().hex,
+                )
+                if corrected != produced_path:
                     produced_path.replace(corrected)
                     produced_path = corrected
                     _TRACE_LOG.info("TRACE download adept rename-format loan_id=%s format=%s path=%s", loan.id, actual_format, produced_path)
-                if destination.suffix.casefold() != actual_suffix:
-                    destination = destination.with_suffix(actual_suffix)
-                    if destination.exists() and not repair_mode:
-                        destination = destination.with_name(destination.stem + ".reacquired-" + uuid.uuid4().hex + destination.suffix)
+                destination = adept_acsm_plan.plan_publish_format_path(
+                    destination, actual_suffix, repair_mode=repair_mode,
+                    unique_suffix=lambda: uuid.uuid4().hex,
+                )
                 inspection = inspect_artifact(produced_path, actual_format)
                 if not inspection.valid:
                     raise ProviderConfigurationError(f"Artefact final invalide: {inspection.reason or 'validation'}")

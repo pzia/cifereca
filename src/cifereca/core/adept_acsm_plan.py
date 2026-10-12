@@ -120,3 +120,49 @@ def profile_is_explicitly_acsm_unready(profile_row: Mapping[str, Any] | None) ->
         else profile_row.get("fetch_capable")
     )
     return readiness is False
+
+
+def plan_produced_format_path(
+    produced_path: Path,
+    actual_suffix: str,
+    *,
+    unique_suffix: Callable[[], str],
+) -> Path:
+    """Choose a non-overwriting filename after ADEPT's actual format is read.
+
+    Read-only: callers remain responsible for the atomic filesystem rename.
+    An existing corrected filename must never be silently overwritten. Keep
+    UUID allocation lazy and use the service-injected generator.
+    """
+    if produced_path.suffix.casefold() == actual_suffix:
+        return produced_path
+    corrected = produced_path.with_suffix(actual_suffix)
+    if corrected.exists():
+        corrected = corrected.with_name(
+            corrected.stem + ".reacquired-" + unique_suffix() + corrected.suffix
+        )
+    return corrected
+
+
+def plan_publish_format_path(
+    destination: Path,
+    actual_suffix: str,
+    *,
+    repair_mode: bool,
+    unique_suffix: Callable[[], str],
+) -> Path:
+    """Align the caller-owned final name after staging has been renamed.
+
+    Preserve the original sequencing: the caller executes the produced-file
+    rename *before* asking for the publish destination. Repair mode retains
+    the historical replacement semantics; all other corrected-name collisions
+    receive a new filename, without writing to disk in this helper.
+    """
+    if destination.suffix.casefold() == actual_suffix:
+        return destination
+    destination = destination.with_suffix(actual_suffix)
+    if destination.exists() and not repair_mode:
+        destination = destination.with_name(
+            destination.stem + ".reacquired-" + unique_suffix() + destination.suffix
+        )
+    return destination
