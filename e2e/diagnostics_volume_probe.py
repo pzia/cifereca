@@ -151,6 +151,8 @@ def main():
     window, page, device, long_detail = [None], [None], [None], [None]
     rc = [1]
     started = monotonic()
+    d06_next_activated = [None]
+    d06_filter_activated = [None]
 
     def save():
         report["elapsed_seconds"] = round(monotonic() - started, 3)
@@ -231,6 +233,52 @@ def main():
               and not seen("Actualisation en cours")
               and seen(expected), then)
 
+    def query_module_physical(mod, expected, then):
+        """A real key sequence, unlike direct Gtk.Entry.set_text/emit."""
+        previous = len(broker.requests)
+        entry = module_entry()
+        assert entry.grab_focus() is not False
+
+        def enter_text():
+            # Gtk.Entry delegates focus to its GtkText child in GTK4.
+            # Test the actual focused descendant, not only entry.has_focus().
+            focused = window[0].get_focus()
+            assert focused is not None and (
+                focused is entry or focused.is_ancestor(entry)
+            ), "D06: le champ Module et ses enfants n'ont pas le focus"
+            device[0].type_text(mod)
+            until(lambda: entry.get_text() == mod, submit_filter, seconds=5)
+
+        def submit_filter():
+            # The module field explicitly applies on Enter; typing must NOT
+            # emit one broker request per character (slow/expensive for 10k).
+            assert len(broker.requests) == previous, (
+                "D06: des requêtes broker ont été lancées pendant la frappe",
+                len(broker.requests), previous,
+            )
+            report["checks"]["D06_keyboard_typing_does_not_query_each_character"] = True
+            d06_filter_activated[0] = monotonic()
+            device[0].key("Return", True)
+            device[0].key("Return", False)
+            until(
+                lambda: len(broker.requests) > previous
+                and broker.requests[-1]["module"] == mod
+                and not seen("Actualisation en cours")
+                and seen(expected),
+                lambda: finish_filter(then), seconds=7,
+            )
+
+        def finish_filter(next_step):
+            assert broker.requests[-1]["offset"] == 0
+            assert len(widgets(Gtk.Label)) < 1200
+            report["audits"]["D06_xtest_filter_gtk_seconds"] = round(
+                monotonic() - d06_filter_activated[0], 3,
+            )
+            report["checks"]["D06_module_filter_keyboard_xtest_applies_and_resets_page"] = True
+            next_step()
+
+        later(enter_text, 190)
+
     def start():
         assert seen("50 événements affichés")
         assert seen("10000 disponibles")
@@ -243,10 +291,25 @@ def main():
         assert len(widgets(Gtk.Label)) < 1200, "Rendu de 10000 widgets interdit"
         assert broker.checks == 0
         report["checks"]["D06_10000_events_50_rows_bounded"] = True
+        # The read-only broker can finish before Xvfb has drawn the frame.
+        # Capture the *visible 50 rows*, never the prior "loading" frame.
+        later(d06_first_page_rendered, 340)
+
+    def d06_first_page_rendered():
+        assert seen("50 événements affichés") and seen("10000 disponibles")
+        assert not seen("Actualisation en cours"), "D06: première page pas rendue"
+        assert find_button("Suivant").get_sensitive()
         screenshot("00-10000-evenements-premiere-page")
         next_btn = find_button("Suivant")
         assert next_btn.get_sensitive()
-        next_btn.emit("clicked")
+        assert next_btn.grab_focus() is not False
+        later(lambda: d06_next_keyboard(next_btn), 220)
+
+    def d06_next_keyboard(next_btn):
+        assert next_btn.has_focus(), "D06: Suivant inatteignable au clavier"
+        d06_next_activated[0] = monotonic()
+        device[0].key("space", True)
+        device[0].key("space", False)
         until(lambda: len(broker.requests) == 2 and
               seen("page à partir de 51"), next_page)
 
@@ -256,8 +319,18 @@ def main():
         assert len(widgets(Gtk.Label)) < 1200
         assert seen("10000 disponibles")
         report["checks"]["D06_stable_pagination_next_50"] = True
+        report["checks"]["D06_next_page_keyboard_xtest_50_rows"] = True
+        report["audits"]["D06_xtest_next_page_gtk_seconds"] = round(
+            monotonic() - d06_next_activated[0], 3,
+        )
+        later(d06_next_page_rendered, 340)
+
+    def d06_next_page_rendered():
+        assert seen("page à partir de 51") and seen("50 événements affichés")
+        assert not seen("Actualisation en cours"), "D06: seconde page pas rendue"
+        assert find_button("Précédent").get_sensitive()
         screenshot("01-page-51-sur-10000")
-        query_module("adept", "ADEPT code 10", adept_case)
+        query_module_physical("adept", "ADEPT code 10", adept_case)
 
     def adept_case():
         assert broker.requests[-1]["module"] == "adept"
@@ -601,6 +674,7 @@ def main():
     def finish():
         assert broker.checks == 0 and plugin.llm is None
         report["unmet_criteria"] = [
+            "D06: broker virtuel 10000 entrées, performance sur journaux réels et matériel non attestée",
             "D09: seules catégories Core/app_log disponibles, provenance métier par module uniquement",
             "D12: aucune corrélation inter-identités attestée par broker ; copie unitaire isolée seulement",
         ]
