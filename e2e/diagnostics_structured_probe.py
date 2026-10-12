@@ -405,16 +405,22 @@ def main():
         later(lambda: select_and_copy(detail_controls()[1]), 160)
 
     def select_and_copy(view):
-        # A real GTK selection and XTEST Ctrl+C, not a direct clipboard set().
-        pane = detail()
-        assert pane.get_expanded()
+        # The real native Save chooser temporarily owns window-manager focus.
+        # Restore the document focus with a physical XTEST pointer click
+        # (not an artificial has_focus override) before selecting text again.
+        assert detail().get_expanded() and view.get_mapped()
+        window[0].present()
+        device[0].click_widget(view)
+        later(lambda: select_and_copy_after_focus_return(view), 320)
+
+    def select_and_copy_after_focus_return(view):
         buf = view.get_buffer()
         buf.select_range(buf.get_end_iter(), buf.get_start_iter())
         assert buf.get_has_selection()
         selected = text(view)
         assert SECRET not in selected
         assert view.grab_focus() is not False
-        until(lambda: view.has_focus(), lambda: send_ctrl_c(view, selected))
+        until(lambda: view.has_focus(), lambda: send_ctrl_c(view, selected), seconds=7)
 
     def send_ctrl_c(view, selected):
         assert view.has_focus(), "TextView doit recevoir les touches XTEST"
