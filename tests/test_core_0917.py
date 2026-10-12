@@ -166,7 +166,7 @@ class Core0917(unittest.TestCase):
         fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_search_enter')
         module=ast.Module(body=[fn],type_ignores=[]);ns={'__package__':'cifereca.gui'}
         exec(compile(ast.fix_missing_locations(module),str(source),'exec'),ns)
-        state=QueryState('harari');w=NS(search_controls=NS(state=lambda:state),service=NS(current_identity=NS(identity_id='stable')),run_search=Mock(),_online_pending_key=(state,'stable'))
+        state=QueryState('harari');w=NS(search_controls=NS(state=lambda:state),service=NS(current_identity=NS(identity_id='stable')),run_search=Mock(),_online_pending_key=(state,'stable'),_online_pending_generation=7,_search_generation=7)
         ns['_search_enter'](w);w.run_search.assert_not_called()
 
     def test_targeted_index_preserves_format_provenance_on_existing_artifact(self):
