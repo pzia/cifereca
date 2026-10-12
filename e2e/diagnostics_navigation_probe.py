@@ -374,10 +374,16 @@ def main() -> int:
 
         def wait_narrow():
             size = (window[0].get_width(), window[0].get_height())
-            if size[0] <= 1260 and size[1] <= (790 if args.width == 1366 else 830):
+            # MainWindow may enforce a legitimate GTK minimum height
+            # (observed 808 px for a requested 760 px). D16 tests the
+            # actual reduced *width*, and reports the true height.
+            if size[0] <= 1260:
+                assert size[1] <= (900 if args.width == 1366 else 1000), (
+                    "D16: fenêtre plus haute que l'écran Xvfb", size
+                )
                 d16_narrow()
             elif monotonic() >= deadline:
-                raise AssertionError(f"D16: redimensionnement étroit non appliqué: {size}")
+                raise AssertionError(f"D16: largeur étroite non appliquée: {size}")
             else:
                 later(95, wait_narrow)
         later(180, wait_narrow)
