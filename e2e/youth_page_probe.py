@@ -226,9 +226,16 @@ def main() -> int:
         """
 
         def ecole_respond(request):
-            assert request.url.scheme == "https" and request.url.host == "www.ecoledesloisirs.fr", request.url
-            assert request.url.path == "/recherche-avancee", request.url
-            assert request.url.params.get("search_api_views_fulltext") == "loup"
+            # Keep debug evidence structural only: NEVER record query values.
+            result["ecole_request_shape_907"] = {
+                "host_is_publisher": request.url.host == "www.ecoledesloisirs.fr",
+                "path": request.url.path,
+                "query_keys": sorted(request.url.params.keys()),
+                "search_present": bool(request.url.params.get("search_api_views_fulltext")),
+            }
+            assert request.url.scheme == "https" and request.url.host == "www.ecoledesloisirs.fr", result["ecole_request_shape_907"]
+            assert request.url.path == "/recherche-avancee", result["ecole_request_shape_907"]
+            assert request.url.params.get("types") == "livre", result["ecole_request_shape_907"]
             ecole_calls.append(request.url.path)  # Never persist user queries.
             return httpx.Response(
                 503 if ecole_outage[0] else 200,
