@@ -104,6 +104,11 @@ def sanitize_collection_pipeline(value: object) -> dict[str, object]:
         "anchor_count", "product_link_count", "candidate_count",
         "analyzed_count", "isbn_valid_count", "age_published_count",
         "age_qualified_count", "age_unknown_count", "returned_items",
+        # Catalogue cards from École des loisirs may have explicit published
+        # ages and stable source references without ANY printed ISBN. Keep
+        # their bounded counters in Diagnostics instead of dropping them.
+        "cards_detected", "cards_complete", "missing_isbn",
+        "covers_seen", "cover_urls_valid", "author_count",
     )
     for key in counts:
         item = value.get(key)
@@ -158,6 +163,8 @@ def source_yield_diagnostic(row: Mapping[str, object]) -> dict[str, object]:
             "anchor_count", "product_link_count", "candidate_count",
             "analyzed_count", "isbn_valid_count", "age_qualified_count",
             "age_unknown_count", "returned_items", "effective_limit",
+            "cards_detected", "cards_complete", "missing_isbn",
+            "covers_seen", "cover_urls_valid", "author_count",
             "html_bytes", "http_ms", "parse_ms", "total_ms",
         ) if key in pipeline
     }

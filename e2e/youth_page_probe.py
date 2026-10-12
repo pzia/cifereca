@@ -208,22 +208,39 @@ def main() -> int:
         # reach this MockTransport; the source is actually installed/activated.
         ecole_html = """
         <html><body>
-          <div>3 à 6 ans</div>
-          <a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a>
-          <div>Sylvie Neeman</div><div>album</div>
-          <div>ISBN: 9782211348171</div>
-          <div>13 ans et +</div>
-          <a href="/livre/roman-ado">Roman du Loup</a>
-          <div>Alice Auteur</div><div>roman</div>
-          <div>ISBN: 9782211345613</div>
+          <div id="products-wrapper">
+            <div class="product-item">
+              <div class="card-title"><a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a></div>
+              <div class="card-author">Sylvie Neeman</div>
+              <div class="card-infos"><span>Age : 3 à 6 ans</span></div>
+              <div class="card-cover"><img src="/assets/cover-loup.jpg"></div>
+            </div>
+            <div class="product-item">
+              <div class="card-title"><a href="/livre/roman-ado">Roman du Loup</a></div>
+              <div class="card-author">Alice Auteur</div>
+              <div class="card-infos"><span>Age : 13 ans et +</span></div>
+              <div class="card-cover"><img src="/assets/cover-roman.jpg"></div>
+            </div>
+          </div>
         </body></html>
         """
 
         def ecole_respond(request):
-            assert request.url.scheme == "https" and request.url.host == "www.ecoledesloisirs.fr", request.url
-            assert request.url.path == "/recherche-avancee", request.url
-            assert request.url.params.get("search_api_views_fulltext") == "loup"
-            ecole_calls.append(request.url.path)  # Never persist user queries.
+            # A real publisher adapter may use either public search surface.
+            # Record structural evidence only, never the private search term.
+            route = request.url.path
+            search_key = "search" if route == "/catalogue/romans" else "search_api_views_fulltext"
+            result["ecole_request_shape_907"] = {
+                "host_is_publisher": request.url.host == "www.ecoledesloisirs.fr",
+                "path": route, "query_keys": sorted(request.url.params.keys()),
+                "search_present": bool(request.url.params.get(search_key)),
+            }
+            assert request.url.scheme == "https" and request.url.host == "www.ecoledesloisirs.fr", result["ecole_request_shape_907"]
+            assert route in {"/catalogue/romans", "/recherche-avancee"}, result["ecole_request_shape_907"]
+            expected_type = ("type", "romans") if route == "/catalogue/romans" else ("types", "livre")
+            assert request.url.params.get(expected_type[0]) == expected_type[1], result["ecole_request_shape_907"]
+            assert result["ecole_request_shape_907"]["search_present"], result["ecole_request_shape_907"]
+            ecole_calls.append(route)  # Never persist user queries.
             return httpx.Response(
                 503 if ecole_outage[0] else 200,
                 headers={"content-type": "text/html; charset=utf-8"},
@@ -1069,10 +1086,16 @@ def main() -> int:
         assert current["request_count"] == 1, current
         assert current["pipeline"].get("candidate_count") == 2, current
         assert current["pipeline"].get("age_qualified_count") == 2, current
-        assert current["pipeline"].get("isbn_valid_count") == 2, current
+        assert current["pipeline"].get("isbn_valid_count") == 0, current
+        assert current["pipeline"].get("missing_isbn") == 2, current
+        assert current["pipeline"].get("cards_detected") == 2, current
+        assert current["pipeline"].get("cards_complete") == 2, current
+        assert current["pipeline"].get("cover_urls_valid") == 2, current
         assert "2 notice(s) reçue(s)" in page.view.status.get_text()
         labels = " ".join(diagnostic_labels())
         assert "L'École des loisirs" in labels and "collecte avec notices" in labels, labels
+        assert "notices sans ISBN publié : 2" in labels, labels
+        assert "cartes catalogue : 2" in labels, labels
         assert "loup" not in labels.lower(), "Query leaked into Diagnostics"
         assert diagnostic_for("camille")["ecole-loisirs"]["collection_state"] == "not_tested"
         assert diagnostic_for("alex")["milan"]["collection_state"] == "not_tested"
@@ -1083,6 +1106,8 @@ def main() -> int:
             "accepted": 2,
             "candidates": 2,
             "qualified_ages": 2,
+            "isbn_published": 0,
+            "cards_without_isbn": 2,
             "error_state": None,
             "retained_cache": None,
         }
