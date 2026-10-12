@@ -24,7 +24,7 @@ COLLECTION_STATES = {
     "items", "empty_unverified", "invalid", "http_error",
     "timeout", "error", "cancelled",
 }
-_PUBLIC_SOURCE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,49}\\Z")
+_PUBLIC_SOURCE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,49}")
 
 
 def public_source_id(value: object) -> str:
