@@ -392,13 +392,14 @@ def main():
         screenshot("04b-kobo-detail-rendered")
         # Physical XTEST keyboard navigation, not an adjustment fabricated
         # by the probe to claim that the end of the long detail is readable.
+        query_count = len(broker.requests)
         device[0].key("Control_L", True)
         device[0].key("End", True)
         device[0].key("End", False)
         device[0].key("Control_L", False)
-        later(lambda: verify_kobo_detail_keyboard_end(adjustment, detail_text), 260)
+        later(lambda: verify_kobo_detail_keyboard_end(adjustment, detail_text, query_count), 260)
 
-    def verify_kobo_detail_keyboard_end(adjustment, detail_text):
+    def verify_kobo_detail_keyboard_end(adjustment, detail_text, query_count):
         bottom = max(0, adjustment.get_upper() - adjustment.get_page_size())
         assert bottom > 80, ("D08: contenu trop court", bottom)
         assert adjustment.get_value() >= bottom - 5, (
@@ -406,7 +407,7 @@ def main():
             round(adjustment.get_value(), 2), round(bottom, 2),
         )
         assert "etape-fictive-039" in detail_text
-        assert len(broker.requests) == 5, "La lecture ne doit pas relancer de consultation"
+        assert len(broker.requests) == query_count, "La lecture ne doit pas relancer de consultation"
         report["audits"]["D08_long_path_text_end_to_end_consultable"] = True
         report["checks"]["D08_long_detail_keyboard_end_xtest"] = True
         report["audits"]["D08_keyboard_end_scroll_px"] = round(adjustment.get_value(), 2)
