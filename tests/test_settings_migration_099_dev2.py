@@ -6,6 +6,7 @@ import re,shlex,tempfile,unittest
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 from cifereca.config import Config
+from cifereca.gui.settings_model import SettingsCommitController
 
 class Value:
     def __init__(self,text='',active=False):self.text=text;self.active=active
@@ -28,6 +29,7 @@ class SaveSettings(unittest.TestCase):
             'track_all_settings_widgets':Mock(),'update_settings_actions':Mock()}
         for name in ['global_cmd_row','global_post_row','global_dir_row','global_ebook_row','global_audio_row','backup_dir_row']:ns[name]=Value()
         ns.update(diag_switch=Value(active=True),level_drop=Value(),exp_switch=Value(),backup_switch=Value(),unlinked_switch=Value(),backup_interval_row=Value('60'),vault_profile_drop=Value(),library_dir_row=Value(self.config.get('library.directory')))
+        ns['settings_committer']=SettingsCommitController(self.service.save_configuration, self.runner.submit, self.window.show_error)
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+list(nested.values()),type_ignores=[])),str(path),'exec'),ns)
         self.ns=ns

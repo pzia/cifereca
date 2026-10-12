@@ -62,3 +62,48 @@ def test_support_report_is_redacted_and_checks_schema(tmp_path, monkeypatch):
     assert "supersecret" not in text
     assert "<redacted>" in text
     assert "plugin.test" in text
+
+
+def test_passive_support_report_does_not_call_active_checks(monkeypatch):
+    from cifereca.brokers import DiagnosticsBrokerImpl
+
+    invoked = []
+
+    def active_checks(_self):
+        invoked.append(True)
+        return (SimpleNamespace(
+            check_id="health.mock", component="core", status="warning",
+            message="simulated", detail={}, scope="core",
+        ),)
+
+    monkeypatch.setattr(DiagnosticsBrokerImpl, "active_checks", active_checks)
+    monkeypatch.setattr(support_diagnostic, "_release_metadata", lambda: {})
+    monkeypatch.setattr(
+        support_diagnostic, "_runtime_state", lambda: {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        support_diagnostic, "_database_state", lambda: {"status": "ok"},
+    )
+    monkeypatch.setattr(
+        support_diagnostic, "_config_state", lambda: {"status": "ok"},
+    )
+
+    service = Service()
+    passive = DiagnosticsBrokerImpl(service).support_report(
+        verbose=False, include_checks=False,
+    )
+    assert invoked == []
+    assert passive["checks_executed"] is False
+    assert passive["checks"] == []
+    assert passive["result"] == "warning"  # plugin degraded, not an active check
+    assert passive["plugins"]["attention"] == 1
+
+    ordinary = DiagnosticsBrokerImpl(service).support_report()
+    assert invoked == [True]
+    assert ordinary["checks_executed"] is True
+    assert len(ordinary["checks"]) == 1
+
+
+def test_support_report_rejects_non_bool_checks_option_before_collection():
+    with __import__("pytest").raises(ValueError, match="invalid_support_checks_scope"):
+        support_diagnostic.build_support_report(Service(), include_checks="no")

@@ -205,15 +205,18 @@ def test_connection_identity_transfer_revokes_effective_borrower_grant(tmp_path)
         service.close()
 
 
-def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_path, monkeypatch):
+@pytest.mark.parametrize("account_id", ["linked-123", "primary", ""])
+def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_path, monkeypatch, account_id):
     """The Adobe-origin profile must belong to the borrower, not the connector."""
     from pathlib import Path
     from cifereca.acquisition import Acquisition
 
     service, loan = service_with_linked_borrower(tmp_path)
     try:
+        from dataclasses import replace
+        loan = replace(loan, source_account_id=account_id)
         service.bind_paris_borrower_adept(
-            credential_id="alice-paris", account_id="linked-123",
+            credential_id="alice-paris", account_id=account_id,
             borrower_identity_id="bob", confirmed=True,
         )
         service._persist_active_loans("alice", [loan])
@@ -226,7 +229,7 @@ def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_
             service, "acquire_digital_loan",
             lambda _loan: Acquisition(
                 provider_id="paris", credential_id="alice-paris",
-                account_id="linked-123", item_id="book", loan_id=loan.id,
+                account_id=account_id, item_id="book", loan_id=loan.id,
                 kind="acsm", source_url="https://example.invalid/acsm",
                 local_path=acsm, mime_type="application/vnd.adobe.adept+xml",
                 drm="adept", acsm_path=acsm, target_dir=tmp_path,
@@ -259,5 +262,69 @@ def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_
         )
         assert row["metadata"]["adept_binding"]["adept_profile_id"] == "bob-profile"
         assert row["metadata"]["adept_binding"]["adept_profile_name"] == "bob-cli"
+    finally:
+        service.close()
+
+
+def test_primary_exception_requires_confirmation_and_preserves_normal_profile(tmp_path):
+    from dataclasses import replace
+    service, loan = service_with_linked_borrower(tmp_path)
+    loan = replace(loan, source_account_id="primary")
+    try:
+        with pytest.raises(ValueError, match="explicit"):
+            service.bind_paris_borrower_adept(
+                credential_id="alice-paris", account_id="primary",
+                borrower_identity_id="bob",
+            )
+        service.bind_paris_borrower_adept(
+            credential_id="alice-paris", account_id="",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice"
+        ) == ("bob", None)
+        assert service.storage.adept_profile_binding_get("identity", "alice") == "alice-profile"
+        service.storage.adept_profile_binding_set("identity", "bob", "changed")
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice"
+        ) == (None, "adept_borrower_profile_changed")
+        service.storage.paris_borrower_adept_binding_delete(
+            credential_id="alice-paris", account_id="primary"
+        )
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice"
+        ) == ("alice", None)
+    finally:
+        service.close()
+
+
+def test_primary_exception_is_scoped_to_connection_and_rejects_ambiguity(tmp_path):
+    from dataclasses import replace
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        service.bind_paris_borrower_adept(
+            credential_id="alice-paris", account_id="primary",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service.storage.provider_connection_put({
+            "identity_id": "bob", "provider_id": "paris", "credential_id": "bob-paris",
+        })
+        service.accounts.append(Account(
+            unique_id="", is_primary=True, provider_id="paris",
+            credential_id="bob-paris", identity_id="bob",
+        ))
+        second = replace(loan, source_account_id="primary", source_credential="bob-paris")
+        assert service._paris_adept_identity_for_loan(
+            second, connection_identity_id="bob"
+        ) == ("bob", None)
+        service.accounts.append(replace(service.accounts[0]))
+        with pytest.raises(ValueError, match="not uniquely identified"):
+            service.bind_paris_borrower_adept(
+                credential_id="alice-paris", account_id="primary",
+                borrower_identity_id="bob", confirmed=True,
+            )
+        assert service._paris_adept_identity_for_loan(
+            replace(loan, source_account_id="primary"), connection_identity_id="alice"
+        ) == (None, "adept_borrower_ambiguous")
     finally:
         service.close()

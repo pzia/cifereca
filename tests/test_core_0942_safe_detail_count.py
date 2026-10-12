@@ -12,7 +12,7 @@ from types import SimpleNamespace as NS
 from cifereca.book_detail_metadata import safe_detail_value
 
 
-MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
 
 
 class Widget:
