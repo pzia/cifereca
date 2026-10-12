@@ -1,4 +1,5 @@
 """Recovery of deleted local files and explicit ACSM fulfillment/return binding."""
+from tests.gui_source import gui_source_text
 import ast,tempfile,unittest,zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -112,7 +113,7 @@ class Core0919(unittest.TestCase):
   self.assertIn('1.2.4',result['error']);self.assertIn('target_scheme / target_port',result['error'])
  def extract(self,name,ns=None):
   path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-  fn=next(n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n,ast.FunctionDef) and n.name==name)
+  fn=next(n for n in ast.walk(ast.parse(gui_source_text(path))) if isinstance(n,ast.FunctionDef) and n.name==name)
   for a in fn.args.args+fn.args.kwonlyargs:a.annotation=None
   fn.returns=None;out={'TaskPriority':TaskPriority,**(ns or {})};exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(path),'exec'),out);return out[name]
  def test_download_ui_calls_full_recovery_and_refreshes_binding(self):

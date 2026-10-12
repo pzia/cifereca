@@ -13,6 +13,7 @@ from threading import BoundedSemaphore, Event, Thread
 from time import monotonic
 from typing import Any, Mapping
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from cifereca.plugin_api.llm import LLMRequest, LLMResult
@@ -170,6 +171,16 @@ class OptionalLLMService:
                     True, text=content, structured=structured,
                     provider=provider, model=model, generated=True, remote=remote,
                 ))
+            except HTTPError as exc:
+                # Expose only safe status categories: never error bodies/URLs.
+                if exc.code in (401, 403):
+                    result.append(failed("auth_refused"))
+                elif exc.code == 404:
+                    result.append(failed("not_found"))
+                elif exc.code == 429:
+                    result.append(failed("rate_limited"))
+                else:
+                    result.append(failed("backend_unavailable"))
             except Exception:
                 result.append(failed("backend_unavailable"))
             finally:

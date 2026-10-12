@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from time import perf_counter
 import re
 from typing import Iterable, Mapping, Protocol, Sequence
@@ -500,6 +501,103 @@ class YouthBook:
 
 
 @dataclass(frozen=True, slots=True)
+class LibraryNoticeEvidence:
+    """A catalogue notice for this *edition*, not evidence of a copy or loan."""
+
+    source_provider: str
+    record_id: str
+    isbn13: str
+    notice_url: str
+    status: str = "catalogue_reference"
+    freshness: str = "unknown"
+
+
+def _attested_public_notice_url(raw: object) -> str:
+    """Only public, canonical HTTPS links without user/session parameters."""
+    if not isinstance(raw, str) or len(raw) > 2048 or not raw.strip():
+        return ""
+    # Reject URL grammar ambiguities before presenting an attested public link.
+    if (any(ord(ch) < 33 or ord(ch) == 127 for ch in raw)
+            or any(ch in raw for ch in '<>\\?#')):
+        return ""
+    try:
+        parts = urlsplit(raw)
+        host = parts.hostname
+        port = parts.port
+        if (parts.scheme.lower() != "https" or not host
+                or parts.username is not None or parts.password is not None
+                or parts.query or parts.fragment or port not in (None, 443)
+                or "%" in host):
+            return ""
+        host = host.lower().rstrip(".")
+        if (not host or host == "localhost" or "." not in host
+                or host.endswith((".local", ".localhost", ".internal",
+                                   ".lan", ".home.arpa"))
+                or any(not label for label in host.split("."))):
+            return ""
+        try:
+            address = ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return ""
+        # Never surface a search page in place of an edition notice.
+        if not parts.path or parts.path == "/":
+            return ""
+        return urlunsplit(("https", host, parts.path, "", ""))
+    except (TypeError, ValueError):
+        return ""
+
+
+def attest_library_notices(
+    book: YouthBook,
+    results: Iterable[object],
+    *,
+    limit: int = 50,
+) -> tuple[LibraryNoticeEvidence, ...]:
+    """Project explicit, already-retrieved library rows into edition notices.
+
+    No HTTP, no cache mutation, and no title/author inference. The caller
+    selects the active identity and performs its explicit library search.
+    A row must carry a matching strong ISBN *and* a direct-notice assertion;
+    free-form provider text, stock labels and loan flags are never promoted.
+    """
+    if not isinstance(book, YouthBook):
+        return ()
+    identifiers = book.identifiers
+    isbn = normalize_isbn(identifiers.get("isbn")) if isinstance(identifiers, Mapping) else ""
+    if not isbn or type(limit) is not int or not 1 <= limit <= 100:
+        return ()
+    notices: list[LibraryNoticeEvidence] = []
+    seen: set[tuple[str, str]] = set()
+    for row_index, raw in enumerate(results):
+        if row_index >= 500 or len(notices) >= limit:
+            break
+        metadata = _field(raw, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            continue
+        candidate_isbn = normalize_isbn(metadata.get("isbn13") or metadata.get("isbn"))
+        if candidate_isbn != isbn or metadata.get("direct_notice_attested") is not True:
+            continue
+        source = _field(raw, "source_provider")
+        record = _field(raw, "record_id")
+        if (not isinstance(source, str)
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{1,127}", source)
+                or not isinstance(record, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", record)):
+            continue
+        url = _attested_public_notice_url(_field(raw, "friendly_url"))
+        if not url or (source, record) in seen:
+            continue
+        seen.add((source, record))
+        notices.append(LibraryNoticeEvidence(
+            source_provider=source, record_id=record, isbn13=isbn,
+            notice_url=url,
+        ))
+    return tuple(notices)
+
+
+@dataclass(frozen=True, slots=True)
 class BibliographyEnrichment:
     source_id: str
     isbn: str
@@ -852,8 +950,14 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_record(raw, source_id=sid))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Provider rows and exception text are untrusted. A raw error
+                # can contain signed URLs, credentials or private searches.
+                title = raw.get("title") if type(raw) is dict else object()
+                kind = ("title is required"
+                        if title is None or (type(title) is str and not title.strip())
+                        else "invalid record")
+                errors.append(f"item[{index}]: {kind}")
         # Reject an entirely malformed refresh atomically: never replace
         # the last usable cache with zero valid records and parsing failures.
         # A genuinely empty (error-free) page is still an authoritative result.
@@ -893,8 +997,10 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_bibliography_record(raw, source_id=sid, expected_isbn=expected))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Never include provider/bibliography exception payloads in a
+                # cache report, even when the library page does not display it.
+                errors.append(f"item[{index}]: invalid bibliography record")
         unique = {item.record_id or item.notice_url or repr(item): item for item in accepted}
         if len(unique) > 1:
             return BibliographyReport(identity, sid, expected, rejected=len(accepted), errors=("ambiguous bibliography result",))
@@ -1195,6 +1301,13 @@ class YouthCatalogIndex:
 
 
 class YouthCatalogPlugin:
+    @staticmethod
+    def attested_library_notices(
+        book: YouthBook, results: Iterable[object], *, limit: int = 50,
+    ) -> tuple[LibraryNoticeEvidence, ...]:
+        """Project only explicit, edition-matching library notice evidence."""
+        return attest_library_notices(book, results, limit=limit)
+
     def __init__(self) -> None:
         self.index = YouthCatalogIndex()
         self.context: object | None = None
@@ -1260,13 +1373,13 @@ class YouthCatalogPlugin:
     ) -> IngestReport:
         """Collect one chosen source and record its outcome for this identity.
 
-        Reading source_diagnostics() never calls search(). Error messages stay
-        in the legacy IngestReport, not the sanitized diagnostic projection.
+        Reading source_diagnostics() never calls search(). Error codes in
+        IngestReport are fixed, never raw provider text or source payloads.
         """
         try:
             info = validate_source_contract(source)
         except Exception as exc:
-            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
+            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=("invalid source contract",))
         bounded = max(1, min(int(limit), 500))
         started = perf_counter()
         stage = "search"
@@ -1327,7 +1440,7 @@ class YouthCatalogPlugin:
             )
             return IngestReport(
                 self.index.identity_key(identity_id), info.source_id,
-                rejected=1, errors=(f"search: {exc}",),
+                rejected=1, errors=("source search failed",),
             )
 
 PLUGIN = YouthCatalogPlugin()

@@ -21,6 +21,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
         "search-filter-p0", "book-detail-1366",
+        "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "startup", "core-navigation",
     ]
 
@@ -45,6 +46,201 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         'clipboard.read_text_async(None, done)',
         '"online": True, "identity_id": "camille"',
         'window.navigate("library")',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in source
+
+
+def test_diagnostics_structured_real_gtk_redacts_and_preserves_types():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-structured-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-structured"
+    assert scenario["fixture"] == "startup"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_structured_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "D07_readable_preserves_false_zero_null_empty_and_unicode",
+        "D07_json_indented_typed_and_redacted",
+        "D07_raw_matches_json_without_secret",
+        "D13_ctrl_c_selection_expurgated",
+        "D13_support_copy_button_xtest_exact_redacted",
+        "D13_support_partial_selection_ctrl_c_xtest",
+        "D13_report_provenance_visible_in_copy",
+        'physical("space")',
+        '"Provenance : Core local"',
+        'content != SUPPORT_REPORT',
+        'physical("c")',
+        'device[0].key("Control_L", True)',
+        'get_has_selection()',
+        'json.loads(body)',
+        'report["unmet_criteria"]',
+    ):
+        assert marker in source
+
+
+def test_diagnostics_volume_real_gtk_bounded_broker_and_provenance():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-volume-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-volume"
+    assert scenario["width"] == 1366
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    source = (ROOT / "e2e/diagnostics_volume_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "TOTAL = 10000",
+        "D06_10000_events_50_rows_bounded",
+        "D06_stable_pagination_next_50",
+        "D09_period_changes_broker_query",
+        "D10_adept_code10_no_invented_adobe_cause",
+        "D11_paris_return_requested_not_confirmed",
+        "D09_event_provenance_source_module_reference_visible",
+        "D09_source_filter_no_cross_source_attribution",
+        "D08_real_detail_panel_available_and_redacted",
+        "D12_copy_one_identity_without_mixing_profiles",
+        "D12_broker_link_between_profiles_proven",
+        "D12_link_proven_by_broker",
+        'report["unmet_criteria"]',
+    ):
+        assert marker in source
+
+
+def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
+    runner = _module()
+    state = runner.SCENARIOS["diagnostics-states-1366"]
+    assert state["runner"] == "gtk-diagnostics-states"
+    assert state["fixture"] == "startup"
+    assert state["plugin"] == "ui.page.diagnostics"
+    assert state["width"] == 1366
+    probe = (ROOT / "e2e/diagnostics_states_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "D01_no_sources_not_healthy",
+        "D02_zero_events_vs_source_available",
+        "D03_error_contextualized_and_ui_responsive",
+        "D03_explicit_retry_recovers",
+        "D04_active_check_does_not_block_GTK",
+        "D04_finished_and_button_reenabled",
+        "D14_three_distinct_sections_visible",
+        "D14_ai_absent_and_explicit_send_disabled",
+        "D14_support_active_and_ai_states_independent_during_check",
+        "D14_active_result_not_confused_with_ai",
+        "D14_support_report_freshness_explicit",
+        "D16_1366_display_narrow_no_horizontal_overflow",
+        "D16_narrow_actions_keyboard_reachable",
+        "D16_restore_without_losing_diagnostics_state",
+        "D16_full_multi_monitor_coverage",
+
+        "D02_explicit_zero_anomaly_with_period",
+        "D04_full_mainwindow_navigation",
+        "diagnostics_states_probe",
+    ):
+        if marker != "diagnostics_states_probe":
+            assert marker in probe
+        else:
+            assert "gtk-diagnostics-states" in RUNNER.read_text(encoding="utf-8")
+    assert 'Thread(target=worker' in probe
+    assert 'device[0].click_widget(check)' in probe
+    assert 'report["unmet_criteria"]' in probe
+
+
+def test_diagnostics_1366_physical_keyboard_module_filters():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-1366"]
+    assert scenario["runner"] == "gtk-diagnostics"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_page_probe.py").read_text(encoding="utf-8")
+    for expected in (
+        "D15_typing_does_not_implicitly_query",
+        "D15_tab_and_shift_tab_between_filters_xtest",
+        "D15_enter_applies_filter_and_resets_pagination",
+        "D15_ctrl_a_delete_return_restores_results",
+        'device[0].type_text("paris")',
+        'press("Return")',
+        'press("BackSpace")',
+        'device[0].key("Control_L", True)',
+        'broker.event_queries[-1]["offset"] == 0',
+    ):
+        assert expected in source
+
+
+def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-large-1600"]
+    assert scenario["runner"] == "gtk-diagnostics"
+    assert scenario["width"] == 1600
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    source = (ROOT / "e2e/diagnostics_page_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "independent_scroll_to_report_end",
+        "long_redacted_report_1600",
+        "tab_shift_tab_and_space_xtest",
+        "D05_report_reduced_with_selection_preserved",
+        "D15_return_xtest_activates_button_and_keeps_focus",
+        "D05_reexpand_preserves_focus_and_selection",
+        "D05_xtest_wheel_keeps_outer_page_fixed",
+        "D13_support_textview_ctrl_c_exact_selection",
+        'XTestFakeButtonEvent(device[0].display, 5, True, 0)',
+        'device[0].key("Control_L", True)',
+        "D13_support_partial_selection_ctrl_c_xtest",
+        "D13_support_full_copy_button_xtest",
+        "D13_copy_selected_vs_full_distinct",
+        'buf.select_range(start_iter, end_iter)',
+        'press("c")',
+        "D05_keyboard_collapse_focus_and_selection",
+        "D05_focus_after_collapse",
+        "D05_text_selection_after_collapse",
+        'press("Return")',
+        'press("Tab")',
+        'press("space")',
+        "outer_before",
+    ):
+        assert marker in source
+
+
+def test_navigation_waits_for_real_gtk_crossfade_before_screenshots():
+    source = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'get_property("transition-running")' in source
+    assert 'if visible and not fading:' in source
+    assert 'later(120, callback)' in source
+
+
+def test_d04_slow_check_real_mainwindow_navigation_contract():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-navigation-slow-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-navigation"
+    assert scenario["width"] == 1366
+    assert scenario["slow_check"] is True
+    script = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for assertion in (
+        "D04_explicit_async_check_started",
+        "D04_physical_library_navigation_during_pending_check",
+        "D04_async_check_completes_offscreen",
+        "D04_check_result_visible_on_return",
+        "SlowNavigationBroker(Broker)",
+        'device[0].click_widget(buttons[0])',
+        "StateTasks() if args.slow_check",
+    ):
+        assert assertion in script
+
+
+def test_diagnostics_navigation_targets_real_mainwindow_and_pointer_events():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-navigation-1366"]
+    assert scenario["runner"] == "gtk-diagnostics-navigation"
+    assert scenario["fixture"] == "startup"
+    assert scenario["plugin"] == "ui.page.diagnostics"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "Pages().pages()",
+        "self.diagnostics_page.pages()",
+        'click_widget(w.nav_rows["library"])',
+        'click_widget(w.nav_rows["diagnostics"])',
+        "Configuration / Technique",
+        "physical_return_to_library",
         'report["status"] = "PASS"',
     ):
         assert marker in source
@@ -292,3 +488,33 @@ def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():
         'assert window._search_mode == "local" and not online_attempts',
     ):
         assert required in source
+
+
+def test_xvfb_display_retry_is_limited_to_transport_initialization():
+    runner = _module()
+    error = (
+        "Gtk-CRITICAL gtk_icon_theme_get_for_display GDK_IS_DISPLAY failed\n"
+        "RuntimeError: Gtk couldn't be initialized."
+    )
+    assert runner.retryable_x11_startup_failure(1, error) is True
+    assert runner.retryable_x11_startup_failure(0, error) is False
+    assert runner.retryable_x11_startup_failure(1, "AssertionError: expected search page") is False
+    assert runner.retryable_x11_startup_failure(
+        1, "RuntimeError: Gtk couldn't be initialized. Missing config."
+    ) is False
+    source = RUNNER.read_text(encoding="utf-8")
+    assert 'name in {"startup", "core-navigation"}' in source
+    assert '"xvfb_display_retry"' in source
+    assert "attempt=2" in source
+
+def test_e2e_workflow_does_not_replay_core_search_filter_twice():
+    """The core group already exercises search-filter-p0 in real GTK/XTEST."""
+    runner = _module()
+    assert [name for name, _ in runner.select(None, "core")].count(
+        "search-filter-p0"
+    ) == 1
+    workflow = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+    assert workflow.count("e2e/run.py --plugin core") == 1
+    assert "--scenario search-filter-p0" not in workflow

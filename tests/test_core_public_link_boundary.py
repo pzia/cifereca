@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -65,7 +66,7 @@ def test_untrusted_metadata_shapes_do_not_crash_public_link_projection(metadata)
 
 def test_detail_renderer_applies_validation_to_direct_plugin_links():
     main = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    module = ast.parse(main.read_text(encoding="utf-8"))
+    module = ast.parse(gui_source_text(main))
     detail = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     renderer = next(node for node in detail.body if isinstance(node, ast.FunctionDef) and node.name == "show_presentation")
     source = ast.unparse(renderer)
@@ -76,7 +77,7 @@ def test_detail_renderer_applies_validation_to_direct_plugin_links():
 
 def test_plugin_master_detail_uri_action_is_checked_and_invalid_actions_are_dropped():
     main = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    module = ast.parse(main.read_text(encoding="utf-8"))
+    module = ast.parse(gui_source_text(main))
     cls = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "PublicBookMasterDetailView")
     renderer = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "show_detail")
     source = ast.unparse(renderer)

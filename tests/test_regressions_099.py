@@ -1,4 +1,5 @@
 """Search and GTK lifecycle regressions, using real methods without a display."""
+from tests.gui_source import gui_source_text
 import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -30,14 +31,14 @@ def _service(tmp: str) -> LibraryService:
 
 ROOT=Path(__file__).resolve().parents[1]
 def functions(file,names,ns):
-    tree=ast.parse((ROOT/'src/cifereca/gui'/file).read_text())
+    tree=ast.parse(gui_source_text(ROOT/'src/cifereca/gui'/file))
     selected=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in names]
     future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
     exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+selected,type_ignores=[])),file,'exec'),ns)
     return {name:ns[name] for name in names}
 
 def methods(file,cls,names,ns):
-    tree=ast.parse((ROOT/'src/cifereca/gui'/file).read_text())
+    tree=ast.parse(gui_source_text(ROOT/'src/cifereca/gui'/file))
     obj=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==cls)
     selected=[n for n in obj.body if isinstance(n,ast.FunctionDef) and n.name in names]
     future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
