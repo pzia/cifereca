@@ -355,14 +355,28 @@ def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
     def pointer_over_report(controller):
         event = controller.get_current_event()
         native = root.get_native()
+        dbg = __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1"
+        if dbg:
+            import sys
+            print("D05_ENTRY", "event", type(event).__name__ if event else None,
+                  "native", type(native).__name__ if native else None,
+                  "report_mapped", report_scroll.get_mapped(), file=sys.stderr, flush=True)
         if event is None or native is None:
             return False
         located, x, y = event.get_position()
+        if dbg:
+            import sys
+            print("D05_EVENT_POSITION", located, x, y, file=sys.stderr, flush=True)
         if not located:
             device = controller.get_current_event_device()
             if device is None:
                 return False
             surface, x, y = device.get_surface_at_position()
+            if dbg:
+                import sys
+                print("D05_DEVICE_POSITION", type(surface).__name__ if surface else None,
+                      x, y, "event_surface", type(event.get_surface()).__name__ if event.get_surface() else None,
+                      file=sys.stderr, flush=True)
             if surface is None or surface != event.get_surface():
                 return False
         offset_x, offset_y = native.get_surface_transform()
