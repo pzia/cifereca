@@ -71,5 +71,6 @@ def test_root_capture_is_installed_before_gtk_outer_scroll_window():
     assert "_install_report_wheel(\n            Gtk, Gdk, page_root" in source
     assert "event.get_position()" in source
     assert "native.get_surface_transform()" in source
-    assert "report_scroll.compute_bounds(native)" in source
+    assert "native.pick(" in source
+    assert "picked.get_parent()" in source
     assert "return page_root" in source
