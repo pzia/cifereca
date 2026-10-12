@@ -613,6 +613,7 @@ def test_incomplete_snapshot_code_is_shared_without_free_text_provenance():
     row = source_summaries(payload)
     assert row[0]["reason"] == "snapshot_records_incomplete"
     assert row[0]["status"] == "partial"
+    assert row[0]["label"] == "Historique structuré partiel (rejets / limite)"
     assert row[0]["last_event"] == "2026-10-11T09:00:00+00:00"
     assert public_source_evidence(payload["sources"][0])["reason"] == row[0]["reason"]
     assert "reason" not in row[1]
