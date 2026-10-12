@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from types import SimpleNamespace as NS
+from dataclasses import replace
+from threading import Event
+from concurrent.futures import ThreadPoolExecutor
 
-from cifereca.models import Loan
+from cifereca.models import Loan, Account
 from cifereca.core.return_adept_orchestrator import adept_return_key
 from cifereca.core.loan_return_guard import return_key
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
@@ -235,5 +238,81 @@ def test_non_adept_loan_only_offers_distinct_provider_action(tmp_path):
         assert result["retry"] == "provider_action_explicit"
         assert calls["mutations"] == 0
         assert paris.posts == 0
+    finally:
+        service.close()
+
+
+def test_adobe_and_pnb_returns_cannot_be_claimed_concurrently(tmp_path):
+    service, loan, paris = setup(tmp_path, paris_active=True)
+    started, release = Event(), Event()
+    try:
+        calls = stub_adept(service)
+        original = service.execute_drm_mutation
+
+        def in_flight(request):
+            started.set()
+            assert release.wait(5), "test timed out awaiting release"
+            return original(request)
+
+        service.execute_drm_mutation = in_flight
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            future = pool.submit(service.return_loan_prefer_adept, loan)
+            try:
+                assert started.wait(5), "ADEPT mutation never started"
+                competing = service.return_digital(loan, explicit_retry=True)
+                assert competing == {
+                    "status": "attention_required", "scope": "provider_pnb_only",
+                    "code": "loan_return_busy", "retry": "verification_only",
+                }
+                assert paris.posts == 0
+                assert calls["mutations"] == 0
+            finally:
+                release.set()
+            first = future.result(timeout=10)
+        assert first["status"] == "partial"
+        assert first["adobe_return_confirmed"] is True
+        assert calls["mutations"] == 1
+        assert paris.posts == 0
+    finally:
+        release.set()
+        service.close()
+
+
+def test_other_connection_same_upstream_loan_uses_same_cross_channel_lock(tmp_path):
+    service, loan, paris = setup(tmp_path, paris_active=True)
+    try:
+        other = replace(loan, source_credential="other-paris", identity_id="bob")
+        assert service._return_operation_lock_file(loan) == service._return_operation_lock_file(other)
+        assert "alice-paris" not in service._return_operation_lock_file(loan).name
+        assert "shared-loan" not in service._return_operation_lock_file(loan).name
+    finally:
+        service.close()
+
+
+def test_pnb_refuses_shared_loan_from_other_paris_identity_without_post(tmp_path):
+    service, loan, paris = setup(tmp_path, paris_active=True)
+    try:
+        service.storage.provider_connection_put({
+            "identity_id": "bob", "provider_id": "paris",
+            "credential_id": "bob-paris", "label": "Paris Bob",
+        })
+        service.accounts.append(Account(
+            unique_id="linked-123", is_primary=False,
+            provider_id="paris", credential_id="bob-paris", identity_id="bob",
+        ))
+        service.storage.entitlement_put({
+            "entitlement_id": "other-view",
+            "provider_id": "paris", "credential_id": "bob-paris",
+            "account_id": "linked-123", "identity_id": "bob",
+            "item_id": loan.record_id, "loan_id": loan.id,
+            "entitlement_type": "loan", "state": "active",
+        })
+        first = service.return_digital(loan, explicit_retry=True)
+        assert first["status"] == "attention_required"
+        assert first["code"] == "loan_return_identity_conflict"
+        assert paris.posts == 0
+        assert service.storage.loan_return_state(
+            return_key("paris", "alice-paris", "linked-123", loan.id)
+        ) is None
     finally:
         service.close()

@@ -1,8 +1,14 @@
 """Constellations page and contextual action, using public Plugin API only."""
 from cifereca.plugin_api import (UiPageContribution, UiActionContribution,
     UiBookDetailPresentation, DetailSection, DetailField, DocumentLink)
-from constellation_view_model import (node_from_row, merge_nodes, neighbours, relation,
+from constellation_view_model import (node_from_row, merge_nodes, neighbours,
     promenade, replace_step, Navigation)
+from itertools import islice
+
+# Read no more than N+1 books from the metadata broker, even if it yields
+# thousands of entries or an unbounded iterator.
+LOCAL_NODE_LIMIT = 300
+PAGE_CACHE_PROFILES = 8
 
 
 def neighbour_card_fields(edge):
@@ -31,17 +37,20 @@ def neighbour_count_label(edges):
 class ConstellationsPlugin:
     def activate(self, context):
         self.context, self.view, self.pending = context, None, None
+        self.pending_identity = ""
         return self
 
     def pages(self):
         return [UiPageContribution('constellations', 'Constellations', 'view-grid-symbolic', 36,
-            self.build, actions=(UiActionContribution('constellations.explore', 'Explorer les liens',
+            self.build, actions=(UiActionContribution('constellations.explore', 'Explorer les livres proches',
             self.from_book, target='book.detail', visible_when=lambda c: c.book is not None),))]
 
     def from_book(self, host):
-        self.pending = host.action_context().book
+        action = host.action_context()
+        self.pending = action.book
+        self.pending_identity = str(getattr(action, 'identity_id', '') or '')
         if self.view:
-            self.view.seed(self.pending)
+            self.view.seed(self.pending, identity_id=self.pending_identity)
         host.navigate('constellations')
 
     def build(self, host):
@@ -53,72 +62,46 @@ class ConstellationsPlugin:
         if self.view:
             self.view.dispose()
         self.view = self.pending = None
+        self.pending_identity = ""
 
 
 class View:
     def __init__(self, plugin, host, Gtk, GLib):
         self.plugin, self.host, self.Gtk, self.GLib = plugin, host, Gtk, GLib
         self.nodes, self.local, self.cache = (), (), {}
-        self.nav, self.center, self.path = Navigation(), None, ()
+        self.nav, self.center = Navigation(), None
+        self.origin_book = plugin.pending
+        self.origin_identity = plugin.pending_identity
         self.generation, self.task, self.disposed = 0, None, False
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.status = Gtk.Label(label='Choisissez un profil pour explorer sa bibliothèque.', wrap=True, xalign=0)
+        self.status = Gtk.Label(label='Choisissez un livre dans Recherche ou Bibliothèque pour explorer ses proches.', wrap=True, xalign=0)
         self.widget.append(self.status)
         self.identities = list(plugin.context.broker('identities').identities())
         self.identity = Gtk.DropDown.new_from_strings([str(r.get('label') or r.get('name') or r.get('identity_id')) for r in self.identities])
         self.identity.set_tooltip_text('Profil de bibliothèque')
+        if self.origin_identity:
+            wanted = next((i for i, row in enumerate(self.identities)
+                           if str(row.get('identity_id') or '') == self.origin_identity), None)
+            if wanted is not None:
+                self.identity.set_selected(wanted)
         self.widget.append(self.identity)
         self.identity.connect('notify::selected', lambda *_: self.load())
-        # Explicitly grouped intents; catalog calls remain click-only.
-        sections = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.widget.append(sections)
-
-        def group(title):
-            sections.append(Gtk.Label(label=title, xalign=0))
-            line = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5)
-            sections.append(line)
-            return line
-
-        explore = group('Explorer')
-        self.mode = Gtk.DropDown.new_from_strings(['Explorateur', 'Confort', 'Projet', 'Humeur'])
-        self.mode.set_tooltip_text('Mode de proximité entre livres')
-        self.mode.connect('notify::selected', lambda *_: self.render())
-        explore.append(self.mode)
-        self.signal = Gtk.Entry(placeholder_text='Sujet du projet / humeur attestée')
-        self.signal.connect('changed', lambda *_: self.render())
-        explore.append(self.signal)
-
-        distance = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        distance.append(Gtk.Label(label='Proche'))
-        self.surprise = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5)
-        self.surprise.set_value(25)
-        self.surprise.set_size_request(160, -1)
-        self.surprise.set_digits(0)
-        self.surprise.set_draw_value(True)
-        self.surprise.set_tooltip_text('Proche (0) à surprenant (100)')
-        self.surprise.update_property([Gtk.AccessibleProperty.LABEL], ['Proximité de 0 à 100'])
-        self.surprise.connect('value-changed', lambda *_: self.render())
-        distance.append(self.surprise)
-        distance.append(Gtk.Label(label='Surprenant'))
-        explore.append(distance)
-        explore.append(self.button('Précédent', lambda: self.move(-1)))
-        explore.append(self.button('Suivant', lambda: self.move(1)))
-        explore.append(self.button('Ouvrir la fiche Bibliothèque', self.open_book))
-
-        search = group('Chercher')
-        self.query = Gtk.Entry(placeholder_text='Requête catalogue — envoi explicite')
-        search.append(self.query)
-        search.append(self.button('Chercher en ligne', lambda: self.load(remote=self.query.get_text().strip())))
-        search.append(self.button('Actualiser la bibliothèque', lambda: self.load(refresh=True)))
-
-        walk = group('Parcours')
-        self.variant = Gtk.DropDown.new_from_strings(['court', 'équilibré', 'surprenant'])
-        walk.append(self.variant)
-        walk.append(self.button('Choisir le départ', self.start_walk))
-        walk.append(self.button('Rejoindre ce livre', self.finish_walk))
+        # MVP: a known book -> explained neighbours -> previous/next book.
+        # No free search, no manual start/end, no mood/exploration controls.
+        self.controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.widget.append(self.controls)
+        self.back_button = self.button('← Livre précédent', lambda: self.move(-1))
+        self.forward_button = self.button('Livre suivant →', lambda: self.move(1))
+        self.origin_button = self.button('Retour à la fiche d’origine', self.open_origin)
+        for button in (self.back_button, self.forward_button, self.origin_button):
+            self.controls.append(button)
+        self.promise = Gtk.Label(
+            label='Découvrez des livres liés au livre choisi. Cliquez un voisin pour continuer.',
+            wrap=True, xalign=0,
+        )
+        self.widget.append(self.promise)
         self.heading = Gtk.Label(wrap=True, xalign=0)
         self.widget.append(self.heading)
-        self.start = None
         self.master = host.build_book_master_detail(title='Livre central', empty_title='Aucun livre sélectionné dans cette liste')
         self.widget.append(self.master.widget)
         self.neighbours_summary = Gtk.Label(label='Aucun voisin proposé', wrap=True, xalign=0)
@@ -127,10 +110,6 @@ class View:
         scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=200)
         scroll.set_child(self.flow)
         self.widget.append(scroll)
-        self.choices = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=3)
-        chooser = Gtk.Expander(label='Choisir un autre livre dans les notices chargées')
-        chooser.set_child(self.choices)
-        self.widget.append(chooser)
         self.unsubscribe = host.subscribe_identity_overview(lambda: GLib.idle_add(self.invalidate)) if hasattr(host, 'subscribe_identity_overview') else lambda: None
         self.widget.connect('map', self.first_map)
         self.started = False
@@ -169,20 +148,37 @@ class View:
             self.generation += 1
             if self.task:
                 self.task.cancel()
-            self.nodes, self.local, self.center, self.path = (), (), None, ()
+            self.nodes, self.local, self.center = (), (), None
             self.render()
             self.status.set_label('Aucun profil disponible. Créez un profil dans Cifereca.')
             return
-        self.nodes, self.local, self.center, self.path = (), (), None, ()
-        self.nav, self.start = Navigation(), None
+        self.nodes, self.local, self.center = (), (), None
+        self.nav = Navigation()
         self.render()
         cached = None if refresh else self.cache.get(identity)
-        pending = self.plugin.pending
+        if cached is not None:
+            # Refresh page-cache LRU order without reading from the broker.
+            self.cache[identity] = self.cache.pop(identity)
+        # A contextual book from profile A must not be injected into B.
+        pending_identity = str(getattr(self.plugin, 'pending_identity', '') or '')
+        pending = self.plugin.pending if not pending_identity or pending_identity == identity else None
         context = self.plugin.context
         self.status.set_label('Chargement…')
         def operation(control):
-            rows = cached if cached is not None else tuple(context.broker('metadata').library_entries(identity_id=identity, scan=False))
-            local = tuple(node_from_row(r, origin='bibliothèque') for r in rows[:300])
+            if control.cancelled():
+                return None
+            if cached is None:
+                # Use N+1 to detect truncation *without* exhausting the
+                # metadata iterator or retaining the rest of the catalogue.
+                entries = context.broker('metadata').library_entries(identity_id=identity, scan=False)
+                sample = tuple(islice(iter(entries), LOCAL_NODE_LIMIT + 1))
+                truncated = len(sample) > LOCAL_NODE_LIMIT
+                rows = sample[:LOCAL_NODE_LIMIT]
+            else:
+                rows, truncated = cached
+            if control.cancelled():
+                return None
+            local = tuple(node_from_row(r, origin='bibliothèque') for r in rows)
             extra = ()
             if remote and not control.cancelled():
                 extra = tuple(node_from_row(r) for r in context.broker('catalog').search(remote, identity_id=identity, limit=100)[:100])
@@ -190,7 +186,7 @@ class View:
                 return None
             seed = node_from_row(pending, origin='sélection') if pending else None
             nodes = merge_nodes(local + extra + ((seed,) if seed else ()))
-            return rows, local, nodes, seed.key if seed else None
+            return rows, local, nodes, seed.key if seed else None, truncated
         self.run_calculation(operation, lambda result: self.loaded(self.generation, identity, result, ''), 'Chargement Constellations')
 
     def run_calculation(self, operation, complete, label):
@@ -223,22 +219,48 @@ class View:
             return False
         if error:
             self.status.set_label(error); return False
-        rows, self.local, self.nodes, seed_key = result
-        self.cache[identity] = rows
-        self.status.set_label(f'{len(self.nodes)} notices · exploration bornée aux 300 premières notices locales et 100 résultats distants')
-        self.plugin.pending = None
+        rows, self.local, self.nodes, seed_key, *extra = result
+        truncated = bool(extra[0]) if extra else False
+        self.cache.pop(identity, None)
+        self.cache[identity] = (rows, truncated)
+        while len(self.cache) > PAGE_CACHE_PROFILES:
+            self.cache.pop(next(iter(self.cache)))
+        coverage = (
+            f'{LOCAL_NODE_LIMIT} premières notices locales seulement ; '
+            'bibliothèque plus grande que le plafond'
+            if truncated else f'{len(rows)} notices locales examinées'
+        )
+        self.status.set_label(
+            f'{coverage} · {len(self.nodes)} nœud(s) pour ce profil · '
+            'voisinage local sans collecte automatique'
+        )
+        if seed_key or not getattr(self.plugin, 'pending_identity', '') or (
+            self.plugin.pending_identity == identity
+        ):
+            self.plugin.pending = None
         if seed_key:
-            self.visit(next(n for n in self.nodes if n.key == seed_key))
-        elif self.nodes:
-            self.visit(self.nodes[0])
+            seed = next((n for n in self.nodes if n.key == seed_key), None)
+            if seed is not None:
+                self.visit(seed)
+            else:
+                self.render()
         else:
+            # Do not select an arbitrary first record on direct page access.
             self.render()
         return False
 
-    def seed(self, book):
+    def seed(self, book, *, identity_id=''):
         if book is None:
             return
-        self.start, self.path = None, ()
+        self.origin_book = book
+        self.origin_identity = identity_id or self.identity_id()
+        if identity_id and identity_id != self.identity_id():
+            selected = next((i for i, row in enumerate(self.identities)
+                             if str(row.get('identity_id') or '') == identity_id), None)
+            if selected is not None:
+                self.plugin.pending = book
+                self.identity.set_selected(selected)
+                return
         if not self.nodes:
             self.plugin.pending = book
             self.load()
@@ -277,30 +299,46 @@ class View:
             return
         self.host.toast('Fiche locale indisponible pour ce profil ; la notice reste affichée ici.')
 
-    def start_walk(self):
-        self.cancel_calculation()
-        self.start = self.center
-        if self.start:
-            self.status.set_label('Départ : ' + self.start.book.title + '. Choisissez maintenant un livre d’arrivée.')
+    def open_origin(self):
+        """Return through public book-detail hosting with the original book."""
+        original = getattr(self, 'origin_book', None)
+        if original is None:
+            self.host.toast('Sélectionnez d’abord un livre dans Recherche ou Bibliothèque.')
+            return
+        method = getattr(self.host, 'open_book_detail', None)
+        if callable(method) and method(original, identity_id=self.origin_identity or self.identity_id()):
+            return
+        self.host.toast('Fiche d’origine indisponible pour ce profil.')
 
+    # Legacy engine adapter kept only for internal/backward compatibility.
+    # Neither these operations nor the departure/arrival controls are exposed
+    # anywhere in the new P2 book-first page (route planning is P3 #703).
     def finish_walk(self):
-        if not self.start or not self.center:
-            self.status.set_label('Choisissez un départ et une arrivée distincts.'); return
-        variant = ('court', 'équilibré', 'surprenant')[self.variant.get_selected()]
+        if not getattr(self, 'start', None) or not self.center:
+            self.status.set_label('Parcours non disponible dans cette vue.')
+            return
+        variant_picker = getattr(self, 'variant', None)
+        selected = variant_picker.get_selected() if variant_picker is not None else 1
+        variant = ('court', 'équilibré', 'surprenant')[selected]
         nodes, start, end = self.nodes, self.start, self.center
-        self.status.set_label('Recherche de promenade…')
+        self.status.set_label('Calcul du parcours historique…')
         def apply(path):
             self.path = path
-            self.status.set_label('Promenade : ' + ' → '.join(n.book.title for n in path) if path else 'Aucun chemin de 4 à 8 livres suffisamment documenté.')
             self.render()
-        self.run_calculation(lambda control: promenade(nodes, start, end, variant=variant, control=control), apply, 'Calcul de promenade')
+        self.run_calculation(
+            lambda control: promenade(nodes, start, end, variant=variant, control=control),
+            apply, 'Calcul du parcours historique',
+        )
 
     def replace(self, index):
         path, nodes = self.path, self.nodes
         def apply(replacement):
             self.path = replacement
             self.render()
-        self.run_calculation(lambda control: replace_step(path, index, nodes), apply, 'Remplacement d’étape')
+        self.run_calculation(
+            lambda control: replace_step(path, index, nodes),
+            apply, 'Remplacement historique',
+        )
 
     def render(self):
         if not hasattr(self, 'flow'):
@@ -308,12 +346,19 @@ class View:
         child = self.flow.get_first_child()
         while child:
             self.flow.remove(child); child = self.flow.get_first_child()
-        child = self.choices.get_first_child()
-        while child:
-            self.choices.remove(child); child = self.choices.get_first_child()
+        back = getattr(self, 'back_button', None)
+        forward = getattr(self, 'forward_button', None)
+        origin = getattr(self, 'origin_button', None)
+        navigation = getattr(self, 'nav', None)
+        if back is not None and navigation is not None:
+            back.set_sensitive(navigation.position > 0)
+        if forward is not None and navigation is not None:
+            forward.set_sensitive(0 <= navigation.position < len(navigation.history) - 1)
+        if origin is not None:
+            origin.set_sensitive(getattr(self, 'origin_book', None) is not None)
         if not self.center:
-            self.heading.set_label('Aucun livre central')
-            self.neighbours_summary.set_label('Choisissez un livre pour afficher son voisinage')
+            self.heading.set_label('Choisissez un livre dans Recherche ou Bibliothèque')
+            self.neighbours_summary.set_label('Aucun point de départ. Utilisez « Explorer les livres proches » depuis une fiche.')
             self.master.empty_detail(); return
         node = self.center
         self.heading.set_label('Centre : ' + node.book.title)
@@ -321,13 +366,12 @@ class View:
         self.master.show_detail(UiBookDetailPresentation(node.book.title, ', '.join(node.book.authors),
             badges=node.availability, links=links, sections=(DetailSection('provenance', 'Provenance',
             (DetailField('sources', 'Sources', ', '.join(node.sources)),)),)))
-        mode = ('Explorateur', 'Confort', 'Projet', 'Humeur')[self.mode.get_selected()]
-        edges = neighbours(self.nodes, node, mode=mode, surprise=self.surprise.get_value()/100,
-            theme=self.signal.get_text(), mood=self.signal.get_text(), profile=self.local)
+        # A single stable ranking keeps the first exploration comprehensible.
+        edges = neighbours(self.nodes, node, mode='Confort', surprise=.25, profile=self.local, limit=12)
         self.neighbours_summary.set_label(neighbour_count_label(edges))
         if not edges:
             self.flow.append(self.Gtk.Label(
-                label='Aucun lien proposé pour ce mode. Choisissez un autre livre ou cherchez en ligne.',
+                label='Aucun livre proche documenté dans le cache actuel. Revenez à la fiche d’origine ou choisissez une autre fiche.',
                 wrap=True, xalign=0,
             ))
         for edge in edges:
@@ -352,16 +396,6 @@ class View:
             button.set_tooltip_text('Visiter : ' + row['title'])
             button.connect('clicked', lambda *_args, node=edge.target: self.visit(node))
             self.flow.append(button)
-        # Catalogue selector remains available when metadata cannot produce edges.
-        for other in self.nodes[:100]:
-            if other.key != node.key and all(e.target.key != other.key for e in edges):
-                b = self.button('Choisir : ' + other.book.title, lambda n=other: self.visit(n))
-                b.get_child().set_wrap(True); self.choices.append(b)
-        for i, step in enumerate(self.path):
-            reason = 'Départ' if i == 0 else '; '.join(relation(self.path[i-1], step).reasons)
-            self.flow.append(self.Gtk.Label(label=f'{i+1}. {step.book.title} · {", ".join(step.availability)}\n{reason}', wrap=True))
-            if 0 < i < len(self.path)-1:
-                self.flow.append(self.button('Remplacer étape ' + str(i+1), lambda index=i: self.replace(index)))
 
     def dispose(self):
         self.disposed = True; self.generation += 1

@@ -80,6 +80,22 @@ def test_shared_loan_with_two_confirmed_profiles_is_flagged():
     } | set()
 
 
+def test_primary_exception_is_audited_instead_of_normal_connection_profile():
+    exception = {**grant("paris-a", "bob", "profile-b"), "account_id": "primary"}
+    storage = FakeStorage(
+        entitlements=[right("paris-a", "alice", "")], grants=[exception],
+    )
+    row = build_paris_adept_audit(storage)["loans"][0]["exposures"][0]
+    assert row["connection_identity_id"] == "alice"
+    assert row["borrower_identity_id"] == "bob"
+    assert row["adept_profile_id"] == "profile-b"
+    assert row["binding_state"] == "locally_consistent"
+    exception["profile_id"] = "obsolete-profile"
+    row = build_paris_adept_audit(storage)["loans"][0]["exposures"][0]
+    assert row["binding_state"] == "stale_profile"
+    assert row["adept_profile_id"] == "obsolete-profile"
+
+
 def test_filter_does_not_hide_other_connection_for_same_loan():
     storage = FakeStorage(entitlements=[
         right("paris-a", "alice", "primary", loan="shared"),

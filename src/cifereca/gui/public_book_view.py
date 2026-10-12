@@ -1,0 +1,88 @@
+from __future__ import annotations
+from typing import Any, TYPE_CHECKING
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk
+from ..catalogue_link import safe_document_link_url
+from .master_detail import MasterDetailPage
+from .book_widgets import BookListItem
+from .action_widgets import action_button
+if TYPE_CHECKING:
+    from .main_window import MainWindow
+
+
+class PublicBookMasterDetailView:
+    """Public adapter backed by the same MasterDetailPage used by Core pages."""
+
+    def __init__(
+        self, window: "MainWindow", *, title: str, subtitle: str = "",
+        empty_title: str = "Aucun document",
+        empty_desc: str = "Aucun document à afficher.",
+    ) -> None:
+        self._page = MasterDetailPage(window, title, subtitle, empty_title, empty_desc)
+        self._rows: dict[str, Any] = {}
+
+    @property
+    def widget(self):
+        return self._page
+
+    def append_toolbar(self, widget: object) -> None:
+        self._page.toolbar.append(widget)
+
+    def show_rows(self, rows, total_count: int | None = None) -> None:
+        self._rows = {str(row.key): row for row in rows}
+        ui_rows = [
+            BookListItem(
+                str(row.key),
+                str(row.title or "Sans titre"),
+                str(row.subtitle or ""),
+                str(row.meta or ""),
+                str(row.badge or ""),
+                getattr(row, "thumbnail_url", None),
+            )
+            for row in rows
+        ]
+        self._page.show_rows(ui_rows, total_count=total_count)
+
+    def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None:
+        self._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
+        self._page.empty_page.set_title(str(title))
+        self._page.empty_page.set_description(str(description or ""))
+        self._page.empty_page.set_icon_name(str(icon_name or "system-search-symbolic"))
+        self._page.list_stack.set_visible_child_name("empty")
+
+    def connect_selected(self, callback) -> None:
+        def selected(item):
+            callback(self._rows.get(str(item.key)) if item is not None else None)
+        self._page.connect_selected(selected)
+
+    def show_detail(self, detail) -> None:
+        panel = self._page.detail
+        panel.show_presentation(detail)
+        buttons = []
+        for action in getattr(detail, "actions", ()) or ():
+            raw_uri = str(getattr(action, "uri", "") or "")
+            if raw_uri:
+                # Plugin actions share the same URL security boundary as
+                # document links. Drop invalid URI actions completely.
+                uri = safe_document_link_url(raw_uri, relation="related")
+                if not uri:
+                    continue
+                button = Gtk.LinkButton(uri=uri, label=str(action.title))
+                button.set_tooltip_text(str(action.title))
+            else:
+                button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
+                callback = getattr(action, "callback", None)
+                if callable(callback):
+                    button.connect("clicked", lambda _button, cb=callback: cb())
+            button._cifereca_action_id = str(action.id)
+            buttons.append(button)
+        panel.add_actions(buttons)
+
+    def empty_detail(
+        self,
+        title: str = "Aucun document sélectionné",
+        description: str = "Sélectionnez un document pour afficher ses détails.",
+    ) -> None:
+        self._page.detail.empty(title, description)
+

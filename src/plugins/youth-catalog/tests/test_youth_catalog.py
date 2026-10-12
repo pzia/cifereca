@@ -215,7 +215,7 @@ def test_source_failure_is_isolated():
     report = plugin.collect_source("alice", source, "chat")
     assert report.accepted == 0
     assert report.rejected == 1
-    assert report.errors == ("search: offline",)
+    assert report.errors == ("source search failed",)
     assert plugin.search_cached("alice") == ()
 
 
@@ -1205,3 +1205,61 @@ def test_confirmed_merge_retains_two_distinct_publishers_without_double_counting
         row("Livre", isbn="9780306406157", publishers=["Milan", "Autre"]),
     ])
     assert index.entries("alice")[0].publishers == ("Milan", "Bayard", "Autre")
+
+
+
+def test_youth_ingest_does_not_expose_untrusted_record_errors():
+    from youth_catalog import YouthCatalogIndex, safe_ingest_rejection_categories
+
+    class SecretRow:
+        @property
+        def title(self):
+            raise RuntimeError("https://private.invalid/?token=SECRET")
+
+    index = YouthCatalogIndex()
+    previous = index.ingest("alice", "milan", [{"title": "Before"}])
+    assert previous.accepted == 1
+    report = index.ingest("alice", "milan", [
+        {"title": ""},
+        {"title": None},
+        SecretRow(),
+    ])
+    assert report.accepted == 0 and report.rejected == 3
+    assert report.errors == (
+        "item[0]: title is required",
+        "item[1]: title is required",
+        "item[2]: invalid record",
+    )
+    assert safe_ingest_rejection_categories(report.errors) == {
+        "missing_title": 2, "other": 1,
+    }
+    assert "SECRET" not in repr(report)
+    assert [b.title for b in index.entries("alice")] == ["Before"]
+
+
+def test_bibliography_ingest_does_not_expose_private_errors():
+    from youth_catalog import YouthCatalogIndex
+
+    index = YouthCatalogIndex()
+    report = index.ingest_bibliography("alice", "openlibrary", "9780306406157", [
+        {"metadata": {"age_evidence": "https://signed.invalid/SECRET"}},
+    ])
+    assert report.accepted == 0 and report.rejected == 1
+    assert report.errors == ("item[0]: invalid bibliography record",)
+    assert "SECRET" not in repr(report)
+
+
+def test_youth_collect_search_error_reports_generic_code():
+    from youth_catalog import YouthCatalogPlugin
+
+    class SecretSearch:
+        def source_info(self):
+            return {"source_id": "test", "display_name": "Test"}
+        def search(self, *args, **kwargs):
+            raise RuntimeError("Authorization: Bearer SECRET https://private.invalid/?token=SECRET")
+
+    plugin = YouthCatalogPlugin()
+    report = plugin.collect_source("alice", SecretSearch(), "chat")
+    assert report.accepted == 0 and report.rejected == 1
+    assert report.errors == ("source search failed",)
+    assert "SECRET" not in repr(report)

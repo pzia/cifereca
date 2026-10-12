@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
@@ -32,6 +33,18 @@ SCENARIOS = {
         "description": "P1 #942 : vrai Détail bibliographique repliable Recherche/Bibliothèque GTK 1366.",
         "runner": "gtk-detail",
         "width": 1366,
+    },
+    "mainwindow-baseline-1366": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P0 #1123: MainWindow, async navigation, keyboard, two identities and normal close.",
+        "runner": "gtk-diagnostics-navigation", "width": 1366,
+        "slow_check": True, "window_baseline": True,
+    },
+    "mainwindow-baseline-1600": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P0 #1123: same MainWindow contracts at 1600x1000.",
+        "runner": "gtk-diagnostics-navigation", "width": 1600,
+        "slow_check": True, "window_baseline": True,
     },
     "youth-1366": {
         "plugin": "catalog.youth",
@@ -63,6 +76,56 @@ SCENARIOS = {
         "runner": "gtk-youth",
         "width": 1366,
         "library_search": True,
+    },
+    "diagnostics-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 : vrai widget GTK Diagnostics 1366, brokers isolés, JSON, rapport, pagination, sans LLM.",
+        "runner": "gtk-diagnostics",
+        "width": 1366,
+    },
+    "diagnostics-large-1600": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 : vrai GTK 1600x1000, rapport support multipage, scroll indépendant, Tab/Shift+Tab/Space XTEST.",
+        "runner": "gtk-diagnostics",
+        "width": 1600,
+    },
+    "diagnostics-structured-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 D07/D13 : types JSON null/false/0, Unicode, secrets expurgés, sélection GTK et Ctrl+C XTEST.",
+        "runner": "gtk-diagnostics-structured",
+        "width": 1366,
+    },
+    "diagnostics-volume-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 D06/D08-D12 : 10000 événements fictifs paginés, filtres source/module/période et provenance sans réseau.",
+        "runner": "gtk-diagnostics-volume",
+        "width": 1366,
+    },
+    "diagnostics-states-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 D01-D04 : états de sources GTK, broker indisponible, retry et contrôle actif lent",
+        "runner": "gtk-diagnostics-states",
+        "width": 1366,
+    },
+    "diagnostics-navigation-slow-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "D04 : vraie MainWindow, clic XTEST vérification lente, navigation Bibliothèque et retour",
+        "runner": "gtk-diagnostics-navigation",
+        "width": 1366,
+        "slow_check": True,
+    },
+    "diagnostics-navigation-1366": {
+        "plugin": "ui.page.diagnostics",
+        "fixture": "startup",
+        "description": "P0 #1011 : vraie MainWindow Bibliothèque → Diagnostics → Bibliothèque via XTEST, brokers isolés.",
+        "runner": "gtk-diagnostics-navigation",
+        "width": 1366,
     },
     "startup": {
         "plugin": "core",
@@ -153,6 +216,15 @@ def _event(path: Path, scenario: str, event: str, **detail) -> None:
         handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
+    """One retry only for Xvfb/GDK display initialization (never test assertions)."""
+    return (
+        returncode != 0
+        and "Gtk couldn't be initialized" in output
+        and "GDK_IS_DISPLAY" in output
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Runner E2E GTK reproductible CIFERECA")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS))
@@ -195,6 +267,43 @@ def main() -> int:
                     *(["--editions"] if scenario.get("editions") else []),
                     *(["--library-search"] if scenario.get("library_search") else []),
                 ]
+            elif scenario.get("runner") == "gtk-diagnostics":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    args.python, str(ROOT / "e2e/diagnostics_page_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-diagnostics-structured":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/diagnostics_structured_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-diagnostics-volume":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/diagnostics_volume_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-diagnostics-states":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/diagnostics_states_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-diagnostics-navigation":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    args.python, str(ROOT / "e2e/diagnostics_navigation_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                    *(["--slow-check"] if scenario.get("slow_check") else []),
+                    *(["--window-baseline"] if scenario.get("window_baseline") else []),
+                ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]
                 command = [
@@ -223,6 +332,22 @@ def main() -> int:
                     command, cwd=ROOT, env=env, check=False,
                     stdout=stdout, stderr=stderr, text=True,
                 )
+                # An occasional Xvfb handover race can leave GTK without a
+                # display (GDK_IS_DISPLAY), even when the previous GTK
+                # scenario passed. Retry exactly once in a new Xvfb session,
+                # retaining the original log and recording the retry.
+                if name in {"startup", "core-navigation"} and completed.returncode:
+                    stdout.flush()
+                    first_output = stdout_path.read_text(encoding="utf-8")
+                    if retryable_x11_startup_failure(completed.returncode, first_output):
+                        _event(trace_path, name, "xvfb_display_retry", attempt=2)
+                        stdout.write("\n--- X11 display initialization retry (once) ---\n")
+                        stdout.flush()
+                        time.sleep(1)
+                        completed = subprocess.run(
+                            command, cwd=ROOT, env=env, check=False,
+                            stdout=stdout, stderr=stderr, text=True,
+                        )
             for log_path in (stdout_path, stderr_path):
                 log_path.write_text(
                     _redact(log_path.read_text(encoding="utf-8"), env),
@@ -235,7 +360,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-youth"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")

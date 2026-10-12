@@ -58,22 +58,22 @@ def main(argv: list[str] | None = None) -> int:
     al.add_argument("--status", choices=["discovered", "pending", "acquiring", "complete", "retryable_error", "attention_required"], default=None)
     sub.add_parser("acquisition-reconcile", help="Réconcilie acquisitions interrompues, prêts expirés et catalogue local")
     paris_adept = sub.add_parser(
-        "paris-adept", help="Confirmation explicite des sous-comptes Paris et profils ADEPT"
+        "paris-adept", help="Liaisons exceptionnelles explicites des comptes Paris et profils ADEPT"
     )
     adept_sub = paris_adept.add_subparsers(dest="paris_adept_cmd", required=True)
     adept_list = adept_sub.add_parser("list", help="Liste les liaisons ADEPT locales confirmées (hors réseau)")
     adept_list.add_argument("--credential", help="Limiter à une connexion Paris")
-    adept_sub.add_parser("accounts", help="Affiche les sous-comptes visibles après connexion Paris")
+    adept_sub.add_parser("accounts", help="Affiche les comptes visibles après connexion Paris")
     adept_audit = adept_sub.add_parser(
         "audit", help="Audit local hors réseau des prêts Paris visibles sur plusieurs connexions"
     )
     adept_audit.add_argument(
         "--credential", help="Filtre les prêts liés à cette connexion, sans masquer les autres provenances"
     )
-    adept_bind = adept_sub.add_parser("bind", help="Confirme le profil ADEPT du véritable emprunteur")
+    adept_bind = adept_sub.add_parser("bind", help="Confirme une exception de profil ADEPT pour un compte Paris")
     adept_bind.add_argument("--credential", required=True, help="ID exact de la connexion Paris")
-    adept_bind.add_argument("--borrower", required=True, help="Identifiant exact du sous-compte Paris")
-    adept_bind.add_argument("--identity", required=True, help="Identité Cifereca du véritable titulaire ADEPT")
+    adept_bind.add_argument("--borrower", required=True, help="Compte Paris : primary ou identifiant exact du sous-compte")
+    adept_bind.add_argument("--identity", required=True, help="Identité portant le profil ADEPT effectif attesté")
     adept_bind.add_argument(
         "--confirm-ownership", action="store_true",
         help="Atteste une vérification humaine du vrai propriétaire Adobe du prêt",
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
                     result = [
                         {
                             "credential_id": account.credential_id,
-                            "account_id": account.unique_id,
+                            "account_id": "primary" if account.is_primary else account.unique_id,
                             "display_name": account.display_name,
                             "connection_identity_id": account.identity_id,
                             "is_primary": bool(account.is_primary),
@@ -176,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
                         "note": "Configuration locale uniquement, sans preuve serveur Adobe",
                     }
                 elif a.paris_adept_cmd == "bind":
-                    # Refresh the real linked-account inventory. A persisted
+                    # Refresh the real account inventory. A persisted
                     # connection owner alone never proves the borrower.
                     service.connect_configured()
                     result = service.bind_paris_borrower_adept(

@@ -138,3 +138,32 @@ Un provider seul, un identifiant source seul ou un champ générique `id` ne son
 Le repli faible n’est utilisé qu’en absence totale d’identifiant fort et exige **titre + auteur**. Un titre sans auteur ne suffit jamais à déclarer une recommandation déjà possédée.
 
 Le classement, MMR, streaming progressif, cache de snapshot et mode « livre de référence » restent inchangés.
+
+
+## Reformulation IA strictement optionnelle — #780 (0.2.27)
+
+Le calcul, les scores, le classement, les 3 raisons attestées et les liens bibliographiques
+continuent de fonctionner **sans aucun service IA**.
+
+- Option de configuration `llm_explanations`, **désactivée par défaut** : lorsqu'elle est
+  activée, un bouton **« Reformuler les raisons (IA) »** est affiché.
+- Sélectionner une recommandation **ne déclenche rien**. Seul un clic sur ce bouton
+  envoie les trois raisons déjà présentées, bornées à 160 caractères chacune ;
+  le plugin n'envoie ni identité, ni titre, ni bibliothèque entière, ni profil.
+  Les raisons peuvent néanmoins contenir des noms d'auteurs ou des sujets : le
+  service configuré peut être distant, comme l'indique l'infobulle.
+- Une unique demande `LLMRequest(max_output_tokens=96)` passe par
+  `context.service("llm")` et le broker public `tasks`, hors du thread GTK.
+  Aucune dépendance fournisseur, aucune clef ni logging des prompts/réponses.
+- La réponse est bornée, étiquetée **« Reformulation générée — à vérifier »**
+  dans une section séparée de **« Pourquoi »**. Le modèle, fournisseur,
+  l'indication distant/local et une durée mesurée sont visibles. Ces mots
+  **ne deviennent jamais une preuve de sujet, auteur, âge ou droit d'accès**.
+- Panne, quota, refus, réponse non générée, annulation, changement de livre,
+  profil ou recalcul : l'explication facultative est abandonnée et les
+  recommandations attestées restent utilisables. Les réponses tardives
+  ne peuvent pas écraser l'explication d'un autre livre.
+
+**Limite :** le ticket Core #778 reste ouvert. Sans configuration du
+service public `llm` dans le Core, le bouton explique que le service
+est indisponible. Aucun backend n'est simulé dans le produit.
