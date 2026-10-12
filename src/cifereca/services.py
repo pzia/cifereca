@@ -2833,6 +2833,24 @@ class LibraryService:
             credential_id=credential_id, account_id=borrower,
         )
 
+    def audit_paris_adept_loan_origins(self, loan: Loan) -> dict[str, Any]:
+        """Read-only historical evidence for the exceptional ADEPT resolver.
+
+        Never authorizes new fulfillment or return; no live inventory refresh,
+        provider session, profile selection or ledger mutation.
+        """
+        from .core.adept_origin_audit import inspect_paris_adept_origins
+        if str(loan.source_provider).casefold() != "paris":
+            return {"status": "unsupported_source", "shared_visibility": False,
+                    "profile_disagreement": False, "sources": [], "origins": []}
+        return inspect_paris_adept_origins(
+            loan_id=str(loan.id or ""),
+            item_id=str(loan.record_id or loan.id or ""),
+            entitlements=self.storage.entitlements(provider_id="paris"),
+            acquisitions=self.storage.acquisitions(provider_id="paris"),
+            artifact_inspector=inspect_artifact,
+        )
+
     def _paris_adept_identity_for_loan(
         self, loan: Loan, *, connection_identity_id: str,
     ) -> tuple[str | None, str | None]:
