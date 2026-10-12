@@ -1766,3 +1766,57 @@ def test_support_version_rejects_arbitrary_person_names_in_build_metadata():
     assert _public_support_report({"core": {"version": "0.9.7.dev2"}})[
         "core"
     ] == {"version": "0.9.7.dev2"}
+
+
+@pytest.mark.parametrize("invalid_since", [
+    "Alice Dupont",
+    "Livre de Camille",
+    "2026-10-12T18:00:00",
+    "2026-10-12",
+    "2026-13-12T18:00:00Z",
+    "2026-02-30T18:00:00+02:00",
+    "2026-10-12T25:00:00Z",
+    "2026-10-12T18:00:00+24:00",
+    "2026-10-12T18:00:00.1234567+02:00",
+    "2026-10-12T18:00:00Z Camille",
+    "2026-10-12T18:00:00Z\u202e",
+    "2026-10-12T18:00:00Z\nmessage",
+])
+def test_ai_since_refuses_non_dates_and_unstructured_personal_data_before_broker(invalid_since):
+    model = FakeLLM(remote=True)
+    broker = FakeBroker([event()])
+    with pytest.raises(ValueError, match="unsupported_since"):
+        prepare_analysis(model, broker, since=invalid_since)
+    assert broker.filters == []
+    assert model.calls == 0
+
+
+@pytest.mark.parametrize("valid_since", [
+    "2026-10-12T18:00:00Z",
+    "2026-10-12T18:00:00+02:00",
+    "2026-10-12T18:00:00.123456+02:00",
+    "2026-10-12T18:00:00.1-04:00",
+])
+def test_ai_since_exact_timezone_filter_stays_in_broker_consent_and_prompt(valid_since):
+    model = FakeLLM(remote=True)
+    broker = FakeBroker([event()])
+    preview = prepare_analysis(model, broker, since=valid_since)
+    assert broker.filters[0]["since"] == valid_since
+    assert preview["scope"]["since"] == valid_since
+    assert valid_since in preview["prompt"]
+    assert preview["bytes"] <= 3000
+    assert model.calls == 0
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert result["ok"] and model.calls == 1
+    assert model.sent[0].prompt == preview["prompt"]
+    assert result["scope"]["since"] == valid_since
+
+
+def test_ai_since_mutation_rejects_reusing_remote_approval():
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, FakeBroker([event()]),
+                               since="2026-10-12T18:00:00Z")
+    preview["scope"]["since"] = "2026-10-12T17:00:00Z"
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert model.calls == 0
