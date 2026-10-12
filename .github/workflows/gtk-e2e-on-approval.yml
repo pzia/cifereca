@@ -1,0 +1,51 @@
+# Temporary network relay for the already documented rootless Debian 13 recipe.
+# Runs only on PR synchronization changing the authorization sentinel.
+name: Debian 13 GTK dependency relay (temporary)
+on:
+  pull_request:
+    types: [synchronize]
+    paths:
+      - .github/gtk-e2e-run-request.txt
+permissions:
+  contents: read
+jobs:
+  bundle:
+    name: Download Debian GTK debs for local rootless bootstrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: debian:trixie
+    steps:
+      - name: Debian prerequisites
+        run: |
+          set -eu
+          apt-get update -o APT::Update::Error-Mode=any
+          apt-get install -y --no-install-recommends ca-certificates python3 dpkg tar xz-utils git debian-archive-keyring
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run documented downloader (no GTK test on runner)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .gtk-deb-cache
+          python3 environnements/openai-chat-debian/bootstrap.py --download-only --deb-cache "$GITHUB_WORKSPACE/.gtk-deb-cache"
+          test -f .gtk-deb-cache/.gtk4-cache-profile.json
+          test "$(find .gtk-deb-cache -name '*.deb' | wc -l)" -gt 10
+          tar -czf /tmp/gtk4-debian13-rootless-offline.tar.gz -C "$GITHUB_WORKSPACE" .gtk-deb-cache
+          # Local workspace here is only the source carrier for the offline
+          # host; GTK execution always happens locally, not in Actions.
+          tar --exclude=.git --exclude=.gtk-deb-cache -czf /tmp/cifereca-gtk-source.tar.gz -C "$GITHUB_WORKSPACE" .
+          sha256sum /tmp/gtk4-debian13-rootless-offline.tar.gz /tmp/cifereca-gtk-source.tar.gz > /tmp/SHA256SUMS
+      - name: Upload offline bundle only
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtk4-debian13-offline-relay
+          path: |
+            /tmp/gtk4-debian13-rootless-offline.tar.gz
+            /tmp/cifereca-gtk-source.tar.gz
+            /tmp/SHA256SUMS
+          retention-days: 2
+          compression-level: 0
+          if-no-files-found: error

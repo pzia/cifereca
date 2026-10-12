@@ -547,6 +547,10 @@ class CriticismIndex:
     def __init__(self) -> None:
         self._articles: dict[str, CriticismArticle] = {}
         self._source_keys: dict[str, set[str]] = {}
+        # Keep per-source normalized evidence, not only the merged article.
+        # Otherwise deleting/updating one feed leaves phantom ISBNs, notice
+        # links and authors from that feed on shared canonical article URLs.
+        self._source_articles: dict[str, dict[str, CriticismArticle]] = {}
         self._fresh_until: dict[str, str] = {}
 
     def articles(self) -> tuple[CriticismArticle, ...]:
@@ -567,60 +571,88 @@ class CriticismIndex:
         if not sid:
             raise ValueError("source_id is required")
         previous_keys = set(self._source_keys.get(sid, set()))
-        incoming_keys: set[str] = set()
+        previous_source = self._source_articles.get(sid, {})
+        incoming: dict[str, CriticismArticle] = {}
         accepted = 0
         duplicates = 0
         errors: list[str] = []
+
+        # Normalize before mutating shared cache: malformed pages must not
+        # destroy the previous per-source evidence or expiration marker.
         for index, raw in enumerate(rows or ()):
             try:
                 article = normalize_article(raw, source_id=sid)
             except Exception:
-                # External item repr/errors may embed URLs, auth parameters or
-                # user data; emit a stable category instead of raw exceptions.
+                # Raw upstream exceptions may contain signed URLs, email or
+                # authorization tokens. Stable categories are all that escape.
                 errors.append(f"item[{index}]: invalid_article")
                 continue
             key = article.url
-            incoming_keys.add(key)
-            current = self._articles.get(key)
-            if current is None:
-                self._articles[key] = article
-                accepted += 1
-            else:
-                self._articles[key] = _merge_duplicate(current, article)
+            if key in incoming:
+                incoming[key] = _merge_duplicate(incoming[key], article)
                 duplicates += 1
-        if replace_source and not incoming_keys and errors:
-            # An all-invalid reply is not proof that a previously valid feed
-            # became empty. Keep the last-good articles and freshness marker.
+            else:
+                incoming[key] = article
+                if key in self._articles:
+                    duplicates += 1
+                else:
+                    accepted += 1
+
+        if replace_source and not incoming and errors:
+            # All-invalid is not evidence of an empty feed: leave every
+            # source contribution, aggregate and freshness marker intact.
             return CollectionReport(
-                source_id=sid, accepted=accepted, duplicates=duplicates,
+                source_id=sid, accepted=0, duplicates=0,
                 errors=tuple(errors), fresh_until=self._fresh_until.get(sid, ""),
             )
+
         if replace_source:
-            stale = previous_keys - incoming_keys
-            for key in stale:
-                current = self._articles.get(key)
-                if current is None:
-                    continue
-                remaining = tuple(value for value in current.provenance if value != sid)
-                if remaining:
-                    self._articles[key] = replace(current, provenance=remaining)
-                else:
-                    self._articles.pop(key, None)
-            self._source_keys[sid] = incoming_keys
+            next_source = incoming
         else:
-            self._source_keys.setdefault(sid, set()).update(incoming_keys)
+            # Incremental pages may complete bibliographic evidence for the
+            # same source. A full replacement, by contrast, MUST discard
+            # stale per-source ISBNs and notice links, even if URL is stable.
+            next_source = dict(previous_source)
+            for key, article in incoming.items():
+                if key in next_source:
+                    next_source[key] = _merge_duplicate(next_source[key], article)
+                else:
+                    next_source[key] = article
+
+        self._source_articles[sid] = next_source
+        next_keys = set(next_source)
+        self._source_keys[sid] = next_keys
+
+        # Recompute ONLY affected articles from surviving source evidence.
+        # Do not carry merged attributes forward when their original source
+        # stopped referencing the article or revised its bibliographic data.
+        for key in previous_keys | next_keys:
+            aggregate: CriticismArticle | None = None
+            for source_rows in self._source_articles.values():
+                source_article = source_rows.get(key)
+                if source_article is None:
+                    continue
+                aggregate = (
+                    source_article if aggregate is None
+                    else _merge_duplicate(aggregate, source_article)
+                )
+            if aggregate is None:
+                self._articles.pop(key, None)
+            else:
+                self._articles[key] = aggregate
 
         fresh_until = ""
         if fresh_for_seconds > 0:
             until = datetime.now(timezone.utc) + timedelta(seconds=int(fresh_for_seconds))
             fresh_until = until.replace(microsecond=0).isoformat()
             self._fresh_until[sid] = fresh_until
+        elif replace_source:
+            # A fresh, valid full replacement without an advertised TTL is
+            # not evidence that the *previous* TTL is still applicable.
+            self._fresh_until.pop(sid, None)
         return CollectionReport(
-            source_id=sid,
-            accepted=accepted,
-            duplicates=duplicates,
-            errors=tuple(errors),
-            fresh_until=fresh_until,
+            source_id=sid, accepted=accepted, duplicates=duplicates,
+            errors=tuple(errors), fresh_until=fresh_until,
         )
 
     def matches_for(self, book: object) -> tuple[CriticismMatch, ...]:

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import hashlib
 from pathlib import Path
@@ -95,7 +96,7 @@ def test_targeted_catalog_index_does_not_scan_whole_catalog(tmp_path: Path, monk
 
 
 def test_gui_list_has_progressive_append_fast_path():
-    source = Path("src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    source = gui_source_text(Path("src/cifereca/gui/main_window.py"))
     assert 'existing_keys == new_keys[:existing_count]' in source
     assert 'append-fast' in source
 

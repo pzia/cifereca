@@ -7,12 +7,14 @@ import re
 from typing import Any
 
 from cifereca.plugin_api import UiPageContribution
-from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent
+from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent, export_analysis_json
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, source_summaries, explorer_header,
-    next_page_offset, export_selected_events,
+    next_page_offset, selectable_event_ids, export_selected_events,
+    empty_observation,
 )
+from diagnostics_support import SupportReportExport, preserve_report_selection
 
 # The broker provides already-redacted data. This is a second, stricter
 # presentation boundary: neither UI modes nor clipboard may expose raw secrets.
@@ -42,11 +44,12 @@ _MAX_DETAIL_CHILDREN = 50
 _MAX_DETAIL_TEXT = 800
 
 
-def _redacted_text(value: str) -> str:
+def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT,
+                   max_input_chars: int = _MAX_DETAIL_BYTES) -> str:
     # A partial email, URL or token can straddle the preview cut. Redact
     # complete values BEFORE truncating anything shown or copied to the UI.
     # Fail closed on oversized untrusted text to bound regex scanning.
-    if len(value) > _MAX_DETAIL_BYTES:
+    if len(value) > max_input_chars:
         return "<texte trop long : contenu masqué>"
     text = _DIAGNOSTIC_URL.sub("<URL expurgée>", value)
     text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
@@ -54,12 +57,54 @@ def _redacted_text(value: str) -> str:
     text = _DIAGNOSTIC_AUTH_HEADER.sub(r"\1=<expurgé>", text)
     text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
     text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
-    return text[:_MAX_DETAIL_TEXT] + (
-        "… [tronqué]" if len(text) > _MAX_DETAIL_TEXT else ""
-    )
+    if len(text) <= max_chars:
+        return text
+    cut = max_chars
+    # Do not slice through a redaction marker. An incomplete "<exp..." can
+    # be rewritten differently by the JSON export's second redaction pass,
+    # causing the report and exported evidence to disagree.
+    for marker in (
+        "<expurgé>", "<URL expurgée>", "<courriel expurgé>",
+        "<chemin expurgé>",
+    ):
+        start = text.find(
+            marker, max(0, max_chars - 32), max_chars + len(marker) + 32,
+        )
+        if start >= 0 and start <= max_chars < start + len(marker):
+            cut = start + len(marker)
+            break
+        if max_chars < start <= max_chars + 32:
+            # The cut would land inside the key or URL label immediately
+            # preceding a marker. Drop that incomplete label rather than
+            # publishing a fragment that the second redaction changes.
+            boundary = text.rfind(" ", max(0, max_chars - 64), start)
+            cut = boundary if boundary >= 0 else max(0, max_chars - 32)
+            break
+    # A newline prevents an Authorization header from absorbing the
+    # truncation notice during the clipboard export's second pass.
+    return text[:cut] + "\n… [tronqué]"
 
 
-def redacted_detail(value: Any) -> Any:
+def redacted_ai_response(value: str) -> str:
+    """Preserve a bounded multi-paragraph LLM answer without relaxing UI caps.
+
+    Redact the *entire* response before cutting it, so long tokens or signed
+    URLs cannot leak a surviving prefix. Invalid Unicode is never exported.
+    """
+    if type(value) is not str:
+        raise ValueError("invalid_llm_response")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError("invalid_llm_response_unicode") from exc
+    return _redacted_text(value, max_chars=3960)
+
+
+def redacted_detail(
+    value: Any, *, max_text: int = _MAX_DETAIL_TEXT,
+) -> Any:
+    if type(max_text) is not int or not 1 <= max_text <= 4000:
+        raise ValueError("invalid_diagnostics_text_budget")
     """Snapshot JSON-compatible values with depth, count and length limits.
 
     Unknown objects are never introspected or stringified; cycles are stopped.
@@ -77,7 +122,7 @@ def redacted_detail(value: Any) -> Any:
         if isinstance(item, float):
             return item if math.isfinite(item) else "<nombre non fini>"
         if isinstance(item, str):
-            return _redacted_text(item)
+            return _redacted_text(item, max_chars=max_text)
         if not isinstance(item, (Mapping, list, tuple)):
             return "<type non pris en charge>"
         if id(item) in stack:
@@ -165,14 +210,28 @@ def format_diagnostic_detail(value: Any, mode: str = "readable") -> str:
         text = safe
     else:
         text = json.dumps(safe, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    if len(text) > _MAX_DETAIL_BYTES:
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeError:
+        notice = "Contenu Unicode invalide : affichage masqué"
+        return (json.dumps({"notice": notice, "truncated": True},
+                           ensure_ascii=False) if mode == "json" else notice)
+    if len(encoded) > _MAX_DETAIL_BYTES:
+        excerpt = encoded[:(
+            _MAX_DETAIL_BYTES // 2 if mode == "json" else _MAX_DETAIL_BYTES - 100
+        )].decode("utf-8", errors="ignore")
         if mode == "json":
-            return json.dumps({
-                "notice": "Aperçu JSON limité à 24 Kio",
-                "truncated": True,
-                "preview": text[:_MAX_DETAIL_BYTES // 2],
-            }, ensure_ascii=False, indent=2)
-        return text[:_MAX_DETAIL_BYTES] + "\n… [affichage limité]"
+            def preview_json(value: str) -> str:
+                return json.dumps({
+                    "notice": "Aperçu JSON limité à 24 Kio",
+                    "truncated": True, "preview": value,
+                }, ensure_ascii=False, indent=2)
+            result = preview_json(excerpt)
+            while len(result.encode("utf-8")) > _MAX_DETAIL_BYTES:
+                excerpt = excerpt[:len(excerpt) // 2]
+                result = preview_json(excerpt)
+            return result
+        return excerpt + "\n… [affichage limité]"
     return text
 
 
@@ -239,6 +298,30 @@ def _run_once_on_first_map(widget, callback):
         on_map(widget)
 
 
+def _install_report_escape(Gtk, Gdk, container, scroller, resize):
+    """Reduce only this report; preserve its buffer, selection and focus."""
+    controller = Gtk.EventControllerKey()
+    # Catch Escape before a focused TextView consumes it. The controller is
+    # scoped to the report, so other Diagnostics controls keep their bindings.
+    controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def key_pressed(_controller, keyval, _keycode, state):
+        modified = state & (
+            Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.META_MASK
+        )
+        if keyval != Gdk.KEY_Escape or modified:
+            return False
+        if resize.get_label() != "Réduire":
+            return False
+        scroller.set_size_request(-1, 320)
+        resize.set_label("Agrandir")
+        return True
+
+    controller.connect("key-pressed", key_pressed)
+    container.add_controller(controller)
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
@@ -271,7 +354,7 @@ class DiagnosticsPagePlugin:
         ]
 
     def _build(self, host):
-        from gi.repository import Gdk, Gtk, Pango
+        from gi.repository import Gdk, Gtk, Pango, Gio, GLib
 
         broker = self.diagnostics
         if broker is None:
@@ -301,6 +384,9 @@ class DiagnosticsPagePlugin:
         action_row.append(refresh)
         action_row.append(check)
         action_row.append(copy)
+        save_report = Gtk.Button(label="Enregistrer le rapport support…")
+        save_report.set_tooltip_text("Exporter le rapport support expurgé vers un fichier choisi")
+        action_row.append(save_report)
         outer.append(action_row)
 
         status_title = Gtk.Label(label="État système", xalign=0)
@@ -401,17 +487,30 @@ class DiagnosticsPagePlugin:
         )
         ai_notice.set_wrap(True)
         outer.append(ai_notice)
+        ai_snapshot = Gtk.CheckButton(
+            label="Inclure les diagnostics structurés Core (lecture seule)"
+        )
+        ai_snapshot.set_active(False)
+        outer.append(ai_snapshot)
+        ai_support_report = Gtk.CheckButton(
+            label="Inclure le rapport support Core (lecture seule)"
+        )
+        ai_support_report.set_active(False)
+        outer.append(ai_support_report)
         ai_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         ai_prepare = Gtk.Button(label="Prévisualiser pour l’IA")
         ai_send = Gtk.Button(label="Autoriser et analyser")
         ai_send.set_sensitive(False)
         ai_cancel = Gtk.Button(label="Annuler")
-        ai_export = Gtk.Button(label="Copier l’analyse IA")
+        ai_export = Gtk.Button(label="Copier Markdown IA")
         ai_export.set_sensitive(False)
+        ai_export_json = Gtk.Button(label="Copier JSON IA")
+        ai_export_json.set_sensitive(False)
         ai_controls.append(ai_prepare)
         ai_controls.append(ai_send)
         ai_controls.append(ai_cancel)
         ai_controls.append(ai_export)
+        ai_controls.append(ai_export_json)
         outer.append(ai_controls)
         ai_status = Gtk.Label(label="IA non configurée ou non consultée", xalign=0)
         ai_status.set_wrap(True)
@@ -495,6 +594,22 @@ class DiagnosticsPagePlugin:
 
         report_resize.connect("clicked", toggle_report_size)
         report_wrap.connect("toggled", toggle_report_wrap)
+        _install_report_escape(
+            Gtk, Gdk, report_container, report_scroll, report_resize,
+        )
+        preserve_report_selection(GLib, report_expander, export_view.get_buffer())
+
+        def report_text():
+            buffer = export_view.get_buffer()
+            return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+
+        report_export = SupportReportExport(
+            Gtk, Gio, save_report, scroll.get_root, report_text, host.toast,
+        )
+        if not hasattr(self, "_support_exports"):
+            self._support_exports = []
+        self._support_exports.append(report_export)
+        save_report.connect("clicked", report_export.choose)
 
         def clear_container(container) -> None:
             child = container.get_first_child()
@@ -619,11 +734,20 @@ class DiagnosticsPagePlugin:
             rows = sanitized_rows(
                 current_page, search=search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
+                include_detail=True,
             )
+            valid_ids = selectable_event_ids(rows)
+            selected_event_ids.intersection_update(valid_ids)
             states = source_summaries(current_page)
             if states:
                 journals_sources.set_text("  ·  ".join(
-                    f"{state['source']} : {state['label']}" for state in states
+                    f"{state['source']} : {state['label']}" +
+                    (f" — {state['reason']}" if state.get("reason") else "") +
+                    (
+                        f" · dernier événement publié : {state['last_event']}"
+                        if state.get("last_event") else ""
+                    )
+                    for state in states
                 ))
             else:
                 journals_sources.set_text("Sources non alimentées ou indisponibles")
@@ -645,9 +769,12 @@ class DiagnosticsPagePlugin:
                     select = Gtk.CheckButton()
                     select.set_tooltip_text("Sélectionner cet événement pour copie expurgée")
                     event_id = row["event_id"]
-                    select.set_active(event_id in selected_event_ids)
+                    select.set_sensitive(event_id in valid_ids)
+                    select.set_active(event_id in valid_ids and event_id in selected_event_ids)
 
                     def on_select(button, event_ref=event_id):
+                        if event_ref not in valid_ids:
+                            return
                         if button.get_active():
                             selected_event_ids.add(event_ref)
                         else:
@@ -681,8 +808,14 @@ class DiagnosticsPagePlugin:
                 expander.set_child(group_box)
                 journals_box.append(expander)
             if not rows:
+                observation = empty_observation(
+                    current_page, period=PERIODS[int(period_selector.get_selected())],
+                    severity=SEVERITIES[int(severity_selector.get_selected())],
+                    module=module_filter.get_text().strip(),
+                    search=search_filter.get_text().strip(),
+                )
                 empty = Gtk.Label(
-                    label="Aucun événement sur cette page. "
+                    label=observation + "\nAucun événement sur cette page. "
                           "Vérifier la période, les filtres ou la disponibilité des sources.",
                     xalign=0,
                 )
@@ -795,7 +928,7 @@ class DiagnosticsPagePlugin:
                 current_page, search=search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
             )
-            visible_ids = {row["event_id"] for row in rows}
+            visible_ids = selectable_event_ids(rows)
             selected = selected_event_ids.intersection(visible_ids)
             if not selected:
                 host.toast("Sélectionner un événement visible")
@@ -828,24 +961,27 @@ class DiagnosticsPagePlugin:
 
         ai_preview = None
         ai_result = ""
+        ai_json = ""
         ai_generation = 0
 
         def invalidate_ai(*_args):
-            nonlocal ai_preview, ai_result, ai_generation
+            nonlocal ai_preview, ai_result, ai_json, ai_generation
             ai_generation += 1
             ai_preview = None
             ai_result = ""
+            ai_json = ""
             if self._ai_handle is not None and not self._ai_handle.done():
                 self._ai_handle.cancel()
             ai_prepare.set_sensitive(True)
             ai_send.set_sensitive(False)
             ai_export.set_sensitive(False)
+            ai_export_json.set_sensitive(False)
             ai_input.get_buffer().set_text("")
             ai_report.get_buffer().set_text("")
             ai_status.set_text("Aperçu à actualiser avant toute nouvelle analyse")
 
         def prepare_ai(_button):
-            nonlocal ai_generation, ai_preview
+            nonlocal ai_generation, ai_preview, ai_result, ai_json
             if self.llm is None:
                 ai_status.set_text("Service IA désactivé : aucun envoi.")
                 return
@@ -853,26 +989,45 @@ class DiagnosticsPagePlugin:
                 destination = llm_destination(self.llm)
                 selected_source = SOURCES[int(source_selector.get_selected())]
                 selected_period = PERIODS[int(period_selector.get_selected())]
-            except (ValueError, TypeError) as exc:
+                selected_module = module_filter.get_text().strip()
+                selected_severity = SEVERITIES[int(severity_selector.get_selected())]
+                selected_snapshot = ai_snapshot.get_active()
+                selected_support_report = ai_support_report.get_active()
+            except (ValueError, TypeError, IndexError) as exc:
                 ai_status.set_text("Destination IA indisponible : " + type(exc).__name__)
                 return
             ai_generation += 1
             token = ai_generation
             ai_preview = None
+            ai_result = ""
+            ai_json = ""
+            ai_input.get_buffer().set_text("")
+            ai_report.get_buffer().set_text("")
             ai_send.set_sensitive(False)
             ai_export.set_sensitive(False)
+            ai_export_json.set_sensitive(False)
             ai_status.set_text("Préparation locale de l’aperçu expurgé…")
 
             def worker(_control):
                 from diagnostics_explorer import explorer_since
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
+                    module=selected_module, severity=selected_severity,
                     since=explorer_since(selected_period),
+                    include_snapshot=selected_snapshot,
+                    include_support_report=selected_support_report,
                 )
 
-            handle = self.tasks.submit(
-                worker, label="Aperçu local Diagnostics IA", kind="diagnostics",
-            )
+            try:
+                handle = self.tasks.submit(
+                    worker, label="Aperçu local Diagnostics IA", kind="diagnostics",
+                )
+            except Exception:
+                ai_status.set_text("Aperçu IA indisponible : tâche non démarrée")
+                ai_send.set_sensitive(False)
+                ai_export.set_sensitive(False)
+                ai_export_json.set_sensitive(False)
+                return
             self._ai_handle = handle
 
             def completed(done_handle):
@@ -895,12 +1050,40 @@ class DiagnosticsPagePlugin:
                 ai_send.set_sensitive(False)
                 return False
             dest = preview["destination"]
-            locality = "DISTANT — données envoyées hors machine" if dest["remote"] else "LOCAL"
+            scope = preview["scope"]
+            locality = (
+                "DISTANT — aucun envoi avant autorisation"
+                if dest["remote"] else "LOCAL — aucun appel avant autorisation"
+            )
+            source_states = preview.get("source_states") or ()
+            source_warnings = [
+                str(row.get("source", "inconnue")) + " : " +
+                str(row.get("status", "unavailable")) +
+                (" (" + str(row["reason"]) + ")" if row.get("reason") else "")
+                for row in source_states if row.get("status") in (
+                    "partial", "disabled", "unavailable",
+                )
+            ]
+            coverage_warning = (
+                "Attention : échantillon incomplet (budget/limite des sources). "
+                if preview.get("sample_truncated") else ""
+            )
+            if source_warnings:
+                coverage_warning += "Sources limitées : " + "; ".join(source_warnings) + ". "
             ai_status.set_text(
                 f"{locality} · {dest['provider']} · modèle {dest['model']} · "
-                f"hôte {dest['host']} · {preview['count']} événements · "
-                f"{preview['chars']} caractères. "
-                "Le modèle produit des hypothèses, jamais une preuve."
+                f"hôte {dest['host']} · {preview['count']} événements, "
+                f"{preview['structured_count']} diagnostics structurés, "
+                f"{preview['support_fields']} rubriques support · "
+                f"{preview['bytes']} octets UTF-8. "
+                f"Périmètre demandé : {scope['source']} · "
+                f"{scope['module'] or 'tous modules'} · "
+                f"{scope['severity'] or 'tous niveaux'} · "
+                f"depuis {scope['since'] or 'tout historique'} · "
+                f"diagnostics structurés : {'oui' if scope['include_snapshot'] else 'non'} · "
+                f"rapport support : {'oui' if scope['include_support_report'] else 'non'}. "
+                + coverage_warning
+                + "Le modèle produit des hypothèses, jamais une preuve."
             )
             ai_input.get_buffer().set_text(preview["prompt"])
             ai_expander.set_expanded(True)
@@ -918,13 +1101,22 @@ class DiagnosticsPagePlugin:
             ai_prepare.set_sensitive(False)
             ai_status.set_text("Analyse IA en cours (requête autorisée)…")
             token = ai_generation
-            self._ai_handle = self.tasks.submit(
-                lambda control: analyze_with_consent(
-                    self.llm, selected, approval_id=selected["approval_id"],
-                    control=control,
-                ),
-                label="Analyse Diagnostics IA explicite", kind="diagnostics",
-            )
+            try:
+                handle = self.tasks.submit(
+                    lambda control: analyze_with_consent(
+                        self.llm, selected, approval_id=selected["approval_id"],
+                        control=control,
+                    ),
+                    label="Analyse Diagnostics IA explicite", kind="diagnostics",
+                )
+            except Exception:
+                ai_prepare.set_sensitive(True)
+                ai_send.set_sensitive(False)
+                ai_export.set_sensitive(False)
+                ai_status.set_text("Analyse IA indisponible : planification impossible")
+                ai_export_json.set_sensitive(False)
+                return
+            self._ai_handle = handle
 
             def completed(done_handle):
                 from gi.repository import GLib
@@ -938,7 +1130,7 @@ class DiagnosticsPagePlugin:
             self._ai_handle.add_done_callback(completed)
 
         def finish_ai(token, result, error):
-            nonlocal ai_result
+            nonlocal ai_result, ai_json
             if token != ai_generation:
                 return False
             ai_prepare.set_sensitive(True)
@@ -947,6 +1139,7 @@ class DiagnosticsPagePlugin:
                 return False
             cited = result.get("references_matched") or ()
             unknown_refs = result.get("references_unknown") or ()
+            ambiguous_refs = result.get("references_ambiguous") or ()
             citations = (
                 "\n".join(
                     f"- {row['event_id']} · {row['timestamp']} · {row['source']}"
@@ -958,20 +1151,32 @@ class DiagnosticsPagePlugin:
                 "\nRéférences non retrouvées : " + ", ".join(unknown_refs)
                 if unknown_refs else ""
             )
+            ambiguity = (
+                "\nRéférences ambiguës (ID dupliqué, source non attribuable) : "
+                + ", ".join(ambiguous_refs)
+                if ambiguous_refs else ""
+            )
             ai_result = (
                 "# Analyse générée par IA — hypothèses NON vérifiées\n"
-                + f"Modèle : {result['provider']} / {result['model']}\n"
-                + f"Provenance : {result['evidence_count']} événements Core expurgés\n"
+                + f"Destination annoncée : {result['provider']} / {result['model']}\n"
+                + f"Provenance : {result['evidence_count']} événements Core et "
+                  f"{result['structured_count']} diagnostics structurés et "
+                  f"{result['support_fields']} rubriques support expurgées\n"
                 + f"Limites : {result['limitations']}\n\n"
                 + "## Analyse du modèle (inférée)\n"
                 + result["text"]
                 + "\n\n## Références d’événements présentes dans l’extrait\n"
-                + citations + unsupported
+                + citations + unsupported + ambiguity
                 + "\nLa correspondance d’un identifiant ne prouve PAS "
                   "la véracité de l’affirmation associée.\n"
             )
             ai_report.get_buffer().set_text(ai_result)
             ai_export.set_sensitive(True)
+            try:
+                ai_json = export_analysis_json(result)
+            except (ValueError, TypeError):
+                ai_json = ""
+            ai_export_json.set_sensitive(bool(ai_json))
             ai_status.set_text("Analyse IA générée ; vérifier toutes les références avant décision.")
             return False
 
@@ -991,12 +1196,25 @@ class DiagnosticsPagePlugin:
                 display.get_clipboard().set(ai_result)
                 host.toast("Analyse IA expurgée copiée (hypothèses non vérifiées)")
 
+        def copy_ai_json(_button):
+            if not ai_json:
+                return
+            display = Gdk.Display.get_default()
+            if display is not None:
+                display.get_clipboard().set(ai_json)
+                host.toast("Rapport IA JSON expurgé copié (inférences non vérifiées)")
+
         ai_prepare.connect("clicked", prepare_ai)
         ai_send.connect("clicked", send_ai)
         ai_cancel.connect("clicked", cancel_ai)
         ai_export.connect("clicked", copy_ai)
+        ai_export_json.connect("clicked", copy_ai_json)
         source_selector.connect("notify::selected", invalidate_ai)
+        severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
+        module_filter.connect("changed", invalidate_ai)
+        ai_snapshot.connect("toggled", invalidate_ai)
+        ai_support_report.connect("toggled", invalidate_ai)
 
         def render(*_args) -> None:
             clear_container(status_grid)
@@ -1124,6 +1342,9 @@ class DiagnosticsPagePlugin:
         return scroll
 
     def deactivate(self):
+        for exporter in getattr(self, "_support_exports", ()):
+            exporter.close()
+        self._support_exports = []
         if self._check_handle is not None:
             try:
                 self._check_handle.cancel()

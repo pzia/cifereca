@@ -1,5 +1,6 @@
 """Pure fake-GTK interaction checks for #940; no application startup or HTTP."""
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -40,7 +41,7 @@ class Button(Widget):
 
 
 def _group():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     panel = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "DetailPanel")
     method = next(x for x in panel.body if isinstance(x, ast.FunctionDef) and x.name == "_group")
     clipboard = NS(value=None)

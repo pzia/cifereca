@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -10,7 +11,7 @@ ACTION_WIDGETS = ROOT / "src/cifereca/gui/action_widgets.py"
 
 
 def _class_method_source(path: Path, class_name: str, method_name: str) -> str:
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(gui_source_text(path))
     cls = next(
         node for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == class_name

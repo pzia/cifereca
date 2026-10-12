@@ -133,6 +133,45 @@ Tests déterministes sans réseau dans
 `tests/test_collection_page_bounds_p2.py`.
 
 
+## Retrait des preuves bibliographiques périmées — #709 (0.3.6)
+
+Avant cet incrément, plusieurs flux pointant vers la **même URL de
+critique** produisaient un seul article par fusion de leurs ISBN, liens de
+notice et auteurs. Après remplacement/suppression d'un flux, le cache
+retirait correctement son identifiant de provenance mais **conservait
+ses ISBN et liens de notice dans l'article partagé**. Un rapprochement
+avec un livre pouvait donc rester « confirmé » sur une preuve retirée.
+
+Le service mémorise désormais pour chaque source les contributions
+normalisées de chaque URL canonique, puis recalcule **uniquement les
+articles affectés** lors d'un nouveau lot :
+
+- **Remplacement complet** `replace_source=True` : la nouvelle réponse
+  remplace intégralement les preuves ISBN/notice/auteurs/extrait de
+  cette source ; disparition d'un article ou modification de ses champs
+  réévalue les preuves partagées, sans toucher aux autres sources.
+- **Pagination incrémentale** `replace_source=False` : les contributions
+  de la source sont enrichies à mesure de la réception des pages ;
+  aucun retrait prématuré d'une preuve provenant d'une autre page.
+- **Lot totalement invalide** : toutes les contributions et le TTL
+  valide précédent sont conservés ; les erreurs restent catégorisées
+  sans texte privé. **Lot réellement vide** : retrait de la source
+  (ainsi que de son TTL si aucun nouveau TTL explicite n'est fourni).
+- La déduplication par URL canonique, la hiérarchie de matching
+  ISBN > notice > titre/auteur et le fonctionnement **100 % local
+  hors collecte explicite** sont inchangés. Aucun rapprochement n'est
+  reconfirmé sur une preuve qui n'a plus de source.
+
+Tests hors réseau : `tests/test_source_evidence_refresh_p2.py`,
+couvrant deux sources, ISBN et notices divergents, auteurs révisés,
+actualisation totale et incrémentale, cache/fraîcheur, et le contrat
+de collecte publique. Pas de modifications de Core/UX/CI/E2E.
+
+**Handoff UX #716** : afficher les raisons réellement actives sans
+présenter comme confirmée une édition à l'ISBN périmé ; recette GTK
+1366/1600 sur les sources configurées. L'enrichissement IA #782
+est une PR distincte à réconcilier au merge. Aucun merge ni release.
+
 ## Découverte de flux bornée — P2 #709 (0.3.7)
 
 La découverte par métarecherche **n'est qu'un aperçu** de sources RSS,
