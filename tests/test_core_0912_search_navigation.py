@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from tests.gui_source import gui_source_text
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -79,6 +80,6 @@ def test_public_contract_remains_optional_and_host_delegates():
     assert "UiSearchNavigationHost" in classes
     assert [base.id for base in classes["UiSearchNavigationHost"].bases] == ["UiPageHost", "Protocol"]
     assert all(node.name != "search_books" for node in classes["UiPageHost"].body if isinstance(node, ast.FunctionDef))
-    main = ast.parse(MAIN.read_text(encoding="utf-8"))
+    main = ast.parse(gui_source_text(MAIN))
     host = next(x for x in ast.walk(main) if isinstance(x, ast.ClassDef) and x.name == "_UiHost")
     assert any(isinstance(x, ast.FunctionDef) and x.name == "search_books" for x in host.body)

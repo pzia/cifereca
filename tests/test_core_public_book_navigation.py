@@ -150,7 +150,9 @@ def test_real_window_callback_navigates_only_to_unique_current_identity_book():
 
 def test_public_ui_host_delegates_book_navigation_to_window():
     _, cls = _window_method()
-    host = next(node for node in cls.body if isinstance(node, ast.ClassDef) and node.name == "_UiHost")
+    from tests.gui_source import gui_source_text
+    host = next(node for node in ast.parse(gui_source_text(MAIN)).body
+                if isinstance(node, ast.ClassDef) and node.name == "_UiHost")
     method = next(node for node in host.body if isinstance(node, ast.FunctionDef)
                   and node.name == "open_book_detail")
     source = ast.unparse(method)
