@@ -296,3 +296,11 @@ execution, with separate stages for interrupted local remnants, metadata
 refresh, acquisition decisions, execution/persistence, success-only pruning
 and summary publication. Failed or partial runs preserve manifest rights and
 local artifacts; locks and the existing facade entry points remain unchanged.
+
+## Read-only ADEPT borrower boundary
+
+`core/adept_borrower.py` resolves the proven Paris borrower/account context and
+checks competing identity evidence in the existing acquisition and entitlement
+ledgers. It reuses facade-owned accounts and bindings and performs no writes or
+network operation. The service retains mutations, locks, fulfillment and return
+orchestration. Historical status proof remains in `adept_return_origin.py`.
