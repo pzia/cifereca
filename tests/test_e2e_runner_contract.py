@@ -246,6 +246,30 @@ def test_diagnostics_navigation_targets_real_mainwindow_and_pointer_events():
         assert marker in source
 
 
+def test_942_security_boundary_is_audited_on_existing_real_gtk_1366_scenario():
+    """No new CI job/scenario: final public/private detail sink uses real GTK."""
+    runner = _module()
+    scenario = runner.SCENARIOS["book-detail-1366"]
+    assert scenario["width"] == 1366
+    assert scenario["runner"] == "gtk-detail"
+    source = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "def audit_mixed_security_values():",
+        "def audit_mixed_security_values_rendered():",
+        "def audit_all_private_values():",
+        "def audit_all_private_values_rendered():",
+        '"04-library-detail-mixed-safety-gtk"',
+        '"05-library-detail-all-private-gtk"',
+        '"security_detail_mixed_942"',
+        '"security_detail_all_private_942"',
+        '"announced_subtitle"',
+        '"expander_count"',
+        'assert len(report["online_calls"]) == 1',
+    ):
+        assert marker in source
+    assert '"book-detail-1024"' not in RUNNER.read_text(encoding="utf-8")
+
+
 def test_reference_scenario_runs_real_cifereca_without_plugins():
     runner = _module()
     scenario = runner.SCENARIOS["startup"]

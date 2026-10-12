@@ -16,8 +16,8 @@ class Widget:
     def __init__(self):
         self.children = []
         self.handlers = {}
-    def set_title(self, *_): pass
-    def set_subtitle(self, *_): pass
+    def set_title(self, value): self.title = value
+    def set_subtitle(self, value): self.subtitle = value
     def set_subtitle_lines(self, *_): pass
     def set_tooltip_text(self, *_): pass
     def set_expanded(self, *_): pass
@@ -106,8 +106,68 @@ def test_signed_urls_and_secrets_are_not_copied_or_searched():
     ], fields=(NS(kind="all"), NS(kind="author")))
     expander = groups[0].children[0]
     assert len(expander.children) == 1
+    # The visible count must reflect safe, rendered fields, not raw input rows.
+    assert expander.subtitle == "1 champ(s) bibliographiques"
     assert clipboard.value is None
     assert events == []
+
+
+
+def test_942_multi_valued_safe_fields_have_exact_visible_count_and_individual_copy():
+    """Three public fields, two secrets: count only GTK rows actually added."""
+    method, clipboard = _group()
+    events, groups = [], []
+    window = NS(
+        service=NS(current_identity=NS(identity_id="camille")),
+        toast=events.append,
+        search_books=lambda *_a, **_k: events.append("unexpected-search"),
+    )
+    host = NS(window=window, _append_content=groups.append)
+    fields = (
+        NS(kind="author"), NS(kind="all"), NS(kind="author"),
+        NS(kind="subject"), NS(kind="all"),
+    )
+    method(host, "Détail", [
+        ("Auteur", "Alice Exemple"),
+        ("Lien signé", "https://example.test/ebook?token=secret"),
+        ("Auteur", "Bob Exemple"),
+        ("Sujet", "nature"),
+        ("Authentification", "Bearer private-value"),
+    ], fields=fields)
+    assert len(groups) == 1
+    expander = groups[0].children[0]
+    assert [row.title for row in expander.children] == ["Auteur", "Auteur", "Sujet"]
+    # A raw source has five rows, but only three are authorized/rendered.
+    assert expander.subtitle == "3 champ(s) bibliographiques"
+    assert len(expander.children) == 3
+    buttons = [
+        [child for child in row.children if isinstance(child, Button)]
+        for row in expander.children
+    ]
+    assert all(len(row_buttons) == 2 for row_buttons in buttons)
+    assert clipboard.value is None and events == []  # no implicit copy/HTTP
+    buttons[1][0].click()
+    assert clipboard.value == "Bob Exemple"
+    assert events == ["Copié"]
+
+
+def test_942_all_private_fields_cannot_leave_an_empty_detail_group():
+    """An all-rejected input must not disclose its presence as an empty expander."""
+    method, clipboard = _group()
+    events, groups = [], []
+    window = NS(
+        service=NS(current_identity=None), toast=events.append,
+        search_books=lambda *_a, **_k: events.append("unexpected-search"),
+    )
+    host = NS(window=window, _append_content=groups.append)
+    method(host, "Détail", [
+        ("URL privée", "https://example.test/ebook?token=secret"),
+        ("Authentification", "Bearer private-value"),
+    ], fields=(NS(kind="all"), NS(kind="all")))
+    # No safe bibliographic field: do not show a misleading empty "Détail"
+    # section, even with a "0 champ(s)" subtitle.
+    assert groups == []
+    assert clipboard.value is None and events == []
 
 
 def test_isbn_validator_refuses_non_bookland_ean_and_invalid_checksum():

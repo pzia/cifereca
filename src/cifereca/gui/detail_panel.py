@@ -146,7 +146,6 @@ class DetailPanel(Gtk.Box):
             group = Adw.PreferencesGroup()
             expander = Adw.ExpanderRow()
             expander.set_title("Détail")
-            expander.set_subtitle(f"{len(rows)} champ(s) bibliographiques")
             expander.set_expanded(bool(getattr(self, "_detail_expanded", False)))
 
             def save_expanded(widget, _pspec):
@@ -156,6 +155,7 @@ class DetailPanel(Gtk.Box):
             search = getattr(self.window, "search_books", None)
             current = getattr(self.window.service, "current_identity", None)
             identity_id = getattr(current, "identity_id", None)
+            visible_count = 0
             for index, (label, value) in enumerate(rows):
                 safe_value = safe_detail_value(value)
                 if not safe_value:
@@ -213,8 +213,14 @@ class DetailPanel(Gtk.Box):
                     )
                     row.add_suffix(lookup)
                 expander.add_row(row)
-            group.add(expander)
-            self._append_content(group)
+                visible_count += 1
+            if visible_count:
+                # Count only rows admitted by the safety filter.  A rejected
+                # URL/credential must not leak through the subtitle or an
+                # otherwise empty detail section.
+                expander.set_subtitle(f"{visible_count} champ(s) bibliographiques")
+                group.add(expander)
+                self._append_content(group)
             return
         group = Adw.PreferencesGroup()
         group.set_title(title)
