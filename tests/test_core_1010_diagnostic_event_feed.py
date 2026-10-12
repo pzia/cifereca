@@ -792,3 +792,79 @@ def test_diagnostics_keyboard_interrupt_is_not_misreported_as_source_failure(tmp
 
     with pytest.raises(KeyboardInterrupt):
         query_diagnostic_events(Interrupted(), log_path=tmp_path / "absent")
+
+
+def test_snapshot_with_bad_row_preserves_valid_events_but_reports_partial(tmp_path):
+    class PartlyMalformed:
+        enabled = True
+
+        def snapshot(self):
+            return [
+                {"timestamp": "2026-10-11T09:00:00+00:00",
+                 "category": "SYNC", "operation": "sync", "status": "ok"},
+                {"timestamp": "Camille /home/borrower/private", "operation": "secret"},
+                {"timestamp": None, "operation": "private token"},
+            ]
+
+    feed = query_diagnostic_events(
+        PartlyMalformed(), log_path=tmp_path / "absent", source="core_events",
+    )
+    assert feed["total"] == 1
+    assert feed["status"] == "partial"
+    assert feed["sources"][0] == {
+        "source": "core_events", "status": "partial",
+        "reason": "snapshot_records_incomplete",
+        "last_event": "2026-10-11T09:00:00+00:00",
+    }
+    assert "Camille" not in json.dumps(feed)
+    assert "/home/borrower" not in json.dumps(feed)
+
+
+def test_snapshot_with_only_invalid_rows_is_not_an_empty_healthy_source(tmp_path):
+    class Malformed:
+        enabled = True
+
+        def snapshot(self):
+            return ["not a row", {"timestamp": "no timestamp", "operation": "secret"}]
+
+    feed = query_diagnostic_events(
+        Malformed(), log_path=tmp_path / "absent", source="core_events",
+    )
+    assert feed["events"] == []
+    assert feed["status"] == "partial"
+    assert feed["sources"][0]["reason"] == "snapshot_records_incomplete"
+
+
+def test_snapshot_history_beyond_500_records_reports_bounded_partial_coverage(tmp_path):
+    class LongSnapshot:
+        enabled = True
+
+        def snapshot(self):
+            return [
+                {"timestamp": f"2026-10-11T09:00:{i % 60:02d}+00:00",
+                 "category": "SYNC", "operation": "sync", "status": "ok"}
+                for i in range(501)
+            ]
+
+    feed = query_diagnostic_events(
+        LongSnapshot(), log_path=tmp_path / "absent",
+        source="core_events", limit=100,
+    )
+    assert feed["status"] == "partial"
+    assert feed["total"] == 500
+    assert len(feed["events"]) == 100
+    assert feed["sources"][0]["reason"] == "snapshot_records_incomplete"
+
+
+def test_clean_empty_snapshot_retains_explicit_no_recorded_events(tmp_path):
+    class EmptySnapshot:
+        enabled = True
+
+        def snapshot(self):
+            return []
+
+    feed = query_diagnostic_events(
+        EmptySnapshot(), log_path=tmp_path / "absent", source="core_events",
+    )
+    assert feed["status"] == "empty"
+    assert feed["sources"][0]["reason"] == "no_recorded_events"
