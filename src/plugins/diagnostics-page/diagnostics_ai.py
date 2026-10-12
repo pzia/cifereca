@@ -25,6 +25,18 @@ _MAX_EVENTS = 24
 _MAX_STRUCTURED = 4
 _MAX_SUPPORT_FIELDS = 8
 _APPROVAL_SECONDS = 300
+# Only Core's fixed public event sources and machine-generated coverage reasons
+# may become part of a remote LLM prompt. Regex masking of arbitrary source
+# labels or reasons cannot reliably remove personal names or book titles.
+_PUBLIC_SOURCE_REASONS = {
+    "app_log": frozenset({"", "log_tail_bounded", "no_matching_events"}),
+    "core_events": frozenset({
+        "", "diagnostics_disabled", "snapshot_unavailable", "no_recorded_events",
+    }),
+}
+_PUBLIC_SOURCE_STATES = frozenset({
+    "available", "empty", "disabled", "unavailable", "partial",
+})
 # Core snapshots may contain arbitrary provider/book/person metadata in
 # 'detail'. Recursive regex redaction alone cannot classify names or titles.
 # Only these operational value tokens are allowed into an LLM preview.
@@ -308,14 +320,27 @@ def prepare_analysis(
         source_value = item.get("source")
         status_value = item.get("status")
         reason_value = item.get("reason")
+        # The public event-feed contract currently exposes only two fixed
+        # source IDs and five operational reason codes. Unrecognized values
+        # are NOT safe just because a regular-expression redactor leaves them
+        # unchanged (e.g. a person's name in a broker failure message).
+        source_id = (
+            source_value
+            if type(source_value) is str and source_value in _PUBLIC_SOURCE_REASONS
+            else "inconnue"
+        )
+        reason = (
+            reason_value
+            if type(reason_value) is str
+            and reason_value in _PUBLIC_SOURCE_REASONS.get(source_id, ())
+            else ""
+        )
         state = {
-            "source": redacted_detail(source_value)[:40]
-            if type(source_value) is str else "inconnue",
-            "status": status_value if type(status_value) is str and status_value in (
-                "available", "empty", "disabled", "unavailable", "partial",
-            ) else "unavailable",
-            "reason": redacted_detail(reason_value)[:100]
-            if type(reason_value) is str else "",
+            "source": source_id,
+            "status": status_value
+            if type(status_value) is str and status_value in _PUBLIC_SOURCE_STATES
+            else "unavailable",
+            "reason": reason,
         }
         # The public broker's bounded last_event timestamp enriches temporal
         # provenance without fetching more logs. Reject naive/malformed dates
