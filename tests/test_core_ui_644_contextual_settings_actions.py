@@ -50,10 +50,10 @@ def test_settings_page_tracks_tab_changes_and_dirty_revisions():
 
     assert 'tabs.connect("notify::visible-child-name", update_settings_actions)' in source
     assert "track_all_settings_widgets()" in rendered
-    assert "settings_revisions[tab] = settings_revisions.get(tab, 0) + 1" in rendered
-    assert "staged_settings_revisions = dict(settings_revisions)" in rendered
-    assert "saved_settings_revisions[tab] = revision" in rendered
-    assert rendered.index("def ok(result):") < rendered.index("saved_settings_revisions[tab] = revision")
+    assert "settings_state.mark_dirty(tab)" in rendered
+    assert "staged_settings_revisions = settings_state.snapshot()" in rendered
+    assert "settings_state.commit(staged_settings_revisions)" in rendered
+    assert rendered.index("def ok(result):") < rendered.index("settings_state.commit(staged_settings_revisions)")
 
 
 def test_add_delete_account_and_identity_operations_mark_accounts_dirty():

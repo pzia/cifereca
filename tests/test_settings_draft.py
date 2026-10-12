@@ -1,0 +1,190 @@
+"""Exercise neutral inputs, validation precedence and independent revisions."""
+from copy import deepcopy
+from types import SimpleNamespace as NS
+
+import pytest
+
+from cifereca.config import Config
+from cifereca.gui.settings_draft import build_settings_draft, SettingsValidationError
+from cifereca.gui.settings_model import SettingsRevisionState
+
+
+@pytest.fixture
+def editor(tmp_path):
+    config = Config(tmp_path / 'config.json')
+    config.set('identities', [{'id': 'alice', 'directory_name': 'alice'}])
+    config.set('providers.accounts', [])
+    values = {
+        'identities': [dict(id='alice', label='Alice', directory='alice',
+                                  adept_profile='', languages=' FR, en ', prefer_vo=True)],
+        'accounts': [], 'provider_downloads': {},
+        'levels': ['errors', 'normal', 'verbose', 'trace'], 'diagnostics_level_index': 1,
+        'vault_profiles': ['Android', 'Desktop'], 'vault_profile_index': 0,
+        'diagnostics_enabled': True, 'experimental_actions': False, 'backup_enabled': False,
+        'allow_unlinked_acquisition': False, 'backup_interval': '60',
+        'library_directory': str(tmp_path / 'books'), 'backup_directory': '',
+        'download_command': '', 'post_download_command': '', 'download_directory': '',
+        'ebook_directory': '', 'audiobook_directory': '', 'ai': {},
+    }
+    return config, values
+
+
+def validate(editor, **kwargs):
+    config, values = editor
+    options = dict(descriptors={}, public_ids=set(), current_dirs={'alice': 'alice'})
+    options.update(kwargs)
+    return build_settings_draft(config, values, **options)
+
+
+def account(provider, identity='alice', account_id='source'):
+    return dict(id=account_id, provider=provider, label='', identity=identity,
+                enabled=True, fields={'username': 'synthetic-user'}, original_options={})
+
+
+def descriptor(provider, state='ready'):
+    return NS(id=provider, state=state, display_name=provider,
+              credential_fields=[NS(key='username')])
+
+
+def test_draft_neither_mutates_config_nor_writes_and_preserves_missing_adept_profile(editor):
+    config, values = editor
+    before = deepcopy(config.data)
+    values['identities'].append(dict(id='bob', label='', directory='bob',
+        adept_profile='missing-profile', languages='', prefer_vo=False))
+    draft = validate(editor)
+    assert config.data == before and not config.path.exists()
+    assert draft.data['identities'][0]['preferences']['reading_languages'] == ['fr', 'en']
+    assert draft.data['identities'][0]['adept_profile'] == ''
+    assert draft.data['identities'][1]['adept_profile'] == 'missing-profile'
+    assert draft.data['identities'][1]['label'] == 'bob'
+    assert draft.data['identities'][1]['preferences']['reading_languages'] == ['fr']
+    draft.data['identities'][0]['label'] = 'Changed'
+    assert values['identities'][0]['label'] == 'Alice' and config.data == before
+
+
+@pytest.mark.parametrize('change,message', [
+    ('empty', 'au moins une identité'), ('bad_id', 'Identité invalide'),
+    ('duplicate_id', 'Identité dupliquée'), ('duplicate_dir', 'Répertoire d’identité dupliqué'),
+    ('outside_dir', 'sous-répertoire direct'), ('unknown_account', 'Identité inconnue'),
+    ('bad_command', 'Commande de téléchargement invalide'),
+    ('bad_provider_command', 'Commande de téléchargement invalide'),
+    ('bad_interval', 'Configuration Kobo invalide'),
+])
+def test_invalid_values_raise_without_changing_config(editor, change, message):
+    config, values = editor
+    before = deepcopy(config.data)
+    descriptors = {'paris': descriptor('paris')}
+    if change == 'empty': values['identities'] = []
+    if change == 'bad_id': values['identities'][0]['id'] = 'bad/id'
+    if change.startswith('duplicate'):
+        row = deepcopy(values['identities'][0])
+        row['id'] = 'alice' if change == 'duplicate_id' else 'bob'
+        values['identities'].append(row)
+    if change == 'outside_dir': values['identities'][0]['directory'] = '/outside/alice'
+    if change == 'unknown_account': values['accounts'] = [account('paris', 'missing')]
+    if change == 'bad_command': values['download_command'] = 'unclosed "'
+    if change == 'bad_provider_command':
+        values['provider_downloads'] = {'paris': dict(command='unclosed "', post='')}
+    if change == 'bad_interval': values['backup_interval'] = 'invalid'
+    with pytest.raises(SettingsValidationError, match=message):
+        validate(editor, descriptors=descriptors)
+    assert config.data == before and not config.path.exists()
+
+
+def test_unavailable_public_and_unknown_accounts_are_preserved(editor):
+    config, values = editor
+    rows = [dict(id=p, provider=p, identity_id='alice', options={'kept': True})
+            for p in ('unknown', 'broken', 'public', 'paris')]
+    config.set('providers.accounts', rows)
+    descriptors = {p: descriptor(p, 'error' if p == 'broken' else 'ready')
+                   for p in ('broken', 'public', 'paris')}
+    replacement = account('paris')
+    replacement['original_options'] = {'kept': 'option'}
+    replacement['base_url'] = ' '
+    values['accounts'] = [replacement]
+    draft = validate(editor, descriptors=descriptors, public_ids={'public'})
+    accounts = draft.data['providers']['accounts']
+    assert accounts[:3] == config.provider_accounts()[:3]
+    assert len(accounts) == 4
+    assert accounts[3]['credentials'] == {'username': 'synthetic-user'}
+    assert accounts[3]['options'] == {'kept': 'option', 'base_url': 'https://bibliotheques.paris.fr'}
+    assert accounts[3]['identity_id'] == 'alice'
+
+
+def test_two_kobo_accounts_cannot_share_one_identity(editor):
+    values = editor[1]
+    values['accounts'] = [account('kobo', account_id='one'), account('kobo', account_id='two')]
+    with pytest.raises(SettingsValidationError, match='qu.un compte Kobo Vault'):
+        validate(editor, descriptors={'kobo': descriptor('kobo')})
+    values['identities'].append(dict(id='bob', label='Bob', directory='bob',
+        adept_profile='', languages='fr', prefer_vo=False))
+    values['accounts'][1]['identity'] = 'bob'
+    assert len(validate(editor, descriptors={'kobo': descriptor('kobo')}).data['providers']['accounts']) == 2
+
+
+def test_commands_remain_argument_lists_and_kobo_defaults_are_unchanged(editor):
+    values = editor[1]
+    values['download_command'] = 'downloader "{file}" --title "two words"'
+    values['backup_interval'] = '1'
+    values['vault_profile_index'] = 50
+    values['provider_downloads'] = {'paris': dict(directory='p', ebook='e',
+        audiobook='a', command='tool "two words"', post='')}
+    draft = validate(editor)
+    assert draft.data['downloads']['command'] == ['downloader', '{file}', '--title', 'two words']
+    assert draft.data['kobo_backup']['interval_minutes'] == 15
+    assert draft.data['kobo_backup']['display_profile'] == 'Android'
+    assert draft.data['providers']['settings']['paris']['downloads']['command'] == ['tool', 'two words']
+
+
+def test_active_tasks_only_block_actual_directory_changes(editor):
+    assert not validate(editor, has_active_tasks=True).directory_change
+    editor[1]['identities'][0]['directory'] = 'renamed'
+    with pytest.raises(SettingsValidationError, match='Attendez la fin'):
+        validate(editor, has_active_tasks=True)
+    assert validate(editor).directory_change
+
+
+def test_only_dirty_ai_is_normalized_and_errors_keep_safe_title(editor):
+    config, values = editor
+    before = deepcopy(config.data)
+    values['ai'] = {'endpoint': 'https://user:synthetic-secret@example.test/private?token=synthetic'}
+    assert validate(editor).data['llm'] == config.get('llm')
+    with pytest.raises(SettingsValidationError) as caught:
+        validate(editor, ai_dirty=True)
+    assert caught.value.title == 'Configuration IA invalide'
+    assert 'synthetic-secret' not in str(caught.value) and '/private' not in str(caught.value)
+    assert config.data == before
+    values['ai'] = dict(enabled=True, endpoint='http://127.0.0.1:11434/v1/chat/completions',
+                        model='synthetic', api_key_env='SYNTHETIC_KEY_NAME')
+    draft = validate(editor, ai_dirty=True)
+    assert draft.ai_restart_required and draft.data['llm']['api_key_env'] == 'SYNTHETIC_KEY_NAME'
+
+
+def test_error_precedence_is_identity_then_command_then_ai_then_kobo(editor):
+    values = editor[1]
+    values['identities'][0]['id'] = '/'
+    values['download_command'] = '"'
+    values['ai'] = {'enabled': True}
+    values['backup_interval'] = 'invalid'
+    with pytest.raises(SettingsValidationError, match='Identité invalide'): validate(editor, ai_dirty=True)
+    values['identities'][0]['id'] = 'alice'
+    with pytest.raises(SettingsValidationError, match='Commande de téléchargement'): validate(editor, ai_dirty=True)
+    values['download_command'] = ''
+    with pytest.raises(SettingsValidationError, match='Indiquer l’adresse'): validate(editor, ai_dirty=True)
+    with pytest.raises(SettingsValidationError, match='Configuration Kobo'): validate(editor)
+
+
+def test_revision_snapshot_is_independent_and_later_edits_remain_dirty():
+    state = SettingsRevisionState(['accounts', 'ai', 'diagnostic'])
+    assert state.mark_dirty('accounts')
+    assert not state.mark_dirty('diagnostic') and not state.dirty('diagnostic')
+    saved = state.snapshot()
+    state.mark_dirty('accounts'); state.mark_dirty('ai')
+    state.commit(saved)
+    assert state.dirty('accounts') and state.dirty('ai')
+    state.reset('ai')
+    assert not state.dirty('ai') and state.dirty('accounts')
+    current = state.snapshot(); current['accounts'] = 999
+    assert state.snapshot()['accounts'] == 2
+    state.commit(state.snapshot())
+    assert not state.dirty('accounts')

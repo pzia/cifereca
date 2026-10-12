@@ -129,9 +129,11 @@ def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
     ).read_text(encoding="utf-8")
     ast.parse(source)
     assert '("ai", "Intelligence artificielle")' in source
-    assert 'draft.set("llm", new_ai_settings)' in source
+    draft_source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_draft.py").read_text()
+    assert "draft.set('llm', new_ai_settings)" in draft_source
     assert "redémarrage nécessaire" in source
-    assert 'settings_revisions.get("ai", 0) != saved_settings_revisions.get("ai", 0)' in source
+    assert 'ai_dirty=settings_state.dirty("ai")' in source
+    assert "if ai_dirty:" in draft_source
     assert "ai_endpoint.connect(\"notify::text\", endpoint_changed)" in source
     assert 'ai_remote.set_active(False)' in source
     assert 'Adw.MessageDialog.new(' in source

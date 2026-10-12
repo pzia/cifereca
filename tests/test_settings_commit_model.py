@@ -83,7 +83,8 @@ class NoGtk(importlib.abc.MetaPathFinder):
         if fullname == 'gi' or fullname.startswith('gi.'):
             raise AssertionError('settings model must be headless')
 sys.meta_path.insert(0, NoGtk())
-from cifereca.gui.settings_model import SettingsCommitController
+from cifereca.gui.settings_model import SettingsCommitController, SettingsRevisionState
+from cifereca.gui.settings_draft import build_settings_draft
 assert 'cifereca.gui.main_window' not in sys.modules
 '''
     result = subprocess.run([sys.executable, '-c', code], env=os.environ.copy(),
