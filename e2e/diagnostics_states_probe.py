@@ -618,7 +618,20 @@ def main():
         assert broker[0].checks == 0
         report["checks"]["D14_repreview_still_no_llm_call"] = True
         capture("11-d14-explicit-approval-available")
-        click_ai(ai_button("Autoriser et analyser"), d14_wait_generated)
+        # The expanded preview can steal scroll space while the pointer moves.
+        # A focused button + physical XTEST Space is an explicit real-user
+        # confirmation without relying on a stale click coordinate.
+        approve = ai_button("Autoriser et analyser")
+        assert approve.grab_focus() is not False
+        later(lambda: d14_keyboard_approve(approve), 220)
+
+    def d14_keyboard_approve(approve):
+        assert approve.has_focus(), "D14: le consentement IA n'accepte pas le focus"
+        assert ai_fixture[0].calls == 0
+        device[0].key("space", True)
+        device[0].key("space", False)
+        report["checks"]["D14_approval_keyboard_space_xtest"] = True
+        d14_wait_generated()
 
     def d14_wait_generated():
         until(lambda: ai_fixture[0].calls == 1
