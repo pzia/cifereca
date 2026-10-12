@@ -292,3 +292,17 @@ recipe also accepts 1366/1600 for local-cache navigation through its real plugin
 fixture to check query, rows, count, selected key, scroll and absence of extra
 searches when opening/closing filter menus. `--short-component-actions` keeps
 the pre-existing overflow reproduction from #1216; its failure is not hidden.
+
+### Settings IA — explicit loopback qualification
+
+`llm_settings_probe.py --out <directory> --width 1366|1600` uses the real
+MainWindow, settings widgets, TaskRunner and Core HTTP transport with
+`simulation/common/llm_http_fixture.py`. Six synthetic POSTs exercise success,
+401/404/429, late-result invalidation after reset and bounded timeout.
+Opening, editing, prevalidation, remote-consent cancellation, reset and saving
+make no extra POST. The recipe rejects HTTP remote/credential/query/fragment
+URLs and invalid limits/key names, checks environment-name-only display and
+needs-restart feedback after saving. The already sent delayed request is not
+undone by reset; the UI ignores its stale result. No distant test is accepted.
+Initial Tab focus is exercised; loss of focus after the disabled test button
+is recorded. This does not certify screen-reader speech or live HTTPS servers.
