@@ -24,6 +24,34 @@ class KoboAdeptError(UserFacingError):
         self.details = dict(details or {})
 
 
+def classified_adept_failure(error, exit_code):
+    """Project only structured ACSM codes, never vendor message or stderr.
+
+    0.13.6 returns opaque adept_error / exit 10. An explicit libgourou
+    license enum, if exported as JSON by a future CLI, can be translated
+    without inspecting private XML, URLs or process logs.
+    """
+    if not isinstance(error, dict):
+        error = {}
+    code = error.get('code')
+    if code in {
+        'E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER',
+        'adept_license_already_fulfilled_by_another_user',
+    }:
+        return (
+            'adept_license_already_fulfilled_by_another_user',
+            "Le prêt ACSM est déjà associé à une autre identité Adobe. Vérifiez l'identité d'origine.",
+            False,
+        )
+    if code == 'adept_error' or exit_code == 10:
+        return (
+            'adept_error',
+            "Échec de l'activation ACSM ; la cause Adobe n'est pas confirmée. Vérifiez le profil d'origine.",
+            False,
+        )
+    return None
+
+
 class KoboAdeptRuntime:
     """Public contract v8, integration document 1.3; no device side effects."""
     required_contract = 8
@@ -129,6 +157,13 @@ class KoboAdeptRuntime:
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
+            # A few older CLI versions expose the same fields at the top level.
+            if not error and (proc.returncode == 10 or value.get('code') == 'adept_error'):
+                error = value
+            classified = classified_adept_failure(error, proc.returncode)
+            if classified is not None:
+                code, public_message, retryable = classified
+                fail(public_message, code, returncode=proc.returncode, retryable=retryable)
             fail(safe_message(error.get('message') or 'Échec Kobo-Adept'),
                 str(error.get('code') or 'kobo_adept_failed'),
                 returncode=proc.returncode, retryable=error.get('retryable') is True)
