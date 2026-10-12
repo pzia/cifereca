@@ -68,3 +68,32 @@ timeout maximum est 15 secondes, la sortie est limitée à 32 KiB et le prompt
 
 Pour les plugins utilisant GTK, lancer `generate` via le TaskRunner/broker de
 tâches, **jamais sur le fil principal GTK**.
+
+## Configuration graphique — Paramètres → Intelligence artificielle
+
+La page **Intelligence artificielle** configure le service LLM commun aux plugins.
+L’interrupteur est désactivé par défaut. Seule l’API Chat Completions compatible OpenAI
+est prise en charge, sur un serveur déjà installé.
+
+1. Activer la fonction et renseigner le modèle et l’endpoint complet. Le bouton
+   de préremplissage Ollama local renseigne uniquement l’adresse loopback ; il
+   n’installe ni ne démarre aucun modèle.
+2. Pour une destination distante : endpoint HTTPS et option « Autoriser les
+   requêtes vers un serveur distant ». Toute modification de l’endpoint retire
+   cette autorisation jusqu’à un nouveau choix. Diagnostics demande en plus
+   son propre consentement explicite, **par analyse**.
+3. Si le serveur requiert une clé, renseigner uniquement **le nom** d’une
+   variable d’environnement du processus. La valeur secrète ne doit jamais
+   être saisie dans Cifereca ni enregistrée dans le fichier de configuration.
+4. Enregistrer via Paramètres puis **redémarrer Cifereca** : le service Core
+   et les plugins utilisant son instance existante ne sont pas rechargés à chaud.
+
+« Tester la connexion » est une action explicite : une requête synthétique
+constante est envoyée sans livre ni diagnostic, sur un thread de tâche séparé.
+Un premier essai distant demande une confirmation supplémentaire indiquant
+l’hôte, le modèle et le risque de facturation. Le résultat « Configuré »
+ne remplace jamais « Test réussi » ; un test passé ne garantit pas la
+disponibilité future du service ni n’autorise des appels automatiques.
+
+Une IA indisponible ne bloque pas le reste de Cifereca. Aucun réseau n’est
+contacté en ouvrant la page ou en sauvegardant les paramètres.

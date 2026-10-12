@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -46,7 +47,7 @@ class Selection:
 
 
 def _show_rows():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MasterDetailPage")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "show_rows")
     module = ast.Module(body=[method], type_ignores=[])

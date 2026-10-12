@@ -94,6 +94,18 @@ from cifereca.gui.return_feedback import loan_return_feedback
             "pnb", "attention", "non confirmée",
         ),
         (
+            {"status": "attention_required", "code": "loan_return_busy"},
+            "adept", "attention", "déjà en cours",
+        ),
+        (
+            {"status": "attention_required", "code": "loan_return_busy"},
+            "pnb", "attention", "déjà en cours",
+        ),
+        (
+            {"status": "attention_required", "code": "loan_return_identity_conflict"},
+            "pnb", "attention", "plusieurs identités Paris",
+        ),
+        (
             None, "adept", "attention", "incomplet",
         ),
         (

@@ -13,6 +13,7 @@ from threading import BoundedSemaphore, Event, Thread
 from time import monotonic
 from typing import Any, Mapping
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from cifereca.plugin_api.llm import LLMRequest, LLMResult
@@ -76,6 +77,18 @@ class OptionalLLMService:
             return False, False, provider, model, endpoint, 0.2, 0, 0
         valid = enabled and provider == "openai-compatible" and bool(model) and permit
         return valid, remote, provider, model, endpoint, timeout, max_input, max_tokens
+
+    def destination(self) -> dict[str, str | bool]:
+        """Safe per-request disclosure for explicit UI consent; no URL path/key."""
+        available, remote, provider, model, endpoint, *_ = self._settings()
+        try:
+            host = urlsplit(endpoint).hostname if available else ""
+        except ValueError:
+            host = ""
+        return {
+            "available": bool(available), "remote": bool(remote) if available else False,
+            "provider": provider[:80], "model": model[:128], "host": str(host or "")[:180],
+        }
 
     def available(self) -> bool:
         return self._settings()[0]
@@ -158,6 +171,16 @@ class OptionalLLMService:
                     True, text=content, structured=structured,
                     provider=provider, model=model, generated=True, remote=remote,
                 ))
+            except HTTPError as exc:
+                # Expose only safe status categories: never error bodies/URLs.
+                if exc.code in (401, 403):
+                    result.append(failed("auth_refused"))
+                elif exc.code == 404:
+                    result.append(failed("not_found"))
+                elif exc.code == 429:
+                    result.append(failed("rate_limited"))
+                else:
+                    result.append(failed("backend_unavailable"))
             except Exception:
                 result.append(failed("backend_unavailable"))
             finally:

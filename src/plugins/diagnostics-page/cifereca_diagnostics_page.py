@@ -1,19 +1,242 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
+import math
+import re
 from typing import Any
 
 from cifereca.plugin_api import UiPageContribution
+from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent, export_analysis_json
+from diagnostics_explorer import (
+    SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
+    sanitized_rows, module_groups, source_summaries, explorer_header,
+    next_page_offset, selectable_event_ids, export_selected_events,
+    empty_observation,
+)
+from diagnostics_support import SupportReportExport, preserve_report_selection
+
+# The broker provides already-redacted data. This is a second, stricter
+# presentation boundary: neither UI modes nor clipboard may expose raw secrets.
+_DIAGNOSTIC_SECRET_KEY = re.compile(
+    r"pass(?:word)?|cookie|token|secret|authorization|bearer|barcode|readerid|"
+    r"credential[_-]?id|account[_-]?id|identity[_-]?id|profile[_-]?id|"
+    r"acsm|licen[sc]e|(?:api|access|private)[_-]?key|(^|_)path$|filename|payload|headers?", re.I
+)
+_DIAGNOSTIC_SECRET_VALUE = re.compile(
+    r"(?i)\b(password|cookie|token|secret|authorization|barcode|readerid)"
+    r"""\s*[:=]\s*(?:"[^"]*"|\'[^\']*\'|[^\s,;]+)"""
+)
+# Authentication headers may contain schemes followed by several secret fields.
+# Mask the entire value, not merely the first whitespace-delimited token.
+_DIAGNOSTIC_AUTH_HEADER = re.compile(
+    r"(?im)\b((?:proxy-)?authorization|x-api-key)\s*[:=][^\r\n]*"
+)
+_DIAGNOSTIC_URL = re.compile(r"(?i)https?://[^\s<>]+")
+_DIAGNOSTIC_MAIL = re.compile(r"(?i)\b[a-z0-9_.+%-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
+_DIAGNOSTIC_PATH = re.compile(
+    r"(?:/home/|/Users/|/run/user/)[^\s,;]+|[A-Za-z]:\\Users\\[^\s,;]+"
+)
+_MAX_DETAIL_BYTES = 24_000
+_MAX_DETAIL_NODES = 300
+_MAX_DETAIL_DEPTH = 7
+_MAX_DETAIL_CHILDREN = 50
+_MAX_DETAIL_TEXT = 800
+
+
+def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT,
+                   max_input_chars: int = _MAX_DETAIL_BYTES) -> str:
+    # A partial email, URL or token can straddle the preview cut. Redact
+    # complete values BEFORE truncating anything shown or copied to the UI.
+    # Fail closed on oversized untrusted text to bound regex scanning.
+    if len(value) > max_input_chars:
+        return "<texte trop long : contenu masqué>"
+    text = _DIAGNOSTIC_URL.sub("<URL expurgée>", value)
+    text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
+    text = _DIAGNOSTIC_PATH.sub("<chemin expurgé>", text)
+    text = _DIAGNOSTIC_AUTH_HEADER.sub(r"\1=<expurgé>", text)
+    text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
+    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
+    if len(text) <= max_chars:
+        return text
+    cut = max_chars
+    # Do not slice through a redaction marker. An incomplete "<exp..." can
+    # be rewritten differently by the JSON export's second redaction pass,
+    # causing the report and exported evidence to disagree.
+    for marker in (
+        "<expurgé>", "<URL expurgée>", "<courriel expurgé>",
+        "<chemin expurgé>",
+    ):
+        start = text.find(
+            marker, max(0, max_chars - 32), max_chars + len(marker) + 32,
+        )
+        if start >= 0 and start <= max_chars < start + len(marker):
+            cut = start + len(marker)
+            break
+        if max_chars < start <= max_chars + 32:
+            # The cut would land inside the key or URL label immediately
+            # preceding a marker. Drop that incomplete label rather than
+            # publishing a fragment that the second redaction changes.
+            boundary = text.rfind(" ", max(0, max_chars - 64), start)
+            cut = boundary if boundary >= 0 else max(0, max_chars - 32)
+            break
+    # A newline prevents an Authorization header from absorbing the
+    # truncation notice during the clipboard export's second pass.
+    return text[:cut] + "\n… [tronqué]"
+
+
+def redacted_ai_response(value: str) -> str:
+    """Preserve a bounded multi-paragraph LLM answer without relaxing UI caps.
+
+    Redact the *entire* response before cutting it, so long tokens or signed
+    URLs cannot leak a surviving prefix. Invalid Unicode is never exported.
+    """
+    if type(value) is not str:
+        raise ValueError("invalid_llm_response")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ValueError("invalid_llm_response_unicode") from exc
+    return _redacted_text(value, max_chars=3960)
+
+
+def redacted_detail(
+    value: Any, *, max_text: int = _MAX_DETAIL_TEXT,
+) -> Any:
+    if type(max_text) is not int or not 1 <= max_text <= 4000:
+        raise ValueError("invalid_diagnostics_text_budget")
+    """Snapshot JSON-compatible values with depth, count and length limits.
+
+    Unknown objects are never introspected or stringified; cycles are stopped.
+    Stable key ordering is applied only to supported scalar dictionary keys.
+    """
+    budget = [_MAX_DETAIL_NODES]
+    stack: set[int] = set()
+
+    def walk(item: Any, depth: int) -> Any:
+        if budget[0] <= 0 or depth > _MAX_DETAIL_DEPTH:
+            return "<limite atteinte>"
+        budget[0] -= 1
+        if item is None or isinstance(item, bool) or isinstance(item, int):
+            return item
+        if isinstance(item, float):
+            return item if math.isfinite(item) else "<nombre non fini>"
+        if isinstance(item, str):
+            return _redacted_text(item, max_chars=max_text)
+        if not isinstance(item, (Mapping, list, tuple)):
+            return "<type non pris en charge>"
+        if id(item) in stack:
+            return "<référence circulaire>"
+        stack.add(id(item))
+        try:
+            if isinstance(item, Mapping):
+                pairs = []
+                for key, child in item.items():
+                    if type(key) not in (str, int, float, bool):
+                        continue
+                    # Preserve the whole key until AFTER redaction. Cutting
+                    # before masking can expose partial emails or signed URLs.
+                    name = str(key)
+                    pairs.append((name, child))
+                pairs.sort(key=lambda pair: pair[0].casefold())
+                result = {}
+                for name, child in pairs[:_MAX_DETAIL_CHILDREN]:
+                    safe_name = _redacted_text(name)[:160]
+                    # Redaction/truncation may collapse distinct original keys.
+                    # Preserve every entry without revealing original names.
+                    if safe_name in result:
+                        base_name = safe_name
+                        suffix = 2
+                        while safe_name in result:
+                            marker = f" [{suffix}]"
+                            safe_name = base_name[:160 - len(marker)] + marker
+                            suffix += 1
+                    result[safe_name] = (
+                        "<expurgé>" if (
+                            len(name) > _MAX_DETAIL_BYTES
+                            or _DIAGNOSTIC_SECRET_KEY.search(name)
+                        ) else walk(child, depth + 1)
+                    )
+                if len(pairs) > _MAX_DETAIL_CHILDREN:
+                    result["[suite]"] = "<éléments supplémentaires masqués>"
+                return result
+            children = [walk(child, depth + 1) for child in item[:_MAX_DETAIL_CHILDREN]]
+            if len(item) > _MAX_DETAIL_CHILDREN:
+                children.append("<éléments supplémentaires masqués>")
+            return children
+        finally:
+            stack.remove(id(item))
+
+    return walk(value, 0)
+
+
+def _readable_lines(value: Any, indent: int = 0) -> list[str]:
+    pad = "  " * indent
+    if isinstance(value, dict):
+        if not value:
+            return [pad + "{}"]
+        rows = []
+        for key, child in value.items():
+            if isinstance(child, (dict, list)):
+                rows.append(pad + str(key) + ":")
+                rows.extend(_readable_lines(child, indent + 1))
+            else:
+                rows.append(pad + str(key) + ": " + json.dumps(child, ensure_ascii=False))
+        return rows
+    if isinstance(value, list):
+        if not value:
+            return [pad + "[]"]
+        rows = []
+        for child in value:
+            if isinstance(child, (dict, list)):
+                rows.append(pad + "–")
+                rows.extend(_readable_lines(child, indent + 1))
+            else:
+                rows.append(pad + "– " + json.dumps(child, ensure_ascii=False))
+        return rows
+    return [pad + (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))]
+
+
+def format_diagnostic_detail(value: Any, mode: str = "readable") -> str:
+    """Three selectable representations of the SAME redacted snapshot."""
+    if mode not in {"readable", "json", "raw"}:
+        raise ValueError("unknown diagnostic display mode")
+    safe = redacted_detail(value)
+    if mode == "readable":
+        text = "\n".join(_readable_lines(safe))
+    elif mode == "json":
+        text = json.dumps(safe, ensure_ascii=False, indent=2, allow_nan=False)
+    elif isinstance(safe, str):
+        text = safe
+    else:
+        text = json.dumps(safe, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeError:
+        notice = "Contenu Unicode invalide : affichage masqué"
+        return (json.dumps({"notice": notice, "truncated": True},
+                           ensure_ascii=False) if mode == "json" else notice)
+    if len(encoded) > _MAX_DETAIL_BYTES:
+        excerpt = encoded[:(
+            _MAX_DETAIL_BYTES // 2 if mode == "json" else _MAX_DETAIL_BYTES - 100
+        )].decode("utf-8", errors="ignore")
+        if mode == "json":
+            def preview_json(value: str) -> str:
+                return json.dumps({
+                    "notice": "Aperçu JSON limité à 24 Kio",
+                    "truncated": True, "preview": value,
+                }, ensure_ascii=False, indent=2)
+            result = preview_json(excerpt)
+            while len(result.encode("utf-8")) > _MAX_DETAIL_BYTES:
+                excerpt = excerpt[:len(excerpt) // 2]
+                result = preview_json(excerpt)
+            return result
+        return excerpt + "\n… [affichage limité]"
+    return text
 
 
 def _safe_text(value: Any) -> str:
-    if value is None:
-        return "—"
-    if isinstance(value, bool):
-        return "Oui" if value else "Non"
-    if isinstance(value, (str, int, float)):
-        return str(value)
-    return str(value)
+    return format_diagnostic_detail(value, "readable")
 
 
 def public_inventory(diagnostics_broker) -> list[dict[str, Any]]:
@@ -75,17 +298,45 @@ def _run_once_on_first_map(widget, callback):
         on_map(widget)
 
 
+def _install_report_escape(Gtk, Gdk, container, scroller, resize):
+    """Reduce only this report; preserve its buffer, selection and focus."""
+    controller = Gtk.EventControllerKey()
+    # Catch Escape before a focused TextView consumes it. The controller is
+    # scoped to the report, so other Diagnostics controls keep their bindings.
+    controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def key_pressed(_controller, keyval, _keycode, state):
+        modified = state & (
+            Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.META_MASK
+        )
+        if keyval != Gdk.KEY_Escape or modified:
+            return False
+        if resize.get_label() != "Réduire":
+            return False
+        scroller.set_size_request(-1, 320)
+        resize.set_label("Agrandir")
+        return True
+
+    controller.connect("key-pressed", key_pressed)
+    container.add_controller(controller)
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
         self.diagnostics = None
         self.tasks = None
         self._check_handle = None
+        self._ai_handle = None
+        self.llm = None
 
     def activate(self, context):
         self.context = context
         self.diagnostics = context.broker("diagnostics")
         self.tasks = context.broker("tasks")
+        service = getattr(context, "service", None)
+        self.llm = service("llm") if callable(service) else None
         if self.diagnostics is None or self.tasks is None:
             raise RuntimeError("brokers diagnostics/tasks indisponibles")
         return self
@@ -103,7 +354,7 @@ class DiagnosticsPagePlugin:
         ]
 
     def _build(self, host):
-        from gi.repository import Gdk, Gtk, Pango
+        from gi.repository import Gdk, Gtk, Pango, Gio, GLib
 
         broker = self.diagnostics
         if broker is None:
@@ -133,6 +384,9 @@ class DiagnosticsPagePlugin:
         action_row.append(refresh)
         action_row.append(check)
         action_row.append(copy)
+        save_report = Gtk.Button(label="Enregistrer le rapport support…")
+        save_report.set_tooltip_text("Exporter le rapport support expurgé vers un fichier choisi")
+        action_row.append(save_report)
         outer.append(action_row)
 
         status_title = Gtk.Label(label="État système", xalign=0)
@@ -147,11 +401,150 @@ class DiagnosticsPagePlugin:
         status_grid.set_row_spacing(8)
         outer.append(status_grid)
 
+
+        # Journals remain inside the existing Diagnostics page. Every refresh
+        # is an asynchronous call to the read-only public Diagnostics broker.
+        journals_title = Gtk.Label(label="Journaux par composant", xalign=0)
+        journals_title.add_css_class("heading")
+        outer.append(journals_title)
+        journals_hint = Gtk.Label(
+            label="Flux expurgé et borné du Core ; aucune collecte réseau. "
+                  "La recherche texte et le tri agissent sur la page chargée.",
+            xalign=0,
+        )
+        journals_hint.set_wrap(True)
+        outer.append(journals_hint)
+
+        filters_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        source_selector = Gtk.DropDown.new_from_strings(
+            ["Toutes les sources", "Événements Core", "Journal applicatif"]
+        )
+        source_selector.set_tooltip_text("Source des événements")
+        severity_selector = Gtk.DropDown.new_from_strings(
+            ["Tous niveaux", "Debug", "Info", "Avertissements", "Erreurs", "Critiques"]
+        )
+        severity_selector.set_tooltip_text("Niveau de gravité")
+        period_selector = Gtk.DropDown.new_from_strings(
+            ["Toutes périodes", "Dernière heure", "24 heures", "7 jours", "30 jours"]
+        )
+        period_selector.set_selected(2)
+        period_selector.set_tooltip_text("Période de la consultation")
+        filters_top.append(source_selector)
+        filters_top.append(severity_selector)
+        filters_top.append(period_selector)
+        outer.append(filters_top)
+
+        filters_bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        module_filter = Gtk.Entry()
+        module_filter.set_placeholder_text("Préfixe module (Entrée pour appliquer)")
+        module_filter.set_hexpand(True)
+        module_filter.set_tooltip_text("Filtre serveur sur le préfixe de module")
+        search_filter = Gtk.Entry()
+        search_filter.set_placeholder_text("Rechercher dans cette page")
+        search_filter.set_hexpand(True)
+        search_filter.set_tooltip_text("Recherche locale dans les événements chargés")
+        sort_latest = Gtk.CheckButton(label="Plus récents d’abord")
+        sort_latest.set_active(True)
+        filters_bottom.append(module_filter)
+        filters_bottom.append(search_filter)
+        filters_bottom.append(sort_latest)
+        outer.append(filters_bottom)
+
+        journals_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        journals_refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
+        journals_refresh.set_tooltip_text("Actualiser les journaux sans synchronisation")
+        journals_previous = Gtk.Button(label="Précédent")
+        journals_next = Gtk.Button(label="Suivant")
+        journals_copy = Gtk.Button(label="Copier la sélection")
+        journals_actions.append(journals_refresh)
+        journals_actions.append(journals_previous)
+        journals_actions.append(journals_next)
+        journals_actions.append(journals_copy)
+        outer.append(journals_actions)
+
+        journals_sources = Gtk.Label(label="Sources non alimentées", xalign=0)
+        journals_sources.set_wrap(True)
+        journals_sources.add_css_class("dim-label")
+        outer.append(journals_sources)
+        journals_summary = Gtk.Label(label="Actualisation requise", xalign=0)
+        journals_summary.set_wrap(True)
+        outer.append(journals_summary)
+        journals_scroll = Gtk.ScrolledWindow()
+        journals_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        journals_scroll.set_min_content_height(200)
+        journals_scroll.set_size_request(-1, 350)
+        journals_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        journals_scroll.set_child(journals_box)
+        outer.append(journals_scroll)
+
+        ai_title = Gtk.Label(label="Analyse IA (facultative)", xalign=0)
+        ai_title.add_css_class("heading")
+        outer.append(ai_title)
+        ai_notice = Gtk.Label(
+            label="Aucune donnée transmise par défaut. Prévisualiser les événements expurgés, "
+                  "vérifier la destination, puis autoriser chaque analyse explicitement.",
+            xalign=0,
+        )
+        ai_notice.set_wrap(True)
+        outer.append(ai_notice)
+        ai_snapshot = Gtk.CheckButton(
+            label="Inclure les diagnostics structurés Core (lecture seule)"
+        )
+        ai_snapshot.set_active(False)
+        outer.append(ai_snapshot)
+        ai_support_report = Gtk.CheckButton(
+            label="Inclure le rapport support Core (lecture seule)"
+        )
+        ai_support_report.set_active(False)
+        outer.append(ai_support_report)
+        ai_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ai_prepare = Gtk.Button(label="Prévisualiser pour l’IA")
+        ai_send = Gtk.Button(label="Autoriser et analyser")
+        ai_send.set_sensitive(False)
+        ai_cancel = Gtk.Button(label="Annuler")
+        ai_export = Gtk.Button(label="Copier Markdown IA")
+        ai_export.set_sensitive(False)
+        ai_export_json = Gtk.Button(label="Copier JSON IA")
+        ai_export_json.set_sensitive(False)
+        ai_controls.append(ai_prepare)
+        ai_controls.append(ai_send)
+        ai_controls.append(ai_cancel)
+        ai_controls.append(ai_export)
+        ai_controls.append(ai_export_json)
+        outer.append(ai_controls)
+        ai_status = Gtk.Label(label="IA non configurée ou non consultée", xalign=0)
+        ai_status.set_wrap(True)
+        outer.append(ai_status)
+        ai_expander = Gtk.Expander(label="Données expurgées proposées à l’IA")
+        ai_expander.set_expanded(False)
+        ai_scroller = Gtk.ScrolledWindow()
+        ai_scroller.set_min_content_height(150)
+        ai_scroller.set_size_request(-1, 220)
+        ai_input = Gtk.TextView()
+        ai_input.set_editable(False)
+        ai_input.set_monospace(True)
+        ai_input.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        ai_scroller.set_child(ai_input)
+        ai_expander.set_child(ai_scroller)
+        outer.append(ai_expander)
+        ai_report = Gtk.TextView()
+        ai_report.set_editable(False)
+        ai_report.set_monospace(True)
+        ai_report.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        ai_report_scroll = Gtk.ScrolledWindow()
+        ai_report_scroll.set_min_content_height(160)
+        ai_report_scroll.set_size_request(-1, 280)
+        ai_report_scroll.set_child(ai_report)
+        outer.append(ai_report_scroll)
+
         diag_title = Gtk.Label(label="Diagnostics", xalign=0)
         diag_title.add_css_class("heading")
         outer.append(diag_title)
         diag_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        outer.append(diag_box)
+        diag_expander = Gtk.Expander(label="Afficher les détails techniques")
+        diag_expander.set_expanded(False)
+        diag_expander.set_child(diag_box)
+        outer.append(diag_expander)
 
         check_title = Gtk.Label(label="Vérification active", xalign=0)
         check_title.add_css_class("heading")
@@ -162,17 +555,61 @@ class DiagnosticsPagePlugin:
         check_hint.set_wrap(True)
         check_box.append(check_hint)
 
-        export_title = Gtk.Label(label="Rapport support", xalign=0)
+        export_title = Gtk.Label(label="Rapport support (copie expurgée)", xalign=0)
         export_title.add_css_class("heading")
         outer.append(export_title)
+        report_expander = Gtk.Expander(label="Ouvrir le rapport support")
+        report_expander.set_expanded(False)
+        report_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        report_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        report_resize = Gtk.Button(label="Agrandir")
+        report_wrap = Gtk.CheckButton(label="Retour à la ligne")
+        report_wrap.set_active(True)
+        report_actions.append(report_resize)
+        report_actions.append(report_wrap)
+        report_container.append(report_actions)
+        report_scroll = Gtk.ScrolledWindow()
+        report_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        report_scroll.set_min_content_height(220)
+        report_scroll.set_size_request(-1, 320)
         export_view = Gtk.TextView()
         export_view.set_editable(False)
         export_view.set_cursor_visible(False)
         export_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         export_view.set_monospace(True)
-        export_view.set_vexpand(True)
-        export_view.set_size_request(-1, 220)
-        outer.append(export_view)
+        report_scroll.set_child(export_view)
+        report_container.append(report_scroll)
+        report_expander.set_child(report_container)
+        outer.append(report_expander)
+
+        def toggle_report_size(_button):
+            is_big = report_resize.get_label() == "Agrandir"
+            report_scroll.set_size_request(-1, 560 if is_big else 320)
+            report_resize.set_label("Réduire" if is_big else "Agrandir")
+
+        def toggle_report_wrap(button):
+            export_view.set_wrap_mode(
+                Gtk.WrapMode.WORD_CHAR if button.get_active() else Gtk.WrapMode.NONE
+            )
+
+        report_resize.connect("clicked", toggle_report_size)
+        report_wrap.connect("toggled", toggle_report_wrap)
+        _install_report_escape(
+            Gtk, Gdk, report_container, report_scroll, report_resize,
+        )
+        preserve_report_selection(GLib, report_expander, export_view.get_buffer())
+
+        def report_text():
+            buffer = export_view.get_buffer()
+            return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+
+        report_export = SupportReportExport(
+            Gtk, Gio, save_report, scroll.get_root, report_text, host.toast,
+        )
+        if not hasattr(self, "_support_exports"):
+            self._support_exports = []
+        self._support_exports.append(report_export)
+        save_report.connect("clicked", report_export.choose)
 
         def clear_container(container) -> None:
             child = container.get_first_child()
@@ -180,6 +617,59 @@ class DiagnosticsPagePlugin:
                 nxt = child.get_next_sibling()
                 container.remove(child)
                 child = nxt
+
+        def add_detail_view(container, value: Any) -> None:
+            # A single redacted snapshot drives every mode and the clipboard.
+            safe = redacted_detail(value)
+            expander = Gtk.Expander(label="Détails expurgés")
+            expander.set_expanded(False)
+            wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            label = Gtk.Label(label="Vue :", xalign=0)
+            selector = Gtk.DropDown.new_from_strings(
+                ["Lisible", "JSON indenté", "Brut expurgé"]
+            )
+            selector.set_tooltip_text("Représentation des mêmes données expurgées")
+            copy_detail = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+            copy_detail.set_tooltip_text("Copier le détail expurgé actuellement affiché")
+            controls.append(label)
+            controls.append(selector)
+            controls.append(copy_detail)
+            wrapper.append(controls)
+
+            detail_scroll = Gtk.ScrolledWindow()
+            detail_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            detail_scroll.set_min_content_height(160)
+            detail_scroll.set_size_request(-1, 250)
+            detail_view = Gtk.TextView()
+            detail_view.set_editable(False)
+            detail_view.set_cursor_visible(False)
+            detail_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            detail_view.set_monospace(True)
+            detail_scroll.set_child(detail_view)
+            wrapper.append(detail_scroll)
+
+            def visible_text() -> str:
+                modes = ("readable", "json", "raw")
+                selected = min(int(selector.get_selected()), len(modes) - 1)
+                return format_diagnostic_detail(safe, modes[selected])
+
+            def change_view(*_args) -> None:
+                detail_view.get_buffer().set_text(visible_text())
+
+            def copy_view(_button) -> None:
+                display = Gdk.Display.get_default()
+                if display is None:
+                    host.toast("Presse-papiers indisponible")
+                    return
+                display.get_clipboard().set(visible_text())
+                host.toast("Détail expurgé copié")
+
+            selector.connect("notify::selected", change_view)
+            copy_detail.connect("clicked", copy_view)
+            change_view()
+            expander.set_child(wrapper)
+            container.append(expander)
 
         def add_status(key: str, value: Any) -> None:
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -190,12 +680,18 @@ class DiagnosticsPagePlugin:
             caption = Gtk.Label(label=str(key), xalign=0)
             caption.add_css_class("caption")
             caption.set_wrap(True)
-            value_label = Gtk.Label(label=_safe_text(value), xalign=0)
-            value_label.set_wrap(True)
-            value_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            value_label.set_selectable(True)
             card.append(caption)
-            card.append(value_label)
+            if isinstance(value, (Mapping, list, tuple)):
+                summary = Gtk.Label(label="Données structurées", xalign=0)
+                summary.add_css_class("dim-label")
+                card.append(summary)
+                add_detail_view(card, value)
+            else:
+                value_label = Gtk.Label(label=_safe_text(value), xalign=0)
+                value_label.set_wrap(True)
+                value_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                value_label.set_selectable(True)
+                card.append(value_label)
             status_grid.insert(card, -1)
 
         def add_diag(row: Mapping[str, Any]) -> None:
@@ -203,28 +699,522 @@ class DiagnosticsPagePlugin:
             card.add_css_class("card")
             for margin in ("top", "bottom", "start", "end"):
                 getattr(card, "set_margin_" + margin)(8)
-            title = str(row.get("message") or row.get("operation") or row.get("id") or "Diagnostic")
+            title = _safe_text(row.get("message") or row.get("operation") or row.get("id") or "Diagnostic")
             heading = Gtk.Label(label=title, xalign=0)
             heading.set_wrap(True)
             heading.add_css_class("heading")
             card.append(heading)
             meta_parts = []
-            for key in ("status", "level", "plugin_id", "source"):
-                value = row.get(key)
+            for key in ("timestamp", "component", "status", "severity", "level", "plugin_id", "source", "operation"):
+                if key not in row:
+                    continue
+                value = row[key]
                 if value not in (None, ""):
-                    meta_parts.append(f"{key}: {value}")
+                    meta_parts.append(f"{key}: {_safe_text(value)}")
             if meta_parts:
                 meta = Gtk.Label(label=" · ".join(meta_parts), xalign=0)
                 meta.add_css_class("dim-label")
                 meta.set_wrap(True)
                 card.append(meta)
-            detail = row.get("detail")
-            if detail:
-                detail_label = Gtk.Label(label=_safe_text(detail), xalign=0)
-                detail_label.set_wrap(True)
-                detail_label.set_selectable(True)
-                card.append(detail_label)
+            if "detail" in row:
+                add_detail_view(card, row["detail"])
             diag_box.append(card)
+
+
+        page_offset = 0
+        page_generation = 0
+        current_page: dict[str, Any] = {
+            "events": [], "sources": [], "total": 0, "offset": 0,
+            "next_offset": None,
+        }
+        selected_event_ids: set[str] = set()
+
+        def display_events() -> None:
+            clear_container(journals_box)
+            rows = sanitized_rows(
+                current_page, search=search_filter.get_text().strip(),
+                newest_first=sort_latest.get_active(),
+                include_detail=True,
+            )
+            valid_ids = selectable_event_ids(rows)
+            selected_event_ids.intersection_update(valid_ids)
+            states = source_summaries(current_page)
+            if states:
+                journals_sources.set_text("  ·  ".join(
+                    f"{state['source']} : {state['label']}" +
+                    (f" — {state['reason']}" if state.get("reason") else "") +
+                    (
+                        f" · dernier événement publié : {state['last_event']}"
+                        if state.get("last_event") else ""
+                    )
+                    for state in states
+                ))
+            else:
+                journals_sources.set_text("Sources non alimentées ou indisponibles")
+            journals_summary.set_text(explorer_header(
+                current_page, rows, search=search_filter.get_text().strip()
+            ))
+            for group in module_groups(rows):
+                title = (
+                    f"{group['module']} · {group['source']} · "
+                    f"{group['count']} événement(s) · {group['severity']}"
+                )
+                expander = Gtk.Expander(label=title)
+                expander.set_expanded(group["severity"] in {"critical", "error"})
+                group_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                for row in group["events"]:
+                    item = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+                    item.add_css_class("card")
+                    first_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                    select = Gtk.CheckButton()
+                    select.set_tooltip_text("Sélectionner cet événement pour copie expurgée")
+                    event_id = row["event_id"]
+                    select.set_sensitive(event_id in valid_ids)
+                    select.set_active(event_id in valid_ids and event_id in selected_event_ids)
+
+                    def on_select(button, event_ref=event_id):
+                        if event_ref not in valid_ids:
+                            return
+                        if button.get_active():
+                            selected_event_ids.add(event_ref)
+                        else:
+                            selected_event_ids.discard(event_ref)
+                        journals_copy.set_sensitive(bool(selected_event_ids))
+
+                    select.connect("toggled", on_select)
+                    first_line.append(select)
+                    summary = _safe_text(
+                        f"{row['timestamp']} · {row['severity']} · {row['message']}"
+                    )
+                    event_label = Gtk.Label(label=summary, xalign=0)
+                    event_label.set_wrap(True)
+                    event_label.set_selectable(True)
+                    event_label.set_hexpand(True)
+                    first_line.append(event_label)
+                    item.append(first_line)
+                    provenance = Gtk.Label(
+                        label=_safe_text(
+                            f"Source : {row['source']} · Module : {row['module']} "
+                            f"· Référence : {event_id[:16]}"
+                        ),
+                        xalign=0,
+                    )
+                    provenance.add_css_class("dim-label")
+                    provenance.set_wrap(True)
+                    provenance.set_selectable(True)
+                    item.append(provenance)
+                    add_detail_view(item, row)
+                    group_box.append(item)
+                expander.set_child(group_box)
+                journals_box.append(expander)
+            if not rows:
+                observation = empty_observation(
+                    current_page, period=PERIODS[int(period_selector.get_selected())],
+                    severity=SEVERITIES[int(severity_selector.get_selected())],
+                    module=module_filter.get_text().strip(),
+                    search=search_filter.get_text().strip(),
+                )
+                empty = Gtk.Label(
+                    label=observation + "\nAucun événement sur cette page. "
+                          "Vérifier la période, les filtres ou la disponibilité des sources.",
+                    xalign=0,
+                )
+                empty.set_wrap(True)
+                journals_box.append(empty)
+            journals_previous.set_sensitive(
+                page_offset >= PAGE_SIZE
+            )
+            journals_next.set_sensitive(
+                next_page_offset(current_page, current_offset=page_offset) is not None
+            )
+            journals_copy.set_sensitive(bool(selected_event_ids))
+
+        def load_events(*_args) -> None:
+            nonlocal page_generation, current_page
+            page_generation += 1
+            generation = page_generation
+            selected_event_ids.clear()
+            # Invalidate the previous snapshot immediately, including when
+            # a local search change happens while the new query is pending.
+            current_page = {
+                "events": [], "sources": [], "total": 0,
+                "offset": page_offset, "next_offset": None,
+            }
+            display_events()
+            journals_summary.set_text("Actualisation en cours…")
+            journals_previous.set_sensitive(False)
+            journals_next.set_sensitive(False)
+
+            # GTK widgets may only be accessed on the UI thread.
+            query = {
+                "source": SOURCES[int(source_selector.get_selected())],
+                "module": module_filter.get_text(),
+                "severity": SEVERITIES[int(severity_selector.get_selected())],
+                "period": PERIODS[int(period_selector.get_selected())],
+                "offset": page_offset,
+            }
+
+            def read_snapshot(_control):
+                return fetch_explorer_page(broker, **query)
+
+            try:
+                handle = self.tasks.submit(
+                    read_snapshot, label="Consultation des journaux",
+                    kind="diagnostics",
+                )
+            except Exception as exc:
+                # A failed refresh must not leave an earlier page visible as
+                # though it were the result of the current filters.
+                current_page = {
+                    "events": [], "sources": [], "total": 0,
+                    "offset": page_offset, "next_offset": None,
+                }
+                display_events()
+                journals_summary.set_text(
+                    f"Source indisponible : {type(exc).__name__}"
+                )
+                return
+            self._event_handle = handle
+
+            def apply_result(token, data, error) -> bool:
+                nonlocal current_page
+                if token != page_generation:
+                    return False  # stale asynchronous result
+                if error is not None or not isinstance(data, Mapping):
+                    current_page = {
+                        "events": [], "sources": [], "total": 0,
+                        "offset": page_offset, "next_offset": None,
+                    }
+                    display_events()
+                    journals_summary.set_text(
+                        "Données indisponibles — vérification du broker requise"
+                    )
+                    return False
+                current_page = dict(data)
+                display_events()
+                return False
+
+            def done(done_handle) -> None:
+                from gi.repository import GLib
+                try:
+                    snapshot = done_handle.result()
+                except Exception as exc:
+                    GLib.idle_add(apply_result, generation, None, type(exc).__name__)
+                else:
+                    GLib.idle_add(apply_result, generation, snapshot, None)
+
+            handle.add_done_callback(done)
+
+        def reset_events(*_args) -> None:
+            nonlocal page_offset
+            page_offset = 0
+            load_events()
+
+        def previous_events(_button) -> None:
+            nonlocal page_offset
+            page_offset = max(0, page_offset - PAGE_SIZE)
+            load_events()
+
+        def next_events(_button) -> None:
+            nonlocal page_offset
+            next_offset = next_page_offset(current_page, current_offset=page_offset)
+            if next_offset is None:
+                return
+            page_offset = next_offset
+            load_events()
+
+        def copy_selected(_button) -> None:
+            rows = sanitized_rows(
+                current_page, search=search_filter.get_text().strip(),
+                newest_first=sort_latest.get_active(),
+            )
+            visible_ids = selectable_event_ids(rows)
+            selected = selected_event_ids.intersection(visible_ids)
+            if not selected:
+                host.toast("Sélectionner un événement visible")
+                return
+            display = Gdk.Display.get_default()
+            if display is None:
+                host.toast("Presse-papiers indisponible")
+                return
+            try:
+                exported = export_selected_events(rows, selected)
+            except ValueError:
+                host.toast("Export trop volumineux : réduire la sélection")
+                return
+            display.get_clipboard().set(exported)
+            host.toast("Sélection expurgée copiée")
+
+        journals_refresh.connect("clicked", reset_events)
+        journals_previous.connect("clicked", previous_events)
+        journals_next.connect("clicked", next_events)
+        journals_copy.connect("clicked", copy_selected)
+        source_selector.connect("notify::selected", reset_events)
+        severity_selector.connect("notify::selected", reset_events)
+        period_selector.connect("notify::selected", reset_events)
+        module_filter.connect("activate", reset_events)
+        search_filter.connect("changed", lambda *_: display_events())
+        sort_latest.connect("toggled", lambda *_: display_events())
+        journals_copy.set_sensitive(False)
+        journals_previous.set_sensitive(False)
+        journals_next.set_sensitive(False)
+
+        ai_preview = None
+        ai_result = ""
+        ai_json = ""
+        ai_generation = 0
+
+        def invalidate_ai(*_args):
+            nonlocal ai_preview, ai_result, ai_json, ai_generation
+            ai_generation += 1
+            ai_preview = None
+            ai_result = ""
+            ai_json = ""
+            if self._ai_handle is not None and not self._ai_handle.done():
+                self._ai_handle.cancel()
+            ai_prepare.set_sensitive(True)
+            ai_send.set_sensitive(False)
+            ai_export.set_sensitive(False)
+            ai_export_json.set_sensitive(False)
+            ai_input.get_buffer().set_text("")
+            ai_report.get_buffer().set_text("")
+            ai_status.set_text("Aperçu à actualiser avant toute nouvelle analyse")
+
+        def prepare_ai(_button):
+            nonlocal ai_generation, ai_preview, ai_result, ai_json
+            if self.llm is None:
+                ai_status.set_text("Service IA désactivé : aucun envoi.")
+                return
+            try:
+                destination = llm_destination(self.llm)
+                selected_source = SOURCES[int(source_selector.get_selected())]
+                selected_period = PERIODS[int(period_selector.get_selected())]
+                selected_module = module_filter.get_text().strip()
+                selected_severity = SEVERITIES[int(severity_selector.get_selected())]
+                selected_snapshot = ai_snapshot.get_active()
+                selected_support_report = ai_support_report.get_active()
+            except (ValueError, TypeError, IndexError) as exc:
+                ai_status.set_text("Destination IA indisponible : " + type(exc).__name__)
+                return
+            ai_generation += 1
+            token = ai_generation
+            ai_preview = None
+            ai_result = ""
+            ai_json = ""
+            ai_input.get_buffer().set_text("")
+            ai_report.get_buffer().set_text("")
+            ai_send.set_sensitive(False)
+            ai_export.set_sensitive(False)
+            ai_export_json.set_sensitive(False)
+            ai_status.set_text("Préparation locale de l’aperçu expurgé…")
+
+            def worker(_control):
+                from diagnostics_explorer import explorer_since
+                return prepare_analysis(
+                    self.llm, broker, source=selected_source,
+                    module=selected_module, severity=selected_severity,
+                    since=explorer_since(selected_period),
+                    include_snapshot=selected_snapshot,
+                    include_support_report=selected_support_report,
+                )
+
+            try:
+                handle = self.tasks.submit(
+                    worker, label="Aperçu local Diagnostics IA", kind="diagnostics",
+                )
+            except Exception:
+                ai_status.set_text("Aperçu IA indisponible : tâche non démarrée")
+                ai_send.set_sensitive(False)
+                ai_export.set_sensitive(False)
+                ai_export_json.set_sensitive(False)
+                return
+            self._ai_handle = handle
+
+            def completed(done_handle):
+                from gi.repository import GLib
+                try:
+                    result = done_handle.result()
+                except Exception as exc:
+                    GLib.idle_add(finish_preview, token, None, type(exc).__name__)
+                else:
+                    GLib.idle_add(finish_preview, token, result, None)
+
+            handle.add_done_callback(completed)
+
+        def finish_preview(token, preview, error):
+            nonlocal ai_preview
+            if token != ai_generation:
+                return False
+            if error is not None or not isinstance(preview, Mapping):
+                ai_status.set_text("Aperçu IA indisponible : aucune donnée transmise")
+                ai_send.set_sensitive(False)
+                return False
+            dest = preview["destination"]
+            scope = preview["scope"]
+            locality = (
+                "DISTANT — aucun envoi avant autorisation"
+                if dest["remote"] else "LOCAL — aucun appel avant autorisation"
+            )
+            source_states = preview.get("source_states") or ()
+            source_warnings = [
+                str(row.get("source", "inconnue")) + " : " +
+                str(row.get("status", "unavailable")) +
+                (" (" + str(row["reason"]) + ")" if row.get("reason") else "")
+                for row in source_states if row.get("status") in (
+                    "partial", "disabled", "unavailable",
+                )
+            ]
+            coverage_warning = (
+                "Attention : échantillon incomplet (budget/limite des sources). "
+                if preview.get("sample_truncated") else ""
+            )
+            if source_warnings:
+                coverage_warning += "Sources limitées : " + "; ".join(source_warnings) + ". "
+            ai_status.set_text(
+                f"{locality} · {dest['provider']} · modèle {dest['model']} · "
+                f"hôte {dest['host']} · {preview['count']} événements, "
+                f"{preview['structured_count']} diagnostics structurés, "
+                f"{preview['support_fields']} rubriques support · "
+                f"{preview['bytes']} octets UTF-8. "
+                f"Périmètre demandé : {scope['source']} · "
+                f"{scope['module'] or 'tous modules'} · "
+                f"{scope['severity'] or 'tous niveaux'} · "
+                f"depuis {scope['since'] or 'tout historique'} · "
+                f"diagnostics structurés : {'oui' if scope['include_snapshot'] else 'non'} · "
+                f"rapport support : {'oui' if scope['include_support_report'] else 'non'}. "
+                + coverage_warning
+                + "Le modèle produit des hypothèses, jamais une preuve."
+            )
+            ai_input.get_buffer().set_text(preview["prompt"])
+            ai_expander.set_expanded(True)
+            ai_preview = preview
+            ai_send.set_sensitive(True)
+            return False
+
+        def send_ai(_button):
+            nonlocal ai_preview, ai_generation
+            if ai_preview is None:
+                return
+            selected = ai_preview
+            ai_preview = None  # single-use consent per request
+            ai_send.set_sensitive(False)
+            ai_prepare.set_sensitive(False)
+            ai_status.set_text("Analyse IA en cours (requête autorisée)…")
+            token = ai_generation
+            try:
+                handle = self.tasks.submit(
+                    lambda control: analyze_with_consent(
+                        self.llm, selected, approval_id=selected["approval_id"],
+                        control=control,
+                    ),
+                    label="Analyse Diagnostics IA explicite", kind="diagnostics",
+                )
+            except Exception:
+                ai_prepare.set_sensitive(True)
+                ai_send.set_sensitive(False)
+                ai_export.set_sensitive(False)
+                ai_status.set_text("Analyse IA indisponible : planification impossible")
+                ai_export_json.set_sensitive(False)
+                return
+            self._ai_handle = handle
+
+            def completed(done_handle):
+                from gi.repository import GLib
+                try:
+                    result = done_handle.result()
+                except Exception as exc:
+                    GLib.idle_add(finish_ai, token, None, type(exc).__name__)
+                else:
+                    GLib.idle_add(finish_ai, token, result, None)
+
+            self._ai_handle.add_done_callback(completed)
+
+        def finish_ai(token, result, error):
+            nonlocal ai_result, ai_json
+            if token != ai_generation:
+                return False
+            ai_prepare.set_sensitive(True)
+            if error or not isinstance(result, Mapping) or not result.get("ok"):
+                ai_status.set_text("Analyse IA indisponible ou annulée ; aucun diagnostic confirmé")
+                return False
+            cited = result.get("references_matched") or ()
+            unknown_refs = result.get("references_unknown") or ()
+            ambiguous_refs = result.get("references_ambiguous") or ()
+            citations = (
+                "\n".join(
+                    f"- {row['event_id']} · {row['timestamp']} · {row['source']}"
+                    for row in cited
+                )
+                if cited else "Aucun événement de l’extrait n’a été cité par identifiant."
+            )
+            unsupported = (
+                "\nRéférences non retrouvées : " + ", ".join(unknown_refs)
+                if unknown_refs else ""
+            )
+            ambiguity = (
+                "\nRéférences ambiguës (ID dupliqué, source non attribuable) : "
+                + ", ".join(ambiguous_refs)
+                if ambiguous_refs else ""
+            )
+            ai_result = (
+                "# Analyse générée par IA — hypothèses NON vérifiées\n"
+                + f"Destination annoncée : {result['provider']} / {result['model']}\n"
+                + f"Provenance : {result['evidence_count']} événements Core et "
+                  f"{result['structured_count']} diagnostics structurés et "
+                  f"{result['support_fields']} rubriques support expurgées\n"
+                + f"Limites : {result['limitations']}\n\n"
+                + "## Analyse du modèle (inférée)\n"
+                + result["text"]
+                + "\n\n## Références d’événements présentes dans l’extrait\n"
+                + citations + unsupported + ambiguity
+                + "\nLa correspondance d’un identifiant ne prouve PAS "
+                  "la véracité de l’affirmation associée.\n"
+            )
+            ai_report.get_buffer().set_text(ai_result)
+            ai_export.set_sensitive(True)
+            try:
+                ai_json = export_analysis_json(result)
+            except (ValueError, TypeError):
+                ai_json = ""
+            ai_export_json.set_sensitive(bool(ai_json))
+            ai_status.set_text("Analyse IA générée ; vérifier toutes les références avant décision.")
+            return False
+
+        def cancel_ai(_button):
+            invalidate_ai()
+            ai_prepare.set_sensitive(True)
+            handle = self._ai_handle
+            if handle is not None and not handle.done():
+                handle.cancel()
+            ai_status.set_text("Analyse annulée côté interface (requête distante éventuellement déjà envoyée)")
+
+        def copy_ai(_button):
+            if not ai_result:
+                return
+            display = Gdk.Display.get_default()
+            if display is not None:
+                display.get_clipboard().set(ai_result)
+                host.toast("Analyse IA expurgée copiée (hypothèses non vérifiées)")
+
+        def copy_ai_json(_button):
+            if not ai_json:
+                return
+            display = Gdk.Display.get_default()
+            if display is not None:
+                display.get_clipboard().set(ai_json)
+                host.toast("Rapport IA JSON expurgé copié (inférences non vérifiées)")
+
+        ai_prepare.connect("clicked", prepare_ai)
+        ai_send.connect("clicked", send_ai)
+        ai_cancel.connect("clicked", cancel_ai)
+        ai_export.connect("clicked", copy_ai)
+        ai_export_json.connect("clicked", copy_ai_json)
+        source_selector.connect("notify::selected", invalidate_ai)
+        severity_selector.connect("notify::selected", invalidate_ai)
+        period_selector.connect("notify::selected", invalidate_ai)
+        module_filter.connect("changed", invalidate_ai)
+        ai_snapshot.connect("toggled", invalidate_ai)
+        ai_support_report.connect("toggled", invalidate_ai)
 
         def render(*_args) -> None:
             clear_container(status_grid)
@@ -290,10 +1280,11 @@ class DiagnosticsPagePlugin:
                 title = Gtk.Label(label=str(row.get("message") or "Vérification"), xalign=0)
                 title.add_css_class("heading")
                 card.append(title)
-                detail = Gtk.Label(label=f"{status} · {_safe_text(row.get('detail'))}", xalign=0)
-                detail.set_wrap(True)
-                detail.set_selectable(True)
-                card.append(detail)
+                result_state = Gtk.Label(label=_safe_text(status), xalign=0)
+                result_state.set_selectable(True)
+                card.append(result_state)
+                if "detail" in row:
+                    add_detail_view(card, row["detail"])
                 check_box.append(card)
             host.toast("Vérification terminée")
             return False
@@ -340,19 +1331,39 @@ class DiagnosticsPagePlugin:
             except Exception as exc:
                 host.toast(f"Copie impossible : {type(exc).__name__}")
 
-        refresh.connect("clicked", render)
+        refresh.connect("clicked", lambda *_: (render(), reset_events()))
         check.connect("clicked", run_checks)
         copy.connect("clicked", copy_report)
-        _run_once_on_first_map(scroll, render)
+        def initial_load() -> None:
+            render()
+            load_events()
+
+        _run_once_on_first_map(scroll, initial_load)
         return scroll
 
     def deactivate(self):
+        for exporter in getattr(self, "_support_exports", ()):
+            exporter.close()
+        self._support_exports = []
         if self._check_handle is not None:
             try:
                 self._check_handle.cancel()
             except Exception:
                 pass
         self._check_handle = None
+        if getattr(self, "_event_handle", None) is not None:
+            try:
+                self._event_handle.cancel()
+            except Exception:
+                pass
+        self._event_handle = None
+        if getattr(self, "_ai_handle", None) is not None:
+            try:
+                self._ai_handle.cancel()
+            except Exception:
+                pass
+        self._ai_handle = None
+        self.llm = None
         self.tasks = None
         self.diagnostics = None
         self.context = None

@@ -28,14 +28,17 @@ Pour toute demande impliquant une vraie interface GTK, une capture, une
 démonstration ou une vidéo, ne pas commencer par recréer l'IHM. Lire dans cet
 ordre :
 
-1. `environnements/README.md` — arbre de décision de l'environnement ;
-2. `environnements/openai-chat-debian/README.md` si l'hôte est Debian 13 /
+1. **`environnements/E2E-UX.md` — guide canonique obligatoire : choix
+   de l'hôte, commandes de recette, niveaux de preuve, pièges rootless,
+   politique de coût et résolution des pannes ;**
+2. `environnements/README.md` — arbre de décision de l'environnement ;
+3. `environnements/openai-chat-debian/README.md` si l'hôte est Debian 13 /
    Python 3.13 ;
-3. `environnements/chatgpt-work/README.md` si l'hôte est Ubuntu 24.04 /
+4. `environnements/chatgpt-work/README.md` si l'hôte est Ubuntu 24.04 /
    Python 3.12 ;
-4. `simulation/README.md` et `simulation/datasetctl.py` pour les profils,
+5. `simulation/README.md` et `simulation/datasetctl.py` pour les profils,
    faux services, données et XDG isolés ;
-5. `e2e/README.md` pour les scénarios déjà automatisés.
+6. `e2e/README.md` pour les scénarios déjà automatisés.
 
 Le rôle UX doit préférer les outils versionnés existants à une recette ad hoc.
 
@@ -56,12 +59,26 @@ détecter l'hôte
   -> preuve + logs -> issue UX si défaut
 ```
 
-Sur Debian 13 réseau-isolé, si le bootstrap échoue seulement sur le DNS des
-miroirs Debian, utiliser GitHub comme relais plutôt que d'abandonner GTK :
-faire exécuter `bootstrap.py --download-only` dans `debian:trixie` sur un
-runner GitHub, publier le cache avec `actions/upload-artifact`, récupérer
-l'artefact via les outils GitHub de l'agent, puis exécuter le bootstrap local
-avec `--offline`. Le cache `.deb` reste un artefact et n'est pas versionné.
+**Décision du 11 octobre 2026 (actualisée) :** le propriétaire indique le
+passage du dépôt en public, le déblocage budgétaire et **autorise les tests
+E2E GTK sur runners GitHub standard**. Utiliser en premier le workflow
+`.github/workflows/e2e-smoke.yml`, sans ajouter un nouveau pipeline pour
+chaque scénario. Examiner les artefacts, les captures et le verdict des
+assertions avant d'annoncer un succès. Garder la frugalité des Actions.
+
+Pour une recette Debian 13 **locale et réseau-isolée**, conserver le bootstrap
+rootless avec `bootstrap.py --offline --deb-cache <chemin>`.
+GitHub peut y servir de **relais ponctuel de paquets** ; ne pas mélanger
+paquets Debian/Ubuntu. Les E2E sur runners standard constituent désormais
+un **mode de validation séparé**, qui n'installe rien localement.
+
+Sur le runtime local rootless, `e2e/run.py` écrase `PYTHONPATH`, mais
+`--python environnements/openai-chat-debian/gtk-python` réapplique
+`env.sh` dans le sous-processus. Sur runners standard, employer le venv
+`--system-site-packages` préparé par `E2E Smoke`. Pour un parcours
+applicatif complet, employer `datasetctl exec` et la vraie IHM.
+Ne jamais assimiler le self-test GTK, un probe widget, une capture visuelle
+et une recette fonctionnelle de la fenêtre complète.
 
 Pour une vidéo, filmer le display Xvfb réel avec FFmpeg `x11grab`. Une vidéo
 reconstruite avec PIL, une maquette de l'interface, un terminal filmé ou le

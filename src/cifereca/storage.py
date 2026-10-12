@@ -1580,7 +1580,7 @@ class Storage:
     ) -> None:
         """Persist an explicit borrower grant; never infer Adobe ownership.
 
-        The grant is scoped to one Paris connection and linked borrower, and
+        The grant is scoped to one Paris connection and borrower account, and
         pins the identity's stable ADEPT profile reference. A later profile
         change invalidates the grant until an explicit reconfirmation.
         """
@@ -1590,8 +1590,8 @@ class Storage:
         profile = str(profile_id or "").strip()
         if not confirmed:
             raise ValueError("explicit borrower/ADEPT confirmation required")
-        if not all((credential, borrower, owner, profile)) or borrower == "primary":
-            raise ValueError("linked Paris borrower and ADEPT identity/profile required")
+        if not all((credential, borrower, owner, profile)):
+            raise ValueError("Paris borrower and ADEPT identity/profile required")
         now = int(time.time())
         with self._lock, self._connect() as db:
             connection = db.execute(
@@ -1623,7 +1623,7 @@ class Storage:
     ) -> dict[str, Any] | None:
         credential = str(credential_id or "").strip()
         borrower = str(account_id or "").strip()
-        if not credential or not borrower or borrower == "primary":
+        if not credential or not borrower:
             return None
         with self._lock, self._connect() as db:
             row = db.execute(

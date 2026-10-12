@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from time import perf_counter
 import re
 from typing import Iterable, Mapping, Protocol, Sequence
@@ -133,6 +134,113 @@ def sanitize_collection_pipeline(value: object) -> dict[str, object]:
     if reasons:
         out["rejection_reasons"] = reasons
     return out
+
+
+def source_yield_diagnostic(row: Mapping[str, object]) -> dict[str, object]:
+    """Explain observed collection yield, never infer provider availability.
+
+    Input is a cache-only, per-identity source_diagnostics projection. Never
+    copy URLs, HTML, bibliographic metadata or identity IDs into the result.
+    """
+    state = str(row.get("collection_state") or "not_tested")
+    family = str(row.get("family") or "age")
+    pipeline = sanitize_collection_pipeline(row.get("pipeline"))
+    accepted = row.get("accepted")
+    rejected = row.get("rejected")
+    counts = {
+        key: pipeline[key] for key in (
+            "anchor_count", "product_link_count", "candidate_count",
+            "analyzed_count", "isbn_valid_count", "age_qualified_count",
+            "age_unknown_count", "returned_items", "effective_limit",
+            "html_bytes", "http_ms", "parse_ms", "total_ms",
+        ) if key in pipeline
+    }
+    for key, value in (("accepted", accepted), ("rejected", rejected),
+                       ("received_count", row.get("received_count")),
+                       ("request_count", row.get("request_count")),
+                       ("requested_limit", row.get("requested_limit"))):
+        if type(value) is int and 0 <= value <= 100_000:
+            counts[key] = value
+    reasons = dict(pipeline.get("rejection_reasons") or {})
+    explanation = "non_teste"
+    confidence = "unknown"
+    if family == "bibliography":
+        explanation = "bibliographie_sans_preuve_age"
+    elif state in {"http_error", "timeout", "error", "cancelled"}:
+        explanation = {
+            "http_error": "http_echec", "timeout": "delai_depasse",
+            "error": "transport_ou_source_echec", "cancelled": "annule",
+        }[state]
+        confidence = "observed"
+    elif state == "invalid" or reasons.get("unexpected_markup", 0):
+        explanation = "structure_invalide_ou_rejet"
+        confidence = "observed" if state == "invalid" else "inferred"
+    elif state == "items" and type(accepted) is int and accepted > 0:
+        explanation = "notices_qualifiees"
+        confidence = "observed"
+    elif state == "empty_unverified":
+        candidates = pipeline.get("candidate_count")
+        anchors = pipeline.get("anchor_count")
+        isbn = pipeline.get("isbn_valid_count")
+        ages = pipeline.get("age_qualified_count")
+        returned = pipeline.get("returned_items")
+        if type(candidates) is int and candidates > 0:
+            if isbn == 0:
+                explanation = "candidats_sans_isbn_atteste"
+            elif ages == 0:
+                explanation = "candidats_sans_age_atteste"
+            else:
+                explanation = "perte_apres_qualification_a_examiner"
+            confidence = "inferred"
+        elif candidates == 0 and type(anchors) is int and anchors > 0:
+            explanation = "ancres_sans_fiches_reconnues"
+            confidence = "inferred"
+        elif candidates == 0 and anchors == 0:
+            explanation = "aucune_ancre_ni_fiche_reconnue"
+            confidence = "inferred"
+        elif type(returned) is int and returned > 0:
+            explanation = "notices_exclues_apres_source"
+            confidence = "inferred"
+        else:
+            explanation = "vide_non_verifie"
+    return {
+        "cause": explanation, "confidence": confidence,
+        "counts": counts, "rejection_reasons": reasons,
+        "state": state if state in COLLECTION_STATES | {"not_tested"} else "unknown",
+        "family": family if family in {"age", "bibliography", "discovery"} else "unknown",
+        "query_mode": pipeline.get("query_mode", "unknown"),
+        "html_sha256_prefix": pipeline.get("html_sha256_prefix", ""),
+        "truncated_by_limit": pipeline.get("truncated_by_limit") is True,
+    }
+
+
+def youth_source_support_snapshot(rows: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    """Bounded, public-only export; no identity, HTML or URL values."""
+    records = []
+    for row in rows:
+        if len(records) >= 30:
+            break
+        if not isinstance(row, Mapping):
+            continue
+        raw_id = str(row.get("source_id") or "")
+        source = raw_id if re.fullmatch(r"[a-z0-9._-]{1,50}", raw_id) else "unknown"
+        records.append({
+            "source_id": source,
+            "plugin_state": str(row.get("plugin_state") or "unknown")[:35]
+                if str(row.get("plugin_state") or "unknown") in {
+                    "ready", "disabled", "not_installed", "incompatible", "degraded"
+                } else "unknown",
+            "enabled": row.get("enabled") is True,
+            "cache_count": min(100_000, max(0, int(row.get("cache_count") or 0)))
+                if type(row.get("cache_count")) is int else None,
+            **source_yield_diagnostic(row),
+        })
+    return {
+        "report": "jeunesse_sources_cache_only",
+        "scope": "sources_sans_identite",
+        "sources": records,
+        "limitations": "Etat cache local, sans vérification HTTP ni preuve d'âge déduite.",
+    }
 
 
 def _field(value: object, name: str, default: object = "") -> object:
@@ -390,6 +498,103 @@ class YouthBook:
     published_year: int | None = None
     cover_url: str = ""
     bibliography_sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryNoticeEvidence:
+    """A catalogue notice for this *edition*, not evidence of a copy or loan."""
+
+    source_provider: str
+    record_id: str
+    isbn13: str
+    notice_url: str
+    status: str = "catalogue_reference"
+    freshness: str = "unknown"
+
+
+def _attested_public_notice_url(raw: object) -> str:
+    """Only public, canonical HTTPS links without user/session parameters."""
+    if not isinstance(raw, str) or len(raw) > 2048 or not raw.strip():
+        return ""
+    # Reject URL grammar ambiguities before presenting an attested public link.
+    if (any(ord(ch) < 33 or ord(ch) == 127 for ch in raw)
+            or any(ch in raw for ch in '<>\\?#')):
+        return ""
+    try:
+        parts = urlsplit(raw)
+        host = parts.hostname
+        port = parts.port
+        if (parts.scheme.lower() != "https" or not host
+                or parts.username is not None or parts.password is not None
+                or parts.query or parts.fragment or port not in (None, 443)
+                or "%" in host):
+            return ""
+        host = host.lower().rstrip(".")
+        if (not host or host == "localhost" or "." not in host
+                or host.endswith((".local", ".localhost", ".internal",
+                                   ".lan", ".home.arpa"))
+                or any(not label for label in host.split("."))):
+            return ""
+        try:
+            address = ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return ""
+        # Never surface a search page in place of an edition notice.
+        if not parts.path or parts.path == "/":
+            return ""
+        return urlunsplit(("https", host, parts.path, "", ""))
+    except (TypeError, ValueError):
+        return ""
+
+
+def attest_library_notices(
+    book: YouthBook,
+    results: Iterable[object],
+    *,
+    limit: int = 50,
+) -> tuple[LibraryNoticeEvidence, ...]:
+    """Project explicit, already-retrieved library rows into edition notices.
+
+    No HTTP, no cache mutation, and no title/author inference. The caller
+    selects the active identity and performs its explicit library search.
+    A row must carry a matching strong ISBN *and* a direct-notice assertion;
+    free-form provider text, stock labels and loan flags are never promoted.
+    """
+    if not isinstance(book, YouthBook):
+        return ()
+    identifiers = book.identifiers
+    isbn = normalize_isbn(identifiers.get("isbn")) if isinstance(identifiers, Mapping) else ""
+    if not isbn or type(limit) is not int or not 1 <= limit <= 100:
+        return ()
+    notices: list[LibraryNoticeEvidence] = []
+    seen: set[tuple[str, str]] = set()
+    for row_index, raw in enumerate(results):
+        if row_index >= 500 or len(notices) >= limit:
+            break
+        metadata = _field(raw, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            continue
+        candidate_isbn = normalize_isbn(metadata.get("isbn13") or metadata.get("isbn"))
+        if candidate_isbn != isbn or metadata.get("direct_notice_attested") is not True:
+            continue
+        source = _field(raw, "source_provider")
+        record = _field(raw, "record_id")
+        if (not isinstance(source, str)
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{1,127}", source)
+                or not isinstance(record, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", record)):
+            continue
+        url = _attested_public_notice_url(_field(raw, "friendly_url"))
+        if not url or (source, record) in seen:
+            continue
+        seen.add((source, record))
+        notices.append(LibraryNoticeEvidence(
+            source_provider=source, record_id=record, isbn13=isbn,
+            notice_url=url,
+        ))
+    return tuple(notices)
 
 
 @dataclass(frozen=True, slots=True)
@@ -745,8 +950,14 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_record(raw, source_id=sid))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Provider rows and exception text are untrusted. A raw error
+                # can contain signed URLs, credentials or private searches.
+                title = raw.get("title") if type(raw) is dict else object()
+                kind = ("title is required"
+                        if title is None or (type(title) is str and not title.strip())
+                        else "invalid record")
+                errors.append(f"item[{index}]: {kind}")
         # Reject an entirely malformed refresh atomically: never replace
         # the last usable cache with zero valid records and parsing failures.
         # A genuinely empty (error-free) page is still an authoritative result.
@@ -786,8 +997,10 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_bibliography_record(raw, source_id=sid, expected_isbn=expected))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Never include provider/bibliography exception payloads in a
+                # cache report, even when the library page does not display it.
+                errors.append(f"item[{index}]: invalid bibliography record")
         unique = {item.record_id or item.notice_url or repr(item): item for item in accepted}
         if len(unique) > 1:
             return BibliographyReport(identity, sid, expected, rejected=len(accepted), errors=("ambiguous bibliography result",))
@@ -1088,6 +1301,13 @@ class YouthCatalogIndex:
 
 
 class YouthCatalogPlugin:
+    @staticmethod
+    def attested_library_notices(
+        book: YouthBook, results: Iterable[object], *, limit: int = 50,
+    ) -> tuple[LibraryNoticeEvidence, ...]:
+        """Project only explicit, edition-matching library notice evidence."""
+        return attest_library_notices(book, results, limit=limit)
+
     def __init__(self) -> None:
         self.index = YouthCatalogIndex()
         self.context: object | None = None
@@ -1153,13 +1373,13 @@ class YouthCatalogPlugin:
     ) -> IngestReport:
         """Collect one chosen source and record its outcome for this identity.
 
-        Reading source_diagnostics() never calls search(). Error messages stay
-        in the legacy IngestReport, not the sanitized diagnostic projection.
+        Reading source_diagnostics() never calls search(). Error codes in
+        IngestReport are fixed, never raw provider text or source payloads.
         """
         try:
             info = validate_source_contract(source)
         except Exception as exc:
-            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
+            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=("invalid source contract",))
         bounded = max(1, min(int(limit), 500))
         started = perf_counter()
         stage = "search"
@@ -1220,7 +1440,7 @@ class YouthCatalogPlugin:
             )
             return IngestReport(
                 self.index.identity_key(identity_id), info.source_id,
-                rejected=1, errors=(f"search: {exc}",),
+                rejected=1, errors=("source search failed",),
             )
 
 PLUGIN = YouthCatalogPlugin()

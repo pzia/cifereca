@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -9,7 +10,7 @@ BOOK_WIDGETS = Path(__file__).resolve().parents[1] / "src/cifereca/gui/book_widg
 
 
 def _tree():
-    return ast.parse(MAIN.read_text(encoding="utf-8"))
+    return ast.parse(gui_source_text(MAIN))
 
 
 def _method(class_name: str, method_name: str) -> ast.FunctionDef:
@@ -23,7 +24,7 @@ def _function(name: str) -> ast.FunctionDef:
 
 
 def _book_widget_method(class_name: str, method_name: str) -> ast.FunctionDef:
-    tree = ast.parse(BOOK_WIDGETS.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(BOOK_WIDGETS))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
 

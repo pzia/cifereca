@@ -24,6 +24,19 @@ explicite, et une nouvelle preuve que le prêt est encore actif
 (`return_digital(loan, explicit_retry=True)`). Si une demande PNB a déjà été
 effectuée, elle doit être réconciliée avant tout retour Adobe.
 
+## Actions concurrentes ADEPT / PNB
+
+Les deux canaux de retour utilisent le **même verrou interprocessus par ID
+de prêt fournisseur**. Si une restitution ADEPT est en cours, une action PNB
+simultanée est rejetée (`loan_return_busy`) avant tout POST ; réciproquement,
+un retour PNB en cours empêche une nouvelle mutation ADEPT.
+
+Si le même ID de prêt apparaît sous plusieurs identités Paris dans les droits
+actifs ou acquisitions, la voie PNB refuse l'envoi
+(`loan_return_identity_conflict`) jusqu'à clarification du véritable
+emprunteur. Aucun profil ou compte n'est inféré de l'identité sélectionnée
+dans l'interface. Les refus ne modifient pas le checkpoint ni les livres.
+
 ## Sécurité des interruptions et reprises
 
 Les checkpoints sont conservés en SQLite et ne contiennent ni identifiant

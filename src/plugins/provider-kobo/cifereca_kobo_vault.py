@@ -186,7 +186,9 @@ class KoboVaultClient:
         ``scope`` is a Paris-side logical selector: ``catalog``, ``library`` or
         ``all``.  API v2.1 deliberately exposes catalog and library as separate
         resources, so the all mode merges by ``product_id`` and lets the library
-        projection win when both endpoints return the same title.
+        projection win for ownership/account facts, while preserving non-empty
+        public catalogue bibliographic details absent from the account row.
+        No ownership/download state is inferred from catalogue data.
         """
         scope = str(scope or "all").lower()
         self.last_search_merge_rejections = []
@@ -226,7 +228,29 @@ class KoboVaultClient:
                     continue
                 if key not in merged:
                     order.append(key)
-                merged[key] = dict(raw)
+                if source == "library" and key in merged:
+                    # Account records are authoritative for ownership/revision,
+                    # but can be a thin manifest without the catalogue synopsis
+                    # or bibliographic facets. An empty library field must not
+                    # erase evidence already supplied by the public catalogue.
+                    catalog_row = merged[key]
+                    combined = dict(catalog_row)
+                    combined.update(raw)
+                    bibliographic_fields = (
+                        "description", "summary", "synopsis", "subjects", "subject",
+                        "genres", "categories", "tags", "keywords", "series",
+                        "awards", "prizes", "authors", "author", "publisher",
+                        "publication_date", "published_at", "language", "languages",
+                        "cover_url", "thumbnail_url", "image", "images",
+                        "product_url",
+                    )
+                    for name in bibliographic_fields:
+                        if (name in catalog_row and catalog_row[name] not in (None, "", (), [], {})
+                                and raw.get(name) in (None, "", (), [], {})):
+                            combined[name] = catalog_row[name]
+                    merged[key] = combined
+                else:
+                    merged[key] = dict(raw)
         return {
             "items": [merged[key] for key in order],
             "catalog": catalog,

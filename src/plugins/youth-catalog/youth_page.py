@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+import ipaddress
 import re
 from time import perf_counter
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from cifereca.plugin_api import (
     BookRef,
@@ -20,7 +21,8 @@ from cifereca.plugin_api import (
 )
 from youth_catalog import (InvalidYouthSourcePage, _extract_page,
                            collection_failure_diagnostic, normalize_isbn,
-                           safe_ingest_rejection_categories)
+                           safe_ingest_rejection_categories,
+                           source_yield_diagnostic, youth_source_support_snapshot)
 
 
 KIND_LABELS = {
@@ -46,16 +48,53 @@ def _fold(value: object) -> str:
 
 
 def public_url(value: object) -> str:
-    raw = _text(value)
-    if not raw:
+    """Public notice/cover URL only; never render a local or signed link.
+
+    This is a display boundary, not proof that a library holds an edition.
+    """
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        return ""
+    if any(ord(ch) < 33 or ord(ch) == 127 for ch in value):
+        return ""
+    if any(ch in value for ch in '<>\\'):
         return ""
     try:
-        parts = urlsplit(raw)
+        parts = urlsplit(value)
+        host = parts.hostname
+        port = parts.port
     except ValueError:
         return ""
-    if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
+    if (parts.scheme not in {"http", "https"} or not host
+            or parts.username is not None or parts.password is not None
+            or parts.fragment or "%" in host):
         return ""
-    return raw
+    if port not in (None, 443 if parts.scheme == "https" else 80):
+        return ""
+    hostname = host.rstrip(".").casefold()
+    if (hostname in {"localhost", "local", "internal"}
+            or hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa"))):
+        return ""
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            return ""
+    parameters = parse_qsl(parts.query, keep_blank_values=True)
+    if len(parameters) > 32:
+        return ""
+    for key, val in parameters:
+        field = re.sub(r"[^a-z0-9]", "", key.casefold())
+        if any(word in field for word in (
+                "token", "secret", "password", "session", "auth",
+                "signature", "apikey", "accesskey", "credential",
+                "jwt", "csrf", "signed", "policy", "expires",
+        )) or field.startswith(("xamz", "xgoog")):
+            return ""
+        if "@" in val or re.search(r"\bbearer\s", val, re.I):
+            return ""
+    return value
 
 
 def age_text(age_range: object) -> str:
@@ -235,7 +274,9 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
             metadata_fields.append(DetailField(
                 f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
             ))
-    link = public_url(getattr(book, "friendly_url", "") or getattr(book, "notice_url", ""))
+    # An unsafe friendly link must not hide an independently safe notice URL.
+    link = (public_url(getattr(book, "friendly_url", ""))
+            or public_url(getattr(book, "notice_url", "")))
     links = (DocumentLink("notice", "Voir la notice publique", link),) if link else ()
     sections = [DetailSection("ages", "Âges attestés", age_fields)]
     if metadata_fields:
@@ -530,6 +571,14 @@ def source_diagnostic_presentation(rows):
                     labels.append(f"{reasons['other']} autres")
                 if labels:
                     line += " (" + ", ".join(labels) + ")"
+        diagnostic = source_yield_diagnostic(row)
+        cause = diagnostic["cause"]
+        if cause != "not_teste":
+            line += " · rendement : " + str(cause).replace("_", " ")
+            if diagnostic["confidence"] == "inferred":
+                line += " (hypothèse, à vérifier)"
+        if diagnostic["truncated_by_limit"]:
+            line += " · collecte partielle (limite de source)"
         lines.append(line)
     return headline, tuple(lines)
 
@@ -654,6 +703,16 @@ class YouthView:
         self.widget.append(actions)
         self._action_buttons = {}
         actions.append(self.button("Collecter cette source", self.collect))
+        # Keep the four legacy single-source actions in _action_buttons:
+        # E2E and public affordance tests depend on that stable registry.
+        self.federated_button = Gtk.Button(
+            label="Rechercher dans toutes les sources Jeunesse",
+        )
+        self.federated_button.set_tooltip_text(
+            "Réseau seulement au clic : 8 sources au plus, 2 connexions, 2 pages de 50 notices."
+        )
+        self.federated_button.connect("clicked", lambda *_: self.collect_federated())
+        actions.append(self.federated_button)
         actions.append(self.button("Plus de résultats", self.more))
         actions.append(self.button("Enrichir la bibliographie", self.enrich_bibliography))
         actions.append(self.button("Ouvrir la fiche Bibliothèque", self.open_selected))
@@ -662,6 +721,11 @@ class YouthView:
             wrap=True, xalign=0,
         )
         self.widget.append(self.actions_hint)
+        self.federated_status = Gtk.Label(
+            label="Recherche fédérée non lancée. Aucune requête automatique.",
+            wrap=True, xalign=0,
+        )
+        self.widget.append(self.federated_status)
 
         # Only local state and the public plugin-inventory broker are read.
         # Collapse by default to preserve the original 1024px reading viewport.
@@ -669,8 +733,14 @@ class YouthView:
         self.diagnostic_expander.set_tooltip_text(
             "Par profil : état des plugins, dernier essai et cache. Aucune collecte automatique."
         )
+        diagnostic_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self.diagnostic_copy = Gtk.Button(label="Copier le diagnostic des sources (expurgé)")
+        self.diagnostic_copy.set_tooltip_text("Copie seulement des compteurs et causes sûres depuis le cache, sans réseau")
+        self.diagnostic_copy.connect("clicked", self.copy_source_diagnostics)
+        diagnostic_container.append(self.diagnostic_copy)
         self.diagnostic_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.diagnostic_expander.set_child(self.diagnostic_rows_box)
+        diagnostic_container.append(self.diagnostic_rows_box)
+        self.diagnostic_expander.set_child(diagnostic_container)
         self.widget.append(self.diagnostic_expander)
 
         self.master = host.build_book_master_detail(
@@ -743,6 +813,25 @@ class YouthView:
             enabled, reason = states[label]
             button.set_sensitive(enabled)
             button.set_tooltip_text(reason)
+        federated_button = getattr(self, "federated_button", None)
+        if federated_button is not None:
+            # Check only static capabilities; importing the new optional
+            # coordinator or making HTTP calls during render is forbidden.
+            eligible = any(
+                getattr(row, "enabled", True) is not False
+                and getattr(getattr(row, "service", row), "enabled", True) is not False
+                and any(callable(getattr(getattr(row, "service", row), method, None))
+                        for method in ("browse", "search", "browse_with_cancellation"))
+                for row in getattr(self, "sources", ())
+            )
+            enabled = bool(identity and not busy and eligible)
+            federated_button.set_sensitive(enabled)
+            federated_button.set_tooltip_text(
+                "Réseau uniquement au clic : 8 sources max, 2 connexions simultanées, "
+                "2 pages de 50 notices par source."
+                if enabled else
+                "Sélectionnez un profil avec des sources Jeunesse actives et compatibles."
+            )
         hint = getattr(self, "actions_hint", None)
         if hint is not None:
             hint.set_label(
@@ -781,6 +870,25 @@ class YouthView:
         for line in lines:
             container.append(self.Gtk.Label(label=line, wrap=True, xalign=0))
         return False
+
+    def copy_source_diagnostics(self, _button):
+        """Explicit, cache-only, cross-source export without identity or ISBN."""
+        import json
+        from gi.repository import Gdk
+        try:
+            broker = self.plugin.context.broker("diagnostics")
+            inventory_fn = getattr(broker, "inventory", None)
+            inventory = tuple(inventory_fn()) if callable(inventory_fn) else ()
+            rows = self.catalog.source_diagnostics(self.identity_id(), inventory=inventory)
+            safe = youth_source_support_snapshot(rows)
+            display = Gdk.Display.get_default()
+            if display is None:
+                self.status.set_label("Presse-papiers indisponible ; aucune collecte déclenchée.")
+                return
+            display.get_clipboard().set(json.dumps(safe, ensure_ascii=False, indent=2))
+            self.status.set_label("Diagnostic Jeunesse expurgé copié (cache local uniquement).")
+        except Exception:
+            self.status.set_label("Copie du diagnostic indisponible ; cache conservé.")
 
     def _identity_rows(self):
         broker = self.plugin.context.broker("identities")
@@ -955,27 +1063,48 @@ class YouthView:
         presentation = detail_presentation(self.selected_book)
         title = _text(getattr(self.selected_book, "title", ""))
         search = getattr(self.host, "search_books", None)
-        if callable(search) and 2 <= len(title) <= 512:
+        if callable(search):
             identity_id = self.identity_id()
-            presentation = replace(presentation, actions=(
-                *presentation.actions,
-                UiBookDetailAction(
+            actions = list(presentation.actions)
+            if 2 <= len(title) <= 512:
+                actions.append(UiBookDetailAction(
                     id="search-library",
                     title="Rechercher en bibliothèque",
                     icon_name="system-search-symbolic",
                     callback=lambda q=title, identity=identity_id: self._search_library(
-                        q, identity,
+                        q, identity, field="title",
                     ),
-                ),
-            ))
+                ))
+            # ISBN is a bibliographic *lookup* only. It does not establish
+            # inventory, ownership, availability or a direct notice link.
+            identifiers = getattr(self.selected_book, "identifiers", {})
+            getter = getattr(identifiers, "get", None)
+            raw_isbn = getter("isbn", "") if callable(getter) else ""
+            # The public host bridge can reuse this method without importing
+            # the whole Youth module. No normalization is needed when the
+            # selected row provides no ISBN mapping.
+            isbn = normalize_isbn(raw_isbn) if raw_isbn else ""
+            if isbn:
+                actions.append(UiBookDetailAction(
+                    id="search-library-isbn",
+                    title="Rechercher cette édition par ISBN",
+                    icon_name="system-search-symbolic",
+                    callback=lambda q=isbn, identity=identity_id: self._search_library(
+                        q, identity, field="isbn",
+                    ),
+                ))
+            if actions:
+                presentation = replace(presentation, actions=tuple(actions))
         self.master.show_detail(presentation)
         refresh_actions()
 
-    def _search_library(self, query: str, identity_id: str) -> None:
-        """Local catalogue only. Reject cross-identity navigation explicitly."""
+    def _search_library(self, query: str, identity_id: str, *, field: str = "title") -> None:
+        """Explicit local search; no proof of holdings or automatic network I/O."""
+        if field not in {"title", "isbn"}:
+            return
         method = getattr(self.host, "search_books", None)
         if not callable(method) or not method(
-            query, field="title", online=False, identity_id=identity_id,
+            query, field=field, online=False, identity_id=identity_id,
         ):
             self.host.toast("Recherche impossible : vérifiez le profil sélectionné.")
 
@@ -1110,6 +1239,11 @@ class YouthView:
 
     def collect(self):
         self._remote_request("")
+
+    def collect_federated(self):
+        """Click-only network federation. No network on typing/filtering."""
+        from youth_federation_ui import run_federated_action
+        run_federated_action(self)
 
     def more(self):
         if not self.next_cursor or self.next_source_plugin != self.selected_source_plugin():
@@ -1253,6 +1387,29 @@ class YouthView:
                 stage="ingest",
                 duration_ms=duration_ms, next_cursor_present=bool(cursor),
             )
+        # Emit a fixed-shape technical event only after this user-triggered
+        # collection; never log the query, user identity, title, URL or HTML.
+        plugin_context = getattr(getattr(self, "plugin", None), "context", None)
+        diagnostic_report = getattr(plugin_context, "report_diagnostic", None)
+        if callable(diagnostic_report):
+            from youth_catalog import sanitize_collection_pipeline
+            state = "items" if report.accepted else "invalid" if report.rejected else "empty_unverified"
+            try:
+                diagnostic_report(
+                    "Jeunesse source collection outcome",
+                    "ok" if report.accepted else "warning",
+                    detail={
+                        "state": state,
+                        "accepted": min(100000, max(0, report.accepted)),
+                        "rejected": min(100000, max(0, report.rejected)),
+                        "pipeline": sanitize_collection_pipeline(
+                            raw.get("collection_pipeline") if isinstance(raw, Mapping) else None
+                        ),
+                    },
+                    level="normal",
+                )
+            except Exception:
+                pass  # A diagnostic event must never break ingestion.
         self.next_cursor = cursor
         self.next_source_plugin = str(source_plugin) if cursor else ""
         message = f"{report.accepted} notice(s) reçue(s) de {label or source_id}"
