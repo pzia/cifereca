@@ -5,10 +5,12 @@ from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 from time import perf_counter
 import re
+import unicodedata
 from typing import Iterable, Mapping, Protocol, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from cifereca.plugin_api.youth_ages import youth_age_from_label
+from cifereca.plugin_api import description_text
 
 _WS = re.compile(r"\s+")
 _ISBN_CLEAN = re.compile(r"[^0-9Xx]")
@@ -516,6 +518,9 @@ class YouthBook:
     bibliography_sources: tuple[str, ...] = ()
     collection: str = ""
     description: str = ""
+    series: tuple[str, ...] = ()
+    collections: tuple[str, ...] = ()
+    awards: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -717,6 +722,21 @@ def _publication_year(raw: object) -> int | None:
     return None
 
 
+def _attested_field(raw: object, *names: str) -> object:
+    # Only explicitly recognized public bibliographic keys, never a recursive
+    # walk through arbitrary metadata that might contain account/session data.
+    metadata = _field(raw, "metadata", {})
+    for name in names:
+        value = _field(raw, name, None)
+        if value not in (None, "", (), [], {}):
+            return value
+        if isinstance(metadata, Mapping):
+            value = metadata.get(name)
+            if value not in (None, "", (), [], {}):
+                return value
+    return ""
+
+
 def normalize_record(raw: object, *, source_id: str) -> YouthBook:
     title = _text(_field(raw, "title"))
     if not title:
@@ -760,7 +780,10 @@ def normalize_record(raw: object, *, source_id: str) -> YouthBook:
         published_year=_publication_year(raw),
         cover_url=_public_cover_url(_field(raw, "cover_url") or _field(raw, "thumbnail_url")),
         collection=_text(_field(raw, "collection"))[:200],
-        description=_text(_field(raw, "description") or _field(raw, "summary"))[:4000],
+        description=(description_text(_attested_field(raw, "description", "summary", "synopsis")) or "")[:4000],
+        series=_names(_attested_field(raw, "series", "series_name"))[:20],
+        collections=_names(_attested_field(raw, "collections", "collection"))[:20],
+        awards=_names(_attested_field(raw, "awards", "prizes", "literary_awards"))[:20],
     )
 
 
@@ -869,6 +892,9 @@ def _merge(left: YouthBook, right: YouthBook) -> YouthBook:
         cover_url=left.cover_url or right.cover_url,
         collection=left.collection or right.collection,
         description=left.description or right.description,
+        series=tuple(dict.fromkeys(left.series + right.series)),
+        collections=tuple(dict.fromkeys(left.collections + right.collections)),
+        awards=tuple(dict.fromkeys(left.awards + right.awards)),
         bibliography_sources=tuple(dict.fromkeys(
             left.bibliography_sources + right.bibliography_sources
         )),
@@ -938,6 +964,75 @@ def _extract_page(value: object) -> tuple[Iterable[object], str, int]:
     except TypeError as exc:
         raise InvalidYouthSourcePage("invalid source response") from exc
     return value, "", 0
+
+
+_SEARCH_STOPWORDS = frozenset({
+    "l", "d", "de", "du", "des", "la", "le", "les", "un", "une", "au", "aux",
+    "a", "et", "en", "sur", "dans", "par", "pour", "avec", "the", "of",
+})
+
+
+def _search_fold(value: object) -> str:
+    """Accent, punctuation and apostrophe insensitive matching, local only."""
+    text = unicodedata.normalize("NFKD", _text(value).casefold())
+    unaccented = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^\w]+", " ", unaccented, flags=re.UNICODE).strip()
+
+
+def _search_score(book: YouthBook, query: str) -> int:
+    """Strict meaningful tokens across attested fields; weighted, deterministic."""
+    if not isinstance(query, str) or not query.strip() or len(query) > 256:
+        return 0
+    phrases = [
+        _search_fold(match.group(1) or match.group(2))
+        for match in re.finditer(r'"([^"]{2,80})"|«([^»]{2,80})»', query)
+    ]
+    cleaned = _search_fold(query)
+    raw_tokens = tuple(dict.fromkeys(cleaned.split()))
+    tokens = tuple(token for token in raw_tokens if token not in _SEARCH_STOPWORDS) or raw_tokens
+    if not tokens or len(tokens) > 24:
+        return 0
+    fields = (
+        (book.title, 100),
+        *((value, 75) for value in book.authors[:12]),
+        *((value, 68) for value in book.series[:12]),
+        *((value, 65) for value in book.collections[:12]),
+        *((value, 63) for value in book.awards[:12]),
+        *((value, 60) for value in book.themes[:24]),
+        *((value, 45) for value in book.publishers[:12]),
+        (book.description[:4000], 24),
+        *((str(value), 35) for value in (
+            book.identifiers.get("isbn", ""),
+            book.identifiers.get("source_item_id", ""),
+            book.record_id,
+        )),
+        (book.book_type, 15),
+        (book.language, 15),
+        *((value, 12) for value in book.formats[:10]),
+        *((value, 10) for value in book.provenance[:10]),
+        (str(book.published_year or ""), 10),
+        *((row.source_label, 10) for row in book.age_ranges[:10]
+          if row.age_kind != "inferred"),
+    )
+    normalized = tuple((text, weight) for value, weight in fields
+                       if (text := _search_fold(value)))
+    if not normalized:
+        return 0
+    if phrases and any(not any(phrase in value for value, _ in normalized)
+                       for phrase in phrases):
+        return 0
+    score = 0
+    for token in tokens:
+        best = max((weight for value, weight in normalized
+                    if any(word.startswith(token) for word in value.split())), default=0)
+        if not best:
+            return 0
+        score += best
+    if cleaned and cleaned in _search_fold(book.title):
+        score += 150
+    elif phrases:
+        score += 30
+    return score
 
 
 class YouthCatalogIndex:
@@ -1291,12 +1386,13 @@ class YouthCatalogIndex:
         themes: Iterable[str] = (),
         include_inferred: bool = False,
     ) -> tuple[YouthBook, ...]:
-        q, source, lang, fmt, typ = _fold(query), _fold(source_id), _fold(language), _fold(format), _fold(book_type)
+        q, source, lang, fmt, typ = _text(query), _fold(source_id), _fold(language), _fold(format), _fold(book_type)
         kind = normalize_age_kind(age_kind) if age_kind else ""
         wanted_themes = {_fold(value) for value in themes if _fold(value)}
-        out: list[YouthBook] = []
-        for book in self.entries(identity_id):
-            if q and q not in " ".join((book.title, *book.authors, *book.themes)).casefold():
+        ranked: list[tuple[int, int, YouthBook]] = []
+        for position, book in enumerate(self.entries(identity_id)):
+            score = _search_score(book, q) if q else 0
+            if q and not score:
                 continue
             if source and source not in book.provenance:
                 continue
@@ -1318,8 +1414,10 @@ class YouthCatalogIndex:
                     continue
             elif kind and not any(rng.age_kind == kind for rng in book.age_ranges):
                 continue
-            out.append(book)
-        return tuple(out)
+            ranked.append((score, position, book))
+        if q:
+            ranked.sort(key=lambda hit: (-hit[0], hit[1]))
+        return tuple(book for _score, _position, book in ranked)
 
     def clear_identity(self, identity_id: str) -> None:
         identity = self.identity_key(identity_id)

@@ -51,6 +51,7 @@ from .settings_ai_section import build_ai_settings_section
 from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
+from .window_close import close_window_resources
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -508,52 +509,7 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _on_close_request(self, *_args) -> bool:
-        if self._closed:
-            return False
-        self._closed = True
-        for name in ("_settings_main_lifetime", "_settings_standalone_lifetime"):
-            lifetime = getattr(self, name, None)
-            if lifetime is not None:
-                lifetime.dispose()
-                setattr(self, name, None)
-        self._diag_refresh = None
-        try:
-            self.config.set("ui.width", self.get_width())
-            self.config.set("ui.height", self.get_height())
-            self.config.save()
-        except Exception:
-            pass
-        try:
-            if self._kobo_backup_timer_id is not None:
-                GLib.source_remove(self._kobo_backup_timer_id)
-                self._kobo_backup_timer_id = None
-        except Exception:
-            pass
-        try:
-            self._cancel_activity_hide()
-        except Exception:
-            pass
-        try:
-            self._cached_book_unsubscribe()
-        except Exception:
-            pass
-        try:
-            self.runner.close()
-        except Exception:
-            pass
-        try:
-            self.history_cover_resolver.close()
-        except Exception:
-            pass
-        try:
-            self.covers.close()
-        except Exception:
-            pass
-        try:
-            self.service.close()
-        except Exception:
-            pass
-        return False
+        return close_window_resources(self, source_remove=GLib.source_remove)
 
     # ---------- provider startup ----------
     def _build_startup(self) -> Gtk.Widget:
@@ -2861,6 +2817,8 @@ class MainWindow(Adw.ApplicationWindow):
         if self._library_refresh_pending and control is None:
             return
         self._library_refresh_pending = True
+        self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
+        request_generation = self._library_refresh_generation
         identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
         generation = self._identity_context_generation
         def work() -> list[dict[str, Any]]:
@@ -2868,12 +2826,18 @@ class MainWindow(Adw.ApplicationWindow):
                 self.service.catalog_scan(force_covers=True)
             return self.service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
         def ok(entries: list[dict[str, Any]]) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._library_refresh_generation):
+                return
             self._library_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_library(False)
                 return
             self._show_library_entries(entries)
         def err(exc: BaseException) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._library_refresh_generation):
+                return
             self._library_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_library(False)
@@ -3027,18 +2991,26 @@ class MainWindow(Adw.ApplicationWindow):
         if self._recent_refresh_pending and control is None:
             return
         self._recent_refresh_pending = True
+        self._recent_refresh_generation = getattr(self, "_recent_refresh_generation", 0) + 1
+        request_generation = self._recent_refresh_generation
         identity = self.service.current_identity
         identity_id = identity.identity_id if identity is not None else None
         generation = self._identity_context_generation
         def work() -> list[dict[str, Any]]:
             return self.service.recent_acquisitions(identity_id=identity_id)
         def ok(items: list[dict[str, Any]]) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._recent_refresh_generation):
+                return
             self._recent_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_recent()
                 return
             self._show_recent_entries(items)
         def err(exc: BaseException) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._recent_refresh_generation):
+                return
             self._recent_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_recent()
