@@ -43,6 +43,7 @@ def install_real_youth(core: CiferecaCore, work: Path, *, with_milan: bool = Fal
     ]
     if with_milan:
         packages.append(("youth-source-milan", ("cifereca-plugin.json", "milan_youth.py")))
+        packages.append(("youth-source-ecole-loisirs", ("cifereca-plugin.json", "ecole_loisirs_youth.py")))
     for name, files in packages:
         source = ROOT / "src/plugins" / name
         archive = work / f"{name}.zip"
@@ -53,7 +54,7 @@ def install_real_youth(core: CiferecaCore, work: Path, *, with_milan: bool = Fal
     statuses = {status.descriptor.id: status for status in core.plugins.statuses()}
     plugins = ("catalog.youth", "ui.page.youth")
     if with_milan:
-        plugins += ("youth.source.milan",)
+        plugins += ("youth.source.milan", "youth.source.ecole-loisirs")
     for plugin_id in plugins:
         assert statuses[plugin_id].state in {"ready", "degraded"}, (
             f"{plugin_id} not activated: {statuses[plugin_id]}"
@@ -112,7 +113,8 @@ def main() -> int:
     core = CiferecaCore.open(
         no_plugins=False,
         force_plugins=(
-            ("catalog.youth", "ui.page.youth", "youth.source.milan")
+            ("catalog.youth", "ui.page.youth", "youth.source.milan",
+             "youth.source.ecole-loisirs")
             if args.milan else ("catalog.youth", "ui.page.youth")
         ),
         activate_plugins=False,
@@ -129,6 +131,8 @@ def main() -> int:
     original_online_search = [None]
     online_attempts = []
     fault = {"unavailable": False}
+    ecole_calls = []
+    ecole_outage = [False]
     notice_sink_path = out / "local-https-handler.jsonl"
     if args.milan:
         # Exercise the real Gtk.LinkButton -> Gio HTTPS handler dispatch while
@@ -195,6 +199,41 @@ def main() -> int:
         milan.client.close()
         milan.client = httpx.Client(
             transport=httpx.MockTransport(milan_respond),
+            trust_env=False, follow_redirects=False,
+        )
+
+        ecole = core.plugins.service("youth.source.ecole-loisirs")
+        assert ecole is not None, "Real École des loisirs provider unavailable"
+        # Fully offline HTTP fixture. Only the real GTK Collecter click may
+        # reach this MockTransport; the source is actually installed/activated.
+        ecole_html = """
+        <html><body>
+          <div>3 à 6 ans</div>
+          <a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a>
+          <div>Sylvie Neeman</div><div>album</div>
+          <div>ISBN: 9782211348171</div>
+          <div>13 ans et +</div>
+          <a href="/livre/roman-ado">Roman du Loup</a>
+          <div>Alice Auteur</div><div>roman</div>
+          <div>ISBN: 9782211345613</div>
+        </body></html>
+        """
+
+        def ecole_respond(request):
+            assert request.url.scheme == "https" and request.url.host == "www.ecoledesloisirs.fr", request.url
+            assert request.url.path == "/recherche-avancee", request.url
+            assert request.url.params.get("search_api_views_fulltext") == "loup"
+            ecole_calls.append(request.url.path)  # Never persist user queries.
+            return httpx.Response(
+                503 if ecole_outage[0] else 200,
+                headers={"content-type": "text/html; charset=utf-8"},
+                text="Simulated outage" if ecole_outage[0] else ecole_html,
+                request=request,
+            )
+
+        ecole.client.close()
+        ecole.client = httpx.Client(
+            transport=httpx.MockTransport(ecole_respond),
             trust_env=False, follow_redirects=False,
         )
 
@@ -725,9 +764,10 @@ def main() -> int:
         })
 
     def milan_start_ui():
-        assert len(page.view.sources) == 1, "Installed Milan provider not listed"
-        assert page.view.sources[0].plugin_id == "youth.source.milan"
-        assert page.view.source.get_model().get_n_items() == 2
+        assert {row.plugin_id for row in page.view.sources} == {
+            "youth.source.milan", "youth.source.ecole-loisirs",
+        }, "Both real publisher providers must be installed"
+        assert page.view.source.get_model().get_n_items() == 3
         assert_rows()
         assert requests == [], "Opening Milan page triggered remote HTTP"
         audit_milan_action_states("empty-all-sources", {
@@ -737,7 +777,11 @@ def main() -> int:
             "Ouvrir la fiche Bibliothèque": False,
         })
         capture("00-milan-source-no-cache")
-        page.view.source.set_selected(1)
+        milan_index = next(
+            i + 1 for i, item in enumerate(page.view.sources)
+            if item.plugin_id == "youth.source.milan"
+        )
+        page.view.source.set_selected(milan_index)
         later(180, milan_collect)
 
     def milan_collect():
@@ -991,97 +1035,88 @@ def main() -> int:
             "alex_before_explicit_request": alex["milan"]["collection_state"],
         }
         capture("07-diagnostics-milan-camille")
-        # The real retained École des loisirs source parses an offline HTTP
-        # fixture through its public source contract. No live site or user
-        # credentials. The fixture is synthetic, and its query is deliberately
-        # absent from all Diagnostics UI and JSON summaries.
-        import httpx
-        sys.path.insert(0, str(ROOT / "src/plugins/youth-source-ecole-loisirs"))
-        from ecole_loisirs_youth import EcoleLoisirsYouthSource
-        html = """
-        <html><body>
-          <div>3 à 6 ans</div>
-          <a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a>
-          <div>Sylvie Neeman</div><div>album</div>
-          <div>ISBN: 9782211348171</div>
-          <div>13 ans et +</div>
-          <a href="/livre/roman-ado">Roman ado</a>
-          <div>Alice Auteur</div><div>roman</div>
-          <div>ISBN: 9782211345613</div>
-        </body></html>
-        """
-        ecole_calls = []
-        ecole_outage = [False]
+        # Until the real user clicks Collecter, the fully installed École
+        # source must remain not_tested and make no HTTP calls.
+        assert not ecole_calls, "École des loisirs was fetched on page load"
+        page.view.identity.set_selected(1)  # Alex, separate from Milan/Camille.
+        page.view.query.set_text("loup")
+        ecole_index = next(
+            i + 1 for i, item in enumerate(page.view.sources)
+            if item.plugin_id == "youth.source.ecole-loisirs"
+        )
+        page.view.source.set_selected(ecole_index)
+        later(220, youth_ecole_collect_click)
 
-        def response(request):
-            assert request.url.scheme == "https"
-            assert request.url.host == "www.ecoledesloisirs.fr"
-            assert request.url.path == "/recherche-avancee"
-            ecole_calls.append(request.url.path)
-            return httpx.Response(
-                503 if ecole_outage[0] else 200,
-                headers={"content-type": "text/html"},
-                text="Unavailable" if ecole_outage[0] else html,
-                request=request,
-            )
+    def youth_ecole_collect_click():
+        assert page.view.identity_id() == "alex"
+        assert page.view.selected_source_plugin() == "youth.source.ecole-loisirs"
+        assert not ecole_calls, "Selecting an identity/source must not trigger HTTP"
+        assert page.view._action_buttons["Collecter cette source"].get_sensitive()
+        assert diagnostic_for("alex")["ecole-loisirs"]["collection_state"] == "not_tested"
+        assert not page.view.rows, "Alex initially has no École cache"
+        device.click_widget(collect_button())  # REAL GTK/XTEST physical click.
+        later(170, youth_ecole_collected)
 
-        with httpx.Client(transport=httpx.MockTransport(response), trust_env=False) as client:
-            ecole = EcoleLoisirsYouthSource(client=client)
-            saved = catalog.collect_source("alex", ecole, "loup PRIVATE_QUERY_907", limit=5)
-            assert saved.accepted == 2 and saved.rejected == 0, saved
-            after_success = diagnostic_for("alex")
-            ecole_ok = after_success["ecole-loisirs"]
-            assert ecole_ok["collection_state"] == "items", ecole_ok
-            assert ecole_ok["request_count"] == 1, ecole_ok
-            assert ecole_ok["pipeline"].get("candidate_count") == 2, ecole_ok
-            assert ecole_ok["pipeline"].get("age_qualified_count") == 2, ecole_ok
-            assert ecole_ok["pipeline"].get("isbn_valid_count") == 2, ecole_ok
-            assert ecole_ok["cache_count"] == 2, ecole_ok
-            ecole_outage[0] = True
-            failed = catalog.collect_source("alex", ecole, "loup PRIVATE_QUERY_907", limit=5)
-            assert failed.accepted == 0 and failed.rejected == 1, failed
-        after_failure = diagnostic_for("alex")["ecole-loisirs"]
-        assert after_failure["collection_state"] == "http_error", after_failure
-        assert after_failure["http_status"] == 503, after_failure
-        assert after_failure["cache_count"] == 2, after_failure
-        assert after_failure["received_count"] is None, after_failure
-        assert len(ecole_calls) == 2, ecole_calls
-        camille = diagnostic_for("camille")
-        assert camille["ecole-loisirs"]["collection_state"] == "not_tested", camille
-        assert camille["milan"]["cache_count"] == 4 and camille["milan"]["collection_state"] == "items"
-        assert len(requests) == 22, "École mock must never affect the real Milan transport"
-        result["youth_diagnostics_907"]["ecole_alex"] = {
-            "success_http_requests": ecole_ok["request_count"],
-            "accepted": saved.accepted,
-            "candidates": ecole_ok["pipeline"].get("candidate_count"),
-            "qualified_ages": ecole_ok["pipeline"].get("age_qualified_count"),
-            "error_state": after_failure["collection_state"],
-            "http_error": after_failure["http_status"],
-            "retained_cache": after_failure["cache_count"],
-        }
-        page.view.source.set_selected(0)  # Both providers, cache-only.
-        page.view.identity.set_selected(1)  # Alex (École) instead of Camille (Milan).
-        later(240, youth_diagnostics_alex)
-
-    def youth_diagnostics_alex():
-        assert page.view.identity_id() == "alex", page.view.identity_id()
+    def youth_ecole_collected():
+        current = diagnostic_for("alex")["ecole-loisirs"]
+        if (current["collection_state"] != "items" or len(page.view.rows) != 2) and monotonic() - start < 47:
+            later(170, youth_ecole_collected)
+            return
+        assert current["collection_state"] == "items", current
+        assert current["cache_count"] == 2, current
         assert len(page.view.rows) == 2, page.view.rows
-        rendered = " ".join(diagnostic_labels())
-        assert "L'École des loisirs" in rendered and "erreur HTTP 503" in rendered, rendered
-        assert "conservé" in rendered and "cache : 2 notice(s)" in rendered, rendered
-        # The retained Milan provider is installed, but has NOT been tested
-        # for Alex. A ready source is not evidence of remote health.
-        assert "Éditions Milan" in rendered and "non testée" in rendered, rendered
-        assert "PRIVATE_QUERY_907" not in rendered, "Search query leaked to GTK Diagnostics"
-        assert len(requests) == 22
-        result["youth_diagnostics_907"]["alex_gtk"] = {
-            "rows": len(page.view.rows),
-            "http_error_visible": True,
-            "milan_not_tested": True,
+        assert len(ecole_calls) == 1, "One GTK click must equal exactly one GET"
+        assert current["request_count"] == 1, current
+        assert current["pipeline"].get("candidate_count") == 2, current
+        assert current["pipeline"].get("age_qualified_count") == 2, current
+        assert current["pipeline"].get("isbn_valid_count") == 2, current
+        assert "2 notice(s) reçue(s)" in page.view.status.get_text()
+        labels = " ".join(diagnostic_labels())
+        assert "L'École des loisirs" in labels and "collecte avec notices" in labels, labels
+        assert "loup" not in labels.lower(), "Query leaked into Diagnostics"
+        assert diagnostic_for("camille")["ecole-loisirs"]["collection_state"] == "not_tested"
+        assert diagnostic_for("alex")["milan"]["collection_state"] == "not_tested"
+        assert len(requests) == 22, "École collection must not contact Milan"
+        result["youth_diagnostics_907"]["ecole_alex"] = {
+            "gtk_xtest_click": True,
+            "http_calls": 1,
+            "accepted": 2,
+            "candidates": 2,
+            "qualified_ages": 2,
+            "error_state": None,
+            "retained_cache": None,
         }
-        capture("08-diagnostics-ecole-alex-http-error")
-        page.view.identity.set_selected(0)
-        later(240, youth_diagnostics_camille_restored)
+        capture("08-ecole-gtk-xtest-click-two-books")
+        ecole_outage[0] = True
+        device.click_widget(collect_button())
+        later(170, youth_ecole_http_error)
+
+    def youth_ecole_http_error():
+        current = diagnostic_for("alex")["ecole-loisirs"]
+        if current["collection_state"] != "http_error" and monotonic() - start < 50:
+            later(170, youth_ecole_http_error)
+            return
+        assert current["collection_state"] == "http_error", current
+        assert current["http_status"] == 503, current
+        assert current["received_count"] is None, current
+        assert current["cache_count"] == 2, current
+        assert len(page.view.rows) == 2, page.view.rows
+        assert len(ecole_calls) == 2, "Second XTEST click must equal one more GET"
+        labels = " ".join(diagnostic_labels())
+        assert "L'École des loisirs" in labels and "erreur HTTP 503" in labels, labels
+        assert "conservé" in labels and "cache : 2 notice(s)" in labels, labels
+        assert "Éditions Milan" in labels and "non testée" in labels, labels
+        assert "loup" not in labels.lower()
+        assert len(requests) == 22
+        result["youth_diagnostics_907"]["ecole_alex"].update({
+            "error_state": "http_error", "http_error": 503,
+            "retained_cache": 2, "second_gtk_xtest_click": True,
+        })
+        capture("09-ecole-gtk-xtest-http503-cache-kept")
+        page.view.source.set_selected(0)
+        page.view.query.set_text("")
+        page.view.identity.set_selected(0)  # Camille again.
+        later(220, youth_diagnostics_camille_restored)
 
     def youth_diagnostics_camille_restored():
         assert page.view.identity_id() == "camille"
@@ -1089,15 +1124,13 @@ def main() -> int:
         rendered = " ".join(diagnostic_labels())
         assert "Éditions Milan" in rendered and "collecte avec notices" in rendered, rendered
         assert "L'École des loisirs" in rendered and "non testée" in rendered, rendered
-        assert "PRIVATE_QUERY_907" not in rendered
-        assert len(requests) == 22
+        assert len(ecole_calls) == 2 and len(requests) == 22, "Switching identity triggered HTTP"
         result["youth_diagnostics_907"]["camille_restored"] = True
-        capture("09-diagnostics-camille-restored")
+        capture("10-diagnostics-camille-restored")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
         app.quit()
-
 
     def editions_start_ui():
         """Three synthetic source records: same ISBN merges, distinct ISBN does not."""
