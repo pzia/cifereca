@@ -42,6 +42,10 @@ class TaskRunner:
         priority: TaskPriority = TaskPriority.NORMAL,
         kind: str = "task",
     ) -> None:
+        # A late plugin/action must not disable a detached GTK control or
+        # enqueue a worker after the window owner has been torn down.
+        if getattr(self.window, "_closed", False):
+            return
         if control is not None:
             control.set_sensitive(False)
         task_id = next(self._task_ids)

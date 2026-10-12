@@ -27,6 +27,12 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     except Exception:
         pass
     try:
+        # A notification timeout can already be queued when GTK is closed.
+        # Remove the source as well as guarding its eventual callback.
+        window._cancel_notification_hide()
+    except Exception:
+        pass
+    try:
         window._cancel_activity_hide()
     except Exception:
         pass

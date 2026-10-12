@@ -300,14 +300,20 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _hide_notification(self) -> bool:
         self._notification_hide_source = None
+        if getattr(self, "_closed", False):
+            return False
         self.notification_revealer.set_reveal_child(False)
         return False
 
     def _dismiss_notification(self) -> None:
+        if getattr(self, "_closed", False):
+            return
         self._cancel_notification_hide()
         self.notification_revealer.set_reveal_child(False)
 
     def toast(self, message: str, timeout: int = 3) -> None:
+        if getattr(self, "_closed", False):
+            return
         self._cancel_notification_hide()
         self.notification_label.set_label(str(message))
         self.notification_revealer.set_reveal_child(True)
@@ -318,6 +324,8 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def show_error(self, message: str, title: str = "Une erreur est survenue") -> None:
+        if getattr(self, "_closed", False):
+            return
         display_message = self._functional_error_message(message)
         self.toast(display_message, 6)
         dialog = Adw.MessageDialog.new(self, title, display_message)
@@ -328,6 +336,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def show_attention(self, message: str, *, code: str = "attention_required") -> None:
         """Present a remediable condition without framing it as a crash."""
+        if getattr(self, "_closed", False):
+            return
         dialog = Adw.MessageDialog.new(self, "Action requise", message)
         dialog.add_response("close", "Fermer")
         dialog.set_default_response("close")
@@ -348,6 +358,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._activity_hide_source = None
 
     def _refresh_activity_history(self) -> None:
+        if getattr(self, "_closed", False):
+            return
         if not hasattr(self, "activity_history_box"):
             return
         clear_box(self.activity_history_box)
@@ -362,6 +374,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.activity_history_button.set_visible(bool(rows))
 
     def _show_pending_activity_error(self) -> bool:
+        if getattr(self, "_closed", False):
+            return False
         entry = self.activity_feedback.latest_unacknowledged_error()
         if entry is None or not hasattr(self, "busy_revealer"):
             return False
@@ -378,6 +392,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _hide_activity_feedback(self) -> bool:
         self._activity_hide_source = None
+        if getattr(self, "_closed", False):
+            return False
         if self._active_tasks:
             return False
         if self._show_pending_activity_error():
@@ -394,12 +410,16 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _dismiss_activity_feedback(self) -> None:
+        if getattr(self, "_closed", False):
+            return
         self._cancel_activity_hide()
         self.activity_feedback.acknowledge_errors()
         self._refresh_activity_history()
         self._hide_activity_feedback()
 
     def _schedule_activity_reduce(self, delay: int = 4) -> None:
+        if getattr(self, "_closed", False):
+            return
         self._cancel_activity_hide()
         self._activity_hide_source = GLib.timeout_add_seconds(
             max(1, int(delay)),
@@ -414,6 +434,8 @@ class MainWindow(Adw.ApplicationWindow):
         persistent: bool = False,
         task_id: int | None = None,
     ) -> None:
+        if getattr(self, "_closed", False):
+            return
         resolved_id = int(task_id) if task_id is not None else self._last_finished_task_id
         if resolved_id is None:
             return
@@ -463,6 +485,8 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _task_progress(self, label: str) -> bool:
+        if getattr(self, "_closed", False):
+            return False
         if hasattr(self, "busy_revealer") and self._active_tasks:
             count = len(self._active_tasks)
             prefix = f"{count} opérations · " if count > 1 else ""
