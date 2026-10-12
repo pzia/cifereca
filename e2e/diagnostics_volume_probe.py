@@ -441,22 +441,42 @@ def main():
         screenshot("05-periode-7-jours")
         report["audits"]["D09_all_domain_source_provenance_complete"] = False
         assert report["audits"]["D08_long_path_text_end_to_end_consultable"] is True
-        # The only public source categories are core_events and app_log.
-        # Verify a real GTK source switch and the absence of misattribution.
+        # Only two PUBLIC broker source categories exist: core_events and
+        # app_log. A provider module such as Kobo is not a third source.
+        # Unlike set_selected(), keyboard XTEST exercises the accessible GTK
+        # DropDown itself, including selection, asynchronous broker query and
+        # visible provenance after the popup closes.
         dropdowns = [
             w for w in widgets(Gtk.DropDown)
             if w.get_tooltip_text() == "Source des événements"
         ]
         assert len(dropdowns) == 1
-        before = len(broker.requests)
-        dropdowns[0].set_selected(2)  # app_log, not a made-up Kobo source
-        until(
-            lambda: len(broker.requests) > before
-            and broker.requests[-1]["source"] == "app_log"
-            and not seen("Actualisation en cours")
-            and seen("kobo.catalog"),
-            source_filtered,
-        )
+        choose_source_keyboard(dropdowns[0], ("End",), 2, "app_log", source_filtered)
+
+    def choose_source_keyboard(dropdown, keys, selected, source, next_step):
+        previous = len(broker.requests)
+        assert dropdown.grab_focus() is not False, "D09: filtre Source sans focus"
+
+        def press_dropdown():
+            # Gtk.DropDown delegates keyboard focus to its internal toggle
+            # child. The focus-ring is visible, but dropdown.has_focus()
+            # itself can be False despite valid keyboard ownership.
+            focused = window[0].get_focus()
+            assert focused is not None and (
+                focused is dropdown or focused.is_ancestor(dropdown)
+            ), "D09: le choix Source et ses enfants n'ont pas le focus"
+            for keysym in ("space", *keys, "Return"):
+                device[0].key(keysym, True)
+                device[0].key(keysym, False)
+            until(
+                lambda: dropdown.get_selected() == selected
+                and len(broker.requests) > previous
+                and broker.requests[-1]["source"] == source
+                and not seen("Actualisation en cours")
+                and seen("kobo.catalog"),
+                next_step,
+            )
+        later(press_dropdown, 240)
 
     def source_filtered():
         assert broker.requests[-1]["module"] == "kobo"
@@ -467,19 +487,48 @@ def main():
         ]
         assert groups and all("· app_log ·" in row for row in groups), groups
         assert not any("· core_events ·" in row for row in groups)
+        assert seen("Journal partiel"), "D09: rotation du journal masquée"
         report["checks"]["D09_source_filter_no_cross_source_attribution"] = True
+        report["checks"]["D09_app_log_source_selected_by_real_keyboard_xtest"] = True
+        # The async broker has updated GTK widgets, but Xvfb still needs a
+        # compositor frame before ImageGrab reflects the finished page.
+        later(source_app_log_rendered, 320)
+
+    def source_app_log_rendered():
+        assert seen("Journal partiel") and not seen("Actualisation en cours")
+        assert any((w.get_label() or "").startswith("kobo.catalog · app_log")
+                   for w in widgets(Gtk.Expander))
         screenshot("06-filtre-source-journal-applicatif")
         src = [
             w for w in widgets(Gtk.DropDown)
             if w.get_tooltip_text() == "Source des événements"
         ][0]
-        previous = len(broker.requests)
-        src.set_selected(0)
-        until(
-            lambda: len(broker.requests) > previous
-            and broker.requests[-1]["source"] == "all"
-            and not seen("Actualisation en cours")
-            and seen("Erreur fictive longue"),
+        choose_source_keyboard(src, ("End", "Up"), 1, "core_events", source_core_filtered)
+
+    def source_core_filtered():
+        assert broker.requests[-1]["module"] == "kobo"
+        assert broker.requests[-1]["source"] == "core_events"
+        groups = [
+            w.get_label() or "" for w in widgets(Gtk.Expander)
+            if (w.get_label() or "").startswith("kobo.catalog · ")
+        ]
+        assert groups and all("· core_events ·" in row for row in groups), groups
+        assert not any("· app_log ·" in row for row in groups)
+        report["checks"]["D09_core_events_source_selected_by_real_keyboard_xtest"] = True
+        report["checks"]["D09_both_sources_have_distinct_visible_provenance"] = True
+        later(source_core_rendered, 320)
+
+    def source_core_rendered():
+        assert not seen("Actualisation en cours")
+        assert any((w.get_label() or "").startswith("kobo.catalog · core_events")
+                   for w in widgets(Gtk.Expander))
+        screenshot("06b-filtre-source-evenements-core")
+        src = [
+            w for w in widgets(Gtk.DropDown)
+            if w.get_tooltip_text() == "Source des événements"
+        ][0]
+        choose_source_keyboard(
+            src, ("Home",), 0, "all",
             lambda: query_module("paris", "paris.lending", paris_copy_loaded),
         )
 
