@@ -49,7 +49,10 @@ def test_late_ui_callbacks_are_noops_after_close():
         "_show_pending_activity_error", "_task_progress",
     ):
         method = _unbound_method(MAIN, "MainWindow", name)
-        assert method(host, "late" ) is False if name == "_task_progress" else method(host) is False
+        if name == "_task_progress":
+            assert method(host, "late") is False
+        else:
+            assert method(host) is False
 
 
 def test_timeout_callbacks_clear_source_ownership_without_touching_widgets():
