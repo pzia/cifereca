@@ -84,3 +84,150 @@ pour distinguer le calcul de l'application UI sans prétendre valider GTK.
 - aucun cache réutilisé sans identité **et** jeton de fraîcheur explicites ;
 - une identité vide n'est jamais mise en cache ;
 - les relations, classements, promenades et états de disponibilité restent inchangés.
+
+## Présentation du voisinage — P2 #762 (0.3.1)
+
+La barre d'actions est regroupée par intention **Explorer**, **Chercher**, **Parcours** ; les extrémités **Proche** et **Surprenant** ainsi que la valeur 0–100 sont visibles. Le panneau de détail ne prétend plus qu'il n'existe aucun voisin lorsque la liste du composant commun est vide : les voisins se trouvent dans une grille distincte avec un compteur explicite.
+
+Chaque carte sépare titre, auteur, raison principale attestée si disponible, nombre de raisons complémentaires, statut d'accès et présence d'indice inféré. Un clic sur la carte visite le livre sélectionné sans accès réseau. Les actions explicites de recherche et actualisation conservent leurs budgets historiques (300 notices locales, 100 résultats distants). La recette visuelle et clavier relève du rôle UX à **1366 et 1600 px**, sans réintroduire de tests de basse résolution.
+
+
+## Cycle de vie du cache Constellations — #700 (0.3.3)
+
+Le cache déterministe de `ConstellationService.graph_for(identity_id, books,
+freshness_token=...)` conserve au maximum **8 graphes** pour des identités
+distinctes, par ordre de dernière consultation (*LRU*). Les graphes sont
+relativement volumineux lorsque de nombreux livres partagent des facettes
+comme la langue ; cette borne limite la rétention mémoire après des
+changements répétés de profils.
+
+L'absence de jeton de fraîcheur ne permet toujours aucune réutilisation du
+graphe en cache ; chaque jeton nouveau provoque un recalcul. Une identité
+différente ne peut jamais reprendre un graphe d'un autre profil. En outre,
+`activate()` et `deactivate()` purgent désormais tous les graphes
+du singleton : une réactivation avec le même identifiant et le même jeton
+mais un contexte Core différent ne réutilise pas d'anciennes données.
+
+Classement, preuves d'arête, promenade, sécurité de téléchargement et
+politique de requêtes externes inchangés. Tests hors réseau :
+`tests/test_cache_lifecycle_p2.py`.
+
+## Construction indexée du graphe — P2 #700 (0.3.4)
+
+La construction du graphe crée un index inversé sur les facettes **attestées**
+(auteurs, séries, thèmes, période, langue, longueur, format, humeur et éditeur).
+Une paire de notices sans facette commune n'est plus évaluée par
+`relation()` ; les paires candidates sont évaluées **exactement par la même
+fonction** qu'auparavant. Scores, ordre des raisons, directions, provenance,
+classements et promenades sont inchangés. Il n'y a aucun vecteur, LLM,
+lien inféré, accès réseau, nouvelle acquisition ni envoi de métadonnées.
+
+Ce travail élimine la comparaison quadratique pour les catalogues
+**clairsemés** (600 livres sans facette commune : zéro appel à `relation()`
+contre 179 700 avant), mais n'élimine pas la nature quadratique des graphes
+**denses** (ex. tous les livres de langue française) : chaque arête
+réellement attestée est encore conservée en mémoire. Un budget d'arêtes
+et sa validation UX relèvent d'une décision séparée.
+
+Tests offline `tests/test_facet_graph_index_p2.py` :
+parité exacte avec le double parcours naïf, cas clairsemé et dense,
+directions de voisinage et protection contre les faux liens entre
+types de facettes.
+
+## Refonte du point d'entrée : livre d'abord — #1042 (0.3.5)
+
+Le lecteur ouvre « Explorer les livres proches » dans la fiche d'un livre
+de Recherche ou de Bibliothèque. Le livre effectivement choisi, son identité
+lorsqu'elle est exposée et ses références documentaires restent le point
+de départ. La page présente le livre central et un maximum de **12 voisins**
+issus d'arêtes bibliographiques attestées : raisons, disponibilité et source
+restent visibles, sans inventer de liens. Un clic sur un voisin recentre
+la navigation ; « Livre précédent » / « Livre suivant » parcourent l'historique.
+
+La navigation directe vers la page **ne choisit plus le premier livre** :
+elle explique qu'il faut ouvrir une fiche puis l'action contextuelle.
+« Retour à la fiche d'origine » emploie la navigation publique
+`open_book_detail` avec la référence et l'identité du livre initial.
+Si l'hôte ne peut restaurer la fiche, un message non bloquant l'indique.
+
+Les contrôles de modes, proximité, recherche catalogue libre,
+sélection arbitraire et **tout parcours départ/arrivée** ont été retirés
+de l'interface P2 ; la promenade est une idée P3 #703 et non une action
+produit actuelle. Le moteur interne peut subsister mais n'est plus exposé.
+Aucun accès réseau, aucune acquisition ou modification de bibliothèque
+n'est déclenché en visitant les voisins.
+
+Cette PR apporte l'implémentation Plugin d'un premier parcours minimal ;
+la spécification et la recette UX indépendante depuis Recherche ET
+Bibliothèque, focus/clavier et vérification visuelle 1366/1600 restent
+au rôle UX (#1042/#706). Tests plugins : `tests/test_book_first_p2.py`.
+
+
+## Flux de bibliothèque borné et sélection isolée — P2 #700 (0.3.6)
+
+La page historique exécutait `tuple(metadata.library_entries(...))` sur la
+**totalité** de la bibliothèque avant de n'utiliser que `rows[:300]`.
+Cette limite ne bornait ni les lectures, ni la mémoire, ni un itérateur
+hostile pouvant ne jamais finir.
+
+Le nouveau chargement applique **`islice(..., 301)` à l'itérateur
+source**, puis conserve au plus **300 entrées par profil**. Le 301e
+élément sert exclusivement à établir qu'une bibliothèque est plus
+grande que le plafond ; dans ce cas le statut indique clairement
+**« 300 premières notices locales seulement »**, sans prétendre avoir
+exploré l'ensemble du catalogue. La sélection explicite depuis une
+fiche livre est ajoutée au graphe indépendamment de la position de
+ce livre parmi les premières notices ; aucune navigation ne choisit
+arbitrairement le premier livre.
+
+La page ne retient au plus que **8 snapshots d'identités** en mémoire
+avec éviction LRU. Le cache graphes du moteur, indépendant, reste
+inchangé ; un `refresh=True` ou une notification d'identité invalide
+les snapshots. Les callbacks asynchrones continuent à vérifier
+génération et identité : une réponse tardive ne peut pas modifier
+le cache d'un nouveau profil. Un livre `pending` issu explicitement
+de l'identité A n'est pas injecté sous l'identité B ; il peut
+être appliqué lorsque A redevient l'identité active.
+
+Tests déterministes sans HTTP ni GTK dans
+`tests/test_bounded_identity_loader_p2.py` : générateur infini
+(301 éléments lus exactement), seuils 0/1/300, bibliothèque >300,
+réutilisation et rafraîchissement, 9 profils et éviction LRU,
+graine contextuelle A/B, annulation et callback tardif.
+Aucun changement d'algorithme de relation, des raisons, des 12 voisins
+affichés ou du contrat Core. **Recette GTK #706** distincte ;
+aucun nouveau workflow GitHub Actions.
+
+**Limite fonctionnelle assumée** : seules les 300 premières entrées
+proposées par le broker constituent les voisins du cache de la page.
+Ce n'est pas une recherche exhaustive du corpus de la bibliothèque.
+Une extension paginée explicite requerrait une évolution du contrat
+public metadata plutôt qu'un scan illimité.
+
+## Pistes sémantiques facultatives par IA — #783 (0.3.2)
+
+Configuration `llm_semantic_hypotheses=false` par défaut. Quand cette
+fonction est activée, le bouton « Piste sémantique (IA) » n'est utilisable
+que pour un centre et un **candidat sans arête déterministe attestée**,
+disposant chacun d'au moins un sujet explicite. Aucun calcul IA ne se lance
+au chargement, à la navigation ou en modifiant un curseur.
+
+Un clic peut adresser au service public `context.service("llm")` uniquement
+les sujets attestés des deux notices (six au plus par livre, 60 caractères
+par sujet). **Titres, auteurs, identités, chemins, accès et bibliothèque
+entière ne sont pas transmis.** Le service configuré peut être distant.
+
+Le texte de la réponse, demandé sous forme `Hypothèse : …`, apparaît
+dans une zone séparée **« Piste sémantique inférée — NON attestée, hors
+graphe »** avec les titres locaux (jamais transmis), la provenance
+fournisseur/modèle et l'état distant/local. Ce texte **ne devient jamais**
+une arête, une raison attestée, un score, un parcours ni une preuve
+d'accès ou d'identité. La désactivation de l'option suffit à supprimer
+la fonctionnalité de l'interface ; l'algorithme déterministe reste
+toujours disponible.
+
+Service absent, quota, refus, annulation ou changement de centre :
+aucune modification du graphe, abandon des réponses tardives.
+Une intégration future d'arêtes sémantiques navigables exigerait un
+contrat de typage, de persistance et de validation distinct. Le service
+réel dépend du Core #778. Tests offline : `tests/test_semantic_llm_p2.py`.

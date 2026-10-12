@@ -1,0 +1,3858 @@
+{
+  "__init__": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_account_context_epoch",
+      "_active_session_key",
+      "_identity_directory_engine",
+      "_kobo_adept_state_cache",
+      "_kobo_adept_state_cache_at",
+      "_local_account",
+      "_plugin_manager",
+      "_provider_plugin_ids",
+      "_recover_identity_directory_migration",
+      "_search_generation",
+      "_search_generation_lock",
+      "_session_errors",
+      "_sessions",
+      "_sync_identity_configuration",
+      "_virtual_change_callbacks",
+      "_virtual_collection_closed",
+      "_virtual_manager_unsubscribe",
+      "_virtual_parent_by_provider",
+      "_virtual_parent_subscriptions",
+      "_virtual_reconcile_lock",
+      "_virtual_refresh_again",
+      "_virtual_refresh_pending",
+      "_virtual_schedule_lock",
+      "_virtual_snapshot_store",
+      "accounts",
+      "acquisition",
+      "acquisition_ledger",
+      "acquisition_reconciler",
+      "catalog_scan",
+      "config",
+      "current_account",
+      "current_identity",
+      "diagnostics",
+      "identities",
+      "last_bookings",
+      "last_history",
+      "last_loans",
+      "last_search",
+      "last_search_warnings",
+      "primary",
+      "registry",
+      "storage"
+    ],
+    "imported_globals": [
+      "Account",
+      "AcquisitionLedger",
+      "AcquisitionManager",
+      "AcquisitionReconciler",
+      "Any",
+      "Booking",
+      "Callable",
+      "Config",
+      "Diagnostics",
+      "HistoryItem",
+      "Identity",
+      "Loan",
+      "Lock",
+      "ProviderCollectionSnapshotStore",
+      "ProviderRegistry",
+      "ProviderSession",
+      "RLock",
+      "SearchResult",
+      "Storage"
+    ],
+    "candidate_callsites": [
+      "e2e/book_detail_probe.py",
+      "e2e/diagnostics_navigation_probe.py",
+      "e2e/diagnostics_page_probe.py",
+      "e2e/diagnostics_states_probe.py",
+      "e2e/diagnostics_structured_probe.py",
+      "e2e/diagnostics_volume_probe.py",
+      "e2e/search_filter_probe.py",
+      "e2e/youth_page_probe.py",
+      "src/cifereca/app.py",
+      "src/cifereca/descriptions.py",
+      "src/cifereca/gui/action_widgets.py",
+      "src/cifereca/gui/book_widgets.py",
+      "src/cifereca/gui/main_window.py",
+      "src/cifereca/gui/plugin_manager_page.py",
+      "src/cifereca/gui/query_controls.py",
+      "src/cifereca/identities/resolver.py",
+      "src/cifereca/kobo/errors.py",
+      "src/cifereca/kobo/vault.py",
+      "src/cifereca/plugin_api/errors.py",
+      "src/plugins/baen/cifereca_baen.py",
+      "src/plugins/cifericaopds/cifereca_cifericaopds.py",
+      "src/plugins/diagnostics-page/tests/test_diagnostics_ai_p0.py",
+      "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py",
+      "src/plugins/literary-criticism/literary_criticism.py",
+      "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py",
+      "src/plugins/provider-gallica/cifereca_gallica.py",
+      "src/plugins/provider-gutenberg/cifereca_gutenberg.py",
+      "src/plugins/provider-kobo/cifereca_kobo.py",
+      "src/plugins/provider-kobo/cifereca_kobo_vault.py",
+      "src/plugins/provider-numilog/cifereca_numilog.py",
+      "src/plugins/provider-numilog/cifereca_numilog_html.py",
+      "src/plugins/provider-paris/cifereca_paris.py",
+      "src/plugins/provider-paris/cifereca_paris_client.py",
+      "src/plugins/recommendations/tests/test_performance_streaming.py",
+      "src/plugins/runtime-kobo-adept/cifereca_kobo_adept_runtime.py",
+      "src/plugins/youth-catalog/tests/test_youth_catalog.py",
+      "src/plugins/youth-catalog/youth_page.py",
+      "src/plugins/youth-source-discovery/youth_discovery.py",
+      "src/plugins/youth-source-ecole-loisirs/ecole_loisirs_youth.py",
+      "src/plugins/youth-source-milan/milan_youth.py",
+      "tests/test_core0927_detail_layout.py",
+      "tests/test_core0931_cover_preview.py",
+      "tests/test_core0933_responsive_widgets.py",
+      "tests/test_core_0940_detail_actions.py",
+      "tests/test_core_0942_detail_metadata.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_stream.py",
+      "tests/test_core_cached_book_detail_enrichment.py",
+      "tests/test_core_ui_270_responsive_search_library.py",
+      "tests/test_core_ui_316_compact_query_filters.py",
+      "tests/test_core_ui_332_filter_value_summary.py",
+      "tests/test_core_ui_338_filter_tab_order.py",
+      "tests/test_core_ui_369_library_context.py",
+      "tests/test_core_ui_541_single_row_filters.py",
+      "tests/test_core_ui_544_list_viewport_width.py",
+      "tests/test_core_ui_559_non_overlapping_notifications.py",
+      "tests/test_core_ui_599_compact_filters.py",
+      "tests/test_core_ui_614_detail_action_overflow.py",
+      "tests/test_core_ui_805_functional_families.py",
+      "tests/test_core_ui_interactive_startup.py",
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_backup_fault_isolation.py",
+      "tests/test_kobo_backup_guard.py",
+      "tests/test_kobo_backup_observability.py",
+      "tests/test_kobo_backup_reconcile_prune.py",
+      "tests/test_kobo_executor_kdrm.py",
+      "tests/test_kobo_executor_policy.py",
+      "tests/test_kobo_executor_retries.py",
+      "tests/test_kobo_vault_closure.py",
+      "tests/test_provider_plugins.py",
+      "tests/test_regressions_099.py"
+    ]
+  },
+  "_identity_directory_engine": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "config",
+      "library_dir",
+      "storage"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "_recover_identity_directory_migration": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_identity_directory_engine",
+      "diagnostics",
+      "storage"
+    ],
+    "imported_globals": [
+      "InterProcessLock",
+      "ProviderConfigurationError",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": []
+  },
+  "save_diagnostic_preferences": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "config",
+      "diagnostics"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0911.py"
+    ]
+  },
+  "can_download_loan": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_session_for_source"
+    ],
+    "imported_globals": [
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0911.py"
+    ]
+  },
+  "save_configuration": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_identity_directory_engine",
+      "_sync_identity_configuration",
+      "catalog_scan",
+      "config",
+      "current_identity",
+      "diagnostics",
+      "identities",
+      "identity_by_id"
+    ],
+    "imported_globals": [
+      "Any",
+      "InterProcessLock",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0915.py",
+      "tests/test_identity_directory_099_dev2.py",
+      "tests/test_identity_save_ui_contract.py"
+    ]
+  },
+  "change_identity_directory": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_identity_directory_engine",
+      "config",
+      "save_configuration"
+    ],
+    "imported_globals": [
+      "InterProcessLock",
+      "ProviderConfigurationError",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "tests/test_core_0915.py",
+      "tests/test_identity_directory_099_dev2.py"
+    ]
+  },
+  "_sync_identity_configuration": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "config",
+      "current_identity",
+      "identities",
+      "storage"
+    ],
+    "imported_globals": [
+      "Identity",
+      "IdentityPreferences",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": []
+  },
+  "identity_by_id": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "identities"
+    ],
+    "imported_globals": [
+      "Identity"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0984_adept_return_status_provenance.py",
+      "tests/test_paris_borrower_adept_binding.py"
+    ]
+  },
+  "identity_for_connection": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "current_identity",
+      "identities",
+      "identity_by_id",
+      "storage"
+    ],
+    "imported_globals": [
+      "Identity"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "src/cifereca/kobo/executor.py",
+      "tests/test_core_0984_adept_return_status_provenance.py",
+      "tests/test_identities_081.py",
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "accounts_for_identity": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "accounts",
+      "current_identity"
+    ],
+    "imported_globals": [
+      "Account"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "tests/test_core0933_refresh_navigation.py"
+    ]
+  },
+  "sync_source_id": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Account",
+      "hashlib"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0978_source_state.py"
+    ]
+  },
+  "sync_source_enabled": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "storage",
+      "sync_source_id"
+    ],
+    "imported_globals": [
+      "Account"
+    ],
+    "candidate_callsites": [
+      "tests/test_kobo_sync_modes.py"
+    ]
+  },
+  "select_identity": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_account_context_epoch",
+      "accounts_for_identity",
+      "current_identity",
+      "identity_by_id",
+      "last_bookings",
+      "last_history",
+      "select_account"
+    ],
+    "imported_globals": [
+      "Identity",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0977_adept_retry_guard.py",
+      "tests/test_core_632_service_identity_snapshots.py",
+      "tests/test_identity_directory_099_dev2.py",
+      "tests/test_identity_save_ui_contract.py"
+    ]
+  },
+  "library_identity_provider_dir": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "identity_by_id",
+      "library_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Path",
+      "ProviderConfigurationError",
+      "safe_library_component"
+    ],
+    "candidate_callsites": [
+      "tests/test_adept_artifact_orchestration.py",
+      "tests/test_core_0919.py",
+      "tests/test_identities_081.py",
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "_migrate_legacy_flat_kobo_files": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "diagnostics",
+      "library_dir",
+      "library_identity_provider_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Identity",
+      "Path",
+      "sha256_file",
+      "shutil"
+    ],
+    "candidate_callsites": []
+  },
+  "adept_profile_choices": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_adept_profile_name",
+      "_adept_profile_ref",
+      "kobo_profiles"
+    ],
+    "imported_globals": [
+      "AdeptProfileResolver"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0913.py"
+    ]
+  },
+  "resolve_adept_profile_for_identity": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_adept_profile_name",
+      "_adept_profile_ref",
+      "_adept_profile_row",
+      "identity_by_id",
+      "kobo_profiles",
+      "storage"
+    ],
+    "imported_globals": [
+      "AdeptProfileResolutionError",
+      "AdeptProfileResolver"
+    ],
+    "candidate_callsites": []
+  },
+  "resolve_adept_profile": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "identity_for_connection",
+      "resolve_adept_profile_for_identity"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_local_account": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "current_identity"
+    ],
+    "imported_globals": [
+      "Account"
+    ],
+    "candidate_callsites": []
+  },
+  "_session_key": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "tests/test_core039_contract_surface.py",
+      "tests/test_diagnostics_health_contract.py",
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_backup_fault_isolation.py",
+      "tests/test_kobo_backup_guard.py",
+      "tests/test_kobo_backup_observability.py",
+      "tests/test_kobo_backup_reconcile_prune.py",
+      "tests/test_kobo_executor_kdrm.py",
+      "tests/test_kobo_executor_policy.py",
+      "tests/test_kobo_executor_retries.py",
+      "tests/test_kobo_vault_closure.py"
+    ]
+  },
+  "active_session": {
+    "domain": "Façade / identité / configuration",
+    "issue": "#1116",
+    "target": "services.py + identities.py",
+    "self_attributes": [
+      "_active_session_key",
+      "_sessions"
+    ],
+    "imported_globals": [
+      "ProviderConfigurationError",
+      "ProviderSession"
+    ],
+    "candidate_callsites": []
+  },
+  "attach_plugin_manager": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_plugin_manager",
+      "_provider_plugin_ids",
+      "_queue_virtual_collection_refresh",
+      "_unbind_virtual_subscriptions",
+      "_virtual_collection_closed",
+      "_virtual_manager_unsubscribe",
+      "_virtual_reconcile_lock",
+      "diagnostics",
+      "refresh_virtual_collections",
+      "registry"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/core/runtime.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_collection_registry.py",
+      "tests/test_core_0968_provider_stream.py",
+      "tests/test_core_ui_interactive_startup.py"
+    ]
+  },
+  "_unbind_virtual_subscriptions": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_virtual_manager_unsubscribe",
+      "_virtual_parent_subscriptions"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "_sync_virtual_subscriptions": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_queue_virtual_collection_refresh",
+      "_virtual_parent_subscriptions",
+      "diagnostics"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "_queue_virtual_collection_refresh": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_drain_virtual_collection_events",
+      "_virtual_collection_closed",
+      "_virtual_refresh_again",
+      "_virtual_refresh_pending",
+      "_virtual_schedule_lock"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "_drain_virtual_collection_events": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_virtual_collection_closed",
+      "_virtual_refresh_again",
+      "_virtual_refresh_pending",
+      "_virtual_schedule_lock",
+      "diagnostics",
+      "refresh_virtual_collections"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "subscribe_virtual_sources": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_virtual_change_callbacks",
+      "_virtual_reconcile_lock"
+    ],
+    "imported_globals": [
+      "Callable"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0968_provider_collection_registry.py"
+    ]
+  },
+  "_connect_changed_virtual_provider": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_session_errors",
+      "_session_key",
+      "_sessions",
+      "config",
+      "diagnostics",
+      "registry",
+      "storage"
+    ],
+    "imported_globals": [
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": []
+  },
+  "refresh_virtual_collections": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_connect_changed_virtual_provider",
+      "_plugin_manager",
+      "_provider_plugin_ids",
+      "_session_key",
+      "_sessions",
+      "_sync_virtual_subscriptions",
+      "_virtual_change_callbacks",
+      "_virtual_collection_closed",
+      "_virtual_parent_by_provider",
+      "_virtual_reconcile_lock",
+      "_virtual_snapshot_store",
+      "diagnostics",
+      "registry"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_collection_registry.py"
+    ]
+  },
+  "plugin_manager": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_plugin_manager"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/artifact_runtime.py",
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "src/cifereca/support_diagnostic.py"
+    ]
+  },
+  "_provider_plugin_status": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_plugin_manager",
+      "_provider_plugin_ids"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py"
+    ]
+  },
+  "_provider_enabled_for_identity": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_plugin_manager",
+      "_provider_plugin_ids",
+      "_provider_plugin_status",
+      "_virtual_parent_by_provider",
+      "current_identity"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "tests/test_core_0968_provider_collection_registry.py"
+    ]
+  },
+  "provider_descriptors": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "registry"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0933_refresh_navigation.py",
+      "tests/test_core_0968_provider_collection_registry.py",
+      "tests/test_core_ui_643_accounts_without_plugin_inventory.py"
+    ]
+  },
+  "provider_diagnostic_state": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_session_errors",
+      "_sessions",
+      "kobo_adept_state",
+      "registry"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py"
+    ]
+  },
+  "close": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_sessions",
+      "_unbind_virtual_subscriptions",
+      "_virtual_change_callbacks",
+      "_virtual_collection_closed",
+      "_virtual_reconcile_lock",
+      "_virtual_schedule_lock",
+      "storage"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "e2e/book_detail_probe.py",
+      "e2e/diagnostics_navigation_probe.py",
+      "e2e/diagnostics_page_probe.py",
+      "e2e/diagnostics_states_probe.py",
+      "e2e/diagnostics_structured_probe.py",
+      "e2e/search_filter_probe.py",
+      "e2e/youth_page_probe.py",
+      "src/cifereca/app.py",
+      "src/cifereca/artifact_runtime.py",
+      "src/cifereca/cli.py",
+      "src/cifereca/core/runtime.py",
+      "src/cifereca/descriptions.py",
+      "src/cifereca/gui/cover_loader.py",
+      "src/cifereca/gui/main_window.py",
+      "src/cifereca/gui/plugin_manager_page.py",
+      "src/cifereca/gui/shortcuts.py",
+      "src/cifereca/locking.py",
+      "src/cifereca/storage.py",
+      "src/cifereca/updater.py",
+      "src/plugins/baen/cifereca_baen.py",
+      "src/plugins/baen/tests/test_public_improvements.py",
+      "src/plugins/cifericaopds/tests/test_cifericaopds.py",
+      "src/plugins/dev-updater/tests/test_release_discovery.py",
+      "src/plugins/diagnostics-page/cifereca_diagnostics_page.py",
+      "src/plugins/diagnostics-page/tests/test_support_export.py",
+      "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py",
+      "src/plugins/ebooksgratuits/tests/test_dataset_integration.py",
+      "src/plugins/ebooksgratuits/tests/test_public_improvements.py",
+      "src/plugins/epub_optimizer/cifereca_epub_optimizer/engine.py",
+      "src/plugins/epub_optimizer/cifereca_epub_optimizer/pdf_engine.py",
+      "src/plugins/epub_optimizer/tests/test_pdf_engine.py",
+      "src/plugins/home-page/cifereca_home.py",
+      "src/plugins/literary-criticism/criticism_feeds.py",
+      "src/plugins/maintenance-library-audit/tests/test_cache_broker_kv_contract.py",
+      "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py",
+      "src/plugins/provider-bnf-catalogue/tests/test_cover_provenance_495.py",
+      "src/plugins/provider-bnf-catalogue/tests/test_dataset_integration.py",
+      "src/plugins/provider-bnf-catalogue/tests/test_diagnostics_resilience.py",
+      "src/plugins/provider-gallica/cifereca_gallica.py",
+      "src/plugins/provider-gallica/tests/test_dataset_pdf_integration.py",
+      "src/plugins/provider-gallica/tests/test_opds_audio_regressions.py",
+      "src/plugins/provider-gutenberg/cifereca_gutenberg.py",
+      "src/plugins/provider-gutenberg/tests/test_cover_provenance_495.py",
+      "src/plugins/provider-gutenberg/tests/test_dataset_navigation_integration.py",
+      "src/plugins/provider-gutenberg/tests/test_diagnostics_resilience.py",
+      "src/plugins/provider-kobo/cifereca_kobo.py",
+      "src/plugins/provider-kobo/cifereca_kobo_vault.py",
+      "src/plugins/provider-kobo/tests/test_dataset_integration.py",
+      "src/plugins/provider-kobo/tests/test_redaction_contract.py",
+      "src/plugins/provider-kobo/tests/test_vault_contract.py",
+      "src/plugins/provider-numilog/cifereca_numilog.py",
+      "src/plugins/provider-numilog/cifereca_numilog_html.py",
+      "src/plugins/provider-numilog/tests/test_acsm_integration.py",
+      "src/plugins/provider-numilog/tests/test_diagnostics_resilience.py",
+      "src/plugins/provider-numilog/tests/test_public_book_url_696.py",
+      "src/plugins/provider-numilog/tests/test_public_url_canonicalization.py",
+      "src/plugins/provider-paris/cifereca_paris.py",
+      "src/plugins/provider-paris/cifereca_paris_client.py",
+      "src/plugins/provider-paris/tests/test_account_aggregate_fault_isolation.py",
+      "src/plugins/provider-paris/tests/test_disabled_account_guard.py",
+      "src/plugins/provider-paris/tests/test_legacy_client_resilience.py",
+      "src/plugins/provider-paris/tests/test_pairings_fault_isolation.py",
+      "src/plugins/provider-paris/tests/test_pnb_acs4_policy.py",
+      "src/plugins/provider-paris/tests/test_sync082_regressions.py",
+      "src/plugins/transport-http/cifereca_http_transport.py",
+      "src/plugins/transport-http/tests/test_http_transport.py",
+      "src/plugins/youth-bibliography-openlibrary/openlibrary_youth.py",
+      "src/plugins/youth-catalog/tests/test_publisher_html_capture_p2.py",
+      "src/plugins/youth-catalog/tests/test_youth_catalog.py",
+      "src/plugins/youth-source-discovery/tests/test_youth_discovery.py",
+      "src/plugins/youth-source-discovery/youth_discovery.py",
+      "src/plugins/youth-source-ecole-loisirs/ecole_loisirs_youth.py",
+      "src/plugins/youth-source-milan/milan_youth.py",
+      "tests/test_095_consolidation.py",
+      "tests/test_acquisition_engine_080.py",
+      "tests/test_adept_artifact_orchestration.py",
+      "tests/test_adept_inventory_binding.py",
+      "tests/test_adept_manual_binding.py",
+      "tests/test_adept_profile_readiness.py",
+      "tests/test_adept_return.py",
+      "tests/test_catalog_083.py",
+      "tests/test_cifereca_step_a.py",
+      "tests/test_cifereca_step_b.py",
+      "tests/test_core037_python_dependencies.py",
+      "tests/test_core042_library_ui.py",
+      "tests/test_core043_progress_cache_stats.py",
+      "tests/test_core044_performance.py",
+      "tests/test_core0925_open_destinations.py",
+      "tests/test_core0929_observations.py",
+      "tests/test_core0933_developer_examples.py",
+      "tests/test_core_0911.py",
+      "tests/test_core_0913.py",
+      "tests/test_core_0915.py",
+      "tests/test_core_0919.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_collection_registry.py",
+      "tests/test_core_0968_provider_stream.py",
+      "tests/test_core_0977_adept_retry_guard.py",
+      "tests/test_core_0978_source_state.py",
+      "tests/test_core_0982_loan_return_reconciliation.py",
+      "tests/test_core_0984_adept_first_paris_reconcile.py",
+      "tests/test_core_0984_adept_return_status_provenance.py",
+      "tests/test_core_532_plugin_freshness.py",
+      "tests/test_core_569_plugin_upgrade_activation.py",
+      "tests/test_core_cached_book_detail_enrichment.py",
+      "tests/test_core_iteration_097_dev3.py",
+      "tests/test_core_kobo_acsm_https_contract.py",
+      "tests/test_core_kobo_acsm_profile_fallback.py",
+      "tests/test_core_kobo_authorization_flag.py",
+      "tests/test_core_kobo_delegated_http_contract.py",
+      "tests/test_core_kobo_descriptor_profile_order.py",
+      "tests/test_core_library_placement_identity_scope.py",
+      "tests/test_core_optional_llm.py",
+      "tests/test_core_ui_095.py",
+      "tests/test_core_ui_517_data_cover.py",
+      "tests/test_cover_loader.py",
+      "tests/test_history_covers.py",
+      "tests/test_identities_081.py",
+      "tests/test_identity_directory_099_dev2.py",
+      "tests/test_identity_save_ui_contract.py",
+      "tests/test_kobo_adept_state.py",
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_backup_fault_isolation.py",
+      "tests/test_kobo_backup_guard.py",
+      "tests/test_kobo_backup_observability.py",
+      "tests/test_kobo_backup_reconcile_prune.py",
+      "tests/test_kobo_executor_kdrm.py",
+      "tests/test_kobo_executor_policy.py",
+      "tests/test_kobo_executor_retries.py",
+      "tests/test_kobo_sync_modes.py",
+      "tests/test_kobo_vault_closure.py",
+      "tests/test_paris_adept_audit.py",
+      "tests/test_paris_adept_cli.py",
+      "tests/test_paris_borrower_adept_binding.py",
+      "tests/test_plugin_configuration_contract.py",
+      "tests/test_plugin_dependency_blocking.py",
+      "tests/test_plugin_lifecycle_regression.py",
+      "tests/test_plugin_package_inventory.py",
+      "tests/test_plugin_package_security.py",
+      "tests/test_provider_plugins.py",
+      "tests/test_regressions_099.py",
+      "tests/test_retired_youth_sources_957.py",
+      "tests/test_shell_controls_097_dev5.py",
+      "tests/test_sync_state_contract.py",
+      "tests/test_task_broker.py"
+    ]
+  },
+  "disconnect_configured": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_active_session_key",
+      "_local_account",
+      "_session_errors",
+      "_sessions",
+      "accounts",
+      "current_account",
+      "last_bookings",
+      "last_history",
+      "last_loans",
+      "primary"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "connect_configured": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_active_session_key",
+      "_local_account",
+      "_provider_plugin_status",
+      "_session_errors",
+      "_session_key",
+      "_sessions",
+      "_virtual_parent_by_provider",
+      "accounts",
+      "config",
+      "current_account",
+      "current_identity",
+      "diagnostics",
+      "disconnect_configured",
+      "identities",
+      "identity_by_id",
+      "last_loans",
+      "primary",
+      "refresh_identity_loans",
+      "registry",
+      "storage"
+    ],
+    "imported_globals": [
+      "Account",
+      "Any",
+      "time"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "tests/test_cifereca_step_g.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_collection_registry.py",
+      "tests/test_core_0968_provider_stream.py",
+      "tests/test_paris_adept_audit.py",
+      "tests/test_paris_adept_cli.py",
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "login": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "src/plugins/provider-paris/cifereca_paris.py",
+      "src/plugins/provider-paris/cifereca_paris_client.py",
+      "src/plugins/provider-paris/tests/test_disabled_account_guard.py",
+      "src/plugins/provider-paris/tests/test_legacy_client_resilience.py"
+    ]
+  },
+  "select_account": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_account_context_epoch",
+      "_active_session_key",
+      "_session_key",
+      "_sessions",
+      "accounts",
+      "current_account",
+      "current_identity",
+      "identity_by_id"
+    ],
+    "imported_globals": [
+      "Account"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_account_scoped_secondary_async.py"
+    ]
+  },
+  "_session_for_account": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_session_key",
+      "_sessions",
+      "current_account"
+    ],
+    "imported_globals": [
+      "Account",
+      "ProviderConfigurationError",
+      "ProviderSession"
+    ],
+    "candidate_callsites": []
+  },
+  "_session_for_source": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_provider_enabled_for_identity",
+      "_session_key",
+      "_sessions"
+    ],
+    "imported_globals": [
+      "ProviderConfigurationError",
+      "ProviderSession"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "src/cifereca/kobo/executor.py",
+      "tests/test_095_consolidation.py",
+      "tests/test_core_0911.py",
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "_key": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "current_account"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/cache_runtime.py",
+      "src/cifereca/gui/main_window.py"
+    ]
+  },
+  "_loans_for_account": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_record_loan_statistics",
+      "_session_for_account",
+      "config",
+      "storage"
+    ],
+    "imported_globals": [
+      "Account",
+      "Loan",
+      "asdict"
+    ],
+    "candidate_callsites": [
+      "tests/test_core0933_refresh_navigation.py",
+      "tests/test_core_0978_source_state.py",
+      "tests/test_kobo_sync_modes.py",
+      "tests/test_sync_state_contract.py"
+    ]
+  },
+  "refresh_loans": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_loans_for_account",
+      "current_account",
+      "diagnostics",
+      "last_loans",
+      "refresh_adept_inventory"
+    ],
+    "imported_globals": [
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0933_refresh_navigation.py"
+    ]
+  },
+  "refresh_identity_loans": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_loans_for_account",
+      "_session_for_account",
+      "accounts_for_identity",
+      "current_identity",
+      "last_loans",
+      "refresh_adept_inventory"
+    ],
+    "imported_globals": [
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0933_refresh_navigation.py"
+    ]
+  },
+  "public_catalogue_target": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "config",
+      "provider_descriptors"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_public_book_notice_actions.py"
+    ]
+  },
+  "public_catalogue_url": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "tests/test_core0933_public_links.py",
+      "tests/test_core_public_book_notice_actions.py"
+    ]
+  },
+  "_provider_loan_active_for_acquisition": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "last_loans",
+      "storage"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "refresh_adept_inventory": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_reconcile_identity_adept_inventory",
+      "diagnostics"
+    ],
+    "imported_globals": [
+      "InterProcessLock",
+      "LockBusyError",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": [
+      "tests/test_core0933_refresh_navigation.py"
+    ]
+  },
+  "refresh_history": {
+    "domain": "Connexions / collections / comptes",
+    "issue": "#1117",
+    "target": "core/provider_sessions.py",
+    "self_attributes": [
+      "_account_context_epoch",
+      "_key",
+      "_session_for_account",
+      "config",
+      "current_account",
+      "diagnostics",
+      "last_history",
+      "storage"
+    ],
+    "imported_globals": [
+      "HistoryItem",
+      "asdict"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_account_scoped_secondary_async.py",
+      "tests/test_core_ui_632_identity_scoped_secondary_pages.py"
+    ]
+  },
+  "_history_fold": {
+    "domain": "Historique / couvertures",
+    "issue": "#1119",
+    "target": "core/library_history.py + core/covers.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "re",
+      "unicodedata"
+    ],
+    "candidate_callsites": []
+  },
+  "_history_cover_score": {
+    "domain": "Historique / couvertures",
+    "issue": "#1119",
+    "target": "core/library_history.py + core/covers.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "SearchResult",
+      "SequenceMatcher",
+      "re"
+    ],
+    "candidate_callsites": []
+  },
+  "_history_search_queries": {
+    "domain": "Historique / couvertures",
+    "issue": "#1119",
+    "target": "core/library_history.py + core/covers.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "re"
+    ],
+    "candidate_callsites": []
+  },
+  "resolve_history_thumbnail": {
+    "domain": "Historique / couvertures",
+    "issue": "#1119",
+    "target": "core/library_history.py + core/covers.py",
+    "self_attributes": [
+      "_history_cover_score",
+      "_history_fold",
+      "_history_search_queries",
+      "_session_for_account",
+      "diagnostics",
+      "storage"
+    ],
+    "imported_globals": [
+      "SearchResult",
+      "hashlib"
+    ],
+    "candidate_callsites": [
+      "tests/test_history_covers.py"
+    ]
+  },
+  "refresh_bookings": {
+    "domain": "Historique / couvertures",
+    "issue": "#1119",
+    "target": "core/library_history.py + core/covers.py",
+    "self_attributes": [
+      "_account_context_epoch",
+      "_key",
+      "_session_for_account",
+      "current_account",
+      "last_bookings",
+      "storage"
+    ],
+    "imported_globals": [
+      "Booking",
+      "asdict"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_account_scoped_secondary_async.py",
+      "tests/test_core_ui_632_identity_scoped_secondary_pages.py"
+    ]
+  },
+  "provider_display_name": {
+    "domain": "Historique / couvertures",
+    "issue": "#1119",
+    "target": "core/library_history.py + core/covers.py",
+    "self_attributes": [
+      "registry"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "_search_query_variants": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "re"
+    ],
+    "candidate_callsites": [
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "_search_relevance": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "SearchResult"
+    ],
+    "candidate_callsites": []
+  },
+  "_normalized_language_values": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "_search_preference_score": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_normalized_language_values",
+      "current_identity"
+    ],
+    "imported_globals": [
+      "SearchResult"
+    ],
+    "candidate_callsites": [
+      "tests/test_identities_081.py"
+    ]
+  },
+  "availability_display_label": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_history_fold",
+      "can_direct_download"
+    ],
+    "imported_globals": [
+      "ItemDetail",
+      "SearchResult"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "searchable_providers": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_provider_enabled_for_identity",
+      "_sessions"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "src/plugins/recommendations/recommendation_service.py",
+      "src/plugins/recommendations/reference_recommendation.py",
+      "tests/test_095_consolidation.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_collection_registry.py"
+    ]
+  },
+  "_session_search_capabilities": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "ProviderSearchCapabilities",
+      "ProviderSession"
+    ],
+    "candidate_callsites": []
+  },
+  "provider_search_capabilities": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_provider_enabled_for_identity",
+      "_session_search_capabilities",
+      "_sessions"
+    ],
+    "imported_globals": [
+      "ProviderSearchCapabilities"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_470_provider_search_capabilities.py"
+    ]
+  },
+  "_search_contract_warning": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "ProviderSession"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_470_provider_search_capabilities.py"
+    ]
+  },
+  "_field_match": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "SearchResult"
+    ],
+    "candidate_callsites": []
+  },
+  "_without_redundant_merged": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_search_contract_warning",
+      "registry"
+    ],
+    "imported_globals": [
+      "ProviderSession"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0968_provider_collection_registry.py"
+    ]
+  },
+  "search": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_field_match",
+      "_mirror_remote_results",
+      "_provider_enabled_for_identity",
+      "_search_preference_score",
+      "_search_query_variants",
+      "_search_relevance",
+      "_sessions",
+      "_without_redundant_merged",
+      "config",
+      "current_identity",
+      "diagnostics",
+      "last_search",
+      "last_search_warnings",
+      "registry",
+      "storage"
+    ],
+    "imported_globals": [
+      "ProviderSession",
+      "SearchResult",
+      "asdict",
+      "hashlib",
+      "inspect"
+    ],
+    "candidate_callsites": [
+      "e2e/book_detail_probe.py",
+      "e2e/run.py",
+      "e2e/search_filter_probe.py",
+      "e2e/youth_page_probe.py",
+      "src/cifereca/artifact_inspection.py",
+      "src/cifereca/brokers.py",
+      "src/cifereca/builtin_ui/pages.py",
+      "src/cifereca/cli.py",
+      "src/cifereca/core/diagnostic_event_feed.py",
+      "src/cifereca/core/provider_stream.py",
+      "src/cifereca/descriptions.py",
+      "src/cifereca/diagnostics.py",
+      "src/cifereca/gui/main_window.py",
+      "src/cifereca/gui/query_model.py",
+      "src/cifereca/plugins/requirements.py",
+      "src/cifereca/storage.py",
+      "src/plugins/baen/cifereca_baen.py",
+      "src/plugins/cifericaopds/cifereca_cifericaopds.py",
+      "src/plugins/cifericaopds/tests/test_cifericaopds.py",
+      "src/plugins/constellations/constellations_page.py",
+      "src/plugins/diagnostics-page/cifereca_diagnostics_page.py",
+      "src/plugins/diagnostics-page/diagnostics_ai.py",
+      "src/plugins/diagnostics-page/tests/test_diagnostics_explorer_p0.py",
+      "src/plugins/diagnostics-page/tests/test_explorer_observation.py",
+      "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py",
+      "src/plugins/ebooksgratuits/tests/test_dataset_integration.py",
+      "src/plugins/ebooksgratuits/tests/test_search_filters_coverage.py",
+      "src/plugins/home-page/cifereca_home.py",
+      "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py",
+      "src/plugins/provider-bnf-catalogue/tests/test_dataset_integration.py",
+      "src/plugins/provider-bnf-catalogue/tests/test_diagnostics_resilience.py",
+      "src/plugins/provider-gallica/cifereca_gallica.py",
+      "src/plugins/provider-gallica/tests/test_dataset_pdf_integration.py",
+      "src/plugins/provider-gallica/tests/test_opds_audio_regressions.py",
+      "src/plugins/provider-gutenberg/cifereca_gutenberg.py",
+      "src/plugins/provider-gutenberg/tests/test_dataset_navigation_integration.py",
+      "src/plugins/provider-kobo/cifereca_kobo.py",
+      "src/plugins/provider-kobo/cifereca_kobo_catalog.py",
+      "src/plugins/provider-kobo/tests/test_dataset_integration.py",
+      "src/plugins/provider-kobo/tests/test_vault_contract.py",
+      "src/plugins/provider-paris/cifereca_paris.py",
+      "src/plugins/provider-paris/cifereca_paris_normalize.py",
+      "src/plugins/provider-paris/tests/test_description_normalization_contract.py",
+      "src/plugins/provider-paris/tests/test_legacy_client_resilience.py",
+      "src/plugins/recommendations/recommendation_service.py",
+      "src/plugins/recommendations/recommendations.py",
+      "src/plugins/recommendations/reference_recommendation.py",
+      "src/plugins/runtime-kobo-adept/cifereca_runtime_diagnostics.py",
+      "src/plugins/youth-bibliography-openlibrary/openlibrary_youth.py",
+      "src/plugins/youth-bibliography-openlibrary/tests/test_openlibrary_youth.py",
+      "src/plugins/youth-catalog/tests/test_federated_search_p2.py",
+      "src/plugins/youth-catalog/tests/test_youth_catalog.py",
+      "src/plugins/youth-catalog/tests/test_youth_page.py",
+      "src/plugins/youth-catalog/youth_catalog.py",
+      "src/plugins/youth-catalog/youth_federation.py",
+      "src/plugins/youth-catalog/youth_page.py",
+      "src/plugins/youth-source-discovery/tests/test_youth_discovery.py",
+      "src/plugins/youth-source-discovery/youth_discovery.py",
+      "src/plugins/youth-source-ecole-loisirs/ecole_loisirs_youth.py",
+      "src/plugins/youth-source-ecole-loisirs/tests/test_ecole_loisirs_youth.py",
+      "src/plugins/youth-source-milan/milan_youth.py",
+      "src/plugins/youth-source-milan/tests/test_milan_youth.py",
+      "tests/test_095_consolidation.py",
+      "tests/test_builtin_ui_rationalization.py",
+      "tests/test_ci_main_path_filters.py",
+      "tests/test_cifereca_step_a.py",
+      "tests/test_core039_iteration1.py",
+      "tests/test_core0927_list_filter_contract.py",
+      "tests/test_core0933_developer_examples.py",
+      "tests/test_core0933_refresh_navigation.py",
+      "tests/test_core_0906_bridge_smoke.py",
+      "tests/test_core_0915.py",
+      "tests/test_core_0940_detail_actions.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_collection_contract.py",
+      "tests/test_core_0968_provider_collection_registry.py",
+      "tests/test_core_415_titlebar_action_registry.py",
+      "tests/test_core_ui_095.py",
+      "tests/test_core_ui_805_attention_expansion.py",
+      "tests/test_core_ui_cached_detail_gtk.py",
+      "tests/test_e2e_ci_paths.py",
+      "tests/test_provider_plugins.py",
+      "tests/test_regressions_099.py",
+      "tests/test_shell_controls_097_dev5.py",
+      "tests/test_ui_iteration_097.py",
+      "tests/test_youth_live_qualification.py"
+    ]
+  },
+  "_search_provider_session": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_field_match",
+      "_search_query_variants",
+      "_search_relevance",
+      "diagnostics"
+    ],
+    "imported_globals": [
+      "ProviderSession",
+      "SearchResult",
+      "asdict",
+      "inspect"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_458_unknown_medium.py"
+    ]
+  },
+  "_search_virtual_stream_session": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_field_match",
+      "_search_provider_session"
+    ],
+    "imported_globals": [
+      "Any",
+      "Callable",
+      "ProviderSearchEvent",
+      "ProviderSession",
+      "SearchResult",
+      "SearchStreamCancelled",
+      "SearchStreamFailure",
+      "asdict",
+      "consume_provider_stream"
+    ],
+    "candidate_callsites": []
+  },
+  "search_progressive": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "_mirror_remote_results",
+      "_provider_enabled_for_identity",
+      "_search_generation",
+      "_search_generation_lock",
+      "_search_preference_score",
+      "_search_provider_session",
+      "_search_query_variants",
+      "_search_relevance",
+      "_search_virtual_stream_session",
+      "_sessions",
+      "_without_redundant_merged",
+      "config",
+      "current_identity",
+      "diagnostics",
+      "last_search",
+      "last_search_warnings",
+      "provider_display_name",
+      "registry",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Callable",
+      "Empty",
+      "FIRST_COMPLETED",
+      "Full",
+      "ProviderSearchEvent",
+      "ProviderSearchStream",
+      "ProviderSession",
+      "Queue",
+      "SearchResult",
+      "asdict",
+      "datetime",
+      "hashlib",
+      "time",
+      "timezone",
+      "wait"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/query_model.py",
+      "src/plugins/recommendations/recommendation_service.py",
+      "src/plugins/recommendations/reference_recommendation.py",
+      "tests/test_core043_progress_cache_stats.py",
+      "tests/test_core044_performance.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_0968_provider_collection_registry.py",
+      "tests/test_core_0968_provider_stream.py"
+    ]
+  },
+  "search_local_library": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "current_identity",
+      "library_entries"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "search_known_catalog": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [
+      "catalog_entries",
+      "current_identity",
+      "library_entries"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0968_http_boundary.py",
+      "tests/test_core_ui_095.py"
+    ]
+  },
+  "filter_loaded_search_results": {
+    "domain": "Recherche / cache / stream",
+    "issue": "#1118",
+    "target": "core/provider_search.py + core/provider_stream.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "_mirror_remote_results": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "current_identity",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "SearchResult",
+      "hashlib",
+      "time"
+    ],
+    "candidate_callsites": [
+      "tests/test_catalog_083.py",
+      "tests/test_core043_progress_cache_stats.py",
+      "tests/test_core044_performance.py"
+    ]
+  },
+  "mirror_personal_libraries": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "_acquire_personal_library_item",
+      "_mirror_remote_results",
+      "_sessions",
+      "accounts",
+      "identity_for_connection",
+      "sync_source_enabled"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "tests/test_kobo_sync_modes.py"
+    ]
+  },
+  "_acquire_personal_library_item": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "catalog_index_path",
+      "library_identity_provider_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Path",
+      "ProviderConfigurationError",
+      "asdict",
+      "inspect_artifact"
+    ],
+    "candidate_callsites": []
+  },
+  "recent_acquisitions": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "current_identity",
+      "identity_for_connection",
+      "last_loans",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Loan",
+      "Path",
+      "cached_cover_url",
+      "cover_candidate",
+      "resolve_cover"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core_ui_618_recent_timeline.py"
+    ]
+  },
+  "local_book_path": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "identities",
+      "identity_by_id",
+      "storage"
+    ],
+    "imported_globals": [
+      "BundleError",
+      "Path",
+      "ProviderConfigurationError",
+      "load_bundle_manifest"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0925_open_destinations.py",
+      "tests/test_core0933_source_placement.py"
+    ]
+  },
+  "local_placement_for_source": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "local_book_path",
+      "storage"
+    ],
+    "imported_globals": [
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0925_open_destinations.py",
+      "tests/test_core0933_source_placement.py"
+    ]
+  },
+  "local_placements_for_sources": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "local_book_path",
+      "storage"
+    ],
+    "imported_globals": [
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0933_source_placement.py"
+    ]
+  },
+  "materialize_to_identity": {
+    "domain": "Bibliothèque / placements",
+    "issue": "#1119",
+    "target": "core/library_materialization.py + materialization.py",
+    "self_attributes": [
+      "catalog_index_path",
+      "identity_by_id",
+      "library_dir",
+      "library_identity_provider_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "BundleError",
+      "Path",
+      "ProviderConfigurationError",
+      "load_bundle_manifest",
+      "os",
+      "sha256_file",
+      "shutil",
+      "time"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/artifact_runtime.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core0925_open_destinations.py"
+    ]
+  },
+  "holdings": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_session_for_source",
+      "config",
+      "storage"
+    ],
+    "imported_globals": [
+      "Holding",
+      "ItemDetail",
+      "SearchResult",
+      "asdict"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "src/plugins/baen/tests/test_public_improvements.py",
+      "src/plugins/provider-gallica/tests/test_opds_audio_regressions.py",
+      "src/plugins/provider-kobo/tests/test_dataset_integration.py",
+      "src/plugins/provider-paris/cifereca_paris.py",
+      "src/plugins/provider-paris/cifereca_paris_client.py"
+    ]
+  },
+  "renew": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_account_for_loan",
+      "_session_for_source",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "src/cifereca/plugin_api/models.py"
+    ]
+  },
+  "_return_loan_identity": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_account_for_loan",
+      "_session_key",
+      "_sessions"
+    ],
+    "imported_globals": [
+      "Account",
+      "Any",
+      "AttentionRequired",
+      "Loan"
+    ],
+    "candidate_callsites": []
+  },
+  "loan_return_state": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0982_loan_return_reconciliation.py",
+      "tests/test_core_0984_adept_first_paris_reconcile.py"
+    ]
+  },
+  "verify_return_digital": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_return_loan_identity",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Loan",
+      "datetime",
+      "timezone"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0982_loan_return_reconciliation.py"
+    ]
+  },
+  "verify_paris_return_inventory": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_return_loan_identity"
+    ],
+    "imported_globals": [
+      "AttentionRequired",
+      "Loan"
+    ],
+    "candidate_callsites": []
+  },
+  "_adobe_return_inventory_confirmed": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_profile_name",
+      "_adept_profile_row",
+      "_kobo_adapter",
+      "kobo_profiles"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "_return_operation_lock_file": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Loan",
+      "Path",
+      "acquisition_lock_file",
+      "hashlib"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0984_adept_first_paris_reconcile.py"
+    ]
+  },
+  "return_loan_prefer_adept": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_return_loan_prefer_adept_guarded",
+      "_return_operation_lock_file",
+      "return_digital"
+    ],
+    "imported_globals": [
+      "Any",
+      "InterProcessLock",
+      "Loan",
+      "LockBusyError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0984_adept_first_paris_reconcile.py"
+    ]
+  },
+  "_return_loan_prefer_adept_guarded": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adobe_return_inventory_confirmed",
+      "_return_loan_identity",
+      "adept_return_status_for_loan",
+      "return_adept_acquisition",
+      "return_digital",
+      "storage",
+      "verify_paris_return_inventory"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "Loan",
+      "uuid"
+    ],
+    "candidate_callsites": []
+  },
+  "verify_loan_return": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_return_loan_identity",
+      "return_loan_prefer_adept",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0984_adept_first_paris_reconcile.py"
+    ]
+  },
+  "return_digital": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_return_digital_guarded",
+      "_return_operation_lock_file"
+    ],
+    "imported_globals": [
+      "Any",
+      "InterProcessLock",
+      "Loan",
+      "LockBusyError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0982_loan_return_reconciliation.py",
+      "tests/test_core_0984_adept_first_paris_reconcile.py"
+    ]
+  },
+  "_return_digital_guarded": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_account_for_loan",
+      "_cross_identity_loan_conflict",
+      "_return_loan_identity",
+      "_session_for_source",
+      "storage",
+      "verify_paris_return_inventory",
+      "verify_return_digital"
+    ],
+    "imported_globals": [
+      "Any",
+      "Loan",
+      "uuid"
+    ],
+    "candidate_callsites": []
+  },
+  "pnb_preferences": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_session_for_account",
+      "current_account"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/plugins/provider-paris/cifereca_paris.py",
+      "src/plugins/provider-paris/cifereca_paris_client.py",
+      "src/plugins/provider-paris/tests/test_sync082_regressions.py"
+    ]
+  },
+  "content_type_for": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "acquisition"
+    ],
+    "imported_globals": [
+      "SearchResult"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/acquisition.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_458_unknown_medium.py"
+    ]
+  },
+  "default_downloads_dir": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "acquisition"
+    ],
+    "imported_globals": [
+      "Path"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py"
+    ]
+  },
+  "_kobo_adapter": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_plugin_manager"
+    ],
+    "imported_globals": [
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "tests/test_kobo_sync_modes.py"
+    ]
+  },
+  "_required_plugin_service": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_plugin_manager"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired"
+    ],
+    "candidate_callsites": []
+  },
+  "_http_plain_transport_proof": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "re"
+    ],
+    "candidate_callsites": []
+  },
+  "execute_acquisition_request": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_http_plain_transport_proof",
+      "_kobo_adapter",
+      "_plugin_manager",
+      "_required_plugin_service"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "Path",
+      "ProviderConfigurationError",
+      "inspect_artifact",
+      "sha256_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py",
+      "tests/test_adept_artifact_orchestration.py",
+      "tests/test_adept_profile_readiness.py",
+      "tests/test_core0925_open_destinations.py",
+      "tests/test_core_0917.py",
+      "tests/test_core_0977_adept_retry_guard.py",
+      "tests/test_core_kobo_acsm_https_contract.py",
+      "tests/test_core_kobo_acsm_profile_fallback.py",
+      "tests/test_core_kobo_authorization_flag.py",
+      "tests/test_core_kobo_delegated_http_contract.py",
+      "tests/test_core_kobo_descriptor_profile_order.py",
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_backup_fault_isolation.py",
+      "tests/test_kobo_backup_observability.py",
+      "tests/test_kobo_executor_kdrm.py",
+      "tests/test_kobo_executor_policy.py",
+      "tests/test_kobo_executor_retries.py",
+      "tests/test_kobo_vault_closure.py",
+      "tests/test_paris_borrower_adept_binding.py"
+    ]
+  },
+  "_originating_adept_profile_id": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_profile_name",
+      "_adept_profile_ref",
+      "kobo_profiles",
+      "storage"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "tests/test_core_0917.py"
+    ]
+  },
+  "_adept_return_capability": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_kobo_adapter"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "_adept_acquisition_path": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "Path"
+    ],
+    "candidate_callsites": []
+  },
+  "_adept_inventory_candidates": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "AttentionRequired"
+    ],
+    "candidate_callsites": []
+  },
+  "_reconcile_adept_acquisition": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_acquisition_path",
+      "_adept_inventory_candidates",
+      "_adept_profile_name",
+      "_adept_profile_ref",
+      "_adept_return_capability",
+      "_kobo_adapter",
+      "diagnostics",
+      "kobo_profiles",
+      "storage"
+    ],
+    "imported_globals": [
+      "AttentionRequired",
+      "time"
+    ],
+    "candidate_callsites": []
+  },
+  "adept_loan_choices": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_inventory_candidates",
+      "_adept_profile_name",
+      "_adept_profile_ref",
+      "_kobo_adapter",
+      "_provider_loan_active_for_acquisition",
+      "kobo_profiles",
+      "storage"
+    ],
+    "imported_globals": [
+      "AttentionRequired"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_adept_manual_binding.py"
+    ]
+  },
+  "attach_adept_loan": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_acquisition_path",
+      "_adept_inventory_candidates",
+      "_adept_profile_name",
+      "_adept_profile_ref",
+      "_adept_return_capability",
+      "_kobo_adapter",
+      "_provider_loan_active_for_acquisition",
+      "kobo_profiles",
+      "storage"
+    ],
+    "imported_globals": [
+      "AttentionRequired",
+      "InterProcessLock",
+      "LockBusyError",
+      "acquisition_lock_file",
+      "time"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_adept_manual_binding.py"
+    ]
+  },
+  "reconcile_adept_acquisition": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_reconcile_adept_acquisition",
+      "storage"
+    ],
+    "imported_globals": [
+      "AttentionRequired",
+      "InterProcessLock",
+      "LockBusyError",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_adept_inventory_binding.py"
+    ]
+  },
+  "_reconcile_identity_adept_inventory": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_reconcile_adept_acquisition",
+      "storage"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "tests/test_adept_inventory_binding.py",
+      "tests/test_core0933_refresh_navigation.py",
+      "tests/test_kobo_sync_modes.py"
+    ]
+  },
+  "adept_return_for_artifact": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_return_capability",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0917.py"
+    ]
+  },
+  "return_adept_acquisition": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_return_adept_acquisition"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "InterProcessLock",
+      "LockBusyError",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_adept_return.py",
+      "tests/test_core0933_refresh_navigation.py",
+      "tests/test_core_0917.py"
+    ]
+  },
+  "_return_adept_acquisition": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_profile_name",
+      "_adept_profile_row",
+      "_adept_return_capability",
+      "_kobo_adapter",
+      "diagnostics",
+      "execute_drm_mutation",
+      "kobo_profiles",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "DrmMutationRequest",
+      "ProviderConfigurationError",
+      "time"
+    ],
+    "candidate_callsites": []
+  },
+  "execute_drm_mutation": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_plugin_manager",
+      "diagnostics"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "DrmMutationRequest",
+      "ProviderConfigurationError",
+      "UserFacingError"
+    ],
+    "candidate_callsites": [
+      "tests/test_core0933_refresh_navigation.py"
+    ]
+  },
+  "_import_acsm_impl": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_loan_destination_name",
+      "_originating_adept_profile_id",
+      "catalog_index_path",
+      "current_identity",
+      "execute_acquisition_request",
+      "identity_by_id",
+      "library_identity_provider_dir",
+      "resolve_adept_profile_for_identity",
+      "storage"
+    ],
+    "imported_globals": [
+      "AdeptProfileResolutionError",
+      "Any",
+      "Path",
+      "ProviderConfigurationError",
+      "data_dir",
+      "detect_acsm_format",
+      "hashlib",
+      "inspect_artifact",
+      "sha256_file",
+      "shutil"
+    ],
+    "candidate_callsites": []
+  },
+  "import_acsm": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_import_acsm_impl",
+      "_record_action",
+      "current_identity",
+      "identity_by_id"
+    ],
+    "imported_globals": [
+      "Any",
+      "Path"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/builtin_ui/pages.py",
+      "src/cifereca/gui/main_window.py",
+      "src/plugins/provider-numilog/cifereca_numilog.py",
+      "tests/test_core_ui_095.py"
+    ]
+  },
+  "runtime_diagnostic": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_required_plugin_service"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/kobo/executor.py",
+      "src/plugins/diagnostics-page/cifereca_diagnostics_page.py",
+      "tests/test_core_0977_adept_retry_guard.py",
+      "tests/test_core_396_public_system_diagnostics.py",
+      "tests/test_paris_borrower_adept_binding.py"
+    ]
+  },
+  "kobo_adept_state": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_kobo_adapter",
+      "_kobo_adept_state_cache",
+      "_kobo_adept_state_cache_at"
+    ],
+    "imported_globals": [
+      "Any",
+      "ProviderConfigurationError",
+      "time"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/kobo/executor.py",
+      "tests/test_kobo_adept_state.py",
+      "tests/test_kobo_backup_fault_isolation.py"
+    ]
+  },
+  "kobo_profiles": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_kobo_adapter"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "tests/test_adept_profile_readiness.py",
+      "tests/test_core_0977_adept_retry_guard.py",
+      "tests/test_paris_borrower_adept_binding.py"
+    ]
+  },
+  "_adept_profile_ref": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "_adept_profile_name": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "_adept_profile_row": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "kobo_profiles"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "_adept_profile_cli_name": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_adept_profile_name",
+      "_adept_profile_row"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "can_direct_download": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_session_for_source",
+      "acquisition",
+      "kobo_adept_state"
+    ],
+    "imported_globals": [
+      "SearchResult"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py"
+    ]
+  },
+  "_kobo_adept_format": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_candidate_media_format": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_candidate_drm": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_candidate_handling": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_candidate_profile": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_candidate_source": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_candidate_requires_authorization": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_acsm_candidate": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboAcquisitionSelectionError",
+      "KoboOfferAdapter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py",
+      "tests/test_core_kobo_acsm_https_contract.py"
+    ]
+  },
+  "_kobo_candidate": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboAcquisitionSelectionError",
+      "KoboOfferAdapter",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py",
+      "tests/test_core_kobo_delegated_http_contract.py"
+    ]
+  },
+  "_kobo_delegated_candidate": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboAcquisitionSelectionError",
+      "KoboOfferAdapter",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_canonical_drm": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "re"
+    ],
+    "candidate_callsites": []
+  },
+  "_kobo_url_format": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_delegated_request": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_kobo_kdrm_context": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_observed_backup_artifact": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "Path",
+      "ProviderConfigurationError",
+      "inspect_artifact",
+      "sha256_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py",
+      "tests/test_core_0917.py"
+    ]
+  },
+  "_kobo_artifact_plausible": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Path"
+    ],
+    "candidate_callsites": []
+  },
+  "_kobo_record_candidate_paths": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_kobo_artifact_plausible",
+      "acquisition"
+    ],
+    "imported_globals": [
+      "Any",
+      "Path",
+      "re"
+    ],
+    "candidate_callsites": []
+  },
+  "_kobo_destination": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "acquisition",
+      "storage"
+    ],
+    "imported_globals": [
+      "Path",
+      "SearchResult",
+      "re"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/kobo/executor.py"
+    ]
+  },
+  "_execute_kobo_acquisition": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Acquisition",
+      "Path",
+      "SearchResult",
+      "execute_kobo_acquisition"
+    ],
+    "candidate_callsites": [
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_backup_fault_isolation.py",
+      "tests/test_kobo_backup_guard.py",
+      "tests/test_kobo_backup_reconcile_prune.py",
+      "tests/test_kobo_vault_closure.py"
+    ]
+  },
+  "_acquire_direct_item_impl": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_execute_kobo_acquisition",
+      "_kobo_backup_target_dir",
+      "_session_for_source",
+      "acquisition",
+      "diagnostics",
+      "identity_for_connection",
+      "library_identity_provider_dir"
+    ],
+    "imported_globals": [
+      "Acquisition",
+      "ProviderConfigurationError",
+      "SearchResult"
+    ],
+    "candidate_callsites": []
+  },
+  "acquire_direct_item": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "_acquire_direct_item_impl",
+      "_record_action",
+      "current_identity",
+      "identity_for_connection"
+    ],
+    "imported_globals": [
+      "Acquisition",
+      "SearchResult"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "tests/test_core_kobo_acsm_https_contract.py",
+      "tests/test_core_kobo_acsm_profile_fallback.py",
+      "tests/test_core_kobo_authorization_flag.py",
+      "tests/test_core_kobo_delegated_http_contract.py",
+      "tests/test_core_kobo_descriptor_profile_order.py",
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_executor_kdrm.py",
+      "tests/test_kobo_executor_policy.py",
+      "tests/test_kobo_executor_retries.py",
+      "tests/test_kobo_vault_closure.py"
+    ]
+  },
+  "obtain_search_item": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "acquire_direct_item",
+      "catalog_index_path",
+      "identity_for_connection"
+    ],
+    "imported_globals": [
+      "SearchResult"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0929_cover_c03.py"
+    ]
+  },
+  "prepare_direct_download": {
+    "domain": "Acquisition / ACSM / ADEPT / restitution",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + return_adept_orchestrator.py",
+    "self_attributes": [
+      "acquire_direct_item",
+      "default_downloads_dir"
+    ],
+    "imported_globals": [
+      "Path",
+      "SearchResult"
+    ],
+    "candidate_callsites": []
+  },
+  "library_dir": {
+    "domain": "Catalogue / bibliothèque",
+    "issue": "#1119",
+    "target": "core/library_catalog.py",
+    "self_attributes": [
+      "config"
+    ],
+    "imported_globals": [
+      "Path",
+      "os"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py"
+    ]
+  },
+  "catalog_scan": {
+    "domain": "Catalogue / bibliothèque",
+    "issue": "#1119",
+    "target": "core/library_catalog.py",
+    "self_attributes": [
+      "diagnostics",
+      "library_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "LocalCatalog"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core0929_cover_c03.py",
+      "tests/test_core0933_refresh_navigation.py",
+      "tests/test_core0933_source_placement.py",
+      "tests/test_core_0915.py",
+      "tests/test_core_0917.py",
+      "tests/test_core_0978_source_state.py",
+      "tests/test_identities_081.py",
+      "tests/test_identity_directory_099_dev2.py",
+      "tests/test_kobo_backup_guard.py",
+      "tests/test_kobo_sync_modes.py",
+      "tests/test_sync_state_contract.py"
+    ]
+  },
+  "catalog_entries": {
+    "domain": "Catalogue / bibliothèque",
+    "issue": "#1119",
+    "target": "core/library_catalog.py",
+    "self_attributes": [
+      "library_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "LocalCatalog"
+    ],
+    "candidate_callsites": [
+      "e2e/search_filter_probe.py",
+      "src/cifereca/artifact_runtime.py",
+      "src/cifereca/brokers.py",
+      "src/cifereca/catalog.py",
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py",
+      "src/cifereca/storage.py",
+      "src/plugins/maintenance-library-audit/cifereca_library_audits.py",
+      "tests/test_acquisition_engine_080.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core044_performance.py",
+      "tests/test_core_iteration_097_dev3.py",
+      "tests/test_identity_directory_099_dev2.py",
+      "tests/test_kobo_backup_reconcile_prune.py"
+    ]
+  },
+  "catalog_index_path": {
+    "domain": "Catalogue / bibliothèque",
+    "issue": "#1119",
+    "target": "core/library_catalog.py",
+    "self_attributes": [
+      "library_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "LocalCatalog",
+      "Path"
+    ],
+    "candidate_callsites": [
+      "tests/test_catalog_083.py",
+      "tests/test_core_0917.py",
+      "tests/test_core_iteration_097_dev3.py",
+      "tests/test_kobo_backup_reconcile_prune.py"
+    ]
+  },
+  "library_entries": {
+    "domain": "Catalogue / bibliothèque",
+    "issue": "#1119",
+    "target": "core/library_catalog.py",
+    "self_attributes": [
+      "catalog_scan",
+      "current_identity",
+      "identities",
+      "last_loans",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Loan",
+      "Path",
+      "cached_cover_url",
+      "cover_candidate",
+      "resolve_cover",
+      "time"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/gui/main_window.py",
+      "src/plugins/constellations/constellations_page.py",
+      "src/plugins/maintenance-library-audit/cifereca_library_audits.py",
+      "src/plugins/recommendations/recommendation_service.py",
+      "src/plugins/recommendations/recommendations.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core042_library_ui.py",
+      "tests/test_core0929_cover_c03.py",
+      "tests/test_core_iteration_097_dev3.py",
+      "tests/test_core_library_placement_identity_scope.py",
+      "tests/test_core_ui_095.py",
+      "tests/test_identities_081.py"
+    ]
+  },
+  "_persist_active_loans": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "Entitlement",
+      "Loan",
+      "SourceIdentity"
+    ],
+    "candidate_callsites": [
+      "tests/test_adept_artifact_orchestration.py",
+      "tests/test_adept_profile_readiness.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core_0913.py",
+      "tests/test_core_0919.py",
+      "tests/test_paris_adept_audit.py",
+      "tests/test_paris_borrower_adept_binding.py",
+      "tests/test_sync_state_contract.py"
+    ]
+  },
+  "_loan_destination_name": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "tests/test_adept_artifact_orchestration.py"
+    ]
+  },
+  "_provider_attention_code": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "_diagnose_adept_binding": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "diagnostics"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "adept_return_status_for_loan": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "_adept_return_capability",
+      "_cross_identity_loan_conflict",
+      "_paris_adept_identity_for_loan",
+      "_provider_loan_active_for_acquisition",
+      "identity_by_id",
+      "identity_for_connection",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0919.py",
+      "tests/test_core_0984_adept_return_status_provenance.py"
+    ]
+  },
+  "reacquire_digital_loan": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "_acquire_active_loan_automatically",
+      "_cross_identity_loan_conflict",
+      "_paris_adept_identity_for_loan",
+      "_persist_active_loans",
+      "can_download_loan",
+      "identity_by_id",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "AttentionRequired",
+      "InterProcessLock",
+      "Loan",
+      "LockBusyError",
+      "Path",
+      "ProviderConfigurationError",
+      "acquisition_lock_file",
+      "inspect_artifact",
+      "time"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_adept_borrower_identity_guard.py",
+      "tests/test_core_0919.py"
+    ]
+  },
+  "_borrower_identity_conflict": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "tests/test_adept_borrower_identity_guard.py"
+    ]
+  },
+  "bind_paris_borrower_adept": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "accounts",
+      "identity_by_id",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "tests/test_core_0984_adept_first_paris_reconcile.py",
+      "tests/test_core_0984_adept_return_status_provenance.py",
+      "tests/test_paris_adept_cli.py",
+      "tests/test_paris_borrower_adept_binding.py"
+    ]
+  },
+  "_paris_adept_identity_for_loan": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "_borrower_identity_conflict",
+      "accounts",
+      "identity_by_id",
+      "storage"
+    ],
+    "imported_globals": [
+      "Loan"
+    ],
+    "candidate_callsites": [
+      "tests/test_paris_borrower_adept_binding.py"
+    ]
+  },
+  "_cross_identity_loan_conflict": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "tests/test_adept_borrower_identity_guard.py"
+    ]
+  },
+  "_acquire_active_loan_automatically": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "_acquire_active_loan_automatically_guarded"
+    ],
+    "imported_globals": [
+      "Any",
+      "InterProcessLock",
+      "Loan",
+      "LockBusyError",
+      "acquisition_lock_file",
+      "hashlib"
+    ],
+    "candidate_callsites": [
+      "tests/test_adept_artifact_orchestration.py",
+      "tests/test_adept_borrower_identity_guard.py",
+      "tests/test_adept_profile_readiness.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core_0911.py",
+      "tests/test_core_0913.py",
+      "tests/test_core_0919.py",
+      "tests/test_core_0977_adept_retry_guard.py",
+      "tests/test_core_0978_source_state.py",
+      "tests/test_paris_borrower_adept_binding.py",
+      "tests/test_sync_state_contract.py"
+    ]
+  },
+  "_acquire_active_loan_automatically_guarded": {
+    "domain": "Prêts / provenance / acquisition automatique",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py",
+    "self_attributes": [
+      "_adept_profile_row",
+      "_cleanup_acsm_after_success",
+      "_cross_identity_loan_conflict",
+      "_diagnose_adept_binding",
+      "_loan_destination_name",
+      "_originating_adept_profile_id",
+      "_paris_adept_identity_for_loan",
+      "_plugin_manager",
+      "_provider_attention_code",
+      "acquire_digital_loan",
+      "catalog_index_path",
+      "diagnostics",
+      "execute_acquisition_request",
+      "identity_by_id",
+      "kobo_profiles",
+      "library_identity_provider_dir",
+      "resolve_adept_profile_for_identity",
+      "runtime_diagnostic",
+      "storage"
+    ],
+    "imported_globals": [
+      "AdeptProfileResolutionError",
+      "Any",
+      "KoboAdeptError",
+      "Loan",
+      "Path",
+      "ProviderConfigurationError",
+      "UserFacingError",
+      "adept_attention_code",
+      "blocked_automatic_adept_retry",
+      "decide_artifact_reuse",
+      "detect_acsm_format",
+      "inspect_artifact",
+      "time",
+      "uuid"
+    ],
+    "candidate_callsites": [
+      "tests/test_adept_borrower_identity_guard.py",
+      "tests/test_core_497_acquisition_reuse_decision.py",
+      "tests/test_paris_borrower_adept_binding.py"
+    ]
+  },
+  "_synchronize_account_source_impl": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "_acquire_personal_library_item",
+      "_loans_for_account",
+      "_mirror_remote_results",
+      "_session_for_account",
+      "catalog_scan"
+    ],
+    "imported_globals": [
+      "Account",
+      "Any",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": []
+  },
+  "synchronize_account_source": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "_record_action",
+      "_synchronize_account_source_impl"
+    ],
+    "imported_globals": [
+      "Account",
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py"
+    ]
+  },
+  "preview_library_filename": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "acquisition",
+      "config"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/artifact_runtime.py",
+      "src/cifereca/brokers.py"
+    ]
+  },
+  "opening_sync": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "_opening_sync_locked",
+      "_record_action"
+    ],
+    "imported_globals": [
+      "Any",
+      "Callable",
+      "InterProcessLock",
+      "LockBusyError",
+      "ProviderConfigurationError",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0929_statistics.py",
+      "tests/test_core0933_refresh_navigation.py",
+      "tests/test_core0933_source_placement.py",
+      "tests/test_core_0913.py",
+      "tests/test_core_0978_source_state.py",
+      "tests/test_regressions_099.py",
+      "tests/test_sync_state_contract.py"
+    ]
+  },
+  "_opening_sync_locked": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "_acquire_active_loan_automatically",
+      "_cleanup_old_acsm_work",
+      "_kobo_adapter",
+      "_kobo_backup_due",
+      "_loans_for_account",
+      "_persist_active_loans",
+      "_reconcile_identity_adept_inventory",
+      "_record_action",
+      "_session_key",
+      "_sessions",
+      "_sync_kobo_backup_locked",
+      "accounts",
+      "accounts_for_identity",
+      "acquisition_reconciler",
+      "catalog_scan",
+      "config",
+      "diagnostics",
+      "identities",
+      "kobo_backup_enabled",
+      "kobo_profiles",
+      "last_loans",
+      "mirror_personal_libraries",
+      "storage",
+      "sync_source_enabled",
+      "sync_source_id"
+    ],
+    "imported_globals": [
+      "Account",
+      "Any",
+      "Callable",
+      "Loan",
+      "datetime",
+      "redact",
+      "time",
+      "timezone"
+    ],
+    "candidate_callsites": [
+      "tests/test_kobo_sync_modes.py"
+    ]
+  },
+  "_record_action": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "diagnostics",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/artifact_runtime.py",
+      "tests/test_core043_progress_cache_stats.py"
+    ]
+  },
+  "action_statistics": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "time"
+    ],
+    "candidate_callsites": []
+  },
+  "_record_loan_statistics": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "hashlib",
+      "time"
+    ],
+    "candidate_callsites": [
+      "tests/test_core0929_observations.py"
+    ]
+  },
+  "identity_statistics": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "accounts_for_identity",
+      "action_statistics",
+      "storage"
+    ],
+    "imported_globals": [
+      "Counter",
+      "asdict",
+      "hashlib",
+      "json"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core043_progress_cache_stats.py",
+      "tests/test_core0929_observations.py",
+      "tests/test_core0929_statistics.py"
+    ]
+  },
+  "dashboard_state": {
+    "domain": "Synchronisation / états / statistiques",
+    "issue": "#1122",
+    "target": "core/opening_sync.py + sync_state.py",
+    "self_attributes": [
+      "_provider_enabled_for_identity",
+      "_sessions",
+      "accounts_for_identity",
+      "current_identity",
+      "identities",
+      "identity_statistics",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core0929_statistics.py",
+      "tests/test_core_0915.py",
+      "tests/test_sync_state_contract.py"
+    ]
+  },
+  "acquisition_ledger_records": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py"
+    ]
+  },
+  "reconcile_acquisitions": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "acquisition_reconciler",
+      "catalog_scan",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/brokers.py",
+      "src/cifereca/cli.py"
+    ]
+  },
+  "kobo_backup_records": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "kobo_backup_enabled": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "config"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": [
+      "src/cifereca/gui/main_window.py",
+      "tests/test_core_0978_source_state.py",
+      "tests/test_kobo_sync_modes.py",
+      "tests/test_sync_state_contract.py"
+    ]
+  },
+  "kobo_backup_interval_minutes": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "config"
+    ],
+    "imported_globals": [],
+    "candidate_callsites": []
+  },
+  "_kobo_backup_target_dir": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "config",
+      "current_identity",
+      "identity_by_id",
+      "library_dir",
+      "library_identity_provider_dir"
+    ],
+    "imported_globals": [
+      "Path",
+      "os",
+      "safe_library_component"
+    ],
+    "candidate_callsites": [
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_backup_reconcile_prune.py"
+    ]
+  },
+  "_manifest_author": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any"
+    ],
+    "candidate_callsites": []
+  },
+  "_kobo_backup_error_info": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Any",
+      "KoboAdeptError",
+      "KoboVaultError",
+      "UserFacingError"
+    ],
+    "candidate_callsites": []
+  },
+  "kobo_backup_diagnostic": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Counter"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "tests/test_kobo_backup_observability.py"
+    ]
+  },
+  "_kobo_backup_due": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "config",
+      "storage"
+    ],
+    "imported_globals": [
+      "time"
+    ],
+    "candidate_callsites": []
+  },
+  "sync_kobo_backup": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "_sync_kobo_backup_locked"
+    ],
+    "imported_globals": [
+      "Any",
+      "Callable",
+      "InterProcessLock",
+      "LockBusyError",
+      "ProviderConfigurationError",
+      "acquisition_lock_file"
+    ],
+    "candidate_callsites": [
+      "src/cifereca/cli.py",
+      "src/cifereca/gui/main_window.py",
+      "tests/test_kobo_archive_metadata.py",
+      "tests/test_kobo_backup_fault_isolation.py",
+      "tests/test_kobo_backup_guard.py",
+      "tests/test_kobo_backup_observability.py",
+      "tests/test_kobo_backup_reconcile_prune.py",
+      "tests/test_kobo_vault_closure.py"
+    ]
+  },
+  "kobo_unlinked_local_count": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "identities",
+      "storage"
+    ],
+    "imported_globals": [
+      "Path"
+    ],
+    "candidate_callsites": [
+      "tests/test_kobo_backup_guard.py"
+    ]
+  },
+  "_sync_kobo_backup_locked": {
+    "domain": "Backup Kobo / artefacts",
+    "issue": "#1121",
+    "target": "core/kobo_backup.py + acquisition_engine.py",
+    "self_attributes": [
+      "_execute_kobo_acquisition",
+      "_kobo_backup_error_info",
+      "_kobo_backup_target_dir",
+      "_kobo_record_candidate_paths",
+      "_manifest_author",
+      "_observed_backup_artifact",
+      "_sessions",
+      "catalog_scan",
+      "config",
+      "diagnostics",
+      "identities",
+      "identity_for_connection",
+      "kobo_adept_state",
+      "kobo_unlinked_local_count",
+      "library_dir",
+      "storage"
+    ],
+    "imported_globals": [
+      "Any",
+      "Callable",
+      "Counter",
+      "KoboAdeptError",
+      "Path",
+      "ProviderConfigurationError",
+      "UserFacingError",
+      "time",
+      "try_sha256_file"
+    ],
+    "candidate_callsites": [
+      "tests/test_kobo_sync_modes.py"
+    ]
+  },
+  "_account_for_loan": {
+    "domain": "Acquisition / ACSM / chemins",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + acsm_cache.py",
+    "self_attributes": [
+      "accounts",
+      "current_account"
+    ],
+    "imported_globals": [
+      "Account",
+      "Loan",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "_acquisition_work_dir": {
+    "domain": "Acquisition / ACSM / chemins",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + acsm_cache.py",
+    "self_attributes": [
+      "storage"
+    ],
+    "imported_globals": [
+      "Path",
+      "safe_library_component"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0913.py"
+    ]
+  },
+  "_cleanup_acsm_after_success": {
+    "domain": "Acquisition / ACSM / chemins",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + acsm_cache.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Path",
+      "acsm_cache"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0913.py"
+    ]
+  },
+  "_cleanup_old_acsm_work": {
+    "domain": "Acquisition / ACSM / chemins",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + acsm_cache.py",
+    "self_attributes": [
+      "config",
+      "storage"
+    ],
+    "imported_globals": [
+      "acsm_cache",
+      "time"
+    ],
+    "candidate_callsites": []
+  },
+  "acquire_digital_loan": {
+    "domain": "Acquisition / ACSM / chemins",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + acsm_cache.py",
+    "self_attributes": [
+      "_account_for_loan",
+      "_acquisition_work_dir",
+      "_session_for_source",
+      "acquisition",
+      "diagnostics",
+      "identity_for_connection",
+      "library_identity_provider_dir"
+    ],
+    "imported_globals": [
+      "Acquisition",
+      "Loan",
+      "SearchResult",
+      "acsm_cache",
+      "time"
+    ],
+    "candidate_callsites": [
+      "tests/test_adept_artifact_orchestration.py",
+      "tests/test_adept_profile_readiness.py",
+      "tests/test_catalog_083.py",
+      "tests/test_core_0913.py",
+      "tests/test_core_0977_adept_retry_guard.py",
+      "tests/test_paris_borrower_adept_binding.py",
+      "tests/test_provider_plugins.py"
+    ]
+  },
+  "prepare_digital_download": {
+    "domain": "Acquisition / ACSM / chemins",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + acsm_cache.py",
+    "self_attributes": [
+      "acquire_digital_loan"
+    ],
+    "imported_globals": [
+      "Loan",
+      "Path",
+      "ProviderConfigurationError"
+    ],
+    "candidate_callsites": [
+      "tests/test_core_0913.py"
+    ]
+  },
+  "_download_filename": {
+    "domain": "Acquisition / ACSM / chemins",
+    "issue": "#1120",
+    "target": "core/loan_acquisition.py + acsm_cache.py",
+    "self_attributes": [],
+    "imported_globals": [
+      "Loan",
+      "Path",
+      "re",
+      "urlparse"
+    ],
+    "candidate_callsites": []
+  }
+}

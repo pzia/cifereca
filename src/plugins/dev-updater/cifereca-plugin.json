@@ -1,0 +1,59 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.dev-updater",
+    "version": "0.1.0",
+    "name": "Releases développeur (consultation)",
+    "publisher": "CIFERECA",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.dev-updater",
+      "type": "ui.page",
+      "version": "0.1.0",
+      "entrypoint": "dev_updater_page:PLUGIN",
+      "display_name": "Releases développeur",
+      "description": "Consultation manuelle et en lecture seule des releases GitHub du dépôt configuré.",
+      "help_text": "Plugin désactivé par défaut : chaque vérification est une action explicite. Consulte les métadonnées publiques GitHub et présente le canal, le tag, les notes, les ZIP et leurs noms de preuves sans télécharger, vérifier, appliquer ou redémarrer. Pas de jeton géré, pas de réseau à l'ouverture de page. L'application et la vérification cryptographique relèvent d'un futur contrat public Core sécurisé.",
+      "enabled_by_default": false,
+      "priority": -90,
+      "instantiation": "singleton_public",
+      "capabilities": [
+        "ui.dev-updater.releases.readonly"
+      ],
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [
+        "tasks"
+      ],
+      "requires_contracts": [],
+      "system_requires": [],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "repository": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 201,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$",
+            "default": "pzia/cifereca",
+            "title": "Dépôt GitHub public"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "prerelease",
+              "dev"
+            ],
+            "default": "stable",
+            "title": "Canal de releases"
+          }
+        }
+      }
+    }
+  ]
+}

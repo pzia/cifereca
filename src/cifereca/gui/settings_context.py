@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-PERSISTABLE_SETTINGS_TABS = frozenset({"accounts", "library", "sync", "interface"})
+PERSISTABLE_SETTINGS_TABS = frozenset({"accounts", "library", "sync", "interface", "ai"})
 RECONNECT_SETTINGS_TABS = frozenset({"accounts", "sync"})
 
 

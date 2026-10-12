@@ -8,7 +8,7 @@ from pathlib import Path
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.models import Loan, SearchResult
+from cifereca.models import Account, Loan, SearchResult
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -75,6 +75,7 @@ def test_provider_quota_is_retryable_and_does_not_permanently_block_active_loan(
         service = _service(td)
         try:
             service.storage.provider_connection_put({"identity_id": "default", "provider_id": "paris", "credential_id": "p", "label": "Paris"})
+            service.accounts.append(Account(unique_id="", is_primary=True, provider_id="paris", credential_id="p", identity_id="default"))
             loan = Loan(id="l", provider="DILICOM", medium="digital", record_id="isbn", title="Quota",
                         source_provider="paris", source_credential="p", source_account_id="primary", identity_id="default",
                         ebook_url="https://example", due_at="2099-01-01T00:00:00Z")
@@ -124,7 +125,7 @@ def test_schema_v8_merges_legacy_empty_and_primary_paris_loan_ledger_rows():
         db.commit(); db.close()
 
         migrated = Storage(db_path)
-        assert migrated.schema_version() == 12
+        assert migrated.schema_version() == 13
         entitlements = migrated.entitlements(provider_id="paris")
         assert len(entitlements) == 1
         assert entitlements[0]["account_id"] == "primary"

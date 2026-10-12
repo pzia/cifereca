@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.literary-criticism",
-    "version": "0.3.1",
+    "version": "0.3.8",
     "name": "Critique littéraire",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -26,11 +26,11 @@
     {
       "id": "literary.criticism",
       "type": "criticism.index",
-      "version": "0.2.0",
+      "version": "0.3.8",
       "entrypoint": "literary_criticism:PLUGIN",
       "display_name": "Critique littéraire",
       "description": "Agrège des critiques publiques, les déduplique et les rattache aux livres par preuves explicables.",
-      "help_text": "Index de critiques avec preuves ISBN, URL ou titre/auteur ; les éditions contradictoires restent des suggestions. Aucune collecte implicite.",
+      "help_text": "Index de critiques avec preuves ISBN, URL ou titre/auteur ; les éditions contradictoires restent des suggestions. Aucune collecte implicite. Toute collecte exclusivement invalide conserve le dernier cache valide et sa fraîcheur ; erreurs de source sous forme de catégories expurgées. Pages de sources bornées à la limite demandée, rejet des réponses hors budget ou structurellement incorrectes avant mutation du cache et fraîcheur externe plafonnée à sept jours. Les preuves ISBN, URL de notice et auteurs sont recalculées à partir des contributions vivantes de chaque source ; une actualisation complète retire les preuves abandonnées même si l'URL de l'article reste identique. Une page incrémentale conserve les preuves précédentes de sa source. Un remplacement sans TTL n'hérite pas de la fraîcheur précédente. La prévisualisation RSS/Atom issue d'une métarecherche est bornée à quatre fois le nombre de sources demandées (max 400 lignes), huit URL par résultat, 32 liens alternate par page et 128000 caractères HTML ; aucune activation ni collecte automatique.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
@@ -48,11 +48,11 @@
     {
       "id": "ui.page.literary-criticism",
       "type": "ui.page",
-      "version": "0.2.0",
+      "version": "0.3.8",
       "entrypoint": "criticism_page:PLUGIN",
       "display_name": "Critiques littéraires",
       "description": "Sources et critiques associées depuis la fiche d’un livre.",
-      "help_text": "Lecture du cache local à l’ouverture. Ajouter un flux le laisse désactivé ; activez-le puis lancez Actualiser. Filtres source, langue, date. Navigation locale optionnelle Core #737.",
+      "help_text": "Sans livre : choisir une fiche Bibliothèque. Sans source : ajouter puis activer un flux. Filtres langue/date validés, cache seul à l’ouverture ; rafraîchissement explicite. Une collecte entièrement invalide n'efface pas les critiques attestées en cache ; les erreurs de transport et d'item ne dévoilent jamais de données source. Synthèse IA désactivée par défaut et seulement sur clic séparé : trois extraits publics en cache bornés, service public llm/tasks, résultat marqué non attesté et sourcé ; aucune mutation des rattachements confirmés.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
@@ -77,12 +77,25 @@
       ],
       "requires": [],
       "recommends": [],
-      "capabilities": []
+      "capabilities": [],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "llm_summaries": {
+            "type": "boolean",
+            "default": false,
+            "title": "Synthèse facultative par IA",
+            "description": "Autorise le bouton manuel de synthèse de trois extraits publics en cache. Aucun texte intégral ni livre/profil envoyé ; le modèle peut être distant. Aucune confirmation bibliographique automatique."
+          }
+        }
+      }
     },
     {
       "id": "criticism.source.rss",
       "type": "criticism.source",
-      "version": "0.3.1",
+      "version": "0.3.8",
       "entrypoint": "criticism_feeds:PLUGIN",
       "display_name": "Source RSS/Atom",
       "description": "Source de critiques publique RSS 2, Atom ou JSON Feed.",

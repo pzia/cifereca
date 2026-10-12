@@ -1,0 +1,786 @@
+{
+  "__init__": {
+    "kind": "method",
+    "signature": "(self, config: 'Config', storage: 'Storage', diagnostics: 'Diagnostics')"
+  },
+  "_identity_directory_engine": {
+    "kind": "method",
+    "signature": "(self)"
+  },
+  "_recover_identity_directory_migration": {
+    "kind": "method",
+    "signature": "(self)"
+  },
+  "save_diagnostic_preferences": {
+    "kind": "method",
+    "signature": "(self, *, enabled: 'bool', level: 'str') -> 'None'"
+  },
+  "can_download_loan": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'bool'"
+  },
+  "save_configuration": {
+    "kind": "method",
+    "signature": "(self, data: 'dict[str, Any]') -> 'dict[str, Any]'"
+  },
+  "change_identity_directory": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str', directory_name: 'str', *, dry_run: 'bool' = False)"
+  },
+  "_sync_identity_configuration": {
+    "kind": "method",
+    "signature": "(self) -> 'None'"
+  },
+  "identity_by_id": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str | None') -> 'Identity | None'"
+  },
+  "identity_for_connection": {
+    "kind": "method",
+    "signature": "(self, provider_id: 'str', credential_id: 'str') -> 'Identity'"
+  },
+  "accounts_for_identity": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str | None' = None) -> 'list[Account]'"
+  },
+  "sync_source_id": {
+    "kind": "method",
+    "signature": "(self, account: 'Account') -> 'str'"
+  },
+  "sync_source_enabled": {
+    "kind": "method",
+    "signature": "(self, account: 'Account') -> 'bool'"
+  },
+  "select_identity": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str') -> 'Identity'"
+  },
+  "library_identity_provider_dir": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str', provider_id: 'str') -> 'Path'"
+  },
+  "_migrate_legacy_flat_kobo_files": {
+    "kind": "method",
+    "signature": "(self, default_identity: 'Identity') -> 'None'"
+  },
+  "adept_profile_choices": {
+    "kind": "method",
+    "signature": "(self) -> 'list[dict[str, str]]'"
+  },
+  "resolve_adept_profile_for_identity": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str', *, explicit_profile: 'str | None' = None) -> 'tuple[str, str]'"
+  },
+  "resolve_adept_profile": {
+    "kind": "method",
+    "signature": "(self, *, provider_id: 'str', credential_id: 'str', account_id: 'str | None' = None, explicit_profile: 'str | None' = None) -> 'tuple[str, str]'"
+  },
+  "_local_account": {
+    "kind": "method",
+    "signature": "(self) -> 'Account'"
+  },
+  "_session_key": {
+    "kind": "staticmethod",
+    "signature": "(provider_id: 'str', credential_id: 'str') -> 'str'"
+  },
+  "active_session": {
+    "kind": "property",
+    "signature": "(self) -> 'ProviderSession'"
+  },
+  "attach_plugin_manager": {
+    "kind": "method",
+    "signature": "(self, manager: 'Any') -> 'list[str]'"
+  },
+  "_unbind_virtual_subscriptions": {
+    "kind": "method",
+    "signature": "(self) -> 'None'"
+  },
+  "_sync_virtual_subscriptions": {
+    "kind": "method",
+    "signature": "(self, services: 'dict[str, object]') -> 'None'"
+  },
+  "_queue_virtual_collection_refresh": {
+    "kind": "method",
+    "signature": "(self) -> 'None'"
+  },
+  "_drain_virtual_collection_events": {
+    "kind": "method",
+    "signature": "(self) -> 'None'"
+  },
+  "subscribe_virtual_sources": {
+    "kind": "method",
+    "signature": "(self, callback: 'Callable[[], None]') -> 'Callable[[], None]'"
+  },
+  "_connect_changed_virtual_provider": {
+    "kind": "method",
+    "signature": "(self, provider_id: 'str') -> 'None'"
+  },
+  "refresh_virtual_collections": {
+    "kind": "method",
+    "signature": "(self, *, connect_changed: 'bool' = False) -> 'list[str]'"
+  },
+  "plugin_manager": {
+    "kind": "property",
+    "signature": "(self) -> 'Any | None'"
+  },
+  "_provider_plugin_status": {
+    "kind": "method",
+    "signature": "(self, provider_id: 'str') -> 'Any | None'"
+  },
+  "_provider_enabled_for_identity": {
+    "kind": "method",
+    "signature": "(self, provider_id: 'str', identity_id: 'str | None' = None) -> 'bool'"
+  },
+  "provider_descriptors": {
+    "kind": "method",
+    "signature": "(self)"
+  },
+  "provider_diagnostic_state": {
+    "kind": "method",
+    "signature": "(self) -> 'dict[str, Any]'"
+  },
+  "close": {
+    "kind": "method",
+    "signature": "(self) -> 'None'"
+  },
+  "disconnect_configured": {
+    "kind": "method",
+    "signature": "(self) -> 'None'"
+  },
+  "connect_configured": {
+    "kind": "method",
+    "signature": "(self) -> 'dict[str, Any]'"
+  },
+  "login": {
+    "kind": "method",
+    "signature": "(self, username: 'str', password: 'str') -> 'dict[str, Any]'"
+  },
+  "select_account": {
+    "kind": "method",
+    "signature": "(self, unique_id: 'str', provider_id: 'str | None' = None, credential_id: 'str | None' = None) -> 'Account'"
+  },
+  "_session_for_account": {
+    "kind": "method",
+    "signature": "(self, account: 'Account | None' = None) -> 'ProviderSession'"
+  },
+  "_session_for_source": {
+    "kind": "method",
+    "signature": "(self, provider_id: 'str', credential_id: 'str | None' = None) -> 'ProviderSession'"
+  },
+  "_key": {
+    "kind": "method",
+    "signature": "(self, kind: 'str', suffix: 'str' = '') -> 'str'"
+  },
+  "_loans_for_account": {
+    "kind": "method",
+    "signature": "(self, account: 'Account', *, force: 'bool' = False) -> 'list[Loan]'"
+  },
+  "refresh_loans": {
+    "kind": "method",
+    "signature": "(self, force: 'bool' = False) -> 'list[Loan]'"
+  },
+  "refresh_identity_loans": {
+    "kind": "method",
+    "signature": "(self, force: 'bool' = False, identity_id: 'str | None' = None) -> 'list[Loan]'"
+  },
+  "public_catalogue_target": {
+    "kind": "method",
+    "signature": "(self, row)"
+  },
+  "public_catalogue_url": {
+    "kind": "method",
+    "signature": "(self, row)"
+  },
+  "_provider_loan_active_for_acquisition": {
+    "kind": "method",
+    "signature": "(self, row)"
+  },
+  "refresh_adept_inventory": {
+    "kind": "method",
+    "signature": "(self, identity_id)"
+  },
+  "refresh_history": {
+    "kind": "method",
+    "signature": "(self, force: 'bool' = False) -> 'list[HistoryItem]'"
+  },
+  "_history_fold": {
+    "kind": "staticmethod",
+    "signature": "(value: 'str | None') -> 'str'"
+  },
+  "_history_cover_score": {
+    "kind": "classmethod",
+    "signature": "(cls, item_title: 'str', item_author: 'str | None', item_year: 'str | None', record_id: 'str | None', candidate: 'SearchResult') -> 'float'"
+  },
+  "_history_search_queries": {
+    "kind": "classmethod",
+    "signature": "(cls, title: 'str') -> 'list[str]'"
+  },
+  "resolve_history_thumbnail": {
+    "kind": "method",
+    "signature": "(self, provider: 'str', record_id: 'str | None', title: 'str', author: 'str | None' = None, year: 'str | None' = None, default_url: 'str | None' = None) -> 'tuple[str | None, str]'"
+  },
+  "refresh_bookings": {
+    "kind": "method",
+    "signature": "(self, force: 'bool' = False) -> 'list[Booking]'"
+  },
+  "provider_display_name": {
+    "kind": "method",
+    "signature": "(self, provider_id: 'str') -> 'str'"
+  },
+  "_search_query_variants": {
+    "kind": "classmethod",
+    "signature": "(cls, query: 'str') -> 'list[str]'"
+  },
+  "_search_relevance": {
+    "kind": "classmethod",
+    "signature": "(cls, query: 'str', row: 'SearchResult') -> 'int'"
+  },
+  "_normalized_language_values": {
+    "kind": "staticmethod",
+    "signature": "(value: 'Any') -> 'list[str]'"
+  },
+  "_search_preference_score": {
+    "kind": "method",
+    "signature": "(self, row: 'SearchResult') -> 'int'"
+  },
+  "availability_display_label": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult', detail: 'ItemDetail') -> 'str'"
+  },
+  "searchable_providers": {
+    "kind": "method",
+    "signature": "(self) -> 'list[tuple[str, str]]'"
+  },
+  "_session_search_capabilities": {
+    "kind": "staticmethod",
+    "signature": "(session: 'ProviderSession') -> 'ProviderSearchCapabilities'"
+  },
+  "provider_search_capabilities": {
+    "kind": "method",
+    "signature": "(self) -> 'dict[str, ProviderSearchCapabilities]'"
+  },
+  "_search_contract_warning": {
+    "kind": "staticmethod",
+    "signature": "(session: 'ProviderSession', field: 'str', scope: 'str') -> 'str'"
+  },
+  "_field_match": {
+    "kind": "classmethod",
+    "signature": "(cls, field: 'str', query: 'str', row: 'SearchResult') -> 'bool'"
+  },
+  "_without_redundant_merged": {
+    "kind": "method",
+    "signature": "(self, sessions: 'list[ProviderSession]', *, field: 'str', scope: 'str', include_redundant_merged: 'bool' = False) -> 'list[ProviderSession]'"
+  },
+  "search": {
+    "kind": "method",
+    "signature": "(self, query: 'str', scope: 'str' = 'all', force: 'bool' = False, *, provider_id: 'str' = 'all', field: 'str' = 'all', content_types: 'tuple[str, ...] | list[str] | None' = None, include_redundant_merged: 'bool' = False) -> 'list[SearchResult]'"
+  },
+  "_search_provider_session": {
+    "kind": "method",
+    "signature": "(self, session: 'ProviderSession', query: 'str', scope: 'str', *, field: 'str' = 'all', content_types: 'tuple[str, ...]' = ()) -> 'tuple[list[SearchResult], list[str], str, str]'"
+  },
+  "_search_virtual_stream_session": {
+    "kind": "method",
+    "signature": "(self, session: 'ProviderSession', query: 'str', scope: 'str', *, field: 'str', content_types: 'tuple[str, ...]', generation: 'int', publish: 'Callable[[ProviderSearchEvent], None]', cancelled: 'Callable[[], bool]', control: 'Any') -> 'tuple[list[SearchResult], list[str], str, str]'"
+  },
+  "search_progressive": {
+    "kind": "method",
+    "signature": "(self, query: 'str', scope: 'str' = 'all', force: 'bool' = False, *, provider_id: 'str' = 'all', provider_ids: 'tuple[str, ...] | list[str] | None' = None, field: 'str' = 'all', content_types: 'tuple[str, ...] | list[str] | None' = None, on_batch: 'Callable[[Any], None] | None' = None, control: 'Any' = None, on_event: 'Callable[[ProviderSearchEvent], None] | None' = None, include_redundant_merged: 'bool' = False)"
+  },
+  "search_local_library": {
+    "kind": "method",
+    "signature": "(self, query: 'str', scope: 'str' = 'all', *, field: 'str' = 'all', identity_id: 'str | None' = None) -> 'list[dict[str, Any]]'"
+  },
+  "search_known_catalog": {
+    "kind": "method",
+    "signature": "(self, query: 'str', scope: 'str' = 'all', *, field: 'str' = 'all', identity_id: 'str | None' = None, provider_ids: 'list[str] | tuple[str, ...] | None' = None, content_types: 'list[str] | tuple[str, ...] | None' = None) -> 'list[dict[str, Any]]'"
+  },
+  "filter_loaded_search_results": {
+    "kind": "staticmethod",
+    "signature": "(rows: 'list[dict[str, Any]]', query: 'str' = '', *, field: 'str' = 'all', scope: 'str' = 'all', provider_ids: 'list[str] | tuple[str, ...] | None' = None, content_types: 'list[str] | tuple[str, ...] | None' = None) -> 'list[dict[str, Any]]'"
+  },
+  "_mirror_remote_results": {
+    "kind": "method",
+    "signature": "(self, rows: 'list[SearchResult]', *, identity_id: 'str | None' = None) -> 'int'"
+  },
+  "mirror_personal_libraries": {
+    "kind": "method",
+    "signature": "(self) -> 'dict[str, int]'"
+  },
+  "_acquire_personal_library_item": {
+    "kind": "method",
+    "signature": "(self, session, row, identity_id: 'str') -> 'dict[str, Any]'"
+  },
+  "recent_acquisitions": {
+    "kind": "method",
+    "signature": "(self, *, identity_id: 'str | None' = None, limit: 'int' = 100) -> 'list[dict[str, Any]]'"
+  },
+  "local_book_path": {
+    "kind": "method",
+    "signature": "(self, placement_id: 'str', *, identity_id: 'str') -> 'Path'"
+  },
+  "local_placement_for_source": {
+    "kind": "method",
+    "signature": "(self, *, provider_id, credential_id, item_id, identity_id)"
+  },
+  "local_placements_for_sources": {
+    "kind": "method",
+    "signature": "(self, identity_id)"
+  },
+  "materialize_to_identity": {
+    "kind": "method",
+    "signature": "(self, placement_id: 'str', target_identity_id: 'str') -> 'dict[str, Any]'"
+  },
+  "holdings": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult', search_terms: 'str' = '', force: 'bool' = False) -> 'ItemDetail'"
+  },
+  "renew": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+  },
+  "_return_loan_identity": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'tuple[Account, Any, str]'"
+  },
+  "loan_return_state": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any] | None'"
+  },
+  "verify_return_digital": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+  },
+  "verify_paris_return_inventory": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, str]'"
+  },
+  "_adobe_return_inventory_confirmed": {
+    "kind": "method",
+    "signature": "(self, acquisition: 'dict[str, Any]') -> 'bool'"
+  },
+  "_return_operation_lock_file": {
+    "kind": "staticmethod",
+    "signature": "(loan: 'Loan') -> 'Path'"
+  },
+  "return_loan_prefer_adept": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+  },
+  "_return_loan_prefer_adept_guarded": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+  },
+  "verify_loan_return": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+  },
+  "return_digital": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan', *, explicit_retry: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "_return_digital_guarded": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan', *, explicit_retry: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "pnb_preferences": {
+    "kind": "method",
+    "signature": "(self) -> 'dict[str, Any]'"
+  },
+  "content_type_for": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult') -> 'str'"
+  },
+  "default_downloads_dir": {
+    "kind": "method",
+    "signature": "(self) -> 'Path'"
+  },
+  "_kobo_adapter": {
+    "kind": "method",
+    "signature": "(self)"
+  },
+  "_required_plugin_service": {
+    "kind": "method",
+    "signature": "(self, plugin_id: 'str') -> 'Any'"
+  },
+  "_http_plain_transport_proof": {
+    "kind": "staticmethod",
+    "signature": "(request: 'dict[str, Any]', source: 'dict[str, Any]') -> 'dict[str, Any]'"
+  },
+  "execute_acquisition_request": {
+    "kind": "method",
+    "signature": "(self, request: 'dict[str, Any]') -> 'dict[str, Any]'"
+  },
+  "_originating_adept_profile_id": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str', profile_name: 'str') -> 'str | None'"
+  },
+  "_adept_return_capability": {
+    "kind": "method",
+    "signature": "(self) -> 'bool'"
+  },
+  "_adept_acquisition_path": {
+    "kind": "method",
+    "signature": "(self, row)"
+  },
+  "_adept_inventory_candidates": {
+    "kind": "method",
+    "signature": "(self, row, profiles, profile_references=None)"
+  },
+  "_reconcile_adept_acquisition": {
+    "kind": "method",
+    "signature": "(self, row, *, profile_references=None, cache=None)"
+  },
+  "adept_loan_choices": {
+    "kind": "method",
+    "signature": "(self, acquisition_id, *, profile_references=None)"
+  },
+  "attach_adept_loan": {
+    "kind": "method",
+    "signature": "(self, acquisition_id, profile_id, loan_id)"
+  },
+  "reconcile_adept_acquisition": {
+    "kind": "method",
+    "signature": "(self, acquisition_id, *, profile_references=None)"
+  },
+  "_reconcile_identity_adept_inventory": {
+    "kind": "method",
+    "signature": "(self, identity_id)"
+  },
+  "adept_return_for_artifact": {
+    "kind": "method",
+    "signature": "(self, artifact_id: 'str', identity_id: 'str') -> 'dict[str, Any] | None'"
+  },
+  "return_adept_acquisition": {
+    "kind": "method",
+    "signature": "(self, acquisition_id: 'str') -> 'dict[str, Any]'"
+  },
+  "_return_adept_acquisition": {
+    "kind": "method",
+    "signature": "(self, acquisition_id: 'str') -> 'dict[str, Any]'"
+  },
+  "execute_drm_mutation": {
+    "kind": "method",
+    "signature": "(self, request: 'DrmMutationRequest') -> 'dict[str, Any]'"
+  },
+  "_import_acsm_impl": {
+    "kind": "method",
+    "signature": "(self, source: 'Path', *, identity_id: 'str | None' = None, provider_id: 'str' = 'manual', title: 'str | None' = None) -> 'dict[str, Any]'"
+  },
+  "import_acsm": {
+    "kind": "method",
+    "signature": "(self, source: 'Path', *, identity_id: 'str | None' = None, provider_id: 'str' = 'manual', title: 'str | None' = None) -> 'dict[str, Any]'"
+  },
+  "runtime_diagnostic": {
+    "kind": "method",
+    "signature": "(self, plugin_id: 'str') -> 'dict[str, Any]'"
+  },
+  "kobo_adept_state": {
+    "kind": "method",
+    "signature": "(self, *, force: 'bool' = False, full: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "kobo_profiles": {
+    "kind": "method",
+    "signature": "(self) -> 'list[dict[str, Any]]'"
+  },
+  "_adept_profile_ref": {
+    "kind": "staticmethod",
+    "signature": "(row: 'dict[str, Any]') -> 'str'"
+  },
+  "_adept_profile_name": {
+    "kind": "staticmethod",
+    "signature": "(row: 'dict[str, Any]') -> 'str'"
+  },
+  "_adept_profile_row": {
+    "kind": "method",
+    "signature": "(self, reference: 'str | None', profiles: 'list[dict[str, Any]] | None' = None) -> 'dict[str, Any] | None'"
+  },
+  "_adept_profile_cli_name": {
+    "kind": "method",
+    "signature": "(self, reference: 'str | None', profiles: 'list[dict[str, Any]] | None' = None) -> 'str | None'"
+  },
+  "can_direct_download": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult') -> 'bool'"
+  },
+  "_kobo_adept_format": {
+    "kind": "staticmethod",
+    "signature": "(vault_format: 'str | None') -> 'str | None'"
+  },
+  "_kobo_candidate_media_format": {
+    "kind": "staticmethod",
+    "signature": "(candidate: 'dict[str, Any]') -> 'str'"
+  },
+  "_kobo_candidate_drm": {
+    "kind": "classmethod",
+    "signature": "(cls, candidate: 'dict[str, Any]') -> 'str'"
+  },
+  "_kobo_candidate_handling": {
+    "kind": "classmethod",
+    "signature": "(cls, candidate: 'dict[str, Any]') -> 'str'"
+  },
+  "_kobo_candidate_profile": {
+    "kind": "staticmethod",
+    "signature": "(candidate: 'dict[str, Any]') -> 'str | None'"
+  },
+  "_kobo_candidate_source": {
+    "kind": "staticmethod",
+    "signature": "(candidate: 'dict[str, Any]') -> 'str | None'"
+  },
+  "_kobo_candidate_requires_authorization": {
+    "kind": "staticmethod",
+    "signature": "(candidate: 'dict[str, Any]') -> 'bool'"
+  },
+  "_kobo_acsm_candidate": {
+    "kind": "classmethod",
+    "signature": "(cls, payload: 'dict[str, Any]') -> 'dict[str, Any] | None'"
+  },
+  "_kobo_candidate": {
+    "kind": "classmethod",
+    "signature": "(cls, payload: 'dict[str, Any]', preferred_format: 'str' = 'epub') -> 'dict[str, Any]'"
+  },
+  "_kobo_delegated_candidate": {
+    "kind": "classmethod",
+    "signature": "(cls, payload: 'dict[str, Any]', preferred_format: 'str' = 'epub') -> 'dict[str, Any]'"
+  },
+  "_kobo_canonical_drm": {
+    "kind": "staticmethod",
+    "signature": "(value: 'Any') -> 'str'"
+  },
+  "_kobo_url_format": {
+    "kind": "staticmethod",
+    "signature": "(candidate: 'dict[str, Any]') -> 'str | None'"
+  },
+  "_kobo_delegated_request": {
+    "kind": "staticmethod",
+    "signature": "(payload: 'dict[str, Any]', candidate: 'dict[str, Any]') -> 'dict[str, Any] | None'"
+  },
+  "_kobo_kdrm_context": {
+    "kind": "staticmethod",
+    "signature": "(payload: 'dict[str, Any]', candidate: 'dict[str, Any]') -> 'dict[str, str] | None'"
+  },
+  "_observed_backup_artifact": {
+    "kind": "staticmethod",
+    "signature": "(path: 'Path') -> 'dict[str, Any]'"
+  },
+  "_kobo_artifact_plausible": {
+    "kind": "staticmethod",
+    "signature": "(path: 'Path', fmt: 'str') -> 'bool'"
+  },
+  "_kobo_record_candidate_paths": {
+    "kind": "method",
+    "signature": "(self, record: 'dict[str, Any]', target_dir: 'Path') -> 'list[Path]'"
+  },
+  "_kobo_destination": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult', target_dir: 'Path', fmt: 'str') -> 'Path'"
+  },
+  "_execute_kobo_acquisition": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult', target_dir: 'Path') -> 'Acquisition'"
+  },
+  "_acquire_direct_item_impl": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult') -> 'Acquisition'"
+  },
+  "acquire_direct_item": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult') -> 'Acquisition'"
+  },
+  "obtain_search_item": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult')"
+  },
+  "prepare_direct_download": {
+    "kind": "method",
+    "signature": "(self, item: 'SearchResult') -> 'tuple[Path, str]'"
+  },
+  "library_dir": {
+    "kind": "method",
+    "signature": "(self) -> 'Path'"
+  },
+  "catalog_scan": {
+    "kind": "method",
+    "signature": "(self, *, repair_misnamed: 'bool' = False, force_covers: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "catalog_entries": {
+    "kind": "method",
+    "signature": "(self, *, state: 'str | None' = None) -> 'list[dict[str, Any]]'"
+  },
+  "catalog_index_path": {
+    "kind": "method",
+    "signature": "(self, path: 'Path', *, title: 'str | None' = None, item_id: 'str | None' = None, identity_id: 'str | None' = None, provider_id: 'str | None' = None) -> 'dict[str, Any]'"
+  },
+  "library_entries": {
+    "kind": "method",
+    "signature": "(self, *, identity_id: 'str | None' = None, scan: 'bool' = False) -> 'list[dict[str, Any]]'"
+  },
+  "_persist_active_loans": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str', loans: 'list[Loan]', *, reconcile_missing: 'bool' = True) -> 'dict[str, int]'"
+  },
+  "_loan_destination_name": {
+    "kind": "staticmethod",
+    "signature": "(title: 'str', suffix: 'str' = '.epub') -> 'str'"
+  },
+  "_provider_attention_code": {
+    "kind": "staticmethod",
+    "signature": "(exc: 'Exception') -> 'str | None'"
+  },
+  "_diagnose_adept_binding": {
+    "kind": "method",
+    "signature": "(self, binding, *, provider_loan_id)"
+  },
+  "adept_return_status_for_loan": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+  },
+  "reacquire_digital_loan": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
+  },
+  "_borrower_identity_conflict": {
+    "kind": "staticmethod",
+    "signature": "(accounts: 'Any', *, provider_id: 'str', account_id: 'str | None', identity_id: 'str', credential_id: 'str | None' = None) -> 'bool'"
+  },
+  "bind_paris_borrower_adept": {
+    "kind": "method",
+    "signature": "(self, *, credential_id: 'str', account_id: 'str', borrower_identity_id: 'str', confirmed: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "_paris_adept_identity_for_loan": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan', *, connection_identity_id: 'str') -> 'tuple[str | None, str | None]'"
+  },
+  "_cross_identity_loan_conflict": {
+    "kind": "staticmethod",
+    "signature": "(acquisitions: 'Any', *, provider_loan_id: 'str', identity_id: 'str', entitlements: 'Any' = ()) -> 'bool'"
+  },
+  "_acquire_active_loan_automatically": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "_acquire_active_loan_automatically_guarded": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "_synchronize_account_source_impl": {
+    "kind": "method",
+    "signature": "(self, account: 'Account', *, deep: 'bool' = False, control: 'Any' = None) -> 'dict[str, Any]'"
+  },
+  "synchronize_account_source": {
+    "kind": "method",
+    "signature": "(self, account: 'Account', *, deep: 'bool' = False, control: 'Any' = None) -> 'dict[str, Any]'"
+  },
+  "preview_library_filename": {
+    "kind": "method",
+    "signature": "(self, *, title: 'str', author: 'str' = '', series: 'str' = '', index: 'str' = '', extension: 'str' = 'epub') -> 'str'"
+  },
+  "opening_sync": {
+    "kind": "method",
+    "signature": "(self, progress: 'Callable[[dict[str, Any]], None] | None' = None, *, deep: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "_opening_sync_locked": {
+    "kind": "method",
+    "signature": "(self, progress: 'Callable[[dict[str, Any]], None] | None' = None, *, deep: 'bool' = False) -> 'dict[str, Any]'"
+  },
+  "_record_action": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str | None', action_type: 'str', outcome: 'str', *, provider_id: 'str' = '', plugin_id: 'str' = '', facts: 'Mapping[str, Any] | None' = None) -> 'None'"
+  },
+  "action_statistics": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str', *, window_seconds: 'int' = 2592000)"
+  },
+  "_record_loan_statistics": {
+    "kind": "method",
+    "signature": "(self, account, rows, *, from_cache=False)"
+  },
+  "identity_statistics": {
+    "kind": "method",
+    "signature": "(self, identity_id, *, window_seconds: 'int' = 2592000)"
+  },
+  "dashboard_state": {
+    "kind": "method",
+    "signature": "(self) -> 'list[dict[str, Any]]'"
+  },
+  "acquisition_ledger_records": {
+    "kind": "method",
+    "signature": "(self, *, status: 'str | None' = None) -> 'list[dict[str, Any]]'"
+  },
+  "reconcile_acquisitions": {
+    "kind": "method",
+    "signature": "(self) -> 'dict[str, Any]'"
+  },
+  "kobo_backup_records": {
+    "kind": "method",
+    "signature": "(self) -> 'list[dict[str, Any]]'"
+  },
+  "kobo_backup_enabled": {
+    "kind": "method",
+    "signature": "(self) -> 'bool'"
+  },
+  "kobo_backup_interval_minutes": {
+    "kind": "method",
+    "signature": "(self) -> 'int'"
+  },
+  "_kobo_backup_target_dir": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str | None' = None) -> 'Path'"
+  },
+  "_manifest_author": {
+    "kind": "staticmethod",
+    "signature": "(item: 'dict[str, Any]') -> 'str | None'"
+  },
+  "_kobo_backup_error_info": {
+    "kind": "staticmethod",
+    "signature": "(exc: 'Exception') -> 'dict[str, Any]'"
+  },
+  "kobo_backup_diagnostic": {
+    "kind": "method",
+    "signature": "(self) -> 'dict[str, Any]'"
+  },
+  "_kobo_backup_due": {
+    "kind": "method",
+    "signature": "(self) -> 'bool'"
+  },
+  "sync_kobo_backup": {
+    "kind": "method",
+    "signature": "(self, progress: 'Callable[[dict[str, Any]], None] | None' = None) -> 'dict[str, Any]'"
+  },
+  "kobo_unlinked_local_count": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str') -> 'int'"
+  },
+  "_sync_kobo_backup_locked": {
+    "kind": "method",
+    "signature": "(self, progress: 'Callable[[dict[str, Any]], None] | None' = None) -> 'dict[str, Any]'"
+  },
+  "_account_for_loan": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan') -> 'Account'"
+  },
+  "_acquisition_work_dir": {
+    "kind": "method",
+    "signature": "(self, identity_id: 'str', provider_id: 'str', loan_id: 'str | None' = None) -> 'Path'"
+  },
+  "_cleanup_acsm_after_success": {
+    "kind": "method",
+    "signature": "(self, path: 'Path | None', *, loan_id: 'str') -> 'None'"
+  },
+  "_cleanup_old_acsm_work": {
+    "kind": "method",
+    "signature": "(self, *, max_age_seconds: 'int | None' = None) -> 'dict[str, int]'"
+  },
+  "acquire_digital_loan": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'Acquisition'"
+  },
+  "prepare_digital_download": {
+    "kind": "method",
+    "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'tuple[Path, str]'"
+  },
+  "_download_filename": {
+    "kind": "method",
+    "signature": "(self, response, loan: 'Loan', content_type: 'str') -> 'str'"
+  }
+}

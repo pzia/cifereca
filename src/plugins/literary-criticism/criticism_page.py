@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import date, datetime, timezone
+import re
 import json
 from pathlib import Path
 
@@ -19,6 +21,32 @@ def filtered_matches(index, book, *, source='', language='', since=''):
         if (not source or source.casefold() in ' '.join(m.article.provenance).casefold())
         and (not language or m.article.language.casefold() == language.casefold())
         and (not since or (cutoff and date_text(m.article.published_at) and date_text(m.article.published_at) >= cutoff)))
+
+
+def validate_review_filters(language: str, since: str) -> str:
+    lang, since = str(language or "").strip(), str(since or "").strip()
+    if lang and (len(lang) > 35 or not re.fullmatch(
+        r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", lang
+    )):
+        return "Langue invalide : utilisez un code tel que fr ou en."
+    if since:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", since):
+            return "Date invalide : format AAAA-MM-JJ requis."
+        try:
+            date.fromisoformat(since)
+        except ValueError:
+            return "Date invalide : vérifiez le jour, le mois et l’année."
+    return ""
+
+
+def review_view_state(*, book_present, sources_present, filters_valid, matches_present):
+    if not book_present:
+        return "no_book"
+    if not sources_present:
+        return "no_sources"
+    if not filters_valid:
+        return "invalid_filters"
+    return "results" if matches_present else "no_matches"
 
 
 class ReviewStore:
@@ -120,6 +148,9 @@ class ReviewView:
         self.plugin, self.host, self.Gtk, self.GLib = plugin, host, Gtk, GLib
         self.book = plugin.pending
         self.generation, self.task, self.disposed = 0, None, False
+        config = getattr(plugin.context, 'config', {}) or {}
+        self._llm_enabled = config.get('llm_summaries') is True if isinstance(config, Mapping) else False
+        self._llm_generation, self._llm_task, self._llm_matches = 0, None, ()
         self.widget = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.heading = Gtk.Label(wrap=True, xalign=0)
         self.widget.append(self.heading)
@@ -132,18 +163,41 @@ class ReviewView:
         self.since = Gtk.Entry(placeholder_text='Depuis AAAA-MM-JJ')
         for entry in (self.source, self.language, self.since):
             controls.append(entry); entry.connect('changed', lambda *_: self.render())
-        controls.append(self.button('Actualiser les sources actives', self.refresh))
-        controls.append(self.button('Retour à la fiche du livre', self.open_book))
-        self.url = Gtk.Entry(placeholder_text='URL de page ou de flux RSS/Atom/JSON Feed', hexpand=True)
-        self.widget.append(self.url)
-        self.widget.append(self.button('Prévisualiser les flux', self.preview))
-        self.previews = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.widget.append(self.previews)
-        self.subscriptions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.widget.append(self.subscriptions)
+        self.refresh_button = self.button('Actualiser les sources actives', self.refresh)
+        self.back_button = self.button('Retour à la fiche du livre', self.open_book)
+        self.choose_button = self.button('Choisir un livre', lambda: self.host.navigate('library'))
+        controls.append(self.refresh_button)
+        controls.append(self.back_button)
+        controls.append(self.choose_button)
+        self._llm_button = None
+        if self._llm_enabled:
+            self._llm_button = self.button('Synthétiser les extraits (IA)', self.summarize)
+            self._llm_button.set_sensitive(False)
+            self._llm_button.set_tooltip_text(
+                'Clic explicite : transmet jusqu’à trois extraits publics en cache (240 caractères chacun) '
+                'au service IA configuré, éventuellement distant. Les liens bibliographiques restent inchangés.'
+            )
+            controls.append(self._llm_button)
+            self._llm_result = Gtk.Label(label='IA facultative : sélectionnez un livre avec critiques. Aucun envoi implicite.', wrap=True, xalign=0)
+            self._llm_result.set_selectable(True)
+            self.widget.append(self._llm_result)
+        self.widget.append(Gtk.Label(label='Critiques de ce livre', xalign=0))
         self.results = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        scroll = Gtk.ScrolledWindow(vexpand=True); scroll.set_child(self.results)
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        scroll.set_child(self.results)
         self.widget.append(scroll)
+
+        self.sources_expander = Gtk.Expander(label='Gérer les sources de critiques')
+        sources_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.sources_expander.set_child(sources_content)
+        self.widget.append(self.sources_expander)
+        self.url = Gtk.Entry(placeholder_text='URL de page ou de flux RSS/Atom/JSON Feed', hexpand=True)
+        sources_content.append(self.url)
+        sources_content.append(self.button('Prévisualiser les flux', self.preview))
+        self.previews = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        sources_content.append(self.previews)
+        self.subscriptions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        sources_content.append(self.subscriptions)
         self.render_sources(); self.render()
 
     def button(self, label, callback):
@@ -233,26 +287,194 @@ class ReviewView:
             return
         self.host.toast('La fiche locale n’est pas disponible dans le profil actif.')
 
+    def open_source_management(self):
+        self.sources_expander.set_expanded(True)
+        self.url.grab_focus()
+
+    def reset_filters(self):
+        for field in (self.source, self.language, self.since):
+            field.set_text("")
+
+    def _reset_llm(self):
+        self._llm_generation += 1
+        handle, self._llm_task = self._llm_task, None
+        if handle is not None:
+            handle.cancel()
+        self._llm_matches = ()
+        if self._llm_button is not None:
+            self._llm_button.set_sensitive(False)
+            self._llm_result.set_label(
+                'IA facultative : choisissez un livre avec critiques. '
+                'Aucun rapprochement n’est confirmé par l’IA.'
+            )
+
+    def summarize(self):
+        if not self._llm_enabled or self._llm_task is not None or self.disposed:
+            return
+        matches = self._llm_matches
+        context = self.plugin.context
+        if not matches or context is None:
+            return
+        service = context.service('llm')
+        tasks = context.broker('tasks')
+        if service is None or tasks is None:
+            self._llm_result.set_label('Service IA indisponible. Les critiques restent consultables.')
+            return
+        # Lazy import: historic GTK smoke may install only the page and index.
+        try:
+            from criticism_llm import summarize_cached_reviews
+        except ImportError:
+            self._llm_result.set_label('Module facultatif indisponible. Les critiques restent consultables.')
+            return
+        self._llm_generation += 1
+        generation = self._llm_generation
+        self._llm_button.set_sensitive(False)
+        self._llm_result.set_label('Synthèse IA demandée… Sources et preuves originales conservées.')
+        try:
+            handle = tasks.submit(
+                lambda control: summarize_cached_reviews(
+                    service, matches, enabled=True, consent=True, control=control,
+                ),
+                label='Synthèse explicite de critiques en cache', kind='criticism.llm',
+            )
+        except Exception:
+            self._llm_button.set_sensitive(True)
+            self._llm_result.set_label('Synthèse indisponible. Le cache de critiques est inchangé.')
+            return
+        self._llm_task = handle
+
+        def done(finished):
+            if finished.control.cancelled():
+                return
+            try:
+                summary = finished.result()
+            except Exception:
+                summary = None
+
+            def apply():
+                if (self.disposed or self.plugin.context is None
+                        or generation != self._llm_generation):
+                    return False
+                self._llm_task = None
+                self._llm_button.set_sensitive(True)
+                if summary is None:
+                    self._llm_result.set_label('Aucune synthèse IA valide. Les critiques originales restent accessibles.')
+                else:
+                    self._llm_result.set_label(
+                        'Synthèse générée — non attestée, à vérifier dans les critiques liées ci-dessous : '
+                        + summary.text + '\nSources des extraits : ' + ', '.join(summary.sources)
+                        + f' · modèle {summary.provider}/{summary.model}'
+                        + (' · service distant' if summary.remote else ' · service local')
+                        + '. Ne confirme aucun rattachement bibliographique.'
+                    )
+                return False
+
+            self.GLib.idle_add(apply)
+
+        handle.add_done_callback(done)
+
     def render(self):
-        self.heading.set_label('Critiques : ' + self.book.title if self.book else 'Depuis une fiche livre, choisissez « Consulter les critiques ».')
+        if hasattr(self, '_llm_generation'):
+            self._reset_llm()
+        self.heading.set_label(
+            'Critiques : ' + self.book.title if self.book
+            else 'Aucun livre sélectionné — ouvrez une fiche depuis la Bibliothèque.'
+        )
         self.clear(self.results)
-        disabled = {FeedSource(url).source_info()['source_id'] for url, enabled in self.plugin.store.subscriptions.items() if not enabled}
-        matches = filtered_matches(self.plugin.store.index, self.book, source=self.source.get_text().strip(),
-            language=self.language.get_text().strip(), since=self.since.get_text().strip())
-        matches = tuple(m for m in matches if set(m.article.provenance) - disabled)
-        if not matches:
-            self.results.append(self.Gtk.Label(label='Aucune critique associée dans le cache pour ces filtres.', wrap=True))
+        has_book = self.book is not None
+        for field in (self.source, self.language, self.since):
+            field.set_sensitive(has_book)
+        self.back_button.set_sensitive(has_book)
+        self.back_button.set_visible(has_book)
+        self.choose_button.set_visible(not has_book)
+
+        try:
+            has_sources = bool(self.plugin.store.sources(self.plugin.context))
+        except Exception:
+            has_sources = False
+        self.refresh_button.set_sensitive(bool(has_book and has_sources))
+        self.refresh_button.set_tooltip_text(
+            'Actualise explicitement les sources de critiques actives.'
+            if has_book and has_sources else
+            'Sélectionnez un livre et activez une source de critiques avant toute actualisation.'
+        )
+        error = validate_review_filters(self.language.get_text(), self.since.get_text())
+        matches = ()
+        if has_book and has_sources and not error:
+            disabled = {
+                FeedSource(url).source_info()['source_id']
+                for url, enabled in self.plugin.store.subscriptions.items() if not enabled
+            }
+            matches = filtered_matches(
+                self.plugin.store.index, self.book, source=self.source.get_text().strip(),
+                language=self.language.get_text().strip(), since=self.since.get_text().strip(),
+            )
+            matches = tuple(m for m in matches if set(m.article.provenance) - disabled)
+        state = review_view_state(
+            book_present=has_book, sources_present=has_sources,
+            filters_valid=not error, matches_present=bool(matches),
+        )
+        if state == 'no_book':
+            self.results.append(self.Gtk.Label(
+                label='Choisissez un livre dans la Bibliothèque pour consulter ses critiques en cache.',
+                wrap=True, xalign=0,
+            ))
+            return
+        if state == 'no_sources':
+            self.results.append(self.Gtk.Label(
+                label='Aucune source de critiques active. Ajoutez un flux puis activez-le explicitement.',
+                wrap=True, xalign=0,
+            ))
+            self.results.append(self.button('Ajouter un flux', self.open_source_management))
+            return
+        if state == 'invalid_filters':
+            self.results.append(self.Gtk.Label(label=error, wrap=True, xalign=0))
+            return
+        if state == 'no_matches':
+            self.results.append(self.Gtk.Label(
+                label='Aucune critique correspondante dans le cache pour ce livre et ces filtres.',
+                wrap=True, xalign=0,
+            ))
+            self.results.append(self.button('Réinitialiser les filtres', self.reset_filters))
+            return
+        if self._llm_button is not None:
+            self._llm_matches = tuple(matches[:3])
+            self._llm_button.set_sensitive(bool(self._llm_matches))
+            if self._llm_matches:
+                self._llm_result.set_label('IA facultative : synthétiser les extraits nécessite un clic explicite. Source potentiellement distante.')
         for match in matches:
             article = match.article
-            status = 'Rattachement confirmé' if match.status == 'confirmed' else 'Suggestion à vérifier'
-            details = '\n'.join([article.title, status + ' · ' + ', '.join(match.reasons),
-                'Sources : ' + ', '.join(article.provenance),
-                'Fraîcheur : ' + ', '.join(sid + ' — ' + ('à actualiser' if not self.plugin.store.freshness.get(sid) or self.plugin.store.freshness[sid] < datetime.now(timezone.utc).isoformat() else 'en cache récent') for sid in article.provenance),
-                ' · '.join(filter(None, [article.critic_author, article.published_at, article.language])), article.excerpt])
-            self.results.append(self.Gtk.Label(label=details, wrap=True, xalign=0, selectable=True))
-            self.results.append(self.Gtk.LinkButton.new_with_label(article.url, 'Lire la critique dans le navigateur'))
+            card = self.Gtk.Box(orientation=self.Gtk.Orientation.VERTICAL, spacing=3)
+            status = 'Confirmée' if match.status == 'confirmed' else 'Suggestion à vérifier'
+            card.append(self.Gtk.Label(label=status, wrap=True, xalign=0))
+            card.append(self.Gtk.Label(label=article.title, wrap=True, xalign=0, selectable=True))
+            card.append(self.Gtk.Label(label='Preuve : ' + ', '.join(match.reasons), wrap=True, xalign=0))
+            card.append(self.Gtk.Label(
+                label='Source : ' + ', '.join(article.provenance)
+                + ' · ' + ' · '.join(filter(None, (
+                    article.critic_author, article.published_at, article.language,
+                ))), wrap=True, xalign=0,
+            ))
+            card.append(self.Gtk.Label(
+                label='Fraîcheur : ' + ', '.join(
+                    sid + ' — ' + (
+                        'en cache récent' if self.plugin.store.freshness.get(sid)
+                        and self.plugin.store.freshness[sid] >= datetime.now(timezone.utc).isoformat()
+                        else 'à actualiser'
+                    )
+                    for sid in article.provenance
+                ), wrap=True, xalign=0,
+            ))
+            card.append(self.Gtk.Label(label=article.excerpt, wrap=True, xalign=0, selectable=True))
+            if article.url:
+                card.append(self.Gtk.LinkButton.new_with_label(
+                    article.url, 'Lire la critique dans le navigateur',
+                ))
+            self.results.append(card)
 
     def dispose(self):
+        if hasattr(self, '_llm_generation'):
+            self._reset_llm()
         self.disposed = True; self.generation += 1
         if self.task:
             self.task.cancel()

@@ -26,6 +26,13 @@ class OptimizerPage:
         self._output_auto = True
         self._setting_output = False
         self._dialogs = []
+        self._semantic_handle = None
+        self._semantic_generation = 0
+        self._semantic_button = None
+        self._semantic_preview_label = None
+        self._semantic_source_buffer = None
+        self._semantic_consent = None
+        self._semantic_mode = None
         self._tasks = context.broker("tasks")
         if self._tasks is None:
             raise RuntimeError("broker tasks indisponible")
@@ -36,6 +43,8 @@ class OptimizerPage:
         self.max_pdf_pages = int(config.get("max_pdf_pages", 5000) or 5000)
         self.max_image_pixels = int(config.get("max_image_pixels", 64_000_000) or 64_000_000)
         self.max_image_mb = int(config.get("max_image_mb", 64) or 64)
+        # Separate opt-in from the deterministic EPUB/PDF transformation.
+        self._semantic_enabled = config.get("llm_semantic_preview") is True
         self.profiles = discover_profiles(context)
         self._unsubscribe_profiles = None
 
@@ -158,6 +167,61 @@ class OptimizerPage:
         note.set_xalign(0)
         note.add_css_class("dim-label")
         box.append(note)
+
+        if self._semantic_enabled:
+            # The user must explicitly paste a small excerpt. Neither Core
+            # artifacts nor arbitrary files are ever opened by this feature.
+            from .semantic_preview import modes
+            ai_panel = Gtk.Expander(label="Laboratoire IA · prévisualisation sans modification de fichier")
+            box.append(ai_panel)
+            ai_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            ai_panel.set_child(ai_box)
+            intro_ai = Gtk.Label(
+                label=(
+                    "Collez volontairement un passage de 20 à 1 600 caractères. "
+                    "Le service IA configuré peut être distant. "
+                    "Aucun contenu n'est lu automatiquement depuis l'EPUB. "
+                    "Le résultat ne modifie ni l'original ni la variante optimisée."
+                ), wrap=True, xalign=0,
+            )
+            ai_box.append(intro_ai)
+            self._semantic_source = Gtk.TextView()
+            self._semantic_source.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            self._semantic_source_buffer = self._semantic_source.get_buffer()
+            self._semantic_source_buffer.connect(
+                "changed", lambda *_: self._invalidate_semantic_preview(),
+            )
+            snippet_scroll = Gtk.ScrolledWindow()
+            snippet_scroll.set_min_content_height(90)
+            snippet_scroll.set_child(self._semantic_source)
+            ai_box.append(snippet_scroll)
+            self._semantic_mode = Gtk.ComboBoxText()
+            for identifier, label in modes():
+                self._semantic_mode.append(identifier, label)
+            self._semantic_mode.set_active_id("simplify")
+            self._semantic_mode.connect(
+                "changed", lambda *_: self._invalidate_semantic_preview(),
+            )
+            ai_box.append(self._semantic_mode)
+            self._semantic_consent = Gtk.CheckButton(
+                label="J'autorise cet envoi ponctuel au service IA configuré, potentiellement distant."
+            )
+            self._semantic_consent.connect(
+                "toggled", lambda *_: self._invalidate_semantic_preview(),
+            )
+            ai_box.append(self._semantic_consent)
+            self._semantic_button = Gtk.Button(label="Prévisualiser (IA) — sans créer de variante")
+            self._semantic_button.connect("clicked", self._preview_semantic)
+            self._semantic_button.set_tooltip_text(
+                "Une requête facultative au clic seulement. Aucun fichier EPUB n’est transmis."
+            )
+            ai_box.append(self._semantic_button)
+            self._semantic_preview_label = Gtk.Label(
+                label="Aucune prévisualisation demandée.", wrap=True, xalign=0,
+            )
+            self._semantic_preview_label.set_selectable(True)
+            ai_box.append(self._semantic_preview_label)
+            self._refresh_semantic_button()
 
         self._refresh_profile_help()
         self._unsubscribe_profiles = context.subscribe_services("device.profile", self._services_changed)
@@ -337,6 +401,8 @@ class OptimizerPage:
 
     def _set_busy(self, busy: bool):
         self.optimize_button.set_sensitive(not busy and bool(self.profiles))
+        if self._semantic_button is not None:
+            self._semantic_button.set_sensitive(False if busy else self._semantic_can_run())
         self.cancel_button.set_sensitive(busy)
         self.source_entry.set_sensitive(not busy and self.artifact is None)
         self.output_entry.set_sensitive(not busy and self.artifact is None)
@@ -360,6 +426,7 @@ class OptimizerPage:
             self.host.toast("Choisissez un fichier EPUB ou PDF")
             return
 
+        self._invalidate_semantic_preview()
         self._set_busy(True)
         self.progress.set_fraction(0.0)
         self.progress.set_text("0% — Démarrage…")
@@ -520,8 +587,113 @@ class OptimizerPage:
         self.host.toast(message)
         return False
 
+    def _semantic_text(self) -> str:
+        if self._semantic_source_buffer is None:
+            return ""
+        buffer = self._semantic_source_buffer
+        return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+
+    def _semantic_can_run(self) -> bool:
+        if self._closed or not self._semantic_enabled or self._semantic_handle is not None:
+            return False
+        if self._semantic_consent is None or not self._semantic_consent.get_active():
+            return False
+        if self._task_handle is not None and not self._task_handle.done():
+            return False
+        from .semantic_preview import preview_request
+        return preview_request(
+            self._semantic_text(), self._semantic_mode.get_active_id(),
+        ) is not None
+
+    def _refresh_semantic_button(self):
+        if self._semantic_button is not None:
+            self._semantic_button.set_sensitive(self._semantic_can_run())
+
+    def _invalidate_semantic_preview(self):
+        # Every edit, operation switch, or consent change makes old results stale.
+        self._semantic_generation += 1
+        handle, self._semantic_handle = self._semantic_handle, None
+        if handle is not None:
+            handle.cancel()
+        if self._semantic_preview_label is not None:
+            self._semantic_preview_label.set_label(
+                "Aucune prévisualisation en cours. "
+                "L’optimisation EPUB/PDF reste indépendante de l’IA."
+            )
+        self._refresh_semantic_button()
+
+    def _preview_semantic(self, _button):
+        """Only manual consent + click trigger one bounded public LLM task."""
+        if not self._semantic_can_run():
+            return
+        from gi.repository import GLib
+        from .semantic_preview import generate_preview
+        service = self.context.service("llm")
+        if service is None:
+            self._semantic_preview_label.set_label(
+                "Service IA non configuré. L'optimisation classique reste disponible."
+            )
+            return
+        text, operation = self._semantic_text(), self._semantic_mode.get_active_id()
+        self._semantic_generation += 1
+        token = self._semantic_generation
+        self._semantic_preview_label.set_label(
+            "Prévisualisation demandée… Aucun EPUB ni PDF n'est transmis."
+        )
+        self._semantic_button.set_sensitive(False)
+        try:
+            handle = self._tasks.submit(
+                lambda control: generate_preview(
+                    service, text, operation,
+                    enabled=True, consent=True, control=control,
+                ),
+                label="Prévisualisation sémantique manuelle",
+                kind="epub-optimizer.llm.preview",
+            )
+        except Exception:
+            self._semantic_preview_label.set_label(
+                "Service IA indisponible. Aucun document modifié."
+            )
+            self._refresh_semantic_button()
+            return
+        self._semantic_handle = handle
+
+        def done(completed):
+            if completed.control.cancelled():
+                return
+            try:
+                result = completed.result()
+            except Exception:
+                result = None
+
+            def apply():
+                if self._closed or token != self._semantic_generation:
+                    return False
+                self._semantic_handle = None
+                if result is None:
+                    self._semantic_preview_label.set_label(
+                        "Aucune sortie IA exploitable. Aucun fichier modifié."
+                    )
+                else:
+                    location = "distant" if result.remote else "local"
+                    self._semantic_preview_label.set_label(
+                        "PRÉVISUALISATION IA — générée, non vérifiée. "
+                        "Aucune modification de l'EPUB ni création de variante.\n"
+                        + result.text
+                        + "\nModèle : " + result.provider + " / " + result.model
+                        + " · service " + location
+                        + f" · passage saisi : {result.input_chars} caractères."
+                    )
+                self._refresh_semantic_button()
+                return False
+
+            GLib.idle_add(apply)
+
+        handle.add_done_callback(done)
+
     def cancel(self):
         self._closed = True
+        self._invalidate_semantic_preview()
         if self._task_handle is not None:
             self._task_handle.cancel()
             self._task_handle = None

@@ -21,6 +21,11 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
+from .core import adept_borrower, loan_artifact_state, adept_acsm_plan
+from .core import kobo_backup
+from .core import sync_coordination, sync_projection
+from .core import library_projection, library_mutation
+from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
 from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
 from .catalog import LocalCatalog
@@ -50,6 +55,9 @@ SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀ�
 
 _TRACE_LOG = logging.getLogger("cifereca")
 _SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="cifereca-search")
+# Serialize automatic loan check-and-record within this process. Opening sync
+# additionally holds the existing cross-process acquisition lock.
+_AUTOMATIC_LOAN_GUARD = Lock()
 
 class LibraryService:
     """Application service orchestrating provider plugins.
@@ -283,6 +291,29 @@ class LibraryService:
         identity = self.identity_by_id(identity_id)
         return identity or self.current_identity or self.identities[0]
 
+    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
+        """Read-only status of the normal Paris-primary/ADEPT configuration.
+
+        This is *not* an Adobe fulfillment authorization, and it does not
+        reinterpret historical loan provenance or exceptional borrower grants.
+        """
+        from .core.paris_adept_normal import normal_paris_adept_status
+
+        if self.identity_by_id(identity_id) is None:
+            return {
+                "identity_id": str(identity_id),
+                "status": "to_configure",
+                "reason": "unknown_identity",
+                "paris_label": None,
+                "adept_profile_id": None,
+            }
+        return normal_paris_adept_status(
+            identity_id=identity_id,
+            connections=self.storage.provider_connections(identity_id=identity_id),
+            accounts=self.accounts,
+            profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
+        )
+
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
         target = identity_id or (self.current_identity.identity_id if self.current_identity else None)
         return [account for account in self.accounts if target is None or account.identity_id == target]
@@ -469,112 +500,21 @@ class LibraryService:
 
     def attach_plugin_manager(self, manager: Any) -> list[str]:
         """Attach Plugin API services, preferring external providers/runtimes when ready."""
-        with self._virtual_reconcile_lock:
-            self._unbind_virtual_subscriptions()
-            self._virtual_collection_closed = False
-            self._plugin_manager = manager
-        attached: list[str] = []
-        try:
-            statuses = manager.candidates("provider.library")
-        except Exception:
-            return attached
-        from .providers.base import ProviderPlugin
-        for status in statuses:
-            service = manager.service(status.descriptor.id)
-            if isinstance(service, ProviderPlugin):
-                self.registry.register(service, replace=True)
-                self._provider_plugin_ids[service.descriptor.id] = status.descriptor.id
-                attached.append(service.descriptor.id)
-        attached.extend(self.refresh_virtual_collections())
-        binder = getattr(manager, "subscribe_services", None)
-        if callable(binder):
-            try:
-                unsub = binder("provider.collection", self._queue_virtual_collection_refresh)
-                if callable(unsub):
-                    self._virtual_manager_unsubscribe = unsub
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual service subscription", "error",
-                    detail={"error_type": type(exc).__name__}, level="detailed",
-                )
-        if attached:
-            self.diagnostics.add("PLUGIN", "external providers attached", "ok", detail={"providers": attached}, level="detailed")
-        return attached
+        return provider_sessions.attach_plugin_manager(self, manager)
 
     def _unbind_virtual_subscriptions(self) -> None:
         """Disconnect previous parent/manager callbacks on replacement or close."""
-        unsubscribers = [
-            *(unsub for _, unsub in self._virtual_parent_subscriptions.values()),
-            self._virtual_manager_unsubscribe,
-        ]
-        self._virtual_parent_subscriptions.clear()
-        self._virtual_manager_unsubscribe = None
-        for unsubscribe in unsubscribers:
-            if callable(unsubscribe):
-                try:
-                    unsubscribe()
-                except Exception:
-                    pass
+        return provider_sessions._unbind_virtual_subscriptions(self)
 
     def _sync_virtual_subscriptions(self, services: dict[str, object]) -> None:
-        for parent, (old_service, unsubscribe) in list(self._virtual_parent_subscriptions.items()):
-            if services.get(parent) is old_service:
-                continue
-            self._virtual_parent_subscriptions.pop(parent, None)
-            try:
-                unsubscribe()
-            except Exception:
-                pass
-        for parent, service in services.items():
-            if parent in self._virtual_parent_subscriptions:
-                continue
-            subscribe = getattr(service, "subscribe", None)
-            if not callable(subscribe):
-                continue
-            try:
-                unsubscribe = subscribe(self._queue_virtual_collection_refresh)
-                if callable(unsubscribe):
-                    self._virtual_parent_subscriptions[parent] = (service, unsubscribe)
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual inventory subscription", "error",
-                    detail={"parent": parent, "error_type": type(exc).__name__},
-                    level="detailed",
-                )
+        return provider_sessions._sync_virtual_subscriptions(self, services)
 
     def _queue_virtual_collection_refresh(self) -> None:
         """Coalesce bursts; re-read the latest cached snapshot on a Core worker."""
-        with self._virtual_schedule_lock:
-            if self._virtual_collection_closed:
-                return
-            if self._virtual_refresh_pending:
-                self._virtual_refresh_again = True
-                return
-            self._virtual_refresh_pending = True
-        try:
-            _SEARCH_EXECUTOR.submit(self._drain_virtual_collection_events)
-        except RuntimeError:
-            with self._virtual_schedule_lock:
-                self._virtual_refresh_pending = False
+        return provider_sessions._queue_virtual_collection_refresh(self, executor=_SEARCH_EXECUTOR)
 
     def _drain_virtual_collection_events(self) -> None:
-        while True:
-            with self._virtual_schedule_lock:
-                if self._virtual_collection_closed:
-                    self._virtual_refresh_pending = False
-                    return
-                self._virtual_refresh_again = False
-            try:
-                self.refresh_virtual_collections(connect_changed=True)
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual notification", "error",
-                    detail={"error_type": type(exc).__name__}, level="detailed",
-                )
-            with self._virtual_schedule_lock:
-                if not self._virtual_refresh_again or self._virtual_collection_closed:
-                    self._virtual_refresh_pending = False
-                    return
+        return provider_sessions._drain_virtual_collection_events(self)
 
     def subscribe_virtual_sources(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Observe accepted inventory changes. Callback runs on the caller/worker.
@@ -582,48 +522,11 @@ class LibraryService:
         GTK consumers must marshal UI changes using GLib.idle_add.
         Invalid snapshots and duplicate notifications do not emit an update.
         """
-        with self._virtual_reconcile_lock:
-            if callback not in self._virtual_change_callbacks:
-                self._virtual_change_callbacks.append(callback)
-
-        def unsubscribe() -> None:
-            with self._virtual_reconcile_lock:
-                if callback in self._virtual_change_callbacks:
-                    self._virtual_change_callbacks.remove(callback)
-        return unsubscribe
+        return provider_sessions.subscribe_virtual_sources(self, callback)
 
     def _connect_changed_virtual_provider(self, provider_id: str) -> None:
         """Connect only one newly published public adapter; keep other sessions."""
-        plugin = self.registry.maybe_get(provider_id)
-        if plugin is None:
-            return
-        key = self._session_key(provider_id, "__public__")
-        if key in self._sessions:
-            return
-        session = None
-        try:
-            session = plugin.create_session(
-                credential_id="__public__", label=plugin.descriptor.display_name,
-                credentials={}, options={}, config=self.config, storage=self.storage,
-                diagnostics=self.diagnostics,
-            )
-            if session.provider_id != provider_id:
-                raise ProviderConfigurationError("virtual session provider mismatch")
-            session.connect()
-            self._sessions[key] = session
-            self._session_errors.pop(key, None)
-        except Exception as exc:
-            if session is not None:
-                try:
-                    session.close()
-                except Exception:
-                    pass
-            self._session_errors[key] = type(exc).__name__
-            self.diagnostics.add(
-                "PLUGIN", "virtual provider connection", "error",
-                detail={"provider": provider_id, "error_type": type(exc).__name__},
-                level="detailed",
-            )
+        return provider_sessions._connect_changed_virtual_provider(self, provider_id)
 
     def refresh_virtual_collections(self, *, connect_changed: bool = False) -> list[str]:
         """Reconcile cached inventories without any implicit discovery HTTP.
@@ -632,145 +535,7 @@ class LibraryService:
         children. An explicit call can defer connections to connect_configured.
         Unrelated provider sessions and local catalogue/history remain intact.
         """
-        with self._virtual_reconcile_lock:
-            if self._virtual_collection_closed:
-                return []
-            manager = self._plugin_manager
-            if manager is None:
-                return []
-            try:
-                statuses = manager.candidates("provider.collection")
-            except Exception:
-                return []
-            before = dict(self._virtual_parent_by_provider)
-            previous_plugins = {
-                provider_id: self.registry.maybe_get(provider_id)
-                for provider_id in before
-            }
-            previous_snapshots = {
-                parent: self.registry.virtual_snapshot(parent)
-                for parent in set(before.values())
-            }
-            live_parents: set[str] = set()
-            active_services: dict[str, object] = {}
-            attached: list[str] = []
-            for status in statuses:
-                parent_id = status.descriptor.id
-                live_parents.add(parent_id)
-                service = manager.service(parent_id)
-                active_services[parent_id] = service
-                persisted = None
-                try:
-                    persisted = self._virtual_snapshot_store.load(parent_id)
-                except Exception as exc:
-                    # Corrupt/tampered disk data must never become providers.
-                    self.diagnostics.add(
-                        "PLUGIN", "saved virtual inventory invalid", "error",
-                        detail={"parent": parent_id, "error_type": type(exc).__name__},
-                        level="detailed",
-                    )
-                try:
-                    children = self.registry.reconcile_collection(
-                        parent_id, service, minimum_snapshot=persisted,
-                    )
-                except Exception as exc:
-                    self.diagnostics.add(
-                        "PLUGIN", "virtual provider inventory rejected", "error",
-                        detail={"parent": parent_id, "error_type": type(exc).__name__},
-                        level="detailed",
-                    )
-                    # Prefer the latest in-memory valid inventory; otherwise
-                    # recover the last validated SQLite checkpoint. Do not
-                    # replace it or erase books if discovery is unavailable.
-                    known = self.registry.virtual_snapshot(parent_id)
-                    if known is not None:
-                        # No new inventory was accepted: keep existing adapters
-                        # but do not report a publication or a false change.
-                        continue
-                    if persisted is None:
-                        continue
-                    try:
-                        children = self.registry.reconcile_collection(
-                            parent_id, service, snapshot_override=persisted,
-                            minimum_snapshot=persisted,
-                        )
-                    except Exception as offline_exc:
-                        self.diagnostics.add(
-                            "PLUGIN", "virtual inventory restore failed", "error",
-                            detail={"parent": parent_id,
-                                    "error_type": type(offline_exc).__name__},
-                            level="detailed",
-                        )
-                        continue
-                    self.diagnostics.add(
-                        "PLUGIN", "virtual inventory restored from SQLite", "ok",
-                        detail={"parent": parent_id,
-                                "generation": persisted.discovery_generation},
-                        level="detailed",
-                    )
-                else:
-                    accepted = self.registry.virtual_snapshot(parent_id)
-                    # A failed disk write never rolls back a valid in-memory
-                    # publication. SQLite is the durable checkpoint, however,
-                    # so only report success after metadata_set returns.
-                    if accepted is not None and accepted != persisted:
-                        try:
-                            self._virtual_snapshot_store.save(accepted)
-                        except Exception as save_exc:
-                            self.diagnostics.add(
-                                "PLUGIN", "virtual inventory checkpoint failed", "error",
-                                detail={"parent": parent_id,
-                                        "error_type": type(save_exc).__name__},
-                                level="detailed",
-                            )
-                attached.extend(children)
-            for parent in set(before.values()) - live_parents:
-                self.registry.retire_collection(parent)
-            self._sync_virtual_subscriptions(active_services)
-            new_mapping = {
-                provider_id: parent
-                for parent in live_parents
-                for provider_id in self.registry.virtual_ids(parent)
-            }
-            stale_ids = {
-                pid for pid, old in previous_plugins.items()
-                if pid not in new_mapping or self.registry.maybe_get(pid) is not old
-            }
-            for old_id in stale_ids:
-                for key, session in list(self._sessions.items()):
-                    if session.provider_id == old_id:
-                        self._sessions.pop(key, None)
-                        try:
-                            session.close()
-                        except Exception:
-                            pass
-                if old_id not in new_mapping:
-                    self._provider_plugin_ids.pop(old_id, None)
-            for provider_id, parent in new_mapping.items():
-                self._provider_plugin_ids[provider_id] = parent
-            self._virtual_parent_by_provider = new_mapping
-            if connect_changed:
-                for provider_id in sorted(new_mapping):
-                    if (provider_id in stale_ids
-                            or self._session_key(provider_id, "__public__") not in self._sessions):
-                        self._connect_changed_virtual_provider(provider_id)
-            # A catalog-generation increment invalidates search cache keys even
-            # when the Python adapter itself has not changed.
-            snapshots_changed = any(
-                self.registry.virtual_snapshot(parent) != previous_snapshots.get(parent)
-                for parent in live_parents | set(previous_snapshots)
-            )
-            changed = bool(stale_ids or set(new_mapping) != set(before) or snapshots_changed)
-            listeners = tuple(self._virtual_change_callbacks) if changed else ()
-        for callback in listeners:
-            try:
-                callback()
-            except Exception as exc:
-                self.diagnostics.add(
-                    "PLUGIN", "virtual inventory observer", "error",
-                    detail={"error_type": type(exc).__name__}, level="detailed",
-                )
-        return attached
+        return provider_sessions.refresh_virtual_collections(self, connect_changed=connect_changed)
 
     @property
     def plugin_manager(self) -> Any | None:
@@ -778,89 +543,22 @@ class LibraryService:
         return self._plugin_manager
 
     def _provider_plugin_status(self, provider_id: str) -> Any | None:
-        manager = self._plugin_manager
-        plugin_id = self._provider_plugin_ids.get(str(provider_id))
-        if manager is None or not plugin_id:
-            return None
-        try:
-            return manager.status(plugin_id)
-        except Exception:
-            return None
+        return provider_sessions._provider_plugin_status(self, provider_id)
 
     def _provider_enabled_for_identity(self, provider_id: str, identity_id: str | None = None) -> bool:
-        status = self._provider_plugin_status(provider_id)
-        if status is None:
-            return str(provider_id) not in self._provider_plugin_ids
-        if not status.enabled or status.state != "ready":
-            return False
-        if (
-            provider_id not in self._virtual_parent_by_provider
-            and getattr(status.descriptor, "instantiation", "multiple") != "singleton_public"
-        ):
-            return True
-        identity = identity_id or (self.current_identity.identity_id if self.current_identity else "default")
-        try:
-            if not self._plugin_manager.enabled_for_identity(status.descriptor.id, identity):
-                return False
-            if provider_id in self._virtual_parent_by_provider:
-                state = getattr(self._plugin_manager, "state", None)
-                if state is not None:
-                    override = state.identity_enabled_override(provider_id, identity)
-                    return True if override is None else bool(override)
-            return True
-        except Exception:
-            return False
+        return provider_sessions._provider_enabled_for_identity(self, provider_id, identity_id)
 
     def provider_descriptors(self):
-        return self.registry.descriptors()
+        return provider_sessions.provider_descriptors(self)
 
     def provider_diagnostic_state(self) -> dict[str, Any]:
-        try:
-            adept = self.kobo_adept_state()
-        except Exception as exc:
-            adept = {"available": False, "error": str(exc)}
-        return {
-            "plugins": self.registry.diagnostic_state(),
-            "sessions": [session.diagnostic_state() for session in self._sessions.values() if session.credential_id != "legacy"],
-            "errors": dict(self._session_errors),
-            "kobo_adept": adept,
-        }
+        return provider_sessions.provider_diagnostic_state(self)
 
     def close(self) -> None:
-        with self._virtual_schedule_lock:
-            self._virtual_collection_closed = True
-        with self._virtual_reconcile_lock:
-            self._unbind_virtual_subscriptions()
-            self._virtual_change_callbacks.clear()
-        seen: set[int] = set()
-        for session in list(self._sessions.values()):
-            if id(session) in seen:
-                continue
-            seen.add(id(session))
-            try:
-                session.close()
-            except Exception:
-                pass
-        try:
-            self.storage.close()
-        except Exception:
-            pass
+        return provider_sessions.close(self)
 
     def disconnect_configured(self) -> None:
-        for key, session in list(self._sessions.items()):
-            try:
-                session.close()
-            except Exception:
-                pass
-            self._sessions.pop(key, None)
-        self._session_errors = {}
-        self._active_session_key = None
-        self.primary = self._local_account()
-        self.accounts = [self.primary]
-        self.current_account = self.primary
-        self.last_loans = []
-        self.last_history = []
-        self.last_bookings = []
+        return provider_sessions.disconnect_configured(self)
 
     def connect_configured(self) -> dict[str, Any]:
         """Connect all enabled provider identities from local preferences.
@@ -870,193 +568,19 @@ class LibraryService:
         must be available for the current account-oriented GUI. Anonymous
         catalogue-only providers will be included once their plugin is ready.
         """
-        started_all = time.monotonic()
-        _TRACE_LOG.info("TRACE connect-configured begin current_identity=%s", getattr(getattr(self, "current_identity", None), "identity_id", None))
-        self.disconnect_configured()
-        all_accounts: list[Account] = []
-        connected: list[str] = []
-        errors: dict[str, str] = {}
-
-        rows = self.config.provider_accounts(enabled_only=True)
-        configured_provider_ids = {str(row.get("provider") or "").strip().lower() for row in rows if isinstance(row, dict)}
-        # Plugin API v1: a ready provider with no credential fields is a public
-        # anonymous source.  Do not require a provider-specific config migration
-        # or a fake account row merely to make it searchable.
-        for plugin in self.registry.all():
-            descriptor = plugin.descriptor
-            provider_id = str(descriptor.id or "").strip().lower()
-            plugin_status = self._provider_plugin_status(provider_id)
-            instantiation = ("singleton_public" if provider_id in self._virtual_parent_by_provider else
-                             getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple"))
-            if (
-                provider_id
-                and descriptor.state == "ready"
-                and not descriptor.credential_fields
-                and provider_id not in configured_provider_ids
-                and instantiation != "singleton_public"
-            ):
-                rows.append({
-                    "id": f"{provider_id}-public",
-                    "provider": provider_id,
-                    "label": descriptor.display_name,
-                    "enabled": True,
-                    "anonymous": True,
-                    "credentials": {},
-                    "options": {},
-                })
-        # singleton/public providers are global plugin instances, not fake
-        # credentials attached to the default Identity. One ephemeral session is
-        # connected and per-Identity visibility is enforced at query time.
-        for plugin in self.registry.all():
-            provider_id = str(plugin.descriptor.id or "").strip().lower()
-            plugin_status = self._provider_plugin_status(provider_id)
-            if (
-                not provider_id or plugin.descriptor.state != "ready" or plugin.descriptor.credential_fields
-                or (provider_id not in self._virtual_parent_by_provider
-                    and getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple") != "singleton_public")
-            ):
-                continue
-            credential_id = "__public__"
-            session = plugin.create_session(
-                credential_id=credential_id, label=plugin.descriptor.display_name, credentials={}, options={},
-                config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-            )
-            key = self._session_key(provider_id, credential_id)
-            try:
-                session.connect()
-                self._sessions[key] = session
-                connected.append(key)
-                self.diagnostics.add(
-                    "PLUGIN", "public provider connected", "ok",
-                    detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
-                )
-            except Exception as exc:
-                try:
-                    session.close()
-                except Exception:
-                    pass
-                errors[key] = str(exc)
-
-        _TRACE_LOG.info("TRACE connect-configured enabled-rows=%s", len(rows))
-        for row in rows:
-            provider_id = str(row.get("provider") or "").strip().lower()
-            credential_id = str(row.get("id") or "").strip()
-            identity_id = str(row.get("identity_id") or (self.current_identity.identity_id if self.current_identity else "default")).strip()
-            if not provider_id or not credential_id:
-                continue
-            item_started = time.monotonic()
-            _TRACE_LOG.info("TRACE provider prepare provider=%s credential=%s identity=%s", provider_id, credential_id, identity_id)
-            plugin = self.registry.maybe_get(provider_id)
-            if plugin is None:
-                errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
-                continue
-            if plugin.descriptor.state != "ready":
-                # Skeletons are visible to the GUI/docs but never perform I/O.
-                continue
-            session = plugin.create_session(
-                credential_id=credential_id,
-                label=str(row.get("label") or plugin.descriptor.display_name),
-                credentials=dict(row.get("credentials") or {}),
-                options=dict(row.get("options") or {}),
-                config=self.config, storage=self.storage, diagnostics=self.diagnostics,
-            )
-            key = self._session_key(provider_id, credential_id)
-            try:
-                _TRACE_LOG.info("TRACE provider connect begin provider=%s credential=%s identity=%s", provider_id, credential_id, identity_id)
-                accounts = session.connect()
-                _TRACE_LOG.info("TRACE provider connect end provider=%s credential=%s accounts=%s dt=%.3fs", provider_id, credential_id, len(accounts), time.monotonic()-item_started)
-                self._sessions[key] = session
-                connection_id = self.storage.provider_connection_put({
-                    "identity_id": identity_id, "provider_id": provider_id, "credential_id": credential_id,
-                    "label": str(row.get("label") or plugin.descriptor.display_name), "enabled": True,
-                })
-                for account in accounts:
-                    account.identity_id = identity_id
-                    self.storage.provider_account_put({
-                        "connection_id": connection_id, "identity_id": identity_id, "provider_id": provider_id,
-                        "credential_id": credential_id, "account_id": account.unique_id,
-                        "label": account.display_name or ("Compte principal" if account.is_primary else "Compte lié"),
-                        "is_primary": account.is_primary,
-                        "metadata": {"barcode": account.barcode},
-                    })
-                all_accounts.extend(accounts)
-                connected.append(key)
-                self.diagnostics.add(
-                    "PLUGIN", "provider connected", "ok",
-                    detail={"provider": provider_id, "credential_id": credential_id, "accounts": len(accounts)},
-                )
-            except Exception as exc:
-                _TRACE_LOG.exception("TRACE provider connect error provider=%s credential=%s identity=%s dt=%.3fs", provider_id, credential_id, identity_id, time.monotonic()-item_started)
-                try:
-                    session.close()
-                except Exception:
-                    pass
-                errors[key] = str(exc)
-                self.diagnostics.add(
-                    "PLUGIN", "provider connect", "error",
-                    detail={"provider": provider_id, "credential_id": credential_id, "error": type(exc).__name__, "message": str(exc)},
-                )
-
-        self._session_errors = errors
-        if not all_accounts:
-            # Local-first cifereca is usable without any provider. Plugin
-            # installation/configuration and the local Library remain available.
-            self.primary = self._local_account()
-            self.accounts = [self.primary]
-            self.current_account = self.primary
-            self._active_session_key = None
-            self.last_loans = []
-            return {"accounts": self.accounts, "identities": self.identities, "loans": [], "connected": connected, "errors": errors}
-
-        self.accounts = all_accounts
-        self.current_account = all_accounts[0]
-        self.current_identity = self.identity_by_id(self.current_account.identity_id) or self.current_identity
-        self._active_session_key = self._session_key(self.current_account.provider_id, self.current_account.credential_id)
-        self.primary = self.current_account
-        loans = self.refresh_identity_loans(force=True)
-        return {"accounts": self.accounts, "identities": self.identities, "loans": loans, "connected": connected, "errors": errors}
+        return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
 
     def login(self, username: str, password: str) -> dict[str, Any]:
-        raise ProviderConfigurationError(
-            "La connexion legacy Paris a été retirée de cifereca 0.9.2 ; configurez le plugin provider.paris."
-        )
+        return provider_sessions.login(self, username, password)
 
     def select_account(self, unique_id: str, provider_id: str | None = None, credential_id: str | None = None) -> Account:
-        for account in self.accounts:
-            if account.unique_id != unique_id:
-                continue
-            if provider_id and account.provider_id != provider_id:
-                continue
-            if credential_id and account.credential_id != credential_id:
-                continue
-            self.current_account = account
-            self._account_context_epoch += 1
-            self.current_identity = self.identity_by_id(account.identity_id) or self.current_identity
-            key = self._session_key(account.provider_id, account.credential_id)
-            if key in self._sessions:
-                self._active_session_key = key
-            return account
-        return self.current_account
+        return provider_sessions.select_account(self, unique_id, provider_id, credential_id)
 
     def _session_for_account(self, account: Account | None = None) -> ProviderSession:
-        account = account or self.current_account
-        key = self._session_key(account.provider_id, account.credential_id)
-        session = self._sessions.get(key)
-        if session is None:
-            raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
-        return session
+        return provider_sessions._session_for_account(self, account)
 
     def _session_for_source(self, provider_id: str, credential_id: str | None = None) -> ProviderSession:
-        if not self._provider_enabled_for_identity(provider_id):
-            raise ProviderConfigurationError(f"Provider désactivé ou indisponible: {provider_id}")
-        if credential_id:
-            key = self._session_key(provider_id, credential_id)
-            if key in self._sessions:
-                return self._sessions[key]
-        for session in self._sessions.values():
-            if session.provider_id == provider_id and session.connected:
-                return session
-        raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
+        return provider_sessions._session_for_source(self, provider_id, credential_id)
 
     def _key(self, kind: str, suffix: str = "") -> str:
         account = self.current_account
@@ -1179,47 +703,11 @@ class LibraryService:
         return summary
 
     def refresh_history(self, force: bool = False) -> list[HistoryItem]:
-        account = self.current_account
-        epoch = self._account_context_epoch
-        key = self._key("history-v3")
-        ttl = int(self.config.get("cache.history_seconds", 1800))
-        if not force:
-            cached = self.storage.cache_get("account", key)
-            if isinstance(cached, list):
-                rows = [HistoryItem(**x) for x in cached]
-                if self._account_context_epoch == epoch and self.current_account is account:
-                    self.last_history = rows
-                self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
-                return rows
-        session = self._session_for_account(account)
-        if not session.capabilities.history:
-            if self._account_context_epoch == epoch and self.current_account is account:
-                self.last_history = []
-            return []
-        rows = session.history(account)
-        direct = sum(1 for x in rows if x.thumbnail_url)
-        default_only = sum(1 for x in rows if not x.thumbnail_url and x.default_thumbnail_url)
-        missing = sum(1 for x in rows if not x.thumbnail_url and not x.default_thumbnail_url)
-        self.diagnostics.add(
-            "API", "history thumbnails", "ok",
-            detail={
-                "provider_plugin": account.provider_id,
-                "account": "primary" if account.is_primary else "linked",
-                "count": len(rows), "direct_thumbnail": direct,
-                "default_only": default_only, "missing": missing,
-            },
-            level="detailed",
-        )
-        self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
-        if self._account_context_epoch == epoch and self.current_account is account:
-            self.last_history = rows
-        return rows
+        return library_projection.refresh_history(self, force)
 
     @staticmethod
     def _history_fold(value: str | None) -> str:
-        text = unicodedata.normalize("NFKD", str(value or "").casefold())
-        text = "".join(ch for ch in text if not unicodedata.combining(ch))
-        return re.sub(r"[^0-9a-z]+", " ", text).strip()
+        return library_projection._history_fold(value)
 
     @classmethod
     def _history_cover_score(
@@ -1230,41 +718,7 @@ class LibraryService:
         record_id: str | None,
         candidate: SearchResult,
     ) -> float:
-        title = cls._history_fold(item_title)
-        cand_title = cls._history_fold(candidate.title)
-        if not title or not cand_title:
-            return 0.0
-        ratio = SequenceMatcher(None, title, cand_title).ratio()
-        left = set(title.split())
-        right = set(cand_title.split())
-        token_overlap = len(left & right) / max(1, len(left | right))
-        score = ratio * 55.0 + token_overlap * 25.0
-        if title == cand_title:
-            score += 30.0
-        elif title in cand_title or cand_title in title:
-            score += 12.0
-
-        if record_id and str(candidate.record_id) == str(record_id):
-            # Si Syracuse finit par renvoyer le même identifiant via Search,
-            # c'est un signal plus fiable que le GetListHoldings défaillant.
-            score += 60.0
-
-        author = cls._history_fold(item_author)
-        cand_author = cls._history_fold(candidate.author)
-        if author and cand_author:
-            author_ratio = SequenceMatcher(None, author, cand_author).ratio()
-            aleft = set(author.split())
-            aright = set(cand_author.split())
-            author_tokens = len(aleft & aright) / max(1, len(aleft | aright))
-            score += max(author_ratio, author_tokens) * 18.0
-            if author == cand_author:
-                score += 5.0
-
-        year = re.sub(r"\D", "", str(item_year or ""))[:4]
-        published = str(candidate.published_at or "")
-        if year and year in published:
-            score += 9.0
-        return score
+        return library_projection._history_cover_score(cls, item_title, item_author, item_year, record_id, candidate)
 
     @classmethod
     def _history_search_queries(cls, title: str) -> list[str]:
@@ -1274,31 +728,7 @@ class LibraryService:
         ``ListHandings`` (sous-titre, ponctuation, mention de volume). On ne
         journalise jamais le texte de ces requêtes dans les diagnostics.
         """
-        original = re.sub(r"\s+", " ", str(title or "")).strip()[:180]
-        if not original:
-            return []
-        variants = [original]
-
-        # Titre principal avant un séparateur de sous-titre fréquent.
-        main = re.split(r"\s(?:[:;/=])\s|\s[-–—]\s", original, maxsplit=1)[0].strip()
-        if len(main) >= 4:
-            variants.append(main[:180])
-
-        # Variante sans ponctuation ni diacritiques : utile quand ListHandings
-        # et le catalogue n'emploient pas exactement la même typographie.
-        folded = cls._history_fold(original)
-        if folded:
-            words = folded.split()
-            variants.append(" ".join(words[:8])[:180])
-
-        out: list[str] = []
-        seen: set[str] = set()
-        for value in variants:
-            key = value.casefold().strip()
-            if key and key not in seen:
-                seen.add(key)
-                out.append(value)
-        return out[:3]
+        return library_projection._history_search_queries(cls, title)
 
     def resolve_history_thumbnail(
         self,
@@ -1317,190 +747,7 @@ class LibraryService:
         recherche. Une notice fiable sans image est enrichie via ``holdings``
         *avec l'identifiant issu de Search.svc*, qui est exploitable.
         """
-        provider = (provider or "SYRACUSE").upper()
-        title = str(title or "").strip()
-        if not title:
-            return default_url, "not_found"
-
-        folded = "\0".join([
-            provider,
-            str(record_id or ""),
-            self._history_fold(title),
-            self._history_fold(author),
-            str(year or ""),
-        ])
-        key = hashlib.sha256(folded.encode("utf-8")).hexdigest()
-        # Nouveau namespace : invalide automatiquement les not_found de 0.2.5.
-        namespace = "history-cover-search-v2"
-        cached = self.storage.cache_get(namespace, key)
-        if isinstance(cached, dict) and cached.get("status"):
-            status = str(cached.get("status"))
-            url = str(cached.get("url") or "").strip() or None
-            self.diagnostics.add(
-                "COVER", "history search", "ok",
-                detail={"provider": provider, "result": status, "cache": True},
-                level="detailed",
-            )
-            return url or default_url, status
-
-        # Cover enrichment is provider-agnostic: use the current provider
-        # session contract rather than any concrete Syracuse client.
-        session = self._session_for_account()
-        all_rows: list[SearchResult] = []
-        seen: set[str] = set()
-        attempts = 0
-        search_error: Exception | None = None
-        search_queries = self._history_search_queries(title)
-        folded_queries = {self._history_fold(q) for q in search_queries if q}
-
-        for query in search_queries:
-            attempts += 1
-            try:
-                rows = session.search(query, scope="all", page=0, field="all")
-            except Exception as exc:
-                search_error = exc
-                self.diagnostics.add(
-                    "COVER", "history search attempt", "error",
-                    detail={
-                        "provider": provider,
-                        "attempt": attempts,
-                        "error": type(exc).__name__,
-                        "message": str(exc)[:160],
-                    },
-                    level="detailed",
-                )
-                continue
-
-            for row in rows:
-                if row.id not in seen:
-                    seen.add(row.id)
-                    all_rows.append(row)
-            self.diagnostics.add(
-                "COVER", "history search attempt", "ok",
-                detail={
-                    "provider": provider,
-                    "attempt": attempts,
-                    "rows": len(rows),
-                    "rows_total": len(all_rows),
-                    "with_thumbnail": sum(1 for x in rows if x.thumbnail_url),
-                },
-                level="detailed",
-            )
-
-            # Une égalité forte permet d'éviter les requêtes plus larges.
-            preview = sorted(
-                ((self._history_cover_score(title, author, year, record_id, x), x) for x in all_rows),
-                key=lambda pair: pair[0], reverse=True,
-            )
-            if preview:
-                pscore, pbest = preview[0]
-                if str(record_id or "") and str(pbest.record_id) == str(record_id):
-                    break
-                if self._history_fold(pbest.title) == self._history_fold(title) and pscore >= 85.0:
-                    break
-
-        if not all_rows and search_error is not None:
-            self.storage.cache_put(namespace, key, {"url": "", "status": "error"}, 5 * 60)
-            self.diagnostics.add(
-                "COVER", "history search", "error",
-                detail={
-                    "provider": provider,
-                    "result": "error",
-                    "cache": False,
-                    "attempts": attempts,
-                    "error": type(search_error).__name__,
-                    "message": str(search_error)[:160],
-                },
-                level="detailed",
-            )
-            return default_url, "error"
-
-        scored = sorted(
-            ((self._history_cover_score(title, author, year, record_id, x), x) for x in all_rows),
-            key=lambda pair: pair[0], reverse=True,
-        )
-        status = "not_found"
-        url: str | None = None
-        best_score = 0.0
-        gap = 0.0
-        cover_source = "none"
-        best: SearchResult | None = None
-
-        if scored:
-            best_score, best = scored[0]
-            second_score = scored[1][0] if len(scored) > 1 else 0.0
-            gap = best_score - second_score
-            best_title = self._history_fold(best.title)
-            history_title = self._history_fold(title)
-            exact_title = bool(history_title and best_title == history_title)
-            exact_variant = bool(best_title and best_title in folded_queries)
-            same_record = bool(record_id and str(best.record_id) == str(record_id))
-
-            confident = False
-            if same_record:
-                confident = True
-            elif (exact_title or exact_variant) and (len(scored) == 1 or gap >= 5.0):
-                confident = True
-            elif best_score >= 92.0 and gap >= 10.0:
-                confident = True
-            elif best_score >= 72.0:
-                status = "ambiguous"
-
-            if confident:
-                if best.thumbnail_url:
-                    url = best.thumbnail_url
-                    status = "matched"
-                    cover_source = "search"
-                else:
-                    # Les résultats physiques peuvent être dépourvus d'image
-                    # dans CompactResult/CustomResult. L'identifiant Search.svc
-                    # est en revanche valide pour la fiche détaillée.
-                    try:
-                        detail = session.holdings(best, search_terms="")
-                        if detail.thumbnail_url:
-                            url = detail.thumbnail_url
-                            status = "matched"
-                            cover_source = "detail"
-                        else:
-                            status = "no_cover"
-                    except Exception as exc:
-                        status = "no_cover"
-                        self.diagnostics.add(
-                            "COVER", "history detail cover", "error",
-                            detail={
-                                "provider": provider,
-                                "error": type(exc).__name__,
-                                "message": str(exc)[:160],
-                            },
-                            level="detailed",
-                        )
-
-        # Match positif durable ; les négatifs restent courts pour ne plus
-        # verrouiller une mauvaise première résolution pendant plusieurs jours.
-        ttl = {
-            "matched": 30 * 24 * 3600,
-            "no_cover": 6 * 3600,
-            "ambiguous": 30 * 60,
-            "not_found": 15 * 60,
-            "error": 5 * 60,
-        }.get(status, 15 * 60)
-        self.storage.cache_put(namespace, key, {"url": url or "", "status": status}, ttl)
-        self.diagnostics.add(
-            "COVER", "history search", "ok",
-            detail={
-                "provider": provider,
-                "result": status,
-                "cache": False,
-                "attempts": attempts,
-                "candidates": len(all_rows),
-                "with_thumbnail": sum(1 for x in all_rows if x.thumbnail_url),
-                "score": round(best_score, 1),
-                "gap": round(gap, 1),
-                "cover_source": cover_source,
-            },
-            level="detailed",
-        )
-        return url or default_url, status
+        return library_projection.resolve_history_thumbnail(self, provider, record_id, title, author, year, default_url)
 
     def refresh_bookings(self, force: bool = False) -> list[Booking]:
         account = self.current_account
@@ -1544,182 +791,43 @@ class LibraryService:
         halves/tokens.  The set is deliberately bounded to avoid turning one UI
         search into an unbounded burst of provider calls.
         """
-        original = re.sub(r"\s+", " ", str(query or "")).strip()[:180]
-        if not original:
-            return []
-        raw_tokens = re.findall(r"[0-9A-Za-zÀ-ÖØ-öø-ÿŒœ'-]+", original)
-        stop = {"a", "au", "aux", "d", "de", "des", "du", "et", "l", "la", "le", "les", "un", "une"}
-        tokens = [t for t in raw_tokens if len(cls._history_fold(t)) >= 2 and cls._history_fold(t) not in stop]
-        if len(tokens) < 2:
-            return [original]
-
-        variants: list[str] = [original]
-        if len(tokens) == 2:
-            # Longest term first: for "Zola Germinal", "Germinal" is normally
-            # the most discriminating fallback.
-            variants.extend(sorted(tokens, key=lambda value: (-len(value), tokens.index(value))))
-        else:
-            midpoint = max(1, len(tokens) // 2)
-            variants.append(" ".join(tokens[:midpoint]))
-            variants.append(" ".join(tokens[midpoint:]))
-            variants.extend(sorted(tokens, key=lambda value: (-len(value), tokens.index(value)))[:2])
-
-        out: list[str] = []
-        seen: set[str] = set()
-        for value in variants:
-            value = re.sub(r"\s+", " ", value).strip()[:180]
-            key = cls._history_fold(value)
-            if key and key not in seen:
-                seen.add(key)
-                out.append(value)
-        return out[:5]
+        return search_orchestration._search_query_variants(cls, query)
 
     @classmethod
     def _search_relevance(cls, query: str, row: SearchResult) -> int:
-        tokens = [x for x in cls._history_fold(query).split() if len(x) >= 2]
-        if not tokens:
-            return 0
-        title = cls._history_fold(row.title)
-        author = cls._history_fold(row.author)
-        combined = f"{title} {author}".strip()
-        score = 0
-        matched = sum(1 for token in tokens if token in combined)
-        score += matched * 20
-        score += sum(8 for token in tokens if token in title)
-        score += sum(6 for token in tokens if token in author)
-        if matched == len(tokens):
-            score += 60
-        folded_query = cls._history_fold(query)
-        if folded_query and folded_query in combined:
-            score += 30
-        return score
+        return search_orchestration._search_relevance(cls, query, row)
 
     @staticmethod
     def _normalized_language_values(value: Any) -> list[str]:
-        if isinstance(value, dict):
-            values: list[Any] = []
-            for key in ("code", "id", "value", "name"):
-                if key in value:
-                    values.append(value[key])
-            if not values:
-                values.extend(value.values())
-        elif isinstance(value, (list, tuple, set)):
-            values = list(value)
-        else:
-            values = [value]
-        out: list[str] = []
-        for raw in values:
-            text = str(raw or "").strip().lower().replace("_", "-")
-            if not text:
-                continue
-            # Keep ISO-ish codes stable while tolerating provider values such as
-            # fr-FR. Human language names are left untouched and simply won't
-            # match the configured short codes unless a provider normalizes them.
-            code = text.split("-", 1)[0]
-            if code not in out:
-                out.append(code)
-        return out
+        return search_orchestration._normalized_language_values(value)
 
     def _search_preference_score(self, row: SearchResult) -> int:
-        identity = self.current_identity
-        if identity is None:
-            return 0
-        metadata = row.metadata if isinstance(row.metadata, dict) else {}
-        languages: list[str] = []
-        for key in ("language", "languages", "lang", "dc_language", "dc:language"):
-            if key in metadata:
-                for code in self._normalized_language_values(metadata.get(key)):
-                    if code not in languages:
-                        languages.append(code)
-        prefs = identity.preferences
-        score = 0
-        for index, preferred in enumerate(prefs.reading_languages):
-            code = str(preferred or "").strip().lower().split("-", 1)[0]
-            if code and code in languages:
-                score += max(1, len(prefs.reading_languages) - index) * 10
-                break
-        if prefs.prefer_original_language and languages:
-            originals: list[str] = []
-            for key in ("original_language", "originalLanguage", "language_original"):
-                if key in metadata:
-                    originals.extend(self._normalized_language_values(metadata.get(key)))
-            if originals and any(code in originals for code in languages):
-                score += 5
-        return score
+        return search_orchestration._search_preference_score(self, row)
 
     def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> str:
         """Translate provider availability into a user-actionable label."""
-        if item.source_provider == "kobo":
-            if item.owned:
-                return "Dans ma bibliothèque Kobo · téléchargeable" if self.can_direct_download(item) else "Dans ma bibliothèque Kobo"
-            if item.price:
-                return f"Catalogue Kobo · {item.price} {item.currency or ''}".strip()
-            return "Catalogue Kobo"
-        if self.can_direct_download(item):
-            return "Téléchargement direct"
-        label = str(detail.availability_label or detail.availability_status or "—").strip()
-        status = self._history_fold(detail.availability_status)
-        folded_label = self._history_fold(label)
-        available = status in {"available", "disponible"} or (
-            folded_label.startswith("disponible") and not folded_label.startswith("indisponible")
-        )
-        if item.source_provider == "paris" and item.medium == "digital" and available:
-            return "Disponible à l’emprunt"
-        return label or "—"
+        return search_orchestration.availability_display_label(self, item, detail)
 
     def searchable_providers(self) -> list[tuple[str, str]]:
         """Connected provider ids/display names usable by the global search UI."""
-        seen: set[str] = set()
-        out: list[tuple[str, str]] = []
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search or session.provider_id in seen:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            seen.add(session.provider_id)
-            out.append((session.provider_id, session.descriptor.display_name))
-        return out
+        return search_orchestration.searchable_providers(self)
 
     @staticmethod
     def _session_search_capabilities(session: ProviderSession) -> ProviderSearchCapabilities:
         """Resolve search capabilities while tolerating legacy/provider test doubles."""
-        contract = getattr(session, "search_capabilities", None)
-        if contract is None:
-            contract = getattr(getattr(session, "descriptor", None), "search_capabilities", None)
-        return contract if isinstance(contract, ProviderSearchCapabilities) else ProviderSearchCapabilities()
+        return search_orchestration._session_search_capabilities(session)
 
     def provider_search_capabilities(self) -> dict[str, ProviderSearchCapabilities]:
         """Return declared search limits for connected providers, keyed by provider id."""
-        result: dict[str, ProviderSearchCapabilities] = {}
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            result.setdefault(session.provider_id, self._session_search_capabilities(session))
-        return result
+        return search_orchestration.provider_search_capabilities(self)
 
     @staticmethod
     def _search_contract_warning(session: ProviderSession, field: str, scope: str) -> str:
-        contract = LibraryService._session_search_capabilities(session)
-        if not contract.supports_field(field):
-            return f"{session.descriptor.display_name}: champ de recherche non pris en charge ({field})"
-        if not contract.supports_scope(scope):
-            return f"{session.descriptor.display_name}: périmètre de recherche non pris en charge ({scope})"
-        return ""
+        return search_orchestration._search_contract_warning(session, field, scope, facade_type=LibraryService)
 
     @classmethod
     def _field_match(cls, field: str, query: str, row: SearchResult) -> bool:
-        field = str(field or "all").lower()
-        if field == "all" or field in {"isbn", "subject"}:
-            # ISBN/sujet are forwarded to providers that understand them. The
-            # common model does not yet expose normalized values to post-filter.
-            return True
-        tokens = [x for x in cls._history_fold(query).split() if len(x) >= 2]
-        if not tokens:
-            return True
-        target = cls._history_fold(row.title if field == "title" else row.author if field == "author" else "")
-        return all(token in target for token in tokens)
+        return search_orchestration._field_match(cls, field, query, row)
 
     def _without_redundant_merged(
         self, sessions: list[ProviderSession], *, field: str, scope: str,
@@ -1732,179 +840,10 @@ class LibraryService:
         (or together via an explicit opt-in). Only origins able to satisfy the
         requested field/scope suppress their sibling aggregate.
         """
-        if include_redundant_merged or len(sessions) < 2:
-            return sessions
-        original_parents: set[str] = set()
-        for session in sessions:
-            entry = self.registry.virtual_entry(session.provider_id)
-            if entry is None or entry.kind == "synthetic.merged":
-                continue
-            parent = self.registry.virtual_parent(session.provider_id)
-            if parent and not self._search_contract_warning(session, field, scope):
-                original_parents.add(parent)
-        if not original_parents:
-            return sessions
-        return [
-            session for session in sessions
-            if not (
-                (entry := self.registry.virtual_entry(session.provider_id)) is not None
-                and entry.kind == "synthetic.merged"
-                and self.registry.virtual_parent(session.provider_id) in original_parents
-            )
-        ]
+        return search_orchestration._without_redundant_merged(self, sessions, field=field, scope=scope, include_redundant_merged=include_redundant_merged)
 
     def search(self, query: str, scope: str = "all", force: bool = False, *, provider_id: str = "all", field: str = "all", content_types: tuple[str, ...] | list[str] | None = None, include_redundant_merged: bool = False) -> list[SearchResult]:
-        provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
-        # Search is global: one connected session per provider is queried,
-        # independently of the reader account currently selected in the GUI.
-        searchable: list[ProviderSession] = []
-        seen_provider: set[str] = set()
-        requested_provider = str(provider_id or "all").strip().lower()
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            if requested_provider != "all" and session.provider_id != requested_provider:
-                continue
-            if session.provider_id in seen_provider:
-                continue
-            seen_provider.add(session.provider_id)
-            searchable.append(session)
-        searchable = self._without_redundant_merged(
-            searchable, field=field, scope=provider_scope,
-            include_redundant_merged=include_redundant_merged,
-        )
-        provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
-        identity = self.current_identity
-        pref_key = ""
-        if identity is not None:
-            pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
-        virtual_versions = ",".join(
-            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
-            for session in searchable
-            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
-        )
-        virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
-        cache_key = hashlib.sha256(
-            f"search-v7\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
-        ).hexdigest()
-        ttl = int(self.config.get("cache.search_seconds", 21600))
-        if not force:
-            cached = self.storage.cache_get("search", cache_key)
-            if isinstance(cached, list):
-                self.last_search = [SearchResult(**x) for x in cached]
-                # Never leak a warning from a previous, unrelated search.
-                self.last_search_warnings = []
-                self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(self.last_search), "q_len": len(query), "providers": provider_key})
-                return self.last_search
-
-        rows: list[SearchResult] = []
-        warnings: list[str] = []
-        variants = self._search_query_variants(query)
-        for session in searchable:
-            provider_rows: list[SearchResult] = []
-            provider_seen: set[tuple[str, str, str]] = set()
-            contract_warning = LibraryService._search_contract_warning(session, field, provider_scope)
-            if contract_warning:
-                warnings.append(contract_warning)
-                continue
-            primary_ok = False
-            for attempt, variant in enumerate(variants):
-                # Loose fallbacks are needed only when the exact query produced
-                # no strong title/author match. This keeps normal searches fast.
-                if attempt > 0 and primary_ok:
-                    break
-                try:
-                    try:
-                        import inspect
-                        parameters = inspect.signature(session.search).parameters
-                        kwargs = {"field": field}
-                        if "content_types" in parameters:
-                            kwargs["content_types"] = tuple(content_types or ())
-                        session_rows = session.search(variant, provider_scope, **kwargs)
-                    except TypeError as exc:
-                        # 0.4 keeps source compatibility with small third-party
-                        # provider prototypes that still implement the 0.3 signature.
-                        if "field" not in str(exc) or "unexpected keyword" not in str(exc):
-                            raise
-                        session_rows = session.search(variant, provider_scope)
-                    for row in session_rows:
-                        key = (row.source_provider, row.docbase, row.record_id)
-                        if key not in provider_seen:
-                            provider_seen.add(key)
-                            provider_rows.append(row)
-                    concrete = getattr(session, "client", None)
-                    partial_failure = False
-                    for source in (session, concrete):
-                        for warning in list(getattr(source, "last_search_warnings", []) or []):
-                            warnings.append(f"{session.descriptor.display_name}: {warning}")
-                            partial_failure = True
-                    if partial_failure:
-                        break
-                    if attempt == 0 and provider_rows:
-                        primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
-                except Exception as exc:
-                    # An exact-query failure should not prevent a looser retry.
-                    if attempt == 0 or len(variants) == 1:
-                        warnings.append(f"{session.descriptor.display_name}: {exc}")
-                    self.diagnostics.add(
-                        "PLUGIN", "search", "error",
-                        detail={
-                            "provider": session.provider_id,
-                            "attempt": attempt + 1,
-                            "q_len": len(variant),
-                            "error": type(exc).__name__,
-                            "message": str(exc),
-                        },
-                    )
-                    from .search_failures import is_technical_search_error
-                    if is_technical_search_error(exc):
-                        break
-            if field in {"title", "author"}:
-                provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
-            if str(scope or "all").casefold() == "unknown":
-                from .core.search import support_kind
-                provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
-            rows.extend(provider_rows)
-
-        # Stable de-duplication across plugins; source provider remains visible.
-        unique: dict[tuple[str, str, str], SearchResult] = {}
-        for row in rows:
-            unique[(row.source_provider, row.docbase, row.record_id)] = row
-        rows = list(unique.values())
-        preference_scores = {id(row): self._search_preference_score(row) for row in rows}
-        if len(variants) > 1 or any(preference_scores.values()):
-            # Relevance remains authoritative; identity preferences only rank
-            # otherwise comparable results and never hide other languages.
-            rows.sort(
-                key=lambda row: (
-                    self._search_relevance(query, row) if len(variants) > 1 else 0,
-                    preference_scores.get(id(row), 0),
-                ),
-                reverse=True,
-            )
-        warnings = list(dict.fromkeys(warnings))
-        try:
-            self._mirror_remote_results(rows)
-        except Exception as exc:
-            _TRACE_LOG.warning("TRACE catalog mirror search error=%s", exc)
-        if not warnings:
-            self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
-        self.last_search = rows
-        self.last_search_warnings = warnings
-        self.diagnostics.add(
-            "SEARCH", "federated",
-            detail={
-                "providers": provider_key,
-                "field": field,
-                "results": len(rows),
-                "variants": len(variants),
-                "fallback": len(variants) > 1,
-            },
-            level="detailed",
-        )
-        return rows
+        return search_orchestration.search(self, query, scope, force, provider_id=provider_id, field=field, content_types=content_types, include_redundant_merged=include_redundant_merged, logger=_TRACE_LOG, facade_type=LibraryService)
 
     def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str = "all", content_types: tuple[str, ...] = ()) -> tuple[list[SearchResult], list[str], str, str]:
         """Search one provider without mutating shared result state.
@@ -1912,64 +851,7 @@ class LibraryService:
         This is deliberately safe to run in parallel with *other* provider sessions;
         a given session is still called sequentially for its own query variants.
         """
-        provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
-        provider_rows: list[SearchResult] = []
-        provider_seen: set[tuple[str, str, str]] = set()
-        warnings: list[str] = []
-        contract_warning = LibraryService._search_contract_warning(session, field, provider_scope)
-        if contract_warning:
-            return [], [contract_warning], "", ""
-        variants = self._search_query_variants(query)
-        primary_ok = False
-        terminal_error_code = terminal_error_message = ""
-        for attempt, variant in enumerate(variants):
-            if attempt > 0 and primary_ok:
-                break
-            try:
-                try:
-                    import inspect
-                    parameters = inspect.signature(session.search).parameters
-                    kwargs = {"field": field}
-                    if "content_types" in parameters:
-                        kwargs["content_types"] = tuple(content_types or ())
-                    session_rows = session.search(variant, provider_scope, **kwargs)
-                except TypeError as exc:
-                    if "field" not in str(exc) or "unexpected keyword" not in str(exc):
-                        raise
-                    session_rows = session.search(variant, provider_scope)
-                for row in session_rows:
-                    key = (row.source_provider, row.docbase, row.record_id)
-                    if key not in provider_seen:
-                        provider_seen.add(key); provider_rows.append(row)
-                concrete = getattr(session, "client", None)
-                partial_failure = False
-                for source in (session, concrete):
-                    for warning in list(getattr(source, "last_search_warnings", []) or []):
-                        warnings.append(f"{session.descriptor.display_name}: {warning}")
-                        partial_failure = True
-                if partial_failure:
-                    break
-                if attempt == 0 and provider_rows:
-                    primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
-            except Exception as exc:
-                if attempt == 0 or len(variants) == 1:
-                    terminal_error_code = type(exc).__name__
-                    terminal_error_message = str(exc)
-                    warnings.append(f"{session.descriptor.display_name}: {exc}")
-                self.diagnostics.add(
-                    "PLUGIN", "search", "error",
-                    detail={"provider": session.provider_id, "attempt": attempt + 1, "q_len": len(variant),
-                            "error": type(exc).__name__, "message": str(exc)},
-                )
-                from .search_failures import is_technical_search_error
-                if is_technical_search_error(exc):
-                    break
-        if field in {"title", "author"}:
-            provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
-        if str(scope or "all").casefold() == "unknown":
-            from .core.search import support_kind
-            provider_rows = [row for row in provider_rows if support_kind(asdict(row)) == "unknown"]
-        return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
+        return search_orchestration._search_provider_session(self, session, query, scope, field=field, content_types=content_types, facade_type=LibraryService)
 
     def _search_virtual_stream_session(
         self, session: ProviderSession, query: str, scope: str, *,
@@ -1978,36 +860,7 @@ class LibraryService:
         control: Any,
     ) -> tuple[list[SearchResult], list[str], str, str]:
         """Worker-only optional stream. Gaps/errors do not poison the cache."""
-        try:
-            outcome = consume_provider_stream(
-                session.search_stream(
-                    query, scope, field=field, content_types=content_types,
-                    control=control,
-                ),
-                provider_id=session.provider_id, catalog_generation=generation,
-                publish=publish, cancelled=cancelled,
-            )
-            rows = list(outcome.rows)
-            if field in {"title", "author"}:
-                rows = [row for row in rows if self._field_match(field, query, row)]
-            if str(scope or "all").casefold() == "unknown":
-                from .core.search import support_kind
-                rows = [row for row in rows if support_kind(asdict(row)) == "unknown"]
-            return rows, list(outcome.warnings), outcome.error_code, outcome.error_message
-        except SearchStreamCancelled:
-            return [], ["stream cancelled"], "StreamCancelled", "search superseded or cancelled"
-        except SearchStreamFailure as exc:
-            publish(ProviderSearchEvent(
-                session.provider_id, generation, 0, "reset",
-                message="resync after invalid/incomplete stream",
-            ))
-            # Rebuild from a complete catalogue query; do not reuse partial
-            # stream results after a dropped message.
-            return self._search_provider_session(
-                session, query, scope, field=field, content_types=content_types,
-            )
-        except Exception as exc:
-            return [], [f"{session.descriptor.display_name}: stream error"], type(exc).__name__, type(exc).__name__
+        return search_orchestration._search_virtual_stream_session(self, session, query, scope, field=field, content_types=content_types, generation=generation, publish=publish, cancelled=cancelled, control=control)
 
     def search_progressive(
         self, query: str, scope: str = "all", force: bool = False, *,
@@ -2028,221 +881,12 @@ class LibraryService:
         are already selected, preventing duplicated remote work. Explicit
         ``include_redundant_merged=True`` opts in to both.
         """
-        from datetime import datetime, timezone
-        from .plugin_api import CatalogSearchBatch, CatalogSearchSummary
-
-        started_dt = datetime.now(timezone.utc)
-        started_mono = time.monotonic()
-        with self._search_generation_lock:
-            self._search_generation += 1
-            search_generation = self._search_generation
-        requested = {str(x).strip().lower() for x in (provider_ids or ()) if str(x).strip() and str(x).strip().lower() != "local"}
-        single = str(provider_id or "all").strip().lower()
-        if single != "all": requested.add(single)
-        searchable: list[ProviderSession] = []
-        seen_provider: set[str] = set()
-        for session in self._sessions.values():
-            if not session.connected or not session.capabilities.search:
-                continue
-            if not self._provider_enabled_for_identity(session.provider_id):
-                continue
-            if requested and session.provider_id not in requested:
-                continue
-            if session.provider_id in seen_provider:
-                continue
-            seen_provider.add(session.provider_id); searchable.append(session)
-        searchable = self._without_redundant_merged(
-            searchable, field=field, scope=scope,
-            include_redundant_merged=include_redundant_merged,
-        )
-        searchable.sort(key=lambda row: row.provider_id)
-        provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
-        identity = self.current_identity
-        pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
-        types = tuple(sorted(content_types or ()))
-        virtual_versions = ",".join(
-            f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
-            for session in searchable
-            if (entry := self.registry.virtual_entry(session.provider_id)) is not None
-        )
-        cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
-        ttl = int(self.config.get("cache.search_seconds", 21600))
-
-        def emit(batch):
-            if on_batch is None: return
-            try: on_batch(batch)
-            except Exception as exc:
-                self.diagnostics.add("SEARCH", "progress callback", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-
-        if not force:
-            cached = self.storage.cache_get("search", cache_key)
-            if isinstance(cached, list):
-                rows = [SearchResult(**x) for x in cached]
-                groups: dict[str, list[SearchResult]] = {}
-                for row in rows: groups.setdefault(str(row.source_provider or "unknown"), []).append(row)
-                for pid in sorted(groups):
-                    emit(CatalogSearchBatch(pid, self.provider_display_name(pid), tuple(groups[pid]), cached=True))
-                self.last_search = rows; self.last_search_warnings = []
-                completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                return CatalogSearchSummary(query, len(rows), len(groups), len(groups), 0, False, (), started_dt.isoformat(timespec="seconds"), completed)
-
-        aggregate: list[SearchResult] = []
-        warnings: list[str] = []
-        failed = completed_count = 0
-        cancelled = False
-        futures = {}
-        streamed: dict[str, int] = {}
-        event_queue: Queue[ProviderSearchEvent] = Queue(maxsize=512)
-
-        def request_cancelled() -> bool:
-            with self._search_generation_lock:
-                if search_generation != self._search_generation:
-                    return True
-            return bool(control is not None and callable(getattr(control, "cancelled", None)) and control.cancelled())
-
-        def publish_from_provider(event: ProviderSearchEvent) -> None:
-            # Bounded queue enforces backpressure on a noisy provider.
-            while not request_cancelled():
-                try:
-                    event_queue.put(event, timeout=0.05)
-                    return
-                except Full:
-                    continue
-
-        def drain_stream_events() -> None:
-            while True:
-                try:
-                    event = event_queue.get_nowait()
-                except Empty:
-                    return
-                if on_event is None or request_cancelled():
-                    continue
-                entry = self.registry.virtual_entry(event.provider_id)
-                if entry is None or entry.catalog_generation != event.catalog_generation:
-                    continue
-                try:
-                    on_event(event)
-                except Exception as exc:
-                    self.diagnostics.add(
-                        "SEARCH", "stream callback", "error",
-                        detail={"provider": event.provider_id, "error": type(exc).__name__},
-                    )
-
-        if searchable:
-            for session in searchable:
-                entry = self.registry.virtual_entry(session.provider_id)
-                if (
-                    entry is not None
-                    and "catalog.search.stream" in entry.capabilities
-                    and isinstance(session, ProviderSearchStream)
-                ):
-                    streamed[session.provider_id] = entry.catalog_generation
-                    future = _SEARCH_EXECUTOR.submit(
-                        self._search_virtual_stream_session, session, query, scope,
-                        field=field, content_types=tuple(content_types or ()),
-                        generation=entry.catalog_generation,
-                        publish=publish_from_provider, cancelled=request_cancelled,
-                        control=control,
-                    )
-                else:
-                    future = _SEARCH_EXECUTOR.submit(
-                        self._search_provider_session, session, query, scope,
-                        field=field, content_types=tuple(content_types or ()),
-                    )
-                futures[future] = (session, time.monotonic())
-            pending = set(futures)
-            while pending:
-                if request_cancelled():
-                    cancelled = True
-                    for future in pending:
-                        future.cancel()
-                    break
-                if control is not None:
-                    try:
-                        check = getattr(control, "check_cancelled", None)
-                        if callable(check):
-                            check()
-                    except Exception:
-                        cancelled = True
-                        for future in pending:
-                            future.cancel()
-                        break
-                drain_stream_events()
-                done, pending = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
-                if not done:
-                    continue
-                for future in done:
-                    session, provider_started = futures[future]
-                    try:
-                        provider_rows, provider_warnings, error_code, error_message = future.result()
-                    except Exception as exc:
-                        provider_rows, provider_warnings = [], [f"{session.descriptor.display_name}: {exc}"]
-                        error_code, error_message = type(exc).__name__, str(exc)
-                    # An inventory revision during a search invalidates any
-                    # partial results from the former generation.
-                    expected = streamed.get(session.provider_id)
-                    if expected is not None:
-                        entry = self.registry.virtual_entry(session.provider_id)
-                        if entry is None or entry.catalog_generation != expected:
-                            cancelled = True
-                            provider_rows = []
-                            provider_warnings = []
-                            error_code = "StreamStale"
-                            error_message = "source generation changed"
-                    aggregate.extend(provider_rows)
-                    warnings.extend(provider_warnings)
-                    completed_count += 1
-                    if error_code and not provider_rows:
-                        failed += 1
-                    if not cancelled:
-                        emit(CatalogSearchBatch(
-                            session.provider_id, session.descriptor.display_name, tuple(provider_rows),
-                            tuple(provider_warnings), error_code, error_message, False,
-                            int((time.monotonic() - provider_started) * 1000),
-                        ))
-                    if control is not None and callable(getattr(control, "report", None)):
-                        try:
-                            control.report(current=completed_count, total=len(searchable),
-                                           message=f"Recherche · {session.descriptor.display_name}")
-                        except Exception:
-                            pass
-            if not cancelled:
-                drain_stream_events()
-        if request_cancelled():
-            cancelled = True
-
-        unique: dict[tuple[str, str, str], SearchResult] = {}
-        for row in aggregate: unique[(row.source_provider, row.docbase, row.record_id)] = row
-        rows = list(unique.values())
-        variants = self._search_query_variants(query)
-        preference_scores = {id(row): self._search_preference_score(row) for row in rows}
-        if len(variants) > 1 or any(preference_scores.values()):
-            rows.sort(key=lambda row: (self._search_relevance(query, row) if len(variants) > 1 else 0, preference_scores.get(id(row), 0)), reverse=True)
-        warnings = list(dict.fromkeys(warnings))
-        if not cancelled:
-            try: self._mirror_remote_results(rows)
-            except Exception as exc: _TRACE_LOG.warning("TRACE catalog mirror progressive search error=%s", exc)
-        if not cancelled and not warnings and failed == 0:
-            self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
-        self.last_search = rows; self.last_search_warnings = warnings
-        self.diagnostics.add("SEARCH", "progressive federated", detail={"providers": provider_key, "field": field, "results": len(rows), "completed": completed_count, "failed": failed, "cancelled": cancelled, "dt_ms": int((time.monotonic()-started_mono)*1000)}, level="detailed")
-        completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        return CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
+        return search_orchestration.search_progressive(self, query, scope, force, provider_id=provider_id, provider_ids=provider_ids, field=field, content_types=content_types, on_batch=on_batch, control=control, on_event=on_event, include_redundant_merged=include_redundant_merged, executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG)
 
     def search_local_library(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        from .core.search import LocalLibrarySearch
-
-        resolved_identity = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        rows = LocalLibrarySearch(self.library_entries).search(
-            query, identity_id=resolved_identity, scope=scope, field=field,
-        )
-        _TRACE_LOG.info(
-            "TRACE search local identity=%s query_len=%s scope=%s field=%s results=%s",
-            resolved_identity, len(str(query or "")), scope, field, len(rows),
-        )
-        return rows
+        return search_orchestration.search_local_library(self, query, scope, field=field, identity_id=identity_id, logger=_TRACE_LOG)
 
     def search_known_catalog(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
@@ -2255,18 +899,7 @@ class LibraryService:
         rights and progressively mirrored catalogue facts. ``search()`` remains
         the explicit online extension operation.
         """
-        from .core.search import KnownCatalogSearch
-
-        resolved_identity = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
-            query, identity_id=resolved_identity, scope=scope, field=field,
-            providers=provider_ids, content_types=content_types,
-        )
-        _TRACE_LOG.info(
-            "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
-            resolved_identity, len(str(query or "")), scope, field, len(rows),
-        )
-        return rows
+        return search_orchestration.search_known_catalog(self, query, scope, field=field, identity_id=identity_id, provider_ids=provider_ids, content_types=content_types, logger=_TRACE_LOG)
 
     @staticmethod
     def filter_loaded_search_results(
@@ -2275,47 +908,11 @@ class LibraryService:
         content_types: list[str] | tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         """Apply current Search controls without network or cache mutation."""
-        from .core.search import filter_loaded_results
-        return filter_loaded_results(
-            rows, query, providers=provider_ids, content_types=content_types, scope=scope, field=field,
-        )
+        return search_orchestration.filter_loaded_search_results(rows, query, field=field, scope=scope, provider_ids=provider_ids, content_types=content_types)
 
     def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None = None) -> int:
         """Persist progressively discovered remote catalog metadata (0.8.3)."""
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        if not identity_id:
-            return 0
-        now = int(time.time())
-        keyed: list[tuple[str, SearchResult, str]] = []
-        for row in rows:
-            state = "remote_owned" if row.owned else ("available_to_buy" if row.source_provider == "kobo" and row.price else ("available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else "remote_catalog"))
-            key = hashlib.sha256(f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}".encode()).hexdigest()
-            keyed.append((key, row, state))
-        existing_by_id = self.storage.catalog_entries_by_ids([key for key, _row, _state in keyed])
-        upserts: list[dict[str, Any]] = []
-        for key, row, state in keyed:
-            existing = existing_by_id.get(key)
-            if existing and existing.get("local_state") == "local":
-                continue
-            raw_meta = dict(row.metadata or {})
-            allowed_meta = {
-                name: raw_meta.get(name)
-                for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "rights", "dates")
-                if raw_meta.get(name) not in (None, "", [], {})
-            }
-            upserts.append({
-                "catalog_entry_id": key, "title": row.title, "author": row.author, "media_format": row.format,
-                "identity_id": identity_id, "provider_id": row.source_provider, "item_id": row.record_id, "local_state": state,
-                "metadata": {
-                    **allowed_meta, "docbase": row.docbase, "scenario": row.scenario, "cover_url": row.thumbnail_url, "product_url": row.friendly_url,
-                    "price": row.price, "currency": row.currency, "source_credential": row.source_credential,
-                    "source_collection": row.source_collection, "publisher": row.publisher or allowed_meta.get("publisher"),
-                    "published_at": row.published_at, "type": row.type, "medium": row.medium,
-                    "mirrored_at": now, "description": row.description,
-                },
-            })
-        self.storage.catalog_entries_upsert_many(upserts)
-        return len(upserts)
+        return search_orchestration._mirror_remote_results(self, rows, identity_id=identity_id)
 
     def mirror_personal_libraries(self) -> dict[str, int]:
         """Refresh enumerable personal libraries and acquire qualified Numilog EPUBs.
@@ -2380,175 +977,19 @@ class LibraryService:
         every visible placement re-read the full Kobo backup and entitlement
         tables solely to resolve a cover.
         """
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        entries = {str(x.get("placement_id")): x for x in self.storage.catalog_entries() if x.get("placement_id")}
-        backup_by_item: dict[str, list[tuple[dict[str, Any], str | None]]] = {}
-        for record in self.storage.backup_list("kobo"):
-            item_key = str(record.get("item_id") or record.get("product_id") or "")
-            if not item_key:
-                continue
-            try:
-                record_identity = self.identity_for_connection("kobo", str(record.get("credential_id") or "")).identity_id
-            except Exception:
-                record_identity = None
-            backup_by_item.setdefault(item_key, []).append((record, record_identity))
-        loan_by_key: dict[tuple[str, str, str | None], Loan] = {}
-        for loan in self.last_loans:
-            try:
-                loan_identity = loan.identity_id or self.identity_for_connection(loan.source_provider, loan.source_credential).identity_id
-            except Exception:
-                loan_identity = loan.identity_id
-            loan_by_key[(loan.source_provider, str(loan.record_id or loan.id), loan_identity)] = loan
-        entitlements_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for entitlement in self.storage.entitlements():
-            entitlements_by_key.setdefault(
-                (str(entitlement.get("provider_id") or ""), str(entitlement.get("item_id") or "")), []
-            ).append(entitlement)
-        rows: list[dict[str, Any]] = []
-        for placement in sorted(
-            self.storage.placements(),
-            key=lambda x: int(x.get("created_at") or x.get("updated_at") or 0),
-            reverse=True,
-        ):
-            if placement.get("state") != "present":
-                continue
-            if identity_id and placement.get("identity_id") not in {identity_id, None, ""}:
-                continue
-            entry = entries.get(str(placement.get("placement_id"))) or {}
-            metadata = dict(entry.get("metadata") or {})
-            provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
-            row_identity = placement.get("identity_id") or identity_id
-            item_id = str(entry.get("item_id") or placement.get("source_item_id") or "")
-            cover_candidates = []
-            embedded = cover_candidate(
-                cached_cover_url(metadata), tier="embedded", source="epub",
-                evidence_id=str(placement.get("artifact_id") or ""), evidence_strength=100,
-            )
-            if embedded:
-                cover_candidates.append(embedded)
-            legacy = cover_candidate(
-                metadata.get("cover_url") or metadata.get("thumbnail_url"),
-                tier="origin", source="catalog-entry",
-                evidence_id=f"{provider_id}:{item_id}" if item_id else provider_id, evidence_strength=60,
-            )
-            if legacy:
-                cover_candidates.append(legacy)
-            catalog_cover = metadata.get("catalog_cover")
-            if isinstance(catalog_cover, dict):
-                public = cover_candidate(
-                    catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
-                    evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
-                )
-                if public:
-                    cover_candidates.append(public)
-            if item_id:
-                if provider_id == "kobo":
-                    for record, record_identity in backup_by_item.get(item_id, []):
-                        if row_identity and record_identity and record_identity != row_identity:
-                            continue
-                        value = cover_candidate(
-                            record.get("cover_url"), tier="origin", source="kobo-backup",
-                            evidence_id=f"{provider_id}:{item_id}", evidence_strength=100,
-                        )
-                        if value:
-                            cover_candidates.append(value)
-                loan_candidates = [
-                    loan_by_key.get((provider_id, item_id, row_identity)),
-                    loan_by_key.get((provider_id, item_id, None)),
-                ]
-                loan = next((value for value in loan_candidates if value is not None), None)
-                if loan is None:
-                    loan = next((
-                        value for (p, i, _identity), value in loan_by_key.items()
-                        if p == provider_id and i == item_id and (not row_identity or _identity == row_identity)
-                    ), None)
-                if loan is not None:
-                    value = cover_candidate(
-                        loan.thumbnail_url, tier="origin", source="loan",
-                        evidence_id=f"{provider_id}:{item_id}", evidence_strength=90,
-                    )
-                    if value:
-                        cover_candidates.append(value)
-                for entitlement in entitlements_by_key.get((provider_id, item_id), []):
-                    if row_identity and entitlement.get("identity_id") not in {row_identity, None, ""}:
-                        continue
-                    emeta = dict(entitlement.get("metadata") or {})
-                    value = cover_candidate(
-                        emeta.get("cover_url") or emeta.get("thumbnail_url"),
-                        tier="origin", source="entitlement",
-                        evidence_id=str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}"),
-                        evidence_strength=80,
-                    )
-                    if value:
-                        cover_candidates.append(value)
-            cover = resolve_cover(cover_candidates)
-            thumbnail_url = cover.url or None
-            metadata["cover_resolution"] = cover.metadata()
-            rows.append({
-                "placement_id": placement.get("placement_id"), "artifact_id": placement.get("artifact_id"),
-                "title": entry.get("title") or Path(str(placement.get("path") or "")).stem, "author": entry.get("author"),
-                "identity_id": row_identity, "provider_id": provider_id, "item_id": item_id or None,
-                "path": placement.get("path"), "media_format": entry.get("media_format"), "thumbnail_url": thumbnail_url,
-                "metadata": metadata,
-                "acquired_at": placement.get("created_at") or placement.get("updated_at"),
-                "updated_at": placement.get("updated_at"),
-            })
-            if len(rows) >= max(1, limit):
-                break
-        return rows
+        return library_projection.recent_acquisitions(self, identity_id=identity_id, limit=limit)
 
     def local_book_path(self, placement_id: str, *, identity_id: str) -> Path:
         """Resolve an inventoried file in the explicit identity scope, no acquisition."""
-        if not identity_id or not self.identity_by_id(identity_id):
-            raise ProviderConfigurationError('Identité locale inconnue')
-        row=self.storage.placement_get(str(placement_id))
-        owner=(row or {}).get('identity_id')
-        if not owner and self.identities:owner=self.identities[0].identity_id
-        if not row or owner!=identity_id or row.get('state')!='present':
-            raise ProviderConfigurationError('Fichier local absent ou hors de cette identité')
-        path=Path(str(row.get('path') or '')).expanduser().resolve()
-        if path.is_dir():
-            try:manifest=load_bundle_manifest(path,verify=True)
-            except BundleError as exc:raise ProviderConfigurationError('Bundle local invalide') from exc
-            if not manifest.playlist:raise ProviderConfigurationError('Ce bundle ne possède pas de fichier à ouvrir')
-            target=(path/manifest.playlist).resolve()
-            if path not in target.parents:raise ProviderConfigurationError('Playlist locale invalide')
-            path=target
-        if not path.is_file():raise ProviderConfigurationError('Le fichier local a disparu')
-        return path
+        return library_projection.local_book_path(self, placement_id, identity_id=identity_id)
 
     def local_placement_for_source(self, *, provider_id, credential_id, item_id, identity_id):
         """Find only an acquisition-attested unique placement, never by title."""
-        artifact_ids={str(row.get('artifact_id') or '') for row in self.storage.acquisitions()
-                      if row.get('status')=='complete' and row.get('identity_id')==identity_id
-                      and row.get('provider_id')==provider_id and row.get('credential_id')==credential_id
-                      and str(row.get('item_id') or '')==str(item_id)}
-        rows=[row for row in self.storage.placements() if row.get('state')=='present'
-              and row.get('identity_id')==identity_id and row.get('artifact_id') in artifact_ids]
-        if len(rows)!=1:return None
-        try:self.local_book_path(rows[0]['placement_id'],identity_id=identity_id)
-        except ProviderConfigurationError:return None
-        return rows[0]
+        return library_projection.local_placement_for_source(self, provider_id=provider_id, credential_id=credential_id, item_id=item_id, identity_id=identity_id)
 
     def local_placements_for_sources(self, identity_id):
         """One snapshot for search; only unique acquisition-attested placements."""
-        artifacts = {}
-        for row in self.storage.acquisitions(status='complete'):
-            if row.get('identity_id') != identity_id or not row.get('artifact_id'): continue
-            key = (row.get('provider_id'), row.get('credential_id'), str(row.get('item_id') or ''))
-            artifacts.setdefault(key, set()).add(row['artifact_id'])
-        placements = {}
-        for row in self.storage.placements():
-            if row.get('identity_id') == identity_id and row.get('state') == 'present':
-                placements.setdefault(row.get('artifact_id'), []).append(row)
-        linked = {}
-        for key, ids in artifacts.items():
-            rows = [row for artifact_id in ids for row in placements.get(artifact_id, [])]
-            if len(rows) != 1: continue
-            try: self.local_book_path(rows[0]['placement_id'], identity_id=identity_id)
-            except ProviderConfigurationError: continue
-            linked[key] = rows[0]
-        return linked
+        return library_projection.local_placements_for_sources(self, identity_id)
 
     def materialize_to_identity(self, placement_id: str, target_identity_id: str) -> dict[str, Any]:
         """Materialize an existing Artifact for another Identity without reacquisition.
@@ -2557,93 +998,7 @@ class LibraryService:
         catalog scan after a one-file hardlink/copy made this visible user action
         proportional to the entire library size.
         """
-        source = self.storage.placement_get(placement_id)
-        if not source or source.get("state") != "present":
-            raise ProviderConfigurationError("Placement source local introuvable")
-        src = Path(str(source.get("path") or ""))
-        if not src.is_file() and not src.is_dir():
-            raise ProviderConfigurationError("Artifact source introuvable")
-        is_bundle = src.is_dir()
-        source_bundle = None
-        if is_bundle:
-            try:
-                source_bundle = load_bundle_manifest(src, verify=True)
-            except BundleError as exc:
-                raise ProviderConfigurationError(f"Bundle source invalide: {exc}") from exc
-        target_identity = self.identity_by_id(target_identity_id)
-        if target_identity is None:
-            raise ProviderConfigurationError(f"Identité cible inconnue: {target_identity_id}")
-        provider = str(source.get("provider_id") or "shared")
-        source_entries = [
-            row for row in self.storage.catalog_entries()
-            if str(row.get("placement_id") or "") == str(placement_id)
-        ]
-        source_entry = source_entries[0] if source_entries else {}
-        dest_dir = self.library_identity_provider_dir(target_identity_id, provider)
-        dest = dest_dir / src.name
-        unchanged = False
-        if dest.exists():
-            if is_bundle and dest.is_dir():
-                try:
-                    unchanged = load_bundle_manifest(dest, verify=True).bundle_sha256 == source_bundle.bundle_sha256
-                except BundleError:
-                    unchanged = False
-            elif not is_bundle and dest.is_file():
-                unchanged = sha256_file(dest) == sha256_file(src)
-            if not unchanged:
-                stem, suffix = dest.stem, dest.suffix; n = 2
-                while dest.exists():
-                    dest = dest_dir / f"{stem} ({n}){suffix}"; n += 1
-        if not unchanged:
-            if is_bundle:
-                shutil.copytree(src, dest)
-            else:
-                try:
-                    os.link(src, dest)
-                except OSError:
-                    shutil.copy2(src, dest)
-
-        artifact_id = str(source.get("artifact_id") or "").strip()
-        item_id = str(source.get("source_item_id") or source_entry.get("item_id") or "").strip() or None
-        if artifact_id:
-            stat_target = (dest / ".cifereca-bundle.json") if is_bundle else dest
-            stat = stat_target.stat()
-            try:
-                relative = str(dest.resolve().relative_to(self.library_dir().resolve()))
-            except ValueError:
-                relative = dest.name
-            placement_meta = {
-                "relative_path": relative, "mtime_ns": int(stat.st_mtime_ns),
-                "materialized_from": placement_id, "artifact_kind": "bundle" if is_bundle else "file",
-            }
-            if is_bundle:
-                placement_meta["manifest_size"] = int(stat.st_size)
-            else:
-                placement_meta["file_size"] = int(stat.st_size)
-            new_placement_id = self.storage.placement_put({
-                "artifact_id": artifact_id, "path": str(dest), "identity_id": target_identity_id,
-                "provider_id": provider, "source_item_id": item_id, "state": "present",
-                "last_seen_at": int(time.time()), "metadata": placement_meta,
-            })
-            metadata = dict(source_entry.get("metadata") or {})
-            metadata["path"] = str(dest.resolve())
-            metadata["materialized_from"] = placement_id
-            self.storage.catalog_entry_put({
-                "artifact_id": artifact_id, "placement_id": new_placement_id,
-                "title": source_entry.get("title") or src.stem, "author": source_entry.get("author"),
-                "media_format": source_entry.get("media_format") or src.suffix.lstrip(".").lower(),
-                "identity_id": target_identity_id, "provider_id": provider, "item_id": item_id,
-                "local_state": "local", "metadata": metadata,
-            })
-        else:
-            self.catalog_index_path(
-                dest, title=str(source_entry.get("title") or src.stem), item_id=item_id,
-                identity_id=target_identity_id, provider_id=provider,
-            )
-        return {
-            "status": "unchanged" if unchanged else "complete", "path": str(dest),
-            "target_identity_id": target_identity_id, "provider_id": provider,
-        }
+        return library_mutation.materialize_to_identity(self, placement_id, target_identity_id)
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
         key = f"{item.source_provider}:{item.source_credential}:{item.scenario}:{item.docbase}:{item.record_id}"
@@ -2772,7 +1127,243 @@ class LibraryService:
         )
         return public_return_state(row or checkpoint)
 
+    def verify_paris_return_inventory(self, loan: Loan) -> dict[str, str]:
+        """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
+        from .core.loan_return_guard import return_ref
+        try:
+            account, session, key = self._return_loan_identity(loan)
+        except AttentionRequired:
+            return {"status": "verification_unavailable", "verification": "unavailable"}
+        try:
+            rows = session.loans(account)
+            if not isinstance(rows, list):
+                raise ValueError("Paris inventory incomplete")
+            errors = getattr(session, "last_loan_errors", None)
+            if errors is None or any(
+                isinstance(error, dict) and error.get("upstream") == "DILICOM"
+                for error in errors
+            ):
+                raise ValueError("Paris digital inventory unverified")
+            present = any(
+                row.id == loan.id and row.provider == loan.provider for row in rows
+            )
+            verification = "still_present" if present else "provider_absent"
+        except Exception:
+            verification = "unavailable"
+        _TRACE_LOG.info(
+            "TRACE return core phase=paris_inventory outcome=%s ref=%s",
+            verification, return_ref(key),
+        )
+        return {
+            "verification": verification,
+            "status": {
+                "provider_absent": "provider_return_confirmed",
+                "still_present": "still_active",
+                "unavailable": "verification_unavailable",
+            }[verification],
+        }
+
+    def _adobe_return_inventory_confirmed(self, acquisition: dict[str, Any]) -> bool:
+        """Crash recovery: ADEPT inventory check ONLY, never replay mutation."""
+        binding = (acquisition.get("metadata") or {}).get("adept_binding") or {}
+        profile_id = binding.get("adept_profile_id")
+        loan_id = binding.get("adept_loan_id")
+        if not profile_id or not loan_id:
+            return False
+        try:
+            profile = self._adept_profile_row(profile_id, self.kobo_profiles())
+            if not profile:
+                return False
+            loans = self._kobo_adapter().loans(self._adept_profile_name(profile))
+            matches = [r for r in loans["loans"] if r.get("id") == loan_id]
+            return (
+                len(matches) == 1
+                and matches[0].get("returned") is True
+                and matches[0].get("token_present") is False
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _return_operation_lock_file(loan: Loan) -> Path:
+        """Coordinate Adobe and PNB mutations across threads and processes.
+
+        The lock is scoped by provider + upstream loan ID, not UI identity:
+        the same Paris loan may be exposed by two different connections.
+        No account identifiers or credentials are written in the lock path.
+        """
+        digest = hashlib.sha256(
+            (str(loan.source_provider).casefold() + "\\0" + str(loan.id or "")).encode("utf-8")
+        ).hexdigest()[:32]
+        return acquisition_lock_file().with_name(
+            "cifereca-return-" + digest + ".lock"
+        )
+
+    def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
+        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
+            return self.return_digital(loan)
+        try:
+            with InterProcessLock(self._return_operation_lock_file(loan)):
+                return self._return_loan_prefer_adept_guarded(loan)
+        except LockBusyError:
+            return {
+                "status": "attention_required", "scope": "adobe_first_paris",
+                "code": "loan_return_busy", "retry": "verification_only",
+            }
+
+    def _return_loan_prefer_adept_guarded(self, loan: Loan) -> dict[str, Any]:
+        """Adobe-first, then Paris inventory; never automatically send PNB POST.
+
+        Durable claim is written *before* ADEPT. A retry, double-click or
+        restart only reads ADEPT/Paris inventories: Adobe is never re-mutated.
+        """
+        import uuid
+        from .core.loan_return_guard import return_key, return_ref
+        from .core.return_adept_orchestrator import adept_return_key, public_state
+
+        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
+            return self.return_digital(loan)
+        try:
+            account, _session, pnb_key = self._return_loan_identity(loan)
+        except AttentionRequired as exc:
+            return {
+                "status": "failed", "scope": "adobe_first_paris",
+                "code": exc.code, "retry": "resolve_identity",
+            }
+        borrower = str(account.unique_id or "primary")
+        key = adept_return_key(
+            loan.source_provider, loan.source_credential, borrower, str(loan.id)
+        )
+        source = self.adept_return_status_for_loan(loan)
+        acquisition_id = source.get("acquisition_id")
+        if not acquisition_id:
+            reason = str(source.get("status") or "adept_return_binding_required")
+            return {
+                "status": "provider_action_available" if reason == "no_acquisition" else reason,
+                "scope": "adobe_first_paris",
+                "retry": "provider_action_explicit" if reason == "no_acquisition"
+                         else "resolve_identity",
+            }
+        acquisition = self.storage.acquisition_get(acquisition_id)
+        if acquisition is None:
+            return {
+                "status": "adept_return_binding_required",
+                "scope": "adobe_first_paris", "retry": "resolve_identity",
+            }
+
+        # A previous PNB mutation must be settled separately; never send both.
+        if self.storage.loan_return_state(pnb_key) is not None:
+            return {
+                "status": "partial", "scope": "adobe_first_paris",
+                "reason": "provider_return_already_requested",
+                "retry": "verification_only",
+            }
+        previous = self.storage.loan_return_state(key)
+        if previous is None:
+            if source.get("status") != "ready" or source.get("return_available") is not True:
+                return {
+                    "status": str(source.get("status") or "adept_return_state_required"),
+                    "scope": "adobe_first_paris", "retry": "verification_only",
+                }
+            claimed, record = self.storage.loan_return_claim(key, uuid.uuid4().hex)
+            if not claimed:
+                previous = record
+        if previous is not None:
+            if previous.get("status") == "paris_return_confirmed":
+                return public_state(previous)
+            op_id = str(previous.get("operation_id") or "")
+            if previous.get("adobe_verified") is not True:
+                if not self._adobe_return_inventory_confirmed(acquisition):
+                    return public_state(previous)
+                record = self.storage.loan_return_transition(
+                    key, op_id, status="adobe_return_confirmed",
+                    verification="adobe_confirmed", adobe_verified=True,
+                ) or previous
+            else:
+                record = previous
+        else:
+            op_id = str(record.get("operation_id") or "")
+            if not op_id:
+                return {"status": "failed", "scope": "adobe_first_paris",
+                        "retry": "verification_only"}
+            self.storage.loan_return_transition(
+                key, op_id, status="adobe_return_requested",
+                verification="adobe_pending", adobe_verified=False,
+            )
+            _TRACE_LOG.info(
+                "TRACE return core phase=adobe_return_requested ref=%s",
+                return_ref(key),
+            )
+            try:
+                result = self.return_adept_acquisition(acquisition_id)
+                if result.get("ok") is not True or result.get("verification") != "confirmed":
+                    raise ValueError("ADEPT return not confirmed")
+            except Exception as exc:
+                record = self.storage.loan_return_transition(
+                    key, op_id, status="failed", verification="adobe_unavailable",
+                    adobe_verified=False, error_type=type(exc).__name__,
+                )
+                return public_state(record or {"status": "failed"})
+            record = self.storage.loan_return_transition(
+                key, op_id, status="adobe_return_confirmed",
+                verification="adobe_confirmed", adobe_verified=True,
+            )
+            _TRACE_LOG.info(
+                "TRACE return core phase=adobe_return_confirmed ref=%s",
+                return_ref(key),
+            )
+
+        if not record or record.get("adobe_verified") is not True:
+            return public_state(record or {"status": "failed"})
+        op_id = str(record.get("operation_id") or "")
+        self.storage.loan_return_transition(
+            key, op_id, status="paris_check_pending",
+            verification="not_checked", adobe_verified=True,
+        )
+        paris = self.verify_paris_return_inventory(loan)
+        status = (
+            "paris_return_confirmed"
+            if paris["verification"] == "provider_absent" else "partial"
+        )
+        finished = self.storage.loan_return_transition(
+            key, op_id, status=status,
+            verification=paris["verification"], adobe_verified=True,
+        )
+        return public_state(finished or {
+            "status": status, "adobe_verified": True,
+            "verification": paris["verification"],
+        })
+
+    def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
+        """Read-only first inspection; restart recovery never mutates ADEPT."""
+        from .core.return_adept_orchestrator import adept_return_key
+        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
+            return {"status": "not_requested", "scope": "adobe_first_paris"}
+        try:
+            account, _session, _key = self._return_loan_identity(loan)
+        except AttentionRequired as exc:
+            return {"status": "failed", "scope": "adobe_first_paris", "code": exc.code}
+        key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        if self.storage.loan_return_state(key) is None:
+            return {"status": "not_requested", "scope": "adobe_first_paris"}
+        return self.return_loan_prefer_adept(loan)
+
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
+        if str(loan.source_provider).lower() != "paris":
+            return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
+        try:
+            with InterProcessLock(self._return_operation_lock_file(loan)):
+                return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
+        except LockBusyError:
+            return {
+                "status": "attention_required", "scope": "provider_pnb_only",
+                "code": "loan_return_busy", "retry": "verification_only",
+            }
+
+    def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
         """PNB provider return with an at-most-once POST until verified.
 
         An HTTP success only means REQUEST ACCEPTED. No Adobe return is made.
@@ -2787,6 +1378,32 @@ class LibraryService:
             session = self._session_for_source(loan.source_provider, loan.source_credential)
             return session.return_digital(loan, account)
         account, session, key = self._return_loan_identity(loan)
+        if self._cross_identity_loan_conflict(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_loan_id=loan.id, identity_id=account.identity_id,
+            entitlements=self.storage.entitlements(
+                provider_id=loan.source_provider, state="active"
+            ),
+        ):
+            return {
+                "status": "attention_required", "scope": "provider_pnb_only",
+                "code": "loan_return_identity_conflict",
+                "retry": "resolve_identity",
+            }
+        from .core.return_adept_orchestrator import adept_return_key, public_state
+        adobe_key = adept_return_key(
+            loan.source_provider, loan.source_credential,
+            str(account.unique_id or "primary"), str(loan.id),
+        )
+        adobe = self.storage.loan_return_state(adobe_key)
+        if adobe is not None:
+            if not explicit_retry or adobe.get("adobe_verified") is not True:
+                return {
+                    **public_state(adobe), "reason": "adobe_return_takes_precedence",
+                }
+            fresh = self.verify_paris_return_inventory(loan)
+            if fresh.get("status") != "still_active":
+                return fresh
         prior = self.storage.loan_return_state(key)
         if prior is not None:
             if not explicit_retry:
@@ -3828,58 +2445,22 @@ class LibraryService:
 
     @staticmethod
     def _observed_backup_artifact(path: Path) -> dict[str, Any]:
-        inspection = inspect_artifact(path)
-        if not inspection.valid or not inspection.media_format or inspection.protected is True:
-            raise ProviderConfigurationError("Artefact de sauvegarde invalide ou encore protégé")
-        return {"format": inspection.media_format.upper(), "size": path.stat().st_size, "sha256": sha256_file(path)}
+        return kobo_backup._observed_backup_artifact(path)
 
     @staticmethod
     def _kobo_artifact_plausible(path: Path, fmt: str) -> bool:
         """Perform a conservative local sanity check without interpreting DRM."""
-        try:
-            if not path.is_file() or path.stat().st_size < 4:
-                return False
-            with path.open("rb") as handle:
-                head = handle.read(8)
-        except OSError:
-            return False
-        if str(fmt).lower() == "pdf":
-            return head.startswith(b"%PDF-")
-        return head.startswith(b"PK\x03\x04")
+        return kobo_backup._kobo_artifact_plausible(path, fmt)
 
     def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path) -> list[Path]:
-        fmt = "pdf" if str(record.get("format") or "").lower() == "pdf" else "epub"
-        ext = ".pdf" if fmt == "pdf" else ".epub"
-        author = str(record.get("author") or "").strip()
-        title = str(record.get("title") or record.get("item_id") or "Kobo").strip()
-        stem = f"{author} - {title}" if author else title
-        safe = self.acquisition._safe_filename(stem or str(record.get("item_id") or "kobo"))
-        base = target_dir / f"{safe}{ext}"
-        suffix = re.sub(r"[^A-Za-z0-9]", "", str(record.get("item_id") or ""))[-8:] or "kobo"
-        suffixed = target_dir / f"{safe} [{suffix}]{ext}"
-        paths: list[Path] = []
-        for path in (base, suffixed):
-            if path not in paths and self._kobo_artifact_plausible(path, fmt):
-                paths.append(path)
-        return paths
+        return kobo_backup._kobo_record_candidate_paths(self, record, target_dir)
 
     def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> Path:
-        ext = ".pdf" if fmt.lower() == "pdf" else ".epub"
-        author = (item.author or "").strip()
-        stem = f"{author} - {item.title}" if author else item.title
-        safe = self.acquisition._safe_filename(stem or item.record_id)
-        path = target_dir / f"{safe}{ext}"
-        # Avoid an unrelated existing file blocking a different Kobo product.
-        if path.exists():
-            current = self.storage.backup_get("kobo", item.source_credential, item.record_id)
-            if not current or Path(str(current.get("local_path") or "")) != path:
-                suffix = re.sub(r"[^A-Za-z0-9]", "", item.record_id)[-8:] or "kobo"
-                path = target_dir / f"{safe} [{suffix}]{ext}"
-        return path
+        return kobo_backup._kobo_destination(self, item, target_dir, fmt)
 
     def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
         """Compatibility façade; Kobo execution lives in the provider adapter."""
-        return execute_kobo_acquisition(self, item, target_dir)
+        return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
 
     def _acquire_direct_item_impl(self, item: SearchResult) -> Acquisition:
         session = self._session_for_source(item.source_provider, item.source_credential)
@@ -3960,23 +2541,16 @@ class LibraryService:
 
     def catalog_scan(self, *, repair_misnamed: bool = False, force_covers: bool = False) -> dict[str, Any]:
         """Reconcile the local-first catalog from the Paris-owned library tree."""
-        result = LocalCatalog(self.storage, self.library_dir()).scan(repair_misnamed=repair_misnamed, force_covers=force_covers)
-        self.diagnostics.add(
-            "CATALOG", "local scan", "ok" if not result.invalid else "warning",
-            detail=result.as_dict(),
-        )
-        return {**result.as_dict(), "storage_schema_version": self.storage.schema_version()}
+        return library_mutation.catalog_scan(self, repair_misnamed=repair_misnamed, force_covers=force_covers)
 
     def catalog_entries(self, *, state: str | None = None) -> list[dict[str, Any]]:
-        return LocalCatalog(self.storage, self.library_dir()).entries(state=state)
+        return library_projection.catalog_entries(self, state=state)
 
     def catalog_index_path(
         self, path: Path, *, title: str | None = None, item_id: str | None = None,
         identity_id: str | None = None, provider_id: str | None = None,
     ) -> dict[str, Any]:
-        return LocalCatalog(self.storage, self.library_dir()).index_path(
-            path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id,
-        )
+        return library_mutation.catalog_index_path(self, path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id)
 
     def library_entries(self, *, identity_id: str | None = None, scan: bool = False) -> list[dict[str, Any]]:
         """Canonical Library projection.
@@ -3985,232 +2559,11 @@ class LibraryService:
         by provider/item. Remote-only rights remain distinct until reconciliation
         can bind them to a local Artifact.
         """
-        _lib_started = time.monotonic()
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        _TRACE_LOG.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
-        if scan:
-            self.catalog_scan()
-        merged: dict[str, dict[str, Any]] = {}
-        source_alias: dict[tuple[str, str], str] = {}
-        default_identity_id = self.identities[0].identity_id if self.identities else None
-        artifacts = {str(row.get("artifact_id") or ""): row for row in self.storage.artifacts()}
-        placements_by_artifact: dict[str, list[dict[str, Any]]] = {}
-        for placement in self.storage.placements(state="present"):
-            # The artifact itself is shared by content hash, but placements
-            # belong to identities. Do not project another identity's paths,
-            # storage targets or placement counts into this library snapshot.
-            # Legacy unscoped placements belong only to the default identity.
-            placement_identity = placement.get("identity_id") or default_identity_id
-            if identity_id and placement_identity != identity_id:
-                continue
-            placements_by_artifact.setdefault(str(placement.get("artifact_id") or ""), []).append(placement)
-
-        def placement_view(row: dict[str, Any]) -> dict[str, Any]:
-            meta = dict(row.get("metadata") or {})
-            return {
-                "placement_id": str(row.get("placement_id") or ""),
-                "identity_id": row.get("identity_id") or default_identity_id,
-                "provider_id": str(row.get("provider_id") or "local"),
-                "source_item_id": str(row.get("source_item_id") or ""),
-                "kind": str(meta.get("placement_kind") or ("storage" if meta.get("storage_target_id") else "library")),
-                "storage_target_id": meta.get("storage_target_id"),
-                "storage_plugin_id": meta.get("storage_plugin_id"),
-                "filename": Path(str(row.get("path") or "")).name,
-                "state": str(row.get("state") or "present"),
-            }
-
-        def add_unique(values: list[Any], value: Any) -> None:
-            if value not in {None, ""} and value not in values:
-                values.append(value)
-
-        for row in self.storage.catalog_entries():
-            if row.get("local_state") != "local":
-                continue
-            row_identity = row.get("identity_id")
-            if identity_id and row_identity != identity_id:
-                if row_identity not in {None, ""} or identity_id != default_identity_id:
-                    continue
-            provider_id = str(row.get("provider_id") or "local")
-            artifact_id = str(row.get("artifact_id") or "")
-            item_id = str(row.get("item_id") or artifact_id or row.get("catalog_entry_id"))
-            artifact = artifacts.get(artifact_id, {})
-            sha256 = str(artifact.get("sha256") or "")
-            if not sha256 and artifact_id.startswith("sha256:"):
-                sha256 = artifact_id.split(":", 1)[1]
-            canonical = f"sha256:{sha256}" if sha256 else (artifact_id or f"source:{provider_id}:{item_id}")
-            key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
-            source_alias[(provider_id, item_id)] = key
-            metadata = dict(row.get("metadata") or {})
-            all_placements = [placement_view(p) for p in placements_by_artifact.get(artifact_id, ())]
-            current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
-            existing = merged.get(key)
-            source_ref = {"provider_id": provider_id, "item_id": item_id, "identity_id": row_identity or default_identity_id}
-            base_cover_candidates = []
-            embedded_cover = cover_candidate(
-                cached_cover_url(metadata), tier="embedded", source="epub",
-                evidence_id=artifact_id or sha256, evidence_strength=100,
-            )
-            if embedded_cover:
-                base_cover_candidates.append(embedded_cover)
-            legacy_cover = cover_candidate(
-                metadata.get("cover_url") or metadata.get("thumbnail_url"),
-                tier="origin", source="catalog-entry",
-                evidence_id=f"{provider_id}:{item_id}" if item_id else provider_id, evidence_strength=60,
-            )
-            if legacy_cover:
-                base_cover_candidates.append(legacy_cover)
-            catalog_cover = metadata.get("catalog_cover")
-            if isinstance(catalog_cover, dict):
-                public_cover = cover_candidate(
-                    catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
-                    evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
-                )
-                if public_cover:
-                    base_cover_candidates.append(public_cover)
-            base_cover = resolve_cover(base_cover_candidates)
-            metadata["cover_resolution"] = base_cover.metadata()
-            if existing is None:
-                existing = {
-                    "key": key, "book_id": item_id, "title": str(row.get("title") or "Sans titre"),
-                    "author": row.get("author"), "provider_id": provider_id, "providers": [provider_id],
-                    "identity_id": row_identity or default_identity_id, "identity_ids": [row_identity or default_identity_id] if (row_identity or default_identity_id) else [],
-                    "item_id": item_id, "source_refs": [source_ref], "state": "local", "local": True,
-                    "local_path": metadata.get("path") or (current_placement or {}).get("path"),
-                    "media_format": artifact.get("media_format") or row.get("media_format"),
-                    "artifact_kind": metadata.get("artifact_kind") or artifact.get("kind") or "file",
-                    "bundle_members": metadata.get("bundle_members") or [], "playlist": metadata.get("playlist"),
-                    "entitlement_type": None, "due_at": None, "source": "catalog",
-                    "thumbnail_url": base_cover.url or None,
-                    "artifact_id": artifact_id or None, "sha256": sha256 or None,
-                    "placement_id": row.get("placement_id"), "placements": all_placements, "possessions": [],
-                    "metadata": metadata,
-                }
-                merged[key] = existing
-            else:
-                add_unique(existing.setdefault("providers", []), provider_id)
-                add_unique(existing.setdefault("identity_ids", []), row_identity or default_identity_id)
-                if source_ref not in existing.setdefault("source_refs", []): existing["source_refs"].append(source_ref)
-                known_ids={p.get("placement_id") for p in existing.setdefault("placements", [])}
-                existing["placements"].extend(p for p in all_placements if p.get("placement_id") not in known_ids)
-                if not existing.get("author") and row.get("author"): existing["author"] = row.get("author")
-                if existing.get("title") in {None, "", "Sans titre"} and row.get("title"): existing["title"] = row.get("title")
-                if not existing.get("thumbnail_url") and base_cover.url:
-                    existing["thumbnail_url"] = base_cover.url
-                existing["metadata"] = {**metadata, **dict(existing.get("metadata") or {})}
-
-        backup_by_key = {(str(row.get("credential_id") or ""), str(row.get("item_id") or "")): row for row in self.storage.backup_list("kobo")}
-        loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
-        for loan in self.last_loans:
-            loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
-
-        for entitlement in self.storage.entitlements(state="active"):
-            entitlement_type = str(entitlement.get("entitlement_type") or "unknown")
-            if entitlement_type not in {"owned", "loan", "license"}: continue
-            entitlement_identity = str(entitlement.get("identity_id") or "").strip() or default_identity_id
-            if identity_id and entitlement_identity != identity_id: continue
-            provider_id = str(entitlement.get("provider_id") or ""); item_id = str(entitlement.get("item_id") or "")
-            if not provider_id or not item_id: continue
-            source_key=(provider_id,item_id); canonical_key=source_alias.get(source_key, f"source:{provider_id}:{item_id}")
-            existing = merged.get(canonical_key, {})
-            meta = dict(entitlement.get("metadata") or {})
-            backup = backup_by_key.get((str(entitlement.get("credential_id") or ""), item_id), {}) if provider_id == "kobo" else {}
-            loan = loans_by_key.get((provider_id, str(entitlement.get("credential_id") or ""), entitlement.get("account_id"), item_id))
-            loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
-            title = str(meta.get("title") or backup.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
-            author = meta.get("author") or backup.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")
-            from .core.search import file_format
-            source_media_format = meta.get("media_format") or backup.get("format") or (loan.media_format if loan else None) or loan_extra.get("format")
-            local_format = file_format(existing.get("media_format")) if existing.get("local") else ""
-            media_format = local_format or file_format(source_media_format) or file_format(existing.get("media_format"))
-            meta["source_media_format"] = source_media_format
-            cover_candidates = []
-            existing_meta = dict(existing.get("metadata") or {})
-            embedded_cover = cover_candidate(
-                cached_cover_url(existing_meta), tier="embedded", source="epub",
-                evidence_id=str(existing.get("artifact_id") or existing.get("sha256") or ""), evidence_strength=100,
-            )
-            if embedded_cover:
-                cover_candidates.append(embedded_cover)
-            for url, source, strength, evidence in (
-                (existing_meta.get("cover_url") or existing_meta.get("thumbnail_url"), "catalog-entry", 60, f"{provider_id}:{item_id}"),
-                (meta.get("cover_url") or meta.get("thumbnail_url"), "entitlement", 80, str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}")),
-                (backup.get("cover_url"), "kobo-backup", 100, f"{provider_id}:{item_id}"),
-                ((loan.thumbnail_url if loan else None), "loan", 90, f"{provider_id}:{item_id}"),
-            ):
-                value = cover_candidate(url, tier="origin", source=source, evidence_id=evidence, evidence_strength=strength)
-                if value:
-                    cover_candidates.append(value)
-            for metadata_source in (existing_meta, meta):
-                public_meta = metadata_source.get("catalog_cover")
-                if isinstance(public_meta, dict):
-                    value = cover_candidate(
-                        public_meta.get("url"), tier="catalog", source=str(public_meta.get("source") or "catalog"),
-                        evidence_id=str(public_meta.get("evidence_id") or ""), evidence_strength=int(public_meta.get("evidence_strength") or 0),
-                    )
-                    if value:
-                        cover_candidates.append(value)
-            cover = resolve_cover(cover_candidates)
-            thumbnail = cover.url or None
-            combined_meta = {**existing_meta, **meta}
-            combined_meta["cover_resolution"] = cover.metadata()
-            remote_state = "remote_owned" if entitlement_type == "owned" else "remote_loan_active" if entitlement_type == "loan" else "remote_entitled"
-            possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
-            if existing:
-                add_unique(existing.setdefault("providers", []), provider_id)
-                add_unique(existing.setdefault("identity_ids", []), entitlement_identity)
-                if possession not in existing.setdefault("possessions", []): existing["possessions"].append(possession)
-                source_ref={"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}
-                if source_ref not in existing.setdefault("source_refs", []): existing["source_refs"].append(source_ref)
-                existing.update({"title":title,"author":author,"state":"local" if existing.get("local") else remote_state,"media_format":str(media_format or "").lower() or None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"metadata":combined_meta})
-            else:
-                merged[canonical_key]={"key":canonical_key,"book_id":item_id,"title":title,"author":author,"provider_id":provider_id,"providers":[provider_id],"identity_id":entitlement_identity,"identity_ids":[entitlement_identity] if entitlement_identity else [],"item_id":item_id,"source_refs":[{"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}],"state":remote_state,"local":False,"local_path":None,"media_format":str(media_format or "").lower() or None,"artifact_kind":None,"bundle_members":[],"playlist":None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"source":"entitlement","loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"artifact_id":None,"sha256":None,"placement_id":None,"placements":[],"possessions":[possession],"metadata":combined_meta}
-
-        result=[]
-        for row in merged.values():
-            row["providers"] = sorted(dict.fromkeys(str(x) for x in row.get("providers", []) if x))
-            row["identity_ids"] = list(dict.fromkeys(x for x in row.get("identity_ids", []) if x))
-            row["placement_count"] = len(row.get("placements") or [])
-            row["source_count"] = len(row.get("source_refs") or [])
-            result.append(row)
-        result.sort(key=lambda row: (str(row.get("title") or "").casefold(), str(row.get("provider_id") or "")))
-        _TRACE_LOG.info("TRACE library-entries end identity=%s count=%s dt=%.3fs", identity_id, len(result), time.monotonic()-_lib_started)
-        return result
+        return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
 
     def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool = True) -> dict[str, int]:
         """Persist current digital loans and realize rights no longer reported."""
-        active_ids: set[str] = set()
-        persisted = 0
-        for loan in loans:
-            if loan.medium != "digital":
-                continue
-            source = SourceIdentity(
-                provider_id=loan.source_provider,
-                credential_id=loan.source_credential,
-                account_id=loan.source_account_id,
-                identity_id=identity_id,
-            )
-            entitlement = Entitlement(
-                source=source,
-                item_id=str(loan.record_id or loan.id),
-                entitlement_type="loan",
-                state="active",
-                loan_id=loan.id,
-                expires_at=loan.due_at,
-                metadata={
-                    "title": loan.title,
-                    "author": loan.author or (dict((loan.raw or {}).get("_cifereca") or {}).get("author") if isinstance((loan.raw or {}).get("_cifereca"), dict) else None),
-                    "media_format": loan.media_format or (dict((loan.raw or {}).get("_cifereca") or {}).get("format") if isinstance((loan.raw or {}).get("_cifereca"), dict) else None),
-                    "cover_url": loan.thumbnail_url,
-                    "ebook_url": loan.ebook_url,
-                    "document_type": loan.document_type,
-                },
-            )
-            active_ids.add(entitlement.entitlement_id)
-            self.storage.entitlement_put(entitlement)
-            persisted += 1
-        returned = self.storage.entitlement_realize_missing_loans(active_ids, identity_id=identity_id) if reconcile_missing else 0
-        expired = self.storage.entitlement_realize_expired()
-        return {"persisted": persisted, "returned_realized": returned, "expired_realized": expired}
+        return library_mutation._persist_active_loans(self, identity_id, loans, reconcile_missing=reconcile_missing)
 
     @staticmethod
     def _loan_destination_name(title: str, suffix: str = ".epub") -> str:
@@ -4240,37 +2593,127 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "loan binding", "ok" if detail["return_available"] else "warning", detail=detail, level="normal")
 
     def adept_return_status_for_loan(self, loan: Loan) -> dict[str, Any]:
-        identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
-        entitlements = {r["entitlement_id"] for r in self.storage.entitlements(provider_id=loan.source_provider)
-                        if r.get("identity_id") == identity.identity_id and r.get("loan_id") == loan.id
-                        and r.get("credential_id") == loan.source_credential
-                        and str(r.get("account_id") or "") == str(loan.source_account_id or "")}
-        for row in self.storage.acquisitions(provider_id=loan.source_provider, status="complete"):
-            if (row.get("identity_id") != identity.identity_id or row.get("credential_id") != loan.source_credential
+        """Read-only ADEPT return status from the exact Paris borrower provenance.
+
+        Never infer the Adobe owner from the selected UI identity or the Paris
+        connection owner for a linked account. Keep return actions unavailable
+        when the source, loan transaction or origin profile is ambiguous.
+        """
+        from .core.adept_return_origin import inventory_attests_return_origin
+
+        borrower_code = None
+        is_paris = str(loan.source_provider).lower() == "paris"
+        if is_paris:
+            connection_identity_id = self.storage.identity_for_connection(
+                loan.source_provider, loan.source_credential
+            )
+            identity = self.identity_by_id(connection_identity_id)
+            if identity is None:
+                return {"status": "adept_identity_unproven", "return_available": False}
+            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=identity.identity_id,
+            )
+        else:
+            identity = self.identity_for_connection(
+                loan.source_provider, loan.source_credential
+            )
+            borrower_identity_id = identity.identity_id
+
+        all_rights = self.storage.entitlements(provider_id=loan.source_provider)
+        all_acquisitions = self.storage.acquisitions(provider_id=loan.source_provider)
+        if is_paris and self._cross_identity_loan_conflict(
+            all_acquisitions, provider_loan_id=loan.id,
+            identity_id=identity.identity_id,
+            entitlements=[r for r in all_rights if r.get("state") == "active"],
+        ):
+            return {"status": "adept_loan_identity_conflict", "return_available": False}
+
+        entitlements = {
+            row["entitlement_id"] for row in all_rights
+            if row.get("identity_id") == identity.identity_id
+            and row.get("loan_id") == loan.id
+            and row.get("credential_id") == loan.source_credential
+            and str(row.get("account_id") or "") == str(loan.source_account_id or "")
+            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
+        }
+        candidates = []
+        for row in all_acquisitions:
+            if (row.get("status") != "complete"
+                    or row.get("executor") != "kobo-adept"
+                    # #989: a manual/imported ADEPT artifact is not proof of
+                    # this automatic Paris loan's fulfillment transaction.
+                    or row.get("strategy") != "loan_auto"
+                    or row.get("identity_id") != identity.identity_id
+                    or row.get("credential_id") != loan.source_credential
                     or str(row.get("account_id") or "") != str(loan.source_account_id or "")
                     or str(row.get("item_id") or "") != str(loan.record_id or loan.id)):
                 continue
             metadata = row.get("metadata") or {}
-            if row.get("entitlement_id") not in entitlements and metadata.get("provider_loan_id") != loan.id:
+            recorded_loan_id = metadata.get("provider_loan_id")
+            if recorded_loan_id is not None and str(recorded_loan_id) != str(loan.id):
                 continue
-            binding = metadata.get("adept_binding") or {}
-            state = "returned" if binding.get("loan_state") == "returned" else ("loan_id_missing" if not binding.get("adept_loan_id") else ("profile_missing" if not binding.get("adept_profile_id") else "ready"))
-            if state == "returned" and (binding.get("return_verification") != "confirmed" or binding.get("token_present") is not False):
-                state = "returned_unverified"
-            if binding.get("return_verification") in {"pending", "verification_failed"}:
-                state = "verification_failed"
-            elif binding.get("loan_state") == "expired":
-                state = "expired"
-            elif binding.get("inventory_status") in {"unresolved", "ambiguous", "inventory_error", "binding_conflict"} and state != "returned":
-                state = binding["inventory_status"]
-            elif binding.get("token_present") is False and state != "returned":
-                state = "token_missing"
-            if state in {'returned', 'returned_unverified'} and self._provider_loan_active_for_acquisition(row):
-                state = 'provider_conflict'
-            return {"status": state, "acquisition_id": row["acquisition_id"],
-                    "adept_loan_id": binding.get("adept_loan_id"), "profile_name": binding.get("adept_profile_name"),
-                    "return_available": bool(state == "ready" and binding.get("return_available") and self._adept_return_capability())}
-        return {"status": "no_acquisition", "return_available": False}
+            if recorded_loan_id is None and row.get("entitlement_id") not in entitlements:
+                continue
+            candidates.append(row)
+
+        if not candidates:
+            return {"status": borrower_code or "no_acquisition", "return_available": False}
+        if len(candidates) != 1:
+            return {"status": "adept_return_acquisition_ambiguous", "return_available": False}
+
+        row = candidates[0]
+        binding = (row.get("metadata") or {}).get("adept_binding") or {}
+        origin_attested = inventory_attests_return_origin(binding)
+        if borrower_code and not origin_attested:
+            return {"status": borrower_code, "return_available": False}
+        # Grants/current identity profile govern NEW fulfillment. Historical
+        # inventory attestation preserves a completed license's own origin.
+        # Exact Paris provenance and cross-identity/duplicate guards above stay.
+        if is_paris and not origin_attested and binding.get("adept_profile_id") and (
+            self.storage.adept_profile_binding_get(
+                "identity", borrower_identity_id
+            ) != binding["adept_profile_id"]
+        ):
+            return {
+                "status": "adept_return_profile_conflict",
+                "acquisition_id": row["acquisition_id"],
+                "return_available": False,
+            }
+
+        state = "returned" if binding.get("loan_state") == "returned" else (
+            "loan_id_missing" if not binding.get("adept_loan_id") else (
+                "profile_missing" if not binding.get("adept_profile_id") else "ready"
+            )
+        )
+        if state == "returned" and (
+            binding.get("return_verification") != "confirmed"
+            or binding.get("token_present") is not False
+        ):
+            state = "returned_unverified"
+        if binding.get("return_verification") in {"pending", "verification_failed"}:
+            state = "verification_failed"
+        elif binding.get("loan_state") == "expired":
+            state = "expired"
+        elif (
+            binding.get("inventory_status") in {
+                "unresolved", "ambiguous", "inventory_error", "binding_conflict"
+            } and state != "returned"
+        ):
+            state = binding["inventory_status"]
+        elif binding.get("token_present") is False and state != "returned":
+            state = "token_missing"
+        if state in {"returned", "returned_unverified"} and self._provider_loan_active_for_acquisition(row):
+            state = "provider_conflict"
+        return {
+            "status": state,
+            "acquisition_id": row["acquisition_id"],
+            "adept_loan_id": binding.get("adept_loan_id"),
+            "profile_name": binding.get("adept_profile_name"),
+            "return_available": bool(
+                state == "ready" and binding.get("return_available")
+                and self._adept_return_capability()
+            ),
+        }
 
     def reacquire_digital_loan(self, loan: Loan) -> dict[str, Any]:
         """Explicit full recovery, serialized with automatic acquisitions.
@@ -4282,7 +2725,35 @@ class LibraryService:
             raise ProviderConfigurationError("Ce prêt ne permet pas une acquisition numérique")
         try:
             with InterProcessLock(acquisition_lock_file()):
-                identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+                bound_identity_id = self.storage.identity_for_connection(
+                    loan.source_provider, loan.source_credential
+                )
+                identity = self.identity_by_id(bound_identity_id)
+                if identity is None:
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": "adept_identity_unproven", "retry": "explicit_only",
+                    }
+                if str(loan.source_provider).lower() == "paris":
+                    _, borrower_code = self._paris_adept_identity_for_loan(
+                        loan, connection_identity_id=identity.identity_id,
+                    )
+                    if borrower_code:
+                        return {
+                            "status": "attention_required", "loan_id": loan.id,
+                            "code": borrower_code, "retry": "explicit_only",
+                        }
+                    if self._cross_identity_loan_conflict(
+                        self.storage.acquisitions(provider_id=loan.source_provider),
+                        provider_loan_id=loan.id, identity_id=identity.identity_id,
+                        entitlements=self.storage.entitlements(
+                            provider_id=loan.source_provider, state="active"
+                        ),
+                    ):
+                        return {
+                            "status": "attention_required", "loan_id": loan.id,
+                            "code": "adept_loan_identity_conflict", "retry": "explicit_only",
+                        }
                 previous = [r for r in self.storage.acquisitions(provider_id=loan.source_provider)
                             if r.get("identity_id") == identity.identity_id and r.get("credential_id") == loan.source_credential
                             and str(r.get("account_id") or "") == str(loan.source_account_id or "")
@@ -4301,7 +2772,161 @@ class LibraryService:
         except LockBusyError as exc:
             raise AttentionRequired("Une acquisition ou synchronisation est déjà en cours. Réessayez après sa fin.", code="acquisition_busy") from exc
 
+    @staticmethod
+    def _borrower_identity_conflict(
+        accounts: Any, *, provider_id: str, account_id: str | None,
+        identity_id: str, credential_id: str | None = None,
+    ) -> bool:
+        """Fail closed unless the borrower is bound to the requested identity.
+
+        Paris uses the literal "primary" for its main-account provenance,
+        while the provider account can have unique_id="". These values
+        identify a borrower only inside the exact provider connection.
+        """
+        if account_id is None:
+            return True
+        borrower = str(account_id).strip()
+        provider = str(provider_id).lower()
+        matching = [
+            account for account in accounts
+            if str(account.provider_id).lower() == provider
+        ]
+        if borrower in {"", "primary"}:
+            if not credential_id:
+                return True
+            matching = [
+                account for account in matching
+                if str(account.credential_id) == str(credential_id)
+                and bool(account.is_primary)
+                and (borrower == "primary" or str(account.unique_id or "") == "")
+            ]
+            return len(matching) != 1 or str(matching[0].identity_id) != identity_id
+
+        matching = [
+            account for account in matching
+            if str(account.unique_id or "").strip() == borrower
+        ]
+        if credential_id is not None and not any(
+            str(account.credential_id) == str(credential_id)
+            and str(account.identity_id) == identity_id
+            for account in matching
+        ):
+            return True
+        return {str(account.identity_id) for account in matching} != {identity_id}
+
+    def bind_paris_borrower_adept(
+        self, *, credential_id: str, account_id: str, borrower_identity_id: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        """Explicitly pin a Paris account's exceptional fulfillment identity.
+
+        This operation must be initiated by an authorized user, never by sync,
+        and never by guessing from the connected/current UI identity.
+        """
+        if account_id is None:
+            raise ValueError("Paris borrower account is required")
+        borrower = str(account_id).strip()
+        if borrower in {"", "primary"}:
+            borrower = "primary"
+        matches = [
+            account for account in self.accounts
+            if str(account.provider_id).lower() == "paris"
+            and str(account.credential_id) == str(credential_id)
+            and ((borrower == "primary" and account.is_primary)
+                 or (borrower != "primary" and not account.is_primary
+                     and str(account.unique_id or "").strip() == borrower))
+        ]
+        if (
+            len(matches) != 1
+            or str(matches[0].identity_id) != self.storage.identity_for_connection("paris", credential_id)
+        ):
+            raise ValueError("Paris borrower not uniquely identified for connection")
+        owner = self.identity_by_id(borrower_identity_id)
+        if owner is None:
+            raise ValueError("unknown ADEPT borrower identity")
+        profile_id = self.storage.adept_profile_binding_get("identity", owner.identity_id)
+        if not profile_id:
+            raise ValueError("ADEPT borrower identity has no stable profile binding")
+        self.storage.paris_borrower_adept_binding_put(
+            credential_id=credential_id, account_id=borrower,
+            borrower_identity_id=owner.identity_id, profile_id=profile_id,
+            confirmed=confirmed,
+        )
+        return self.storage.paris_borrower_adept_binding_get(
+            credential_id=credential_id, account_id=borrower,
+        )
+
+    def audit_paris_adept_loan_origins(self, loan: Loan) -> dict[str, Any]:
+        """Read-only historical evidence for the exceptional ADEPT resolver.
+
+        Never authorizes new fulfillment or return; no live inventory refresh,
+        provider session, profile selection or ledger mutation.
+        """
+        from .core.adept_origin_audit import inspect_paris_adept_origins
+        if str(loan.source_provider).casefold() != "paris":
+            return {"status": "unsupported_source", "shared_visibility": False,
+                    "profile_disagreement": False, "sources": [], "origins": []}
+        return inspect_paris_adept_origins(
+            loan_id=str(loan.id or ""),
+            item_id=str(loan.record_id or loan.id or ""),
+            entitlements=self.storage.entitlements(provider_id="paris"),
+            acquisitions=self.storage.acquisitions(provider_id="paris"),
+            artifact_inspector=inspect_artifact,
+        )
+
+    def _paris_adept_identity_for_loan(
+        self, loan: Loan, *, connection_identity_id: str,
+    ) -> tuple[str | None, str | None]:
+        """Resolve the Adobe borrower separately from the Paris connection.
+
+        The primary account normally uses its proven connection identity.
+        An explicit exceptional grant takes precedence without changing that
+        identity's normal profile. Linked accounts always require a grant.
+        """
+        return adept_borrower._paris_adept_identity_for_loan(self, loan, connection_identity_id=connection_identity_id)
+
+    @staticmethod
+    def _cross_identity_loan_conflict(
+        acquisitions: Any, *, provider_loan_id: str, identity_id: str,
+        entitlements: Any = (),
+    ) -> bool:
+        """Reject a Paris loan recorded under another identity in either ledger.
+
+        A currently active entitlement is also a trace of the same upstream
+        loan; it does not prove that identity is the rightful ADEPT owner.
+        """
+        return adept_borrower._cross_identity_loan_conflict(acquisitions, provider_loan_id=provider_loan_id, identity_id=identity_id, entitlements=entitlements)
+
     def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
+        """Serialize automatic acquisition across threads and processes per loan.
+
+        Do not reuse the global acquisition lock: opening_sync already holds it.
+        The loan-scoped lock also covers other callers running in another process.
+        """
+        loan_id = str(loan.id or "").strip()
+        if not loan_id:
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_loan_identity_unproven", "retry": "explicit_only",
+            }
+        loan_key = hashlib.sha256(
+            (str(loan.source_provider).lower() + "\\0" + loan_id).encode("utf-8")
+        ).hexdigest()[:32]
+        lock_path = acquisition_lock_file().with_name(
+            "cifereca-loan-" + loan_key + ".lock"
+        )
+        try:
+            with _AUTOMATIC_LOAN_GUARD, InterProcessLock(lock_path):
+                return self._acquire_active_loan_automatically_guarded(
+                    loan, force_refresh=force_refresh
+                )
+        except LockBusyError:
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "acquisition_busy", "retry": "explicit_only",
+            }
+
+    def _acquire_active_loan_automatically_guarded(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Acquire one active digital loan and fulfill ACSM through Kobo-Adept.
 
         Provider download remains responsible for obtaining the ACSM. Paris owns
@@ -4313,77 +2938,96 @@ class LibraryService:
             "TRACE download loan_auto begin loan_id=%s item_id=%s title=%r provider=%s credential=%s account=%s direct_url_present=%s",
             loan.id, loan.record_id, loan.title, loan.source_provider, loan.source_credential, loan.source_account_id, bool(loan.ebook_url),
         )
-        identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+        # DRM must never inherit the currently selected identity when a provider
+        # connection has no persisted owner. Keep this fail-closed at the
+        # automatic acquisition boundary; unrelated UI navigation may still
+        # use the historical identity_for_connection fallback.
+        bound_identity_id = self.storage.identity_for_connection(
+            loan.source_provider, loan.source_credential
+        )
+        identity = self.identity_by_id(bound_identity_id)
+        if identity is None:
+            _TRACE_LOG.warning(
+                "TRACE download loan_auto blocked reason=unbound_connection_identity provider=%s",
+                loan.source_provider,
+            )
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_identity_unproven",
+                "reason": "unbound_connection_identity",
+                "retry": "explicit_only",
+            }
         _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
+        if str(loan.source_provider).lower() == "paris":
+            _, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=identity.identity_id,
+            )
+            if borrower_code:
+                _TRACE_LOG.warning(
+                    "TRACE download loan_auto blocked reason=%s provider=%s",
+                    borrower_code, loan.source_provider,
+                )
+                return {
+                    "status": "attention_required", "loan_id": loan.id,
+                    "code": borrower_code, "retry": "explicit_only",
+                }
+        entitlement_inventory = self.storage.entitlements(
+            provider_id=loan.source_provider, state="active"
+        )
+        if str(loan.source_provider).lower() == "paris" and self._cross_identity_loan_conflict(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            provider_loan_id=loan.id, identity_id=identity.identity_id,
+            entitlements=entitlement_inventory,
+        ):
+            _TRACE_LOG.warning(
+                "TRACE download loan_auto blocked reason=cross_identity_loan provider=%s",
+                loan.source_provider,
+            )
+            return {
+                "status": "attention_required", "loan_id": loan.id,
+                "code": "adept_loan_identity_conflict",
+                "reason": "cross_identity_loan", "retry": "explicit_only",
+            }
         entitlement_rows = [
-            row for row in self.storage.entitlements(provider_id=loan.source_provider, state="active")
+            row for row in entitlement_inventory
             if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
         ]
         entitlement_id = entitlement_rows[0]["entitlement_id"] if entitlement_rows else None
-        existing = [
-            row for row in self.storage.catalog_entries()
-            if row.get("identity_id") == identity.identity_id
-            and row.get("provider_id") == loan.source_provider
-            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
-            and row.get("local_state") == "local"
-        ]
+        existing = loan_artifact_state.local_catalog_candidates(
+            self.storage.catalog_entries(),
+            identity_id=identity.identity_id,
+            source_provider=loan.source_provider,
+            item_id=str(loan.record_id or loan.id),
+        )
         # Inventory is a projection. Validate its files before deciding to skip.
+        # Keep invalidation writes inline, in the same candidate order and under
+        # the existing per-loan locks. No side effects occur in the helper.
         valid_existing = []
         for entry in existing:
-            path_text = str((entry.get("metadata") or {}).get("path") or "")
-            path = Path(path_text) if path_text else None
-            if path is not None and path.is_file():
-                inspection = inspect_artifact(path)
-                if inspection.valid and inspection.protected is not True:
-                    valid_existing.append(entry)
-                    continue
+            usable, path = loan_artifact_state.inspect_catalog_local_file(
+                entry, artifact_inspector=inspect_artifact,
+            )
+            if usable:
+                valid_existing.append(entry)
+                continue
             self.storage.catalog_entry_put({**entry, "local_state": "missing" if path is None or not path.is_file() else "invalid"})
             _TRACE_LOG.info("TRACE download local-recheck provider_loan_id=%s catalog_state=%s", loan.id, "missing" if path is None or not path.is_file() else "invalid")
         existing = valid_existing
-        previous_rows = [
-            row for row in self.storage.acquisitions(provider_id=loan.source_provider)
-            if row.get("identity_id") == identity.identity_id
-            and row.get("credential_id") == loan.source_credential
-            and str(row.get("account_id") or "") == str(loan.source_account_id or "")
-            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
-            and row.get("strategy") == "loan_auto"
-        ]
-        previous = previous_rows[0] if previous_rows else None
-        previous_meta = dict((previous or {}).get("metadata") or {})
-        previous_path = Path(str(previous_meta.get("path") or "")) if previous_meta.get("path") else None
-        previous_inspection = None
-        if previous_path is not None and previous_path.is_file():
-            expected_previous = "pdf" if previous_path.suffix.casefold() == ".pdf" else "epub" if previous_path.suffix.casefold() == ".epub" else None
-            previous_inspection = inspect_artifact(previous_path, expected_previous)
-        legacy_acsm_artifact = bool(
-            loan.source_provider == "paris"
-            and (previous or {}).get("executor") == "kobo-adept"
-            and previous_path is not None
-            and previous_path.is_file()
-            and (
-                not previous_meta.get("post_processed")
-                or previous_inspection is None
-                or not previous_inspection.valid
-                or previous_inspection.protected is True
-            )
+        previous_state = loan_artifact_state.inspect_previous_loan_artifact(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            identity_id=identity.identity_id,
+            credential_id=loan.source_credential,
+            account_id=loan.source_account_id,
+            item_id=str(loan.record_id or loan.id),
+            source_provider=loan.source_provider,
+            artifact_inspector=inspect_artifact,
         )
-        # A completed ledger row with a validated local artifact is sufficient
-        # proof that this loan has already been materialized. Do not depend on
-        # catalog item_id alone: older/full scans may leave the catalog
-        # projection incomplete even though the canonical acquisition is valid.
-        previous_complete_local = bool(
-            previous
-            and previous.get("status") == "complete"
-            and previous_path is not None
-            and previous_path.is_file()
-            and previous_inspection is not None
-            and previous_inspection.valid
-            and previous_inspection.protected is not True
-            and (
-                (previous or {}).get("executor") != "kobo-adept"
-                or bool(previous_meta.get("post_processed"))
-            )
-        )
+        previous = previous_state.row
+        previous_meta = previous_state.metadata
+        previous_path = previous_state.path
+        previous_inspection = previous_state.inspection
+        legacy_acsm_artifact = previous_state.legacy_acsm_artifact
+        previous_complete_local = previous_state.complete_local
         if previous_complete_local and not existing and not force_refresh:
             repaired_index = self.catalog_index_path(
                 previous_path, title=loan.title, item_id=str(loan.record_id or loan.id),
@@ -4490,8 +3134,33 @@ class LibraryService:
             if acquisition.kind == "acsm" and acquisition.acsm_path is not None:
                 retained_acsm = acquisition.acsm_path
                 failure_executor = "kobo-adept"
+                # Check the pinned borrower grant again immediately before ADEPT:
+                # provider staging can take time, and a grant may be revoked.
+                adept_borrower_identity_id = identity.identity_id
+                borrower_code = None
+                if str(loan.source_provider).lower() == "paris":
+                    adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                        loan, connection_identity_id=identity.identity_id,
+                    )
+                if borrower_code:
+                    code = borrower_code
+                    self.storage.acquisition_put({
+                        **ledger_base, "status": "attention_required",
+                        "strategy": "loan_auto", "executor": "kobo-adept",
+                        "attention_code": code,
+                        "metadata": {**previous_meta, "provider_loan_id": loan.id,
+                                     "acsm_staging_path": str(retained_acsm)},
+                    })
+                    _TRACE_LOG.warning(
+                        "TRACE download loan_auto blocked reason=ambiguous_borrower_account provider=%s",
+                        loan.source_provider,
+                    )
+                    return {
+                        "status": "attention_required", "loan_id": loan.id,
+                        "code": code, "retry": "explicit_only",
+                    }
                 try:
-                    profile_name, profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
+                    profile_name, profile_source = self.resolve_adept_profile_for_identity(adept_borrower_identity_id)
                 except AdeptProfileResolutionError as exc:
                     self.storage.acquisition_put({
                         **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
@@ -4505,8 +3174,8 @@ class LibraryService:
                     )
                     return {"status": "attention_required", "loan_id": loan.id, "code": exc.code, "error": str(exc)}
                 _TRACE_LOG.info(
-                    "TRACE download adept profile-resolved loan_id=%s identity=%s profile=%s source=%s",
-                    loan.id, identity.identity_id, profile_name, profile_source,
+                    "TRACE download adept profile-resolved loan_id=%s connection_identity=%s borrower_identity=%s profile=%s source=%s",
+                    loan.id, identity.identity_id, adept_borrower_identity_id, profile_name, profile_source,
                 )
                 # 0.13.3+ distinguishes a reader-backed profile from one that
                 # can actually execute ACSM/libgourou operations. Only block
@@ -4518,9 +3187,7 @@ class LibraryService:
                     profile_rows = []
                 profile_row = self._adept_profile_row(profile_name, profile_rows)
                 if profile_row:
-                    provisioning = profile_row.get("provisioning") if isinstance(profile_row.get("provisioning"), dict) else {}
-                    readiness = provisioning.get("acsm_fetch_ready") if "acsm_fetch_ready" in provisioning else profile_row.get("fetch_capable")
-                    if readiness is False:
+                    if adept_acsm_plan.profile_is_explicitly_acsm_unready(profile_row):
                         code = "adept_profile_acsm_not_ready"
                         message = "Le profil Kobo-Adept lié à cette identité n'est pas prêt pour les acquisitions ACSM"
                         self.storage.acquisition_put({
@@ -4536,44 +3203,36 @@ class LibraryService:
                         )
                         return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
 
-                acsm_format = detect_acsm_format(acquisition.acsm_path)
-                if acsm_format is None:
-                    # Contract v8 requires an exact caller-owned destination.
-                    # Retain the historical EPUB fallback only when the ACSM
-                    # itself provides no usable format metadata.
-                    acsm_format = "epub"
-                    format_source = "fallback"
-                else:
-                    format_source = "acsm"
-                suffix = ".pdf" if acsm_format == "pdf" else ".epub"
-                destination = self.library_identity_provider_dir(identity.identity_id, loan.source_provider) / self._loan_destination_name(loan.title, suffix)
-                repair_mode = bool(not force_refresh and legacy_acsm_artifact and previous_path is not None and previous_path.is_file())
-                # Explicit re-acquisition never replaces a preserved local file.
-                # A title collision is not evidence that a file belongs to this loan.
-                if not repair_mode and destination.exists():
-                    destination = destination.with_name(destination.stem + ".reacquired-" + uuid.uuid4().hex + destination.suffix)
-                adept_destination = destination.with_name(destination.stem + ".repairing" + destination.suffix) if repair_mode else destination
+                acsm_format, format_source, suffix = adept_acsm_plan.select_acsm_format(
+                    detect_acsm_format(acquisition.acsm_path),
+                )
+                destination, adept_destination, repair_mode = adept_acsm_plan.plan_adept_destination(
+                    self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
+                    / self._loan_destination_name(loan.title, suffix),
+                    force_refresh=force_refresh,
+                    legacy_acsm_artifact=legacy_acsm_artifact,
+                    previous_path=previous_path,
+                    unique_suffix=lambda: uuid.uuid4().hex,
+                )
                 try:
                     adept_destination.unlink(missing_ok=True)
                 except OSError:
                     pass
-                request = {
-                    "schema_version": 2,
-                    "source": {"type": "acsm", "provider": loan.source_provider, "path": str(acquisition.acsm_path), "headers": {}},
-                    "destination": str(adept_destination),
-                    "format": acsm_format,
-                    "profile": profile_name,
-                    "metadata": {"title": loan.title, "loan_id": loan.id},
-                    # Kobo-Adept owns its post-download policy. Do not override
-                    # run_hook; its public schema defaults it to true.
-                    "options": {"force": False},
-                }
+                request = adept_acsm_plan.build_fulfillment_request(
+                    acsm_path=acquisition.acsm_path,
+                    destination=adept_destination,
+                    acsm_format=acsm_format,
+                    profile_name=profile_name,
+                    provider=loan.source_provider,
+                    title=loan.title,
+                    loan_id=loan.id,
+                )
                 _TRACE_LOG.info(
                     "TRACE download adept begin provider_loan_id=%s profile=%s source_file=%s destination=%s format=%s format_source=%s",
                     loan.id, profile_name, acquisition.acsm_path.name, adept_destination, acsm_format, format_source,
                 )
                 adept_started = time.monotonic()
-                originating_profile_id = self._originating_adept_profile_id(identity.identity_id, profile_name)
+                originating_profile_id = self._originating_adept_profile_id(adept_borrower_identity_id, profile_name)
                 result = self.execute_acquisition_request(request)
                 from .adept_binding import capture_binding
                 adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
@@ -4602,17 +3261,17 @@ class LibraryService:
                     raise ProviderConfigurationError(f"Artefact Kobo-Adept invalide: {actual_before_publish.reason or 'format inconnu'}")
                 actual_format = actual_before_publish.media_format
                 actual_suffix = ".pdf" if actual_format == "pdf" else ".epub"
-                if produced_path.suffix.casefold() != actual_suffix:
-                    corrected = produced_path.with_suffix(actual_suffix)
-                    if corrected.exists():
-                        corrected = corrected.with_name(corrected.stem + ".reacquired-" + uuid.uuid4().hex + corrected.suffix)
+                corrected = adept_acsm_plan.plan_produced_format_path(
+                    produced_path, actual_suffix, unique_suffix=lambda: uuid.uuid4().hex,
+                )
+                if corrected != produced_path:
                     produced_path.replace(corrected)
                     produced_path = corrected
                     _TRACE_LOG.info("TRACE download adept rename-format loan_id=%s format=%s path=%s", loan.id, actual_format, produced_path)
-                if destination.suffix.casefold() != actual_suffix:
-                    destination = destination.with_suffix(actual_suffix)
-                    if destination.exists() and not repair_mode:
-                        destination = destination.with_name(destination.stem + ".reacquired-" + uuid.uuid4().hex + destination.suffix)
+                destination = adept_acsm_plan.plan_publish_format_path(
+                    destination, actual_suffix, repair_mode=repair_mode,
+                    unique_suffix=lambda: uuid.uuid4().hex,
+                )
                 inspection = inspect_artifact(produced_path, actual_format)
                 if not inspection.valid:
                     raise ProviderConfigurationError(f"Artefact final invalide: {inspection.reason or 'validation'}")
@@ -4786,39 +3445,10 @@ class LibraryService:
         deliberately isolates one source so disabling or failing a provider does
         not prevent the other sources from being synchronized.
         """
-        result: dict[str, Any] = {"provider": account.provider_id, "account_id": account.unique_id or "primary"}
-        session = self._session_for_account(account)
-        if not session.connected:
-            raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
-        if control is not None and callable(getattr(control, "check_cancelled", None)):
-            control.check_cancelled()
-        if session.capabilities.loans:
-            loans = self._loans_for_account(account, force=True)
-            result["loans"] = len(loans)
-        if session.capabilities.personal_library:
-            rows = session.library()
-            result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
-            if account.provider_id == "numilog" and session.capabilities.direct_download:
-                acquired = 0
-                for row in rows:
-                    if control is not None and callable(getattr(control, "check_cancelled", None)):
-                        control.check_cancelled()
-                    outcome = self._acquire_personal_library_item(session, row, account.identity_id)
-                    if outcome.get("status") == "complete":
-                        acquired += 1
-                result["acquired"] = acquired
-        if deep:
-            result["catalog_scan"] = self.catalog_scan()
-        return result
+        return sync_coordination._synchronize_account_source_impl(self, account, deep=deep, control=control)
 
     def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        try:
-            result = self._synchronize_account_source_impl(account, deep=deep, control=control)
-            self._record_action(account.identity_id, "synchronization", "success", provider_id=account.provider_id, facts={"deep": bool(deep)})
-            return result
-        except Exception as exc:
-            self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": type(exc).__name__})
-            raise
+        return sync_coordination.synchronize_account_source(self, account, deep=deep, control=control)
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
         """Return the Core naming policy result without touching the filesystem."""
@@ -4839,303 +3469,27 @@ class LibraryService:
 
     def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None = None, *, deep: bool = False) -> dict[str, Any]:
         """Synchronize remote state; filesystem reconciliation is opt-in/deep."""
-        lock = InterProcessLock(acquisition_lock_file())
-        try:
-            with lock:
-                result = self._opening_sync_locked(progress=progress, deep=deep)
-            for summary in result.get("identities", ()) if isinstance(result, dict) else ():
-                if not isinstance(summary, dict):
-                    continue
-                outcome = "failed" if str(summary.get("status") or "") == "failed" else "success"
-                self._record_action(str(summary.get("identity_id") or "") or None, "synchronization", outcome, facts={"deep": bool(deep), "status": summary.get("status"), "errors": int(summary.get("errors") or 0)})
-            return result
-        except LockBusyError as exc:
-            raise ProviderConfigurationError("Une synchronisation automatique est déjà en cours") from exc
+        return sync_coordination.opening_sync(self, progress, deep=deep, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
 
     def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None = None, *, deep: bool = False) -> dict[str, Any]:
-        from .brokers import SynchronizationBrokerImpl
-        source_status = SynchronizationBrokerImpl(self)
-
-        def emit(event: str, **detail: Any) -> None:
-            if progress:
-                try: progress({"event": event, **detail})
-                except Exception: pass
-
-        started = int(time.time())
-        acsm_cleanup = self._cleanup_old_acsm_work()
-        recovered = self.acquisition_reconciler.recover_interrupted()
-        expired_before = self.acquisition_reconciler.realize_expired_loans()
-        summaries: list[dict[str, Any]] = []
-        all_loans: list[Loan] = []
-        # Device/profile state is provider-owned by Kobo-Adept. Read it once per
-        # opening sync and only project it into the dashboard summary; Paris does
-        # not persist a competing device inventory.
-        adept_profiles: list[dict[str, Any]] = []
-        try:
-            if self._kobo_adapter().available():
-                adept_profiles = self.kobo_profiles()
-        except Exception as exc:
-            self.diagnostics.add("ADEPT", "profile list for dashboard", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-        for identity in self.identities:
-            run_id = self.storage.sync_run_put({
-                "identity_id": identity.identity_id, "scope": "opening", "status": "running", "started_at": started,
-                "detail": {"label": identity.label},
-            })
-            emit("identity_begin", identity_id=identity.identity_id, label=identity.label)
-            errors = 0; new_acquisitions = 0; attention = 0
-            detail: dict[str, Any] = {"label": identity.label, "providers": [], "loans": 0, "realized": 0}
-            bound_profile = str(self.storage.adept_profile_binding_get("identity", identity.identity_id) or "").strip()
-            if bound_profile:
-                profile = next((p for p in adept_profiles if str(p.get("profile_id") or "") == bound_profile or str(p.get("name") or "") == bound_profile), None)
-                detail["adept_profile_id"] = str((profile or {}).get("profile_id") or bound_profile)
-                detail["adept_profile_name"] = str((profile or {}).get("name") or bound_profile)
-                detail["adept_provisioning"] = dict((profile or {}).get("provisioning") or {})
-                if adept_profiles and profile is None:
-                    detail["adept_attention"] = "profile_missing"
-            accounts: list[Account] = []
-            try:
-                loans: list[Loan] = []
-                seen_loans: set[tuple[str, str, str, str]] = set()
-                provider_errors: list[dict[str, str]] = []
-                accounts = sorted(
-                    [a for a in self.accounts_for_identity(identity.identity_id) if self.sync_source_enabled(a)],
-                    key=lambda a: (0 if a.provider_id == "paris" else 1, a.provider_id, a.credential_id, a.unique_id),
-                )
-                for account in accounts:
-                    provider = account.provider_id
-                    if provider not in detail["providers"]:
-                        detail["providers"].append(provider)
-                    try:
-                        loan_started = time.monotonic()
-                        _TRACE_LOG.info(
-                            "TRACE loans sync begin identity=%s provider=%s credential=%s account=%s",
-                            identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                        )
-                        account_loans = self._loans_for_account(account, force=True)
-                        _TRACE_LOG.info(
-                            "TRACE loans sync end identity=%s provider=%s credential=%s account=%s count=%s dt=%.3fs",
-                            identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                            len(account_loans), time.monotonic() - loan_started,
-                        )
-                        session = self._sessions.get(self._session_key(account.provider_id, account.credential_id))
-                        partial_errors = list(getattr(session, "last_loan_errors", []) or []) if session is not None else []
-                        if partial_errors:
-                            errors += len(partial_errors)
-                            for part in partial_errors:
-                                provider_errors.append({
-                                    "provider": provider, "credential_id": account.credential_id,
-                                    "account_id": account.unique_id,
-                                    "upstream": str(part.get("upstream") or ""),
-                                    "error": str(part.get("error") or ""),
-                                })
-                            _TRACE_LOG.warning(
-                                "TRACE loans sync partial identity=%s provider=%s credential=%s account=%s errors=%s",
-                                identity.identity_id, provider, account.credential_id, account.unique_id or "primary", partial_errors,
-                            )
-                        for loan in account_loans:
-                            key = (loan.source_provider, loan.source_credential, str(loan.source_account_id or ""), loan.id)
-                            if key not in seen_loans:
-                                seen_loans.add(key); loans.append(loan)
-                    except Exception as exc:
-                        errors += 1
-                        provider_errors.append({"provider": provider, "credential_id": account.credential_id, "account_id": account.unique_id, "error": str(exc)})
-                        _TRACE_LOG.exception(
-                            "TRACE loans sync error identity=%s provider=%s credential=%s account=%s",
-                            identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                        )
-                loans.sort(key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
-                all_loans.extend(loans)
-                detail["loans"] = len(loans)
-                if provider_errors:
-                    detail["provider_errors"] = provider_errors
-                lifecycle = self._persist_active_loans(identity.identity_id, loans)
-                detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
-                for loan in loans:
-                    if loan.medium != "digital" or not (loan.ebook_url or loan.raw):
-                        continue
-                    result = self._acquire_active_loan_automatically(loan)
-                    if result["status"] == "complete":
-                        new_acquisitions += 1
-                        self._record_action(identity.identity_id, "acquisition", "success", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id})
-                    elif result["status"] == "attention_required":
-                        attention += 1
-                        self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
-                    elif result["status"] == "retryable_error":
-                        errors += 1
-                        self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
-                    if result["status"] in {"retryable_error", "attention_required"}:
-                        issue = redact({"provider": loan.source_provider, "loan_id": loan.id,
-                                        "title": loan.title, "status": result["status"],
-                                        "code": result.get("code"), "error": result.get("error"),
-                                        "process": result.get("process", {})})
-                        detail.setdefault("acquisition_errors", []).append(issue)
-                        self.diagnostics.add("ACQUISITION", "loan sync", "error" if result["status"] == "retryable_error" else "warning", detail=issue, level="errors")
-                if errors or attention:
-                    status = "partial" if loans or len(accounts) > len(provider_errors) else "failed"
-                else:
-                    status = "success"
-            except Exception as exc:
-                errors += 1; status = "failed"; detail["error"] = str(exc)
-            finished = int(time.time())
-            self.storage.sync_run_put({
-                "sync_run_id": run_id, "identity_id": identity.identity_id, "scope": "opening", "status": status,
-                "started_at": started, "finished_at": finished, "new_acquisitions": new_acquisitions,
-                "attention_required": attention, "errors": errors, "detail": detail,
-            })
-            summary = {"identity_id": identity.identity_id, "label": identity.label, "status": status,
-                       "new_acquisitions": new_acquisitions, "attention_required": attention, "errors": errors, **detail}
-            summaries.append(summary)
-            # Opening sync previously wrote only sync_runs, while GTK reads
-            # sync.source.state.*. Project the *confirmed* identity result into
-            # each enabled account, without inventing a success on partial ADEPT.
-            attempted_at = datetime.fromtimestamp(started, timezone.utc).isoformat(timespec="seconds")
-            for account in accounts:
-                try:
-                    source_status.record_opening_state(
-                        self.sync_source_id(account), identity_id=identity.identity_id,
-                        status=status, attempted_at=attempted_at,
-                    )
-                except Exception as sync_state_exc:
-                    _TRACE_LOG.warning(
-                        "TRACE sync source projection failed provider=%s reason=%s",
-                        account.provider_id, type(sync_state_exc).__name__,
-                    )
-            emit("identity_end", **summary)
-
-        try:
-            mirror = self.mirror_personal_libraries()
-            emit("catalog_mirror", result=mirror)
-        except Exception as exc:
-            _TRACE_LOG.warning("TRACE catalog mirror opening error=%s", exc)
-
-        # Kobo owned sync is one global batch because the existing engine already
-        # serializes and reconciles all connected Vault sessions.
-        kobo_summary: dict[str, Any] | None = None
-        if self.kobo_backup_enabled() and any(
-            s.connected and s.provider_id == "kobo" and s.capabilities.backup
-            and any(a.provider_id == "kobo" and a.credential_id == s.credential_id and self.sync_source_enabled(a) for a in self.accounts)
-            for s in self._sessions.values()
-        ):
-            if deep or self._kobo_backup_due():
-                try:
-                    kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-                except Exception as exc:
-                    kobo_summary = {"errors": 1, "error": str(exc)}
-            else:
-                kobo_summary = {"errors": 0, "status": "fresh_cache", "skipped_fresh": True}
-                _TRACE_LOG.info("TRACE kobo sync skipped reason=fresh-cache interval_minutes=%s", self.config.get("kobo_backup.interval_minutes", 60))
-        for identity in self.identities:
-            emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
-        self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
-        if deep:
-            catalog = self.catalog_scan(repair_misnamed=True)
-            self.storage.metadata_set("catalog_deep_last_at", int(time.time()))
-            sync_mode = "deep"
-        else:
-            catalog = {"mode": "fast", "filesystem_scan": "skipped", "entries": len(self.storage.catalog_entries())}
-            sync_mode = "fast"
-        return {
-            "started_at": started, "finished_at": int(time.time()), "recovered_interrupted": recovered,
-            "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "catalog": catalog,
-            "sync_mode": sync_mode, "acsm_cleanup": acsm_cleanup,
-        }
+        return sync_coordination._opening_sync_locked(self, progress, deep=deep, logger=_TRACE_LOG)
 
     def _record_action(self, identity_id: str | None, action_type: str, outcome: str, *, provider_id: str = "", plugin_id: str = "", facts: Mapping[str, Any] | None = None) -> None:
-        try:
-            self.storage.action_event_put(identity_id=identity_id, action_type=action_type, outcome=outcome, provider_id=provider_id, plugin_id=plugin_id, facts=facts)
-        except Exception as exc:
-            self.diagnostics.add("STATISTICS", "action event", "error", detail={"action": action_type, "error": type(exc).__name__})
+        return sync_coordination._record_action(self, identity_id, action_type, outcome, provider_id=provider_id, plugin_id=plugin_id, facts=facts)
 
     def action_statistics(self, identity_id: str, *, window_seconds: int = 2592000):
-        from .plugin_api import ActionStatistics
-        window = max(60, int(window_seconds or 2592000))
-        until = int(time.time()); since = until - window
-        counts = {(row["action_type"], row["outcome"]): int(row["count"]) for row in self.storage.action_event_counts(identity_id=identity_id, since=since, until=until)}
-        def count(action: str, outcome: str) -> int:
-            return counts.get((action, outcome), 0)
-        return ActionStatistics(
-            window, since, until,
-            count("acquisition", "success"), count("acquisition", "failed"),
-            count("import", "success"), count("import", "failed"),
-            count("synchronization", "success"), count("synchronization", "failed"),
-            count("transformation", "success"), count("transformation", "failed"),
-            count("transfer", "success"), count("transfer", "failed"),
-        )
+        return sync_projection.action_statistics(self, identity_id, window_seconds=window_seconds)
 
     def _record_loan_statistics(self, account, rows, *, from_cache=False):
-        key='loan_statistics:'+str(account.identity_id)
-        source=hashlib.sha256(f'{account.provider_id}:{account.credential_id}:{account.unique_id}'.encode()).hexdigest()
-        value={'loan_keys':sorted({hashlib.sha256(f'{source}:{row.id}'.encode()).hexdigest() for row in rows}),
-               'observed_at':None if from_cache else int(time.time()),'origin':'cache' if from_cache else 'provider'}
-        self.storage.metadata_json_put_item(key,source,value,only_if_missing=from_cache)
+        return sync_coordination._record_loan_statistics(self, account, rows, from_cache=from_cache)
 
     def identity_statistics(self, identity_id, *, window_seconds: int = 2592000):
         """Persisted inventory facts only; no scan, authentication or download."""
-        placements=[r for r in self.storage.placements(state='present') if r.get('identity_id')==identity_id]
-        artifacts={r['artifact_id']:r for r in self.storage.artifacts()}
-        ids={r['artifact_id'] for r in placements if r['artifact_id'] in artifacts}
-        formats=Counter();sources=Counter();covers=Counter()
-        for aid in ids:
-            artifact=artifacts[aid];formats[str(artifact.get('media_format') or 'unknown')]+=1
-            meta=artifact.get('metadata') or {}
-            if artifact.get('media_format') in {'epub','kepub'}:
-                covers['extracted' if meta.get('epub_cover') else str(meta.get('epub_cover_status') or 'not_inspected')]+=1
-        for provider in {r.get('provider_id') or 'local' for r in placements}:
-            sources[provider]=len({r['artifact_id'] for r in placements if (r.get('provider_id') or 'local')==provider})
-        try:observations=json.loads(self.storage.metadata_get('loan_statistics:'+str(identity_id)) or '{}')
-        except (ValueError,TypeError):observations={}
-        if not isinstance(observations,dict):observations={}
-        selected=[]
-        for account in self.accounts_for_identity(identity_id):
-            key=hashlib.sha256(f'{account.provider_id}:{account.credential_id}:{account.unique_id}'.encode()).hexdigest()
-            if isinstance(observations.get(key),dict):selected.append(observations[key])
-        loan_keys={key for row in selected for key in row.get('loan_keys',[])}
-        owned={r['entitlement_id'] for r in self.storage.entitlements(state='active') if r.get('identity_id')==identity_id and r.get('entitlement_type')=='owned'}
-        return {'identity_id':identity_id,'local_books':len(ids),'local_placements':len(placements),'local_files':sum((r.get('metadata') or {}).get('artifact_kind')!='bundle' for r in placements),
-                'known_loans':len(loan_keys) if selected else None,'loan_sources_observed':len(selected),
-                'loans_observed_at':min((r.get('observed_at') for r in selected),default=None) if all(isinstance(r.get('observed_at'),int) for r in selected) else None,
-                'remote_owned_rights':len(owned),'formats':dict(formats),'sources':dict(sources),'epub_covers':dict(covers),
-                'actions':asdict(self.action_statistics(identity_id, window_seconds=window_seconds)),
-                'scope':'persisted_inventory_last_observed_provider_loans_and_action_window'}
+        return sync_projection.identity_statistics(self, identity_id, window_seconds=window_seconds)
 
     def dashboard_state(self) -> list[dict[str, Any]]:
         """Return dashboard cards without triggering network I/O."""
-        cards: list[dict[str, Any]] = []
-        for identity in self.identities:
-            providers = sorted({a.provider_id for a in self.accounts_for_identity(identity.identity_id)})
-            latest = self.storage.latest_sync_run(identity.identity_id)
-            profile_id = self.storage.adept_profile_binding_get("identity", identity.identity_id)
-            try:
-                deep_last_at = int(self.storage.metadata_get("catalog_deep_last_at") or 0) or None
-            except (TypeError, ValueError):
-                deep_last_at = None
-            labels = {"search": "Recherche", "loans": "Emprunts", "history": "Historique",
-                      "bookings": "Réservations", "borrow": "Emprunter", "digital_download": "Récupérer les prêts",
-                      "direct_download": "Téléchargement direct", "personal_library": "Bibliothèque du compte",
-                      "return_loan": "Restituer un prêt", "renew_loan": "Prolonger un prêt"}
-            capabilities = set(); sources = []
-            credentials = {(account.provider_id, account.credential_id) for account in self.accounts_for_identity(identity.identity_id)}
-            for session in self._sessions.values():
-                descriptor = session.descriptor
-                public = getattr(descriptor, "instantiation", "multiple") == "singleton_public"
-                if not self._provider_enabled_for_identity(session.provider_id, identity.identity_id):
-                    continue
-                if not public and (session.provider_id, session.credential_id) not in credentials:
-                    continue
-                sources.append({"provider_id": session.provider_id, "label": descriptor.display_name,
-                                "connected": bool(session.connected)})
-                if session.connected:
-                    capabilities.update(key for key in labels if bool(getattr(session.capabilities, key, False)))
-            cards.append({
-                "sources": sources,
-                "statistics": self.identity_statistics(identity.identity_id),
-                "selected": bool(self.current_identity and self.current_identity.identity_id == identity.identity_id),
-                "capabilities": [{"id": key, "label": labels[key]} for key in labels if key in capabilities],
-                "identity_id": identity.identity_id, "label": identity.label, "directory_name": identity.directory_name,
-                "providers": providers, "adept_profile_id": profile_id,
-                "sync": latest, "deep_last_at": deep_last_at,
-            })
-        return cards
+        return sync_projection.dashboard_state(self)
 
     def acquisition_ledger_records(self, *, status: str | None = None) -> list[dict[str, Any]]:
         return self.storage.acquisitions(status=status)
@@ -5152,161 +3506,35 @@ class LibraryService:
         }
 
     def kobo_backup_records(self) -> list[dict[str, Any]]:
-        return self.storage.backup_list("kobo")
+        return kobo_backup.kobo_backup_records(self)
 
     def kobo_backup_enabled(self) -> bool:
-        return bool(self.config.get("kobo_backup.enabled", False))
+        return kobo_backup.kobo_backup_enabled(self)
 
     def kobo_backup_interval_minutes(self) -> int:
-        try:
-            return max(15, int(self.config.get("kobo_backup.interval_minutes", 60)))
-        except (TypeError, ValueError):
-            return 60
+        return kobo_backup.kobo_backup_interval_minutes(self)
 
     def _kobo_backup_target_dir(self, identity_id: str | None = None) -> Path:
         # 0.8.1 makes the visible layout identity/provider mandatory for new
         # materializations. The historical Kobo override remains a base root;
         # existing flat files are never moved automatically.
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else "default")
-        configured = os.path.expandvars(os.path.expanduser(str(self.config.get("kobo_backup.directory", "") or "").strip()))
-        if configured:
-            base = Path(configured)
-            if not base.is_absolute():
-                base = self.library_dir() / base
-            identity = self.identity_by_id(identity_id)
-            directory_name = identity.directory_name if identity and identity.directory_name else identity_id
-            path = base / safe_library_component(directory_name, "default") / "kobo"
-            path.mkdir(parents=True, exist_ok=True)
-            return path
-        return self.library_identity_provider_dir(identity_id, "kobo")
+        return kobo_backup._kobo_backup_target_dir(self, identity_id)
 
     @staticmethod
     def _manifest_author(item: dict[str, Any]) -> str | None:
-        authors = item.get("authors")
-        if isinstance(authors, list):
-            text = ", ".join(str(x) for x in authors if str(x).strip())
-            return text or None
-        text = str(item.get("author") or "").strip()
-        return text or None
+        return kobo_backup._manifest_author(item)
 
     @staticmethod
     def _kobo_backup_error_info(exc: Exception) -> dict[str, Any]:
         """Return a compact, non-secret diagnostic classification for a backup error."""
-        message = str(exc) or exc.__class__.__name__
-        code: str | None = None
-        status_code: int | None = None
-        phase = "integration"
-        fatal = False
-
-        if isinstance(exc, KoboVaultError):
-            phase = "vault"
-            code = exc.code
-            status_code = exc.status_code
-            fatal = status_code in {401, 403} or str(code or "").lower() in {
-                "missing_token", "invalid_token", "invalid_bearer", "unauthorized",
-                "forbidden", "insufficient_scope", "invalid_api_token",
-            }
-        elif isinstance(exc, (KoboAdeptError, UserFacingError)):
-            phase = "adept"
-            code = str(getattr(exc, "code", "") or "adept_error")
-        else:
-            lower = message.lower()
-            if "bearer token invalide" in lower or "token api refus" in lower:
-                phase = "vault"
-                code = "invalid_token"
-                fatal = True
-            elif "scope insuffisant" in lower:
-                phase = "vault"
-                code = "insufficient_scope"
-                fatal = True
-            elif "candidat epub/pdf http direct" in lower or "candidat http epub/pdf" in lower:
-                phase = "integration"
-                code = "no_compatible_http_candidate"
-            elif "aucun artefact téléchargeable compatible" in lower:
-                phase = "vault"
-                code = "no_downloadable_artifact"
-            elif "library_sync/kdrm exige" in lower:
-                phase = "integration"
-                code = "missing_pinned_delivery_capability"
-
-        if code is None:
-            code = exc.__class__.__name__
-        return {
-            "phase": phase,
-            "code": str(code),
-            "status_code": status_code,
-            "message": message,
-            "fatal": fatal,
-        }
+        return kobo_backup._kobo_backup_error_info(exc)
 
     def kobo_backup_diagnostic(self) -> dict[str, Any]:
         """Summarise the persisted Kobo backup state without network access."""
-        rows = self.storage.backup_list(provider_id="kobo")
-        statuses = Counter(str(row.get("status") or "unknown") for row in rows)
-        errors = Counter(
-            str(row.get("error") or "").strip()
-            for row in rows
-            if str(row.get("status") or "") == "error" and str(row.get("error") or "").strip()
-        )
-        examples: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for row in rows:
-            message = str(row.get("error") or "").strip()
-            if str(row.get("status") or "") != "error" or not message or message in seen:
-                continue
-            seen.add(message)
-            examples.append({
-                "item_id": row.get("item_id"),
-                "title": row.get("title"),
-                "error": message,
-            })
-            if len(examples) >= 10:
-                break
-        reconcile_examples = [
-            {
-                "item_id": row.get("item_id"),
-                "title": row.get("title"),
-                "status": row.get("status"),
-                "local_path": row.get("local_path"),
-                "message": row.get("error"),
-            }
-            for row in rows
-            if str(row.get("status") or "") in {"reconcile_required", "reconcile_conflict"}
-        ][:20]
-        attention_examples = [
-            {
-                "item_id": row.get("item_id"),
-                "title": row.get("title"),
-                "attention_code": row.get("attention_code"),
-                "message": row.get("error"),
-            }
-            for row in rows
-            if str(row.get("status") or "") == "attention_required"
-        ][:20]
-        return {
-            "items": len(rows),
-            "statuses": dict(statuses),
-            "error_summary": [
-                {"message": message, "count": count}
-                for message, count in errors.most_common(10)
-            ],
-            "error_examples": examples,
-            "reconcile_examples": reconcile_examples,
-            "attention_examples": attention_examples,
-            "storage_schema_version": self.storage.schema_version(),
-        }
+        return kobo_backup.kobo_backup_diagnostic(self)
 
     def _kobo_backup_due(self) -> bool:
-        try:
-            interval_minutes = max(1, int(self.config.get("kobo_backup.interval_minutes", 60) or 60))
-        except (TypeError, ValueError):
-            interval_minutes = 60
-        raw = self.storage.metadata_get("kobo_backup_last_success_at")
-        try:
-            last = int(raw or 0)
-        except (TypeError, ValueError):
-            last = 0
-        return last <= 0 or (int(time.time()) - last) >= interval_minutes * 60
+        return kobo_backup._kobo_backup_due(self)
 
     def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Compatibility entry point for the Kobo local synchronization.
@@ -5315,30 +3543,11 @@ class LibraryService:
         same global lock is intentionally named for local acquisition rather
         than Kobo so the 0.8.x loan synchronizer can share it.
         """
-        lock = InterProcessLock(acquisition_lock_file())
-        try:
-            with lock:
-                return self._sync_kobo_backup_locked(progress=progress)
-        except LockBusyError as exc:
-            raise ProviderConfigurationError(
-                "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
-            ) from exc
+        return kobo_backup.sync_kobo_backup(self, progress, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
 
     def kobo_unlinked_local_count(self, identity_id: str) -> int:
         """Conservative guard, never infer a Kobo link from a filename/title."""
-        known = {str(Path(r["local_path"]).resolve()) for r in self.storage.backup_list("kobo")
-                 if r.get("identity_id") == identity_id and r.get("local_path")}
-        default_id = self.identities[0].identity_id if self.identities else None
-        paths = set()
-        for row in self.storage.catalog_entries():
-            owner = row.get("identity_id") or default_id
-            raw = (row.get("metadata") or {}).get("path")
-            if (owner == identity_id and row.get("local_state") == "local"
-                    and str(row.get("provider_id") or "local") in {"local", "kobo"} and raw):
-                path = Path(raw)
-                if path.is_file() and str(path.resolve()) not in known:
-                    paths.add(str(path.resolve()))
-        return len(paths)
+        return kobo_backup.kobo_unlinked_local_count(self, identity_id)
 
     def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Reconcile the Vault manifest and acquire missing Kobo books locally.
@@ -5354,510 +3563,7 @@ class LibraryService:
         states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
         existing reconciliation safeguards still prevent duplicate redownloads.
         """
-        def emit(event: str, **detail: Any) -> None:
-            if progress is None:
-                return
-            try:
-                progress({"event": event, **detail})
-            except Exception:
-                # Progress reporting must never break the backup itself.
-                pass
-
-        # Refresh filesystem membership before deciding whether acquisition is safe.
-        self.catalog_scan()
-        sessions = [
-            session for session in self._sessions.values()
-            if session.connected and session.provider_id == "kobo" and session.capabilities.backup
-        ]
-        target_dir = self._kobo_backup_target_dir()
-        target_dirs: dict[str, str] = {}
-        preferred = str(self.config.get("kobo_backup.format", "epub") or "epub").lower()
-        vault_versions = sorted({
-            str(getattr(session, "api_version", "") or "2.x") for session in sessions
-        })
-        vault_contract = ",".join(vault_versions) if vault_versions else "2.x"
-        emit("adept_probe", message="Vérification de Kobo-Adept")
-        adept_state = self.kobo_adept_state(force=True)
-        emit(
-            "adept_ready",
-            compatible=bool(adept_state.get("compatible")),
-            operational=bool(adept_state.get("operational")),
-            software_version=adept_state.get("software_version"),
-            contract_version=adept_state.get("contract_version"),
-        )
-        adapter_available = bool(adept_state.get("available") and adept_state.get("compatible") and adept_state.get("operational"))
-        summary: dict[str, Any] = {
-            "sessions": len(sessions), "manifest_items": 0, "scanned": 0, "attempted": 0, "pending": 0,
-            "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
-            "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
-            "vault_errors": 0, "integration_errors": 0, "adept_errors": 0,
-            "recovered_interrupted": 0, "recovered_unparsed": 0,
-            "reconcile_pending": 0, "reconcile_conflicts": 0, "reconcile_skipped": 0,
-            "legacy_pruned": 0, "legacy_local_preserved": 0, "legacy_entitlements_inactivated": 0,
-            "aborted": False, "abort_reason": None,
-            "target_dir": str(target_dir),
-            "target_dirs": target_dirs,
-            "storage_schema_version": self.storage.schema_version(),
-            "vault_contract": vault_contract,
-            "vault_display_profile": str(self.config.get("kobo_backup.display_profile", "Android") or "Android"),
-            "vault_acsm_supported": any(bool(getattr(session, "supports_acquisition_acsm", False)) for session in sessions),
-            "adept_acsm_available": bool(adept_state.get("acsm_available")),
-            "adept_pinned_delivery_candidate": bool(adept_state.get("kobo_pinned_delivery_candidate")),
-            "adept_separate_content_keys_replay": bool(adept_state.get("kobo_separate_content_keys_replay")),
-            "adept_kdrm_available": bool(adept_state.get("kobo_kdrm_available")),
-            "adept_kobo_formats": list(adept_state.get("kobo_formats") or []),
-            "adept_profile_configured": any(
-                bool(self.storage.adept_profile_binding_get("identity", identity.identity_id))
-                for identity in self.identities
-            ),
-            "adept_contract": adept_state.get("contract_version") or 8,
-            "adept_contract_min": 8,
-            "adept_contract_preferred": 8,
-            "adept_available": adapter_available,
-            "adept_software_version": adept_state.get("software_version"),
-            "adept_error": adept_state.get("error"),
-        }
-
-        # Reconcile local remnants from interrupted / previously-unparseable
-        # acquisitions before contacting Vault again. Never delete a file here:
-        # one plausible artifact is quarantined for verification; several
-        # plausible artifacts become an explicit conflict. This prevents the
-        # historical ``Title [deadbeef].epub`` duplication loop.
-        for previous in self.storage.backup_list("kobo"):
-            previous_status = str(previous.get("status") or "")
-            previous_error = str(previous.get("error") or "")
-            recoverable = (
-                previous_status in {"acquiring", "reconcile_required", "reconcile_conflict"}
-                or (previous_status == "error" and "réponse JSON invalide" in previous_error)
-            )
-            if not recoverable:
-                continue
-            if previous_status == "acquiring":
-                summary["recovered_interrupted"] += 1
-            if previous_status == "error" and "réponse JSON invalide" in previous_error:
-                summary["recovered_unparsed"] += 1
-
-            previous_identity = str(previous.get("identity_id") or "").strip() or self.identity_for_connection(
-                str(previous.get("provider_id") or "kobo"), str(previous.get("credential_id") or "")
-            ).identity_id
-            previous_target_dir = self._kobo_backup_target_dir(previous_identity)
-            target_dirs[previous_identity] = str(previous_target_dir)
-            candidates = self._kobo_record_candidate_paths(previous, previous_target_dir)
-            # Compatibility scan: legacy flat files may still exist after an interrupted
-            # reclassification; include them to avoid duplicate downloads.
-            legacy_target_dir = self.library_dir()
-            if legacy_target_dir.resolve() != previous_target_dir.resolve():
-                for legacy_candidate in self._kobo_record_candidate_paths(previous, legacy_target_dir):
-                    if legacy_candidate not in candidates:
-                        candidates.append(legacy_candidate)
-            if len(candidates) == 1:
-                artifact = candidates[0]
-                self.storage.backup_put({
-                    **previous,
-                    "status": "reconcile_required",
-                    "local_path": str(artifact),
-                    "size": artifact.stat().st_size,
-                    "sha256": try_sha256_file(artifact),
-                    "updated_at": int(time.time()),
-                    "error": (
-                        "Artefact local présent après une acquisition Adept non réconciliée ; "
-                        "vérification post-hook requise avant de le considérer complet"
-                    ),
-                    "job_id": None,
-                })
-                emit("reconcile_required", item_id=previous.get("item_id"), title=previous.get("title"), path=str(artifact))
-            elif len(candidates) > 1:
-                self.storage.backup_put({
-                    **previous,
-                    "status": "reconcile_conflict",
-                    "local_path": None,
-                    "updated_at": int(time.time()),
-                    "error": (
-                        f"{len(candidates)} artefacts locaux candidats détectés ; "
-                        "aucune suppression automatique"
-                    ),
-                    "job_id": None,
-                })
-                emit("reconcile_conflict", item_id=previous.get("item_id"), title=previous.get("title"), count=len(candidates))
-            elif previous_status == "acquiring":
-                self.storage.backup_put({
-                    **previous,
-                    "status": "pending_acquisition",
-                    "updated_at": int(time.time()),
-                    "error": "Acquisition locale interrompue avant finalisation ; nouvelle tentative nécessaire",
-                    "job_id": None,
-                })
-            elif previous_status in {"reconcile_required", "reconcile_conflict"}:
-                # The user may have manually moved/removed the suspect file(s).
-                # With no candidate left, allow a clean retry on the next pass.
-                self.storage.backup_put({
-                    **previous,
-                    "status": "pending_acquisition",
-                    "local_path": None,
-                    "size": None,
-                    "sha256": None,
-                    "updated_at": int(time.time()),
-                    "error": "Artefact à réconcilier absent ; nouvelle tentative autorisée",
-                    "job_id": None,
-                })
-
-        recovery_rows = self.storage.backup_list("kobo")
-        summary["reconcile_pending"] = sum(
-            1 for row in recovery_rows
-            if str(row.get("status") or "") in {"reconcile_required", "reconcile_conflict"}
-        )
-        summary["reconcile_conflicts"] = sum(
-            1 for row in recovery_rows
-            if str(row.get("status") or "") == "reconcile_conflict"
-        )
-        if summary["recovered_interrupted"]:
-            emit("recovered", count=summary["recovered_interrupted"])
-        if summary["recovered_unparsed"]:
-            emit("recovered_unparsed", count=summary["recovered_unparsed"])
-        error_counts: Counter[tuple[str, str, int | None, str]] = Counter()
-        error_examples: list[dict[str, Any]] = []
-
-        def record_error(exc: Exception, *, title: str | None = None, item_id: str | None = None) -> dict[str, Any]:
-            info = self._kobo_backup_error_info(exc)
-            phase = str(info.get("phase") or "integration")
-            phase_counter = {"vault": "vault_errors", "integration": "integration_errors", "adept": "adept_errors"}.get(phase)
-            if phase_counter:
-                summary[phase_counter] += 1
-            key = (phase, str(info["code"]), info.get("status_code"), str(info["message"]))
-            error_counts[key] += 1
-            if len(error_examples) < 10:
-                example = {
-                    "phase": info["phase"], "code": info["code"],
-                    "status_code": info.get("status_code"), "message": info["message"],
-                }
-                if item_id:
-                    example["item_id"] = item_id
-                if title:
-                    example["title"] = title
-                error_examples.append(example)
-            return info
-
-        abort_all = False
-        authoritative_manifest_ids: dict[str, set[str]] = {}
-        for session in sessions:
-            session_identity = self.identity_for_connection("kobo", session.credential_id)
-            unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
-            session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
-            target_dirs[session_identity.identity_id] = str(session_target_dir)
-            try:
-                emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
-                manifest = session.backup_manifest()
-                summary["manifest_items"] += len(manifest)
-                authoritative_manifest_ids[session.credential_id] = {
-                    str(raw.get("product_id") or raw.get("id") or "").strip()
-                    for raw in manifest if isinstance(raw, dict)
-                    if str(raw.get("product_id") or raw.get("id") or "").strip()
-                }
-                emit("manifest", credential_id=session.credential_id, total=len(manifest))
-            except Exception as exc:
-                summary["errors"] += 1
-                info = record_error(exc, title=session.label)
-                if info["fatal"]:
-                    summary["aborted"] = True
-                    summary["abort_reason"] = info
-                    abort_all = True
-                    break
-                continue
-
-            for index, raw in enumerate(manifest):
-                if not isinstance(raw, dict):
-                    continue
-                summary["scanned"] += 1
-                progress_title = str(raw.get("title") or raw.get("product_id") or raw.get("id") or "Kobo")
-                emit(
-                    "scan",
-                    current=index + 1,
-                    total=len(manifest),
-                    title=progress_title,
-                    downloaded=summary["downloaded"],
-                    errors=summary["errors"],
-                    unchanged=summary["unchanged"],
-                    skipped=summary["skipped"],
-                )
-                product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
-                if not product_id:
-                    summary["skipped"] += 1
-                    continue
-                content_type = str(raw.get("content_type") or "ebook").lower()
-                if content_type not in {"ebook", "book", "epub"}:
-                    summary["skipped"] += 1
-                    continue
-                revision_id = str(raw.get("revision_id") or "").strip() or None
-                title = str(raw.get("title") or product_id)
-                author = self._manifest_author(raw)
-                fmt = str(raw.get("format") or "").upper() or None
-                current = self.storage.backup_get("kobo", session.credential_id, product_id)
-                account_id = session.accounts[0].unique_id if len(session.accounts) == 1 else None
-                fresh_cover_url = session.cover_url(raw) if hasattr(session, "cover_url") else None
-
-                base_record = {
-                    "provider_id": "kobo",
-                    "credential_id": session.credential_id,
-                    "account_id": account_id,
-                    "identity_id": session_identity.identity_id,
-                    "entitlement_type": "owned",
-                    "item_id": product_id,
-                    "revision_id": revision_id,
-                    "title": title,
-                    "author": author,
-                    "format": fmt,
-                    "cover_url": fresh_cover_url or (current.get("cover_url") if current else None),
-                    "local_path": current.get("local_path") if current else None,
-                    "size": current.get("size") if current else None,
-                    "sha256": current.get("sha256") if current else None,
-                    "updated_at": int(time.time()),
-                    "job_id": None,
-                    "attention_code": None,
-                }
-
-                # Metadata refresh is independent from acquisition. Historical
-                # backup rows may have been persisted before Vault exposed a
-                # normalized cover_url. Refresh the durable projection before any
-                # fast-path continue so title/author/format/cover metadata can heal
-                # without re-downloading an unchanged local artifact.
-                if current:
-                    refreshed = {
-                        **current,
-                        **base_record,
-                        "status": current.get("status") or "pending",
-                        "error": current.get("error"),
-                        "job_id": current.get("job_id"),
-                        "attention_code": current.get("attention_code"),
-                        "attempt_count": current.get("attempt_count"),
-                        "last_attempt_at": current.get("last_attempt_at"),
-                        "acquisition_strategy": current.get("acquisition_strategy"),
-                        "executor": current.get("executor"),
-                        "adept_profile": current.get("adept_profile"),
-                        "loan_id": current.get("loan_id"),
-                        "expires_at": current.get("expires_at"),
-                    }
-                    before_cover = str(current.get("cover_url") or "").strip()
-                    after_cover = str(refreshed.get("cover_url") or "").strip()
-                    if (
-                        before_cover != after_cover
-                        or current.get("title") != refreshed.get("title")
-                        or current.get("author") != refreshed.get("author")
-                        or current.get("format") != refreshed.get("format")
-                        or current.get("identity_id") != refreshed.get("identity_id")
-                    ):
-                        summary["metadata_refreshed"] += 1
-                    self.storage.backup_put(refreshed)
-                    current = self.storage.backup_get("kobo", session.credential_id, product_id) or refreshed
-
-                if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
-                    summary["reconcile_skipped"] += 1
-                    emit(
-                        "reconcile_waiting",
-                        current=index + 1, total=len(manifest), title=title, item_id=product_id,
-                        status=current.get("status"), path=current.get("local_path"),
-                    )
-                    continue
-
-                if current and current.get("status") in {"ok", "complete"} and current.get("revision_id") == revision_id:
-                    local = Path(str(current.get("local_path") or ""))
-                    if local.is_file():
-                        try:
-                            observed = self._observed_backup_artifact(local)
-                        except ProviderConfigurationError:
-                            # A stale/invalid file must not retain a complete state.
-                            self.storage.backup_put({**current, "status": "reconcile_required", "error": "Artefact local invalide"})
-                            summary["reconcile_skipped"] += 1
-                            continue
-                        self.storage.backup_put({**current, **observed})
-                        summary["unchanged"] += 1
-                        continue
-
-                # Vault 2.3.1 exposes archived items explicitly. Keep an already
-                # acquired local file (handled above), otherwise persist a user
-                # action instead of treating the title as permanently unavailable.
-                if bool(raw.get("archived")):
-                    message = "Livre archivé sur Kobo ; restaurez-le dans votre bibliothèque Kobo avant de réessayer"
-                    self.storage.backup_put({
-                        **base_record,
-                        "status": "attention_required",
-                        "attention_code": "archived_book",
-                        "error": message,
-                    })
-                    summary["attention_required"] += 1
-                    emit(
-                        "attention_required", current=index + 1, total=len(manifest),
-                        title=title, item_id=product_id, code="archived_book", message=message,
-                    )
-                    continue
-
-                if raw.get("downloadable") is False:
-                    summary["skipped"] += 1
-                    continue
-
-                if unlinked_local_count and not bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False)):
-                    message = f"Acquisition suspendue : {unlinked_local_count} livre(s) local(aux) sans liaison Kobo. Rapprochez les fichiers ou autorisez explicitement l’acquisition dans les paramètres."
-                    self.storage.backup_put({**base_record, "status": "attention_required", "attention_code": "unlinked_local_books", "error": message})
-                    summary["attention_required"] += 1
-                    emit("attention_required", current=index + 1, total=len(manifest), title=title, item_id=product_id, code="unlinked_local_books", message=message)
-                    _TRACE_LOG.info("TRACE kobo acquisition decision=blocked reason=unlinked-local-books count=%s", unlinked_local_count)
-                    continue
-
-                if not adapter_available:
-                    adept_error = adept_state.get("error") if isinstance(adept_state.get("error"), dict) else {}
-                    reason = str(adept_error.get("message") or "Kobo-Adept indisponible")
-                    self.storage.backup_put({**base_record, "status": "pending_acquisition", "error": reason})
-                    summary["pending"] += 1
-                    continue
-
-                summary["attempted"] += 1
-                attempt_count = int(current.get("attempt_count") or 0) + 1 if current else 1
-                attempted_at = int(time.time())
-                self.storage.backup_put({
-                    **base_record,
-                    "status": "acquiring",
-                    "error": None,
-                    "attempt_count": attempt_count,
-                    "last_attempt_at": attempted_at,
-                    "executor": "kobo-adept",
-                })
-                emit("acquiring", current=index + 1, total=len(manifest), title=title, item_id=product_id)
-                try:
-                    normalizer = getattr(session, "normalize_item", None)
-                    if normalizer is None:
-                        raise ProviderConfigurationError("Kobo provider sans normalisation LibraryItem")
-                    search_item = normalizer(raw, default_collection="library")
-                    result = self._execute_kobo_acquisition(search_item, session_target_dir)
-                    artifact = result.path
-                    if artifact is None or not artifact.is_file():
-                        raise ProviderConfigurationError("Acquisition Kobo sans fichier local")
-                    observed = self._observed_backup_artifact(artifact)
-                    size = observed["size"]
-                    sha256 = observed["sha256"]
-                    result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
-                    self.storage.backup_put({
-                        **base_record,
-                        "account_id": result.account_id or account_id,
-                        "format": observed["format"],
-                        "status": "complete",
-                        "local_path": str(artifact),
-                        "size": size if size is not None else artifact.stat().st_size,
-                        "sha256": sha256,
-                        "updated_at": int(time.time()),
-                        "error": None,
-                        "attempt_count": attempt_count,
-                        "last_attempt_at": attempted_at,
-                        "acquisition_strategy": result_metadata.get("acquisition_mode"),
-                        "executor": "kobo-adept",
-                        "adept_profile": result_metadata.get("adept_profile"),
-                    })
-                    summary["downloaded"] += 1
-                    summary["completed"] += 1
-                    emit(
-                        "downloaded", current=index + 1, total=len(manifest), title=title,
-                        item_id=product_id, path=str(artifact), downloaded=summary["downloaded"],
-                        errors=summary["errors"],
-                    )
-                except Exception as exc:
-                    if isinstance(exc, (KoboAdeptError, UserFacingError)) and getattr(exc, "code", "") == "result_unparseable_artifact_present":
-                        details = dict(getattr(exc, "details", {}) or {})
-                        artifact_path = Path(str(details.get("artifact_path") or "")) if details.get("artifact_path") else None
-                        self.storage.backup_put({
-                            **base_record,
-                            "status": "reconcile_required",
-                            "local_path": str(artifact_path) if artifact_path else None,
-                            "size": details.get("artifact_size"),
-                            "sha256": details.get("artifact_sha256"),
-                            "error": str(exc),
-                            "updated_at": int(time.time()),
-                        })
-                        summary["reconcile_pending"] += 1
-                        emit(
-                            "reconcile_required",
-                            current=index + 1, total=len(manifest), title=title, item_id=product_id,
-                            path=str(artifact_path) if artifact_path else None,
-                        )
-                        continue
-                    info = self._kobo_backup_error_info(exc)
-                    if str(info.get("code") or "") == "archived_book":
-                        message = "Livre archivé sur Kobo ; restaurez-le dans votre bibliothèque Kobo avant de réessayer"
-                        self.storage.backup_put({
-                            **base_record,
-                            "status": "attention_required",
-                            "attention_code": "archived_book",
-                            "error": message,
-                            "attempt_count": attempt_count,
-                            "last_attempt_at": attempted_at,
-                            "executor": "kobo-adept",
-                            "updated_at": int(time.time()),
-                        })
-                        summary["attention_required"] += 1
-                        emit(
-                            "attention_required", current=index + 1, total=len(manifest),
-                            title=title, item_id=product_id, code="archived_book", message=message,
-                        )
-                        continue
-                    message = str(exc)
-                    _TRACE_LOG.warning(
-                        "TRACE kobo acquisition failed identity=%s credential=%s item_id=%s exception=%s code=%s phase=%s status=%s error=%s",
-                        session_identity.identity_id, session.credential_id, product_id, type(exc).__name__,
-                        info.get("code"), info.get("phase"), info.get("status_code"), message,
-                    )
-                    self.storage.backup_put({
-                        **base_record, "status": "error", "error": message,
-                        "attempt_count": attempt_count, "last_attempt_at": attempted_at,
-                        "executor": "kobo-adept", "updated_at": int(time.time()),
-                    })
-                    summary["errors"] += 1
-                    info = record_error(exc, title=title, item_id=product_id)
-                    emit(
-                        "item_error", current=index + 1, total=len(manifest), title=title,
-                        item_id=product_id, code=info.get("code"), phase=info.get("phase"),
-                        message=info.get("message"), downloaded=summary["downloaded"], errors=summary["errors"],
-                    )
-                    if info["fatal"]:
-                        summary["aborted"] = True
-                        summary["abort_reason"] = info
-                        summary["remaining"] += max(0, len(manifest) - index - 1)
-                        abort_all = True
-                        break
-            if abort_all:
-                break
-
-        # ``backup_items`` is a current-manifest compatibility projection.
-        # Prune it only after the complete Kobo run succeeded: a failed/partial
-        # sync must never make a remote title disappear merely because its
-        # manifest could not be observed.  Artifacts/placements/catalog rows are
-        # deliberately preserved by Storage.backup_prune_missing().
-        if not summary.get("errors") and not summary.get("aborted"):
-            for credential_id, seen_ids in authoritative_manifest_ids.items():
-                pruned = self.storage.backup_prune_missing("kobo", credential_id, seen_ids)
-                summary["legacy_pruned"] += int(pruned.get("pruned") or 0)
-                summary["legacy_local_preserved"] += int(pruned.get("local_preserved") or 0)
-                summary["legacy_entitlements_inactivated"] += int(pruned.get("entitlements_inactivated") or 0)
-                if pruned.get("pruned"):
-                    emit(
-                        "legacy_pruned", credential_id=credential_id,
-                        count=pruned.get("pruned"), local_preserved=pruned.get("local_preserved"),
-                    )
-
-        summary["error_summary"] = [
-            {
-                "phase": phase, "code": code, "status_code": status_code,
-                "message": message, "count": count,
-            }
-            for (phase, code, status_code, message), count in error_counts.most_common(10)
-        ]
-        summary["error_examples"] = error_examples
-        # Backward-compatible concise text list for existing callers.
-        summary["error_messages"] = [x["message"] for x in error_examples[:10]]
-        self.diagnostics.add(
-            "KOBO", "backup sync", "ok" if not summary["errors"] else "error",
-            detail={k: v for k, v in summary.items() if k != "error_messages"},
-        )
-        emit("done", **{k: v for k, v in summary.items() if k not in {"error_examples", "error_messages"}})
-        if not summary.get("errors") and not summary.get("aborted"):
-            self.storage.metadata_set("kobo_backup_last_success_at", int(time.time()))
-        return summary
+        return kobo_backup._sync_kobo_backup_locked(self, progress, logger=_TRACE_LOG)
 
     def _account_for_loan(self, loan: Loan) -> Account:
         """Resolve the exact borrower recorded on a loan.

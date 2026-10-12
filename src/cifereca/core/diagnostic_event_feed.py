@@ -1,0 +1,341 @@
+"""Bounded, read-only public Diagnostics event feed.
+
+Never expose raw application logs, filesystem paths, credentials or arbitrary
+runtime output through the plugin broker. Local log files are only opened from
+the Core-owned fixed log location. There is no network or subprocess access.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from hashlib import sha256
+import os
+from pathlib import Path
+import re
+import stat
+from typing import Any
+
+_LOG_LINE = re.compile(
+    r"^(?P<date>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) "
+    r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) "
+    r"(?P<logger>[\w.-]{1,90}) (?:\[[^\]]{0,80}\] )?(?P<body>.*)$"
+)
+_TRACE = re.compile(r"^TRACE ([a-zA-Z][\w-]{0,30}) ([a-zA-Z][\w-]{0,45})(?:\s|$)")
+_SAFE_FIELDS = re.compile(
+    r"\b(phase|status|outcome|operation|duration_ms|count|returncode)="
+    r"([a-zA-Z][a-zA-Z_-]{0,32}|\d{1,6})\b"
+)
+_ALLOWED_FIELDS = {"phase", "status", "outcome", "operation", "duration_ms", "count", "returncode"}
+_SAFE_TRACE_VALUES = frozenset({
+    "ok", "success", "failed", "error", "warning", "partial",
+    "available", "unavailable", "disabled", "empty", "pending",
+    "running", "completed", "cancelled", "skipped", "timeout",
+    "accepted", "rejected", "attention_required",
+    "adobe_return_confirmed",
+})
+
+
+def _safe_trace_field(key: str, value: str) -> bool:
+    if key not in _ALLOWED_FIELDS:
+        return False
+    if key in {"duration_ms", "count", "returncode"}:
+        return value.isascii() and value.isdecimal()
+    return value.lower() in _SAFE_TRACE_VALUES
+
+
+_MAX_BYTES_PER_LOG = 32768
+_MAX_EVENTS_PER_FILE = 200
+_MAX_RESULTS = 100
+_STRUCTURED_TERMS = frozenset({
+    "sync", "source", "opening", "connect", "download", "acquire", "acquisition",
+    "return", "verification", "retry", "import", "runtime", "plugin", "parse",
+    "catalog", "search", "library", "update", "install", "check", "health",
+    "error", "warning", "state", "fetch", "adept", "pnb", "paris", "kobo",
+})
+_CATEGORIES = frozenset({
+    "CORE", "SYNC", "ADEPT", "PNB", "PARIS", "KOBO", "PLUGIN",
+    "UPDATER", "UI", "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY",
+})
+
+
+def _stamp(value: str) -> datetime:
+    instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if instant.tzinfo is None:
+        raise ValueError("timezone required for diagnostic date filters")
+    return instant.astimezone(timezone.utc)
+
+
+def _event_id(source: str, timestamp: str, detail: str) -> str:
+    return sha256((source + "\0" + timestamp + "\0" + detail).encode()).hexdigest()[:16]
+
+
+def _log_lines(
+    path: Path,
+) -> tuple[list[tuple[int, str]], str, tuple[int, int] | None]:
+    """Read a 32 KiB tail with absolute byte positions and file identity.
+
+    (device, inode, byte offset) survives a rename to cifereca.log.1 on
+    POSIX filesystems. It is never exposed outside the hashed event_id.
+    """
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "rb") as handle:
+            identity = os.fstat(handle.fileno())
+            if not stat.S_ISREG(identity.st_mode):
+                return [], "unavailable", None
+            start = max(0, identity.st_size - _MAX_BYTES_PER_LOG)
+            handle.seek(start)
+            data = handle.read(_MAX_BYTES_PER_LOG)
+            lines: list[tuple[int, str]] = []
+            offset = start
+            # Split bytes before decoding: Unicode replacement characters must
+            # not change the original absolute offsets, even after truncation.
+            for raw_line in data.splitlines(keepends=True):
+                lines.append((
+                    offset, raw_line.decode("utf-8", errors="replace").rstrip("\r\n"),
+                ))
+                offset += len(raw_line)
+            if start and lines:
+                lines.pop(0)  # the first record may start mid-line
+            status = (
+                "partial" if start or len(lines) > _MAX_EVENTS_PER_FILE
+                else "available"
+            )
+            return lines[-_MAX_EVENTS_PER_FILE:], status, (
+                identity.st_dev, identity.st_ino,
+            )
+    except (OSError, ValueError):
+        return [], "unavailable", None
+
+
+def _latest_published_event(events: list[dict[str, Any]]) -> str | None:
+    """Newest public event in Core's bounded source window, not file mtime."""
+    if not events:
+        return None
+    return max(_stamp(event["timestamp"]) for event in events).isoformat()
+
+
+def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    observed = False
+    partial = False
+    for index in (3, 2, 1, 0):
+        path = Path(str(log_path) + (f".{index}" if index else ""))
+        lines, status, identity = _log_lines(path)
+        if status == "unavailable" or identity is None:
+            continue
+        observed = True
+        partial |= status == "partial"
+        for byte_offset, line in lines:
+            match = _LOG_LINE.match(line)
+            if not match or not (match["logger"] == "cifereca" or match["logger"].startswith("cifereca.")):
+                continue
+            # Raw log messages may contain arbitrary PII or ACSM/licence URLs.
+            # Export only known machine-generated TRACE categories and small
+            # allowlisted status fields. Everything else remains private.
+            trace = _TRACE.match(match["body"])
+            if trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
+                message = "TRACE " + trace.group(1).lower() + " " + trace.group(2).lower()
+                suffix = match["body"][trace.end():]
+                pairs = [
+                    (key, value) for key, value in _SAFE_FIELDS.findall(suffix)
+                    if _safe_trace_field(key, value)
+                ][:4]
+                if pairs:
+                    message += " " + " ".join(k + "=" + v for k, v in pairs)
+            else:
+                message = "[contenu libre masqué : consulter le journal local]"
+            try:
+                ts = datetime.strptime(match["date"], "%Y-%m-%d %H:%M:%S,%f")
+                ts = ts.astimezone().isoformat()
+            except ValueError:
+                continue
+            # Logger names are not guaranteed to be static: extensions may
+            # embed account identifiers. Publish only recognised components.
+            logger_parts = match["logger"].split(".")
+            safe_parts = ["cifereca"]
+            for part in logger_parts[1:]:
+                if part.lower() not in (_STRUCTURED_TERMS | {"core", "diagnostics", "ui", "service", "worker"}):
+                    break
+                safe_parts.append(part.lower())
+            events.append({
+                "timestamp": ts,
+                "source": "app_log",
+                "module": ".".join(safe_parts)[:90],
+                "severity": match["level"].lower(),
+                "message": message[:240],
+                # Neither the rotation suffix nor a moving tail line index
+                # participates in the ID. Distinct lines remain distinct.
+                # A file can be overwritten on the same inode/offset.
+                # Include every published event discriminator so a change of
+                # severity or sanitized module cannot reuse an old reference.
+                "event_id": _event_id(
+                    "app_log", ts,
+                    f"{identity[0]}:{identity[1]}:{byte_offset}:"
+                    f"{match['level']}:{'.'.join(safe_parts)}:{message}",
+                ),
+            })
+    status = "partial" if partial else ("available" if observed else "unavailable")
+    state = {
+        "source": "app_log",
+        "status": "partial" if partial else (
+            status if events else ("empty" if observed else "unavailable")
+        ),
+        "reason": "log_tail_bounded" if partial else (
+            "no_matching_events" if observed and not events else ""
+        ),
+    }
+    if events:
+        state["last_event"] = _latest_published_event(events)
+    return events, state
+
+
+def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not getattr(diagnostics, "enabled", True):
+        return [], {"source": "core_events", "status": "disabled", "reason": "diagnostics_disabled"}
+    try:
+        snapshot = diagnostics.snapshot()
+        if not isinstance(snapshot, (list, tuple)):
+            raise ValueError("snapshot must be a sequence")
+        rows = snapshot[-500:]
+    except (AttributeError, ValueError, TypeError):
+        return [], {"source": "core_events", "status": "unavailable", "reason": "snapshot_unavailable"}
+    events: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    duplicate_offsets: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stamp = row.get("timestamp")
+        if not isinstance(stamp, str):
+            continue
+        try:
+            _stamp(stamp)
+        except (ValueError, TypeError):
+            continue
+        raw_category = row.get("category")
+        raw_operation = row.get("operation")
+        raw_status = row.get("status")
+        category = raw_category.upper() if isinstance(raw_category, str) else ""
+        module = category if category in _CATEGORIES else "DIAGNOSTICS"
+        operation = raw_operation if isinstance(raw_operation, str) else ""
+        status = raw_status.lower() if isinstance(raw_status, str) else ""
+        severity = "error" if status in {"error", "failed"} else "warning" if status in {
+            "warning", "attention_required", "partial"
+        } else "info"
+        # Even structured Diagnostics text can include names/paths. Publish
+        # only a closed vocabulary of operational terms, never raw free text.
+        terms = [word for word in re.findall(r"[a-zA-Z]+", operation.lower())
+                 if word in _STRUCTURED_TERMS][:5]
+        message = " ".join(terms) if terms else "[opération masquée]"
+        base_id = _event_id("core_events", stamp, category + ":" + operation)
+        event_id = base_id
+        # Two records may share the same timestamp/category/operation.
+        # Preserve the historical hash of a unique record, but avoid false
+        # reference provenance when two published records collide.
+        duplicate_number = duplicate_offsets.get(base_id, 0)
+        while event_id in used_ids:
+            duplicate_number += 1
+            event_id = _event_id(
+                "core_events", stamp,
+                f"{category}:{operation}:duplicate:{duplicate_number}",
+            )
+        used_ids.add(event_id)
+        duplicate_offsets[base_id] = duplicate_number
+        events.append({
+            "timestamp": stamp,
+            "source": "core_events",
+            "module": module,
+            "severity": severity,
+            "message": message,
+            "status": status if status in {"ok", "error", "failed", "warning",
+                                         "attention_required", "partial", "success"}
+                       else "unknown",
+            "event_id": event_id,
+        })
+    state = {
+        "source": "core_events",
+        "status": "available" if events else "empty",
+        "reason": "" if events else "no_recorded_events",
+    }
+    if events:
+        state["last_event"] = _latest_published_event(events)
+    return events, state
+
+
+def query_diagnostic_events(
+    diagnostics: Any, *, log_path: Path,
+    source: str = "all", module: str = "", severity: str = "",
+    since: str | None = None, until: str | None = None,
+    limit: int = 50, offset: int = 0,
+) -> dict[str, Any]:
+    """A bounded/paginated snapshot with explicit source states.
+
+    Log content is intentionally *not* an unredacted viewer. The caller may
+    only select sources and filters, never a filesystem path.
+    """
+    if not isinstance(source, str) or source not in {"all", "core_events", "app_log"}:
+        raise ValueError("unknown diagnostic source")
+    if not isinstance(module, str) or len(module) > 90:
+        raise ValueError("diagnostic module must be a string of at most 90 characters")
+    if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
+        raise ValueError("unknown diagnostic severity")
+    if any(value is not None and (not isinstance(value, str) or len(value) > 64) for value in (since, until)):
+        raise ValueError("diagnostic date filters must be bounded ISO-8601 strings")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= _MAX_RESULTS:
+        raise ValueError("diagnostic limit must be 1..100")
+    if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
+        raise ValueError("invalid diagnostic offset")
+    lower = _stamp(since) if since is not None else None
+    upper = _stamp(until) if until is not None else None
+    if lower and upper and lower > upper:
+        raise ValueError("diagnostic date range reversed")
+    events: list[dict[str, Any]] = []
+    states: list[dict[str, Any]] = []
+    if source in {"all", "core_events"}:
+        rows, state = _source_diagnostics(diagnostics)
+        events.extend(rows)
+        states.append(state)
+    if source in {"all", "app_log"}:
+        rows, state = _source_logs(log_path)
+        events.extend(rows)
+        states.append(state)
+    if module:
+        events = [row for row in events if row["module"].casefold().startswith(module.casefold()[:90])]
+    if severity:
+        if severity.lower() not in {"debug", "info", "warning", "error", "critical"}:
+            raise ValueError("unknown diagnostic severity")
+        events = [row for row in events if row["severity"] == severity.lower()]
+    if lower or upper:
+        events = [
+            row for row in events
+            if (not lower or _stamp(row["timestamp"]) >= lower)
+            and (not upper or _stamp(row["timestamp"]) <= upper)
+        ]
+    events.sort(key=lambda row: (_stamp(row["timestamp"]), row["source"], row["event_id"]))
+    total = len(events)
+    page = events[offset:offset + limit]
+    # A healthy source cannot make another unavailable/disabled source
+    # disappear from the overall coverage status. Distinguish an entirely
+    # unavailable feed from a mixed (incomplete) multi-source snapshot.
+    states_seen = {state["status"] for state in states}
+    missing = {"disabled", "unavailable"}
+    if "partial" in states_seen:
+        coverage = "partial"
+    elif states_seen <= missing:
+        coverage = "unavailable"
+    elif states_seen & missing:
+        coverage = "partial"
+    else:
+        coverage = "available" if total else "empty"
+    return {
+        "status": coverage,
+        "sources": states,
+        "events": page,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "next_offset": offset + len(page) if offset + len(page) < total else None,
+        "read_only": True,
+        "bounded": True,
+    }

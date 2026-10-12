@@ -17,7 +17,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # Schema history is deliberately explicit from 0.7.10 onward.  Databases created
 # before that release had no schema_version metadata; they are treated as v0 and
 # migrated forward transactionally.
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -138,7 +138,8 @@ class Storage:
     def loan_return_transition(self, key: str, operation_id: str, *,
                                status: str, verification: str,
                                accepted: bool | None = None,
-                               error_type: str | None = None) -> dict[str, Any] | None:
+                               error_type: str | None = None,
+                               adobe_verified: bool | None = None) -> dict[str, Any] | None:
         """CAS update: an obsolete worker may not overwrite a newer attempt."""
         import json as _json
         from datetime import datetime, timezone
@@ -159,6 +160,8 @@ class Storage:
                 row["request_accepted"] = bool(accepted)
             if error_type is not None:
                 row["error_type"] = error_type[:90]
+            if adobe_verified is not None:
+                row["adobe_verified"] = bool(adobe_verified)
             db.execute(
                 "UPDATE metadata SET value=? WHERE key=?",
                 (_json.dumps(row, sort_keys=True, separators=(",", ":")), key),
@@ -209,6 +212,7 @@ class Storage:
         v10: persisted artifact variants and preferred variants.
         v11: structured action events for dashboard statistics.
         v12: performance indexes for catalogue/library projections.
+        v13: explicit, pinned Paris borrower-to-ADEPT identity/profile grants.
         """
         version = cls._read_schema_version(db)
         _TRACE_LOG.info("TRACE storage migrate begin from=%s target=%s", version, CURRENT_SCHEMA_VERSION)
@@ -849,6 +853,30 @@ class Storage:
                 db.execute("RELEASE SAVEPOINT migration_v12")
                 raise
             version = 12
+
+        if version < 13:
+            db.execute("SAVEPOINT migration_v13")
+            try:
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paris_borrower_adept_bindings (
+                        credential_id TEXT NOT NULL,
+                        account_id TEXT NOT NULL,
+                        connection_identity_id TEXT NOT NULL,
+                        borrower_identity_id TEXT NOT NULL,
+                        profile_id TEXT NOT NULL,
+                        confirmed_by TEXT NOT NULL,
+                        confirmed_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY (credential_id, account_id)
+                    )
+                """)
+                cls._write_schema_version(db, 13)
+                db.execute("RELEASE SAVEPOINT migration_v13")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v13")
+                db.execute("RELEASE SAVEPOINT migration_v13")
+                raise
+            version = 13
 
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
@@ -1545,6 +1573,102 @@ class Storage:
                 (str(scope_type).strip().lower(), str(scope_id).strip()),
             ).fetchone()
         return str(row[0]) if row else None
+
+    def paris_borrower_adept_binding_put(
+        self, *, credential_id: str, account_id: str, borrower_identity_id: str,
+        profile_id: str, confirmed: bool = False,
+    ) -> None:
+        """Persist an explicit borrower grant; never infer Adobe ownership.
+
+        The grant is scoped to one Paris connection and borrower account, and
+        pins the identity's stable ADEPT profile reference. A later profile
+        change invalidates the grant until an explicit reconfirmation.
+        """
+        credential = str(credential_id or "").strip()
+        borrower = str(account_id or "").strip()
+        owner = str(borrower_identity_id or "").strip()
+        profile = str(profile_id or "").strip()
+        if not confirmed:
+            raise ValueError("explicit borrower/ADEPT confirmation required")
+        if not all((credential, borrower, owner, profile)):
+            raise ValueError("Paris borrower and ADEPT identity/profile required")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            connection = db.execute(
+                "SELECT identity_id FROM provider_connections WHERE provider_id='paris' AND credential_id=?",
+                (credential,),
+            ).fetchone()
+            binding = db.execute(
+                "SELECT profile_id FROM adept_profile_bindings WHERE scope_type='identity' AND scope_id=?",
+                (owner,),
+            ).fetchone()
+            identity = db.execute(
+                "SELECT 1 FROM identities WHERE identity_id=?", (owner,)
+            ).fetchone()
+            if not connection or not identity or not binding or str(binding[0]) != profile:
+                raise ValueError("Paris connection or identity ADEPT profile is not proven")
+            db.execute(
+                "INSERT INTO paris_borrower_adept_bindings "
+                "(credential_id,account_id,connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(credential_id,account_id) DO UPDATE SET "
+                "connection_identity_id=excluded.connection_identity_id,"
+                "borrower_identity_id=excluded.borrower_identity_id,"
+                "profile_id=excluded.profile_id,confirmed_by=excluded.confirmed_by,"
+                "confirmed_at=excluded.confirmed_at,updated_at=excluded.updated_at",
+                (credential, borrower, str(connection[0]), owner, profile, "explicit", now, now),
+            )
+
+    def paris_borrower_adept_binding_get(
+        self, *, credential_id: str, account_id: str,
+    ) -> dict[str, Any] | None:
+        credential = str(credential_id or "").strip()
+        borrower = str(account_id or "").strip()
+        if not credential or not borrower:
+            return None
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
+                "FROM paris_borrower_adept_bindings WHERE credential_id=? AND account_id=?",
+                (credential, borrower),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(zip(
+            ("connection_identity_id", "borrower_identity_id", "profile_id", "confirmed_by", "confirmed_at", "updated_at"),
+            row,
+        ))
+
+    def paris_borrower_adept_bindings(
+        self, *, credential_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List locally confirmed bindings only, without contacting Paris/Adobe."""
+        query = (
+            "SELECT credential_id,account_id,connection_identity_id,"
+            "borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
+            "FROM paris_borrower_adept_bindings"
+        )
+        params: tuple[str, ...] = ()
+        if credential_id is not None:
+            query += " WHERE credential_id=?"
+            params = (str(credential_id).strip(),)
+        query += " ORDER BY credential_id,account_id"
+        with self._lock, self._connect() as db:
+            rows = db.execute(query, params).fetchall()
+        fields = (
+            "credential_id", "account_id", "connection_identity_id",
+            "borrower_identity_id", "profile_id", "confirmed_by",
+            "confirmed_at", "updated_at",
+        )
+        return [dict(zip(fields, row)) for row in rows]
+
+    def paris_borrower_adept_binding_delete(
+        self, *, credential_id: str, account_id: str,
+    ) -> None:
+        with self._lock, self._connect() as db:
+            db.execute(
+                "DELETE FROM paris_borrower_adept_bindings WHERE credential_id=? AND account_id=?",
+                (str(credential_id).strip(), str(account_id).strip()),
+            )
 
     def device_binding_put(self, item: dict[str, Any]) -> str:
         row = dict(item); device_id = str(row.get("device_id") or "").strip(); identity_id = str(row.get("identity_id") or "").strip()

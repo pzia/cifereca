@@ -70,3 +70,92 @@ def test_stable_book_ids_take_precedence_over_title_similarity():
     a=normalize_book({'book_id':'a','title':'Same','authors':['Same']})
     b=normalize_book({'book_id':'b','title':'Same','authors':['Same']})
     assert a.key!=b.key
+
+
+def test_762_neighbour_cards_keep_main_reason_and_inferred_evidence():
+    from constellations_page import neighbour_card_fields, neighbour_count_label
+    target = NS(book=BookRef('related', 'Neighbour', ('Writer',)),
+                availability=('empruntable',))
+    mixed = NS(target=target, reasons=(
+        'Inféré : Sujet : nature', 'Auteur : writer', 'Série : recent',
+    ))
+    certain = neighbour_card_fields(mixed)
+    assert certain['title'] == 'Neighbour'
+    assert certain['authors'] == 'Writer'
+    assert certain['access'] == 'empruntable'
+    assert certain['reason'] == 'Auteur : writer'
+    assert certain['other_reasons'] == 2
+    assert certain['inferred'] is True
+    only_inferred = neighbour_card_fields(NS(target=target, reasons=('Inféré : Projet : nature',)))
+    assert only_inferred['reason'].startswith('Inféré')
+    assert neighbour_count_label((mixed, NS(target=target, reasons=('Auteur : writer',)))).startswith(
+        '2 voisin(s) proposé(s) · 1'
+    )
+    assert neighbour_count_label(()) == 'Aucun voisin proposé avec les paramètres actuels'
+
+
+def test_762_cards_show_distinct_access_and_visit_action_without_network(monkeypatch):
+    class Widget:
+        def __init__(self, label='', child=None):
+            self.label, self.child, self.children, self.clicked = label, child, [], None
+
+        def get_first_child(self):
+            return self.children[0] if self.children else None
+
+        def remove(self, row):
+            self.children.remove(row)
+
+        def append(self, row):
+            self.children.append(row)
+
+        def set_label(self, value):
+            self.label = value
+
+        def set_child(self, widget):
+            self.child = widget
+
+        def set_tooltip_text(self, value):
+            self.tooltip = value
+
+        def connect(self, name, callback):
+            if name == 'clicked':
+                self.clicked = callback
+
+    class FakeGtk:
+        Orientation = NS(VERTICAL=1)
+        Label = staticmethod(lambda label='', **kwargs: Widget(label))
+        Box = staticmethod(lambda **kwargs: Widget())
+        Button = staticmethod(lambda **kwargs: Widget())
+
+    center = NS(book=BookRef('center', 'Centre', ('A',)), url='', key='c',
+                sources=('bibliothèque',), availability=('possédé',))
+    target = NS(book=BookRef('target', 'Voisin', ('B',)), url='', key='t',
+                sources=('source',), availability=('empruntable',))
+    edge = NS(target=target, reasons=('Auteur : b', 'Inféré : Sujet : nature'))
+    view = object.__new__(View)
+    view.center, view.nodes, view.local, view.path = center, (center, target), (), ()
+    view.flow, view.choices, view.heading = Widget(), Widget(), Widget()
+    view.neighbours_summary = Widget()
+    view.Gtk = FakeGtk
+    detail = []
+    view.master = NS(show_detail=detail.append, empty_detail=lambda: detail.append(None))
+    view.mode = NS(get_selected=lambda: 0)
+    view.surprise = NS(get_value=lambda: 25)
+    view.signal = NS(get_text=lambda: '')
+    visits = []
+    view.visit = visits.append
+    monkeypatch.setattr('constellations_page.neighbours', lambda *a, **kw: (edge,))
+    view.render()
+    assert view.heading.label == 'Centre : Centre'
+    assert '1 voisin(s)' in view.neighbours_summary.label
+    assert len(view.flow.children) == 1
+    button = view.flow.children[0]
+    labels = [row.label for row in button.child.children]
+    assert 'Voisin' in labels
+    assert 'Auteur : B' in labels
+    assert 'Lien principal : Auteur : b' in labels
+    assert 'Accès : empruntable' in labels
+    assert 'Contient un indice inféré' in labels
+    button.clicked(button)
+    assert visits == [target]
+    assert len(detail) == 1

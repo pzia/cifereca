@@ -57,6 +57,31 @@ def main(argv: list[str] | None = None) -> int:
     al = sub.add_parser("acquisition-ledger", help="Liste le ledger générique d'acquisition")
     al.add_argument("--status", choices=["discovered", "pending", "acquiring", "complete", "retryable_error", "attention_required"], default=None)
     sub.add_parser("acquisition-reconcile", help="Réconcilie acquisitions interrompues, prêts expirés et catalogue local")
+    paris_adept = sub.add_parser(
+        "paris-adept", help="Liaisons exceptionnelles explicites des comptes Paris et profils ADEPT"
+    )
+    adept_sub = paris_adept.add_subparsers(dest="paris_adept_cmd", required=True)
+    adept_list = adept_sub.add_parser("list", help="Liste les liaisons ADEPT locales confirmées (hors réseau)")
+    adept_list.add_argument("--credential", help="Limiter à une connexion Paris")
+    adept_sub.add_parser("accounts", help="Affiche les comptes visibles après connexion Paris")
+    adept_audit = adept_sub.add_parser(
+        "audit", help="Audit local hors réseau des prêts Paris visibles sur plusieurs connexions"
+    )
+    adept_audit.add_argument(
+        "--credential", help="Filtre les prêts liés à cette connexion, sans masquer les autres provenances"
+    )
+    adept_bind = adept_sub.add_parser("bind", help="Confirme une exception de profil ADEPT pour un compte Paris")
+    adept_bind.add_argument("--credential", required=True, help="ID exact de la connexion Paris")
+    adept_bind.add_argument("--borrower", required=True, help="Compte Paris : primary ou identifiant exact du sous-compte")
+    adept_bind.add_argument("--identity", required=True, help="Identité portant le profil ADEPT effectif attesté")
+    adept_bind.add_argument(
+        "--confirm-ownership", action="store_true",
+        help="Atteste une vérification humaine du vrai propriétaire Adobe du prêt",
+    )
+    adept_unbind = adept_sub.add_parser("unbind", help="Révoque la liaison ADEPT enregistrée")
+    adept_unbind.add_argument("--credential", required=True)
+    adept_unbind.add_argument("--borrower", required=True)
+
     plugin = sub.add_parser("plugin", help="Gère les plugins cifereca")
     psub = plugin.add_subparsers(dest="plugin_cmd", required=True)
     psub.add_parser("list", help="Liste les plugins")
@@ -73,6 +98,14 @@ def main(argv: list[str] | None = None) -> int:
     packages = psub.add_parser("packages", help="Liste les packages/versions installés")
     deps_repair = psub.add_parser("deps-repair", help="Résout les dépendances Python des plugins actifs dans le venv Core")
     a = p.parse_args(argv)
+    if a.cmd == "paris-adept":
+        if a.username or a.account:
+            p.error("paris-adept exige --credential, pas --username ou --account")
+        if a.paris_adept_cmd == "bind" and not a.confirm_ownership:
+            p.error(
+                "paris-adept bind exige --confirm-ownership : "
+                "vérifiez explicitement l'emprunteur et le profil Adobe avant validation"
+            )
 
     if a.cmd == "identity-directory" and a.abort:
         try:
@@ -96,6 +129,81 @@ def main(argv: list[str] | None = None) -> int:
                 p.error("identity-directory exige identity_id et directory_name, ou --abort")
             result = service.change_identity_directory(a.identity_id, a.directory_name, dry_run=a.dry_run)
             print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
+        if a.cmd == "paris-adept":
+            try:
+                if a.paris_adept_cmd == "accounts":
+                    service.connect_configured()
+                    result = [
+                        {
+                            "credential_id": account.credential_id,
+                            "account_id": "primary" if account.is_primary else account.unique_id,
+                            "display_name": account.display_name,
+                            "connection_identity_id": account.identity_id,
+                            "is_primary": bool(account.is_primary),
+                        }
+                        for account in service.accounts
+                        if str(account.provider_id).lower() == "paris"
+                    ]
+                elif a.paris_adept_cmd == "audit":
+                    from .paris_adept_audit import build_paris_adept_audit
+                    result = build_paris_adept_audit(
+                        core.storage, credential_id=a.credential
+                    )
+                elif a.paris_adept_cmd == "list":
+                    bindings = core.storage.paris_borrower_adept_bindings(
+                        credential_id=a.credential
+                    )
+                    for binding in bindings:
+                        binding["configuration_consistent"] = (
+                            core.storage.identity_for_connection(
+                                "paris", binding["credential_id"]
+                            ) == binding["connection_identity_id"]
+                            and core.storage.adept_profile_binding_get(
+                                "identity", binding["borrower_identity_id"]
+                            ) == binding["profile_id"]
+                        )
+                    result = {
+                        "bindings": bindings,
+                        "identities": [
+                            {
+                                "identity_id": identity.identity_id,
+                                "adept_profile_id": core.storage.adept_profile_binding_get(
+                                    "identity", identity.identity_id
+                                ),
+                            }
+                            for identity in service.identities
+                        ],
+                        "note": "Configuration locale uniquement, sans preuve serveur Adobe",
+                    }
+                elif a.paris_adept_cmd == "bind":
+                    # Refresh the real account inventory. A persisted
+                    # connection owner alone never proves the borrower.
+                    service.connect_configured()
+                    result = service.bind_paris_borrower_adept(
+                        credential_id=a.credential,
+                        account_id=a.borrower,
+                        borrower_identity_id=a.identity,
+                        confirmed=True,
+                    )
+                elif a.paris_adept_cmd == "unbind":
+                    previous = core.storage.paris_borrower_adept_binding_get(
+                        credential_id=a.credential, account_id=a.borrower
+                    )
+                    core.storage.paris_borrower_adept_binding_delete(
+                        credential_id=a.credential, account_id=a.borrower
+                    )
+                    result = {
+                        "status": "revoked" if previous is not None else "not_found",
+                        "credential_id": a.credential, "account_id": a.borrower,
+                    }
+                else:
+                    p.error("sous-commande paris-adept inconnue")
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            except (ValueError, RuntimeError) as exc:
+                print(f"paris-adept: {exc}", file=sys.stderr)
+                return 2
+
         if a.cmd == "plugin":
             manager = core.plugins
             if a.plugin_cmd == "list":

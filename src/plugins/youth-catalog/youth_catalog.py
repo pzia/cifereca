@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from time import perf_counter
 import re
+import unicodedata
 from typing import Iterable, Mapping, Protocol, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from cifereca.plugin_api.youth_ages import youth_age_from_label
+from cifereca.plugin_api import description_text
 
 _WS = re.compile(r"\s+")
 _ISBN_CLEAN = re.compile(r"[^0-9Xx]")
@@ -23,6 +26,12 @@ COLLECTION_STATES = {
     "items", "empty_unverified", "invalid", "http_error",
     "timeout", "error", "cancelled",
 }
+_PUBLIC_SOURCE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,49}")
+
+
+def public_source_id(value: object) -> str:
+    """An opaque, non-personal plugin/source slug safe for public diagnostics."""
+    return value if type(value) is str and _PUBLIC_SOURCE_ID.fullmatch(value) else ""
 
 
 
@@ -97,6 +106,12 @@ def sanitize_collection_pipeline(value: object) -> dict[str, object]:
         "anchor_count", "product_link_count", "candidate_count",
         "analyzed_count", "isbn_valid_count", "age_published_count",
         "age_qualified_count", "age_unknown_count", "returned_items",
+        # Catalogue cards from École des loisirs may have explicit published
+        # ages and stable source references without ANY printed ISBN. Keep
+        # their bounded counters in Diagnostics instead of dropping them.
+        "cards_detected", "cards_complete", "missing_isbn",
+        "covers_seen", "cover_urls_valid", "author_count",
+        "thumbnail_card_count", "thumbnail_duplicate_count",
     )
     for key in counts:
         item = value.get(key)
@@ -133,6 +148,117 @@ def sanitize_collection_pipeline(value: object) -> dict[str, object]:
     if reasons:
         out["rejection_reasons"] = reasons
     return out
+
+
+def source_yield_diagnostic(row: Mapping[str, object]) -> dict[str, object]:
+    """Explain observed collection yield, never infer provider availability.
+
+    Input is a cache-only, per-identity source_diagnostics projection. Never
+    copy URLs, HTML, bibliographic metadata or identity IDs into the result.
+    """
+    state = str(row.get("collection_state") or "not_tested")
+    family = str(row.get("family") or "age")
+    pipeline = sanitize_collection_pipeline(row.get("pipeline"))
+    accepted = row.get("accepted")
+    rejected = row.get("rejected")
+    counts = {
+        key: pipeline[key] for key in (
+            "anchor_count", "product_link_count", "candidate_count",
+            "analyzed_count", "isbn_valid_count", "age_qualified_count",
+            "age_unknown_count", "returned_items", "effective_limit",
+            "cards_detected", "cards_complete", "missing_isbn",
+            "covers_seen", "cover_urls_valid", "author_count",
+            "thumbnail_card_count", "thumbnail_duplicate_count",
+            "html_bytes", "http_ms", "parse_ms", "total_ms",
+        ) if key in pipeline
+    }
+    for key, value in (("accepted", accepted), ("rejected", rejected),
+                       ("received_count", row.get("received_count")),
+                       ("request_count", row.get("request_count")),
+                       ("requested_limit", row.get("requested_limit"))):
+        if type(value) is int and 0 <= value <= 100_000:
+            counts[key] = value
+    reasons = dict(pipeline.get("rejection_reasons") or {})
+    explanation = "non_teste"
+    confidence = "unknown"
+    if family == "bibliography":
+        explanation = "bibliographie_sans_preuve_age"
+    elif state in {"http_error", "timeout", "error", "cancelled"}:
+        explanation = {
+            "http_error": "http_echec", "timeout": "delai_depasse",
+            "error": "transport_ou_source_echec", "cancelled": "annule",
+        }[state]
+        confidence = "observed"
+    elif state == "invalid" or reasons.get("unexpected_markup", 0):
+        explanation = "structure_invalide_ou_rejet"
+        confidence = "observed" if state == "invalid" else "inferred"
+    elif state == "items" and type(accepted) is int and accepted > 0:
+        explanation = "notices_qualifiees"
+        confidence = "observed"
+    elif state == "empty_unverified":
+        candidates = pipeline.get("candidate_count")
+        anchors = pipeline.get("anchor_count")
+        isbn = pipeline.get("isbn_valid_count")
+        ages = pipeline.get("age_qualified_count")
+        returned = pipeline.get("returned_items")
+        if type(candidates) is int and candidates > 0:
+            # ISBN can be legitimately absent (notably École des loisirs).
+            # Zero ISBNs alone cannot prove why no notices were accepted.
+            if reasons.get("isbn_invalid", 0):
+                explanation = "candidats_avec_isbn_rejete"
+            elif ages == 0:
+                explanation = "candidats_sans_age_atteste"
+            else:
+                explanation = "perte_apres_qualification_a_examiner"
+            confidence = "inferred"
+        elif candidates == 0 and type(anchors) is int and anchors > 0:
+            explanation = "ancres_sans_fiches_reconnues"
+            confidence = "inferred"
+        elif candidates == 0 and anchors == 0:
+            explanation = "aucune_ancre_ni_fiche_reconnue"
+            confidence = "inferred"
+        elif type(returned) is int and returned > 0:
+            explanation = "notices_exclues_apres_source"
+            confidence = "inferred"
+        else:
+            explanation = "vide_non_verifie"
+    return {
+        "cause": explanation, "confidence": confidence,
+        "counts": counts, "rejection_reasons": reasons,
+        "state": state if state in COLLECTION_STATES | {"not_tested"} else "unknown",
+        "family": family if family in {"age", "bibliography", "discovery"} else "unknown",
+        "query_mode": pipeline.get("query_mode", "unknown"),
+        "html_sha256_prefix": pipeline.get("html_sha256_prefix", ""),
+        "truncated_by_limit": pipeline.get("truncated_by_limit") is True,
+    }
+
+
+def youth_source_support_snapshot(rows: Iterable[Mapping[str, object]]) -> dict[str, object]:
+    """Bounded, public-only export; no identity, HTML or URL values."""
+    records = []
+    for row in rows:
+        if len(records) >= 30:
+            break
+        if not isinstance(row, Mapping):
+            continue
+        source = public_source_id(row.get("source_id")) or "unknown"
+        records.append({
+            "source_id": source,
+            "plugin_state": str(row.get("plugin_state") or "unknown")[:35]
+                if str(row.get("plugin_state") or "unknown") in {
+                    "ready", "disabled", "not_installed", "incompatible", "degraded"
+                } else "unknown",
+            "enabled": row.get("enabled") is True,
+            "cache_count": min(100_000, max(0, int(row.get("cache_count") or 0)))
+                if type(row.get("cache_count")) is int else None,
+            **source_yield_diagnostic(row),
+        })
+    return {
+        "report": "jeunesse_sources_cache_only",
+        "scope": "sources_sans_identite",
+        "sources": records,
+        "limitations": "Etat cache local, sans vérification HTTP ni preuve d'âge déduite.",
+    }
 
 
 def _field(value: object, name: str, default: object = "") -> object:
@@ -390,6 +516,108 @@ class YouthBook:
     published_year: int | None = None
     cover_url: str = ""
     bibliography_sources: tuple[str, ...] = ()
+    collection: str = ""
+    description: str = ""
+    series: tuple[str, ...] = ()
+    collections: tuple[str, ...] = ()
+    awards: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryNoticeEvidence:
+    """A catalogue notice for this *edition*, not evidence of a copy or loan."""
+
+    source_provider: str
+    record_id: str
+    isbn13: str
+    notice_url: str
+    status: str = "catalogue_reference"
+    freshness: str = "unknown"
+
+
+def _attested_public_notice_url(raw: object) -> str:
+    """Only public, canonical HTTPS links without user/session parameters."""
+    if not isinstance(raw, str) or len(raw) > 2048 or not raw.strip():
+        return ""
+    # Reject URL grammar ambiguities before presenting an attested public link.
+    if (any(ord(ch) < 33 or ord(ch) == 127 for ch in raw)
+            or any(ch in raw for ch in '<>\\?#')):
+        return ""
+    try:
+        parts = urlsplit(raw)
+        host = parts.hostname
+        port = parts.port
+        if (parts.scheme.lower() != "https" or not host
+                or parts.username is not None or parts.password is not None
+                or parts.query or parts.fragment or port not in (None, 443)
+                or "%" in host):
+            return ""
+        host = host.lower().rstrip(".")
+        if (not host or host == "localhost" or "." not in host
+                or host.endswith((".local", ".localhost", ".internal",
+                                   ".lan", ".home.arpa"))
+                or any(not label for label in host.split("."))):
+            return ""
+        try:
+            address = ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return ""
+        # Never surface a search page in place of an edition notice.
+        if not parts.path or parts.path == "/":
+            return ""
+        return urlunsplit(("https", host, parts.path, "", ""))
+    except (TypeError, ValueError):
+        return ""
+
+
+def attest_library_notices(
+    book: YouthBook,
+    results: Iterable[object],
+    *,
+    limit: int = 50,
+) -> tuple[LibraryNoticeEvidence, ...]:
+    """Project explicit, already-retrieved library rows into edition notices.
+
+    No HTTP, no cache mutation, and no title/author inference. The caller
+    selects the active identity and performs its explicit library search.
+    A row must carry a matching strong ISBN *and* a direct-notice assertion;
+    free-form provider text, stock labels and loan flags are never promoted.
+    """
+    if not isinstance(book, YouthBook):
+        return ()
+    identifiers = book.identifiers
+    isbn = normalize_isbn(identifiers.get("isbn")) if isinstance(identifiers, Mapping) else ""
+    if not isbn or type(limit) is not int or not 1 <= limit <= 100:
+        return ()
+    notices: list[LibraryNoticeEvidence] = []
+    seen: set[tuple[str, str]] = set()
+    for row_index, raw in enumerate(results):
+        if row_index >= 500 or len(notices) >= limit:
+            break
+        metadata = _field(raw, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            continue
+        candidate_isbn = normalize_isbn(metadata.get("isbn13") or metadata.get("isbn"))
+        if candidate_isbn != isbn or metadata.get("direct_notice_attested") is not True:
+            continue
+        source = _field(raw, "source_provider")
+        record = _field(raw, "record_id")
+        if (not isinstance(source, str)
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{1,127}", source)
+                or not isinstance(record, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", record)):
+            continue
+        url = _attested_public_notice_url(_field(raw, "friendly_url"))
+        if not url or (source, record) in seen:
+            continue
+        seen.add((source, record))
+        notices.append(LibraryNoticeEvidence(
+            source_provider=source, record_id=record, isbn13=isbn,
+            notice_url=url,
+        ))
+    return tuple(notices)
 
 
 @dataclass(frozen=True, slots=True)
@@ -494,6 +722,21 @@ def _publication_year(raw: object) -> int | None:
     return None
 
 
+def _attested_field(raw: object, *names: str) -> object:
+    # Only explicitly recognized public bibliographic keys, never a recursive
+    # walk through arbitrary metadata that might contain account/session data.
+    metadata = _field(raw, "metadata", {})
+    for name in names:
+        value = _field(raw, name, None)
+        if value not in (None, "", (), [], {}):
+            return value
+        if isinstance(metadata, Mapping):
+            value = metadata.get(name)
+            if value not in (None, "", (), [], {}):
+                return value
+    return ""
+
+
 def normalize_record(raw: object, *, source_id: str) -> YouthBook:
     title = _text(_field(raw, "title"))
     if not title:
@@ -536,6 +779,11 @@ def normalize_record(raw: object, *, source_id: str) -> YouthBook:
         publishers=_names(_field(raw, "publishers") or _field(raw, "publisher")),
         published_year=_publication_year(raw),
         cover_url=_public_cover_url(_field(raw, "cover_url") or _field(raw, "thumbnail_url")),
+        collection=_text(_field(raw, "collection"))[:200],
+        description=(description_text(_attested_field(raw, "description", "summary", "synopsis")) or "")[:4000],
+        series=_names(_attested_field(raw, "series", "series_name"))[:20],
+        collections=_names(_attested_field(raw, "collections", "collection"))[:20],
+        awards=_names(_attested_field(raw, "awards", "prizes", "literary_awards"))[:20],
     )
 
 
@@ -642,6 +890,11 @@ def _merge(left: YouthBook, right: YouthBook) -> YouthBook:
         publishers=tuple(dict.fromkeys(left.publishers + right.publishers)),
         published_year=left.published_year or right.published_year,
         cover_url=left.cover_url or right.cover_url,
+        collection=left.collection or right.collection,
+        description=left.description or right.description,
+        series=tuple(dict.fromkeys(left.series + right.series)),
+        collections=tuple(dict.fromkeys(left.collections + right.collections)),
+        awards=tuple(dict.fromkeys(left.awards + right.awards)),
         bibliography_sources=tuple(dict.fromkeys(
             left.bibliography_sources + right.bibliography_sources
         )),
@@ -713,6 +966,75 @@ def _extract_page(value: object) -> tuple[Iterable[object], str, int]:
     return value, "", 0
 
 
+_SEARCH_STOPWORDS = frozenset({
+    "l", "d", "de", "du", "des", "la", "le", "les", "un", "une", "au", "aux",
+    "a", "et", "en", "sur", "dans", "par", "pour", "avec", "the", "of",
+})
+
+
+def _search_fold(value: object) -> str:
+    """Accent, punctuation and apostrophe insensitive matching, local only."""
+    text = unicodedata.normalize("NFKD", _text(value).casefold())
+    unaccented = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^\w]+", " ", unaccented, flags=re.UNICODE).strip()
+
+
+def _search_score(book: YouthBook, query: str) -> int:
+    """Strict meaningful tokens across attested fields; weighted, deterministic."""
+    if not isinstance(query, str) or not query.strip() or len(query) > 256:
+        return 0
+    phrases = [
+        _search_fold(match.group(1) or match.group(2))
+        for match in re.finditer(r'"([^"]{2,80})"|«([^»]{2,80})»', query)
+    ]
+    cleaned = _search_fold(query)
+    raw_tokens = tuple(dict.fromkeys(cleaned.split()))
+    tokens = tuple(token for token in raw_tokens if token not in _SEARCH_STOPWORDS) or raw_tokens
+    if not tokens or len(tokens) > 24:
+        return 0
+    fields = (
+        (book.title, 100),
+        *((value, 75) for value in book.authors[:12]),
+        *((value, 68) for value in book.series[:12]),
+        *((value, 65) for value in book.collections[:12]),
+        *((value, 63) for value in book.awards[:12]),
+        *((value, 60) for value in book.themes[:24]),
+        *((value, 45) for value in book.publishers[:12]),
+        (book.description[:4000], 24),
+        *((str(value), 35) for value in (
+            book.identifiers.get("isbn", ""),
+            book.identifiers.get("source_item_id", ""),
+            book.record_id,
+        )),
+        (book.book_type, 15),
+        (book.language, 15),
+        *((value, 12) for value in book.formats[:10]),
+        *((value, 10) for value in book.provenance[:10]),
+        (str(book.published_year or ""), 10),
+        *((row.source_label, 10) for row in book.age_ranges[:10]
+          if row.age_kind != "inferred"),
+    )
+    normalized = tuple((text, weight) for value, weight in fields
+                       if (text := _search_fold(value)))
+    if not normalized:
+        return 0
+    if phrases and any(not any(phrase in value for value, _ in normalized)
+                       for phrase in phrases):
+        return 0
+    score = 0
+    for token in tokens:
+        best = max((weight for value, weight in normalized
+                    if any(word.startswith(token) for word in value.split())), default=0)
+        if not best:
+            return 0
+        score += best
+    if cleaned and cleaned in _search_fold(book.title):
+        score += 150
+    elif phrases:
+        score += 30
+    return score
+
+
 class YouthCatalogIndex:
     def __init__(self) -> None:
         self._sources: dict[str, dict[str, tuple[YouthBook, ...]]] = {}
@@ -745,8 +1067,14 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_record(raw, source_id=sid))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Provider rows and exception text are untrusted. A raw error
+                # can contain signed URLs, credentials or private searches.
+                title = raw.get("title") if type(raw) is dict else object()
+                kind = ("title is required"
+                        if title is None or (type(title) is str and not title.strip())
+                        else "invalid record")
+                errors.append(f"item[{index}]: {kind}")
         # Reject an entirely malformed refresh atomically: never replace
         # the last usable cache with zero valid records and parsing failures.
         # A genuinely empty (error-free) page is still an authoritative result.
@@ -786,8 +1114,10 @@ class YouthCatalogIndex:
         for index, raw in enumerate(rows or ()):
             try:
                 accepted.append(normalize_bibliography_record(raw, source_id=sid, expected_isbn=expected))
-            except Exception as exc:
-                errors.append(f"item[{index}]: {exc}")
+            except Exception:
+                # Never include provider/bibliography exception payloads in a
+                # cache report, even when the library page does not display it.
+                errors.append(f"item[{index}]: invalid bibliography record")
         unique = {item.record_id or item.notice_url or repr(item): item for item in accepted}
         if len(unique) > 1:
             return BibliographyReport(identity, sid, expected, rejected=len(accepted), errors=("ambiguous bibliography result",))
@@ -918,18 +1248,27 @@ class YouthCatalogIndex:
                 continue
             if typ == "youth.bibliography" and not pid.startswith("youth.bibliography."):
                 continue
+            # Diagnostics are exported/copyable. Do not promote malformed
+            # runtime identifiers (emails, URLs, signed queries) to UI labels.
+            if not public_source_id(sid):
+                continue
             record = providers.setdefault(sid, {
                 "source_id": sid, "plugin_id": pid, "label": sid,
                 "family": "age" if typ == "youth.source" else "bibliography",
             })
+            package = _text(row.get("package_id"))
             record.update({
                 "plugin_state": _text(row.get("state"))[:40] or "unknown",
                 "enabled": bool(row.get("enabled")),
-                "package_id": _text(row.get("package_id"))[:128],
+                "package_id": (
+                    package if public_source_id(package) else ""
+                ),
             })
         cached = self._sources.get(identity, {})
         recent = self._collection_health.get(identity, {})
         for sid in set(cached) | set(recent):
+            if not public_source_id(sid):
+                continue
             if sid not in providers:
                 providers[sid] = {
                     "source_id": sid, "plugin_id": f"youth.source.{sid}",
@@ -1047,12 +1386,13 @@ class YouthCatalogIndex:
         themes: Iterable[str] = (),
         include_inferred: bool = False,
     ) -> tuple[YouthBook, ...]:
-        q, source, lang, fmt, typ = _fold(query), _fold(source_id), _fold(language), _fold(format), _fold(book_type)
+        q, source, lang, fmt, typ = _text(query), _fold(source_id), _fold(language), _fold(format), _fold(book_type)
         kind = normalize_age_kind(age_kind) if age_kind else ""
         wanted_themes = {_fold(value) for value in themes if _fold(value)}
-        out: list[YouthBook] = []
-        for book in self.entries(identity_id):
-            if q and q not in " ".join((book.title, *book.authors, *book.themes)).casefold():
+        ranked: list[tuple[int, int, YouthBook]] = []
+        for position, book in enumerate(self.entries(identity_id)):
+            score = _search_score(book, q) if q else 0
+            if q and not score:
                 continue
             if source and source not in book.provenance:
                 continue
@@ -1074,8 +1414,10 @@ class YouthCatalogIndex:
                     continue
             elif kind and not any(rng.age_kind == kind for rng in book.age_ranges):
                 continue
-            out.append(book)
-        return tuple(out)
+            ranked.append((score, position, book))
+        if q:
+            ranked.sort(key=lambda hit: (-hit[0], hit[1]))
+        return tuple(book for _score, _position, book in ranked)
 
     def clear_identity(self, identity_id: str) -> None:
         identity = self.identity_key(identity_id)
@@ -1088,6 +1430,13 @@ class YouthCatalogIndex:
 
 
 class YouthCatalogPlugin:
+    @staticmethod
+    def attested_library_notices(
+        book: YouthBook, results: Iterable[object], *, limit: int = 50,
+    ) -> tuple[LibraryNoticeEvidence, ...]:
+        """Project only explicit, edition-matching library notice evidence."""
+        return attest_library_notices(book, results, limit=limit)
+
     def __init__(self) -> None:
         self.index = YouthCatalogIndex()
         self.context: object | None = None
@@ -1153,13 +1502,13 @@ class YouthCatalogPlugin:
     ) -> IngestReport:
         """Collect one chosen source and record its outcome for this identity.
 
-        Reading source_diagnostics() never calls search(). Error messages stay
-        in the legacy IngestReport, not the sanitized diagnostic projection.
+        Reading source_diagnostics() never calls search(). Error codes in
+        IngestReport are fixed, never raw provider text or source payloads.
         """
         try:
             info = validate_source_contract(source)
         except Exception as exc:
-            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=(str(exc),))
+            return IngestReport(self.index.identity_key(identity_id), "", rejected=1, errors=("invalid source contract",))
         bounded = max(1, min(int(limit), 500))
         started = perf_counter()
         stage = "search"
@@ -1220,7 +1569,7 @@ class YouthCatalogPlugin:
             )
             return IngestReport(
                 self.index.identity_key(identity_id), info.source_id,
-                rejected=1, errors=(f"search: {exc}",),
+                rejected=1, errors=("source search failed",),
             )
 
 PLUGIN = YouthCatalogPlugin()

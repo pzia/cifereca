@@ -534,6 +534,20 @@ class DiagnosticsBrokerImpl:
     def snapshot(self):
         return tuple(self.service.diagnostics.snapshot())
 
+    def events(
+        self, *, source: str = "all", module: str = "", severity: str = "",
+        since: str | None = None, until: str | None = None,
+        limit: int = 50, offset: int = 0,
+    ) -> dict[str, Any]:
+        """Read-only, bounded public feed; filesystem paths are Core-owned."""
+        from .core.diagnostic_event_feed import query_diagnostic_events
+        from .paths import log_file
+        return query_diagnostic_events(
+            self.service.diagnostics, log_path=log_file(),
+            source=source, module=module, severity=severity,
+            since=since, until=until, limit=limit, offset=offset,
+        )
+
     def system_status(self):
         from .system_status import system_status
         return system_status(getattr(self.service, "plugin_manager", None))
@@ -723,9 +737,13 @@ class DiagnosticsBrokerImpl:
         from . import __version__
         return self.service.diagnostics.text(__version__, {"plugins": len(getattr(getattr(self.service, "plugin_manager", None), "statuses", lambda: [])())})
 
-    def support_report(self, *, verbose: bool = False):
+    def support_report(
+        self, *, verbose: bool = False, include_checks: bool = True,
+    ):
         from .support_diagnostic import build_support_report
-        return build_support_report(self.service, verbose=verbose)
+        return build_support_report(
+            self.service, verbose=verbose, include_checks=include_checks,
+        )
 
     def export_support_text(self, *, verbose: bool = False) -> str:
         from .support_diagnostic import support_report_text

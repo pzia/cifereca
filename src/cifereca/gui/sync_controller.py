@@ -1,0 +1,217 @@
+"""GTK synchronization page and runner orchestration (#1131).
+
+This module delegates exclusively to existing service/broker contracts, and
+uses MainWindow as a host without importing it or starting threads of its own.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw, GLib
+
+from ..plugin_api import SyncRequest
+from .action_widgets import AdaptiveActionBar, add_css, clear_box
+from .sync_view import sync_identity_action_label, sync_source_presentation
+from .task_runner import TaskPriority
+
+
+def _build_sync_page(self):
+    scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    for edge in ("top", "bottom", "start", "end"):
+        getattr(outer, "set_margin_" + edge)(20)
+    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
+    actions = AdaptiveActionBar(source=heading)
+    refresh = self.action_button("Actualiser", "view-refresh-symbolic")
+    all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
+    self._sync_all_button = all_now
+    actions.append(refresh); actions.append(all_now)
+    heading.append(title); heading.append(actions); outer.append(heading)
+    self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
+    refresh.connect("clicked", lambda _b: self._refresh_sync_page())
+    def sync_all(button):
+        broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
+        identity = self.service.current_identity
+        if broker is None: return
+        request = SyncRequest(identity_id=identity.identity_id if identity else None)
+        self.runner.submit(
+            "Synchronisation des sources…",
+            lambda: broker.synchronize(request),
+            lambda _r: (self._refresh_sync_page(), self.refresh_library(False)),
+            control=button,
+            priority=TaskPriority.USER_ACTION,
+            kind="source-sync",
+        )
+    all_now.connect("clicked", sync_all)
+    scroll.set_child(outer); return scroll
+
+
+def _refresh_sync_page(self) -> None:
+    box = getattr(self, "_sync_sources_box", None)
+    if box is None: return
+    clear_box(box)
+    broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
+    identity = self.service.current_identity
+    all_now = getattr(self, "_sync_all_button", None)
+    global_label = sync_identity_action_label(identity)
+    if all_now is not None:
+        all_now._cifereca_action_label = global_label
+        child = all_now.get_child()
+        if child is not None and callable(getattr(child, "set_label", None)):
+            child.set_label(global_label)
+        else:
+            all_now.set_label(global_label)
+        all_now.set_sensitive(False)
+    if broker is None:
+        if all_now is not None:
+            all_now.set_tooltip_text("Synchronisation indisponible : broker absent")
+        box.append(Gtk.Label(label="Broker de synchronisation indisponible", xalign=0)); return
+    rows = broker.sources(identity.identity_id if identity else None)
+    presentations = [sync_source_presentation(source) for source in rows]
+    actionable = any(item.action_enabled for item in presentations)
+    if all_now is not None:
+        all_now.set_sensitive(actionable)
+        all_now.set_tooltip_text(
+            global_label if actionable
+            else "Aucune source activée, connectée et synchronisable pour cette identité"
+        )
+    if not rows:
+        box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
+    for source, presentation in zip(rows, presentations):
+        group = Adw.PreferencesGroup(); box.append(group)
+        row = Adw.ActionRow(); row.set_title(source.label or source.provider_id)
+        row.set_subtitle(presentation.summary)
+        row.set_subtitle_lines(0)
+        toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
+        toggle.set_tooltip_text("Activation : inclure cette source dans les synchronisations")
+        def toggled(widget, _param, sid=source.source_id):
+            try:
+                broker.set_enabled(sid, widget.get_active())
+                self._refresh_sync_page()
+            except Exception as exc:
+                self.show_error(str(exc), "Synchronisation")
+        toggle.connect("notify::active", toggled); row.add_suffix(toggle)
+        now = self.action_button(presentation.action_label, "emblem-synchronizing-symbolic")
+        now.set_sensitive(presentation.action_enabled)
+        now.set_tooltip_text(
+            presentation.action_label if presentation.action_enabled else presentation.disabled_reason
+        )
+        def one(_button, sid=source.source_id, label=source.label or source.provider_id):
+            self.runner.submit(f"Synchronisation {label}…", lambda: broker.synchronize_source(sid),
+                lambda _r: (self._refresh_sync_page(), self.refresh_library(False)), control=_button,
+                priority=TaskPriority.USER_ACTION, kind="source-sync")
+        now.connect("clicked", one); row.add_suffix(now); group.add(row)
+
+
+def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
+    def progress(event: dict[str, Any]) -> None:
+        kind = str(event.get("event") or "")
+        if kind == "identity_begin":
+            label = f"Synchronisation · {event.get('label') or event.get('identity_id')}…"
+            GLib.idle_add(self._task_progress, label)
+    def ok(summary: dict[str, Any]) -> None:
+        self._render_dashboard(); self._populate_loans(self.service.last_loans); self.refresh_library(False); self.refresh_recent()
+        acquisitions = sum(int(x.get("new_acquisitions") or 0) for x in summary.get("identities", []))
+        attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
+        errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
+        if acquisitions or attention or errors:
+            self._activity_result(
+                f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)",
+                success=not bool(attention or errors),
+                persistent=bool(attention or errors),
+            )
+    def err(exc: BaseException) -> None:
+        self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+        self._render_dashboard()
+        if control is not None: self.show_error(str(exc), "Synchronisation impossible")
+    task_label = "Vérification complète de la bibliothèque…" if deep else "Synchronisation des bibliothèques…"
+    self.runner.submit(
+        task_label, lambda: self.service.opening_sync(progress=progress, deep=deep), ok, err, control=control,
+        priority=TaskPriority.USER_ACTION if control is not None else (TaskPriority.MAINTENANCE if deep else TaskPriority.ACTIVE_LOAN),
+        kind="deep-sync" if deep else "opening-sync",
+    )
+
+# Reader/storage targets are provided by storage.target plugins.
+# The first 0.9.2 prototype intentionally has no brand-specific reader UI.
+
+
+def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
+    """0.8.2 compatibility shim: automation runs at application opening only.
+
+    The historical interval setting remains readable for rollback compatibility,
+    but Paris no longer installs a recurring in-process timer.
+    """
+    if self._kobo_backup_timer_id is not None:
+        try:
+            GLib.source_remove(self._kobo_backup_timer_id)
+        except Exception:
+            pass
+        self._kobo_backup_timer_id = None
+    if run_now and self.service.kobo_backup_enabled():
+        GLib.idle_add(lambda: (self.run_kobo_backup(False), False)[1])
+
+
+def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
+    original_label = control.get_label() if isinstance(control, Gtk.Button) else None
+    progress_state = {"last": 0}
+
+    def progress(event: dict[str, Any]) -> None:
+        if not isinstance(control, Gtk.Button):
+            return
+        kind = str(event.get("event") or "")
+        current = int(event.get("current") or 0)
+        total = int(event.get("total") or 0)
+        if kind == "adept_probe":
+            label = "Synchronisation Kobo · vérification Adept…"
+        elif kind in {"manifest_fetch", "manifest"}:
+            label = f"Synchronisation Kobo · manifest {total}" if total else "Synchronisation Kobo · manifest…"
+        elif kind in {"scan", "acquiring", "downloaded", "item_error"} and total:
+            if kind == "scan" and current not in {1, total} and current - progress_state["last"] < 10:
+                return
+            progress_state["last"] = current
+            label = f"Synchronisation Kobo · {current}/{total}"
+        else:
+            return
+        GLib.idle_add(lambda: (control.set_label(label), False)[1])
+
+    def work() -> dict[str, Any]:
+        return self.service.sync_kobo_backup(progress=progress)
+
+    def restore_label() -> None:
+        if isinstance(control, Gtk.Button) and original_label is not None:
+            control.set_label(original_label)
+
+    def ok(summary: dict[str, Any]) -> None:
+        restore_label()
+        self._render_kobo_loans()
+        attention = int(summary.get("attention_required", 0) or 0)
+        errors = int(summary.get("errors", 0) or 0)
+        if manual:
+            self._activity_result(
+                f"Synchronisation Kobo : {summary.get('downloaded', 0)} téléchargé(s), "
+                f"{summary.get('pending', 0)} en attente, {summary.get('unchanged', 0)} à jour, "
+                f"{summary.get('skipped', 0)} ignoré(s), {attention} action(s), {errors} erreur(s)",
+                success=not bool(attention or errors),
+                persistent=bool(attention or errors),
+            )
+        elif summary.get("downloaded") or summary.get("pending") or attention or errors:
+            self._activity_result(
+                f"Synchronisation Kobo automatique : {summary.get('downloaded', 0)} téléchargé(s), "
+                f"{summary.get('pending', 0)} en attente, {attention} action(s), {errors} erreur(s)",
+                success=not bool(attention or errors),
+                persistent=bool(attention or errors),
+            )
+    def err(exc: BaseException) -> None:
+        restore_label()
+        if manual:
+            self.show_error(str(exc), "Synchronisation Kobo impossible")
+        else:
+            self.diagnostics.add("KOBO", "automatic backup task", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+    self.runner.submit(
+        "Synchronisation locale Kobo…", work, ok, err, control=control,
+        priority=TaskPriority.USER_ACTION if manual else TaskPriority.ACTIVE_LOAN, kind="kobo-acquisition",
+    )
