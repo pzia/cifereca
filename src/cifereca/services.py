@@ -21,7 +21,7 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
-from .core import adept_borrower
+from .core import adept_borrower, loan_artifact_state
 from .core import kobo_backup
 from .core import sync_coordination, sync_projection
 from .core import library_projection, library_mutation
@@ -2969,50 +2969,21 @@ class LibraryService:
             self.storage.catalog_entry_put({**entry, "local_state": "missing" if path is None or not path.is_file() else "invalid"})
             _TRACE_LOG.info("TRACE download local-recheck provider_loan_id=%s catalog_state=%s", loan.id, "missing" if path is None or not path.is_file() else "invalid")
         existing = valid_existing
-        previous_rows = [
-            row for row in self.storage.acquisitions(provider_id=loan.source_provider)
-            if row.get("identity_id") == identity.identity_id
-            and row.get("credential_id") == loan.source_credential
-            and str(row.get("account_id") or "") == str(loan.source_account_id or "")
-            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
-            and row.get("strategy") == "loan_auto"
-        ]
-        previous = previous_rows[0] if previous_rows else None
-        previous_meta = dict((previous or {}).get("metadata") or {})
-        previous_path = Path(str(previous_meta.get("path") or "")) if previous_meta.get("path") else None
-        previous_inspection = None
-        if previous_path is not None and previous_path.is_file():
-            expected_previous = "pdf" if previous_path.suffix.casefold() == ".pdf" else "epub" if previous_path.suffix.casefold() == ".epub" else None
-            previous_inspection = inspect_artifact(previous_path, expected_previous)
-        legacy_acsm_artifact = bool(
-            loan.source_provider == "paris"
-            and (previous or {}).get("executor") == "kobo-adept"
-            and previous_path is not None
-            and previous_path.is_file()
-            and (
-                not previous_meta.get("post_processed")
-                or previous_inspection is None
-                or not previous_inspection.valid
-                or previous_inspection.protected is True
-            )
+        previous_state = loan_artifact_state.inspect_previous_loan_artifact(
+            self.storage.acquisitions(provider_id=loan.source_provider),
+            identity_id=identity.identity_id,
+            credential_id=loan.source_credential,
+            account_id=loan.source_account_id,
+            item_id=str(loan.record_id or loan.id),
+            source_provider=loan.source_provider,
+            artifact_inspector=inspect_artifact,
         )
-        # A completed ledger row with a validated local artifact is sufficient
-        # proof that this loan has already been materialized. Do not depend on
-        # catalog item_id alone: older/full scans may leave the catalog
-        # projection incomplete even though the canonical acquisition is valid.
-        previous_complete_local = bool(
-            previous
-            and previous.get("status") == "complete"
-            and previous_path is not None
-            and previous_path.is_file()
-            and previous_inspection is not None
-            and previous_inspection.valid
-            and previous_inspection.protected is not True
-            and (
-                (previous or {}).get("executor") != "kobo-adept"
-                or bool(previous_meta.get("post_processed"))
-            )
-        )
+        previous = previous_state.row
+        previous_meta = previous_state.metadata
+        previous_path = previous_state.path
+        previous_inspection = previous_state.inspection
+        legacy_acsm_artifact = previous_state.legacy_acsm_artifact
+        previous_complete_local = previous_state.complete_local
         if previous_complete_local and not existing and not force_refresh:
             repaired_index = self.catalog_index_path(
                 previous_path, title=loan.title, item_id=str(loan.record_id or loan.id),
