@@ -808,10 +808,10 @@ def main():
             device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, True, 0)
             device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, False, 0)
         device[0].x11.XSync(device[0].display, False)
-        outer = page[0].get_vadjustment()
-        until(lambda: outer.get_value() > outer_before + 5,
-              lambda: verify_wheel_at_report_edge(view, inner_max, outer_before),
-              seconds=5)
+        # Measure after GTK has handled the physical input. A positive
+        # timeout otherwise hides the actual edge values behind a generic
+        # "condition GTK" failure and wastes five seconds per run.
+        later(lambda: verify_wheel_at_report_edge(view, inner_max, outer_before), 700)
 
     def verify_wheel_at_report_edge(view, inner_max, outer_before):
         report["stage"] = "D05_verify_wheel_at_report_bottom"
@@ -821,17 +821,23 @@ def main():
         assert scroller is not None
         inner_after = scroller.get_vadjustment().get_value()
         outer_after = page[0].get_vadjustment().get_value()
-        assert abs(inner_after - inner_max) <= 2, (
+        report["wheel_edge_inner_after"] = round(inner_after, 2)
+        report["wheel_edge_outer_after"] = round(outer_after, 2)
+        inside_at_end = abs(inner_after - inner_max) <= 2
+        outer_propagated = outer_after > outer_before + 5
+        report.setdefault("audit", {})[
+            "D05_xtest_wheel_at_inner_edge_scrolls_outer_page"
+        ] = outer_propagated
+        # Save the actual post-wheel GTK state even on a genuine product FAIL.
+        screenshot("09bb-report-wheel-edge-propagates-1600")
+        assert inside_at_end, (
             "D05: inner adjustment should stay at its lower edge", inner_after, inner_max,
         )
-        assert outer_after > outer_before + 5, (
+        assert outer_propagated, (
             "D05: physical wheel is trapped by report at the lower edge",
             outer_before, outer_after,
         )
-        report["wheel_edge_inner_after"] = round(inner_after, 2)
-        report["wheel_edge_outer_after"] = round(outer_after, 2)
         report["checks"]["D05_xtest_wheel_at_inner_edge_scrolls_outer_page"] = True
-        screenshot("09bb-report-wheel-edge-propagates-1600")
         select_support_report(view)
 
     def select_support_report(view):
