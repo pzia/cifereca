@@ -208,14 +208,20 @@ def main() -> int:
         # reach this MockTransport; the source is actually installed/activated.
         ecole_html = """
         <html><body>
-          <div>3 à 6 ans</div>
-          <a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a>
-          <div>Sylvie Neeman</div><div>album</div>
-          <div>ISBN: 9782211348171</div>
-          <div>13 ans et +</div>
-          <a href="/livre/roman-ado">Roman du Loup</a>
-          <div>Alice Auteur</div><div>roman</div>
-          <div>ISBN: 9782211345613</div>
+          <div id="products-wrapper">
+            <div class="product-item">
+              <div class="card-title"><a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a></div>
+              <div class="card-author">Sylvie Neeman</div>
+              <div class="card-infos"><span>Age : 3 à 6 ans</span></div>
+              <div class="card-cover"><img src="/assets/cover-loup.jpg"></div>
+            </div>
+            <div class="product-item">
+              <div class="card-title"><a href="/livre/roman-ado">Roman du Loup</a></div>
+              <div class="card-author">Alice Auteur</div>
+              <div class="card-infos"><span>Age : 13 ans et +</span></div>
+              <div class="card-cover"><img src="/assets/cover-roman.jpg"></div>
+            </div>
+          </div>
         </body></html>
         """
 
@@ -1069,10 +1075,16 @@ def main() -> int:
         assert current["request_count"] == 1, current
         assert current["pipeline"].get("candidate_count") == 2, current
         assert current["pipeline"].get("age_qualified_count") == 2, current
-        assert current["pipeline"].get("isbn_valid_count") == 2, current
+        assert current["pipeline"].get("isbn_valid_count") == 0, current
+        assert current["pipeline"].get("missing_isbn") == 2, current
+        assert current["pipeline"].get("cards_detected") == 2, current
+        assert current["pipeline"].get("cards_complete") == 2, current
+        assert current["pipeline"].get("cover_urls_valid") == 2, current
         assert "2 notice(s) reçue(s)" in page.view.status.get_text()
         labels = " ".join(diagnostic_labels())
         assert "L'École des loisirs" in labels and "collecte avec notices" in labels, labels
+        assert "notices sans ISBN publié : 2" in labels, labels
+        assert "cartes catalogue : 2" in labels, labels
         assert "loup" not in labels.lower(), "Query leaked into Diagnostics"
         assert diagnostic_for("camille")["ecole-loisirs"]["collection_state"] == "not_tested"
         assert diagnostic_for("alex")["milan"]["collection_state"] == "not_tested"
@@ -1083,6 +1095,8 @@ def main() -> int:
             "accepted": 2,
             "candidates": 2,
             "qualified_ages": 2,
+            "isbn_published": 0,
+            "cards_without_isbn": 2,
             "error_state": None,
             "retained_cache": None,
         }

@@ -540,6 +540,12 @@ def source_diagnostic_presentation(rows):
             ("age_qualified_count", "âges attestés"),
             ("age_unknown_count", "âges inconnus"),
             ("returned_items", "notices source"),
+            ("cards_detected", "cartes catalogue"),
+            ("cards_complete", "cartes qualifiées"),
+            ("missing_isbn", "notices sans ISBN publié"),
+            ("covers_seen", "images présentes"),
+            ("cover_urls_valid", "couvertures publiques valides"),
+            ("author_count", "mentions d’auteur"),
         )
         for key, label in evidence:
             amount = funnel.get(key)

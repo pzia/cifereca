@@ -85,6 +85,73 @@ def test_inventory_ids_and_labels_cannot_expose_untrusted_private_source_names()
     assert "Source inconnue" in message and "custom-source" in message
 
 
+def test_isbnless_catalogue_funnel_survives_identity_cache_diagnostics_and_safe_export():
+    index = YouthCatalogIndex()
+    source_funnel = {
+        "query_mode": "remote", "http_status": 200,
+        "cards_detected": 20, "cards_complete": 20,
+        "candidate_count": 20, "analyzed_count": 20,
+        "age_qualified_count": 20, "isbn_valid_count": 0,
+        "missing_isbn": 20, "covers_seen": 20,
+        "cover_urls_valid": 18, "author_count": 29,
+        "returned_items": 20,
+        # Deliberately unsafe provider data must never reach UI/support.
+        "html": "<script>PRIVATE_HTML</script>",
+        "url": "https://private.example/?token=PRIVATE_URL",
+        "title": "PRIVATE_TITLE",
+        "private_token": "PRIVATE_TOKEN",
+    }
+    index.record_collection(
+        "identity-A-SECRET", "ecole-loisirs", state="items",
+        accepted=20, received_count=20, request_count=1,
+        pipeline=source_funnel,
+    )
+    rows_a = index.source_diagnostics("identity-A-SECRET")
+    rows_b = index.source_diagnostics("identity-B-SECRET")
+    ecole_a = next(item for item in rows_a if item["source_id"] == "ecole-loisirs")
+    ecole_b = next(item for item in rows_b if item["source_id"] == "ecole-loisirs")
+    assert ecole_a["collection_state"] == "items"
+    assert ecole_a["request_count"] == 1
+    assert ecole_b["collection_state"] == "not_tested"
+    assert ecole_b["pipeline"] == {}
+    assert ecole_a["pipeline"]["missing_isbn"] == 20
+    assert ecole_a["pipeline"]["cards_complete"] == 20
+    assert source_yield_diagnostic(ecole_a)["cause"] == "notices_qualifiees"
+    assert source_yield_diagnostic(ecole_a)["confidence"] == "observed"
+    line = " ".join(source_diagnostic_presentation(rows_a)[1])
+    assert "notices sans ISBN publié : 20" in line
+    assert "cartes catalogue : 20" in line
+    assert "couvertures publiques valides : 18" in line
+    export = youth_source_support_snapshot(rows_a)
+    safe = json.dumps(export, ensure_ascii=False)
+    ecole_export = next(item for item in export["sources"] if item["source_id"] == "ecole-loisirs")
+    for key, value in (("missing_isbn", 20), ("cards_detected", 20),
+                       ("cards_complete", 20), ("cover_urls_valid", 18)):
+        assert ecole_export["counts"][key] == value
+    for secret in ("PRIVATE_HTML", "PRIVATE_URL", "PRIVATE_TITLE",
+                   "PRIVATE_TOKEN", "identity-A-SECRET", "identity-B-SECRET"):
+        assert secret not in safe
+        assert secret not in line
+
+
+def test_card_metrics_are_strictly_bounded_before_support_and_ui():
+    malicious = row("items",
+                    cards_detected=True, cards_complete=-1,
+                    missing_isbn=100_001, covers_seen="PRIVATE_TOKEN",
+                    cover_urls_valid=2, author_count=100_000,
+                    private_token="PRIVATE_TOKEN")
+    malicious["accepted"] = 2
+    counts = source_yield_diagnostic(malicious)["counts"]
+    assert "cards_detected" not in counts
+    assert "cards_complete" not in counts
+    assert "missing_isbn" not in counts
+    assert "covers_seen" not in counts
+    assert counts["cover_urls_valid"] == 2
+    assert counts["author_count"] == 100_000
+    payload = json.dumps(youth_source_support_snapshot((malicious,)))
+    assert "PRIVATE_TOKEN" not in payload
+
+
 def test_http_errors_and_success_are_not_mixed_with_undetermined_empty():
     assert source_yield_diagnostic(row("http_error"))["cause"] == "http_echec"
     assert source_yield_diagnostic(row("timeout"))["cause"] == "delai_depasse"
