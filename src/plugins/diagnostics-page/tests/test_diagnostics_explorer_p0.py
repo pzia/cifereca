@@ -561,6 +561,22 @@ def test_source_summaries_ignore_untrusted_last_event(invalid):
     assert "last_event" not in states[1]
 
 
+def test_last_event_requires_attested_available_or_partial_core_source():
+    fixed = "2026-10-11T14:00:00+02:00"
+    states = source_summaries({"sources": [
+        {"source": "core_events", "status": "available", "last_event": fixed},
+        {"source": "app_log", "status": "partial", "last_event": fixed},
+        {"source": "app_log", "status": "empty", "last_event": fixed},
+        {"source": "core_events", "status": "disabled", "last_event": fixed},
+        {"source": "app_log", "status": "unavailable", "last_event": fixed},
+        {"source": "Camille Dupont", "status": "available", "last_event": fixed},
+    ]})
+    assert states[0]["last_event"] == "2026-10-11T12:00:00+00:00"
+    assert states[1]["last_event"] == "2026-10-11T12:00:00+00:00"
+    assert all("last_event" not in x for x in states[2:])
+    assert "Camille Dupont" not in repr(states)
+
+
 def test_journals_show_last_published_event_from_broker():
     from pathlib import Path
     page = (Path(__file__).parents[1] /

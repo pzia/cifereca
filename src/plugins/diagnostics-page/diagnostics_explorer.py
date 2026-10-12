@@ -194,7 +194,14 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
         # Dates are metadata from the Core, never arbitrary display strings.
         # Validate timezone and normalise UTC; do not stringify hostile types.
         raw_last = raw.get("last_event")
-        if type(raw_last) is str and len(raw_last) <= 40:
+        # A missing or disabled source cannot establish the time of its
+        # latest published event. An unknown source also has no attestable
+        # provenance under the current two-source Core contract.
+        if (
+            evidence["source"] != "inconnue"
+            and status in ("available", "partial")
+            and type(raw_last) is str and len(raw_last) <= 40
+        ):
             try:
                 instant = datetime.fromisoformat(raw_last.replace("Z", "+00:00"))
                 if instant.tzinfo is not None:
@@ -241,11 +248,25 @@ def empty_observation(payload: Mapping[str, Any], *, period: str,
     if type(total) is not int or total != 0:
         return ""
     window = labels.get(period, "période inconnue")
+    # A filtered empty page is not evidence of an all-clear; the selection
+    # might simply exclude the relevant domain, severity or local search.
+    # Preserve the distinction between an empty complete feed and a partial
+    # source window (log rotation, missing privileges, disabled Core).
+    incomplete = (
+        payload.get("status") in ("partial", "unavailable")
+        or any(s["status"] not in {"available", "empty"} for s in states)
+    )
     if severity or module or search:
-        return f"Aucun événement correspondant aux filtres · période : {window}."
-    if any(s["status"] not in {"available", "empty"} for s in states):
-        return (f"Aucune anomalie rapportée dans les sources consultées · période : {window}. "
-                "Couverture partielle ; les sources indisponibles ne sont pas évaluées.")
+        message = f"Aucun événement correspondant aux filtres · période : {window}."
+        if incomplete:
+            message += " Couverture partielle ; événements manquants possibles."
+        return message
+    if incomplete:
+        return (
+            f"Aucun événement publié dans l’extrait consultable · période : {window}. "
+            "Couverture partielle ; les sources indisponibles ne sont pas évaluées "
+            "et les journaux tronqués peuvent masquer des événements."
+        )
     return (f"Pas d’erreur observée dans les sources consultées · période : {window}. "
             "Cette observation ne garantit pas la disponibilité des services.")
 
