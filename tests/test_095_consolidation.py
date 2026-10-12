@@ -1,4 +1,5 @@
 """Regressions found when restoring the 0.9.2 test/installation context."""
+from tests.gui_source import gui_source_text
 import ast
 import json
 from pathlib import Path
@@ -109,7 +110,7 @@ class ProviderActivation(unittest.TestCase):
 class Selection(unittest.TestCase):
     def test_clearing_selection_clears_details_before_notifying_page(self):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        tree=ast.parse(source.read_text())
+        tree=ast.parse(gui_source_text(source))
         cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MasterDetailPage')
         method=next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name=='_selection_changed')
         module=ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0),method],type_ignores=[])

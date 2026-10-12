@@ -304,3 +304,101 @@ def test_stream_cancelled_midflight_never_delivers_late_events(tmp_path):
         release.set()
         thread.join(timeout=2)
         lib.close()
+
+
+
+def test_public_error_code_and_messages_are_sanitized_before_callback():
+    secret = "Bearer user-private-session-token"
+    emitted = []
+    result = consume_provider_stream([
+        event("error", 1, error_code="api_key=" + secret,
+              message="GET https://service.invalid?auth=" + secret,
+              resume_token=secret,
+              item_key=secret, result=row("private")),
+        event("progress", 2, current=3, total=10,
+              message=secret, resume_token=secret,
+              item_key=secret, result=row("private")),
+        event("done", 3, message=secret, resume_token=secret,
+              item_key=secret, result=row("private"),
+              error_code=secret),
+    ], provider_id=PID, catalog_generation=1,
+        publish=emitted.append, cancelled=lambda: False)
+    assert result.error_code == "StreamPartialError"
+    assert result.warnings == (f"{PID}: provider_error",)
+    assert result.error_message == f"{PID}: provider_error"
+    assert [x.kind for x in emitted] == ["error", "progress", "done"]
+    assert emitted[0].error_code == "provider_error"
+    assert (emitted[1].current, emitted[1].total) == (3, 10)
+    for published in emitted:
+        assert published.message == ""
+        assert published.resume_token == ""
+        assert published.item_key == ""
+        assert published.result is None
+        assert secret not in repr(published)
+
+
+def test_known_public_error_code_survives_without_upstream_extras():
+    emitted = []
+    result = consume_provider_stream([
+        event("error", 1, error_code="rate_limited", message="private book title",
+              resume_token="private cursor"),
+        event("done", 2),
+    ], provider_id=PID, catalog_generation=1,
+        publish=emitted.append, cancelled=lambda: False)
+    assert result.warnings == (f"{PID}: rate_limited",)
+    assert emitted[0].error_code == "rate_limited"
+    assert emitted[0].message == "" and emitted[0].resume_token == ""
+
+
+def test_upsert_public_projection_keeps_row_and_key_but_not_private_transport():
+    emitted = []
+    result = consume_provider_stream([
+        event("upsert", 1, message="private upstream text",
+              resume_token="private resume token", error_code="private",
+              current=3000, total=5000),
+        event("done", 2),
+    ], provider_id=PID, catalog_generation=1,
+        publish=emitted.append, cancelled=lambda: False)
+    assert result.rows[0].record_id == "a"
+    assert emitted[0].result == result.rows[0]
+    assert emitted[0].item_key == "BOOK:a"
+    assert emitted[0].error_code == ""
+    assert emitted[0].current is None and emitted[0].total is None
+    assert emitted[0].message == "" and emitted[0].resume_token == ""
+
+
+def test_unknown_remove_cannot_publish_arbitrary_upstream_item_key():
+    secret = "https://private.invalid/notice?token=secret"
+    emitted = []
+    with pytest.raises(SearchStreamFailure, match="remove references unknown item"):
+        consume_provider_stream([
+            event("upsert", 1),
+            event("remove", 2, item_key=secret, message=secret),
+            event("done", 3),
+        ], provider_id=PID, catalog_generation=1,
+            publish=emitted.append, cancelled=lambda: False)
+    assert [x.kind for x in emitted] == ["upsert"]
+    assert secret not in repr(emitted)
+
+
+def test_public_stream_sanitization_applies_through_library_service(tmp_path):
+    secret = "https://upstream.invalid?private-session=secret"
+    collection = Collection([
+        event("progress", 1, current=1, message=secret, resume_token=secret),
+        event("error", 2, error_code=secret, message=secret, resume_token=secret),
+        event("done", 3, message=secret),
+    ])
+    lib = _library(tmp_path, collection)
+    try:
+        events = []
+        batches = []
+        summary = lib.search_progressive(
+            "book", force=True, on_event=events.append, on_batch=batches.append,
+        )
+        assert not summary.cancelled
+        assert len(events) == 3
+        assert [x.kind for x in events] == ["progress", "error", "done"]
+        assert all(secret not in repr(x) for x in events)
+        assert events[1].error_code == "provider_error"
+    finally:
+        lib.close()

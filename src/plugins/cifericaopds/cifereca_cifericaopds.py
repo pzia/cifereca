@@ -6,14 +6,19 @@ Only cifereca.plugin_api is imported; no private registry access or remote code.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from datetime import date
+import re
 import json
+import math
 import os
+import stat
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from threading import RLock
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from cifereca.plugin_api import (
     ProviderCapabilities, ProviderDescriptor, ProviderPlugin, ProviderSession,
@@ -52,16 +57,68 @@ def safe_base_url(raw: str) -> str:
     return urlunsplit((parts.scheme, host + (f":{port}" if port is not None else ""), "", "", ""))
 
 
+def _decode_strict_json(raw: bytes):
+    """Reject ambiguous or non-finite JSON before it enters local/HTTP state."""
+    def reject_constant(_value):
+        raise ValueError("invalid JSON numeric constant")
+
+    def reject_duplicate_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
+    def parse_finite_float(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("non-finite JSON number")
+        return result
+
+    return json.loads(
+        raw.decode("utf-8"), parse_constant=reject_constant,
+        parse_float=parse_finite_float, object_pairs_hook=reject_duplicate_fields,
+    )
+
+
 class JsonClient:
     def __init__(self, base_url, timeout=4):
         self.base_url = safe_base_url(base_url)
-        self.timeout = min(20.0, max(0.5, float(timeout)))
-        self._opener = build_opener(NoRedirects())
+        try:
+            if isinstance(timeout, bool):
+                raise ValueError("invalid timeout")
+            seconds = float(timeout)
+            if not math.isfinite(seconds):
+                raise ValueError("invalid timeout")
+            self.timeout = min(20.0, max(0.5, seconds))
+        except (TypeError, ValueError, OverflowError):
+            raise ContractUnavailable("invalid configured timeout") from None
+        # No proxies from HTTP_PROXY/HTTPS_PROXY or platform settings:
+        # even requests to a loopback fixture must remain on loopback.
+        self._opener = build_opener(ProxyHandler({}), NoRedirects())
 
     def get(self, endpoint: str, *, params=None):
-        if not endpoint.startswith("/api/v1/") or "?" in endpoint or "#" in endpoint:
+        # Do not let child providers turn this candidate read-only transport
+        # into a general-purpose HTTP client.
+        if endpoint == "/api/v1/sources":
+            if params is not None:
+                raise ContractUnavailable("unexpected discovery parameters")
+            query_string = ""
+        elif endpoint == "/api/v1/search":
+            if not isinstance(params, dict) or set(params) != {"source_id", "q"}:
+                raise ContractUnavailable("invalid search parameters")
+            source_id, query = params["source_id"], params["q"]
+            if not isinstance(source_id, str) or not re.fullmatch(
+                    r"[a-z0-9][a-z0-9_-]{0,63}", source_id):
+                raise ContractUnavailable("invalid candidate source id")
+            if not isinstance(query, str) or len(query) > 300 or any(
+                    ord(ch) < 32 or ord(ch) == 127 for ch in query):
+                raise ContractUnavailable("invalid candidate query")
+            query_string = "?" + urlencode({"source_id": source_id, "q": query})
+        else:
             raise ContractUnavailable("endpoint not allowed")
-        url = self.base_url + endpoint + ("?" + urlencode(params) if params else "")
+        url = self.base_url + endpoint + query_string
         request = Request(url, headers={
             "Accept": "application/json", "User-Agent": "cifereca-cifericaopds/0.1"
         })
@@ -73,17 +130,84 @@ class JsonClient:
                 if content_type != "application/json":
                     raise ContractUnavailable("invalid JSON content type")
                 raw = response.read(MAX_JSON_BYTES + 1)
-        except (HTTPError, URLError, OSError, TimeoutError) as exc:
-            raise ContractUnavailable("server unavailable") from exc
+        except (HTTPError, URLError, OSError, TimeoutError):
+            # Do not chain a transport exception: its repr may contain
+            # URL query parameters, hostname or configuration secrets.
+            raise ContractUnavailable("server unavailable") from None
         if len(raw) > MAX_JSON_BYTES:
             raise ContractUnavailable("oversized JSON response")
         try:
-            result = json.loads(raw)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise ContractUnavailable("invalid server JSON") from exc
+            result = _decode_strict_json(raw)
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            raise ContractUnavailable("invalid server JSON") from None
         if not isinstance(result, dict):
             raise ContractUnavailable("JSON object required")
         return result
+
+
+def _read_local_json(path: Path, *, label: str, optional: bool = False):
+    """Bounded, no-symlink JSON read; never include local paths in failures.
+
+    The file size is checked on the opened descriptor, not with a separate
+    path.stat(), to prevent accidental unbounded reads after a file swap.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        # Also refuse symlinks on systems without O_NOFOLLOW.
+        if path.is_symlink():
+            raise ContractUnavailable(f"unreadable local {label} JSON")
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        if optional:
+            return None
+        raise ContractUnavailable(f"missing local {label} fixture") from None
+    except OSError:
+        raise ContractUnavailable(f"unreadable local {label} JSON") from None
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            file_status = os.fstat(handle.fileno())
+            if not stat.S_ISREG(file_status.st_mode):
+                raise ContractUnavailable(f"invalid local {label} file")
+            if file_status.st_size > MAX_JSON_BYTES:
+                raise ContractUnavailable(f"oversized local {label} JSON")
+            raw = handle.read(MAX_JSON_BYTES + 1)
+    except OSError:
+        raise ContractUnavailable(f"unreadable local {label} JSON") from None
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractUnavailable(f"oversized local {label} JSON")
+    try:
+        # Use exactly the same strict JSON grammar for local and HTTP data.
+        return _decode_strict_json(raw)
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise ContractUnavailable(f"invalid local {label} JSON") from None
+
+
+def _persist_inventory(path: Path, snapshot) -> None:
+    """Publish a private inventory atomically; never follow a known tmp path."""
+    raw = json.dumps(asdict(snapshot), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    if len(raw) > MAX_JSON_BYTES:
+        raise ContractUnavailable("oversized local inventory JSON")
+    temp_name = None
+    try:
+        # Randomized, exclusive temporary file in the same directory ensures
+        # os.replace() is atomic and avoids following a pre-existing .tmp link.
+        with NamedTemporaryFile(
+            mode="wb", prefix=".cifericaopds-inventory-", suffix=".tmp",
+            dir=path.parent, delete=False,
+        ) as handle:
+            temp_name = handle.name
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except OSError:
+        raise ContractUnavailable("local inventory persistence unavailable") from None
+    finally:
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
 
 
 def _text(value, label, maximum=512):
@@ -136,8 +260,52 @@ def candidate_inventory(data, previous, *, show_synthetic=False):
     }, parent_plugin_id=PARENT_ID, previous=previous)
 
 
+
+def _published_text(value, *, maximum=256):
+    """Allow only bounded scalar publisher facts, never URLs or credentials."""
+    if not isinstance(value, str):
+        return None
+    # Check the raw value *before* whitespace normalization. Otherwise a CR,
+    # newline or tab in upstream text can be silently converted into content.
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned or len(cleaned) > maximum:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        return None
+    if re.search(r"(?:https?://|www\.|@|(?:access[_-]?token|api[_-]?key|password|bearer)\s*[:=])", cleaned, re.I):
+        return None
+    return cleaned
+
+
+def _published_date(value):
+    raw = _published_text(value, maximum=10)
+    if raw is None or not re.fullmatch(r"(?:1[89]|20)\d{2}(?:-\d{2}-\d{2})?", raw):
+        return None
+    if len(raw) == 10:
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            return None
+    return raw
+
+
+def _published_isbn(value):
+    if not isinstance(value, str):
+        return None
+    raw = re.sub(r"[-\s]", "", value)
+    if len(raw) != 13 or not raw.isdigit() or not raw.startswith(("978", "979")):
+        return None
+    checksum = sum(int(number) * (1 if index % 2 == 0 else 3)
+                   for index, number in enumerate(raw))
+    return raw if checksum % 10 == 0 else None
+
+
 def candidate_results(data, provider_id):
     """Conservative projection: no inferred rights, signed URLs or user data."""
+    if not isinstance(data, dict):
+        raise ContractUnavailable("invalid candidate result envelope")
     values = data.get("items")
     if not isinstance(values, list) or len(values) > MAX_RESULTS:
         raise ContractUnavailable("invalid candidate item list")
@@ -145,30 +313,57 @@ def candidate_results(data, provider_id):
     for item in values:
         if not isinstance(item, dict):
             raise ContractUnavailable("invalid candidate item")
-        record_id = _text(item.get("id"), "record id", 256)
-        title = _text(item.get("title"), "title", 1024)
+        # Opaque but path-free IDs only; reject URLs, tokens and arbitrary
+        # serialized objects before they reach SearchResult or UI/log contexts.
+        record_id = item.get("id")
+        if not isinstance(record_id, str) or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", record_id):
+            raise ContractUnavailable("invalid candidate record id")
+        title = _published_text(item.get("title"), maximum=1024)
+        if title is None:
+            raise ContractUnavailable("invalid candidate title")
+        author = item.get("author")
+        if author is not None:
+            author = _published_text(author, maximum=512)
+            if author is None:
+                raise ContractUnavailable("invalid candidate author")
         if record_id in seen:
             continue
         seen.add(record_id)
-        author = item.get("author")
-        if author is not None and (not isinstance(author, str) or len(author) > 512):
-            raise ContractUnavailable("invalid author")
+        # v0.2 is still unverified. Project *only* bounded, explicit,
+        # bibliographic scalars from the candidate fixture/schema.
+        # Never trust upstream URLs, entitlement, acquisition or free-form metadata.
+        published_isbn = (_published_isbn(item.get("isbn13"))
+                          or _published_isbn(item.get("isbn")))
+        published_language = _published_text(item.get("language"), maximum=12)
+        if published_language and not re.fullmatch(
+                r"[A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?", published_language):
+            published_language = None
+        metadata = {"source_id": provider_id.removeprefix("cifericaopds.")}
+        if published_isbn:
+            metadata["isbn"] = published_isbn
+        if published_language:
+            metadata["language"] = published_language
         rows.append(SearchResult(
             id=f"{provider_id}:{record_id}", record_id=record_id,
             docbase="CIFERICAOPDS", medium="unknown", title=title,
-            author=author, type=None, format=None, publisher=None,
-            published_at=None, description=None, thumbnail_url=None,
-            friendly_url=None, scenario="CATALOG",
-            source_provider=provider_id, source_credential="__public__",
-            metadata={"source_id": provider_id.removeprefix("cifericaopds.")},
+            author=author,
+            type=_published_text(item.get("type"), maximum=80),
+            format=_published_text(item.get("format"), maximum=40),
+            publisher=_published_text(item.get("publisher"), maximum=256),
+            published_at=_published_date(item.get("published_at")),
+            description=None, thumbnail_url=None, friendly_url=None,
+            scenario="CATALOG", source_provider=provider_id,
+            source_credential="__public__", metadata=metadata,
         ))
     return rows
 
 
 class CifericaSession(ProviderSession):
-    def __init__(self, *, client, mode, directory, **kw):
+    def __init__(self, *, client, mode, directory, source_searchable, **kw):
         super().__init__(**kw)
         self._client, self._mode, self._directory = client, mode, directory
+        self._source_searchable = source_searchable
 
     def connect(self):
         self.connected = True  # No discovery or network probe.
@@ -178,27 +373,43 @@ class CifericaSession(ProviderSession):
         self.connected = False
 
     def search(self, query, scope="all", page=0, field="all"):
+        if not isinstance(query, str) or len(query) > 300 or any(
+                ord(ch) < 32 or ord(ch) == 127 for ch in query):
+            raise ContractUnavailable("invalid search query")
+        if type(page) is not int or not 0 <= page <= 100:
+            raise ContractUnavailable("invalid search page")
+        if page:
+            if self._mode == "fixture":
+                return []  # One bounded fixture page; never repeat first-page records.
+            raise ContractUnavailable("candidate server pagination is unverified")
+        # Lock-protected local inventory check; no network.
+        if not self._source_searchable():
+            raise ContractUnavailable("source inactive or changed; reconnect required")
         sid = self.provider_id.removeprefix("cifericaopds.")
         if self._mode == "fixture":
             path = self._directory / "fixture-results.json"
-            if not path.exists():
+            data = _read_local_json(path, label="results", optional=True)
+            if data is None:
                 return []
-            if path.stat().st_size > MAX_JSON_BYTES:
-                raise ContractUnavailable("oversized local results fixture")
-            data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or not isinstance(data.get(sid, {"items": []}), dict):
                 raise ContractUnavailable("invalid local results fixture")
             values = candidate_results(data.get(sid, {"items": []}), self.provider_id)
             q = str(query).strip().casefold()
-            return [x for x in values if q in x.title.casefold() or q in (x.author or "").casefold()]
-        # Explicit user search only. This GET schema is UNVERIFIED for real v0.2.
-        data = self._client.get("/api/v1/search", params={"source_id": sid, "q": str(query)})
-        return candidate_results(data, self.provider_id)
+            rows = [x for x in values if q in x.title.casefold() or q in (x.author or "").casefold()]
+        else:
+            # Explicit user search only; candidate HTTP is NOT confirmed v0.2.
+            data = self._client.get("/api/v1/search", params={"source_id": sid, "q": str(query)})
+            rows = candidate_results(data, self.provider_id)
+        if not self._source_searchable():
+            raise ContractUnavailable("source changed during search; results discarded")
+        return rows
 
 
 class CifericaProvider(ProviderPlugin):
-    def __init__(self, source_id, capabilities, *, client, mode, directory):
+    def __init__(self, source_id, capabilities, *, client, mode, directory,
+                 source_searchable):
         self._client, self._mode, self._directory = client, mode, directory
+        self._source_searchable = source_searchable
         self.descriptor = ProviderDescriptor(
             id=f"cifericaopds.{source_id}", display_name=f"CifericaOPDS · {source_id}",
             description="Public metadata only; no acquisition rights",
@@ -214,6 +425,7 @@ class CifericaProvider(ProviderPlugin):
             descriptor=self.descriptor, credential_id=credential_id,
             label=label, credentials={}, options={},
             client=self._client, mode=self._mode, directory=self._directory,
+            source_searchable=self._source_searchable,
         )
 
 
@@ -221,71 +433,140 @@ class CifericaCollection:
     def __init__(self):
         self._lock = RLock()
         self._snapshot = None
+        # Raw accepted inventory, including hidden synthetic sources. The
+        # public snapshot is a local visibility projection of this inventory.
+        self._full_snapshot = None
         self._callbacks = []
         self._directory = None
         self._client = None
         self._mode = "fixture"
         self._show_synthetic = False
+        self._session_epochs = {}
+        self._active = False
+        self._activation_generation = 0
 
     def activate(self, context):
+        # Retire the previous incarnation before any potentially blocking
+        # configuration/cache I/O. Only the latest activation may publish.
+        with self._lock:
+            self._activation_generation += 1
+            activation = self._activation_generation
+            for sid in self._session_epochs:
+                self._session_epochs[sid] += 1
+            self._active = False
+            self._snapshot = None
+            self._full_snapshot = None
+            self._client = None
+            self._directory = None
+            # Subscriptions from a retired Core instance must not observe
+            # discoveries made under a replacement configuration/identity.
+            self._callbacks.clear()
+
         cfg = dict(context.config)
-        self._mode = cfg.get("mode", "fixture")
-        if self._mode not in ("fixture", "candidate_v02"):
+        mode = cfg.get("mode", "fixture")
+        if mode not in ("fixture", "candidate_v02"):
             raise ContractUnavailable("unknown plugin mode")
-        self._client = JsonClient(cfg.get("base_url", "http://127.0.0.1:8788"),
-                                  cfg.get("timeout_seconds", 4))
-        self._show_synthetic = bool(cfg.get("show_synthetic", False))
-        self._directory = context.data_directory
-        path = self._directory / "inventory.json"
-        if path.is_file() and path.stat().st_size <= MAX_JSON_BYTES:
-            try:
-                self._snapshot = validate_provider_collection_snapshot(
-                    json.loads(path.read_text(encoding="utf-8")),
-                    parent_plugin_id=PARENT_ID,
+        client = JsonClient(cfg.get("base_url", "http://127.0.0.1:8788"),
+                            cfg.get("timeout_seconds", 4))
+        show_synthetic = bool(cfg.get("show_synthetic", False))
+        directory = context.data_directory
+        full_snapshot = None
+        visible_snapshot = None
+        try:
+            cached = _read_local_json(
+                directory / "inventory.json", label="inventory", optional=True,
+            )
+            if cached is not None:
+                full_snapshot = validate_provider_collection_snapshot(
+                    cached, parent_plugin_id=PARENT_ID,
                 )
-            except (ValueError, TypeError, OSError):
-                self._snapshot = None
+                visible_snapshot = self._visible_snapshot(
+                    full_snapshot, show_synthetic=show_synthetic,
+                )
+        except (ContractUnavailable, ValueError, TypeError, RecursionError):
+            # An invalid cache must not break activation or leak private paths.
+            # An explicit refresh is required before any source is published.
+            full_snapshot = None
+            visible_snapshot = None
+
+        with self._lock:
+            if self._activation_generation != activation:
+                # A later activate()/deactivate() retired this invocation.
+                # Never revive it or overwrite its chosen cache and endpoint.
+                raise ContractUnavailable("plugin changed during activation")
+            self._mode = mode
+            self._client = client
+            self._show_synthetic = show_synthetic
+            self._directory = directory
+            self._full_snapshot = full_snapshot
+            self._snapshot = visible_snapshot
+            self._active = True
         return self
 
     def deactivate(self):
         with self._lock:
+            self._activation_generation += 1
+            self._active = False
+            for sid in self._session_epochs:
+                self._session_epochs[sid] += 1
             self._callbacks.clear()
+            self._directory = None
+            self._client = None
+            self._full_snapshot = None
+            self._snapshot = None
 
     def snapshot(self):
         with self._lock:
-            if self._snapshot is None:
-                raise ContractUnavailable("no validated inventory; explicit refresh required")
+            if not self._active or self._snapshot is None:
+                raise ContractUnavailable("no validated inventory; plugin inactive or explicit refresh required")
             return self._snapshot
+
+    def _visible_snapshot(self, full, *, show_synthetic=None):
+        if show_synthetic is None:
+            show_synthetic = self._show_synthetic
+        if full is None or show_synthetic:
+            return full
+        return replace(full, children=tuple(
+            row for row in full.children if row.kind != "synthetic.merged"
+        ))
 
     def refresh(self, *, explicit=True):
         if explicit is not True:
             raise ContractUnavailable("discovery must be explicit")
-        if self._directory is None:
-            raise ContractUnavailable("plugin is not active")
-        if self._mode == "fixture":
-            path = self._directory / "fixture-sources.json"
-            if path.stat().st_size > MAX_JSON_BYTES:
-                raise ContractUnavailable("oversized local source fixture")
-            data = json.loads(path.read_text(encoding="utf-8"))
+        with self._lock:
+            if not self._active or self._directory is None:
+                raise ContractUnavailable("plugin is not active")
+            activation = self._activation_generation
+            directory = self._directory
+            mode = self._mode
+        if mode == "fixture":
+            path = directory / "fixture-sources.json"
+            data = _read_local_json(path, label="source")
         else:
             # Experimental candidate route, not an assertion about upstream v0.2.
             data = self._client.get("/api/v1/sources")
         if not isinstance(data, dict):
             raise ContractUnavailable("invalid candidate inventory")
         with self._lock:
-            accepted = candidate_inventory(data, self._snapshot,
-                                           show_synthetic=self._show_synthetic)
-            if accepted == self._snapshot:
+            if not self._active or self._activation_generation != activation:
+                raise ContractUnavailable("plugin changed during source refresh")
+            # Validate and cache the *full* upstream inventory. Display
+            # options must never rewrite generation semantics or persist a
+            # lossy, identity-dependent view of source capabilities.
+            accepted_full = candidate_inventory(
+                data, self._full_snapshot, show_synthetic=True,
+            )
+            accepted = self._visible_snapshot(accepted_full)
+            if accepted_full == self._full_snapshot and accepted == self._snapshot:
                 return accepted
-            path = self._directory / "inventory.json"
-            temp = path.with_suffix(".tmp")
-            try:
-                temp.write_text(json.dumps(asdict(accepted), ensure_ascii=False,
-                                           sort_keys=True), encoding="utf-8")
-                os.replace(temp, path)
-            finally:
-                if temp.exists():
-                    temp.unlink()
+            if accepted_full != self._full_snapshot:
+                _persist_inventory(directory / "inventory.json", accepted_full)
+            previous = {row.source_id: row for row in self._snapshot.children} if self._snapshot else {}
+            current = {row.source_id: row for row in accepted.children}
+            for source_id in previous.keys() | current.keys():
+                if previous.get(source_id) != current.get(source_id):
+                    self._session_epochs[source_id] = self._session_epochs.get(source_id, 0) + 1
+            self._full_snapshot = accepted_full
             self._snapshot = accepted
             subscribers = tuple(self._callbacks)
         for callback in subscribers:
@@ -295,18 +576,37 @@ class CifericaCollection:
                 pass
         return accepted
 
+    def _searchable(self, source_id, source_revision, catalog_generation, epoch):
+        """Inspect current validated local inventory and source incarnation."""
+        with self._lock:
+            snapshot = self._snapshot
+            if not self._active or snapshot is None or self._session_epochs.get(source_id, 0) != epoch:
+                return False
+            return any(
+                child.source_id == source_id
+                and child.status == "ready"
+                and "catalog.search" in child.capabilities
+                and child.source_revision == source_revision
+                and child.catalog_generation == catalog_generation
+                for child in snapshot.children
+            )
+
     def create_provider(self, source_id):
         with self._lock:
             snapshot = self._snapshot
-        if snapshot is None:
-            raise ContractUnavailable("no local source inventory")
-        child = next((row for row in snapshot.children
-                      if row.source_id == source_id and row.status == "ready"), None)
+            if not self._active or snapshot is None:
+                raise ContractUnavailable("no active local source inventory")
+            child = next((row for row in snapshot.children
+                          if row.source_id == source_id and row.status == "ready"), None)
+            epoch = self._session_epochs.get(source_id, 0)
         if child is None:
             raise ContractUnavailable("source absent or disabled")
-        return CifericaProvider(source_id, child.capabilities,
-                                client=self._client, mode=self._mode,
-                                directory=self._directory)
+        return CifericaProvider(
+            source_id, child.capabilities, client=self._client, mode=self._mode,
+            directory=self._directory,
+            source_searchable=lambda: self._searchable(
+                source_id, child.source_revision, child.catalog_generation, epoch),
+        )
 
     def subscribe(self, callback):
         with self._lock:

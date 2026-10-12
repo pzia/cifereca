@@ -1,0 +1,1434 @@
+{
+  "HistoryCoverResolver.__init__": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='service', annotation=Name(id='LibraryService', ctx=Load())), arg(arg='diagnostics', annotation=Name(id='Diagnostics', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "HistoryCoverResolver.close": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "HistoryCoverResolver.stats": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='int', ctx=Load())], ctx=Load()), ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "HistoryCoverResolver._key": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='provider', annotation=Name(id='str', ctx=Load())), arg(arg='record_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='author', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='year', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "HistoryCoverResolver.request": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='provider', annotation=Name(id='str', ctx=Load())), arg(arg='record_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='author', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='year', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='default_url', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='callback', annotation=Subscript(value=Name(id='Callable', ctx=Load()), slice=Tuple(elts=[List(elts=[BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), Constant(value=None)], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='_MetaRequest', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.__init__": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='window', annotation=Constant(value='MainWindow'))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._cancel_meta_request": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.empty": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='description', annotation=Name(id='str', ctx=Load())), arg(arg='icon', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='book-open-symbolic')])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._cover_and_title": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='subtitle', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='thumbnail', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='badges', annotation=Subscript(value=Name(id='Iterable', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Tuple(elts=[], ctx=Load())])",
+    "returns": "Name(id='CoverView', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._group": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='fields')], kw_defaults=[Tuple(elts=[], ctx=Load())], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._append_content": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='widget')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._action_focus_key": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='button')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "DetailPanel._focused_action_key": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._clear_actions": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._detail_action_priority": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='button')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='int', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "DetailPanel._actions": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='buttons', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Button', ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.show_presentation": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='presentation', annotation=Name(id='UiBookDetailPresentation', ctx=Load()))], kwonlyargs=[arg(arg='description', annotation=BinOp(left=Name(id='object', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value=None)], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.show_summary": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='subtitle', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='thumbnail', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='badges', annotation=Subscript(value=Name(id='Iterable', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())), arg(arg='group_title', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='rows', annotation=BinOp(left=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[None, Constant(value=None), Constant(value=None), Tuple(elts=[], ctx=Load()), Constant(value=None), Constant(value=None)], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.update_cached_book_details": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='contributions')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.add_group": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.add_actions": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='buttons', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Button', ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._direct_download_action": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.show_loan": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='include_pnb_action', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=True)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._decorate": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.show_history": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='HistoryItem', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.show_booking": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='Booking', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.show_search": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='loading', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel._show_description": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='description')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "DetailPanel.show_item_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='detail', annotation=Name(id='ItemDetail', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage.__init__": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='window', annotation=Constant(value='MainWindow')), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='subtitle', annotation=Name(id='str', ctx=Load())), arg(arg='empty_title', annotation=Name(id='str', ctx=Load())), arg(arg='empty_desc', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._factory_setup": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='_factory', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='SignalListItemFactory', ctx=Load())), arg(arg='list_item', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='ListItem', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._factory_bind": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='_factory', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='SignalListItemFactory', ctx=Load())), arg(arg='list_item', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='ListItem', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._factory_unbind": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='_factory', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='SignalListItemFactory', ctx=Load())), arg(arg='list_item', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='ListItem', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage.connect_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='callback', annotation=Subscript(value=Name(id='Callable', ctx=Load()), slice=Tuple(elts=[List(elts=[BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), Constant(value=None)], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._selection_changed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='_selection', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='SingleSelection', ctx=Load())), arg(arg='_pspec')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage.select_key": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='key', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._set_narrow_detail_context": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='active', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._show_narrow_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._show_narrow_list": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage.clear_rows": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage.set_total_only_count": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='enabled', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=True)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage._item_count_label": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='count', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "MasterDetailPage._update_count": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='total_count', annotation=BinOp(left=Name(id='int', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage.show_rows": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='BookListItem', ctx=Load()), ctx=Load())), arg(arg='total_count', annotation=BinOp(left=Name(id='int', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MasterDetailPage.append_rows": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='BookListItem', ctx=Load()), ctx=Load())), arg(arg='total_count', annotation=BinOp(left=Name(id='int', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "PublicBookMasterDetailView.__init__": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='window', annotation=Constant(value='MainWindow'))], kwonlyargs=[arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='subtitle', annotation=Name(id='str', ctx=Load())), arg(arg='empty_title', annotation=Name(id='str', ctx=Load())), arg(arg='empty_desc', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None, Constant(value=''), Constant(value='Aucun document'), Constant(value='Aucun document à afficher.')], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "PublicBookMasterDetailView.widget": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [
+      "property"
+    ],
+    "async": false
+  },
+  "PublicBookMasterDetailView.append_toolbar": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='widget', annotation=Name(id='object', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "PublicBookMasterDetailView.show_rows": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows'), arg(arg='total_count', annotation=BinOp(left=Name(id='int', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "PublicBookMasterDetailView.set_list_state": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='description', annotation=Name(id='str', ctx=Load())), arg(arg='icon_name', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value='system-search-symbolic')])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "PublicBookMasterDetailView.connect_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='callback')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "PublicBookMasterDetailView.show_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "PublicBookMasterDetailView.empty_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='description', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='Aucun document sélectionné'), Constant(value='Sélectionnez un document pour afficher ses détails.')])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.__init__": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='app', annotation=Attribute(value=Name(id='Adw', ctx=Load()), attr='Application', ctx=Load())), arg(arg='config', annotation=Name(id='Config', ctx=Load())), arg(arg='service', annotation=Name(id='LibraryService', ctx=Load())), arg(arg='diagnostics', annotation=Name(id='Diagnostics', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.action_button": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='label', annotation=Name(id='str', ctx=Load())), arg(arg='icon_name', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[arg(arg='suggested', annotation=Name(id='bool', ctx=Load())), arg(arg='destructive', annotation=Name(id='bool', ctx=Load())), arg(arg='tooltip', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value=False), Constant(value=False), Constant(value=None)], defaults=[Constant(value=None)])",
+    "returns": "Attribute(value=Name(id='Gtk', ctx=Load()), attr='Button', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._install_css": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._cancel_notification_hide": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._hide_notification": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._dismiss_notification": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.toast": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='message', annotation=Name(id='str', ctx=Load())), arg(arg='timeout', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=3)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.show_error": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='message', annotation=Name(id='str', ctx=Load())), arg(arg='title', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='Une erreur est survenue')])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.show_attention": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='message', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='code', annotation=Name(id='str', ctx=Load()))], kw_defaults=[Constant(value='attention_required')], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._cancel_activity_hide": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._refresh_activity_history": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_pending_activity_error": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._hide_activity_feedback": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._dismiss_activity_feedback": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._schedule_activity_reduce": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='delay', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=4)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._activity_result": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='message', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='success', annotation=Name(id='bool', ctx=Load())), arg(arg='persistent', annotation=Name(id='bool', ctx=Load())), arg(arg='task_id', annotation=BinOp(left=Name(id='int', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value=True), Constant(value=False), Constant(value=None)], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._task_started": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='task_id', annotation=Name(id='int', ctx=Load())), arg(arg='count', annotation=Name(id='int', ctx=Load())), arg(arg='label', annotation=Name(id='str', ctx=Load())), arg(arg='priority', annotation=Name(id='int', ctx=Load())), arg(arg='kind', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._task_progress": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='label', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._task_finished": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='task_id', annotation=Name(id='int', ctx=Load())), arg(arg='remaining', annotation=Name(id='int', ctx=Load())), arg(arg='label', annotation=Name(id='str', ctx=Load())), arg(arg='success', annotation=Name(id='bool', ctx=Load())), arg(arg='error', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._functional_error_message": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='message', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "MainWindow._busy_changed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='count', annotation=Name(id='int', ctx=Load())), arg(arg='label', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._on_close_request": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], vararg=arg(arg='_args'), kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_startup": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.connect_configured_sources": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.reconnect_sources": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.activate_startup_plugins": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.logout": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._open_prelogin_diagnostics": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_main_shell": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._plugins_changed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._subscribe_cached_book_details": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._cached_book_cache_invalidated": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._cancel_cached_book_details": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._request_cached_book_details": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route', annotation=Name(id='str', ctx=Load())), arg(arg='key', annotation=Name(id='str', ctx=Load())), arg(arg='item', annotation=Name(id='dict', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._add_nav_row": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route', annotation=Name(id='str', ctx=Load())), arg(arg='label', annotation=Name(id='str', ctx=Load())), arg(arg='icon_name', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_standard_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._rebuild_plugin_pages": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._toggle_nav_group": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='group'), arg(arg='expanded')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._install_shell_shortcuts": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._quit_application": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._open_pages_menu": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._focus_search": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_settings": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._cycle_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='direction')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_shortcuts": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._create_shell_header": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._ensure_pages_menu_rightmost": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._refresh_header_actions": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._invoke_ui_action": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='action'), arg(arg='host')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_route": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._navigation_state": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._update_navigation_buttons": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._visit_route": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._restore_navigation_state": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='state')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.can_go_back": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.can_go_forward": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.go_back": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.go_forward": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._nav_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='_listbox', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='ListBox', ctx=Load())), arg(arg='row', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='ListBoxRow', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.navigate": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='route', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._replace_dropdown_labels": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='dropdown'), arg(arg='labels')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._populate_account_dropdown": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='identity_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._populate_accounts": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._identity_changed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='dropdown', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='DropDown', ctx=Load())), arg(arg='_pspec')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.open_identity_library": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='identity_id', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.open_identity_view": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='identity_id', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='route', annotation=Name(id='str', ctx=Load())), arg(arg='providers')], kw_defaults=[None, Tuple(elts=[], ctx=Load())], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._activate_identity": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='identity_id', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._account_changed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='dropdown', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='DropDown', ctx=Load())), arg(arg='_pspec')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_dashboard_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._sync_status_label": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='status', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "MainWindow._refresh_statistics": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_statistics": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._render_dashboard": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._choose_identity_directory": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='entry'), arg(arg='root', annotation=Name(id='Path', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._choose_adept_profile": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='entry'), arg(arg='control')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_sync_issues": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='card')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_sync_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._refresh_sync_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_tools_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._refresh_tools_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.run_opening_sync": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[arg(arg='deep', annotation=Name(id='bool', ctx=Load()))], kw_defaults=[Constant(value=False)], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._known_item_languages": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='provider_id', annotation=Name(id='str', ctx=Load())), arg(arg='item_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='metadata', annotation=BinOp(left=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Subscript(value=Name(id='set', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_loans_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='MasterDetailPage', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._loan_filter_toggled": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='button', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='ToggleButton', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._populate_loans": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='Loan', ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._render_loans": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._loan_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.refresh_loans": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='force', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=True), Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._loans_refreshed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.confirm_renew": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._renew": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.confirm_return": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._return_loan_result": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='result', annotation=Name(id='Any', ctx=Load()))], kwonlyargs=[arg(arg='channel', annotation=Name(id='str', ctx=Load()))], kw_defaults=[None], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._return_loan": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._return_loan_pnb": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._query_controls": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='changed'), arg(arg='activate')], kwonlyargs=[arg(arg='library')], kw_defaults=[Constant(value=False)], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._reset_search_enter": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_controls_changed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_enter": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_key_interaction": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='_controller'), arg(arg='keyval'), arg(arg='_keycode'), arg(arg='_state')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_search_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='MasterDetailPage', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.search_books": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='query', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='field', annotation=Name(id='str', ctx=Load())), arg(arg='online', annotation=Name(id='bool', ctx=Load())), arg(arg='identity_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value='title'), Constant(value=False), Constant(value=None)], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.run_search": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='force', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[arg(arg='keyboard', annotation=Name(id='bool', ctx=Load()))], kw_defaults=[Constant(value=False)], defaults=[Constant(value=False)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._sync_search_detail_after_results": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._populate_local_search": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._populate_search": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='SearchResult', ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='announce', annotation=Name(id='bool', ctx=Load()))], kw_defaults=[Constant(value=True)], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._render_search_results": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='int', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._update_search_count": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='shown', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_detail_request_context": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_detail_context_current": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='selected_id', annotation=Name(id='str', ctx=Load())), arg(arg='context', annotation=BinOp(left=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._apply_search_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='selected_id', annotation=Name(id='str', ctx=Load())), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='detail', annotation=Name(id='ItemDetail', ctx=Load()))], kwonlyargs=[arg(arg='context', annotation=BinOp(left=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value=None)], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_detail_error": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='selected_id', annotation=Name(id='str', ctx=Load())), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='exc', annotation=Name(id='BaseException', ctx=Load()))], kwonlyargs=[arg(arg='context', annotation=BinOp(left=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), Name(id='int', ctx=Load()), BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value=None)], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_history_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='MasterDetailPage', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._identity_request_current": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='identity_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='generation', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.refresh_history": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='force', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False), Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._history_book_row": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='x', annotation=Name(id='HistoryItem', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='BookListItem', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._rerender_history": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._populate_history": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='HistoryItem', ctx=Load()), ctx=Load())), arg(arg='preserve_all', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._history_scroll_changed": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='adjustment', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Adjustment', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._append_history_chunk": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._history_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_bookings_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='MasterDetailPage', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.refresh_bookings": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='force', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False), Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._populate_bookings": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='Booking', ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._booking_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_library_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='MasterDetailPage', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._kobo_backup_status_label": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='status', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "MainWindow._library_state_label": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='item', annotation=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "MainWindow._library_availability_label": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='cls'), arg(arg='item', annotation=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [
+      "classmethod"
+    ],
+    "async": false
+  },
+  "MainWindow._library_filter_toggled": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='button', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='ToggleButton', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._library_search_online": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='_button', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Button', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.choose_acsm": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._search_facet": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='field'), arg(arg='text'), arg(arg='controls')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._facet_values": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._facet_value_button": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='label'), arg(arg='field'), arg(arg='value'), arg(arg='controls')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._facet_value_group": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='choices'), arg(arg='field'), arg(arg='controls')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._attach_row_facets": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='rows'), arg(arg='objects'), arg(arg='controls')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._add_facets": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail'), arg(arg='item'), arg(arg='controls')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._decorate_book_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._book_action_context": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='UiActionContext', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._add_plugin_book_actions": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._known_search_result": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._load_known_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.refresh_library": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='scan', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[arg(arg='refresh_covers', annotation=Name(id='bool', ctx=Load()))], kw_defaults=[Constant(value=False)], defaults=[Constant(value=False), Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_library_entries": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='entries', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.open_book_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='book', annotation=Name(id='BookRef', ctx=Load()))], kwonlyargs=[arg(arg='identity_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value=None)], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._open_library_item": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='key', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._select_pending_library_item": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._render_library": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='entries', annotation=BinOp(left=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_recent_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='MasterDetailPage', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.refresh_recent": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._show_recent_entries": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='items', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._render_recent": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='items', annotation=BinOp(left=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='dict', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='Any', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._add_local_book_actions": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._open_placement": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='placement')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._add_catalogue_action": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._book_description": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [
+      "staticmethod"
+    ],
+    "async": false
+  },
+  "MainWindow._add_book_notice": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail'), arg(arg='item')], kwonlyargs=[arg(arg='include_description')], kw_defaults=[Constant(value=True)], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._recent_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._render_kobo_loans": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._book_recommendation_target": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._add_book_recommendation_action": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='detail'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._library_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._kobo_selected": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._configure_kobo_backup_timer": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[arg(arg='run_now', annotation=Name(id='bool', ctx=Load()))], kw_defaults=[Constant(value=False)], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.run_kobo_backup": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='manual', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=True), Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.choose_adept_loan": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='acquisition_id'), arg(arg='loan'), arg(arg='control')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._present_adept_loan_choices": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='acquisition_id'), arg(arg='loan'), arg(arg='result')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.reconcile_adept_from_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='acquisition_id'), arg(arg='loan'), arg(arg='control')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.return_adept_from_detail": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='acquisition_id', annotation=Name(id='str', ctx=Load())), arg(arg='control', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.prepare_pnb_for_loan": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='loan', annotation=Name(id='Loan', ctx=Load())), arg(arg='send', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False), Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.can_borrow_item": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Name(id='bool', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._eligible_borrow_accounts": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": null,
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.borrow_search_item": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[arg(arg='account')], kw_defaults=[Constant(value=None)], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.download_direct_item": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item', annotation=Name(id='SearchResult', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.open_downloads_folder": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.open_library_folder": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow._build_settings_page": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='standalone', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False)])",
+    "returns": "Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "MainWindow.refresh_diagnostics_text": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  },
+  "fr_date": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='value', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='with_time', annotation=Name(id='bool', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False)])",
+    "returns": "Name(id='str', ctx=Load())",
+    "decorators": [],
+    "async": false
+  },
+  "clear_box": {
+    "args": "arguments(posonlyargs=[], args=[arg(arg='box', annotation=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Box', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "returns": "Constant(value=None)",
+    "decorators": [],
+    "async": false
+  }
+}

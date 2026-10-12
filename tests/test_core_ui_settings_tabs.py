@@ -1,3 +1,4 @@
+from tests.gui_source import gui_source_text
 from pathlib import Path
 
 
@@ -6,7 +7,7 @@ MAIN_WINDOW = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def test_settings_tabs_stay_compact_without_shortening_labels():
-    source = MAIN_WINDOW.read_text()
+    source = gui_source_text(MAIN_WINDOW)
 
     assert '("accounts", "Identités et comptes")' in source
     assert '("sync", "Synchronisation")' in source

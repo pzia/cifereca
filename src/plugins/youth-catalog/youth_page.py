@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+import ipaddress
 import re
 from time import perf_counter
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from cifereca.plugin_api import (
     BookRef,
@@ -47,16 +48,53 @@ def _fold(value: object) -> str:
 
 
 def public_url(value: object) -> str:
-    raw = _text(value)
-    if not raw:
+    """Public notice/cover URL only; never render a local or signed link.
+
+    This is a display boundary, not proof that a library holds an edition.
+    """
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        return ""
+    if any(ord(ch) < 33 or ord(ch) == 127 for ch in value):
+        return ""
+    if any(ch in value for ch in '<>\\'):
         return ""
     try:
-        parts = urlsplit(raw)
+        parts = urlsplit(value)
+        host = parts.hostname
+        port = parts.port
     except ValueError:
         return ""
-    if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
+    if (parts.scheme not in {"http", "https"} or not host
+            or parts.username is not None or parts.password is not None
+            or parts.fragment or "%" in host):
         return ""
-    return raw
+    if port not in (None, 443 if parts.scheme == "https" else 80):
+        return ""
+    hostname = host.rstrip(".").casefold()
+    if (hostname in {"localhost", "local", "internal"}
+            or hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa"))):
+        return ""
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            return ""
+    parameters = parse_qsl(parts.query, keep_blank_values=True)
+    if len(parameters) > 32:
+        return ""
+    for key, val in parameters:
+        field = re.sub(r"[^a-z0-9]", "", key.casefold())
+        if any(word in field for word in (
+                "token", "secret", "password", "session", "auth",
+                "signature", "apikey", "accesskey", "credential",
+                "jwt", "csrf", "signed", "policy", "expires",
+        )) or field.startswith(("xamz", "xgoog")):
+            return ""
+        if "@" in val or re.search(r"\bbearer\s", val, re.I):
+            return ""
+    return value
 
 
 def age_text(age_range: object) -> str:
@@ -236,7 +274,9 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
             metadata_fields.append(DetailField(
                 f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
             ))
-    link = public_url(getattr(book, "friendly_url", "") or getattr(book, "notice_url", ""))
+    # An unsafe friendly link must not hide an independently safe notice URL.
+    link = (public_url(getattr(book, "friendly_url", ""))
+            or public_url(getattr(book, "notice_url", "")))
     links = (DocumentLink("notice", "Voir la notice publique", link),) if link else ()
     sections = [DetailSection("ages", "Âges attestés", age_fields)]
     if metadata_fields:
@@ -636,6 +676,9 @@ class YouthView:
         ])
         self.identity.set_tooltip_text("Choisit le profil dont le cache Jeunesse est affiché. Aucun changement d’identité implicite.")
         self.identity.connect("notify::selected", lambda *_: self.identity_changed())
+        identity_label = Gtk.Label(label="_Profil", use_underline=True, xalign=0)
+        identity_label.set_mnemonic_widget(self.identity)
+        self.widget.append(identity_label)
         self.widget.append(self.identity)
 
         filters = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5)
@@ -674,6 +717,10 @@ class YouthView:
             "Inclut les estimations d’âge dans le filtre ; désactivé, seuls les âges attestés sont retenus."
         )
         filters.append(self.inferred)
+        for index in range(len(controls) + 1):
+            child = filters.get_child_at_index(index)
+            if child is not None:
+                child.set_focusable(False)
         for entry in (self.query, self.language, self.format, self.book_type, self.themes):
             entry.connect("changed", lambda *_: self.filters_changed())
         self.query.connect("activate", lambda *_: self.query_activated())
@@ -1045,27 +1092,48 @@ class YouthView:
         presentation = detail_presentation(self.selected_book)
         title = _text(getattr(self.selected_book, "title", ""))
         search = getattr(self.host, "search_books", None)
-        if callable(search) and 2 <= len(title) <= 512:
+        if callable(search):
             identity_id = self.identity_id()
-            presentation = replace(presentation, actions=(
-                *presentation.actions,
-                UiBookDetailAction(
+            actions = list(presentation.actions)
+            if 2 <= len(title) <= 512:
+                actions.append(UiBookDetailAction(
                     id="search-library",
                     title="Rechercher en bibliothèque",
                     icon_name="system-search-symbolic",
                     callback=lambda q=title, identity=identity_id: self._search_library(
-                        q, identity,
+                        q, identity, field="title",
                     ),
-                ),
-            ))
+                ))
+            # ISBN is a bibliographic *lookup* only. It does not establish
+            # inventory, ownership, availability or a direct notice link.
+            identifiers = getattr(self.selected_book, "identifiers", {})
+            getter = getattr(identifiers, "get", None)
+            raw_isbn = getter("isbn", "") if callable(getter) else ""
+            # The public host bridge can reuse this method without importing
+            # the whole Youth module. No normalization is needed when the
+            # selected row provides no ISBN mapping.
+            isbn = normalize_isbn(raw_isbn) if raw_isbn else ""
+            if isbn:
+                actions.append(UiBookDetailAction(
+                    id="search-library-isbn",
+                    title="Rechercher cette édition par ISBN",
+                    icon_name="system-search-symbolic",
+                    callback=lambda q=isbn, identity=identity_id: self._search_library(
+                        q, identity, field="isbn",
+                    ),
+                ))
+            if actions:
+                presentation = replace(presentation, actions=tuple(actions))
         self.master.show_detail(presentation)
         refresh_actions()
 
-    def _search_library(self, query: str, identity_id: str) -> None:
-        """Local catalogue only. Reject cross-identity navigation explicitly."""
+    def _search_library(self, query: str, identity_id: str, *, field: str = "title") -> None:
+        """Explicit local search; no proof of holdings or automatic network I/O."""
+        if field not in {"title", "isbn"}:
+            return
         method = getattr(self.host, "search_books", None)
         if not callable(method) or not method(
-            query, field="title", online=False, identity_id=identity_id,
+            query, field=field, online=False, identity_id=identity_id,
         ):
             self.host.toast("Recherche impossible : vérifiez le profil sélectionné.")
 

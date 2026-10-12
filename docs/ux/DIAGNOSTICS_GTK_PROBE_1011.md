@@ -1,5 +1,10 @@
 # Recette UX Diagnostics P0 — scénario GTK4 isolé
 
+**Préparation de l'environnement :** [environnements/E2E-UX.md](../../environnements/E2E-UX.md).
+Pour Debian 13 rootless, utiliser la commande `headless` + `gtk-python`
+du guide (le runner général masque actuellement `PYTHONPATH` de GI).
+
+
 Commande (sur environnement Debian 13 du dépôt, GTK4/PyGObject disponible) :
 
 ```bash
@@ -19,12 +24,15 @@ l'absence de vérification active/IA implicite, le défilement autonome et
 l'agrandissement du rapport, le JSON expurgé et la pagination 50 → 15.
 
 **Limites explicites :** le probe monte le widget du plugin dans une fenêtre
-GTK réelle, **pas** la fenêtre complète de Cifereca. Il n'atteste ni le parcours
-de navigation depuis la bibliothèque, ni les clics physiques XTEST, ni le
-presse-papiers système, ni l'accessibilité clavier complète. Ces contrôles
-restent dans la recette D01–D16 de #1011 et nécessitent une seconde passe GTK.
-Ne pas clôturer #1011 sur ce seul scénario.
+GTK réelle, **pas** la fenêtre complète de Cifereca. Le code du probe utilise
+désormais XTEST pour une activation clavier et interroge le presse-papiers GTK,
+mais **ces contrôles n'ont pas été validés par une exécution E2E PASS**. Ils
+ne prouvent ni le parcours Bibliothèque → Diagnostics, ni une couverture
+complète d'accessibilité clavier. Les contrôles D01–D16 de #1011 restent
+à recetter. Ne pas clôturer #1011 sur ce seul scénario.
 
-L'environnement de ce changement ne fournit pas `gi` (PyGObject) :
-**scénario créé mais pas exécuté**, aucune capture PASS annoncée.
-Aucun nouveau workflow GitHub Actions.
+L'environnement local initial ne fournissait pas `gi` (PyGObject).
+Un runner GitHub a depuis validé l'installation GI/GTK4/Xvfb, **mais pas
+le scénario fonctionnel** ; les tentatives ultérieures ont été arrêtées
+pour budget GitHub Actions. Aucune capture PASS du parcours n'est annoncée.
+Ne pas déclencher de nouveau workflow ; privilégier la recette locale documentée.
