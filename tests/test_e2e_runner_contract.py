@@ -61,6 +61,9 @@ def test_diagnostics_structured_real_gtk_redacts_and_preserves_types():
     for marker in (
         "D07_readable_preserves_false_zero_null_empty_and_unicode",
         "D07_json_indented_typed_and_redacted",
+        "D07_json_file_export_exact_redacted_via_gtk",
+        "D07_real_gtk_file_chooser_opened_by_xtest",
+        "02c-dialogue-enregistrer-json-gtk",
         "D07_raw_matches_json_without_secret",
         "D13_ctrl_c_selection_expurgated",
         "D13_support_copy_button_xtest_exact_redacted",
