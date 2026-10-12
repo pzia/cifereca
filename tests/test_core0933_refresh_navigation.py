@@ -7,13 +7,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ROOT / "src/cifereca/services.py"
 MAIN = ROOT / "src/cifereca/gui/main_window.py"
+LOANS = ROOT / "src/cifereca/gui/loans_controller.py"
 MODELS = ROOT / "src/cifereca/plugin_api/models.py"
 
 
 def _method_source(path: Path, class_name: str, method_name: str) -> str:
     tree = ast.parse(path.read_text())
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+    scope = (tree.body if class_name is None else next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name).body)
+    method = next(node for node in scope if isinstance(node, ast.FunctionDef) and node.name == method_name)
     return ast.unparse(method)
 
 
@@ -49,7 +50,7 @@ def test_adept_refresh_is_inventory_only():
 
 
 def test_late_loan_refresh_for_old_identity_is_ignored():
-    source = _method_source(MAIN, "MainWindow", "refresh_loans")
+    source = _method_source(LOANS, None, "refresh_loans")
 
     assert "identity_id = identity.identity_id if identity else None" in source
     assert "if (current.identity_id if current else None) == identity_id:" in source

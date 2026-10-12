@@ -107,22 +107,26 @@ class TaskRunner:
                 else:
                     if err:
                         err(payload)
-                    elif isinstance(payload, AttentionRequired):
-                        _TRACE_LOG.warning(
-                            "TRACE attention-required code=%s technical_detail=%s",
-                            payload.code, payload.technical_detail,
-                        )
-                        self.window.show_attention(payload.user_message, code=payload.code)
-                    elif isinstance(payload, UserFacingError):
-                        _TRACE_LOG.warning(
-                            "TRACE user-facing-error code=%s technical_detail=%s",
-                            payload.code, payload.technical_detail,
-                        )
-                        self.window.show_error(payload.user_message)
                     else:
-                        self.window.show_error(str(payload))
+                        self.present_error(payload)
                 return False
 
             GLib.idle_add(deliver)
 
         future.add_done_callback(done)
+
+    def present_error(self, payload: BaseException) -> None:
+        if isinstance(payload, AttentionRequired):
+            _TRACE_LOG.warning(
+                "TRACE attention-required code=%s technical_detail=%s",
+                payload.code, payload.technical_detail,
+            )
+            self.window.show_attention(payload.user_message, code=payload.code)
+        elif isinstance(payload, UserFacingError):
+            _TRACE_LOG.warning(
+                "TRACE user-facing-error code=%s technical_detail=%s",
+                payload.code, payload.technical_detail,
+            )
+            self.window.show_error(payload.user_message)
+        else:
+            self.window.show_error(str(payload))

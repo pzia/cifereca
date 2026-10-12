@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -11,7 +12,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _method(class_name: str, method_name: str, namespace=None):
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(gui_source_text(SOURCE))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
     ns = dict(namespace or {})
@@ -33,7 +34,7 @@ def test_repeated_action_decoration_deduplicates_open_and_send_actions():
 
 
 def test_library_group_uses_same_three_column_truncation_contract_as_notice():
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(gui_source_text(SOURCE))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_group")
     source = ast.unparse(method)
@@ -54,7 +55,7 @@ def test_action_width_budget_has_exact_fit_boundary():
 
 
 def test_detail_facets_replace_previous_inline_value_group_without_footer_tags():
-    tree = ast.parse(SOURCE.read_text())
+    tree = ast.parse(gui_source_text(SOURCE))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_add_facets")
     source = ast.unparse(method)

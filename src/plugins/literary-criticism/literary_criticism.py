@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
+from itertools import islice
 import re
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -15,6 +16,11 @@ _FEED_TYPES = {
     "application/atom+xml": "atom",
     "application/feed+json": "jsonfeed",
 }
+# Discovery preview is not bulk scraping: never exhaust a third-party stream.
+MAX_DISCOVERY_HTML_CHARS = 128_000
+MAX_FEED_LINKS_PER_PAGE = 32
+MAX_FEED_URLS_PER_ROW = 8
+MAX_SEARCH_ROWS_PER_RESULT = 4
 
 
 def _text(value: object) -> str:
@@ -226,17 +232,21 @@ class _FeedLinkParser(HTMLParser):
         rel = {item.casefold() for item in row.get("rel", "").split()}
         media_type = row.get("type", "").split(";", 1)[0].strip().casefold()
         href = row.get("href", "")
-        if "alternate" in rel and href and media_type in _FEED_TYPES:
+        if ("alternate" in rel and href and media_type in _FEED_TYPES
+                and len(self.links) < MAX_FEED_LINKS_PER_PAGE):
             self.links.append((href, media_type, row.get("title", "")))
 
 
 def discover_feed_links(page_url: str, html: str) -> tuple[FeedCandidate, ...]:
     base = canonical_url(page_url)
-    if not base:
+    if not base or not isinstance(html, str) or len(html) > MAX_DISCOVERY_HTML_CHARS:
+        # Oversized or non-text payload is not evidence of zero feeds.
+        # A preview must never parse a third-party multi-megabyte document.
         return ()
     parser = _FeedLinkParser()
     try:
-        parser.feed(str(html or ""))
+        parser.feed(html)
+        parser.close()
     except Exception:
         return ()
     out: list[FeedCandidate] = []
@@ -254,6 +264,20 @@ def discover_feed_links(page_url: str, html: str) -> tuple[FeedCandidate, ...]:
             evidence="html-alternate",
         ))
     return tuple(out)
+
+
+def _limited_feed_values(value: object) -> tuple[object, ...]:
+    """Extract only bounded candidate URLs, including hostile generators."""
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        return (value,)
+    if isinstance(value, Mapping):
+        value = value.values()
+    try:
+        return tuple(islice(iter(value), MAX_FEED_URLS_PER_ROW))
+    except (TypeError, ValueError, RuntimeError):
+        return (value,) if not hasattr(value, "__iter__") else ()
 
 
 def discover_feeds(
@@ -277,30 +301,52 @@ def discover_feeds(
         return ()
     candidates: list[FeedCandidate] = []
     seen: set[str] = set()
-    for row in rows or ():
-        page_url = canonical_url(_field(row, "url"))
-        title = _text(_field(row, "title"))
-        explicit = list(_iter_values(_field(row, "feed_url")))
-        explicit.extend(_iter_values(_field(row, "feed_urls")))
-        for raw_url in explicit:
-            url = canonical_url(raw_url, base_url=page_url)
-            if url and url not in seen:
-                seen.add(url)
-                candidates.append(FeedCandidate(
-                    url=url,
-                    page_url=page_url,
-                    title=title,
-                    evidence="metasearch-explicit-feed",
-                ))
-        html = str(_field(row, "html", "") or "")
-        if page_url and html:
-            for item in discover_feed_links(page_url, html):
-                if item.url in seen:
-                    continue
-                seen.add(item.url)
-                candidates.append(replace(item, title=item.title or title))
-        if len(candidates) >= bounded:
+    # Search engines can return more rows than requested or a never-ending
+    # iterator without valid feeds. Read <= 4 * requested rows at most.
+    try:
+        rows_iter = iter(rows or ())
+    except (TypeError, ValueError, RuntimeError):
+        return ()
+    for _ in range(bounded * MAX_SEARCH_ROWS_PER_RESULT):
+        try:
+            row = next(rows_iter)
+        except StopIteration:
             break
+        except Exception:
+            # Third-party iterator failures can carry tokens in exception
+            # messages. Keep already discovered candidates; emit no raw error.
+            break
+        try:
+            page_url = canonical_url(_field(row, "url"))
+            title = _text(_field(row, "title"))
+            for field_name in ("feed_url", "feed_urls"):
+                for raw_url in _limited_feed_values(_field(row, field_name)):
+                    if not isinstance(raw_url, str) or not 0 < len(raw_url) <= 2048:
+                        continue
+                    url = canonical_url(raw_url, base_url=page_url)
+                    if url and url not in seen:
+                        seen.add(url)
+                        candidates.append(FeedCandidate(
+                            url=url,
+                            page_url=page_url,
+                            title=title,
+                            evidence="metasearch-explicit-feed",
+                        ))
+                        if len(candidates) >= bounded:
+                            return tuple(candidates)
+            html = _field(row, "html", "")
+            if page_url and isinstance(html, str) and html:
+                for item in discover_feed_links(page_url, html):
+                    if item.url in seen:
+                        continue
+                    seen.add(item.url)
+                    candidates.append(replace(item, title=item.title or title))
+                    if len(candidates) >= bounded:
+                        return tuple(candidates)
+        except Exception:
+            # Invalid result rows are isolated; remaining rows still count
+            # against the finite discovery work budget.
+            continue
     return tuple(candidates[:bounded])
 
 
@@ -501,6 +547,10 @@ class CriticismIndex:
     def __init__(self) -> None:
         self._articles: dict[str, CriticismArticle] = {}
         self._source_keys: dict[str, set[str]] = {}
+        # Keep per-source normalized evidence, not only the merged article.
+        # Otherwise deleting/updating one feed leaves phantom ISBNs, notice
+        # links and authors from that feed on shared canonical article URLs.
+        self._source_articles: dict[str, dict[str, CriticismArticle]] = {}
         self._fresh_until: dict[str, str] = {}
 
     def articles(self) -> tuple[CriticismArticle, ...]:
@@ -521,60 +571,88 @@ class CriticismIndex:
         if not sid:
             raise ValueError("source_id is required")
         previous_keys = set(self._source_keys.get(sid, set()))
-        incoming_keys: set[str] = set()
+        previous_source = self._source_articles.get(sid, {})
+        incoming: dict[str, CriticismArticle] = {}
         accepted = 0
         duplicates = 0
         errors: list[str] = []
+
+        # Normalize before mutating shared cache: malformed pages must not
+        # destroy the previous per-source evidence or expiration marker.
         for index, raw in enumerate(rows or ()):
             try:
                 article = normalize_article(raw, source_id=sid)
             except Exception:
-                # External item repr/errors may embed URLs, auth parameters or
-                # user data; emit a stable category instead of raw exceptions.
+                # Raw upstream exceptions may contain signed URLs, email or
+                # authorization tokens. Stable categories are all that escape.
                 errors.append(f"item[{index}]: invalid_article")
                 continue
             key = article.url
-            incoming_keys.add(key)
-            current = self._articles.get(key)
-            if current is None:
-                self._articles[key] = article
-                accepted += 1
-            else:
-                self._articles[key] = _merge_duplicate(current, article)
+            if key in incoming:
+                incoming[key] = _merge_duplicate(incoming[key], article)
                 duplicates += 1
-        if replace_source and not incoming_keys and errors:
-            # An all-invalid reply is not proof that a previously valid feed
-            # became empty. Keep the last-good articles and freshness marker.
+            else:
+                incoming[key] = article
+                if key in self._articles:
+                    duplicates += 1
+                else:
+                    accepted += 1
+
+        if replace_source and not incoming and errors:
+            # All-invalid is not evidence of an empty feed: leave every
+            # source contribution, aggregate and freshness marker intact.
             return CollectionReport(
-                source_id=sid, accepted=accepted, duplicates=duplicates,
+                source_id=sid, accepted=0, duplicates=0,
                 errors=tuple(errors), fresh_until=self._fresh_until.get(sid, ""),
             )
+
         if replace_source:
-            stale = previous_keys - incoming_keys
-            for key in stale:
-                current = self._articles.get(key)
-                if current is None:
-                    continue
-                remaining = tuple(value for value in current.provenance if value != sid)
-                if remaining:
-                    self._articles[key] = replace(current, provenance=remaining)
-                else:
-                    self._articles.pop(key, None)
-            self._source_keys[sid] = incoming_keys
+            next_source = incoming
         else:
-            self._source_keys.setdefault(sid, set()).update(incoming_keys)
+            # Incremental pages may complete bibliographic evidence for the
+            # same source. A full replacement, by contrast, MUST discard
+            # stale per-source ISBNs and notice links, even if URL is stable.
+            next_source = dict(previous_source)
+            for key, article in incoming.items():
+                if key in next_source:
+                    next_source[key] = _merge_duplicate(next_source[key], article)
+                else:
+                    next_source[key] = article
+
+        self._source_articles[sid] = next_source
+        next_keys = set(next_source)
+        self._source_keys[sid] = next_keys
+
+        # Recompute ONLY affected articles from surviving source evidence.
+        # Do not carry merged attributes forward when their original source
+        # stopped referencing the article or revised its bibliographic data.
+        for key in previous_keys | next_keys:
+            aggregate: CriticismArticle | None = None
+            for source_rows in self._source_articles.values():
+                source_article = source_rows.get(key)
+                if source_article is None:
+                    continue
+                aggregate = (
+                    source_article if aggregate is None
+                    else _merge_duplicate(aggregate, source_article)
+                )
+            if aggregate is None:
+                self._articles.pop(key, None)
+            else:
+                self._articles[key] = aggregate
 
         fresh_until = ""
         if fresh_for_seconds > 0:
             until = datetime.now(timezone.utc) + timedelta(seconds=int(fresh_for_seconds))
             fresh_until = until.replace(microsecond=0).isoformat()
             self._fresh_until[sid] = fresh_until
+        elif replace_source:
+            # A fresh, valid full replacement without an advertised TTL is
+            # not evidence that the *previous* TTL is still applicable.
+            self._fresh_until.pop(sid, None)
         return CollectionReport(
-            source_id=sid,
-            accepted=accepted,
-            duplicates=duplicates,
-            errors=tuple(errors),
-            fresh_until=fresh_until,
+            source_id=sid, accepted=accepted, duplicates=duplicates,
+            errors=tuple(errors), fresh_until=fresh_until,
         )
 
     def matches_for(self, book: object) -> tuple[CriticismMatch, ...]:

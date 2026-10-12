@@ -211,6 +211,170 @@ def _card_authors(tokens, start: int, end: int) -> tuple[str, ...]:
     return ()
 
 
+class _ProductCards(HTMLParser):
+    """Parse separate product-item cards, ignoring duplicate thumbnail cards."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.card = None
+        self.cards = []
+        self.field = None
+        self._ignored = 0
+        self.thumbnail_count = 0
+        self.thumbnail_urls = set()
+        self._thumbnail_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._ignored += 1
+            return
+        if self._ignored:
+            return
+        a = dict(attrs)
+        classes = set(a.get("class", "").split())
+        if self.card is None:
+            if self._thumbnail_depth:
+                if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
+                    self._thumbnail_depth += 1
+                if tag == "a":
+                    url = _product_url(a.get("href"))
+                    if url:
+                        self.thumbnail_urls.add(url)
+                return
+            if tag == "div" and "product-item-thumb" in classes:
+                self.thumbnail_count += 1
+                self._thumbnail_depth = 1
+                return
+            if tag == "div" and "product-item" in classes:
+                self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": "", "cover_url": "", "cover_seen": False}
+                self.stack = [tag]
+            return
+        if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
+            self.stack.append(tag)
+        if tag == "img":
+            self.card["cover_seen"] = True
+        if tag == "img" and not self.card["cover_url"]:
+            for candidate in (a.get("data-src"), a.get("src"), (a.get("srcset") or "").split(",")[0].strip().split(" ")[0]):
+                url = _allowed_url(candidate)
+                if url and urlsplit(url).path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")) and "_files/" not in url:
+                    self.card["cover_url"] = url
+                    break
+        if tag == "a":
+            self.card["url"] = self.card["url"] or _product_url(a.get("href"))
+        if "card-title" in classes:
+            self.field = ("title", len(self.stack))
+        elif "card-author" in classes:
+            self.field = ("authors", len(self.stack))
+        elif "card-infos" in classes:
+            self.field = ("info", len(self.stack))
+        elif "card-text" in classes:
+            self.field = ("summary", len(self.stack))
+
+    def handle_data(self, data):
+        if self.card is not None and self.field and not self._ignored:
+            value = _text(data)
+            if value:
+                self.card[self.field[0]].append(value)
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style", "noscript", "svg"} and self._ignored:
+            self._ignored -= 1
+            return
+        if self._ignored:
+            return
+        if self._thumbnail_depth and self.card is None:
+            if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
+                self._thumbnail_depth -= 1
+            return
+        if self.card is None:
+            return
+        # HTMLParser also emits an end callback for self-closing void tags.
+        if tag in {"img", "br", "input", "hr", "meta", "link", "source"}:
+            return
+        if self.field and self.field[1] == len(self.stack):
+            self.field = None
+        if self.stack:
+            self.stack.pop()
+        if not self.stack:
+            self.cards.append(self.card)
+            self.card = None
+
+
+def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
+    parser = _ProductCards()
+    parser.feed(html or "")
+    parser.close()
+    out, seen = [], set()
+    rejection = {"duplicate": 0, "unexpected_markup": 0,
+                 "title_missing": 0, "age_unattested": 0}
+    bounded = max(1, min(int(limit), 40))
+    examined = 0
+    truncated = False
+    for card in parser.cards:
+        if len(out) >= bounded:
+            truncated = True
+            break
+        examined += 1
+        url = card["url"]
+        if not url:
+            rejection["unexpected_markup"] += 1
+            continue
+        if url in seen:
+            rejection["duplicate"] += 1
+            continue
+        seen.add(url)
+        info = _text(" ".join(card["info"]))
+        age_match = re.search(r"(?:âge|age)\s*:\s*(\d{1,2}\s*à\s*\d{1,2}\s*ans|\d{1,2}\s*ans\s*et\s*\+)", info, re.I)
+        age = parse_age_label(age_match.group(1)) if age_match else None
+        title = _text(" ".join(card["title"]))
+        if not title:
+            rejection["title_missing"] += 1
+            continue
+        if age is None or not age.qualified:
+            rejection["age_unattested"] += 1
+            continue
+        slug = urlsplit(url).path.removeprefix("/livre/")
+        item = {
+            "record_id": slug, "source_item_id": slug, "title": title,
+            "authors": tuple(dict.fromkeys(card["authors"])),
+            "notice_url": url, "friendly_url": url, "book_type": "roman",
+            "age_ranges": [{"age_min": age.age_min, "age_max": age.age_max,
+                            "age_kind": "publisher", "source_label": age.label,
+                            "source_id": "ecole-loisirs", "confidence": 1.0}],
+            "metadata": {"age_label": age.label, "age_evidence": "ecole-loisirs.catalogue.explicit"},
+        }
+        if card["cover_url"]:
+            item["cover_url"] = card["cover_url"]
+        if card["summary"]:
+            item["description"] = _text(" ".join(card["summary"]))
+        if info:
+            collection = _text(info.replace(age_match.group(0), "")) if age_match else info
+            if collection:
+                item["collection"] = collection
+        out.append(item)
+    if diagnostic is not None:
+        # Only bounded counters and fixed reason keys leave the adapter; the
+        # transient URLs needed for deduplication never enter Diagnostics.
+        primary_urls = {card["url"] for card in parser.cards if card["url"]}
+        diagnostic.update({
+            "cards_detected": min(100_000, len(parser.cards)),
+            "cards_complete": len(out),
+            "thumbnail_card_count": min(100_000, parser.thumbnail_count),
+            "thumbnail_duplicate_count": min(100_000, len(parser.thumbnail_urls & primary_urls)),
+            "candidate_count": min(100_000, len(seen)),
+            "analyzed_count": min(100_000, examined),
+            "age_qualified_count": len(out),
+            "returned_items": len(out),
+            "missing_isbn": len(out), "isbn_valid_count": 0,
+            "author_count": sum(len(row["authors"]) for row in out),
+            "covers_seen": sum(bool(card["cover_seen"]) for card in parser.cards),
+            "cover_urls_valid": sum(bool(row.get("cover_url")) for row in out),
+            "truncated_by_limit": truncated,
+            "rejection_reasons": {key: min(100_000, n) for key, n in rejection.items() if n},
+        })
+    return tuple(out)
+
+
 def parse_listing(
     html: str, *, limit: int = 40,
     diagnostic: dict[str, object] | None = None,
@@ -220,6 +384,8 @@ def parse_listing(
     The diagnostic contains integers and fixed public reason identifiers,
     never titles, ISBNs, product URLs, HTML or search terms.
     """
+    if re.search(r'class\s*=\s*["\'][^"\']*\bproduct-item\b', html or ''):
+        return parse_catalogue_cards(html, limit=limit, diagnostic=diagnostic)
     tokens = _tokens(html)
     products = []
     anchor_count = 0
@@ -314,16 +480,16 @@ def parse_listing(
         })
     return tuple(out)
 
-def next_cursor(html: str, *, current_page: int) -> str:
+def next_cursor(html: str, *, current_page: int, current_route: str = "advanced") -> str:
     for kind, label, href in _tokens(html):
         if kind != "link" or _fold(label) != "afficher plus de résultats":
             continue
         raw = _text(href)
         if raw.startswith("?"):
-            url = SEARCH + raw
+            url = SEARCH + ("/romans" if current_route == "romans" else "") + raw
         else:
             url = _allowed_url(raw)
-        if not url or urlsplit(url).path != "/recherche-avancee":
+        if not url or urlsplit(url).path not in {"/recherche-avancee", "/recherche-avancee/romans"}:
             continue
         query = parse_qs(urlsplit(url).query)
         try:
@@ -331,16 +497,22 @@ def next_cursor(html: str, *, current_page: int) -> str:
         except ValueError:
             continue
         if page == int(current_page) + 1 and page <= 100:
-            return str(page)
+            return f"romans:{page}" if urlsplit(url).path.endswith("/romans") else str(page)
     return ""
 
 
-def search_url(query: str, *, page: int) -> str:
+def search_url(query: str, *, page: int, route: str = "advanced") -> str:
     params = {
         "page": str(max(1, min(int(page), 100))),
         "search_api_views_fulltext": _text(query)[:_MAX_QUERY_CHARS],
         "types": "livre",
     }
+    if route not in {"advanced", "romans"}:
+        raise ValueError("invalid l\u0027école des loisirs search route")
+    if route == "romans":
+        return SEARCH + "/romans?" + urlencode({
+            "page": params["page"], "type": "romans", "search": _text(query)[:_MAX_QUERY_CHARS],
+        })
     return SEARCH + "?" + urlencode(params)
 
 
@@ -397,7 +569,7 @@ class EcoleLoisirsYouthSource:
 
     def _get(self, url: str, *, diagnostic: dict[str, object] | None = None) -> str:
         allowed = _allowed_url(url)
-        if not allowed or urlsplit(allowed).path != "/recherche-avancee":
+        if not allowed or urlsplit(allowed).path not in {"/recherche-avancee", "/recherche-avancee/romans", "/catalogue/romans"}:
             raise ValueError("only l'école des loisirs advanced search is allowed")
         self._last_diagnostic["request_count"] = int(self._last_diagnostic.get("request_count", 0)) + 1
         counter = self._call_requests.get()
@@ -424,9 +596,99 @@ class EcoleLoisirsYouthSource:
             raise RuntimeError("l'école des loisirs response exceeds 2 MB")
         return response.text
 
+    def search_catalogue(self, query: str, *, page: int = 0, limit: int = 40) -> Mapping[str, object]:
+        """One explicit publisher catalogue page; never fetch book detail pages."""
+        if type(page) is not int or not 0 <= page <= 100:
+            raise ValueError("invalid catalogue page")
+        bounded = max(1, min(int(limit), 40))
+        term = _text(query)[:_MAX_QUERY_CHARS]
+        started = perf_counter()
+        self._last_diagnostic = {
+            "source": "ecole-loisirs", "page": page,
+            "attempted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "requested_limit": bounded, "text_filter_present": bool(term),
+            "phase": "listing", "request_count": 0,
+        }
+        token = self._call_requests.set(0)
+        diagnostic: dict[str, object] = {"query_mode": "remote", "effective_limit": bounded}
+        try:
+            params = urlencode({"type": "romans", "search": term, "page": page})
+            url = BASE + "/catalogue/romans?" + params
+            http_started = perf_counter()
+            try:
+                html = self._get(url, diagnostic=diagnostic)
+            finally:
+                diagnostic["http_ms"] = max(0, int((perf_counter() - http_started) * 1000))
+            self._last_diagnostic["phase"] = "parsing"
+            parse_started = perf_counter()
+            try:
+                rows = parse_catalogue_cards(html, limit=bounded, diagnostic=diagnostic)
+                links = _tokens(html)
+            finally:
+                diagnostic["parse_ms"] = max(0, int((perf_counter() - parse_started) * 1000))
+            next_page = ""
+            for kind, _label, href in links:
+                if kind != "link":
+                    continue
+                target = _allowed_url(href)
+                if not target or urlsplit(target).path != "/catalogue/romans":
+                    continue
+                values = parse_qs(urlsplit(target).query)
+                if values.get("search") != [term] or values.get("type") != ["romans"]:
+                    continue
+                try:
+                    proposed = int((values.get("page") or [""])[0])
+                except ValueError:
+                    continue
+                if proposed == page + 1 and proposed <= 100:
+                    next_page = str(proposed)
+                    break
+            if next_page and not rows:
+                raise InvalidCatalogueStructureError(
+                    "Ecole des loisirs paginated catalogue has no qualifying product cards"
+                )
+            diagnostic["pages_available"] = int(bool(next_page))
+            diagnostic["total_ms"] = max(0, int((perf_counter() - started) * 1000))
+            self._last_diagnostic.update({
+                "phase": "complete", "state": "items" if rows else "empty_unverified",
+                "returned_items": len(rows), "next_cursor_present": bool(next_page),
+                "duration_ms": diagnostic["total_ms"],
+            })
+            self._publish_diagnostic("ok" if rows else "empty")
+            return {"items": rows, "next_cursor": next_page, "fresh_for_seconds": 86400,
+                    "collection_request_count": self._call_requests.get(),
+                    "collection_pipeline": dict(diagnostic)}
+        except Exception as exc:
+            exc.collection_request_count = self._call_requests.get()
+            exc.collection_pipeline = dict(diagnostic)
+            self._last_diagnostic.update({
+                "phase": "error",
+                "state": "invalid" if isinstance(exc, InvalidCatalogueStructureError) else "error",
+                "error_type": type(exc).__name__,
+                "duration_ms": max(0, int((perf_counter() - started) * 1000)),
+            })
+            self._publish_diagnostic("error")
+            raise
+        finally:
+            self._call_requests.reset(token)
+
+    def browse(self, *, age: int | None = None, themes: tuple[str, ...] = (),
+               text_filter: str = "", cursor: str | None = None,
+               limit: int = 40) -> Mapping[str, object]:
+        """Explicit UI browse: one catalogue page; age/theme filters remain local.
+
+        No network request happens until the user clicks collect/more.
+        The catalogue endpoint has not demonstrated remote age/theme filtering.
+        """
+        if cursor is not None and (not isinstance(cursor, str) or
+                                   not re.fullmatch(r"(?:0|[1-9][0-9]{0,2})", cursor)):
+            raise ValueError("invalid catalogue page cursor")
+        return self.search_catalogue(text_filter, page=int(cursor or "0"), limit=limit)
+
     def search(self, query: str, *, cursor: str | None = None, limit: int = 40) -> Mapping[str, object]:
         try:
-            page = int(cursor or "1")
+            route = "romans" if (cursor or "").startswith("romans:") else "advanced"
+            page = int((cursor or "1").removeprefix("romans:"))
         except ValueError:
             raise ValueError("invalid l'école des loisirs page cursor")
         if not 1 <= page <= 100:
@@ -446,7 +708,7 @@ class EcoleLoisirsYouthSource:
             "query_mode": "remote", "effective_limit": max(1, min(int(limit), 40)),
         }
         try:
-            url = search_url(_text(query), page=page)
+            url = search_url(_text(query), page=page, route=route)
             http_started = perf_counter()
             try:
                 html = self._get(url, diagnostic=pipeline)
@@ -467,7 +729,7 @@ class EcoleLoisirsYouthSource:
                 if kind == "link" and _product_url(href)
                 and _fold(label) != "lire la suite"
             }
-            cursor_out = next_cursor(html, current_page=page)
+            cursor_out = next_cursor(html, current_page=page, current_route=route)
             if cursor_out and not product_urls:
                 raise InvalidCatalogueStructureError(
                     "Ecole des loisirs paginated catalogue has no recognizable book links"

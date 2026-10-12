@@ -1,0 +1,123 @@
+"""P0 #1127: Diagnostics Gtk section is presentation-only and headless-importable."""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace
+from cifereca.gui.settings_diagnostics_section import build_settings_diagnostics_section
+
+
+class Widget:
+    def __init__(self, label=None, xalign=None, orientation=None, spacing=None, source=None):
+        self.label, self.source = label, source
+        self.title = self.tooltip = None
+        self.visible = True
+        self.wrap = False
+        self.children = []
+        self.signals = []
+        self.props = {}
+    def set_title(self, value): self.title = value
+    def set_wrap(self, value): self.wrap = value
+    def set_hexpand(self, value): self.props["hexpand"] = value
+    def set_tooltip_text(self, value): self.tooltip = value
+    def set_halign(self, value): self.props["halign"] = value
+    def set_editable(self, value): self.props["editable"] = value
+    def set_monospace(self, value): self.props["monospace"] = value
+    def set_wrap_mode(self, value): self.props["wrap"] = value
+    def set_top_margin(self, value): self.props["top"] = value
+    def set_bottom_margin(self, value): self.props["bottom"] = value
+    def set_left_margin(self, value): self.props["left"] = value
+    def set_right_margin(self, value): self.props["right"] = value
+    def set_min_content_height(self, value): self.props["min_height"] = value
+    def set_child(self, value): self.children = [value]
+    def set_visible(self, value): self.visible = value
+    def add(self, child): self.children.append(child)
+    def append(self, child): self.children.append(child)
+    def connect(self, *args): self.signals.append(args)
+
+
+class DropDown(Widget):
+    @classmethod
+    def new_from_strings(cls, values):
+        instance = cls()
+        instance.values = list(values)
+        return instance
+
+
+def _render():
+    section = Widget()
+    calls = []
+    def action_button(label, icon, **kwargs):
+        calls.append((label, icon, kwargs))
+        return Widget(label=label)
+    gtk = SimpleNamespace(
+        Label=Widget, Box=Widget, DropDown=DropDown,
+        ToggleButton=Widget, TextView=Widget, ScrolledWindow=Widget,
+        Align=SimpleNamespace(START="start"),
+        Orientation=SimpleNamespace(HORIZONTAL="horizontal", VERTICAL="vertical"),
+        WrapMode=SimpleNamespace(WORD_CHAR="word_char"),
+    )
+    ui = build_settings_diagnostics_section(
+        section=section, Gtk=gtk,
+        Adw=SimpleNamespace(PreferencesGroup=Widget),
+        adaptive_action_bar=Widget, action_button=action_button,
+    )
+    return ui, section, calls
+
+
+def test_diagnostic_hierarchy_filter_and_actions_are_unchanged():
+    ui, section, calls = _render()
+    assert len(section.children) == 2
+    group = section.children[0]
+    assert group.title == "Diagnostic système"
+    assert len(group.children) == 5
+    assert group.children[0] is ui.summary
+    assert group.children[2] is ui.issues_box
+    assert group.children[3] is ui.details_toggle
+    assert group.children[4] is ui.scroll
+    assert ui.filter.values == ["À examiner", "Tous"]
+    assert ui.filter.tooltip == "Afficher uniquement les anomalies ou l’inventaire complet"
+    assert ui.summary.wrap is True
+    assert [row[0] for row in calls] == [
+        "Actualiser", "Copier dans le presse-papiers", "Exporter le diagnostic", "Effacer",
+    ]
+    assert calls[1][2] == {"suggested": True}
+    assert ui.export.tooltip.startswith("Enregistrer le rapport de diagnostic expurgé")
+
+
+def test_long_report_keeps_readonly_scroll_and_original_margins():
+    ui, _, _ = _render()
+    assert ui.scroll.visible is False
+    assert ui.scroll.props["min_height"] == 330
+    assert ui.scroll.children == [ui.text]
+    assert ui.text.props["editable"] is False
+    assert ui.text.props["monospace"] is True
+    assert ui.text.props["wrap"] == "word_char"
+    for edge in ("top", "bottom", "left", "right"):
+        assert ui.text.props[edge] == 10
+
+
+def test_builder_never_attaches_signals_or_accesses_diagnostic_backend():
+    ui, section, _ = _render()
+    def walk(w):
+        yield w
+        for child in w.children:
+            yield from walk(child)
+    assert all(not row.signals for row in walk(section))
+    assert ui.details_toggle.label == "Afficher les détails techniques"
+
+
+def test_host_owns_expurgation_copy_export_navigation_and_refresh():
+    source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py").read_text("utf-8")
+    tree = ast.parse(source)
+    window = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
+    build = next(x for x in window.body if isinstance(x, ast.FunctionDef) and x.name == "_build_settings_page")
+    rendered = ast.unparse(build)
+    assert "build_settings_diagnostics_section(" in rendered
+    assert "diagnostic_plugin_rows(data, attention_only=attention_only)" in rendered
+    assert "self.diagnostics.text(" in rendered
+    assert "self.navigate('plugins')" in rendered
+    assert "Gtk.FileChooserAction.SAVE" in rendered
+    assert "Gdk.ContentProvider.new_for_value(content)" in rendered
+    assert "diag_scroll.set_visible(visible)" in rendered
+    assert "self.service.save_diagnostic_preferences(" in rendered

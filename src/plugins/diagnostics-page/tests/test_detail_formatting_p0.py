@@ -117,3 +117,23 @@ def test_authentication_headers_are_redacted_entirely(mode):
                    "response=abc123", "KEY-PRIVATE-123"):
         assert secret not in shown
     assert "status" in shown
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_quoted_secret_values_with_spaces_are_fully_masked(mode):
+    data = {"message": 'token="mot de passe privé" cookie=\'session longue privée\' password=ordinary'}
+    shown = format_diagnostic_detail(data, mode)
+    for leaked in ("mot de passe privé", "session longue privée", "ordinary"):
+        assert leaked not in shown
+    assert "token=<expurgé>" in shown
+    assert "cookie=<expurgé>" in shown
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_api_and_access_keys_are_always_redacted(mode):
+    detail = {"api_key": "API-PRIVATE-ABC", "access_key": "ACCESS-PRIVATE-XYZ",
+              "api-key": "SECOND-API-SECRET", "status": "ok"}
+    shown = format_diagnostic_detail(detail, mode)
+    for secret in ("API-PRIVATE-ABC", "ACCESS-PRIVATE-XYZ", "SECOND-API-SECRET"):
+        assert secret not in shown
+    assert "ok" in shown

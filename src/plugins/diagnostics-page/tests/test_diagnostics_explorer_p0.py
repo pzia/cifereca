@@ -10,6 +10,7 @@ from diagnostics_explorer import (
     PAGE_SIZE, SOURCES, SEVERITIES, PERIODS,
     explorer_since, fetch_explorer_page, sanitized_rows, module_groups,
     source_summaries, explorer_header, export_selected_events, next_page_offset,
+    selectable_event_ids,
 )
 
 
@@ -227,8 +228,8 @@ def test_next_page_rejects_invalid_or_nonmonotonic_cursors(next_cursor):
 
 
 def test_next_page_validates_current_page_and_bounds():
-    assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=0) == 50
-    assert next_page_offset({"offset": 9950, "next_offset": 10000}, current_offset=9950) == 10000
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 100}, current_offset=0) == 50
+    assert next_page_offset({"offset": 9950, "next_offset": 10000, "total": 10001}, current_offset=9950) == 10000
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=50) is None
     assert next_page_offset({"offset": "0", "next_offset": 50}, current_offset=0) is None
     assert next_page_offset({"offset": 0, "next_offset": 50}, current_offset=True) is None
@@ -313,3 +314,232 @@ def test_export_does_not_stringify_untrusted_broker_values():
     assert len(exported["events"]) == 1
     assert exported["events"][0]["message"] == ""
     assert exported["events"][0]["event_id"] == "safe-id"
+
+
+@pytest.mark.parametrize("filters", [
+    {"source": []}, {"source": {}}, {"severity": []}, {"severity": {}},
+    {"period": []}, {"period": {}}, {"source": None}, {"severity": 1},
+])
+def test_malformed_selector_types_fail_without_broker_access(filters):
+    broker = Broker()
+    with pytest.raises(ValueError):
+        fetch_explorer_page(broker, **filters)
+    assert broker.calls == []
+
+
+@pytest.mark.parametrize("search", [[], {}, 123, object()])
+def test_invalid_local_search_rejected_cleanly(search):
+    with pytest.raises(ValueError, match="search"):
+        sanitized_rows({"events": [event("safe")]}, search=search)
+
+
+@pytest.mark.parametrize("sort", [None, 1, [], "descending"])
+def test_invalid_sort_direction_rejected_cleanly(sort):
+    with pytest.raises(ValueError, match="sort"):
+        sanitized_rows({"events": [event("safe")]}, newest_first=sort)
+
+
+@pytest.mark.parametrize("payload", [None, [], "unexpected", 123, object()])
+def test_header_refuses_non_mapping_broker_response(payload):
+    assert explorer_header(payload, []) == (
+        "Sources non alimentées — aucune donnée disponible"
+    )
+
+
+def test_export_rejects_invalid_unicode_without_crashing_ui():
+    rows = [event("invalid", message="bad-\ud800-surrogate")]
+    with pytest.raises(ValueError, match="invalid Unicode"):
+        export_selected_events(rows, {"invalid"})
+
+
+def test_export_redacts_secret_crossing_500_character_cutoff():
+    text = "x" * 480 + " token=SUPERPRIVATESECRET-" + "z" * 40
+    row = event("bounded", message=text)
+    payload = json.loads(export_selected_events([row], {"bounded"}))
+    message = payload["events"][0]["message"]
+    assert "SUPERPRIVATE" not in message
+    assert "token=<expurgé>" in message
+    assert len(message) <= 500
+
+
+def test_normalizer_redacts_before_500_character_display_cutoff():
+    # The UI must not publish a cut token prefix, even if the broker is malformed.
+    text = "x" * 490 + " token=SUPERPRIVATESECRET-" + "z" * 40
+    rows = sanitized_rows({"events": [event("bounded", message=text)]})
+    assert len(rows) == 1
+    shown = rows[0]["message"]
+    assert "SUPERPRIVATE" not in shown
+    assert "token=SUP" not in shown
+    assert len(shown) <= 500
+
+
+@pytest.mark.parametrize("now", [0, False, "", {}, [], object()])
+def test_period_refuses_invalid_clock_values(now):
+    with pytest.raises(ValueError, match="reference time"):
+        explorer_since("day", now=now)
+
+
+def test_module_groups_fail_closed_on_malformed_fields():
+    rows = [None, {}, {"module": [], "source": {}, "severity": []},
+            {"module": "valid", "source": "app_log", "severity": "error"}]
+    groups = module_groups(rows)
+    assert len(groups) == 2
+    assert next(group for group in groups if group["module"] == "valid")["severity"] == "error"
+    assert next(group for group in groups if group["module"] == "Inconnu")["severity"] == "unknown"
+
+
+def test_module_groups_are_page_bounded():
+    rows = [event(str(i), module="m" + str(i)) for i in range(PAGE_SIZE + 10)]
+    assert sum(group["count"] for group in module_groups(rows)) == PAGE_SIZE
+
+
+def test_search_rejects_excessive_input():
+    with pytest.raises(ValueError, match="search"):
+        sanitized_rows({"events": [event("x")]}, search="x" * 501)
+
+
+def test_cursor_respects_broker_total():
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 50}, current_offset=0) is None
+    assert next_page_offset({"offset": 0, "next_offset": 50, "total": 51}, current_offset=0) == 50
+
+
+def test_selection_requires_unique_nonempty_event_ids():
+    rows = [event(""), event("collision"), event("collision"), event("unique")]
+    assert selectable_event_ids(rows) == {"unique"}
+    for invalid in ("", "collision"):
+        with pytest.raises(ValueError, match="ambiguous"):
+            export_selected_events(rows, {invalid})
+    payload = json.loads(export_selected_events(rows, {"unique"}))
+    assert [row["event_id"] for row in payload["events"]] == ["unique"]
+
+
+def test_selection_disabled_for_ambiguous_references_in_ui():
+    from pathlib import Path
+    page = (Path(__file__).resolve().parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert "select.set_sensitive(event_id in valid_ids)" in page
+    assert "visible_ids = selectable_event_ids(rows)" in page
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_diagnostic_detail_respects_24k_utf8_byte_budget(mode):
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    data = {f"field_{i:02d}": "é" * 400 for i in range(48)}
+    text = format_diagnostic_detail(data, mode)
+    assert len(text.encode("utf-8")) <= 24_000
+    if mode == "json":
+        assert json.loads(text)["truncated"] is True
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_diagnostic_detail_handles_invalid_unicode(mode):
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    result = format_diagnostic_detail({"message": "bad-" + chr(0xD800)}, mode)
+    assert len(result.encode("utf-8")) <= 24_000
+    assert "bad-" not in result
+    if mode == "json":
+        assert json.loads(result)["truncated"] is True
+
+
+def test_source_summaries_redact_entire_name_and_reason_before_display_cut():
+    payload = {
+        "sources": [{
+            "source": "alice@example.com",
+            "status": "partial",
+            "reason": (
+                "journal rotaté : authorization=Bearer PRIVATE_TOKEN "
+                "https://example.org/path?token=PRIVATE_URL"
+            ),
+        }, {
+            "source": "app_log",
+            "status": "unavailable",
+            "reason": "/home/alice/private/cifereca.log",
+        }],
+    }
+    states = source_summaries(payload)
+    assert len(states) == 2
+    assert states[0]["status"] == "partial"
+    assert "courriel expurgé" in states[0]["source"]
+    assert "journal rotaté" in states[0]["reason"]
+    assert "PRIVATE_TOKEN" not in repr(states)
+    assert "PRIVATE_URL" not in repr(states)
+    assert "alice@example.com" not in repr(states)
+    assert "/home/alice" not in repr(states)
+    assert "chemin expurgé" in states[1]["reason"]
+
+
+def test_source_summaries_never_stringify_malformed_reason_or_long_status():
+    class Secret:
+        def __str__(self):
+            raise AssertionError("must not stringify")
+
+    states = source_summaries({"sources": [
+        {"source": Secret(), "status": "unknown" * 10000, "reason": Secret()},
+        {"source": "app_log", "status": "available", "reason": "PRIVATE_SHOULD_NOT_SHOW"},
+    ]})
+    assert states[0] == {
+        "source": "inconnue", "status": "unavailable", "label": "Indisponible",
+    }
+    assert states[1] == {
+        "source": "app_log", "status": "available", "label": "Alimentée",
+    }
+
+
+def test_source_summaries_do_not_expose_partial_tokens_cut_at_display_bound():
+    source = "prefix-" + "x" * 35 + " token=PRIVATE_SUFFIX"
+    states = source_summaries({"sources": [
+        {"source": source, "status": "disabled",
+         "reason": "Error\nAuthorization: Bearer PRIVATE_HEADER"},
+    ]})
+    shown = repr(states)
+    assert "PRIVATE_SUFFIX" not in shown
+    assert "PRIVATE_HEADER" not in shown
+    assert "\\n" not in states[0]["reason"]
+
+
+def test_journals_ui_shows_optional_expurgated_source_reasons():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert 'state.get("reason")' in page
+    assert 'source_summaries(current_page)' in page
+
+
+def test_source_summaries_normalize_only_valid_last_event_dates():
+    states = source_summaries({"sources": [
+        {"source": "core_events", "status": "available",
+         "last_event": "2026-10-11T14:00:00+02:00"},
+        {"source": "app_log", "status": "partial",
+         "last_event": "2026-10-11T11:30:00Z"},
+    ]})
+    assert states[0]["last_event"] == "2026-10-11T12:00:00+00:00"
+    assert states[1]["last_event"] == "2026-10-11T11:30:00+00:00"
+    assert states[1]["status"] == "partial"
+
+
+@pytest.mark.parametrize("invalid", [
+    "2026-10-11T12:00:00", "yesterday", "2026-10-11T00:00:00Z secret",
+    "X" * 1000, None, 123, {}, [],
+])
+def test_source_summaries_ignore_untrusted_last_event(invalid):
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("untrusted source metadata stringified")
+
+    payload = {"sources": [
+        {"source": "app_log", "status": "unavailable",
+         "last_event": invalid},
+        {"source": "core_events", "status": "empty",
+         "last_event": Hostile()},
+    ]}
+    states = source_summaries(payload)
+    assert "last_event" not in states[0]
+    assert "last_event" not in states[1]
+
+
+def test_journals_show_last_published_event_from_broker():
+    from pathlib import Path
+    page = (Path(__file__).parents[1] /
+            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    assert "dernier événement publié : {state['last_event']}" in page
+    assert "source_summaries(current_page)" in page

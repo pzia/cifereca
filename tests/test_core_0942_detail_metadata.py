@@ -1,5 +1,6 @@
 """Focused, no-GTK regression checks for the shared metadata detail wiring."""
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -10,7 +11,7 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(class_name, method_name):
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
 
@@ -48,7 +49,7 @@ def test_detail_section_uses_collapsible_rows_without_network():
 
 
 def test_shared_builder_keeps_essential_and_detail_sections_separate():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "book_detail_presentation")
     assert any(arg.arg == "metadata" for arg in builder.args.kwonlyargs)
     source = ast.unparse(builder)

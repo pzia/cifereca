@@ -128,7 +128,7 @@ class Core0911(unittest.TestCase):
         fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='persist_diagnostics')
         window=NS(service=self.service,show_error=Mock())
         refresh=Mock()
-        ns={'self':window,'level_drop':NS(get_selected=lambda:3),'levels':['errors','normal','verbose','trace'],'diag_switch':NS(get_active=lambda:True),'refresh_text':refresh}
+        ns={'self':window,'level_drop':NS(get_selected=lambda:3),'levels':['errors','normal','verbose','trace'],'diag_switch':NS(get_active=lambda:True),'refresh_text':refresh,'page_lifetime':NS(alive=True)}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(source),'exec'),ns)
         ns['persist_diagnostics']()
         self.assertEqual(json.loads(self.config.read_text())['diagnostics']['level'],'trace')
