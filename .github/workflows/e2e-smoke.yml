@@ -6,13 +6,22 @@ on:
     paths:
       - 'e2e/**'
       - 'src/cifereca/gui/**'
+      - 'src/cifereca/builtin_ui/**'
+      - 'src/cifereca/app.py'
+      - 'src/plugins/diagnostics-page/**'
       - 'src/plugins/youth-catalog/**'
-      - 'src/plugins/youth-source-milan/**'
+      - 'src/plugins/youth-source-*/**'
       - 'simulation/youth_sources/**'
       - 'simulation/milan/**'
       - 'scripts/ci-install-gtk-e2e-runtime.sh'
+      - 'scripts/ci-select-e2e.py'
+      - 'scripts/ci-select-core-tests.py'
+      - 'environnements/openai-chat-debian/capture_app.py'
       - '.github/workflows/e2e-smoke.yml'
+      - 'pyproject.toml'
       - 'tests/test_e2e_runner_contract.py'
+      - 'tests/test_e2e_ci_paths.py'
+      - 'tests/test_ci_select_e2e.py'
 
 permissions:
   contents: read
@@ -29,11 +38,33 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select impacted GTK/XTEST scenarios
+        id: select
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            /usr/bin/python3 scripts/ci-select-e2e.py --full --github-output "$GITHUB_OUTPUT"
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/e2e-changed-files"
+            /usr/bin/python3 scripts/ci-select-e2e.py --changed-files "$RUNNER_TEMP/e2e-changed-files" --github-output "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test E2E scenario selector
+        run: /usr/bin/python3 tests/test_ci_select_e2e.py
 
       - name: Install GTK E2E runtime
+        if: steps.select.outputs.count != '0'
         run: bash scripts/ci-install-gtk-e2e-runtime.sh
 
       - name: Prepare isolated E2E Python with plugin dependencies
+        if: steps.select.outputs.count != '0'
         shell: bash
         run: |
           set -euo pipefail
@@ -49,64 +80,41 @@ jobs:
           assert Gtk is not None and httpx is not None
           PY
 
-      - name: Run reference E2E
+      - name: Replay impacted GTK/XTEST scenarios
+        if: steps.select.outputs.count != '0'
+        shell: bash
         env:
+          E2E_SCENARIOS: ${{ steps.select.outputs.scenarios }}
           CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin core
-
-      - name: Replay Diagnostics P0 widget on real GTK4 / XTEST
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-1366
-
-      - name: Replay Diagnostics 1600 long report and keyboard / XTEST
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-large-1600
-
-      - name: Replay Diagnostics source states D01-D04 and slow checks on GTK4
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-states-1366
-
-      - name: Replay Diagnostics structured values D07 and Ctrl+C D13 on GTK4
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-structured-1366
-
-      - name: Replay Diagnostics volume 10000 and provenance D06-D12 on GTK4
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-volume-1366
-
-      - name: Replay Cifereca Library to Diagnostics navigation via real GTK4 / XTEST
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-1366
-
-      - name: Replay Diagnostics slow check while navigating real MainWindow / XTEST
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario diagnostics-navigation-slow-1366
-
-      - name: Replay Jeunesse P1 in a real virtual GTK4 environment
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --plugin catalog.youth --out e2e-artifacts/youth
-
-      - name: Replay Jeunesse filter labels and keyboard regression
-        if: ${{ !cancelled() }}
-        env:
-          CIFERECA_E2E_PYTHON: ${{ runner.temp }}/cifereca-e2e-venv/bin/python
-        run: dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario youth-filter-help-1366
+        run: |
+          set -euo pipefail
+          status=0
+          # One GTK installation and DBus session; fail at first real assertion.
+          dbus-run-session -- bash -c '
+            for scenario in $E2E_SCENARIOS; do
+              echo "::group::GTK/XTEST $scenario"
+              if ! /usr/bin/python3 e2e/run.py --scenario "$scenario" --out "e2e-artifacts/$scenario"; then
+                echo "::endgroup::"
+                exit 1
+              fi
+              echo "::endgroup::"
+            done
+          ' || status=$?
+          # Keep each scenario's logs/screenshots and publish a combined summary.
+          /usr/bin/python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("e2e-artifacts")
+          results = []
+          for path in sorted(root.glob("*/summary.json")):
+              results.extend(json.loads(path.read_text(encoding="utf-8")))
+          root.mkdir(exist_ok=True)
+          (root / "summary.json").write_text(
+              json.dumps(results, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          exit "$status"
 
       - name: Publish E2E summary
         if: always()
@@ -114,13 +122,14 @@ jobs:
         run: |
           {
             echo "## E2E GTK"
+            echo "Selected: ${{ steps.select.outputs.count }}/${{ steps.select.outputs.total }} (mode: ${{ steps.select.outputs.mode }})"
             echo
             if [ -f e2e-artifacts/summary.json ]; then
               echo '~~~json'
               cat e2e-artifacts/summary.json
               echo '~~~'
             else
-              echo "Aucun résumé produit."
+              echo "Aucun GTK demandé (documentation seule), ou échec avant le replay."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

@@ -21,7 +21,7 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
-from .core import adept_borrower, loan_artifact_state
+from .core import adept_borrower, loan_artifact_state, adept_acsm_plan
 from .core import kobo_backup
 from .core import sync_coordination, sync_projection
 from .core import library_projection, library_mutation
@@ -290,6 +290,29 @@ class LibraryService:
         identity_id = self.storage.identity_for_connection(provider_id, credential_id)
         identity = self.identity_by_id(identity_id)
         return identity or self.current_identity or self.identities[0]
+
+    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
+        """Read-only status of the normal Paris-primary/ADEPT configuration.
+
+        This is *not* an Adobe fulfillment authorization, and it does not
+        reinterpret historical loan provenance or exceptional borrower grants.
+        """
+        from .core.paris_adept_normal import normal_paris_adept_status
+
+        if self.identity_by_id(identity_id) is None:
+            return {
+                "identity_id": str(identity_id),
+                "status": "to_configure",
+                "reason": "unknown_identity",
+                "paris_label": None,
+                "adept_profile_id": None,
+            }
+        return normal_paris_adept_status(
+            identity_id=identity_id,
+            connections=self.storage.provider_connections(identity_id=identity_id),
+            accounts=self.accounts,
+            profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
+        )
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
         target = identity_id or (self.current_identity.identity_id if self.current_identity else None)
@@ -2617,6 +2640,9 @@ class LibraryService:
         for row in all_acquisitions:
             if (row.get("status") != "complete"
                     or row.get("executor") != "kobo-adept"
+                    # #989: a manual/imported ADEPT artifact is not proof of
+                    # this automatic Paris loan's fulfillment transaction.
+                    or row.get("strategy") != "loan_auto"
                     or row.get("identity_id") != identity.identity_id
                     or row.get("credential_id") != loan.source_credential
                     or str(row.get("account_id") or "") != str(loan.source_account_id or "")
@@ -2828,6 +2854,24 @@ class LibraryService:
         )
         return self.storage.paris_borrower_adept_binding_get(
             credential_id=credential_id, account_id=borrower,
+        )
+
+    def audit_paris_adept_loan_origins(self, loan: Loan) -> dict[str, Any]:
+        """Read-only historical evidence for the exceptional ADEPT resolver.
+
+        Never authorizes new fulfillment or return; no live inventory refresh,
+        provider session, profile selection or ledger mutation.
+        """
+        from .core.adept_origin_audit import inspect_paris_adept_origins
+        if str(loan.source_provider).casefold() != "paris":
+            return {"status": "unsupported_source", "shared_visibility": False,
+                    "profile_disagreement": False, "sources": [], "origins": []}
+        return inspect_paris_adept_origins(
+            loan_id=str(loan.id or ""),
+            item_id=str(loan.record_id or loan.id or ""),
+            entitlements=self.storage.entitlements(provider_id="paris"),
+            acquisitions=self.storage.acquisitions(provider_id="paris"),
+            artifact_inspector=inspect_artifact,
         )
 
     def _paris_adept_identity_for_loan(
@@ -3143,9 +3187,7 @@ class LibraryService:
                     profile_rows = []
                 profile_row = self._adept_profile_row(profile_name, profile_rows)
                 if profile_row:
-                    provisioning = profile_row.get("provisioning") if isinstance(profile_row.get("provisioning"), dict) else {}
-                    readiness = provisioning.get("acsm_fetch_ready") if "acsm_fetch_ready" in provisioning else profile_row.get("fetch_capable")
-                    if readiness is False:
+                    if adept_acsm_plan.profile_is_explicitly_acsm_unready(profile_row):
                         code = "adept_profile_acsm_not_ready"
                         message = "Le profil Kobo-Adept lié à cette identité n'est pas prêt pour les acquisitions ACSM"
                         self.storage.acquisition_put({
@@ -3161,38 +3203,30 @@ class LibraryService:
                         )
                         return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
 
-                acsm_format = detect_acsm_format(acquisition.acsm_path)
-                if acsm_format is None:
-                    # Contract v8 requires an exact caller-owned destination.
-                    # Retain the historical EPUB fallback only when the ACSM
-                    # itself provides no usable format metadata.
-                    acsm_format = "epub"
-                    format_source = "fallback"
-                else:
-                    format_source = "acsm"
-                suffix = ".pdf" if acsm_format == "pdf" else ".epub"
-                destination = self.library_identity_provider_dir(identity.identity_id, loan.source_provider) / self._loan_destination_name(loan.title, suffix)
-                repair_mode = bool(not force_refresh and legacy_acsm_artifact and previous_path is not None and previous_path.is_file())
-                # Explicit re-acquisition never replaces a preserved local file.
-                # A title collision is not evidence that a file belongs to this loan.
-                if not repair_mode and destination.exists():
-                    destination = destination.with_name(destination.stem + ".reacquired-" + uuid.uuid4().hex + destination.suffix)
-                adept_destination = destination.with_name(destination.stem + ".repairing" + destination.suffix) if repair_mode else destination
+                acsm_format, format_source, suffix = adept_acsm_plan.select_acsm_format(
+                    detect_acsm_format(acquisition.acsm_path),
+                )
+                destination, adept_destination, repair_mode = adept_acsm_plan.plan_adept_destination(
+                    self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
+                    / self._loan_destination_name(loan.title, suffix),
+                    force_refresh=force_refresh,
+                    legacy_acsm_artifact=legacy_acsm_artifact,
+                    previous_path=previous_path,
+                    unique_suffix=lambda: uuid.uuid4().hex,
+                )
                 try:
                     adept_destination.unlink(missing_ok=True)
                 except OSError:
                     pass
-                request = {
-                    "schema_version": 2,
-                    "source": {"type": "acsm", "provider": loan.source_provider, "path": str(acquisition.acsm_path), "headers": {}},
-                    "destination": str(adept_destination),
-                    "format": acsm_format,
-                    "profile": profile_name,
-                    "metadata": {"title": loan.title, "loan_id": loan.id},
-                    # Kobo-Adept owns its post-download policy. Do not override
-                    # run_hook; its public schema defaults it to true.
-                    "options": {"force": False},
-                }
+                request = adept_acsm_plan.build_fulfillment_request(
+                    acsm_path=acquisition.acsm_path,
+                    destination=adept_destination,
+                    acsm_format=acsm_format,
+                    profile_name=profile_name,
+                    provider=loan.source_provider,
+                    title=loan.title,
+                    loan_id=loan.id,
+                )
                 _TRACE_LOG.info(
                     "TRACE download adept begin provider_loan_id=%s profile=%s source_file=%s destination=%s format=%s format_source=%s",
                     loan.id, profile_name, acquisition.acsm_path.name, adept_destination, acsm_format, format_source,
@@ -3227,17 +3261,17 @@ class LibraryService:
                     raise ProviderConfigurationError(f"Artefact Kobo-Adept invalide: {actual_before_publish.reason or 'format inconnu'}")
                 actual_format = actual_before_publish.media_format
                 actual_suffix = ".pdf" if actual_format == "pdf" else ".epub"
-                if produced_path.suffix.casefold() != actual_suffix:
-                    corrected = produced_path.with_suffix(actual_suffix)
-                    if corrected.exists():
-                        corrected = corrected.with_name(corrected.stem + ".reacquired-" + uuid.uuid4().hex + corrected.suffix)
+                corrected = adept_acsm_plan.plan_produced_format_path(
+                    produced_path, actual_suffix, unique_suffix=lambda: uuid.uuid4().hex,
+                )
+                if corrected != produced_path:
                     produced_path.replace(corrected)
                     produced_path = corrected
                     _TRACE_LOG.info("TRACE download adept rename-format loan_id=%s format=%s path=%s", loan.id, actual_format, produced_path)
-                if destination.suffix.casefold() != actual_suffix:
-                    destination = destination.with_suffix(actual_suffix)
-                    if destination.exists() and not repair_mode:
-                        destination = destination.with_name(destination.stem + ".reacquired-" + uuid.uuid4().hex + destination.suffix)
+                destination = adept_acsm_plan.plan_publish_format_path(
+                    destination, actual_suffix, repair_mode=repair_mode,
+                    unique_suffix=lambda: uuid.uuid4().hex,
+                )
                 inspection = inspect_artifact(produced_path, actual_format)
                 if not inspection.valid:
                     raise ProviderConfigurationError(f"Artefact final invalide: {inspection.reason or 'validation'}")

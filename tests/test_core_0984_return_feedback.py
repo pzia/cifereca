@@ -131,11 +131,9 @@ def test_unknown_channel_cannot_accidentally_claim_success():
 
 def test_gui_return_actions_show_outcome_instead_of_generic_success_toast():
     gui = (
-        Path(__file__).parents[1] / "src" / "cifereca" / "gui" / "main_window.py"
+        Path(__file__).parents[1] / "src" / "cifereca" / "gui" / "loans_controller.py"
     ).read_text(encoding="utf-8")
-    block = gui.split("    def _return_loan_result(", 1)[1].split(
-        "    # ---------- search ----------", 1
-    )[0]
+    block = gui.split("def _return_loan_result(", 1)[1]
     assert "loan_return_feedback(result, channel=channel)" in block
     assert "self.show_attention(message" in block
     assert "self.toast(message, 6)" in block

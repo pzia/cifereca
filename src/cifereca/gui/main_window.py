@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .settings_context import settings_action_state
+from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .llm_settings import (
@@ -41,12 +42,15 @@ from .llm_settings import (
     env_key_is_set, probe_llm_connection,
 )
 from .diagnostic_presentation import diagnostic_plugin_rows
+from . import loans_controller, sync_controller
+from .settings_sync_section import build_kobo_sync_section
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
     loan_due_presentation,
     loan_medium_counts,
 )
+from ..core.loan_source_identity import loan_source_key, unique_library_loan
 from .recent_time import format_recent_timestamp
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
@@ -1675,91 +1679,10 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.present()
 
     def _build_sync_page(self):
-        scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        for edge in ("top", "bottom", "start", "end"):
-            getattr(outer, "set_margin_" + edge)(20)
-        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
-        actions = AdaptiveActionBar(source=heading)
-        refresh = self.action_button("Actualiser", "view-refresh-symbolic")
-        all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
-        self._sync_all_button = all_now
-        actions.append(refresh); actions.append(all_now)
-        heading.append(title); heading.append(actions); outer.append(heading)
-        self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
-        refresh.connect("clicked", lambda _b: self._refresh_sync_page())
-        def sync_all(button):
-            broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
-            identity = self.service.current_identity
-            if broker is None: return
-            request = SyncRequest(identity_id=identity.identity_id if identity else None)
-            self.runner.submit(
-                "Synchronisation des sources…",
-                lambda: broker.synchronize(request),
-                lambda _r: (self._refresh_sync_page(), self.refresh_library(False)),
-                control=button,
-                priority=TaskPriority.USER_ACTION,
-                kind="source-sync",
-            )
-        all_now.connect("clicked", sync_all)
-        scroll.set_child(outer); return scroll
+        return sync_controller._build_sync_page(self)
 
     def _refresh_sync_page(self) -> None:
-        box = getattr(self, "_sync_sources_box", None)
-        if box is None: return
-        clear_box(box)
-        broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
-        identity = self.service.current_identity
-        all_now = getattr(self, "_sync_all_button", None)
-        global_label = sync_identity_action_label(identity)
-        if all_now is not None:
-            all_now._cifereca_action_label = global_label
-            child = all_now.get_child()
-            if child is not None and callable(getattr(child, "set_label", None)):
-                child.set_label(global_label)
-            else:
-                all_now.set_label(global_label)
-            all_now.set_sensitive(False)
-        if broker is None:
-            if all_now is not None:
-                all_now.set_tooltip_text("Synchronisation indisponible : broker absent")
-            box.append(Gtk.Label(label="Broker de synchronisation indisponible", xalign=0)); return
-        rows = broker.sources(identity.identity_id if identity else None)
-        presentations = [sync_source_presentation(source) for source in rows]
-        actionable = any(item.action_enabled for item in presentations)
-        if all_now is not None:
-            all_now.set_sensitive(actionable)
-            all_now.set_tooltip_text(
-                global_label if actionable
-                else "Aucune source activée, connectée et synchronisable pour cette identité"
-            )
-        if not rows:
-            box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
-        for source, presentation in zip(rows, presentations):
-            group = Adw.PreferencesGroup(); box.append(group)
-            row = Adw.ActionRow(); row.set_title(source.label or source.provider_id)
-            row.set_subtitle(presentation.summary)
-            row.set_subtitle_lines(0)
-            toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
-            toggle.set_tooltip_text("Activation : inclure cette source dans les synchronisations")
-            def toggled(widget, _param, sid=source.source_id):
-                try:
-                    broker.set_enabled(sid, widget.get_active())
-                    self._refresh_sync_page()
-                except Exception as exc:
-                    self.show_error(str(exc), "Synchronisation")
-            toggle.connect("notify::active", toggled); row.add_suffix(toggle)
-            now = self.action_button(presentation.action_label, "emblem-synchronizing-symbolic")
-            now.set_sensitive(presentation.action_enabled)
-            now.set_tooltip_text(
-                presentation.action_label if presentation.action_enabled else presentation.disabled_reason
-            )
-            def one(_button, sid=source.source_id, label=source.label or source.provider_id):
-                self.runner.submit(f"Synchronisation {label}…", lambda: broker.synchronize_source(sid),
-                    lambda _r: (self._refresh_sync_page(), self.refresh_library(False)), control=_button,
-                    priority=TaskPriority.USER_ACTION, kind="source-sync")
-            now.connect("clicked", one); row.add_suffix(now); group.add(row)
+        return sync_controller._refresh_sync_page(self)
 
     def _build_tools_page(self):
         scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -1845,35 +1768,7 @@ class MainWindow(Adw.ApplicationWindow):
             run.connect("clicked", prepare)
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
-        def progress(event: dict[str, Any]) -> None:
-            kind = str(event.get("event") or "")
-            if kind == "identity_begin":
-                label = f"Synchronisation · {event.get('label') or event.get('identity_id')}…"
-                GLib.idle_add(self._task_progress, label)
-        def ok(summary: dict[str, Any]) -> None:
-            self._render_dashboard(); self._populate_loans(self.service.last_loans); self.refresh_library(False); self.refresh_recent()
-            acquisitions = sum(int(x.get("new_acquisitions") or 0) for x in summary.get("identities", []))
-            attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
-            errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
-            if acquisitions or attention or errors:
-                self._activity_result(
-                    f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)",
-                    success=not bool(attention or errors),
-                    persistent=bool(attention or errors),
-                )
-        def err(exc: BaseException) -> None:
-            self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-            self._render_dashboard()
-            if control is not None: self.show_error(str(exc), "Synchronisation impossible")
-        task_label = "Vérification complète de la bibliothèque…" if deep else "Synchronisation des bibliothèques…"
-        self.runner.submit(
-            task_label, lambda: self.service.opening_sync(progress=progress, deep=deep), ok, err, control=control,
-            priority=TaskPriority.USER_ACTION if control is not None else (TaskPriority.MAINTENANCE if deep else TaskPriority.ACTIVE_LOAN),
-            kind="deep-sync" if deep else "opening-sync",
-        )
-
-    # Reader/storage targets are provided by storage.target plugins.
-    # The first 0.9.2 prototype intentionally has no brand-specific reader UI.
+        return sync_controller.run_opening_sync(self, control, deep=deep)
 
     def _known_item_languages(self, provider_id: str, item_id: str | None, metadata: dict[str, Any] | None = None) -> set[str]:
         from cifereca.language import normalize_language_tag
@@ -1891,211 +1786,43 @@ class MainWindow(Adw.ApplicationWindow):
         return {tag for value in values if (tag := normalize_language_tag(value))}
 
     def _build_loans_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Mes emprunts", "Prêts physiques et numériques", "Aucun emprunt", "Vos prêts actifs apparaîtront ici.")
-        history = Gtk.Button(label="Historique"); history.connect("clicked", lambda _b: self.navigate("history")); page.header_actions.append(history)
-        bookings = Gtk.Button(label="Réservations"); bookings.connect("clicked", lambda _b: self.navigate("bookings")); page.header_actions.append(bookings)
-        self.loan_filter = "digital"
-        segment = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        buttons: list[Gtk.ToggleButton] = []
-        self.loan_filter_buttons: dict[str, Gtk.ToggleButton] = {}
-        for value, label in [("all", "Tous"), ("physical", "Physiques"), ("digital", "Numériques")]:
-            b = Gtk.ToggleButton(label=label); b.set_name(value)
-            if buttons: b.set_group(buttons[0])
-            if value == "digital": b.set_active(True)
-            b.connect("toggled", self._loan_filter_toggled)
-            segment.append(b); buttons.append(b)
-            self.loan_filter_buttons[value] = b
-        page.toolbar.append(segment)
-        self.loan_scope_count = Gtk.Label(label="", xalign=0)
-        self.loan_scope_count.add_css_class("caption")
-        self.loan_scope_count.add_css_class("dim-label")
-        self.loan_scope_count.set_tooltip_text(
-            "Nombre affiché dans le filtre actif, comparé au volume total des prêts"
-        )
-        page.toolbar.append(self.loan_scope_count)
-        from cifereca.language import language_label
-        self.loan_languages = MultiSelect('Langues', [(code, language_label(code)) for code in ('fr','en','de','es','it','pt','nl')], self._render_loans)
-        page.toolbar.append(self.loan_languages)
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser les emprunts")
-        refresh.set_tooltip_text("Actualiser les catalogues de prêts et vérifier ADEPT, sans acquisition ni synchronisation des stores")
-        refresh.connect("clicked", lambda _b: self.refresh_loans(True, refresh)); page.header_actions.append(refresh)
-        page.connect_selected(self._loan_selected)
-        return page
+        return loans_controller._build_loans_page(self)
 
     def _loan_filter_toggled(self, button: Gtk.ToggleButton) -> None:
-        if button.get_active():
-            self.loan_filter = button.get_name() or "all"
-            self._render_loans()
+        return loans_controller._loan_filter_toggled(self, button)
 
     def _populate_loans(self, rows: list[Loan]) -> None:
-        self.service.last_loans = rows
-        self.loan_objects = {x.id: x for x in rows}
-        self._render_loans()
-        self._render_kobo_loans()
-        if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
+        return loans_controller._populate_loans(self, rows)
 
     def _render_loans(self) -> None:
-        if not hasattr(self, "loan_page"):
-            return
-        all_loans = list(self.service.last_loans)
-        counts = loan_medium_counts(all_loans)
-        if hasattr(self, "loan_filter_buttons"):
-            for key, button in self.loan_filter_buttons.items():
-                label = LOAN_FILTER_LABELS.get(key, key)
-                button.set_label(f"{label} · {counts.get(key, 0)}")
-        ranked_rows: list[tuple[tuple[int, int], BookListItem]] = []
-        wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
-        for loan in all_loans:
-            if self.loan_filter != "all" and loan.medium != self.loan_filter:
-                continue
-            raw = dict(loan.raw or {})
-            meta = dict(raw.get('_cifereca') or {}) if isinstance(raw.get('_cifereca'), dict) else raw
-            loan_languages = self._known_item_languages(loan.source_provider, loan.record_id or loan.id, meta)
-            if wanted_languages and not loan_languages.intersection(wanted_languages):
-                continue
-            due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
-            subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
-            meta = f"Retour {fr_date(loan.due_at)} · {loan.document_type or loan.provider}"
-            ranked_rows.append((
-                due.sort_key,
-                BookListItem(
-                    loan.id,
-                    loan.title,
-                    subtitle,
-                    meta,
-                    due.label,
-                    loan.thumbnail_url,
-                    badge_style=due.style,
-                ),
-            ))
-        ranked_rows.sort(key=lambda item: item[0])
-        rows = [row for _rank, row in ranked_rows]
-        if hasattr(self, "loan_scope_count"):
-            self.loan_scope_count.set_label(
-                loan_context_label(
-                    filter_key=self.loan_filter,
-                    visible_count=len(rows),
-                    medium_count=counts.get(self.loan_filter, counts["all"]),
-                    total_count=counts["all"],
-                    language_filtered=bool(wanted_languages),
-                )
-            )
-        objects={key:{"source_provider":loan.source_provider,"media_format":loan.media_format,"author":loan.author,"metadata":(dict((loan.raw or {}).get('_cifereca') or {}) if isinstance((loan.raw or {}).get('_cifereca'),dict) else dict(loan.raw or {}))} for key,loan in self.loan_objects.items()}
-        self._attach_row_facets(rows,objects,self.search_controls)
-        self.loan_page.show_rows(rows, total_count=len(rows))
+        return loans_controller._render_loans(self)
 
     def _loan_selected(self, row: BookListItem | None) -> None:
-        if row is None: return
-        loan = self.loan_objects.get(row.key)
-        if loan:
-            self._displayed_loan = loan
-            self.loan_page.detail.show_loan(loan)
-            self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
-                'source_credential':loan.source_credential,'record_id':loan.record_id})
-            self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
-                'author':loan.author,'media_format':loan.media_format}, self.search_controls)
+        return loans_controller._loan_selected(self, row)
 
     def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -> None:
-        identity = self.service.current_identity
-        identity_id = identity.identity_id if identity else None
-        def done(rows):
-            current = self.service.current_identity
-            if (current.identity_id if current else None) == identity_id:
-                self._loans_refreshed(rows)
-        self.runner.submit(
-            "Actualisation des emprunts…",
-            lambda: self.service.refresh_identity_loans(force=force, identity_id=identity_id),
-            done,
-            control=control,
-            priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.ACTIVE_LOAN,
-            kind="loans",
-        )
+        return loans_controller.refresh_loans(self, force, control)
 
     def _loans_refreshed(self, rows):
-        displayed=getattr(self, '_displayed_loan', None)
-        self._populate_loans(rows)
-        if displayed:
-            fresh=next((r for r in rows if (r.id,r.source_provider,r.source_credential,r.source_account_id)==
-                        (displayed.id,displayed.source_provider,displayed.source_credential,displayed.source_account_id)),None)
-            self._displayed_loan=fresh
-            if fresh:self.loan_page.detail.show_loan(fresh)
-            else:self.loan_page.detail.empty("Prêt absent du catalogue", "La liste des prêts a été actualisée ; les fichiers locaux sont conservés.")
-        self.toast(f"{len(rows)} emprunt(s) actualisé(s)")
+        return loans_controller._loans_refreshed(self, rows)
 
     def confirm_renew(self, loan: Loan, control: Gtk.Widget) -> None:
-        dialog = Adw.MessageDialog.new(self, "Prolonger ce prêt ?", loan.title)
-        dialog.add_response("cancel", "Annuler"); dialog.add_response("ok", "Prolonger")
-        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-        dialog.connect("response", lambda _d, response: self._renew(loan, control) if response == "ok" else None)
-        dialog.present()
+        return loans_controller.confirm_renew(self, loan, control)
 
     def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
-        self.runner.submit(
-            "Prolongation du prêt…", lambda: self.service.renew(loan), lambda _r: self.refresh_loans(True),
-            control=control, success_toast="Prêt prolongé", priority=TaskPriority.USER_ACTION, kind="loan-renew",
-        )
+        return loans_controller._renew(self, loan, control)
 
     def confirm_return(self, loan: Loan, control: Gtk.Widget) -> None:
-        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
-            dialog = Adw.MessageDialog.new(self, "Rendre ce livre numérique ?", "Confirmer la demande de restitution au fournisseur.")
-            dialog.add_response("cancel", "Annuler")
-            dialog.add_response("provider", "Restituer")
-            dialog.set_response_appearance("provider", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.connect(
-                "response",
-                lambda _d, response: self._return_loan_pnb(loan, control)
-                if response == "provider" else None,
-            )
-            dialog.present()
-            return
-
-        dialog = Adw.MessageDialog.new(
-            self, "Restituer ce prêt numérique ?",
-            "ADEPT restitue la licence Adobe d’origine, puis vérifie Paris. "
-            "Paris (PNB) est une action séparée, qui ne peut être déclenchée automatiquement.",
-        )
-        dialog.add_response("cancel", "Annuler")
-        dialog.add_response("adept", "Restituer la licence ADEPT")
-        dialog.add_response("pnb", "Restituer à Paris (PNB)")
-        dialog.set_response_appearance("adept", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_response_appearance("pnb", Adw.ResponseAppearance.DESTRUCTIVE)
-
-        def on_response(_dialog, response):
-            if response == "adept":
-                self._return_loan(loan, control)
-            elif response == "pnb":
-                self._return_loan_pnb(loan, control)
-
-        dialog.connect("response", on_response)
-        dialog.present()
+        return loans_controller.confirm_return(self, loan, control)
 
     def _return_loan_result(self, result: Any, *, channel: str) -> None:
-        """The background task completed; the loan return may still be partial."""
-        self.refresh_loans(True)
-        kind, message = loan_return_feedback(result, channel=channel)
-        if kind == "confirmed":
-            self.toast(message, 6)
-        else:
-            code = result.get("code") if isinstance(result, dict) else None
-            self.show_attention(message, code=str(code or "loan_return_unconfirmed"))
+        return loans_controller._return_loan_result(self, result, channel=channel)
 
     def _return_loan(self, loan: Loan, control: Gtk.Widget) -> None:
-        self.runner.submit(
-            "Vérification de restitution ADEPT…",
-            lambda: self.service.return_loan_prefer_adept(loan),
-            lambda result: self._return_loan_result(result, channel="adept"),
-            control=control,
-            priority=TaskPriority.USER_ACTION, kind="loan-return",
-        )
+        return loans_controller._return_loan(self, loan, control)
 
     def _return_loan_pnb(self, loan: Loan, control: Gtk.Widget) -> None:
-        self.runner.submit(
-            "Vérification de restitution Paris (PNB)…",
-            lambda: self.service.return_digital(loan, explicit_retry=True),
-            lambda result: self._return_loan_result(result, channel="pnb"),
-            control=control,
-            priority=TaskPriority.USER_ACTION, kind="loan-return",
-        )
+        return loans_controller._return_loan_pnb(self, loan, control)
 
     # ---------- search ----------
     def _query_controls(self, changed, activate, *, library=False):
@@ -3612,7 +3339,9 @@ class MainWindow(Adw.ApplicationWindow):
         if not item:
             return
         if item.get("source") == "loan" and item.get("loan_id"):
-            loan = self.loan_objects.get(str(item.get("loan_id")))
+            # A merged catalogue notice may not identify the exact borrower.
+            # In that case never expose an action for an arbitrary loan source.
+            loan = unique_library_loan(self.loan_objects.values(), item)
             if loan:
                 self.library_page.detail.show_loan(loan, include_pnb_action=False)
                 actions = []
@@ -3684,80 +3413,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._library_selected(row)
 
     def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
-        """0.8.2 compatibility shim: automation runs at application opening only.
-
-        The historical interval setting remains readable for rollback compatibility,
-        but Paris no longer installs a recurring in-process timer.
-        """
-        if self._kobo_backup_timer_id is not None:
-            try:
-                GLib.source_remove(self._kobo_backup_timer_id)
-            except Exception:
-                pass
-            self._kobo_backup_timer_id = None
-        if run_now and self.service.kobo_backup_enabled():
-            GLib.idle_add(lambda: (self.run_kobo_backup(False), False)[1])
+        return sync_controller._configure_kobo_backup_timer(self, run_now=run_now)
 
     def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
-        original_label = control.get_label() if isinstance(control, Gtk.Button) else None
-        progress_state = {"last": 0}
-
-        def progress(event: dict[str, Any]) -> None:
-            if not isinstance(control, Gtk.Button):
-                return
-            kind = str(event.get("event") or "")
-            current = int(event.get("current") or 0)
-            total = int(event.get("total") or 0)
-            if kind == "adept_probe":
-                label = "Synchronisation Kobo · vérification Adept…"
-            elif kind in {"manifest_fetch", "manifest"}:
-                label = f"Synchronisation Kobo · manifest {total}" if total else "Synchronisation Kobo · manifest…"
-            elif kind in {"scan", "acquiring", "downloaded", "item_error"} and total:
-                if kind == "scan" and current not in {1, total} and current - progress_state["last"] < 10:
-                    return
-                progress_state["last"] = current
-                label = f"Synchronisation Kobo · {current}/{total}"
-            else:
-                return
-            GLib.idle_add(lambda: (control.set_label(label), False)[1])
-
-        def work() -> dict[str, Any]:
-            return self.service.sync_kobo_backup(progress=progress)
-
-        def restore_label() -> None:
-            if isinstance(control, Gtk.Button) and original_label is not None:
-                control.set_label(original_label)
-
-        def ok(summary: dict[str, Any]) -> None:
-            restore_label()
-            self._render_kobo_loans()
-            attention = int(summary.get("attention_required", 0) or 0)
-            errors = int(summary.get("errors", 0) or 0)
-            if manual:
-                self._activity_result(
-                    f"Synchronisation Kobo : {summary.get('downloaded', 0)} téléchargé(s), "
-                    f"{summary.get('pending', 0)} en attente, {summary.get('unchanged', 0)} à jour, "
-                    f"{summary.get('skipped', 0)} ignoré(s), {attention} action(s), {errors} erreur(s)",
-                    success=not bool(attention or errors),
-                    persistent=bool(attention or errors),
-                )
-            elif summary.get("downloaded") or summary.get("pending") or attention or errors:
-                self._activity_result(
-                    f"Synchronisation Kobo automatique : {summary.get('downloaded', 0)} téléchargé(s), "
-                    f"{summary.get('pending', 0)} en attente, {attention} action(s), {errors} erreur(s)",
-                    success=not bool(attention or errors),
-                    persistent=bool(attention or errors),
-                )
-        def err(exc: BaseException) -> None:
-            restore_label()
-            if manual:
-                self.show_error(str(exc), "Synchronisation Kobo impossible")
-            else:
-                self.diagnostics.add("KOBO", "automatic backup task", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-        self.runner.submit(
-            "Synchronisation locale Kobo…", work, ok, err, control=control,
-            priority=TaskPriority.USER_ACTION if manual else TaskPriority.ACTIVE_LOAN, kind="kobo-acquisition",
-        )
+        return sync_controller.run_kobo_backup(self, manual, control)
 
     def choose_adept_loan(self, acquisition_id, loan, control):
         self.runner.submit("Lecture des prêts ADEPT…", lambda: self.service.adept_loan_choices(acquisition_id),
@@ -4073,6 +3732,23 @@ class MainWindow(Adw.ApplicationWindow):
             choose_adept.set_tooltip_text("Lister les profils Adobe capables de récupérer les prêts ACSM")
             adept_row.add_suffix(choose_adept)
             choose_adept.connect("clicked", lambda button, entry=adept_row: self._choose_adept_profile(entry, button))
+            # P0 #1063: local normal path status only. Exceptional borrower
+            # grants and historical Adobe provenance belong to #976, not here.
+            normal_row = Adw.ActionRow()
+            normal_row.set_title("Parcours normal · Paris principal et ADEPT")
+            if data.get("id"):
+                normal_row.set_subtitle(
+                    normal_paris_adept_summary(
+                        self.service.normal_paris_adept_status(identity_id)
+                    )
+                )
+            else:
+                normal_row.set_subtitle("À configurer · enregistrez l’identité pour vérifier ses liaisons.")
+            normal_row.set_tooltip_text(
+                "État local enregistré, sans test Adobe ni connexion réseau. "
+                "Après modification, enregistrez et rouvrez les paramètres pour actualiser cet état."
+            )
+            group.add(normal_row)
             delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette identité de la configuration")
             delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
             editor = {"group": group, "id": id_row, "label": label_row, "directory": directory_row, "languages": languages_row, "prefer_vo": vo_switch, "adept_profile": adept_row, "deleted": False}
@@ -4242,29 +3918,17 @@ class MainWindow(Adw.ApplicationWindow):
         except ValueError: level_drop.set_selected(1)
         level_row.add_suffix(level_drop); config_group.add(level_row)
 
-        box = sections["sync"]
-        backup_group = Adw.PreferencesGroup(); backup_group.set_title("Acquisition automatique / activité Kobo"); box.append(backup_group)
-        backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title("Synchroniser automatiquement les ebooks Kobo")
-        backup_auto_row.set_subtitle("Paris résout l’acquisition via Kobo-Vault v2.3+ puis exécute localement via Kobo-Adept contract v8")
-        backup_switch = Gtk.Switch(); backup_switch.set_active(bool(self.config.get("kobo_backup.enabled", False))); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
-        unlinked_row = Adw.ActionRow(); unlinked_row.set_title("Autoriser les acquisitions Kobo malgré des livres locaux sans liaison")
-        unlinked_row.set_subtitle("Désactivé : suspend les acquisitions du lot en présence d’EPUB importés non rapprochés. Activé : des doublons peuvent être téléchargés.")
-        unlinked_switch = Gtk.Switch(); unlinked_switch.set_active(bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False))); unlinked_switch.set_valign(Gtk.Align.CENTER); unlinked_row.add_suffix(unlinked_switch); backup_group.add(unlinked_row)
-        library_dir_row = Adw.EntryRow(); library_dir_row.set_title("Bibliothèque locale possédée par cifereca")
-        library_dir_row.set_text(str(self.config.get("library.directory", "~/EBooks") or "~/EBooks")); download_group.add(library_dir_row)
-        backup_dir_row = Adw.EntryRow(); backup_dir_row.set_title("Sous-répertoire/override Kobo (vide = bibliothèque locale)")
-        backup_dir_row.set_text(str(self.config.get("kobo_backup.directory", "") or "")); backup_group.add(backup_dir_row)
-        backup_interval_row = Adw.EntryRow(); backup_interval_row.set_title("Intervalle automatique (minutes, minimum 15)")
-        backup_interval_row.set_text(str(self.config.get("kobo_backup.interval_minutes", 60) or 60)); backup_group.add(backup_interval_row)
-        vault_profiles = ["Android", "Desktop"]
-        current_vault_profile = str(self.config.get("kobo_backup.display_profile", "Android") or "Android")
-        if current_vault_profile not in vault_profiles:
-            current_vault_profile = "Android"
-        vault_display_row = Adw.ActionRow(); vault_display_row.set_title("DisplayProfile Kobo-Vault")
-        vault_display_row.set_subtitle("v2.3 : ACSM est prioritaire quand disponible ; le DisplayProfile pilote ensuite SignedNoDrm/KDRM")
-        vault_profile_drop = Gtk.DropDown.new_from_strings(vault_profiles)
-        vault_profile_drop.set_selected(vault_profiles.index(current_vault_profile))
-        vault_profile_drop.set_valign(Gtk.Align.CENTER); vault_display_row.add_suffix(vault_profile_drop); backup_group.add(vault_display_row)
+        kobo_settings = build_kobo_sync_section(
+            section=sections["sync"], download_group=download_group,
+            config=self.config, Gtk=Gtk, Adw=Adw,
+        )
+        backup_switch = kobo_settings.backup_switch
+        unlinked_switch = kobo_settings.unlinked_switch
+        library_dir_row = kobo_settings.library_dir_row
+        backup_dir_row = kobo_settings.backup_dir_row
+        backup_interval_row = kobo_settings.backup_interval_row
+        vault_profiles = kobo_settings.vault_profiles
+        vault_profile_drop = kobo_settings.vault_profile_drop
 
         settings_actions = AdaptiveActionBar(source=settings_heading); settings_actions.set_halign(Gtk.Align.END); settings_heading.append(settings_actions)
         save = action_button(
