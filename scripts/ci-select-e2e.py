@@ -15,6 +15,19 @@ ALL = CORE + DIAG + YOUTH
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
          "diagnostics-navigation-slow-1366", "youth-library-search-1366")
+# main_window is imported directly by core search, detail, youth and
+# Diagnostics navigation probes. The generic shell subset misses those
+# XTEST consumers. Keep all direct consumers when MainWindow changes.
+MAINWINDOW = tuple(dict.fromkeys(
+    CORE + YOUTH + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
+))
+# The Diagnostics common probe is imported by every other Diagnostics probe;
+# navigation probes also implement both MainWindow baseline scenarios.
+DIAG_SHARED = DIAG + ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
+DIAG_STATES = ("diagnostics-states-1366", "diagnostics-navigation-1366",
+               "diagnostics-navigation-slow-1366",
+               "mainwindow-baseline-1366", "mainwindow-baseline-1600")
+
 LOCAL_GUI = {
     "action_layout.py": ("book-detail-1366",),
     "action_widgets.py": ("book-detail-1366",),
@@ -24,14 +37,15 @@ LOCAL_GUI = {
     "cover_preview.py": ("book-detail-1366",),
     "facet_text.py": ("search-filter-p0",),
     "query_controls.py": ("search-filter-p0", "core-navigation"),
-    "query_model.py": ("search-filter-p0",),
+    # youth_page_probe imports QueryState from this module directly.
+    "query_model.py": ("search-filter-p0",) + YOUTH,
     "search_intent.py": ("search-filter-p0",),
 }
 PROBES = {
     "e2e/book_detail_probe.py": ("book-detail-1366",),
     "e2e/search_filter_probe.py": ("search-filter-p0",),
-    "e2e/diagnostics_page_probe.py": ("diagnostics-1366", "diagnostics-large-1600"),
-    "e2e/diagnostics_states_probe.py": ("diagnostics-states-1366",),
+    "e2e/diagnostics_page_probe.py": DIAG_SHARED,
+    "e2e/diagnostics_states_probe.py": DIAG_STATES,
     "e2e/diagnostics_structured_probe.py": ("diagnostics-structured-1366",),
     "e2e/diagnostics_volume_probe.py": ("diagnostics-volume-1366",),
     "e2e/diagnostics_navigation_probe.py": (
@@ -72,8 +86,9 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             selected.update(YOUTH)
         elif path.startswith("src/cifereca/builtin_ui/"):
             selected.update(SHELL)
-        elif path in ("src/cifereca/app.py", "src/cifereca/gui/main_window.py",
-                      "src/cifereca/gui/shell_model.py",
+        elif path == "src/cifereca/gui/main_window.py":
+            selected.update(MAINWINDOW)
+        elif path in ("src/cifereca/app.py", "src/cifereca/gui/shell_model.py",
                       "src/cifereca/gui/navigation_history.py"):
             selected.update(SHELL)
         elif path.startswith("src/cifereca/gui/"):

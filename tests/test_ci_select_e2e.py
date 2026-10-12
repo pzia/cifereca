@@ -40,7 +40,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_mainwindow_both_baselines_and_cross_domain(self):
         self.assertEqual(set(mod.select(["src/cifereca/gui/main_window.py"])),
-                         set(mod.SHELL))
+                         set(mod.MAINWINDOW))
         self.assertEqual(set(mod.select(["src/cifereca/builtin_ui/library.py"])),
                          set(mod.SHELL))
         self.assertEqual(set(mod.select(["src/cifereca/app.py"])), set(mod.SHELL))
@@ -48,6 +48,84 @@ class SelectionTests(unittest.TestCase):
     def test_local_widget(self):
         self.assertEqual(mod.select(["src/cifereca/gui/book_widgets.py"]),
                          ("search-filter-p0", "book-detail-1366"))
+
+    def test_1269_diagnostics_shared_probe_keeps_transitive_consumers(self):
+        self.assertEqual(
+            set(mod.select(["e2e/diagnostics_page_probe.py"])),
+            set(mod.DIAG_SHARED),
+        )
+        self.assertEqual(len(mod.DIAG_SHARED), 9)
+        self.assertEqual(set(mod.DIAG), set(mod.DIAG_SHARED) -
+                         {"mainwindow-baseline-1366", "mainwindow-baseline-1600"})
+
+    def test_1269_diagnostics_states_probe_keeps_navigation_and_baselines(self):
+        selected = mod.select(["e2e/diagnostics_states_probe.py"])
+        self.assertEqual(set(selected), set(mod.DIAG_STATES))
+        self.assertEqual(len(selected), 5)
+
+    def test_1269_query_model_includes_youth_query_state_consumers(self):
+        selected = mod.select(["src/cifereca/gui/query_model.py"])
+        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.YOUTH))
+
+    def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
+        selected = mod.select(["src/cifereca/gui/main_window.py"])
+        self.assertEqual(set(selected), set(mod.MAINWINDOW))
+        self.assertEqual(len(selected), 13)
+        for name in mod.CORE + mod.YOUTH + (
+            "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"
+        ):
+            self.assertIn(name, selected)
+
+    def test_1269_probe_import_graph_never_silently_omits_a_consumer(self):
+        """Guard future direct and transitive dependencies of GTK probes.
+
+        Every import of a sibling E2E probe or a real GUI module must select
+        the consumer scenario. Traversal is unnecessary: if every direct
+        graph edge is covered, the selection also covers transitive edges.
+        """
+        import ast
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "runner_for_graph", ROOT / "e2e/run.py"
+        )
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        entrypoints = {
+            "gtk-probe": "search_filter_probe.py",
+            "gtk-detail": "book_detail_probe.py",
+            "gtk-diagnostics": "diagnostics_page_probe.py",
+            "gtk-diagnostics-states": "diagnostics_states_probe.py",
+            "gtk-diagnostics-structured": "diagnostics_structured_probe.py",
+            "gtk-diagnostics-volume": "diagnostics_volume_probe.py",
+            "gtk-diagnostics-navigation": "diagnostics_navigation_probe.py",
+            "gtk-youth": "youth_page_probe.py",
+        }
+        for scenario, descriptor in runner.SCENARIOS.items():
+            filename = entrypoints.get(descriptor.get("runner"))
+            if filename is None:
+                continue  # startup/core-navigation use the capture runner
+            script = ROOT / "e2e" / filename
+            tree = ast.parse(script.read_text(encoding="utf-8"))
+            imported = []
+            for node in ast.walk(tree):
+                names = ([node.module] if isinstance(node, ast.ImportFrom)
+                         else [alias.name for alias in node.names]
+                         if isinstance(node, ast.Import) else [])
+                imported.extend(name for name in names if name)
+            for name in imported:
+                if name.startswith("cifereca.gui."):
+                    relative = "src/" + name.replace(".", "/") + ".py"
+                elif "." not in name:
+                    relative = "e2e/" + name + ".py"
+                else:
+                    continue
+                if not (ROOT / relative).is_file():
+                    continue
+                self.assertIn(
+                    scenario, mod.select([relative]),
+                    f"{scenario} uses {relative} via {filename}",
+                )
+
 
     def test_shared_unknown_and_full_dispatch(self):
         for path in ("e2e/run.py", ".github/workflows/e2e-smoke.yml",
