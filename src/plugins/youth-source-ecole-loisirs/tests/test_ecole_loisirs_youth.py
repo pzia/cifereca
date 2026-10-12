@@ -108,6 +108,53 @@ def test_next_cursor_requires_explicit_immediate_next_page_link():
     assert next_cursor("<p>Fin</p>", current_page=1) == ""
 
 
+def test_romans_cursor_preserves_editor_route_and_page_bounds():
+    from urllib.parse import parse_qs, urlsplit
+
+    next_page = '<a href="/recherche-avancee/romans?page=2&type=romans">Afficher plus de résultats</a>'
+    assert next_cursor(next_page, current_page=1) == "romans:2"
+    relative = '<a href="?page=3&type=romans">Afficher plus de résultats</a>'
+    assert next_cursor(relative, current_page=2, current_route="romans") == "romans:3"
+    assert next_cursor(relative, current_page=2) == "3"
+    assert next_cursor('<a href="/recherche-avancee/romans?page=101">Afficher plus de résultats</a>', current_page=100) == ""
+    assert next_cursor('<a href="https://evil.example/recherche-avancee/romans?page=2">Afficher plus de résultats</a>', current_page=1) == ""
+    url = search_url("loup & école", page=500, route="romans")
+    assert urlsplit(url).path == "/recherche-avancee/romans"
+    assert parse_qs(urlsplit(url).query) == {"page": ["100"], "type": ["romans"], "search": ["loup & école"]}
+    with pytest.raises(ValueError, match="search route"):
+        search_url("loup", page=1, route="unknown")
+
+
+def test_romans_cursor_replays_only_explicit_next_page_with_offline_http():
+    requests = []
+    html = HTML.replace(
+        '/recherche-avancee?page=2&search_api_views_fulltext=loup&types=livre',
+        '?page=3&type=romans',
+    )
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = source.search("loup", cursor="romans:2", limit=40)
+    assert result["next_cursor"] == "romans:3"
+    assert len(result["items"]) == 3
+    assert requests[0].url.path == "/recherche-avancee/romans"
+    assert requests[0].url.params["page"] == "2"
+    assert requests[0].url.params["search"] == "loup"
+    assert requests[0].url.params["type"] == "romans"
+    result2 = source.search("loup", cursor=result["next_cursor"], limit=40)
+    assert len(result2["items"]) == 3
+    assert requests[1].url.path == "/recherche-avancee/romans"
+    assert requests[1].url.params["page"] == "3"
+    assert len(requests) == 2
+    for invalid in ("romans:101", "romans:-1", "romans:oops"):
+        with pytest.raises(ValueError, match="cursor"):
+            source.search("loup", cursor=invalid)
+    assert len(requests) == 2
+
+
 def test_search_url_is_bounded_and_uses_book_filter():
     url = search_url("loup & école", page=500)
     assert url.startswith(SEARCH + "?")
