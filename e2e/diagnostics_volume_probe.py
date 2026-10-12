@@ -363,11 +363,16 @@ def main():
         report["audits"]["D08_long_detail_safe_presence_flags"] = expected
         missing = [key for key, present in expected.items() if not present]
         assert not missing, "D08: segments absents ou non expurges: " + ", ".join(missing)
-        detail_scrollers = [
-            w for w in walk(panes[0]) if isinstance(w, Gtk.ScrolledWindow)
-        ]
-        assert len(detail_scrollers) == 1
-        long_detail[0] = (views[0], detail_scrollers[0], detail_text)
+        # Gtk.DropDown may contain its own internal ScrolledWindow. Resolve
+        # the scroll ancestor of the exact rendered TextView instead of
+        # assuming a single scroller exists in the complete expander tree.
+        detail_scroll = views[0].get_parent()
+        while detail_scroll is not None and not isinstance(detail_scroll, Gtk.ScrolledWindow):
+            detail_scroll = detail_scroll.get_parent()
+        assert detail_scroll is not None, "D08: scroll interne du texte absent"
+        assert detail_scroll.get_child() is views[0], "D08: mauvais conteneur de texte"
+        report["audits"]["D08_scroll_belongs_to_visible_textview"] = True
+        long_detail[0] = (views[0], detail_scroll, detail_text)
         report["audits"]["D08_complete_redacted_long_detail_available"] = True
         report["checks"]["D08_real_detail_panel_available_and_redacted"] = True
         journal_scroll = error_labels[0].get_parent()
