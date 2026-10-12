@@ -3164,13 +3164,14 @@ class LibraryService:
                 acsm_format, format_source, suffix = adept_acsm_plan.select_acsm_format(
                     detect_acsm_format(acquisition.acsm_path),
                 )
-                destination = self.library_identity_provider_dir(identity.identity_id, loan.source_provider) / self._loan_destination_name(loan.title, suffix)
-                repair_mode = bool(not force_refresh and legacy_acsm_artifact and previous_path is not None and previous_path.is_file())
-                # Explicit re-acquisition never replaces a preserved local file.
-                # A title collision is not evidence that a file belongs to this loan.
-                if not repair_mode and destination.exists():
-                    destination = destination.with_name(destination.stem + ".reacquired-" + uuid.uuid4().hex + destination.suffix)
-                adept_destination = destination.with_name(destination.stem + ".repairing" + destination.suffix) if repair_mode else destination
+                destination, adept_destination, repair_mode = adept_acsm_plan.plan_adept_destination(
+                    self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
+                    / self._loan_destination_name(loan.title, suffix),
+                    force_refresh=force_refresh,
+                    legacy_acsm_artifact=legacy_acsm_artifact,
+                    previous_path=previous_path,
+                    unique_suffix=lambda: uuid.uuid4().hex,
+                )
                 try:
                     adept_destination.unlink(missing_ok=True)
                 except OSError:
