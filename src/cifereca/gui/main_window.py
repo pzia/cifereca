@@ -43,6 +43,7 @@ from .llm_settings import (
 )
 from .diagnostic_presentation import diagnostic_plugin_rows
 from . import loans_controller, sync_controller
+from .search_pending import pending_online_search_matches
 from .settings_sync_section import build_kobo_sync_section
 from .settings_account_editor import build_provider_account_editor
 from .settings_identity_editor import build_identity_settings_editor
@@ -1884,7 +1885,11 @@ class MainWindow(Adw.ApplicationWindow):
             self._search_enter_sequence = SearchEnterSequence()
         state = self.search_controls.state()
         identity = self.service.current_identity.identity_id if self.service.current_identity else None
-        if getattr(self, "_online_pending_key", None) == (state, identity):
+        if pending_online_search_matches(
+            getattr(self, "_online_pending_key", None), (state, identity),
+            getattr(self, "_online_pending_generation", None),
+            getattr(self, "_search_generation", 0),
+        ):
             return
         online = self._search_enter_sequence.press(state)
         self.run_search(online, keyboard=True)
@@ -1962,14 +1967,22 @@ class MainWindow(Adw.ApplicationWindow):
             self.toast("Saisissez au moins 2 caractères"); return
         request_identity = self.service.current_identity.identity_id if self.service.current_identity else None
         online_key = (state, request_identity)
-        if force and getattr(self, "_online_pending_key", None) == online_key:
+        if force and pending_online_search_matches(
+            getattr(self, "_online_pending_key", None), online_key,
+            getattr(self, "_online_pending_generation", None),
+            self._search_generation,
+        ):
             return
         self._search_generation += 1
         generation = self._search_generation
         identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
         def current():
             identity = self.service.current_identity.identity_id if self.service.current_identity else None
-            return generation == self._search_generation and identity_id == identity
+            return (
+                not getattr(self, "_closed", False)
+                and generation == self._search_generation
+                and identity_id == identity
+            )
         if not force:
             self._last_search_query = state.text
             self._search_mode = "local"
@@ -1990,9 +2003,11 @@ class MainWindow(Adw.ApplicationWindow):
         pending_token = object()
         self._online_pending_key = online_key
         self._online_pending_token = pending_token
+        self._online_pending_generation = generation
         def clear_pending():
             if getattr(self, "_online_pending_token", None) is pending_token:
                 self._online_pending_key = None
+                self._online_pending_generation = None
         def failed(exc):
             clear_pending()
             if current(): self.show_error(str(exc), "Recherche en ligne impossible")
