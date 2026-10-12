@@ -490,6 +490,14 @@ def main():
         assert seen("Journal partiel"), "D09: rotation du journal masquée"
         report["checks"]["D09_source_filter_no_cross_source_attribution"] = True
         report["checks"]["D09_app_log_source_selected_by_real_keyboard_xtest"] = True
+        # The async broker has updated GTK widgets, but Xvfb still needs a
+        # compositor frame before ImageGrab reflects the finished page.
+        later(source_app_log_rendered, 320)
+
+    def source_app_log_rendered():
+        assert seen("Journal partiel") and not seen("Actualisation en cours")
+        assert any((w.get_label() or "").startswith("kobo.catalog · app_log")
+                   for w in widgets(Gtk.Expander))
         screenshot("06-filtre-source-journal-applicatif")
         src = [
             w for w in widgets(Gtk.DropDown)
@@ -508,6 +516,12 @@ def main():
         assert not any("· app_log ·" in row for row in groups)
         report["checks"]["D09_core_events_source_selected_by_real_keyboard_xtest"] = True
         report["checks"]["D09_both_sources_have_distinct_visible_provenance"] = True
+        later(source_core_rendered, 320)
+
+    def source_core_rendered():
+        assert not seen("Actualisation en cours")
+        assert any((w.get_label() or "").startswith("kobo.catalog · core_events")
+                   for w in widgets(Gtk.Expander))
         screenshot("06b-filtre-source-evenements-core")
         src = [
             w for w in widgets(Gtk.DropDown)
