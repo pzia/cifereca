@@ -70,6 +70,72 @@ def _public_structured_detail(raw: Any) -> dict[str, Any]:
     if type(retryable) is bool:
         safe["retryable"] = retryable
     return safe
+# A support report is locally redacted by Core, but lexical redaction can
+# miss arbitrary plugin IDs, config keys and branch names. The model needs
+# only operational health facts, never those free-form metadata fields.
+_SUPPORT_STATES = frozenset({
+    "ok", "warning", "error", "partial", "available", "unavailable",
+    "empty", "disabled", "unknown",
+})
+_SUPPORT_STATUS_FIELDS = {
+    "runtime": frozenset({"status"}),
+    "database": frozenset({"status", "integrity"}),
+    "config": frozenset({"status"}),
+    "plugins": frozenset({"status"}),
+}
+_SUPPORT_BOOL_FIELDS = {
+    "runtime": frozenset({"managed", "current_matches_process", "previous_present"}),
+    "database": frozenset({"present"}),
+    "config": frozenset({"present"}),
+}
+_SUPPORT_COUNT_FIELDS = {
+    "runtime": frozenset({"backup_count"}),
+    "database": frozenset({"schema", "expected_schema", "migration_markers"}),
+    "config": frozenset({"identities", "providers"}),
+    "plugins": frozenset({"count", "attention"}),
+}
+_SUPPORT_VERSION = re.compile(r"[0-9]{1,4}(?:\.[0-9]{1,4}){1,4}(?:\.(?:dev|rc|post)[0-9]{1,3})?\Z")
+
+
+def _public_support_report(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Project Core passive health facts; never walk free-form private data."""
+    safe: dict[str, Any] = {}
+    result = raw.get("result")
+    if type(result) is str and result in {"ok", "warning", "error"}:
+        safe["result"] = result
+    if type(raw.get("format")) is int and raw.get("format") == 1:
+        safe["format"] = 1
+    core = raw.get("core")
+    if type(core) is dict:
+        fields = {}
+        for key in ("version", "python"):
+            value = core.get(key)
+            if type(value) is str and _SUPPORT_VERSION.fullmatch(value):
+                fields[key] = value
+        if fields:
+            safe["core"] = fields
+    for section in ("runtime", "database", "config", "plugins"):
+        raw_section = raw.get(section)
+        if type(raw_section) is not dict:
+            continue
+        fields = {}
+        for key in _SUPPORT_STATUS_FIELDS.get(section, ()):
+            value = raw_section.get(key)
+            if type(value) is str and value in _SUPPORT_STATES:
+                fields[key] = value
+        for key in _SUPPORT_BOOL_FIELDS.get(section, ()):
+            value = raw_section.get(key)
+            if type(value) is bool:
+                fields[key] = value
+        for key in _SUPPORT_COUNT_FIELDS.get(section, ()):
+            value = raw_section.get(key)
+            if type(value) is int and 0 <= value <= 1_000_000:
+                fields[key] = value
+        if fields:
+            safe[section] = fields
+    return safe
+
+
 # A Core snapshot's top-level metadata can also contain unstructured
 # titles, personal names or provider payloads. Do not infer safety from its
 # "public" provenance: only send exact operational fields and tokens.
@@ -444,7 +510,8 @@ def prepare_analysis(
         # is produced by the public Core broker, not the LLM.
         if report.get("checks_executed") is not False:
             raise ValueError("support_report_not_passive")
-        safe_report = redacted_detail(report)
+        # A regex-only redactor cannot classify arbitrary names and IDs.
+        safe_report = redacted_detail(_public_support_report(report))
         if not isinstance(safe_report, Mapping):
             raise ValueError("support_report_unavailable")
         # The generic redactor sorts keys alphabetically, which could

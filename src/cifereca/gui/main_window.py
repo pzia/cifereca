@@ -43,6 +43,7 @@ from .llm_settings import (
 )
 from .diagnostic_presentation import diagnostic_plugin_rows
 from . import loans_controller, sync_controller
+from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section
 from .settings_accounts_section import (build_identity_settings_header, build_provider_accounts_header, build_provider_account_buttons)
 from .settings_application_interface import build_settings_application_interface
@@ -3763,32 +3764,20 @@ class MainWindow(Adw.ApplicationWindow):
         vault_profiles = kobo_settings.vault_profiles
         vault_profile_drop = kobo_settings.vault_profile_drop
 
-        settings_actions = AdaptiveActionBar(source=settings_heading); settings_actions.set_halign(Gtk.Align.END); settings_heading.append(settings_actions)
-        save = action_button(
-            "Enregistrer", "document-save-symbolic", suggested=True,
-            tooltip="Enregistrer les modifications de configuration en attente",
-        ); settings_actions.append(save)
-        reconnect = action_button(
-            "Reconnecter", "network-transmit-receive-symbolic",
-            tooltip="Enregistrer les modifications en attente puis reconnecter les sources",
-        ); settings_actions.append(reconnect)
-        settings_footer = AdaptiveActionBar(source=settings_root); settings_footer.set_halign(Gtk.Align.END)
-        save_bottom = action_button(
-            "Enregistrer", "document-save-symbolic", suggested=True,
-            tooltip="Enregistrer les modifications de configuration en attente",
-        ); settings_footer.append(save_bottom)
-        reconnect_bottom = action_button(
-            "Reconnecter", "network-transmit-receive-symbolic",
-            tooltip="Enregistrer les modifications en attente puis reconnecter les sources",
-        ); settings_footer.append(reconnect_bottom)
-        settings_root.append(settings_footer)
+        from .action_widgets import mirror_sensitivity
+        settings_bars = build_settings_action_bars(
+            root=settings_root, heading=settings_heading,
+            adaptive_action_bar=AdaptiveActionBar,
+            action_button=action_button, mirror_sensitivity=mirror_sensitivity,
+            Gtk=Gtk,
+        )
+        save, reconnect = settings_bars.save, settings_bars.reconnect
+        save_bottom, reconnect_bottom = settings_bars.save_bottom, settings_bars.reconnect_bottom
         settings_action_widgets.update({
             "save": (save, save_bottom),
             "reconnect": (reconnect, reconnect_bottom),
-            "containers": (settings_actions, settings_footer),
+            "containers": (settings_bars.heading_bar, settings_bars.footer_bar),
         })
-        from .action_widgets import mirror_sensitivity
-        mirror_sensitivity(save, save_bottom); mirror_sensitivity(reconnect, reconnect_bottom)
         # Independent, opt-in Core LLM settings. No backend contact on entry.
         ai_box = sections["ai"]
         ai_cfg = self.config.get("llm", {})

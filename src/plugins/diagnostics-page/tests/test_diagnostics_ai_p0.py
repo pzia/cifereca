@@ -957,10 +957,13 @@ def test_optional_support_report_expurgated_and_never_read_without_opt_in():
             assert verbose is False
             self.support_calls += 1
             return {
-                "summary": "statut partiel",
+                "format": 1, "result": "warning",
                 "checks_executed": False,
                 "checks": [],
-                "runtime": {"step": "ready", "authorization": "Bearer PRIVATE_AUTH"},
+                "runtime": {"status": "warning", "managed": True,
+                            "step": "Camille Dupont",
+                            "authorization": "Bearer PRIVATE_AUTH"},
+                "database": {"status": "ok", "present": True},
                 "source": "alice@example.com",
                 "raw_log": "NEVER_READ_RAW_LOG",
             }
@@ -978,8 +981,9 @@ def test_optional_support_report_expurgated_and_never_read_without_opt_in():
     assert broker.support_calls == 1
     assert preview["scope"]["include_support_report"] is True
     assert preview["support_fields"] >= 2
-    assert "statut partiel" in preview["prompt"]
-    assert "ready" in preview["prompt"]
+    assert '"result": "warning"' in preview["prompt"]
+    assert '"managed": true' in preview["prompt"]
+    assert "Camille Dupont" not in preview["prompt"]
     assert "ref-support" in preview["prompt"]
     for forbidden in ("PRIVATE_AUTH", "alice@example.com",
                       "NEVER_READ_RAW_LOG", "raw_log"):
@@ -996,7 +1000,7 @@ def test_support_report_only_and_modifying_consent_scope_is_forbidden():
     class ReportBroker(FakeBroker):
         def support_report(self, *, verbose=False, include_checks=True):
             assert include_checks is False
-            return {"checks_executed": False, "summary": "Synchronisation partielle"}
+            return {"checks_executed": False, "result": "warning"}
 
     model = FakeLLM()
     broker = ReportBroker([])
@@ -1004,7 +1008,7 @@ def test_support_report_only_and_modifying_consent_scope_is_forbidden():
     assert preview["count"] == 0
     assert preview["structured_count"] == 0
     assert preview["support_fields"] == 1
-    assert "Synchronisation partielle" in preview["prompt"]
+    assert '"result": "warning"' in preview["prompt"]
     preview["scope"]["include_support_report"] = False
     with pytest.raises(ValueError, match="explicit_consent_required"):
         analyze_with_consent(model, preview, approval_id=preview["approval_id"])
@@ -1043,8 +1047,12 @@ def test_support_report_is_lowest_priority_and_bounded_after_core_evidence():
     preview = prepare_analysis(model, broker, include_support_report=True)
     assert preview["count"] == 3
     assert all(f"ref-{i}" in preview["prompt"] for i in range(3))
-    assert preview["sample_truncated"] is True
-    assert preview["support_fields"] < 8
+    # Unknown extras are not eligible support evidence and should neither
+    # reach the model nor invent a partial-report warning.
+    assert preview["sample_truncated"] is False
+    assert preview["support_fields"] == 0
+    assert "extra_0" not in preview["prompt"]
+    assert "X" * 800 not in preview["prompt"]
     assert preview["bytes"] <= 3000
     assert model.calls == 0
 
@@ -1313,13 +1321,15 @@ def test_passive_support_more_than_eight_eligible_sections_remains_truncated():
             return {
                 "checks_executed": False,
                 "checks": [],
+                "result": "ok",
                 **{f"section_{i}": "ok" for i in range(9)},
             }
 
     preview = prepare_analysis(FakeLLM(), ExpandedSupport([]),
                                include_support_report=True)
-    assert preview["support_fields"] == 8
-    assert preview["sample_truncated"] is True
+    # Unknown section names are not public operational evidence.
+    assert preview["support_fields"] == 1
+    assert preview["sample_truncated"] is False
 
 
 def test_public_source_last_event_is_available_in_ai_preview_and_export():
@@ -1445,8 +1455,10 @@ def test_support_report_global_result_survives_large_bounded_sections():
                                include_support_report=True)
     assert preview["count"] == 1
     assert preview["support_fields"] >= 1
-    assert preview["sample_truncated"] is True
+    assert preview["sample_truncated"] is False
     assert '"result": "warning"' in preview["prompt"]
+    for secret in ("C" * 800, "K" * 800, "D" * 800, "P" * 800, "R" * 800):
+        assert secret not in preview["prompt"]
     # JSON formatting sorts keys again. Priority governs *inclusion*
     # under budget, not the serialized key order.
     assert preview["bytes"] <= 3000
@@ -1653,3 +1665,104 @@ def test_ai_module_scope_minimization_keeps_original_metadata_locally_but_not_re
     assert preview["scope"]["module"] == original
     assert original not in preview["prompt"]
     assert preview["bytes"] == len(preview["prompt"].encode("utf-8"))
+
+
+def test_support_report_projection_excludes_identifiable_free_metadata_from_real_model_request():
+    """A lexical redactor cannot recognise personally named config/plugin keys."""
+    class PrivateSupport(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            assert verbose is False and include_checks is False
+            return {
+                "format": 1, "result": "warning",
+                "checks_executed": False, "checks": [],
+                "core": {
+                    "version": "0.9.7", "python": "3.12.4",
+                    "platform": "Alice Bernard workstation",
+                    "repository": "bibliotheque-de-Camille",
+                    "ref": "users/Alice Bernard/private-feature",
+                    "source": "Bibliothèque privée",
+                },
+                "runtime": {
+                    "status": "warning", "managed": True,
+                    "backup_count": 2, "error_type": "Alexandre Bernard",
+                },
+                "database": {
+                    "status": "ok", "schema": 12, "expected_schema": 12,
+                    "integrity": "ok", "migration_markers": 1,
+                },
+                "config": {
+                    "status": "ok", "identities": 2,
+                    "keys": ["Camille Dupont", "Livre de Jean Martin"],
+                },
+                "plugins": {
+                    "status": "warning", "count": 3, "attention": 1,
+                    "plugins": [{"plugin_id": "lectures-alexandre-bernard",
+                                 "package_id": "romans-de-camille",
+                                 "reason_code": "Prêt personnel"}],
+                },
+                "summary": "Dossier Alice Bernard",
+            }
+
+    llm = FakeLLM(remote=True)
+    preview = prepare_analysis(llm, PrivateSupport([]), include_support_report=True)
+    assert preview["count"] == 0
+    assert preview["support_fields"] == 7
+    assert preview["sample_truncated"] is False
+    for useful in ('"result": "warning"', '"schema": 12', '"identities": 2',
+                   '"attention": 1', '"version": "0.9.7"'):
+        assert useful in preview["prompt"]
+    for private in ("Alice Bernard", "Camille", "Jean Martin", "Alexandre",
+                    "bibliotheque-de-Camille", "lectures-alexandre",
+                    "romans-de-camille", "Dossier"):
+        assert private not in preview["prompt"]
+    assert llm.calls == 0
+    analysis = analyze_with_consent(llm, preview, approval_id=preview["approval_id"])
+    assert analysis["ok"] and llm.calls == 1
+    prompt_sent = llm.sent[0].prompt
+    assert prompt_sent == preview["prompt"]
+    assert '"backup_count": 2' in prompt_sent
+    exported = export_analysis_json(analysis)
+    for private in ("Alice Bernard", "Camille", "Jean Martin", "Alexandre",
+                    "lectures-alexandre", "romans-de-camille"):
+        assert private not in prompt_sent
+        assert private not in exported
+
+
+def test_support_projection_does_not_stringify_untrusted_nested_fields():
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("unknown object should not be stringified")
+
+    class HostileSupport(FakeBroker):
+        def support_report(self, *, verbose=False, include_checks=True):
+            return {
+                "checks_executed": False, "result": "ok",
+                "runtime": {"status": "ok", "managed": True,
+                            "error_type": Hostile()},
+                "config": {"status": "ok", "keys": [Hostile()]},
+                "plugins": {"status": "ok", "plugins": [Hostile()]},
+                "rogue": Hostile(),
+            }
+
+    preview = prepare_analysis(FakeLLM(remote=True), HostileSupport([]),
+                               include_support_report=True)
+    assert preview["support_fields"] == 4
+    assert "rogue" not in preview["prompt"]
+    assert "error_type" not in preview["prompt"]
+    assert "plugins" in preview["prompt"]
+    assert preview["bytes"] <= 3000
+
+
+
+def test_support_version_rejects_arbitrary_person_names_in_build_metadata():
+    from diagnostics_ai import _public_support_report
+
+    row = _public_support_report({
+        "core": {"version": "0.9.7+CamilleDupont", "python": "3.12.4"},
+        "result": "ok",
+    })
+    assert row["core"] == {"python": "3.12.4"}
+    assert "Camille" not in repr(row)
+    assert _public_support_report({"core": {"version": "0.9.7.dev2"}})[
+        "core"
+    ] == {"version": "0.9.7.dev2"}
