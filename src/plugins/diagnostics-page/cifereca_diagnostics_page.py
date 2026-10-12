@@ -399,6 +399,15 @@ def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
         return left <= x < right and top <= y < bottom
 
     def on_wheel(controller, dx, dy):
+        if __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1":
+            import sys
+            print(
+                "D05_wheel_entry", dx, dy,
+                "expanded", report_expander.get_expanded(),
+                "mapped", report_scroll.get_mapped(),
+                "event", str(controller.get_current_event()),
+                file=sys.stderr, flush=True,
+            )
         if not report_expander.get_expanded() or not report_scroll.get_mapped():
             return False
         if not pointer_over_report(controller):
