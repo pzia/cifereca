@@ -359,6 +359,38 @@ def test_search_filter_p0_has_two_identities_and_offline_catalogue():
     ).read_text(encoding="utf-8")
 
 
+def test_youth_922_real_gtk_filter_help_is_explicit_and_1366_only():
+    runner = _module()
+    scenario = runner.SCENARIOS["youth-filter-help-1366"]
+    assert scenario["plugin"] == "catalog.youth"
+    assert scenario["runner"] == "gtk-youth"
+    assert scenario["filters_ux"] is True
+    assert scenario["width"] == 1366
+    assert "youth-filter-help-1024" not in runner.SCENARIOS
+    script = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    runner_script = RUNNER.read_text(encoding="utf-8")
+    for token in (
+        '"--filters-ux"', "def filter_help_snapshot():",
+        "def filter_help_start_ui():", "def filter_help_after_input():",
+        'device.type_text("Forest")',
+        '"filter_help_missing_labels"', '"filter_help_missing_tooltips"',
+        '"filter_help_lost_labels_after_input"', "assert not requests",
+        '"00-jeunesse-controles-1366"', '"01-jeunesse-controles-saisie-1366"',
+        '"02-jeunesse-navigation-clavier-1366"',
+        "def filter_help_tab_step(phase, index):",
+        "def filter_help_tab_record(phase, index):",
+        "def filter_help_keyboard_finish():",
+        'device.key("Shift_L", True)', 'keys("Tab")',
+        'focused.is_ancestor(control)',
+        '"filter_help_keyboard"', '"missing_controls"',
+        '"anonymous_forward_filter_stops"',
+        '"anonymous_backward_filter_stops"',
+        'if name == "other:GtkFlowBoxChild"',
+        'assert not requests, "Tab/Shift+Tab ne doivent jamais déclencher de collecte"',
+    ):
+        assert token in script or token in runner_script
+
+
 def test_youth_milan_replay_uses_installed_source_and_safe_notice_action():
     runner = _module()
     for name in ("youth-milan-1366",):

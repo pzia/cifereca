@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 17)
+        self.assertEqual(len(mod.ALL), 18)
 
     def test_volume_only(self):
         self.assertEqual(mod.select(["e2e/diagnostics_volume_probe.py"]),
@@ -31,6 +31,12 @@ class SelectionTests(unittest.TestCase):
                      "src/plugins/youth-source-new/source.py",
                      "simulation/youth_sources/fixture.py"):
             self.assertEqual(mod.select([path]), mod.YOUTH, path)
+
+    def test_922_filter_ux_in_youth_scope(self):
+        self.assertIn("youth-filter-help-1366", mod.select([
+            "src/plugins/youth-catalog/youth_page.py",
+        ]))
+        self.assertIn("youth-filter-help-1366", mod.select(["e2e/youth_page_probe.py"]))
 
     def test_mainwindow_both_baselines_and_cross_domain(self):
         self.assertEqual(set(mod.select(["src/cifereca/gui/main_window.py"])),

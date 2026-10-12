@@ -9,8 +9,8 @@ CORE = ("search-filter-p0", "book-detail-1366", "mainwindow-baseline-1366",
 DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
-YOUTH = ("youth-1366", "youth-milan-1366", "youth-editions-1366",
-         "youth-library-search-1366")
+YOUTH = ("youth-1366", "youth-filter-help-1366", "youth-milan-1366",
+         "youth-editions-1366", "youth-library-search-1366")
 ALL = CORE + DIAG + YOUTH
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
@@ -100,6 +100,7 @@ def main() -> int:
     with args.github_output.open("a", encoding="utf-8") as output:
         output.write("scenarios=" + " ".join(scenarios) + "\n")
         output.write(f"count={len(scenarios)}\n")
+        output.write(f"total={len(ALL)}\n")
         output.write(f"mode={'full' if scenarios == ALL else 'selected' if scenarios else 'docs-only'}\n")
     print(f"GTK E2E selection: {len(scenarios)}/{len(ALL)}: {', '.join(scenarios) or 'docs only'}")
     return 0

@@ -122,7 +122,7 @@ jobs:
         run: |
           {
             echo "## E2E GTK"
-            echo "Selected: ${{ steps.select.outputs.count }}/17 (mode: ${{ steps.select.outputs.mode }})"
+            echo "Selected: ${{ steps.select.outputs.count }}/${{ steps.select.outputs.total }} (mode: ${{ steps.select.outputs.mode }})"
             echo
             if [ -f e2e-artifacts/summary.json ]; then
               echo '~~~json'
