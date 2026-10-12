@@ -56,6 +56,7 @@ from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
 from .window_close import close_window_resources
+from .startup_page import build_startup_page
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -533,26 +534,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- provider startup ----------
     def _build_startup(self) -> Gtk.Widget:
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        outer.set_valign(Gtk.Align.CENTER)
-        outer.set_halign(Gtk.Align.FILL)
-        clamp = Adw.Clamp(); clamp.set_maximum_size(620); clamp.set_tightening_threshold(460); outer.append(clamp)
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14); add_css(card, "login-card"); clamp.set_child(card)
-        icon = Gtk.Image.new_from_icon_name("accessories-dictionary-symbolic"); icon.set_pixel_size(52); icon.set_halign(Gtk.Align.START); card.append(icon)
-        eyebrow = Gtk.Label(label="BIBLIOTHÈQUE MULTI-SOURCES", xalign=0); add_css(eyebrow, "dim-label", "caption"); card.append(eyebrow)
-        title = Gtk.Label(label="cifereca", xalign=0); add_css(title, "login-brand"); card.append(title)
-        subtitle = Gtk.Label(label="Connexion automatique aux providers configurés. Les identifiants sont gérés dans les préférences locales.", xalign=0)
-        subtitle.set_wrap(True); add_css(subtitle, "dim-label"); card.append(subtitle)
-        self.startup_status = Gtk.Label(label="Initialisation…", xalign=0); self.startup_status.set_wrap(True); card.append(self.startup_status)
-        actions = AdaptiveActionBar(source=card)
-        self.startup_connect_button = Gtk.Button(label="Connecter les sources"); self.startup_connect_button.add_css_class("suggested-action")
-        self.startup_connect_button.connect("clicked", lambda _b: self.connect_configured_sources()); actions.append(self.startup_connect_button)
-        settings = Gtk.Button(label="Configurer les sources"); settings.connect("clicked", lambda _b: self._open_prelogin_diagnostics()); actions.append(settings)
-        card.append(actions)
-        plugins = ", ".join(f"{d.display_name} ({'prêt' if d.state == 'ready' else 'squelette'})" for d in self.service.provider_descriptors()) or "aucun provider installé"
-        info = Gtk.Label(label=f"Providers actifs : {plugins}", xalign=0); info.set_wrap(True); add_css(info, "caption", "dim-label"); card.append(info)
-        version = Gtk.Label(label=f"v{__version__} · GTK 4 / libadwaita · Plugin API v1", xalign=0); add_css(version, "dim-label", "caption"); card.append(version)
-        return outer
+        return build_startup_page(self)
 
     def connect_configured_sources(self) -> bool:
         _TRACE_LOG.info("TRACE gui connect-configured-sources begin")
