@@ -43,6 +43,15 @@ altération du texte prévisualisé, de la destination ou de la liste des
 références invalide cette autorisation. Refaire une analyse implique une
 **nouvelle prévisualisation et une nouvelle confirmation**.
 
+Avant l'envoi au modèle, les **métadonnées d'événement** sont projetées
+une seconde fois sur un contrat fermé : source Core connue, module technique
+reconnu (sinon masqué), sévérité/statut autorisés, horodatage ISO avec fuseau,
+identifiant au format public attendu. Un identifiant ne peut être cité comme
+preuve si la source ou sa date sont inconnues. Les messages techniques restent
+soumis à l'expurgation Core complète avant la limite de taille du prompt.
+La dernière date d'une source inconnue n'est pas attribuée arbitrairement.
+L'utilisateur doit toujours contrôler l'aperçu avant un éventuel envoi distant.
+
 Les références citées par le texte généré sont désormais comparées aux
 identifiants exacts des événements effectivement transmis. Le rapport
 sépare « référence retrouvée dans l’extrait » et « référence inconnue ».

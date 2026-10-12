@@ -216,6 +216,61 @@ def _public_module_filter(module: str) -> str:
 
 
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
+_PUBLIC_EVENT_STATUSES = frozenset({
+    "ok", "error", "failed", "warning", "attention_required",
+    "partial", "success", "unknown",
+})
+_PUBLIC_EVENT_LEVELS = frozenset({
+    "debug", "info", "warning", "error", "critical",
+})
+
+
+def _public_event_row(item: Mapping[str, Any]) -> dict[str, str]:
+    """Minimise Core event metadata again at the model transmission edge.
+
+    The real Core emits a closed vocabulary. A malformed or substituted
+    broker must not turn a free-form module, status, source or event ID into
+    a person's name in an LLM prompt. Messages have their separate Core
+    redaction contract and receive full redaction before size limiting.
+    """
+    row: dict[str, str] = {}
+    stamp = item.get("timestamp")
+    if type(stamp) is str and len(stamp) <= 40:
+        try:
+            instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if instant.tzinfo is not None and instant.utcoffset() is not None:
+                # Preserve subsecond precision for same-second events.
+                row["timestamp"] = instant.astimezone(timezone.utc).isoformat()
+        except (ValueError, OverflowError):
+            pass
+    source = item.get("source")
+    if type(source) is str and source in ("core_events", "app_log"):
+        row["source"] = source
+    module = item.get("module")
+    if type(module) is str and 0 < len(module) <= 90:
+        row["module"] = _public_module_filter(module)
+    elif module is not None:
+        row["module"] = "<module masqué>"
+    for field, allowed in (
+        ("severity", _PUBLIC_EVENT_LEVELS),
+        ("status", _PUBLIC_EVENT_STATUSES),
+    ):
+        value = item.get(field)
+        if type(value) is str and value.casefold() in allowed:
+            row[field] = value.casefold()
+    event_id = item.get("event_id")
+    if (
+        "source" in row and "timestamp" in row
+        and type(event_id) is str and len(event_id) <= 64
+        and _REF.fullmatch(event_id)
+    ):
+        # IDs without an attested source and date cannot be cited as evidence.
+        row["event_id"] = event_id
+    message = item.get("message")
+    if type(message) is str:
+        row["message"] = message
+    return row
+
 
 # Every field later copied from an approved preview into a user-facing
 # inference report is part of the exact one-use consent fingerprint.
@@ -426,7 +481,8 @@ def prepare_analysis(
         # and never stringify an untrusted object.
         raw_last = item.get("last_event")
         if (
-            state["status"] in ("available", "partial")
+            state["source"] != "inconnue"
+            and state["status"] in ("available", "partial")
             and type(raw_last) is str and len(raw_last) <= 40
         ):
             try:
@@ -471,11 +527,10 @@ def prepare_analysis(
     structured = []
     support_sections = {}
     truncated = len(events) > _MAX_EVENTS or broker_has_more
-    fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     for item in events[:_MAX_EVENTS]:
         if not isinstance(item, Mapping):
             continue
-        row = {field: item.get(field) for field in fields if field in item}
+        row = _public_event_row(item)
         safe = redacted_detail(row)
         candidate = filtered + [safe]
         if _prompt_bytes(header + evidence_body(candidate, [], {})) > _MAX_PROMPT:

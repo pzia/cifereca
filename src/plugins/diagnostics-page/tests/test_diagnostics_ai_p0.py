@@ -1820,3 +1820,98 @@ def test_ai_since_mutation_rejects_reusing_remote_approval():
     with pytest.raises(ValueError, match="explicit_consent_required"):
         analyze_with_consent(model, preview, approval_id=preview["approval_id"])
     assert model.calls == 0
+
+
+def test_ai_malformed_event_metadata_never_discloses_personal_names():
+    """Only the Core's typed event fields can cross the LLM boundary."""
+    class MalformedEventBroker(FakeBroker):
+        def events(self, **kwargs):
+            page = super().events(**kwargs)
+            page["events"] = [{
+                "timestamp": "2026-10-11T05:20:00+00:00",
+                "source": "Bibliothèque de Camille",
+                "module": "cifereca.compte-Alice",
+                "severity": "incident de Sophie",
+                "status": "prêt personnel de Jean",
+                "event_id": "identifiant de Luc",
+                "message": "TRACE sync source status=partial",
+            }]
+            return page
+
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, MalformedEventBroker([event()]))
+    for private in ("Camille", "Alice", "Sophie", "Jean", "Luc",
+                    "Bibliothèque de", "identifiant de"):
+        assert private not in preview["prompt"]
+    assert "TRACE sync source status=partial" in preview["prompt"]
+    assert preview["evidence_refs"] == ()
+    assert model.calls == 0
+    result = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert result["ok"] and model.calls == 1
+    assert model.sent[0].prompt == preview["prompt"]
+
+
+def test_ai_unattributed_source_must_not_claim_last_published_event():
+    class UnknownSource(FakeBroker):
+        def events(self, **kwargs):
+            page = super().events(**kwargs)
+            page["sources"] = [
+                {"source": "Lectures de Léa", "status": "partial",
+                 "last_event": "2026-10-11T14:00:00Z"},
+                {"source": "app_log", "status": "partial",
+                 "last_event": "2026-10-11T13:00:00Z"},
+            ]
+            return page
+
+    preview = prepare_analysis(FakeLLM(remote=True), UnknownSource([event()]))
+    assert preview["source_states"][0] == {
+        "source": "inconnue", "status": "partial", "reason": "",
+    }
+    assert "last_event" not in preview["source_states"][0]
+    assert preview["source_states"][1]["last_event"] == "2026-10-11T13:00:00+00:00"
+    assert "Lectures de Léa" not in preview["prompt"]
+    assert "2026-10-11T14:00:00" not in preview["prompt"]
+
+
+def test_ai_event_projection_preserves_core_evidence_ids_and_time_precision():
+    class CoreEvent(FakeBroker):
+        def events(self, **kwargs):
+            page = super().events(**kwargs)
+            page["events"] = [{
+                "timestamp": "2026-10-11T10:00:00.123456+02:00",
+                "source": "core_events", "module": "ADEPT",
+                "severity": "WARNING", "status": "attention_required",
+                "event_id": "a1b2c3d4e5f60718",
+                "message": "return verification",
+            }]
+            return page
+
+    preview = prepare_analysis(FakeLLM(), CoreEvent([event()]))
+    assert '"module": "adept"' in preview["prompt"]
+    assert '"status": "attention_required"' in preview["prompt"]
+    assert '"severity": "warning"' in preview["prompt"]
+    assert "2026-10-11T08:00:00.123456+00:00" in preview["prompt"]
+    assert preview["evidence_refs"] == ({
+        "event_id": "a1b2c3d4e5f60718",
+        "timestamp": "2026-10-11T08:00:00.123456+00:00",
+        "source": "core_events",
+    },)
+
+
+def test_ai_valid_looking_id_without_attested_source_cannot_be_cited():
+    class ForgedSource(FakeBroker):
+        def events(self, **kwargs):
+            page = super().events(**kwargs)
+            page["events"] = [{
+                "timestamp": "2026-10-11T05:20:00Z",
+                "source": "compte personnel", "module": "cifereca.sync",
+                "severity": "warning", "status": "partial",
+                "event_id": "ref-personne-privee",
+                "message": "TRACE sync source status=partial",
+            }]
+            return page
+
+    preview = prepare_analysis(FakeLLM(), ForgedSource([event()]))
+    assert preview["evidence_refs"] == ()
+    assert "ref-personne-privee" not in preview["prompt"]
+    assert "compte personnel" not in preview["prompt"]
