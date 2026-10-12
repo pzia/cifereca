@@ -13,6 +13,7 @@ from typing import Any, Callable
 class SettingsShell:
     scroll: Any
     root: Any
+    heading: Any
     tabs: Any
     sections: dict[str, Any]
 
@@ -39,4 +40,4 @@ def build_settings_shell(*, Gtk: Any, Adw: Any, add_css: Callable[..., Any]) -> 
                        ("ai", "Intelligence artificielle"), ("diagnostic", "Diagnostic")):
         section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         sections[key] = section; tabs.add_titled(section, key, label)
-    return SettingsShell(scroll=scroll, root=settings_root, tabs=tabs, sections=sections)
+    return SettingsShell(scroll=scroll, root=settings_root, heading=settings_heading, tabs=tabs, sections=sections)
