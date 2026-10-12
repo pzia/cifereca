@@ -1598,3 +1598,58 @@ def test_ai_snapshot_unknown_root_values_not_stringified_or_transmitted():
     assert '"message"' not in preview["prompt"]
     assert '"plugin_id"' not in preview["prompt"]
     assert '"operation"' not in preview["prompt"]
+
+
+@pytest.mark.parametrize("module", [
+    "Alice Dupont",
+    "Titre du livre Jeunesse",
+    "cifereca.AliceDupont",
+    "cifereca.sync.AliceDupont",
+    "camille",
+    "cifereca.sync;Alice",
+])
+def test_ai_unknown_module_filter_never_leaks_plain_person_or_title_to_model(module):
+    """P0: a regex-only secret scrubber misses names without token markers."""
+    llm = FakeLLM(remote=True)
+    broker = FakeBroker([event()])
+    preview = prepare_analysis(llm, broker, source="app_log", module=module)
+
+    # The real Core query and one-use consent still describe the user's
+    # original choice; only the remote prompt gets a minimised label.
+    assert broker.filters[0]["module"] == module
+    assert preview["scope"]["module"] == module
+    assert module not in preview["prompt"]
+    assert "filtre de module libre masqué" in preview["prompt"]
+    assert llm.calls == 0
+
+    result = analyze_with_consent(llm, preview, approval_id=preview["approval_id"])
+    assert result["ok"] and llm.calls == 1
+    assert module not in llm.sent[0].prompt
+    assert result["scope"]["module"] == module
+
+
+@pytest.mark.parametrize("module", [
+    "cifereca.sync", "cifereca.diagnostics", "kobo",
+    "PARIS", "cifereca.adept.return",
+])
+def test_ai_known_core_module_stays_citable_and_consent_bound(module):
+    llm = FakeLLM(remote=True)
+    broker = FakeBroker([event()])
+    preview = prepare_analysis(llm, broker, module=module)
+    # Only canonical lower-case technical terms may appear in the prompt.
+    assert f'"module": "{module.lower()}"' in preview["prompt"]
+    assert broker.filters[0]["module"] == module
+    assert preview["scope"]["module"] == module
+    preview["scope"]["module"] = "Alice Dupont"
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(llm, preview, approval_id=preview["approval_id"])
+    assert llm.calls == 0
+
+
+def test_ai_module_scope_minimization_keeps_original_metadata_locally_but_not_remote():
+    llm = FakeLLM(remote=True)
+    original = "Liseuse de Camille"
+    preview = prepare_analysis(llm, FakeBroker([event()]), module=original)
+    assert preview["scope"]["module"] == original
+    assert original not in preview["prompt"]
+    assert preview["bytes"] == len(preview["prompt"].encode("utf-8"))
