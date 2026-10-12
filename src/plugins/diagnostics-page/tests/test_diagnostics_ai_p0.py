@@ -1896,3 +1896,22 @@ def test_ai_event_projection_preserves_core_evidence_ids_and_time_precision():
         "timestamp": "2026-10-11T08:00:00.123456+00:00",
         "source": "core_events",
     },)
+
+
+def test_ai_valid_looking_id_without_attested_source_cannot_be_cited():
+    class ForgedSource(FakeBroker):
+        def events(self, **kwargs):
+            page = super().events(**kwargs)
+            page["events"] = [{
+                "timestamp": "2026-10-11T05:20:00Z",
+                "source": "compte personnel", "module": "cifereca.sync",
+                "severity": "warning", "status": "partial",
+                "event_id": "ref-personne-privee",
+                "message": "TRACE sync source status=partial",
+            }]
+            return page
+
+    preview = prepare_analysis(FakeLLM(), ForgedSource([event()]))
+    assert preview["evidence_refs"] == ()
+    assert "ref-personne-privee" not in preview["prompt"]
+    assert "compte personnel" not in preview["prompt"]
