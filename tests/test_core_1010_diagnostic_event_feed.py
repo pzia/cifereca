@@ -732,3 +732,63 @@ def test_unused_missing_rotation_slots_do_not_mark_active_log_partial(tmp_path):
     assert page["total"] == 1
     assert page["status"] == "available"
     assert page["sources"][0]["reason"] == ""
+
+
+@pytest.mark.parametrize("failure", [
+    RuntimeError("private borrower Camille /home/alex/private"),
+    PermissionError("private config path /home/alex/profiles"),
+    OSError("token=PERSONAL-SECRET"),
+])
+def test_broken_diagnostics_snapshot_keeps_safe_app_log_available(tmp_path, failure):
+    """One failing Core source cannot hide a healthy second source."""
+    class BrokenDiagnostics:
+        enabled = True
+
+        def snapshot(self):
+            raise failure
+
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [W] TRACE sync source status=ok",
+    )
+    feed = query_diagnostic_events(BrokenDiagnostics(), log_path=log)
+    assert feed["status"] == "partial"
+    assert feed["total"] == 1
+    assert feed["events"][0]["source"] == "app_log"
+    assert [(s["source"], s["status"]) for s in feed["sources"]] == [
+        ("core_events", "unavailable"), ("app_log", "available"),
+    ]
+    assert feed["sources"][0]["reason"] == "snapshot_unavailable"
+    serialized = json.dumps(feed)
+    for private in ("Camille", "/home/alex", "PERSONAL-SECRET", "private borrower"):
+        assert private not in serialized
+
+
+def test_broken_diagnostics_snapshot_without_logs_is_unavailable_not_empty(tmp_path):
+    class BrokenDiagnostics:
+        enabled = True
+
+        def snapshot(self):
+            raise RuntimeError("private unexpected backend error")
+
+    feed = query_diagnostic_events(
+        BrokenDiagnostics(), log_path=tmp_path / "absent",
+    )
+    assert feed["status"] == "unavailable"
+    assert feed["total"] == 0
+    assert feed["events"] == []
+    assert [row["status"] for row in feed["sources"]] == [
+        "unavailable", "unavailable",
+    ]
+    assert "private unexpected backend error" not in json.dumps(feed)
+
+
+def test_diagnostics_keyboard_interrupt_is_not_misreported_as_source_failure(tmp_path):
+    class Interrupted:
+        enabled = True
+
+        def snapshot(self):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        query_diagnostic_events(Interrupted(), log_path=tmp_path / "absent")
