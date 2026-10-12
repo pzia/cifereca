@@ -343,71 +343,39 @@ def _scroll_report_adjustment(adjustment, delta: float, unit, Gdk) -> bool:
 
 
 def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
-    """Intercept a wheel before GTK's outer ScrolledWindow capture controller.
+    """Route wheel events at the window before the outer GTK scroll capture.
 
-    A controller on the nested scroll widget runs too late: GTK4 captures
-    scroll events in the outer ScrolledWindow first. The parent wrapper
-    dispatches only wheel positions inside the visible report to the inner adjustment.
-    Keyboard navigation and wheel events elsewhere remain native GTK.
+    Use GTK's own widget picking, not a motion controller's hover state or
+    bounds against a native coordinate system. The picked widget must belong
+    to the report subtree; all other wheel events remain native.
     """
     wheel = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.BOTH_AXES)
     wheel.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
     def pointer_over_report(controller):
-        # Motion controllers can miss synthetic XTEST position changes when
-        # the long GtkTextView is clipped. Use the actual Gdk wheel position,
-        # transformed from surface coordinates to the native GTK window.
         event = controller.get_current_event()
         native = root.get_native()
         if event is None or native is None:
             return False
         located, x, y = event.get_position()
         if not located:
-            return False
+            device = controller.get_current_event_device()
+            if device is None:
+                return False
+            surface, x, y = device.get_surface_at_position()
+            if surface is None or surface != event.get_surface():
+                return False
         offset_x, offset_y = native.get_surface_transform()
-        x += offset_x
-        y += offset_y
-        report_ok, report_bounds = report_scroll.compute_bounds(native)
-        page_ok, page_bounds = root.compute_bounds(native)
-        if not report_ok or not page_ok:
-            return False
-        # Report allocation can continue below the visible outer viewport:
-        # only route events over its actual clipped intersection.
-        left = max(report_bounds.get_x(), page_bounds.get_x())
-        top = max(report_bounds.get_y(), page_bounds.get_y())
-        right = min(
-            report_bounds.get_x() + report_bounds.get_width(),
-            page_bounds.get_x() + page_bounds.get_width(),
-        )
-        bottom = min(
-            report_bounds.get_y() + report_bounds.get_height(),
-            page_bounds.get_y() + page_bounds.get_height(),
-        )
-        if __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1":
-            import sys
-            print(
-                "D05_wheel_capture",
-                {"x": x, "y": y, "report": (
-                    report_bounds.get_x(), report_bounds.get_y(),
-                    report_bounds.get_width(), report_bounds.get_height()
-                ), "page": (
-                    page_bounds.get_x(), page_bounds.get_y(),
-                    page_bounds.get_width(), page_bounds.get_height()
-                ), "hit": left <= x < right and top <= y < bottom},
-                file=sys.stderr, flush=True,
-            )
-        return left <= x < right and top <= y < bottom
+        picked = native.pick(x + offset_x, y + offset_y, Gtk.PickFlags.DEFAULT)
+        while picked is not None:
+            if picked is report_scroll:
+                return True
+            if picked is root:
+                break
+            picked = picked.get_parent()
+        return False
 
     def on_wheel(controller, dx, dy):
-        if __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1":
-            import sys
-            print(
-                "D05_wheel_entry", dx, dy,
-                "expanded", report_expander.get_expanded(),
-                "mapped", report_scroll.get_mapped(),
-                "event", str(controller.get_current_event()),
-                file=sys.stderr, flush=True,
-            )
         if not report_expander.get_expanded() or not report_scroll.get_mapped():
             return False
         if not pointer_over_report(controller):
