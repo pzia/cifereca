@@ -105,8 +105,11 @@ class FictionalLLM:
     def generate(self, request, *, control=None):
         self.calls += 1
         self.requests.append(request)
+        # The fake model cites the event actually present in the approved
+        # prompt; it must not hallucinate an obsolete fixture ID itself.
+        ref = "event-ux-002" if "event-ux-002" in request.prompt else "event-ux-001"
         return LLMResult(
-            True, text="Hypothèse fictive : rapprocher event-ux-001 avant conclusion.",
+            True, text=f"Hypothèse fictive : rapprocher {ref} avant conclusion.",
             provider="fixture-ux", model="ux-fictif", generated=True, remote=True,
         )
 
