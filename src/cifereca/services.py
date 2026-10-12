@@ -2617,6 +2617,9 @@ class LibraryService:
         for row in all_acquisitions:
             if (row.get("status") != "complete"
                     or row.get("executor") != "kobo-adept"
+                    # #989: a manual/imported ADEPT artifact is not proof of
+                    # this automatic Paris loan's fulfillment transaction.
+                    or row.get("strategy") != "loan_auto"
                     or row.get("identity_id") != identity.identity_id
                     or row.get("credential_id") != loan.source_credential
                     or str(row.get("account_id") or "") != str(loan.source_account_id or "")
