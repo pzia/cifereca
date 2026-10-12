@@ -64,6 +64,7 @@ from .loan_view import (
 )
 from ..core.loan_source_identity import loan_source_key, unique_library_loan
 from .recent_time import format_recent_timestamp
+from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
 from .return_feedback import loan_return_feedback
@@ -2653,22 +2654,10 @@ class MainWindow(Adw.ApplicationWindow):
         if items is None:
             items = list(self._recent_entries_cache)
         self._recent_entries_cache = list(items)
-        self._recent_objects = {}
-        rows: list[BookListItem] = []
-        for item in items:
-            key = str(item.get("placement_id") or f"recent:{len(rows)}")
-            self._recent_objects[key] = item
-            provider = str(item.get("provider_id") or "local")
-            temporal = format_recent_timestamp(item.get("acquired_at"))
-            rows.append(BookListItem(
-                key,
-                str(item.get("title") or "Sans titre"),
-                str(item.get("author") or ""),
-                temporal,
-                "Kobo" if provider == "kobo" else provider.capitalize(),
-                item.get("thumbnail_url"),
-            ))
-        self._attach_row_facets(rows,self._recent_objects,self.search_controls)
+        rows, self._recent_objects = project_recent_rows(
+            items, row_factory=BookListItem,
+        )
+        self._attach_row_facets(rows, self._recent_objects, self.search_controls)
         self.recent_page.show_rows(rows)
         self.ui_perf.record("render_recent", (time.perf_counter() - _perf_started) * 1000.0)
 
