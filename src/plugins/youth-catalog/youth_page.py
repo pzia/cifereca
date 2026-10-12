@@ -269,6 +269,12 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     published_year = getattr(book, "published_year", None)
     if published_year:
         metadata_fields.append(DetailField("published-year", "Première publication", str(published_year), kind="copy"))
+    collection = _text(getattr(book, "collection", ""))
+    if collection:
+        metadata_fields.append(DetailField("collection", "Collection", collection, kind="all"))
+    description = _text(getattr(book, "description", ""))
+    if description:
+        metadata_fields.append(DetailField("summary", "Résumé éditeur", description, kind="copy"))
     bibliography_sources = tuple(getattr(book, "bibliography_sources", ()) or ())
     for index, value in enumerate(bibliography_sources):
         cleaned = _text(value)

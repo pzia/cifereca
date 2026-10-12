@@ -505,6 +505,8 @@ class YouthBook:
     published_year: int | None = None
     cover_url: str = ""
     bibliography_sources: tuple[str, ...] = ()
+    collection: str = ""
+    description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -748,6 +750,8 @@ def normalize_record(raw: object, *, source_id: str) -> YouthBook:
         publishers=_names(_field(raw, "publishers") or _field(raw, "publisher")),
         published_year=_publication_year(raw),
         cover_url=_public_cover_url(_field(raw, "cover_url") or _field(raw, "thumbnail_url")),
+        collection=_text(_field(raw, "collection"))[:200],
+        description=_text(_field(raw, "description") or _field(raw, "summary"))[:4000],
     )
 
 
@@ -854,6 +858,8 @@ def _merge(left: YouthBook, right: YouthBook) -> YouthBook:
         publishers=tuple(dict.fromkeys(left.publishers + right.publishers)),
         published_year=left.published_year or right.published_year,
         cover_url=left.cover_url or right.cover_url,
+        collection=left.collection or right.collection,
+        description=left.description or right.description,
         bibliography_sources=tuple(dict.fromkeys(
             left.bibliography_sources + right.bibliography_sources
         )),
