@@ -19,6 +19,13 @@ from urllib.parse import urlsplit
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# Resolve the repository-owned sibling module for both direct CLI execution
+# and importlib-based offline tests, independent of the caller's cwd.
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+from youth_evidence_public import public_report
+
 SOURCES = {
     "milan": {
         "package": "youth-source-milan", "module": "milan_youth.py",
@@ -311,12 +318,12 @@ def main(argv=None) -> int:
     try:
         settings = plan(args)
     except ValueError as exc:
-        print(json.dumps({"result": "INVALID_INPUT", "reason": str(exc)}, ensure_ascii=False))
+        print(json.dumps({"result": "INVALID_INPUT", "reason_code": "INVALID_INPUT"}, ensure_ascii=False))
         return 2
     report = {"timestamp_utc": datetime.now(timezone.utc).isoformat(), **settings}
     if not args.confirm_live:
         report.update(result="NOT_RUN", reason="--confirm-live required for public HTTPS")
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        print(json.dumps(public_report(report, SOURCES), ensure_ascii=False, indent=2))
         return 2
     try:
         report["source_commit"] = subprocess.check_output(
@@ -327,8 +334,8 @@ def main(argv=None) -> int:
     try:
         qualify(args, report)
     except Exception as exc:
-        report.update(result="BLOCKED", error_type=type(exc).__name__, reason=str(exc)[:300])
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+        report.update(result="BLOCKED", error_type=type(exc).__name__)
+    print(json.dumps(public_report(report, SOURCES), ensure_ascii=False, indent=2))
     return 0 if report.get("result") == "PASS" else 1
 
 
