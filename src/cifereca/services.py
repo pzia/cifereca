@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from .core import adept_profiles
-
 import logging
 import time
 import json
@@ -40,6 +38,7 @@ from .kobo.acquisition import KoboOfferAdapter, KoboAcquisitionSelectionError
 from .kobo.executor import execute_kobo_acquisition
 from .kobo.vault import KoboVaultError
 from .identities import Identity, IdentityPreferences, AdeptProfileResolver, AdeptProfileResolutionError
+from .core import adept_profiles
 from .locking import InterProcessLock, LockBusyError
 from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
