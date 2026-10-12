@@ -45,6 +45,7 @@ from .core.acquisition_decision import decide_artifact_reuse
 from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attention_code
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
+from .core import loan_accounts
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
 from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
@@ -1028,32 +1029,9 @@ class LibraryService:
 
     def _return_loan_identity(self, loan: Loan) -> tuple[Account, Any, str]:
         """Require *exact* Paris borrower provenance before mutating anything."""
-        from .core.loan_return_guard import return_key
-        if not loan.id or loan.source_account_id is None:
-            raise AttentionRequired(
-                "Le compte emprunteur de ce prêt est inconnu. Actualisez les emprunts.",
-                code="loan_return_borrower_unproven",
-            )
-        account = self._account_for_loan(loan)
-        expected = str(loan.source_account_id or "primary")
-        actual = str(account.unique_id or "primary")
-        if (expected != actual or account.provider_id != loan.source_provider
-                or account.credential_id != loan.source_credential):
-            raise AttentionRequired(
-                "Le compte emprunteur de ce prêt ne correspond pas à sa provenance.",
-                code="loan_return_borrower_mismatch",
-            )
-        # Do not let a disconnected session or the first available Paris login
-        # stand in for the exact credential that owns this borrow.
-        key = self._session_key(loan.source_provider, loan.source_credential)
-        session = self._sessions.get(key)
-        if session is None or not session.connected:
-            raise AttentionRequired(
-                "La connexion exacte de l'emprunteur est indisponible.",
-                code="loan_return_source_unavailable",
-            )
-        return account, session, return_key(
-            loan.source_provider, loan.source_credential, expected, str(loan.id),
+        return loan_accounts.return_loan_identity(
+            loan, resolve_account=self._account_for_loan, session_key=self._session_key,
+            lookup_session=lambda key: self._sessions.get(key), attention_error=AttentionRequired,
         )
 
     def loan_return_state(self, loan: Loan) -> dict[str, Any] | None:
@@ -3572,36 +3550,9 @@ class LibraryService:
         the primary account for a linked-account loan. New loans carry
         ``source_account_id``; old cached loans keep a conservative fallback.
         """
-        candidates = [
-            a for a in self.accounts
-            if a.provider_id == loan.source_provider and a.credential_id == loan.source_credential
-        ]
-        if loan.source_account_id is not None:
-            # "primary" is Paris' stable provenance sentinel for the primary
-            # borrower. The provider API itself still expects an empty UID for
-            # that account, so return the real Account object (unique_id="").
-            if loan.source_account_id == "primary":
-                primary = next((a for a in candidates if a.is_primary), None)
-                if primary is not None:
-                    return primary
-            for account in candidates:
-                if account.unique_id == loan.source_account_id:
-                    return account
-            raise ProviderConfigurationError(
-                f"Compte emprunteur introuvable pour le prêt {loan.id}: "
-                f"{loan.source_provider}/{loan.source_credential}/{loan.source_account_id!r}"
-            )
-        # Compatibility for cache/data produced before 0.3.3. Prefer the
-        # current account only when it belongs to the same provider identity.
-        if self.current_account in candidates:
-            return self.current_account
-        primary = next((a for a in candidates if a.is_primary), None)
-        if primary is not None:
-            return primary
-        if candidates:
-            return candidates[0]
-        raise ProviderConfigurationError(
-            f"Aucun compte connecté pour {loan.source_provider}/{loan.source_credential}"
+        return loan_accounts.account_for_loan(
+            loan, accounts=self.accounts, current_account_get=lambda: self.current_account,
+            configuration_error=ProviderConfigurationError,
         )
 
     def _acquisition_work_dir(self, identity_id: str, provider_id: str, loan_id: str | None = None) -> Path:
