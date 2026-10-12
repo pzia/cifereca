@@ -82,3 +82,14 @@ aucune permission de lecture arbitraire à un plugin.
 
 Priorité P0 ; l'analyse IA #1009 n'est jamais déclenchée depuis ce broker.
 Aucune nouvelle GitHub Action.
+
+## Couverture des événements structurés
+
+Le snapshot Core est limité aux **500 derniers enregistrements**. Quand il
+contient davantage de lignes, ou qu'un enregistrement sans horodatage ISO
+valide ne peut pas être publié, `core_events` rapporte `partial` et le code
+fixe `snapshot_records_incomplete`. Les événements valides restent
+consultables ; aucune donnée brute ni détail de l'enregistrement rejeté
+n'est renvoyé. Un snapshot vide et valide reste `empty` avec
+`no_recorded_events`. L'UI et l'aperçu IA utilisent la même liste autorisée
+de codes de couverture.
