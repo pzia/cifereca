@@ -354,8 +354,14 @@ def main():
         )
         target = out / "d07-json-export-local.json"
         assert not target.exists(), "D07: fichier de test déjà présent"
-        assert dialog.set_current_folder(Gio.File.new_for_path(str(out)))
-        dialog.set_current_name(target.name)
+        # GTK4's native chooser may defer a folder change until its main
+        # loop finishes. Select an existing harmless fixture destination
+        # explicitly (documented FileChooser.set_file SAVE contract) rather
+        # than accidentally exporting into the repository working directory.
+        target.write_bytes(b"D07-EXPORT-FIXTURE-MUST-BE-REPLACED")
+        assert dialog.set_file(Gio.File.new_for_path(str(target))), (
+            "D07: native file chooser refused local fixture destination"
+        )
         selected = dialog.get_file()
         assert selected is not None and selected.get_path() == str(target), (
             "D07: chemin sélectionné incorrect",
