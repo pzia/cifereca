@@ -74,7 +74,33 @@ class TaskRunner:
                     task_id, kind, time.monotonic() - started, label,
                 )
 
-        future = self.pool.submit(priority, traced_fn)
+        try:
+            future = self.pool.submit(priority, traced_fn)
+        except RuntimeError:
+            # close() can shut down PriorityExecutor between the window's
+            # initial closed gate and enqueue. Balance the activity counter
+            # and release the control; never publish exception internals.
+            with self._lock:
+                self._count = max(0, self._count - 1)
+                remaining = self._count
+
+            def rejected() -> bool:
+                if getattr(self.window, "_closed", False):
+                    return False
+                if control is not None and control.get_root() is not None:
+                    control.set_sensitive(True)
+                self.window._task_finished(
+                    task_id, remaining, label, False, "Traitement indisponible",
+                )
+                failure = RuntimeError("Traitement indisponible")
+                if err:
+                    err(failure)
+                else:
+                    self.present_error(failure)
+                return False
+
+            GLib.idle_add(rejected)
+            return
 
         def done(fut: Future[Any]) -> None:
             try:
