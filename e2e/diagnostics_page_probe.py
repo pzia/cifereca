@@ -723,14 +723,11 @@ def main():
         report.setdefault("audit", {})["D05_xtest_wheel_outer_page_fixed"] = outer_fixed
         report["wheel_inner_after"] = round(inner.get_value(), 2)
         report["wheel_outer_after"] = round(outer.get_value(), 2)
-        if outer_fixed:
-            report["checks"]["D05_xtest_wheel_keeps_outer_page_fixed"] = True
-        else:
-            # A genuine UX finding is not a PASS. Do not block independent
-            # D13 clipboard verification; keep D05 explicitly unmet.
-            report.setdefault("unmet_criteria", []).append(
-                "D05: molette XTEST déplace aussi la page externe malgré le scroll interne"
-            )
+        assert outer_fixed, (
+            "D05: molette XTEST fait aussi défiler la page externe",
+            outer_before, outer.get_value(),
+        )
+        report["checks"]["D05_xtest_wheel_keeps_outer_page_fixed"] = True
         screenshot("09b-report-physical-wheel-1600")
         select_support_report(view)
 
@@ -986,8 +983,15 @@ def main():
             window[0].set_title("Diagnostics UX GTK isolé")
             window[0].set_default_size(args.width - 40, 870 if args.width == 1600 else 790)
             device[0] = X11Input()
-            page[0] = plugin._build(host)
-            window[0].set_child(page[0])
+            root = plugin._build(host)
+            window[0].set_child(root)
+            # The Diagnostics root now captures nested wheel events before
+            # GTK's outer ScrolledWindow; keep existing viewport assertions.
+            outer_scrollers = [
+                w for w in walk(root) if isinstance(w, Gtk.ScrolledWindow)
+            ]
+            assert outer_scrollers, "Page scroller absent"
+            page[0] = outer_scrollers[0]
             window[0].present()
             until(lambda: find_label("50 événements affichés"), initial)
 
