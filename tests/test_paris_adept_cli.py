@@ -110,7 +110,7 @@ def test_cli_accounts_displays_connection_scoped_borrowers(
         assert cli.main(["paris-adept", "accounts"]) == 0
         rows = json.loads(capsys.readouterr().out)
         assert seen == ["connected"]
-        assert {row["account_id"] for row in rows} == {"", "linked-123"}
+        assert {row["account_id"] for row in rows} == {"primary", "linked-123"}
         assert all(row["credential_id"] == "alice-paris" for row in rows)
     finally:
         service.close()

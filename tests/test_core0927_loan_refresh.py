@@ -5,13 +5,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controller.py"
 
 
 def _method(name: str):
     tree = ast.parse(SOURCE.read_text())
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    fn = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
+    fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
     ns = {}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), str(SOURCE), "exec"), ns)
     return ns[name]

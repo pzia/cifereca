@@ -84,3 +84,56 @@ def test_null_false_zero_and_empty_containers_remain_distinct():
 def test_unknown_mode_refused():
     with pytest.raises(ValueError):
         format_diagnostic_detail({"x": 1}, "unsafe")
+
+
+def test_redacted_key_collisions_preserve_all_values_without_original_names():
+    detail = {
+        "alice@example.com": "first",
+        "bob@example.com": "second",
+        "token": "never reveal this",
+    }
+    safe = redacted_detail(detail)
+    assert len(safe) == 3
+    assert sorted(v for v in safe.values() if v != "<expurgé>") == ["first", "second"]
+    assert len(set(safe)) == 3
+    shown = format_diagnostic_detail(detail, mode="json")
+    assert len(json.loads(shown)) == 3
+    assert "alice@example.com" not in shown and "bob@example.com" not in shown
+    assert "never reveal this" not in shown
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_authentication_headers_are_redacted_entirely(mode):
+    details = {
+        "message": (
+            "Authorization: Basic dXNlcjpzZWNyZXQ=\\n"
+            "Proxy-Authorization: Digest username=alice, realm=private, response=abc123\\n"
+            "X-API-Key: KEY-PRIVATE-123\\nstatus=ok"
+        ),
+        "status": "ok",
+    }
+    shown = format_diagnostic_detail(details, mode)
+    for secret in ("dXNlcjpzZWNyZXQ=", "username=alice", "realm=private",
+                   "response=abc123", "KEY-PRIVATE-123"):
+        assert secret not in shown
+    assert "status" in shown
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_quoted_secret_values_with_spaces_are_fully_masked(mode):
+    data = {"message": 'token="mot de passe privé" cookie=\'session longue privée\' password=ordinary'}
+    shown = format_diagnostic_detail(data, mode)
+    for leaked in ("mot de passe privé", "session longue privée", "ordinary"):
+        assert leaked not in shown
+    assert "token=<expurgé>" in shown
+    assert "cookie=<expurgé>" in shown
+
+
+@pytest.mark.parametrize("mode", ["readable", "json", "raw"])
+def test_api_and_access_keys_are_always_redacted(mode):
+    detail = {"api_key": "API-PRIVATE-ABC", "access_key": "ACCESS-PRIVATE-XYZ",
+              "api-key": "SECOND-API-SECRET", "status": "ok"}
+    shown = format_diagnostic_detail(detail, mode)
+    for secret in ("API-PRIVATE-ABC", "ACCESS-PRIVATE-XYZ", "SECOND-API-SECRET"):
+        assert secret not in shown
+    assert "ok" in shown

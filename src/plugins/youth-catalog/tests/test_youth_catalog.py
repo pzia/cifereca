@@ -215,7 +215,7 @@ def test_source_failure_is_isolated():
     report = plugin.collect_source("alice", source, "chat")
     assert report.accepted == 0
     assert report.rejected == 1
-    assert report.errors == ("search: offline",)
+    assert report.errors == ("source search failed",)
     assert plugin.search_cached("alice") == ()
 
 
@@ -1205,3 +1205,93 @@ def test_confirmed_merge_retains_two_distinct_publishers_without_double_counting
         row("Livre", isbn="9780306406157", publishers=["Milan", "Autre"]),
     ])
     assert index.entries("alice")[0].publishers == ("Milan", "Bayard", "Autre")
+
+
+def test_youth_publisher_collection_and_synopsis_survive_normalization_and_merge():
+    from youth_catalog import _merge
+    first = normalize_record({
+        "title": "Un loup à ma porte",
+        "record_id": "loup-a-ma-porte",
+        "source_item_id": "loup-a-ma-porte",
+        "notice_url": "https://www.ecoledesloisirs.fr/livre/loup-a-ma-porte",
+        "age_ranges": [{
+            "age_min": 13, "age_max": None, "age_kind": "publisher",
+            "source_label": "13 ans et +", "source_id": "ecole-loisirs",
+        }],
+        "collection": "Medium 14+",
+        "description": "Résumé public de l'éditeur",
+        "cover_url": "https://www.ecoledesloisirs.fr/images/cover.webp",
+    }, source_id="ecole-loisirs")
+    assert first.collection == "Medium 14+"
+    assert first.description == "Résumé public de l'éditeur"
+    assert first.identifiers["source_item_id"] == "loup-a-ma-porte"
+    assert "isbn" not in first.identifiers
+    assert first.age_ranges[0].age_min == 13
+    assert first.age_ranges[0].age_max is None
+    assert first.cover_url.endswith("/images/cover.webp")
+    second = normalize_record({
+        "title": "Un loup à ma porte",
+        "record_id": "loup-a-ma-porte",
+        "source_item_id": "loup-a-ma-porte",
+        "notice_url": "https://www.ecoledesloisirs.fr/livre/loup-a-ma-porte",
+    }, source_id="ecole-loisirs")
+    assert _merge(second, first).description == first.description
+    assert _merge(second, first).collection == first.collection
+
+
+
+def test_youth_ingest_does_not_expose_untrusted_record_errors():
+    from youth_catalog import YouthCatalogIndex, safe_ingest_rejection_categories
+
+    class SecretRow:
+        @property
+        def title(self):
+            raise RuntimeError("https://private.invalid/?token=SECRET")
+
+    index = YouthCatalogIndex()
+    previous = index.ingest("alice", "milan", [{"title": "Before"}])
+    assert previous.accepted == 1
+    report = index.ingest("alice", "milan", [
+        {"title": ""},
+        {"title": None},
+        SecretRow(),
+    ])
+    assert report.accepted == 0 and report.rejected == 3
+    assert report.errors == (
+        "item[0]: title is required",
+        "item[1]: title is required",
+        "item[2]: invalid record",
+    )
+    assert safe_ingest_rejection_categories(report.errors) == {
+        "missing_title": 2, "other": 1,
+    }
+    assert "SECRET" not in repr(report)
+    assert [b.title for b in index.entries("alice")] == ["Before"]
+
+
+def test_bibliography_ingest_does_not_expose_private_errors():
+    from youth_catalog import YouthCatalogIndex
+
+    index = YouthCatalogIndex()
+    report = index.ingest_bibliography("alice", "openlibrary", "9780306406157", [
+        {"metadata": {"age_evidence": "https://signed.invalid/SECRET"}},
+    ])
+    assert report.accepted == 0 and report.rejected == 1
+    assert report.errors == ("item[0]: invalid bibliography record",)
+    assert "SECRET" not in repr(report)
+
+
+def test_youth_collect_search_error_reports_generic_code():
+    from youth_catalog import YouthCatalogPlugin
+
+    class SecretSearch:
+        def source_info(self):
+            return {"source_id": "test", "display_name": "Test"}
+        def search(self, *args, **kwargs):
+            raise RuntimeError("Authorization: Bearer SECRET https://private.invalid/?token=SECRET")
+
+    plugin = YouthCatalogPlugin()
+    report = plugin.collect_source("alice", SecretSearch(), "chat")
+    assert report.accepted == 0 and report.rejected == 1
+    assert report.errors == ("source search failed",)
+    assert "SECRET" not in repr(report)

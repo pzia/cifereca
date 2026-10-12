@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -10,7 +11,7 @@ BOOK_WIDGETS = ROOT / "src/cifereca/gui/book_widgets.py"
 
 
 def _method(path: Path, class_name: str, method_name: str) -> str:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(path))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
     return ast.unparse(method)
@@ -28,7 +29,7 @@ def test_master_detail_list_viewport_owns_horizontal_allocation():
 
 
 def test_search_and_library_share_the_fixed_master_detail_viewport():
-    source = MAIN.read_text(encoding="utf-8")
+    source = gui_source_text(MAIN)
     assert source.count("MasterDetailPage(") >= 2
     assert 'MasterDetailPage(self, "Recherche"' in source
     assert 'MasterDetailPage(self, "Bibliothèque"' in source

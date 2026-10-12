@@ -17,6 +17,7 @@ from cifereca.plugin_api import (
     UiPageContribution,
     normalize_language_tag,
 )
+from recommendation_llm import explain_reasons
 
 from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, normalize
 from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
@@ -260,6 +261,15 @@ class UxRecommendationsView:
         self._partial_source_id = 0
         self._render_generation = 0
         self._ranked_by_key: dict[str, Any] = {}
+        # Optional explanation is never used by the ranking engine.
+        self._llm_enabled = False
+        self._llm_selection_key = None
+        self._llm_selected_row = None
+        self._llm_explanation = None
+        self._llm_handle = None
+        self._llm_generation = 0
+        self._llm_button = None
+        self._llm_hint = None
 
         builder = getattr(host, "build_book_master_detail", None)
         if not callable(builder):
@@ -354,7 +364,27 @@ class UxRecommendationsView:
         self._refresh_button.set_tooltip_text("Relancer le calcul en conservant les filtres de vue")
         self._refresh_button.connect("clicked", lambda *_: self.refresh())
         controls.insert(self._refresh_button, -1)
+
+        # Double opt-in: explicit plugin configuration AND an explicit click.
+        # Opening the page/choosing a book never sends data to an LLM.
+        self._llm_enabled = self._config_bool("llm_explanations", False)
+        if self._llm_enabled:
+            self._llm_button = Gtk.Button(label="Reformuler les raisons (IA)")
+            self._llm_button.set_sensitive(False)
+            self._llm_button.set_tooltip_text(
+                "Envoi explicite des trois raisons affichées au service IA configuré "
+                "(qui peut être distant) ; aucun titre, profil ou livre entier."
+            )
+            self._llm_button.connect("clicked", lambda *_: self._explain_selected())
+            controls.insert(self._llm_button, -1)
         toolbox.append(controls)
+        if self._llm_enabled:
+            self._llm_hint = Gtk.Label(
+                label="IA facultative : choisissez une recommandation puis confirmez l'envoi "
+                      "des raisons. Aucun changement du classement.",
+                xalign=0, wrap=True,
+            )
+            toolbox.append(self._llm_hint)
 
         self._progress = Gtk.ProgressBar()
         self._progress.set_show_text(True)
@@ -730,6 +760,7 @@ class UxRecommendationsView:
         self._base_reload_providers(providers)
 
     def _start_refresh(self):
+        self._reset_llm_selection(None)
         if self._task_handle is not None:
             self._task_handle.cancel()
 
@@ -1079,6 +1110,7 @@ class UxRecommendationsView:
             self._update_view_summary(provisional=self._provisional_active)
 
     def _selected_row(self, row: UiBookListEntry | None) -> None:
+        self._reset_llm_selection(row.key if row is not None else None)
         if row is None:
             self._master.empty_detail(
                 "Aucune recommandation sélectionnée",
@@ -1088,6 +1120,9 @@ class UxRecommendationsView:
         ranked = self._ranked_by_key.get(row.key)
         if ranked is None:
             return
+        self._llm_selected_row = row
+        if self._llm_button is not None:
+            self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
 
         item = ranked.item
         title = str(get_field(item, "title", "") or "Sans titre")
@@ -1154,6 +1189,21 @@ class UxRecommendationsView:
                     30,
                 )
             )
+        if self._llm_enabled and self._llm_explanation is not None and self._llm_selection_key == row.key:
+            explanation = self._llm_explanation
+            sections.append(DetailSection(
+                "llm-explanation", "Reformulation générée — à vérifier",
+                (
+                    DetailField("llm-wording", "Texte généré (non attesté)", explanation.text),
+                    DetailField(
+                        "llm-provenance", "Provenance du traitement",
+                        f"{explanation.provider} / {explanation.model} · "
+                        + ("service distant" if explanation.remote else "service local")
+                        + f" · {explanation.elapsed_ms} ms",
+                    ),
+                ),
+                25,
+            ))
 
         actions = []
         url = _external_book_url(get_field(item, "friendly_url", ""))
@@ -1186,6 +1236,89 @@ class UxRecommendationsView:
                 actions=tuple(actions),
             )
         )
+
+    def _reset_llm_selection(self, key) -> None:
+        """Cancel old explanation on new book, profile or ranking generation."""
+        if key == self._llm_selection_key:
+            return
+        self._llm_generation += 1
+        handle = self._llm_handle
+        if handle is not None:
+            handle.cancel()
+        self._llm_handle = None
+        self._llm_selection_key = key
+        self._llm_selected_row = None
+        self._llm_explanation = None
+        if self._llm_button is not None:
+            self._llm_button.set_sensitive(False)
+        if self._llm_hint is not None:
+            self._llm_hint.set_label(
+                "IA facultative : sélectionnez un livre. Aucun envoi sans clic."
+                if key is None else
+                "Raisons attestées disponibles. Cliquez pour reformuler (service potentiellement distant)."
+            )
+
+    def _explain_selected(self) -> None:
+        """Explicit one-shot async wording; never changes ranking or source rows."""
+        if not self._llm_enabled or self._llm_handle is not None or self._busy:
+            return
+        key, row = self._llm_selection_key, self._llm_selected_row
+        ranked = self._ranked_by_key.get(key) if key is not None else None
+        context = self.plugin.context
+        if row is None or ranked is None or context is None:
+            return
+        service = context.service("llm")
+        task_broker = context.broker("tasks")
+        if service is None or task_broker is None:
+            self._llm_hint.set_label("Service IA non configuré. Les raisons originales restent disponibles.")
+            return
+        reasons = tuple(ranked.reasons)
+        self._llm_generation += 1
+        token, main_generation = self._llm_generation, self._generation
+        self._llm_button.set_sensitive(False)
+        self._llm_hint.set_label("Reformulation demandée… Les raisons originales restent inchangées.")
+        try:
+            handle = task_broker.submit(
+                lambda control: explain_reasons(
+                    service, reasons, enabled=True, consent=True, control=control,
+                ),
+                label="Reformulation explicative des recommandations",
+                kind="recommendations.llm",
+            )
+        except Exception:
+            self._llm_hint.set_label("Service IA indisponible. Le classement est inchangé.")
+            self._llm_button.set_sensitive(True)
+            return
+        self._llm_handle = handle
+
+        def finished(done_handle):
+            if done_handle.control.cancelled():
+                return
+            try:
+                explanation = done_handle.result()
+            except Exception:
+                explanation = None
+
+            def apply():
+                if (self.plugin.context is None or token != self._llm_generation
+                        or main_generation != self._generation
+                        or key != self._llm_selection_key):
+                    return False
+                self._llm_handle = None
+                self._llm_explanation = explanation
+                self._llm_button.set_sensitive(True)
+                self._llm_hint.set_label(
+                    "Reformulation générée et signalée dans le détail. À vérifier."
+                    if explanation is not None else
+                    "Aucune reformulation disponible. Les preuves d'origine restent affichées."
+                )
+                if self._llm_selected_row is not None:
+                    self._selected_row(self._llm_selected_row)
+                return False
+
+            self.GLib.idle_add(apply)
+
+        handle.add_done_callback(finished)
 
     def _base_complete(self, generation: int, result: RecommendationResult | None, error: str | None) -> bool:
         if generation != self._generation:
@@ -1320,6 +1453,7 @@ class UxRecommendationsView:
         self._unsubscribe = None
 
     def dispose(self) -> None:
+        self._reset_llm_selection(None)
         self._clear_overview_refresh()
         if self._task_handle is not None:
             self._task_handle.cancel()

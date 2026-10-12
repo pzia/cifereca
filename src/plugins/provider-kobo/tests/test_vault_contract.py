@@ -552,3 +552,101 @@ def test_kobo_connect_succeeds_when_diagnostics_sink_fails():
         assert [account.unique_id for account in accounts] == ["acct"]
     finally:
         session.close()
+
+
+def test_kobo_all_scope_keeps_catalogue_description_and_facts_for_owned_manifest(monkeypatch):
+    """A thin Kobo library hit must not erase public catalogue search evidence."""
+    client = KoboVaultClient("https://vault.example", "secret")
+
+    def catalog(_query, **_opts):
+        return {"items": [
+            {
+                "product_id": "owned-book",
+                "title": "Prix du Quai",
+                "description": "<p>Finaliste du Prix du Quai des Orfèvres.</p>",
+                "subjects": ["polar", "prix littéraire"],
+                "series": "Enquêtes",
+                "awards": ["Prix du Quai des Orfèvres"],
+                "publisher": "Éditions témoin",
+                "cover_url": "https://cdn.example/cover.jpg",
+                "language": "fr",
+                "price": {"amount": "3.00", "currency": "EUR"},
+                "owned": False,
+                "downloadable": False,
+            },
+            {"product_id": "catalog-only", "title": "Livre externe", "description": "Notice"},
+        ]}
+
+    def library(_query, **_opts):
+        return {"items": [
+            {
+                "product_id": "owned-book",
+                "title": "Prix du Quai (bibliothèque)",
+                "description": "",
+                "subjects": [],
+                "awards": None,
+                "cover_url": "",
+                "owned": True,
+                "downloadable": True,
+                "archived": False,
+                "revision_id": "revision-library",
+                "price": None,
+            },
+            {"product_id": "library-only", "title": "Livre uniquement dans mon compte", "owned": True},
+        ]}
+
+    monkeypatch.setattr(client, "search_catalog", catalog)
+    monkeypatch.setattr(client, "search_library", library)
+    try:
+        merged = client.search("prix du quai", scope="all")
+        assert [row["product_id"] for row in merged["items"]] == [
+            "owned-book", "catalog-only", "library-only",
+        ]
+        owned = merged["items"][0]
+        assert owned["title"] == "Prix du Quai (bibliothèque)"
+        assert owned["description"].startswith("<p>Finaliste")
+        assert owned["subjects"] == ["polar", "prix littéraire"]
+        assert owned["awards"] == ["Prix du Quai des Orfèvres"]
+        assert owned["series"] == "Enquêtes"
+        assert owned["cover_url"] == "https://cdn.example/cover.jpg"
+        assert owned["owned"] is True and owned["downloadable"] is True
+        assert owned["revision_id"] == "revision-library"
+        assert owned["price"] is None  # never resurrect catalog commercial state
+
+        service = KoboCatalogService(client, credential_id="main")
+        result = service.normalize_item(owned)
+        assert "Finaliste du Prix du Quai des Orfèvres." in result.description
+        assert result.owned and result.downloadable
+        assert result.metadata["awards"] == ["Prix du Quai des Orfèvres"]
+        assert result.metadata["series"] == "Enquêtes"
+        assert result.metadata["subjects"] == ["polar", "prix littéraire"]
+        assert result.metadata["revision_id"] == "revision-library"
+        assert result.metadata["price"] is None
+        assert "description" not in result.metadata
+    finally:
+        client.close()
+
+
+def test_kobo_library_explicit_bibliographic_value_wins_and_no_cross_product_merge(monkeypatch):
+    """No field may cross an unrelated product id or override a meaningful account value."""
+    client = KoboVaultClient("https://vault.example", "secret")
+    monkeypatch.setattr(client, "search_catalog", lambda *_a, **_kw: {"items": [
+        {"product_id": "a", "description": "Catalogue A", "subjects": ["Série 1"], "owned": False},
+        {"product_id": "b", "description": "Catalogue B", "owned": False},
+    ]})
+    monkeypatch.setattr(client, "search_library", lambda *_a, **_kw: {"items": [
+        {"product_id": "a", "description": "Correction bibliothèque", "subjects": ["Série 2"],
+         "owned": True, "downloadable": False, "archived": True},
+    ]})
+    try:
+        rows = client.search("x", scope="all")["items"]
+        assert len(rows) == 2
+        assert rows[0]["description"] == "Correction bibliothèque"
+        assert rows[0]["subjects"] == ["Série 2"]
+        assert rows[0]["owned"] is True
+        assert rows[0]["downloadable"] is False
+        assert rows[0]["archived"] is True
+        assert rows[1]["description"] == "Catalogue B"
+        assert rows[1]["owned"] is False
+    finally:
+        client.close()

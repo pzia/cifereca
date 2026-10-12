@@ -33,6 +33,7 @@ from cifereca.gui.main_window import MainWindow
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--width", type=int, choices=(1366, 1600), default=1366)
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -105,6 +106,7 @@ def main() -> int:
         def do_activate(self):
             nonlocal window, device
             window = MainWindow(self, core.config, core.library, core.diagnostics)
+            window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
             window.present()
             device = X11Input()
             later(600, start_search)

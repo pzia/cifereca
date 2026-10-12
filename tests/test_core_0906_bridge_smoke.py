@@ -157,3 +157,19 @@ def test_906_invalid_query_cannot_change_search_controls():
     assert view.host.search_books(
         "Un livre", field="bogus", identity_id="alice") is False
     assert not events
+
+
+
+def test_959_public_bridge_without_isbn_mapping_keeps_legacy_title_search():
+    """The extracted method must not depend on a module-only Mapping import."""
+    view, events, shown, toasts, _empty = _setup()
+    view.rows = {
+        "old": NS(title="Livre sans notice", isbn="9780306406157"),
+        "invalid": NS(title="Livre sans identifiants", identifiers=[]),
+        "none": NS(title="Livre avec identifiants absents", identifiers=None),
+    }
+    for key in view.rows:
+        view.selected(NS(key=key))
+        assert [action.id for action in shown[-1].actions] == ["search-library"]
+    assert not events
+    assert not toasts

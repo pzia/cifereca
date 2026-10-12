@@ -6,6 +6,8 @@ import re,shlex,tempfile,unittest
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 from cifereca.config import Config
+from cifereca.gui.settings_model import SettingsCommitController, SettingsRevisionState
+from cifereca.gui.settings_draft import build_settings_draft, SettingsValidationError
 
 class Value:
     def __init__(self,text='',active=False):self.text=text;self.active=active
@@ -21,15 +23,17 @@ class SaveSettings(unittest.TestCase):
         self.window=NS(config=self.config,service=self.service,runner=self.runner,_active_tasks={},show_error=Mock(),diagnostics=NS(enabled=True,level='normal'),refresh_library=Mock(),refresh_recent=Mock(),_render_dashboard=Mock(),toast=Mock(),_configure_kobo_backup_timer=Mock(),reconnect_sources=Mock(),identity_dropdown=object(),_populate_accounts=Mock())
         editor={'id':Value('stable-id'),'label':Value('Hugues'),'directory':Value('hugues'),'adept_profile':Value(),'languages':Value('fr'),'prefer_vo':Value(active=False)}
         path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py';tree=ast.parse(path.read_text())
-        nested={n.name:n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name in {'save_settings','save_and_reconnect'}}
-        ns={'__name__':'cifereca.gui.main_window','__package__':'cifereca.gui','self':self.window,'re':re,'shlex':shlex,'identity_editors':[editor],'account_editors':[],'descriptors':{},'public_ids':set(),'provider_download_editors':{},'levels':['normal'],'vault_profiles':['Android'],'TaskPriority':NS(USER_ACTION=0),'refresh_text':Mock(),'save':object(),'reconnect':object(),
-            'settings_revisions':{'accounts':1,'library':0,'sync':0,'interface':0,'diagnostic':0},
-            'saved_settings_revisions':{'accounts':0,'library':0,'sync':0,'interface':0,'diagnostic':0},
+        nested={n.name:n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name in {'capture_settings_values','save_settings','save_and_reconnect'}}
+        ns={'__name__':'cifereca.gui.main_window','__package__':'cifereca.gui','self':self.window,'re':re,'shlex':shlex,'page_lifetime':NS(alive=True),'identity_editors':[editor],'account_editors':[],'descriptors':{},'public_ids':set(),'provider_download_editors':{},'levels':['normal'],'vault_profiles':['Android'],'TaskPriority':NS(USER_ACTION=0),'refresh_text':Mock(),'save':object(),'reconnect':object(),
+            'settings_state':SettingsRevisionState(['accounts','library','sync','interface','ai','diagnostic']),
+            'build_settings_draft':build_settings_draft,'SettingsValidationError':SettingsValidationError,
             'track_all_settings_widgets':Mock(),'update_settings_actions':Mock()}
         for name in ['global_cmd_row','global_post_row','global_dir_row','global_ebook_row','global_audio_row','backup_dir_row']:ns[name]=Value()
         ns.update(diag_switch=Value(active=True),level_drop=Value(),exp_switch=Value(),backup_switch=Value(),unlinked_switch=Value(),backup_interval_row=Value('60'),vault_profile_drop=Value(),library_dir_row=Value(self.config.get('library.directory')))
+        ns['settings_committer']=SettingsCommitController(self.service.save_configuration, self.runner.submit, self.window.show_error)
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+list(nested.values()),type_ignores=[])),str(path),'exec'),ns)
+        ns['settings_state'].mark_dirty('accounts')
         self.ns=ns
     def tearDown(self):self.tmp.cleanup()
     def test_changes_are_staged_and_migration_runs_in_worker(self):
@@ -63,3 +67,29 @@ class SaveSettings(unittest.TestCase):
         self.window._populate_accounts.assert_not_called()
         self.window._render_dashboard.assert_not_called()
         self.assertEqual(self.service.identities[0].identity_id,'stable-id')
+
+    def test_edits_during_worker_delivery_remain_dirty_after_success(self):
+        self.assertTrue(self.ns['save_settings']())
+        args=self.runner.submit.call_args.args
+        result=args[1]()
+        self.ns['identity_editors'][0]['label'].text='Nouvelle modification'
+        self.ns['settings_state'].mark_dirty('accounts')
+        args[2](result)
+        self.assertTrue(self.ns['settings_state'].dirty('accounts'))
+        self.assertEqual(self.service.save_configuration.call_args.args[0]['identities'][0]['label'],'Hugues')
+
+    def test_failed_delivery_keeps_revisions_pending_without_reconnection(self):
+        self.ns['save_and_reconnect']()
+        args=self.runner.submit.call_args.args
+        args[3](RuntimeError('rollback'))
+        self.assertTrue(self.ns['settings_state'].dirty('accounts'))
+        self.window.reconnect_sources.assert_not_called()
+        self.window._populate_accounts.assert_not_called()
+
+    def test_invalid_edit_does_not_queue_or_modify_configuration(self):
+        before=deepcopy(self.config.data)
+        self.ns['identity_editors'][0]['id'].text='invalid / id'
+        self.assertFalse(self.ns['save_settings']())
+        self.runner.submit.assert_not_called()
+        self.assertEqual(self.config.data,before)
+        self.window.show_error.assert_called_once()

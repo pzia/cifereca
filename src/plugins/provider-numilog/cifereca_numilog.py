@@ -16,10 +16,10 @@ import httpx
 from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderCapabilities,
     ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderError,
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
-from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url
+from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url, public_book_url
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.15'
+VERSION = '0.1.16'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -226,11 +226,12 @@ class NumilogSession(ProviderSession):
 
     def _normalize(self,row):
         key = self._id(row)
+        public_url = public_book_url(row.get('public_url'), self.library_url)
         return SearchResult(id=key,record_id=key,docbase='NUMILOG',medium='digital',title=row['title'],
             author=None,type='Livre numérique',format=None,publisher=None,published_at=None,description=None,
-            thumbnail_url=row['cover'],friendly_url=row.get('public_url'),scenario='NUMILOG_LIBRARY',source_provider='numilog',
+            thumbnail_url=row['cover'],friendly_url=public_url,scenario='NUMILOG_LIBRARY',source_provider='numilog',
             source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='library',
-            owned=True,downloadable=True,metadata={'format_unverified':True})
+            owned=True,downloadable=True,metadata={'format_unverified':True,**({'public_url_evidence':'numilog.library_title_link'} if public_url else {})})
 
     def library(self):
         with self.lock:
@@ -274,8 +275,9 @@ class NumilogSession(ProviderSession):
         item.owned = True
         item.downloadable = True
         item.source_collection = 'library'
-        if item.friendly_url == self.library_url:
-            item.friendly_url = None
+        # Re-check links restored from older persisted catalogue objects:
+        # they are not proof of a public product URL and may carry tokens.
+        item.friendly_url = public_book_url(item.friendly_url, self.library_url)
 
     def _identity_id(self):
         if self.identity_broker is None:
