@@ -310,9 +310,85 @@ def main():
             )
             assert report["audits"]["D07_json_copy_sha256_matches_visible"]
             screenshot("02b-copie-json-bouton-xtest")
-            later(lambda: select_and_copy(view), 160)
+            later(lambda: export_json_button(view), 160)
         except Exception as exc:
             fail(f"Copie JSON via bouton GTK : {type(exc).__name__}: {exc}")
+
+    def export_json_button(view):
+        # Real GTK button and FileChooserNative; only the sandbox file choice
+        # and acceptance are fixture-controlled, not a physical Save click.
+        expected = text(view)
+        assert expected.lstrip().startswith("{") and "\n  " in expected
+        assert hashlib.sha256(expected.encode("utf-8")).hexdigest() == report["json_sha256"]
+        buttons = [
+            w for w in walk(detail()) if isinstance(w, Gtk.Button)
+            and w.get_label() == "Enregistrer JSON…"
+        ]
+        assert len(buttons) == 1, "D07: bouton GTK Enregistrer JSON absent"
+        button = buttons[0]
+        assert button.grab_focus() is not False
+        until(lambda: button.has_focus(), lambda: export_json_press_xtest(expected))
+
+    def export_json_press_xtest(expected):
+        physical("space")
+        until(
+            lambda: any(
+                e.filename == "cifereca-diagnostic.json" and e.dialog is not None
+                for e in plugin._support_exports
+            ),
+            lambda: export_json_select_fixture_path(expected),
+        )
+
+    def export_json_select_fixture_path(expected):
+        exporters = [
+            e for e in plugin._support_exports
+            if e.filename == "cifereca-diagnostic.json" and e.dialog is not None
+        ]
+        assert len(exporters) == 1, "D07: file chooser JSON absent"
+        exporter = exporters[0]
+        dialog = exporter.dialog
+        assert dialog.get_visible(), "D07: dialogue de sauvegarde non visible"
+        assert dialog.get_current_name() == "cifereca-diagnostic.json"
+        assert exporter.data == expected.encode("utf-8"), (
+            "D07: bytes capturés avant choix ≠ JSON affiché"
+        )
+        target = out / "d07-json-export-local.json"
+        assert not target.exists(), "D07: fichier de test déjà présent"
+        assert dialog.set_current_folder(Gio.File.new_for_path(str(out)))
+        dialog.set_current_name(target.name)
+        selected = dialog.get_file()
+        assert selected is not None and selected.get_path() == str(target), (
+            "D07: chemin sélectionné incorrect",
+            selected.get_path() if selected is not None else None,
+        )
+        report["audits"]["D07_real_gtk_file_chooser_opened_by_xtest"] = True
+        screenshot("02c-dialogue-enregistrer-json-gtk")
+        dialog.emit("response", Gtk.ResponseType.ACCEPT)
+        until(
+            lambda: target.is_file() and exporter.data is None,
+            lambda: export_json_verify_file(expected, target),
+        )
+
+    def export_json_verify_file(expected, target):
+        raw = target.read_bytes()
+        assert raw == expected.encode("utf-8"), "D07: export JSON différent de la vue GTK"
+        data = json.loads(raw)
+        assert data["null"] is None and data["false"] is False
+        assert type(data["zero"]) is int and data["zero"] == 0
+        assert data["nested"]["items"] == [None, False, 0, [], {}]
+        assert data["unicode"] == "Élève 🌍 漢字"
+        assert data["multiline"] == "Ligne A\nLigne B"
+        assert "absent" not in data and SECRET.encode() not in raw
+        assert len(broker.event_queries) == 1 and broker.checks == 0 and plugin.llm is None
+        assert "Détail JSON expurgé enregistré" in host.toasts
+        report["checks"]["D07_json_file_export_exact_redacted_via_gtk"] = True
+        report["audits"]["D07_json_file_sha256_matches_visible"] = (
+            hashlib.sha256(raw).hexdigest() == report["json_sha256"]
+        )
+        assert report["audits"]["D07_json_file_sha256_matches_visible"]
+        report["json_file_size_bytes"] = len(raw)
+        screenshot("02d-json-fichier-local-verifie")
+        later(lambda: select_and_copy(detail_controls()[1]), 160)
 
     def select_and_copy(view):
         # A real GTK selection and XTEST Ctrl+C, not a direct clipboard set().
@@ -455,7 +531,7 @@ def main():
             report["checks"]["D13_support_partial_selection_ctrl_c_xtest"] = True
             screenshot("05-support-ctrl-c-selection-partielle")
             report["unmet_criteria"] = [
-                "D13: export fichier non exercé par ce scénario (recette dédiée)",
+                "D13: export du rapport support en fichier non exercé (détail JSON exporté)",
                 "D05: fermeture/sélection non exercée par ce scénario (recette rapport long)",
             ]
             report["status"] = "PASS"
