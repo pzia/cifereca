@@ -685,3 +685,50 @@ def test_all_sources_present_remains_available(tmp_path):
     result = query_diagnostic_events(diag, log_path=log)
     assert result["status"] == "available" and result["total"] == 2
     assert {x["status"] for x in result["sources"]} == {"available"}
+
+
+def test_unreadable_rotation_does_not_appear_as_complete_log_coverage(tmp_path):
+    """No partial evidence can be silently upgraded by a healthy active log."""
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [W] TRACE sync source status=ok",
+    )
+    private = tmp_path / "private.log"
+    make_log(private,
+        "2026-10-11 06:00:00,000 ERROR cifereca.sync [W] user SecretPerson token=SecretToken",
+    )
+    try:
+        (tmp_path / "cifereca.log.1").symlink_to(private)
+    except OSError:
+        pytest.skip("symlinks unsupported")
+    page = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert page["total"] == 1
+    assert page["status"] == "partial"
+    assert page["sources"][0]["status"] == "partial"
+    assert page["sources"][0]["reason"] == "log_source_incomplete"
+    assert "SecretPerson" not in json.dumps(page)
+    assert "SecretToken" not in json.dumps(page)
+    assert str(private) not in json.dumps(page)
+
+
+def test_archived_log_without_active_file_is_not_claimed_complete(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(tmp_path / "cifereca.log.1",
+        "2026-10-11 06:00:00,000 WARNING cifereca.sync [W] TRACE sync source status=partial",
+    )
+    page = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert page["total"] == 1
+    assert page["status"] == "partial"
+    assert page["sources"][0]["reason"] == "log_source_incomplete"
+    assert "last_event" in page["sources"][0]
+
+
+def test_unused_missing_rotation_slots_do_not_mark_active_log_partial(tmp_path):
+    log = tmp_path / "cifereca.log"
+    make_log(log,
+        "2026-10-11 07:00:00,000 INFO cifereca.sync [W] TRACE sync source status=ok",
+    )
+    page = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
+    assert page["total"] == 1
+    assert page["status"] == "available"
+    assert page["sources"][0]["reason"] == ""

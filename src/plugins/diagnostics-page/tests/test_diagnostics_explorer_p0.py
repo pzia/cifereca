@@ -583,3 +583,19 @@ def test_journals_show_last_published_event_from_broker():
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
     assert "dernier événement publié : {state['last_event']}" in page
     assert "source_summaries(current_page)" in page
+
+
+def test_log_source_incomplete_reason_is_public_but_free_text_stays_hidden():
+    rows = source_summaries({"sources": [
+        {"source": "app_log", "status": "partial",
+         "reason": "log_source_incomplete",
+         "last_event": "2026-10-11T07:00:00+00:00"},
+        {"source": "app_log", "status": "partial",
+         "reason": "secret-profile-Alexandre",
+         "last_event": "2026-10-11T07:00:00+00:00"},
+    ]})
+    assert rows[0]["reason"] == "log_source_incomplete"
+    assert rows[0]["label"] == "Journal partiel (rotation / troncation)"
+    assert rows[0]["last_event"] == "2026-10-11T07:00:00+00:00"
+    assert "reason" not in rows[1]
+    assert "Alexandre" not in json.dumps(rows)
