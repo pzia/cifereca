@@ -104,6 +104,10 @@ def _log_lines(
             return lines[-_MAX_EVENTS_PER_FILE:], status, (
                 identity.st_dev, identity.st_ino,
             )
+    except FileNotFoundError:
+        # Missing rotation slots are normal; all other I/O failures mean
+        # the source exists but its evidence cannot be trusted as complete.
+        return [], "missing", None
     except (OSError, ValueError):
         return [], "unavailable", None
 
@@ -119,10 +123,19 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     events: list[dict[str, Any]] = []
     observed = False
     partial = False
+    unreadable = False
+    active_missing = False
     for index in (3, 2, 1, 0):
         path = Path(str(log_path) + (f".{index}" if index else ""))
         lines, status, identity = _log_lines(path)
+        if status == "missing":
+            if index == 0:
+                active_missing = True
+            continue
         if status == "unavailable" or identity is None:
+            # An existing but unreadable/nonregular rotation must never be
+            # silently treated as an absent, harmless rotation slot.
+            unreadable = True
             continue
         observed = True
         partial |= status == "partial"
@@ -175,14 +188,20 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                     f"{match['level']}:{'.'.join(safe_parts)}:{message}",
                 ),
             })
+    # A missing active file with only archived records, or an unreadable
+    # rotation next to a readable one, cannot establish full coverage.
+    incomplete = observed and (unreadable or active_missing)
+    partial = partial or incomplete
     status = "partial" if partial else ("available" if observed else "unavailable")
     state = {
         "source": "app_log",
         "status": "partial" if partial else (
             status if events else ("empty" if observed else "unavailable")
         ),
-        "reason": "log_tail_bounded" if partial else (
-            "no_matching_events" if observed and not events else ""
+        "reason": "log_source_incomplete" if incomplete else (
+            "log_tail_bounded" if partial else (
+                "no_matching_events" if observed and not events else ""
+            )
         ),
     }
     if events:
