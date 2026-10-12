@@ -26,7 +26,7 @@ def _host():
             ast.alias(name="annotations")], level=0), *methods], type_ignores=[],
     ))
     env = {
-        "pending_online_search_matches": pending_online_search_matches,
+        "__package__": "cifereca.gui",
         "TaskPriority": NS(USER_ACTION=1),
         "progressive_online_search": lambda *args: None,
     }
