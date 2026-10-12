@@ -815,7 +815,7 @@ class DiagnosticsPagePlugin:
             )
             self._support_exports.append(json_export)
 
-            def on_detail_unroot(*_args):
+            def on_detail_unmap(*_args):
                 # Journal pagination and local search rebuild widgets often.
                 # Close pending dialogs/writes and release the stale exporter
                 # instead of retaining every old detail in the page lifetime.
@@ -823,7 +823,7 @@ class DiagnosticsPagePlugin:
                 if json_export in self._support_exports:
                     self._support_exports.remove(json_export)
 
-            expander.connect("unroot", on_detail_unroot)
+            expander.connect("unmap", on_detail_unmap)
             selector.connect("notify::selected", change_view)
             copy_detail.connect("clicked", copy_view)
             save_json.connect("clicked", json_export.choose)
