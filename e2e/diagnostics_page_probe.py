@@ -744,6 +744,64 @@ def main():
         )
         report["checks"]["D05_xtest_wheel_keeps_outer_page_fixed"] = True
         screenshot("09b-report-physical-wheel-1600")
+        # A nested scroller must not trap the physical wheel at its lower
+        # bound. After the parent guard expires, the same XTEST wheel must
+        # propagate to the outer Diagnostics page when the report is at end.
+        later(lambda: prepare_wheel_at_report_edge(view), 130)
+
+    def prepare_wheel_at_report_edge(view):
+        report["stage"] = "D05_prepare_wheel_at_report_edge"
+        scroller = view.get_parent()
+        while scroller is not None and not isinstance(scroller, Gtk.ScrolledWindow):
+            scroller = scroller.get_parent()
+        assert scroller is not None, "D05: support report scroll parent missing"
+        inner = scroller.get_vadjustment()
+        inner_max = max(inner.get_lower(), inner.get_upper() - inner.get_page_size())
+        assert inner_max > 400, "D05: edge test requires a long report"
+        inner.set_value(inner_max)
+
+        outer = page[0].get_vadjustment()
+        outer_max = max(outer.get_lower(), outer.get_upper() - outer.get_page_size())
+        # Keep room below the page scroll position; otherwise a valid
+        # propagation would be invisible when the parent is already at end.
+        outer.set_value(min(outer.get_value(), max(outer.get_lower(), outer_max - 180)))
+        outer_before = outer.get_value()
+        assert outer_max - outer_before > 20, "D05: no outer scroll range for edge test"
+        assert abs(inner.get_value() - inner_max) <= 2, "D05: report not at bottom"
+        report["wheel_edge_outer_before"] = round(outer_before, 2)
+        report["wheel_edge_inner_before"] = round(inner.get_value(), 2)
+        later(lambda: send_wheel_at_report_edge(view, inner_max, outer_before), 170)
+
+    def send_wheel_at_report_edge(view, inner_max, outer_before):
+        report["stage"] = "D05_xtest_wheel_at_report_bottom"
+        for _ in range(4):
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, True, 0)
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, False, 0)
+        device[0].x11.XSync(device[0].display, False)
+        outer = page[0].get_vadjustment()
+        until(lambda: outer.get_value() > outer_before + 5,
+              lambda: verify_wheel_at_report_edge(view, inner_max, outer_before),
+              seconds=5)
+
+    def verify_wheel_at_report_edge(view, inner_max, outer_before):
+        report["stage"] = "D05_verify_wheel_at_report_bottom"
+        scroller = view.get_parent()
+        while scroller is not None and not isinstance(scroller, Gtk.ScrolledWindow):
+            scroller = scroller.get_parent()
+        assert scroller is not None
+        inner_after = scroller.get_vadjustment().get_value()
+        outer_after = page[0].get_vadjustment().get_value()
+        assert abs(inner_after - inner_max) <= 2, (
+            "D05: inner adjustment should stay at its lower edge", inner_after, inner_max,
+        )
+        assert outer_after > outer_before + 5, (
+            "D05: physical wheel is trapped by report at the lower edge",
+            outer_before, outer_after,
+        )
+        report["wheel_edge_inner_after"] = round(inner_after, 2)
+        report["wheel_edge_outer_after"] = round(outer_after, 2)
+        report["checks"]["D05_xtest_wheel_at_inner_edge_scrolls_outer_page"] = True
+        screenshot("09bb-report-wheel-edge-propagates-1600")
         select_support_report(view)
 
     def select_support_report(view):
