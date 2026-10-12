@@ -1200,9 +1200,13 @@ class MainWindow(Adw.ApplicationWindow):
         self._restoring_navigation = True
         try:
             current = self.service.current_identity
-            if state.identity_id and (current is None or current.identity_id != state.identity_id):
-                # History restores only still-existing identities.
-                if self.service.identity_by_id(state.identity_id) is not None:
+            if state.identity_id:
+                # Never apply filters or navigate in another identity when a
+                # history entry refers to an identity that has been removed.
+                # This check also covers a stale current_identity pointer.
+                if self.service.identity_by_id(state.identity_id) is None:
+                    return
+                if current is None or current.identity_id != state.identity_id:
                     self._activate_identity(state.identity_id)
             controls = getattr(self, state.route + "_controls", None)
             if controls is not None and state.query_state is not None:
