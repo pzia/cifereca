@@ -546,6 +546,8 @@ def source_diagnostic_presentation(rows):
             ("covers_seen", "images présentes"),
             ("cover_urls_valid", "couvertures publiques valides"),
             ("author_count", "mentions d’auteur"),
+            ("thumbnail_card_count", "vignettes secondaires"),
+            ("thumbnail_duplicate_count", "vignettes d’éditions déjà présentes"),
         )
         for key, label in evidence:
             amount = funnel.get(key)
