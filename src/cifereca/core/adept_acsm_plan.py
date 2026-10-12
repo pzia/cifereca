@@ -7,7 +7,7 @@ here. The service retains both ownership/locking and the execution boundary.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 
 def select_acsm_format(detected_format: str | None) -> tuple[str, str, str]:
@@ -93,3 +93,30 @@ def plan_adept_destination(
         if repair_mode else destination
     )
     return destination, adept_destination, repair_mode
+
+
+def profile_is_explicitly_acsm_unready(profile_row: Mapping[str, Any] | None) -> bool:
+    """Reject only an explicit negative signal from the selected ADEPT profile.
+
+    Since Kobo-Adept 0.13.3, provisioning.acsm_fetch_ready takes precedence over
+    legacy fetch_capable, even if they disagree. Keep older plugin contracts
+    working when the new property is absent or unknown. Presence of a reader
+    identity alone is not sufficient proof of ACSM capability.
+
+    Caller must already have resolved the borrower-owned profile: this pure
+    check never chooses or substitutes a profile, performs I/O, or writes the
+    acquisition ledger.
+    """
+    if not profile_row:
+        return False
+    provisioning = (
+        profile_row.get("provisioning")
+        if isinstance(profile_row.get("provisioning"), dict)
+        else {}
+    )
+    readiness = (
+        provisioning.get("acsm_fetch_ready")
+        if "acsm_fetch_ready" in provisioning
+        else profile_row.get("fetch_capable")
+    )
+    return readiness is False

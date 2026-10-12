@@ -3143,9 +3143,7 @@ class LibraryService:
                     profile_rows = []
                 profile_row = self._adept_profile_row(profile_name, profile_rows)
                 if profile_row:
-                    provisioning = profile_row.get("provisioning") if isinstance(profile_row.get("provisioning"), dict) else {}
-                    readiness = provisioning.get("acsm_fetch_ready") if "acsm_fetch_ready" in provisioning else profile_row.get("fetch_capable")
-                    if readiness is False:
+                    if adept_acsm_plan.profile_is_explicitly_acsm_unready(profile_row):
                         code = "adept_profile_acsm_not_ready"
                         message = "Le profil Kobo-Adept lié à cette identité n'est pas prêt pour les acquisitions ACSM"
                         self.storage.acquisition_put({
