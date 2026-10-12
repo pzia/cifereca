@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Fail-closed E2E GTK scenario selection (issue #1236)."""
+from __future__ import annotations
+import argparse
+from pathlib import Path
+
+CORE = ("search-filter-p0", "book-detail-1366", "mainwindow-baseline-1366",
+        "mainwindow-baseline-1600", "startup", "core-navigation")
+DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
+        "diagnostics-structured-1366", "diagnostics-volume-1366",
+        "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
+YOUTH = ("youth-1366", "youth-milan-1366", "youth-editions-1366",
+         "youth-library-search-1366")
+ALL = CORE + DIAG + YOUTH
+SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
+         "startup", "core-navigation", "diagnostics-navigation-1366",
+         "diagnostics-navigation-slow-1366", "youth-library-search-1366")
+LOCAL_GUI = {
+    "action_layout.py": ("book-detail-1366",),
+    "action_widgets.py": ("book-detail-1366",),
+    "book_facets.py": ("search-filter-p0", "book-detail-1366"),
+    "book_widgets.py": ("book-detail-1366", "search-filter-p0"),
+    "cover_loader.py": ("book-detail-1366",),
+    "cover_preview.py": ("book-detail-1366",),
+    "facet_text.py": ("search-filter-p0",),
+    "query_controls.py": ("search-filter-p0", "core-navigation"),
+    "query_model.py": ("search-filter-p0",),
+    "search_intent.py": ("search-filter-p0",),
+}
+PROBES = {
+    "e2e/book_detail_probe.py": ("book-detail-1366",),
+    "e2e/search_filter_probe.py": ("search-filter-p0",),
+    "e2e/diagnostics_page_probe.py": ("diagnostics-1366", "diagnostics-large-1600"),
+    "e2e/diagnostics_states_probe.py": ("diagnostics-states-1366",),
+    "e2e/diagnostics_structured_probe.py": ("diagnostics-structured-1366",),
+    "e2e/diagnostics_volume_probe.py": ("diagnostics-volume-1366",),
+    "e2e/diagnostics_navigation_probe.py": (
+        "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366",
+        "mainwindow-baseline-1366", "mainwindow-baseline-1600"),
+    "e2e/youth_page_probe.py": YOUTH,
+}
+GLOBAL = {
+    "e2e/run.py", "pyproject.toml",
+    "scripts/ci-select-e2e.py", "scripts/ci-select-core-tests.py",
+    "scripts/ci-install-gtk-e2e-runtime.sh",
+    "environnements/openai-chat-debian/capture_app.py",
+    ".github/workflows/e2e-smoke.yml",
+    "tests/test_e2e_runner_contract.py",
+    "tests/test_e2e_ci_paths.py", "tests/test_ci_select_e2e.py",
+}
+
+def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
+    if full:
+        return ALL
+    changed = [p.strip() for p in paths if p.strip()]
+    if not changed:
+        return ALL  # empty diff is not a silent pass
+    selected: set[str] = set()
+    for path in changed:
+        if path.endswith((".md", ".rst", ".txt")):
+            continue
+        if path in GLOBAL or path.startswith("e2e/fixtures/"):
+            return ALL
+        if path in PROBES:
+            selected.update(PROBES[path])
+        elif path.startswith("e2e/"):
+            return ALL  # unknown or shared E2E helper
+        elif path.startswith("src/plugins/diagnostics-page/"):
+            selected.update(DIAG)
+        elif path.startswith(("src/plugins/youth-catalog/", "src/plugins/youth-source-",
+                              "simulation/youth_sources/", "simulation/milan/")):
+            selected.update(YOUTH)
+        elif path.startswith("src/cifereca/builtin_ui/"):
+            selected.update(SHELL)
+        elif path in ("src/cifereca/app.py", "src/cifereca/gui/main_window.py",
+                      "src/cifereca/gui/shell_model.py",
+                      "src/cifereca/gui/navigation_history.py"):
+            selected.update(SHELL)
+        elif path.startswith("src/cifereca/gui/"):
+            component = path.removeprefix("src/cifereca/gui/")
+            if component not in LOCAL_GUI:
+                return ALL
+            selected.update(LOCAL_GUI[component])
+        elif path.startswith("tests/") and path.endswith(".py"):
+            continue  # unrelated test alongside a known UI change
+        else:
+            return ALL  # unknown dependency in an otherwise targeted PR
+    return tuple(name for name in ALL if name in selected)
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--changed-files", type=Path)
+    parser.add_argument("--full", action="store_true")
+    parser.add_argument("--github-output", type=Path, required=True)
+    args = parser.parse_args()
+    if not args.full and args.changed_files is None:
+        parser.error("--changed-files is required unless --full")
+    paths = args.changed_files.read_text(encoding="utf-8").splitlines() if args.changed_files else []
+    scenarios = select(paths, full=args.full)
+    with args.github_output.open("a", encoding="utf-8") as output:
+        output.write("scenarios=" + " ".join(scenarios) + "\n")
+        output.write(f"count={len(scenarios)}\n")
+        output.write(f"mode={'full' if scenarios == ALL else 'selected' if scenarios else 'docs-only'}\n")
+    print(f"GTK E2E selection: {len(scenarios)}/{len(ALL)}: {', '.join(scenarios) or 'docs only'}")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
