@@ -69,13 +69,11 @@ def test_root_capture_is_installed_before_gtk_outer_scroll_window():
     assert "page_root.append(scroll)" in source
     assert "wheel.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)" in source
     assert "_install_report_wheel(\n            Gtk, Gdk, GLib, page_root, scroll" in source
-    assert "tracking.connect(\"motion\", pointer_moved)" in source
-    assert "tracking.connect(\"enter\", pointer_moved)" in source
-    assert "tracking.connect(\"leave\", pointer_left)" in source
-    assert "root.pick(*position, Gtk.PickFlags.DEFAULT)" in source
+    assert "report_scroll.add_controller(tracking)" in source
+    assert "tracking.contains_pointer()" in source
+    assert "root.pick(*position, Gtk.PickFlags.DEFAULT)" not in source
     assert 'page_adjustment.connect("value-changed", keep_page_fixed)' in source
     assert "GLib.timeout_add(350, release_later)" in source
     assert "if not moved:" in source
     assert "release_guard()" in source
-    assert "picked.get_parent()" in source
     assert "return page_root" in source
