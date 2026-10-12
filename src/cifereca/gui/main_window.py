@@ -48,6 +48,7 @@ from .loan_view import (
     loan_due_presentation,
     loan_medium_counts,
 )
+from ..core.loan_source_identity import loan_source_key, unique_library_loan
 from .recent_time import format_recent_timestamp
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
@@ -1930,7 +1931,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _populate_loans(self, rows: list[Loan]) -> None:
         self.service.last_loans = rows
-        self.loan_objects = {x.id: x for x in rows}
+        # The same upstream loan can be visible under two Paris credentials.
+        # Preserve both source-bound rows instead of overwriting by loan.id.
+        self.loan_objects = {loan_source_key(x): x for x in rows}
         self._render_loans()
         self._render_kobo_loans()
         if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
@@ -1960,7 +1963,7 @@ class MainWindow(Adw.ApplicationWindow):
             ranked_rows.append((
                 due.sort_key,
                 BookListItem(
-                    loan.id,
+                    loan_source_key(loan),
                     loan.title,
                     subtitle,
                     meta,
@@ -3613,7 +3616,9 @@ class MainWindow(Adw.ApplicationWindow):
         if not item:
             return
         if item.get("source") == "loan" and item.get("loan_id"):
-            loan = self.loan_objects.get(str(item.get("loan_id")))
+            # A merged catalogue notice may not identify the exact borrower.
+            # In that case never expose an action for an arbitrary loan source.
+            loan = unique_library_loan(self.loan_objects.values(), item)
             if loan:
                 self.library_page.detail.show_loan(loan, include_pnb_action=False)
                 actions = []
