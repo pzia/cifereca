@@ -217,7 +217,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         if not isinstance(snapshot, (list, tuple)):
             raise ValueError("snapshot must be a sequence")
         rows = snapshot[-500:]
-    except (AttributeError, ValueError, TypeError):
+    except Exception:
+        # Snapshot providers can fail with I/O/runtime exceptions as well as
+        # malformed values. Keep the other public log source consultable and
+        # expose only the fixed code, never the exception text or path.
         return [], {"source": "core_events", "status": "unavailable", "reason": "snapshot_unavailable"}
     events: list[dict[str, Any]] = []
     used_ids: set[str] = set()
