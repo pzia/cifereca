@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .core import acsm_staging
+from .core import acsm_staging, loan_failure_evidence
 
 import logging
 import time
@@ -3324,21 +3324,10 @@ class LibraryService:
             process = {}
             if failure_executor == "kobo-adept":
                 raw = self.runtime_diagnostic("runtime.kobo-adept")
-                for key in ("returncode", "duration_ms", "stdout_bytes", "stderr_bytes"):
-                    value = raw.get(key)
-                    if isinstance(value, int) and not isinstance(value, bool):
-                        process[key] = value
-                exit_code = getattr(exc, "exit_code", None)
-                if isinstance(exit_code, int):
-                    process["returncode"] = exit_code
-                candidate = locals().get("adept_destination")
-                if isinstance(candidate, Path):
-                    try:
-                        process["artifact_present"] = candidate.is_file()
-                        if process["artifact_present"]:
-                            process["artifact_bytes"] = candidate.stat().st_size
-                    except OSError:
-                        process["artifact_present"] = False
+                process = loan_failure_evidence.process_failure_facts(
+                    raw, exc=exc,
+                    candidate=locals().get("adept_destination"), path_type=Path,
+                )
                 self.diagnostics.add("KOBO-ADEPT", "acquisition failed", "error",
                     detail={"code": code, "message": str(exc), **process}, level="errors")
             message = str(exc)
@@ -3366,13 +3355,11 @@ class LibraryService:
             )
             status = "retryable_error" if retryable else "attention_required"
             attention_code = adept_attention_code(code, message, executor=failure_executor)
-            metadata = {**previous_meta, "provider_loan_id": loan.id, "process": process}
-            if retained_acsm is not None:
-                metadata["acsm_staging_path"] = str(retained_acsm)
-            if failure_executor == "kobo-adept":
-                if isinstance(locals().get("profile_name"), str):
-                    metadata["adept_attempt_profile"] = profile_name
-                metadata["failure_stage"] = "adept_fulfillment"
+            metadata = loan_failure_evidence.adept_failure_metadata(
+                previous_meta, loan_id=loan.id, process=process,
+                retained_acsm=retained_acsm, executor=failure_executor,
+                attempt_profile=locals().get("profile_name"),
+            )
             self.storage.acquisition_put({
                 **ledger_base, "status": status, "strategy": "loan_auto", "executor": failure_executor,
                 "error_code": code, "error_message": message, "metadata": metadata,
@@ -3396,13 +3383,10 @@ class LibraryService:
             # (manual ACSM retrieval can still succeed). Keep it observable but
             # retryable instead of permanently blocking the loan.
             validation_failure = failure_executor == "kobo-adept" and isinstance(exc, ProviderConfigurationError)
-            metadata = {**previous_meta, "provider_loan_id": loan.id}
-            if retained_acsm is not None:
-                metadata["acsm_staging_path"] = str(retained_acsm)
-            if attention_code:
-                metadata["provider_condition"] = attention_code
-            if validation_failure:
-                metadata.update({"repairable": True, "failure_stage": "post_adept_validation"})
+            metadata = loan_failure_evidence.provider_failure_metadata(
+                previous_meta, loan_id=loan.id, retained_acsm=retained_acsm,
+                attention_code=attention_code, validation_failure=validation_failure,
+            )
             self.storage.acquisition_put({
                 **ledger_base, "status": "retryable_error", "strategy": "loan_auto", "executor": failure_executor,
                 "error_code": "artifact_invalid" if validation_failure else type(exc).__name__, "error_message": str(exc),
