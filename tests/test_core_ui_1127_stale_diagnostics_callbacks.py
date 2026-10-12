@@ -16,10 +16,22 @@ from cifereca.gui.settings_lifetime import SettingsPageLifetime
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
-def _callback(name, namespace):
+def _settings_callback(name):
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    nested = next(n for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef) and n.name == name)
+    window = next(node for node in tree.body
+                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    builder = next(node for node in window.body
+                   if isinstance(node, ast.FunctionDef) and
+                   node.name == "_build_settings_page")
+    owner_name = "copy_text" if name == "verified" else "export_text"
+    owner = next(node for node in ast.walk(builder)
+                 if isinstance(node, ast.FunctionDef) and node.name == owner_name)
+    return next(node for node in owner.body
+                if isinstance(node, ast.FunctionDef) and node.name == name)
+
+
+def _callback(name, namespace):
+    nested = _settings_callback(name)
     exec(compile(ast.fix_missing_locations(
         ast.Module(body=[nested], type_ignores=[])
     ), str(MAIN), "exec"), namespace)
@@ -108,8 +120,12 @@ def test_export_entrypoint_checks_page_lifetime_once():
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "export_text")
     source = ast.unparse(fn)
-    assert source.count("if not page_lifetime.alive:") == 1
+    # The entrypoint has exactly one gate; the nested chooser intentionally
+    # has its own gate for responses arriving after page disposal.
+    guards = [node for node in fn.body
+              if isinstance(node, ast.If)
+              and "not page_lifetime.alive" in ast.unparse(node.test)]
+    assert len(guards) == 1
     for name in ("verified", "chosen"):
-        child = next(n for n in ast.walk(tree)
-                     if isinstance(n, ast.FunctionDef) and n.name == name)
+        child = _settings_callback(name)
         assert "if not page_lifetime.alive:" in ast.unparse(child)
