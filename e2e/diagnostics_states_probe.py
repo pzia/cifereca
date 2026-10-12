@@ -63,7 +63,7 @@ class StateBroker(Broker):
         events = [{
             "event_id": "event-ux-001",
             "timestamp": "2026-10-11T05:20:00+00:00",
-            "source": "app_log", "module": "core.sync", "severity": "warning",
+            "source": "core_events", "module": "core.sync", "severity": "warning",
             "status": "partial", "message": "Incident simulé sans donnée réelle",
             "secret": "UX_FICTIF_NON_EXPORTABLE",
         }] if self.state == "ai" else []
