@@ -274,3 +274,21 @@ MainWindow probe checks multivalued Search/Library metadata, independent
 subject clipboard copy and the explicit typed ISBN action without remote I/O.
 It does not certify live account behavior or resolve the pre-existing duplicate
 author copy tooltips. Preserve source hashes with before/after reports.
+
+### CoreUI component lifecycle
+
+`book_detail_probe.py --out <directory> --width 1366 --component-contracts`
+(or `--width 1600`) extends the loaded Search/Library detail recipe with empty
+and long summaries, XTEST expand/collapse and overflow actions, 0/1/N list
+reconciliation, stable-key selection and Escape. The real MainWindow identity
+transition cancels a controlled pending observer and clears the old GTK detail;
+its scheduler is controlled during this last stage. Deferred worker delivery
+is separately covered by the deterministic resolver coordination tests.
+Synthetic list keys have no business callbacks. This recipe neither acquires
+books nor connects to remote accounts. Jeunesse's existing `--library-search`
+recipe also accepts 1366/1600 for local-cache navigation through its real plugin.
+
+`search_filter_probe.py --width 1366|1600` uses the same loaded local-index
+fixture to check query, rows, count, selected key, scroll and absence of extra
+searches when opening/closing filter menus. `--short-component-actions` keeps
+the pre-existing overflow reproduction from #1216; its failure is not hidden.

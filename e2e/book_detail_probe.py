@@ -52,6 +52,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
+    parser.add_argument("--component-contracts", action="store_true", help="P0 #1124/#1125: real widget lifecycle, summaries, overflow and stable selection")
+    parser.add_argument("--short-component-actions", action="store_true", help="Reproduce the pre-existing boundary overflow case with eight shorter labels")
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -282,6 +284,8 @@ def main():
         window.library_page.selection.set_selected(0)
         later(270, verify_library)
 
+    component = {}
+
     def verify_library():
         expander, rows = detail_info("library")
         shown = read_rows(rows)
@@ -295,10 +299,152 @@ def main():
         report["library_expanded"] = expander.get_expanded()
         capture("03-library-shared-detail")
         assert len(report["online_calls"]) == 1
+        if args.component_contracts:
+            component_summaries()
+        else:
+            finish()
+
+    def finish():
         report["status"] = "PASS"
         save()
         rc[0] = 0
         app.quit()
+
+    def component_summaries():
+        p = panel("library")
+        p.empty("Sans couverture", "Fixture locale sans URL")
+        p._show_description("")
+        assert not any(isinstance(w, Adw.PreferencesGroup) and w.get_title() == "Résumé" for w in walk(p.content))
+        p._show_description("Résumé long de la fixture. " * 80)
+        toggle = next(w for w in walk(p.content) if isinstance(w, Gtk.Button) and w.get_label() == "Lire la suite")
+        component["summary_toggle"] = toggle
+        later(200, lambda: component_expand(toggle))
+
+    def component_expand(toggle):
+        assert toggle.get_mapped()
+        report["summary_pointer"] = device.click_widget(toggle)
+        later(180, component_collapse)
+
+    def component_collapse():
+        toggle = component["summary_toggle"]
+        assert toggle.get_label() == "Réduire"
+        labels = [w for w in walk(panel("library").content) if isinstance(w, Gtk.Label) and str(w.get_text()).startswith("Résumé long")]
+        assert labels and labels[0].get_lines() == -1
+        adjustment = panel("library").body_scroll.get_vadjustment()
+        adjustment.set_value(max(0, adjustment.get_upper() - adjustment.get_page_size()))
+        later(180, component_click_collapse)
+
+    def component_click_collapse():
+        toggle = component["summary_toggle"]
+        assert toggle.get_mapped(), "Résumé: bouton Réduire non mappé"
+        report["collapse_pointer"] = device.click_widget(toggle)
+        later(180, component_overflow)
+
+    def component_overflow():
+        from cifereca.gui.main_window import action_button
+        toggle = component["summary_toggle"]
+        assert toggle.get_label() == "Lire la suite", "Résumé: clic Réduire sans effet"
+        report["checks"]["empty_and_long_summary"] = True
+        capture("04-summary-collapsed")
+        p = panel("library")
+        p.empty("Actions de la fixture", "Sans couverture distante")
+        component["action_calls"] = []
+        buttons = []
+        for i in range(8):
+            label = f"Action longue {i}" if args.short_component_actions else f"Action de la fixture depuis le contexte du document {i}"
+            button = action_button(label, "view-more-symbolic")
+            button.connect("clicked", lambda _button, index=i: component["action_calls"].append(index))
+            buttons.append(button)
+        report["component_action_labels"] = [button._cifereca_action_label for button in buttons]
+        p.add_actions(buttons)
+        later(250, component_open_overflow)
+
+    def component_open_overflow():
+        bar = panel("library").action_scroll
+        assert bar.overflow_button.get_visible() and bar.overflow_button.get_mapped()
+        report["overflow_pointer"] = device.click_widget(bar.overflow_button)
+        later(200, component_click_hidden)
+
+    def component_click_hidden():
+        bar = panel("library").action_scroll
+        assert bar.overflow_popover.get_mapped(), "Overflow: menu non ouvert par le clic XTEST"
+        button = next(w for w in walk(bar.overflow_box) if isinstance(w, Gtk.Button))
+        component["expected_action"] = int(button._cifereca_action_label.rsplit(" ", 1)[1])
+        report["hidden_action_pointer"] = device.click_widget(button)
+        later(160, component_lists)
+
+    def component_lists():
+        assert component["action_calls"] == [component["expected_action"]]
+        panel("library").action_scroll.overflow_popover.popdown()
+        report["checks"]["overflow_action"] = True
+        from cifereca.gui.main_window import BookListItem
+        page = window.library_page
+        page.clear_rows()
+        assert page.store.get_n_items() == 0 and page.selection.get_selected_item() is None
+        page.show_rows([BookListItem("one", "Un document")])
+        assert page.store.get_n_items() == 1 and page.selection.get_selected_item() is None
+        # No business callback may interpret these deliberately synthetic keys.
+        callbacks = page._selected_callbacks
+        page._selected_callbacks = []
+        try:
+            assert page.select_key("one")
+            page.append_rows([BookListItem("two", "Deux documents"), BookListItem("three", "Trois documents")])
+            assert page.selection.get_selected_item().key == "one"
+            page.show_rows([page.store.get_item(2), page.store.get_item(0)])
+            assert page.selection.get_selected_item().key == "one"
+            page.show_rows([page.store.get_item(0)])
+            assert page.selection.get_selected_item() is None
+            assert not page.select_key("missing")
+        finally:
+            page._selected_callbacks = callbacks
+        report["checks"]["zero_one_many_stable_selection"] = True
+        # Real key input must clear selection and return focus to the list.
+        page._selected_callbacks = []
+        component["callbacks"] = callbacks
+        assert page.select_key("three")
+        page.listview.grab_focus()
+        device.key("Escape", True); device.key("Escape", False)
+        later(180, component_identity)
+
+    def component_identity():
+        page = window.library_page
+        assert page.selection.get_selected_item() is None
+        page._selected_callbacks = component.pop("callbacks")
+        report["checks"]["keyboard_escape"] = True
+        # Model a pending metadata observer; the real identity transition must
+        # cancel it, clear old rows and leave no stale detail in the real widget.
+        class Observer:
+            cancelled = False
+            def cancel(self): self.cancelled = True
+        observer = Observer()
+        page.detail._meta_request = observer
+        original_runner = window.runner
+        submitted = []
+        class Queue:
+            def submit(self, *args, **kwargs): submitted.append((args, kwargs))
+        window.runner = Queue()
+        try:
+            window._activate_identity("alex")
+            assert observer.cancelled and page.detail._meta_request is None
+            assert page.store.get_n_items() == 0
+            assert window.service.current_identity.identity_id == "alex"
+            assert submitted
+        finally:
+            window.runner = original_runner
+        report["checks"]["identity_cancels_pending_observer"] = True
+        report["pending_observer_scope"] = "controlled observer/scheduler; real MainWindow identity transition and GTK widgets"
+        later(220, component_identity_rendered)
+
+    def component_identity_rendered():
+        assert window.service.current_identity.identity_id == "alex", "Identité changée de nouveau avant rendu"
+        assert window.library_page.store.get_n_items() == 0, "Anciennes lignes restaurées avant rendu"
+        report["identity_rendered"] = {
+            "identity": window.service.current_identity.identity_id,
+            "rows": window.library_page.store.get_n_items(),
+            "selected": window.library_page.selection.get_selected_item() is not None,
+        }
+        capture("05-new-identity-cleared-detail")
+        finish()
 
     class Application(Adw.Application):
         def __init__(self):
