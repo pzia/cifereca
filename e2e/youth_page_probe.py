@@ -944,6 +944,155 @@ def main() -> int:
         result["milan_requests_after_recovery"] = list(requests)
         result["milan_recovery_feedback"] = status
         capture("06-milan-recovered-first-page")
+        # #907: existing Milan XTEST path now also proves the cache-only,
+        # per-identity source diagnostic projection in the real Youth GTK.
+        later(180, youth_diagnostics_milan)
+
+
+    def diagnostic_labels():
+        children = []
+        child = page.view.diagnostic_rows_box.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Label):
+                children.append(child.get_text())
+            child = child.get_next_sibling()
+        return tuple(children)
+
+    def diagnostic_for(identity):
+        return {
+            row["source_id"]: row
+            for row in catalog.source_diagnostics(identity)
+        }
+
+    def youth_diagnostics_milan():
+        page.view.diagnostic_expander.set_expanded(True)
+        page.view.refresh_source_diagnostics()
+        camille = diagnostic_for("camille")
+        alex = diagnostic_for("alex")
+        assert camille["milan"]["collection_state"] == "items", camille["milan"]
+        assert camille["milan"]["cache_count"] == 4, camille["milan"]
+        assert camille["milan"]["request_count"] == 9, camille["milan"]
+        assert camille["milan"]["pipeline"].get("candidate_count", 0) > 0, camille["milan"]
+        assert camille["ecole-loisirs"]["collection_state"] == "not_tested"
+        assert alex["milan"]["collection_state"] == "not_tested"
+        assert alex["ecole-loisirs"]["collection_state"] == "not_tested"
+        rendered = " ".join(diagnostic_labels())
+        assert "Éditions Milan" in rendered and "collecte avec notices" in rendered, rendered
+        assert "L'École des loisirs" in rendered and "non testée" in rendered, rendered
+        assert len(requests) == 22, "Reading Diagnostics must not contact Milan"
+        result["youth_diagnostics_907"] = {
+            "milan_camille": {
+                "state": camille["milan"]["collection_state"],
+                "cached": camille["milan"]["cache_count"],
+                "http_requests_last_attempt": camille["milan"]["request_count"],
+                "candidates": camille["milan"]["pipeline"].get("candidate_count"),
+            },
+            "ecole_before_explicit_request": camille["ecole-loisirs"]["collection_state"],
+            "alex_before_explicit_request": alex["milan"]["collection_state"],
+        }
+        capture("07-diagnostics-milan-camille")
+        # The real retained École des loisirs source parses an offline HTTP
+        # fixture through its public source contract. No live site or user
+        # credentials. The fixture is synthetic, and its query is deliberately
+        # absent from all Diagnostics UI and JSON summaries.
+        import httpx
+        sys.path.insert(0, str(ROOT / "src/plugins/youth-source-ecole-loisirs"))
+        from ecole_loisirs_youth import EcoleLoisirsYouthSource
+        html = """
+        <html><body>
+          <div>3 à 6 ans</div>
+          <a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a>
+          <div>Sylvie Neeman</div><div>album</div>
+          <div>ISBN: 9782211348171</div>
+          <div>13 ans et +</div>
+          <a href="/livre/roman-ado">Roman ado</a>
+          <div>Alice Auteur</div><div>roman</div>
+          <div>ISBN: 9782211345613</div>
+        </body></html>
+        """
+        ecole_calls = []
+        ecole_outage = [False]
+
+        def response(request):
+            assert request.url.scheme == "https"
+            assert request.url.host == "www.ecoledesloisirs.fr"
+            assert request.url.path == "/recherche-avancee"
+            ecole_calls.append(request.url.path)
+            return httpx.Response(
+                503 if ecole_outage[0] else 200,
+                headers={"content-type": "text/html"},
+                text="Unavailable" if ecole_outage[0] else html,
+                request=request,
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(response), trust_env=False) as client:
+            ecole = EcoleLoisirsYouthSource(client=client)
+            saved = catalog.collect_source("alex", ecole, "loup PRIVATE_QUERY_907", limit=5)
+            assert saved.accepted == 2 and saved.rejected == 0, saved
+            after_success = diagnostic_for("alex")
+            ecole_ok = after_success["ecole-loisirs"]
+            assert ecole_ok["collection_state"] == "items", ecole_ok
+            assert ecole_ok["request_count"] == 1, ecole_ok
+            assert ecole_ok["pipeline"].get("candidate_count") == 2, ecole_ok
+            assert ecole_ok["pipeline"].get("age_qualified_count") == 2, ecole_ok
+            assert ecole_ok["pipeline"].get("isbn_valid_count") == 2, ecole_ok
+            assert ecole_ok["cache_count"] == 2, ecole_ok
+            ecole_outage[0] = True
+            failed = catalog.collect_source("alex", ecole, "loup PRIVATE_QUERY_907", limit=5)
+            assert failed.accepted == 0 and failed.rejected == 1, failed
+        after_failure = diagnostic_for("alex")["ecole-loisirs"]
+        assert after_failure["collection_state"] == "http_error", after_failure
+        assert after_failure["http_status"] == 503, after_failure
+        assert after_failure["cache_count"] == 2, after_failure
+        assert after_failure["received_count"] is None, after_failure
+        assert len(ecole_calls) == 2, ecole_calls
+        camille = diagnostic_for("camille")
+        assert camille["ecole-loisirs"]["collection_state"] == "not_tested", camille
+        assert camille["milan"]["cache_count"] == 4 and camille["milan"]["collection_state"] == "items"
+        assert len(requests) == 22, "École mock must never affect the real Milan transport"
+        result["youth_diagnostics_907"]["ecole_alex"] = {
+            "success_http_requests": ecole_ok["request_count"],
+            "accepted": saved.accepted,
+            "candidates": ecole_ok["pipeline"].get("candidate_count"),
+            "qualified_ages": ecole_ok["pipeline"].get("age_qualified_count"),
+            "error_state": after_failure["collection_state"],
+            "http_error": after_failure["http_status"],
+            "retained_cache": after_failure["cache_count"],
+        }
+        page.view.source.set_selected(0)  # Both providers, cache-only.
+        page.view.identity.set_selected(1)  # Alex (École) instead of Camille (Milan).
+        later(240, youth_diagnostics_alex)
+
+    def youth_diagnostics_alex():
+        assert page.view.identity_id() == "alex", page.view.identity_id()
+        assert len(page.view.rows) == 2, page.view.rows
+        rendered = " ".join(diagnostic_labels())
+        assert "L'École des loisirs" in rendered and "erreur HTTP 503" in rendered, rendered
+        assert "conservé" in rendered and "cache : 2 notice(s)" in rendered, rendered
+        # The retained Milan provider is installed, but has NOT been tested
+        # for Alex. A ready source is not evidence of remote health.
+        assert "Éditions Milan" in rendered and "non testée" in rendered, rendered
+        assert "PRIVATE_QUERY_907" not in rendered, "Search query leaked to GTK Diagnostics"
+        assert len(requests) == 22
+        result["youth_diagnostics_907"]["alex_gtk"] = {
+            "rows": len(page.view.rows),
+            "http_error_visible": True,
+            "milan_not_tested": True,
+        }
+        capture("08-diagnostics-ecole-alex-http-error")
+        page.view.identity.set_selected(0)
+        later(240, youth_diagnostics_camille_restored)
+
+    def youth_diagnostics_camille_restored():
+        assert page.view.identity_id() == "camille"
+        assert len(page.view.rows) == 4, page.view.rows
+        rendered = " ".join(diagnostic_labels())
+        assert "Éditions Milan" in rendered and "collecte avec notices" in rendered, rendered
+        assert "L'École des loisirs" in rendered and "non testée" in rendered, rendered
+        assert "PRIVATE_QUERY_907" not in rendered
+        assert len(requests) == 22
+        result["youth_diagnostics_907"]["camille_restored"] = True
+        capture("09-diagnostics-camille-restored")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
