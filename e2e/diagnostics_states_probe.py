@@ -320,9 +320,11 @@ def main():
               len(broker[0].event_queries) == 1, verify_d02_partial)
 
     def verify_d02_partial():
-        assert has("Aucune anomalie rapportée dans les sources consultées")
+        assert has("Aucun événement publié dans l’extrait consultable")
         assert has("24 heures") and has("sources indisponibles ne sont pas évaluées")
+        assert has("journaux tronqués peuvent masquer des événements")
         assert not has("Pas d’erreur observée")
+        assert not has("Aucune anomalie rapportée")
         assert broker[0].checks == 0 and plugin[0].llm is None
         report["checks"]["D02_partial_coverage_not_global_health"] = True
         capture("01b-couverture-partielle-sans-evenement")
