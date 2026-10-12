@@ -94,7 +94,7 @@ _SUPPORT_COUNT_FIELDS = {
     "config": frozenset({"identities", "providers"}),
     "plugins": frozenset({"count", "attention"}),
 }
-_SUPPORT_VERSION = re.compile(r"[0-9]{1,4}(?:\\.[0-9]{1,4}){1,4}(?:[-+][0-9A-Za-z.]{1,32})?\\Z")
+_SUPPORT_VERSION = re.compile(r"[0-9]{1,4}(?:\.[0-9]{1,4}){1,4}(?:\.(?:dev|rc|post)[0-9]{1,3})?\Z")
 
 
 def _public_support_report(raw: Mapping[str, Any]) -> dict[str, Any]:
