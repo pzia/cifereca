@@ -2816,6 +2816,8 @@ class MainWindow(Adw.ApplicationWindow):
         if self._library_refresh_pending and control is None:
             return
         self._library_refresh_pending = True
+        self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
+        request_generation = self._library_refresh_generation
         identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
         generation = self._identity_context_generation
         def work() -> list[dict[str, Any]]:
@@ -2823,12 +2825,18 @@ class MainWindow(Adw.ApplicationWindow):
                 self.service.catalog_scan(force_covers=True)
             return self.service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
         def ok(entries: list[dict[str, Any]]) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._library_refresh_generation):
+                return
             self._library_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_library(False)
                 return
             self._show_library_entries(entries)
         def err(exc: BaseException) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._library_refresh_generation):
+                return
             self._library_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_library(False)
@@ -2982,18 +2990,26 @@ class MainWindow(Adw.ApplicationWindow):
         if self._recent_refresh_pending and control is None:
             return
         self._recent_refresh_pending = True
+        self._recent_refresh_generation = getattr(self, "_recent_refresh_generation", 0) + 1
+        request_generation = self._recent_refresh_generation
         identity = self.service.current_identity
         identity_id = identity.identity_id if identity is not None else None
         generation = self._identity_context_generation
         def work() -> list[dict[str, Any]]:
             return self.service.recent_acquisitions(identity_id=identity_id)
         def ok(items: list[dict[str, Any]]) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._recent_refresh_generation):
+                return
             self._recent_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_recent()
                 return
             self._show_recent_entries(items)
         def err(exc: BaseException) -> None:
+            if (getattr(self, "_closed", False) or
+                    request_generation != self._recent_refresh_generation):
+                return
             self._recent_refresh_pending = False
             if not self._identity_request_current(identity_id, generation):
                 self.refresh_recent()
