@@ -85,7 +85,7 @@ def records():
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366,))
+    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
     parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
@@ -1230,7 +1230,7 @@ def main() -> int:
         def do_activate(self):
             nonlocal window, device
             window = MainWindow(self, core.config, core.library, core.diagnostics)
-            window.set_default_size(args.width - 40, 780)
+            window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
             window.present()
             device = X11Input()
             later(400, lambda: (window.navigate("youth"), later(400, start_ui)))

@@ -44,6 +44,36 @@ Le cache est isolé par identité et par source. Une mise à jour remplace seule
 
 `find_cached()` interroge uniquement l’agrégat déjà en mémoire avec des preuves fortes : ISBN, provider+identifiant source ou URL de notice. Il ne rapproche jamais titre+auteur et borne la réponse. Les enrichissements bibliographiques déjà appliqués restent visibles dans le résultat.
 
+## Notices directes de bibliothèque — socle P1 #959
+
+Le socle fournit `attest_library_notices(book, results)` et
+`YouthCatalogPlugin.attested_library_notices(...)` pour projeter **des
+résultats déjà obtenus lors d'une recherche locale explicite**. Aucune
+recherche HTTP n'est déclenchée par cette projection.
+
+Une notice est émise uniquement si le résultat porte **un ISBN Bookland
+valide identique à l'édition Jeunesse**, un fournisseur et un identifiant
+de notice bornés, une URL directe publique HTTPS sans identifiants/query,
+et `metadata.direct_notice_attested is True` établi par le fournisseur
+lorsqu'il a réellement identifié cette URL comme fiche de l'édition.
+`friendly_url` seul, une coïncidence titre/auteur ou un EAN non ISBN
+ne constituent **pas** une preuve de notice directe.
+
+Chaque fournisseur garde sa provenance et son lien indépendant. Le
+statut `catalogue_reference` veut uniquement dire **référencé au
+catalogue** : ni exemplaire, ni disponibilité vérifiée, ni réservation,
+ni possession ne sont inférés de `owned`, `downloadable` ou d'un texte
+libre. Fraîcheur `unknown` tant qu'une preuve vérifiable ne la fournit
+pas ; pas de jeton d'identité ni de données de compte dans la projection.
+Le composant appelant reste responsable du périmètre de l'identité
+active ; le résultat n'est pas conservé par le plugin.
+
+**Reste à faire #959 :** adapter les fournisseurs compatibles pour qu'ils
+attestent réellement leurs liens et leurs ISBN, puis intégrer la
+présentation, l'expiration du cache par identité, les vrais statuts
+d'exemplaires/stock et la recette GTK. Ces faits ne peuvent pas être
+fabriqués par le socle.
+
 ## Filtres locaux
 
 Recherche texte, âge, type d’âge, source, langue, format, fiction/documentaire et thèmes sont composables sur le cache local. Les âges inférés peuvent être exclus.

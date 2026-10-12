@@ -315,13 +315,21 @@ def query_diagnostic_events(
     events.sort(key=lambda row: (_stamp(row["timestamp"]), row["source"], row["event_id"]))
     total = len(events)
     page = events[offset:offset + limit]
+    # A healthy source cannot make another unavailable/disabled source
+    # disappear from the overall coverage status. Distinguish an entirely
+    # unavailable feed from a mixed (incomplete) multi-source snapshot.
+    states_seen = {state["status"] for state in states}
+    missing = {"disabled", "unavailable"}
+    if "partial" in states_seen:
+        coverage = "partial"
+    elif states_seen <= missing:
+        coverage = "unavailable"
+    elif states_seen & missing:
+        coverage = "partial"
+    else:
+        coverage = "available" if total else "empty"
     return {
-        "status": "partial" if any(st["status"] == "partial" for st in states) else (
-            "available" if total else (
-                "unavailable" if all(st["status"] in {"disabled", "unavailable"} for st in states)
-                else "empty"
-            )
-        ),
+        "status": coverage,
         "sources": states,
         "events": page,
         "total": total,

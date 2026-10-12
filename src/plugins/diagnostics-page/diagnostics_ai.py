@@ -25,6 +25,98 @@ _MAX_EVENTS = 24
 _MAX_STRUCTURED = 4
 _MAX_SUPPORT_FIELDS = 8
 _APPROVAL_SECONDS = 300
+# Core snapshots may contain arbitrary provider/book/person metadata in
+# 'detail'. Recursive regex redaction alone cannot classify names or titles.
+# Only these operational value tokens are allowed into an LLM preview.
+_STRUCTURED_DETAIL_VALUES = frozenset({
+    "ok", "success", "failed", "error", "warning", "partial",
+    "pending", "running", "completed", "cancelled", "skipped",
+    "unavailable", "available", "disabled", "empty", "timeout",
+    "provider_timeout", "network_timeout", "provider_unavailable",
+    "network_error", "rate_limited", "permission_denied",
+    "invalid_response", "not_found", "missing", "retry",
+    "retrying", "ready", "idle", "fetch", "download", "connect",
+    "sync", "parse", "import", "return", "verify", "check",
+    "update", "install", "search", "catalog", "open",
+    "accepted", "rejected", "attention_required",
+})
+_STRUCTURED_DETAIL_STRING_KEYS = frozenset({
+    "phase", "reason", "status", "outcome", "result", "operation",
+})
+_STRUCTURED_DETAIL_NUMERIC_KEYS = frozenset({
+    "count", "duration_ms", "attempts", "returncode",
+})
+
+
+def _public_structured_detail(raw: Any) -> dict[str, Any]:
+    """Project known operational scalar fields only; never walk unknown data.
+
+    The snapshot contract is public, but detail values can still contain
+    personally identifying strings with no recognizable secret marker.
+    """
+    if not isinstance(raw, Mapping):
+        return {}
+    safe: dict[str, Any] = {}
+    for key in sorted(_STRUCTURED_DETAIL_STRING_KEYS):
+        value = raw.get(key)
+        if type(value) is str and value in _STRUCTURED_DETAIL_VALUES:
+            safe[key] = value
+    for key in sorted(_STRUCTURED_DETAIL_NUMERIC_KEYS):
+        value = raw.get(key)
+        if type(value) is int and -9999 <= value <= 1_000_000:
+            safe[key] = value
+    retryable = raw.get("retryable")
+    if type(retryable) is bool:
+        safe["retryable"] = retryable
+    return safe
+# A Core snapshot's top-level metadata can also contain unstructured
+# titles, personal names or provider payloads. Do not infer safety from its
+# "public" provenance: only send exact operational fields and tokens.
+_STRUCTURED_TOP_LEVEL = _STRUCTURED_DETAIL_VALUES | frozenset({
+    "core", "core_events", "app_log", "scheduler", "runtime", "diagnostics",
+    "database", "plugin", "provider", "worker", "service", "network",
+    "cache", "adapter", "startup", "shutdown",
+})
+
+
+def _public_structured_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Whitelist snapshot scalars without visiting arbitrary child objects."""
+    row: dict[str, Any] = {}
+    timestamp = item.get("timestamp")
+    if type(timestamp) is str and len(timestamp) <= 40:
+        try:
+            instant = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if instant.tzinfo is not None and instant.utcoffset() is not None:
+                row["timestamp"] = instant.astimezone(timezone.utc).isoformat(
+                    timespec="seconds",
+                )
+        except (ValueError, OverflowError):
+            pass
+    source = item.get("source")
+    if type(source) is str and source in ("core_events", "app_log"):
+        row["source"] = source
+    for key in ("component", "status", "operation"):
+        value = item.get(key)
+        if type(value) is str and value.casefold() in _STRUCTURED_TOP_LEVEL:
+            row[key] = value.casefold()
+    severity = item.get("severity")
+    if type(severity) is str and severity in (
+        "debug", "info", "warning", "error", "critical",
+    ):
+        row["severity"] = severity
+    plugin_id = item.get("plugin_id")
+    if type(plugin_id) is str and plugin_id.startswith("cifereca."):
+        # Only canonical Core module IDs with a known operational suffix.
+        module = plugin_id[len("cifereca."):]
+        if module in _STRUCTURED_TOP_LEVEL:
+            row["plugin_id"] = plugin_id
+    if "detail" in item:
+        detail = _public_structured_detail(item.get("detail"))
+        if detail:
+            row["detail"] = detail
+    # The free-form 'message' field is intentionally excluded, even though
+    # the generic regex-based redactor can handle known secret patterns.
+    return row
 _REF = re.compile(r"(?i)(?<![a-z0-9_-])(?:[a-f0-9]{16}|(?:event|ref)-[a-z0-9_-]{1,55})(?![a-z0-9_-])")
 
 # Every field later copied from an approved preview into a user-facing
@@ -293,17 +385,15 @@ def prepare_analysis(
         records = snapshot()
         if not isinstance(records, (list, tuple)):
             raise ValueError("structured_diagnostics_unavailable")
-        fields = (
-            "timestamp", "source", "component", "plugin_id", "severity",
-            "status", "message", "operation", "detail",
-        )
-        for item in records[:_MAX_STRUCTURED]:
+        # Diagnostics.snapshot() exposes the Core's append-ordered deque.
+        # Sample the *latest* records, newest first, so a full history or
+        # a tight byte budget does not hide the incident being investigated.
+        for item in reversed(records[-_MAX_STRUCTURED:]):
             if not isinstance(item, Mapping):
                 continue
-            row = {field: item.get(field) for field in fields if field in item}
+            row = _public_structured_row(item)
             if not row:
                 continue
-            # Recursive redaction masks secret-bearing keys in nested detail.
             safe = redacted_detail(row)
             candidate = structured + [safe]
             if _prompt_bytes(header + evidence_body(filtered, candidate, {})) > _MAX_PROMPT:
@@ -331,7 +421,21 @@ def prepare_analysis(
         safe_report = redacted_detail(report)
         if not isinstance(safe_report, Mapping):
             raise ValueError("support_report_unavailable")
-        for key, value in list(safe_report.items())[:32]:
+        # The generic redactor sorts keys alphabetically, which could
+        # exhaust the prompt budget on large config/core/plugin sections
+        # before the top-level operational result is ever shown.
+        # Prioritize public health status, then operational detail, while
+        # retaining the same 32-field and 3,000-byte bounds.
+        preferred = {
+            "result": 0, "runtime": 1, "database": 2,
+            "config": 3, "plugins": 4, "core": 5, "format": 6,
+        }
+        candidates = list(safe_report.items())[:32]
+        candidates.sort(key=lambda pair: (
+            preferred.get(pair[0], 99) if type(pair[0]) is str else 99,
+            pair[0] if type(pair[0]) is str else "",
+        ))
+        for key, value in candidates:
             if not isinstance(key, str):
                 continue
             # Control metadata and deliberately excluded raw data are not

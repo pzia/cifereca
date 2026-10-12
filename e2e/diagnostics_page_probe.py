@@ -74,6 +74,8 @@ class Broker:
         self.event_queries.append(dict(query))
         offset = int(query.get("offset", 0))
         limit = int(query.get("limit", 50))
+        module = str(query.get("module") or "").strip().casefold()
+        total = 65 if not module or "core.sync".startswith(module) else 0
         events = [
             {"event_id": f"evt-{i:03d}",
              "timestamp": f"2026-10-11T06:{i % 60:02d}:00+00:00",
@@ -81,11 +83,11 @@ class Broker:
              "severity": "error" if i == 51 else "info",
              "status": "partial" if i == 51 else "ok",
              "message": f"Événement fictif {i}"}
-            for i in range(offset, min(offset + limit, 65))
+            for i in range(offset, min(offset + limit, total))
         ]
         return {
-            "events": events, "offset": offset, "total": 65,
-            "next_offset": offset + len(events) if offset + len(events) < 65 else None,
+            "events": events, "offset": offset, "total": total,
+            "next_offset": offset + len(events) if offset + len(events) < total else None,
             "sources": [
                 {"source": "core_events", "status": "available"},
                 {"source": "app_log", "status": "unavailable"},
@@ -332,6 +334,104 @@ def main():
         if args.width == 1600:
             later(extended_keyboard, 120)
             return
+        # D15: keyboard-only module filtering, using actual XTEST events.
+        later(begin_keyboard_filter, 140)
+
+    def entry_with_placeholder(placeholder):
+        rows = [
+            w for w in walk(page[0])
+            if isinstance(w, Gtk.Entry)
+            and w.get_placeholder_text() == placeholder
+        ]
+        assert len(rows) == 1, (placeholder, len(rows))
+        return rows[0]
+
+    def focus_inside(widget):
+        # Gtk.Entry delegates keyboard focus to its internal Gtk.Text child:
+        # entry.has_focus() can be False although the entry is visibly focused.
+        current = window[0].get_focus()
+        while current is not None:
+            if current is widget:
+                return True
+            current = current.get_parent()
+        return False
+
+    def begin_keyboard_filter():
+        assert args.width == 1366
+        assert len(broker.event_queries) == 2
+        module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
+        search = entry_with_placeholder("Rechercher dans cette page")
+        assert module.grab_focus() is not False
+        until(lambda: focus_inside(module),
+              lambda: type_keyboard_module(module, search), seconds=5)
+
+    def type_keyboard_module(module, search):
+        report["stage"] = "D15_type_physical_module_filter"
+        device[0].type_text("paris")
+        until(lambda: module.get_text() == "paris",
+              lambda: keyboard_tab_forward(module, search), seconds=5)
+
+    def keyboard_tab_forward(module, search):
+        # Typing should not fetch until Enter explicitly submits the filter.
+        assert len(broker.event_queries) == 2
+        report["checks"]["D15_typing_does_not_implicitly_query"] = True
+        press("Tab")
+        until(lambda: focus_inside(search),
+              lambda: keyboard_tab_backward(module), seconds=5)
+
+    def keyboard_tab_backward(module):
+        device[0].key("Shift_L", True)
+        try:
+            press("Tab")
+        finally:
+            device[0].key("Shift_L", False)
+        until(lambda: focus_inside(module),
+              keyboard_filter_submit, seconds=5)
+
+    def keyboard_filter_submit():
+        report["checks"]["D15_tab_and_shift_tab_between_filters_xtest"] = True
+        press("Return")
+        until(lambda: len(broker.event_queries) == 3
+              and broker.event_queries[-1]["module"] == "paris"
+              and broker.event_queries[-1]["offset"] == 0
+              and find_label("0 événements affichés"),
+              keyboard_filter_result, seconds=8)
+
+    def keyboard_filter_result():
+        assert find_label("Aucun événement sur cette page")
+        assert not find_button("Suivant").get_sensitive()
+        assert not find_button("Précédent").get_sensitive()
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["D15_enter_applies_filter_and_resets_pagination"] = True
+        screenshot("04-module-filter-enter-1366")
+        module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
+        assert module.grab_focus() is not False
+        until(lambda: focus_inside(module),
+              lambda: clear_keyboard_filter(module), seconds=5)
+
+    def clear_keyboard_filter(module):
+        device[0].key("Control_L", True)
+        try:
+            press("a")
+        finally:
+            device[0].key("Control_L", False)
+        press("BackSpace")
+        until(lambda: module.get_text() == "",
+              keyboard_filter_clear_submit, seconds=5)
+
+    def keyboard_filter_clear_submit():
+        assert len(broker.event_queries) == 3
+        press("Return")
+        until(lambda: len(broker.event_queries) == 4
+              and broker.event_queries[-1]["module"] == ""
+              and find_label("50 événements affichés"),
+              keyboard_filter_restored, seconds=8)
+
+    def keyboard_filter_restored():
+        assert find_button("Suivant").get_sensitive()
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["D15_ctrl_a_delete_return_restores_results"] = True
+        screenshot("05-module-filter-restored-1366")
         pass_scenario()
 
     def pass_scenario():
@@ -743,18 +843,120 @@ def main():
         )
         screenshot("10-escape-export-audit-1600")
         assert broker.checks == 0 and plugin.llm is None
-        # Check the focus and selection after closing the real Gtk.Expander
-        # with the physical Return key. If GTK cannot focus/collapse it,
-        # preserve the finding as an audit (not a fabricated PASS).
-        later(lambda: audit_expander_keyboard_close(expander), 130)
+        # D13: prove Ctrl+C only copies a selection in the REAL support
+        # report, not an entire block or the previous JSON clipboard.
+        later(lambda: begin_support_selection_copy(expander), 130)
+
+    def begin_support_selection_copy(expander):
+        report["stage"] = "D13_select_support_excerpt"
+        assert expander.get_expanded()
+        views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(views) == 1
+        view = views[0]
+        buf = view.get_buffer()
+        full = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        prefix = "RAPPORT SUPPORT EXPURGÉ — FIXTURE UX"
+        assert full.startswith(prefix) and len(full) > len(prefix) * 10
+        start_iter = buf.get_start_iter()
+        end_iter = buf.get_iter_at_offset(len(prefix))
+        buf.select_range(start_iter, end_iter)
+        assert buf.get_has_selection()
+        report["audit"]["D13_support_selected_chars"] = len(prefix)
+        assert view.grab_focus() is not False
+        until(lambda: view.has_focus(),
+              lambda: send_support_selection_copy(expander, full, prefix),
+              seconds=5)
+
+    def send_support_selection_copy(expander, full, prefix):
+        report["stage"] = "D13_ctrl_c_support_excerpt_xtest"
+        device[0].key("Control_L", True)
+        try:
+            press("c")
+        finally:
+            device[0].key("Control_L", False)
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+            None,
+            lambda clipboard, task: verify_support_selection_copy(
+                clipboard, task, expander, full, prefix),
+        ), 260)
+
+    def verify_support_selection_copy(clipboard, task, expander, full, prefix):
+        try:
+            selected = clipboard.read_text_finish(task)
+            assert selected == prefix, ("Ctrl+C n'a pas copié l'extrait exact", repr(selected))
+            assert selected != full
+            assert "SECRET-UX-TEST" not in selected
+            assert "EXEMPLE-PRIVE-UX" not in selected
+            assert expander.get_expanded()
+            report["checks"]["D13_support_partial_selection_ctrl_c_xtest"] = True
+            screenshot("11-support-excerpt-ctrl-c-1600")
+            later(lambda: focus_support_copy_button(expander, full), 130)
+        except Exception as exc:
+            fail(f"Ctrl+C support: {type(exc).__name__}: {exc}")
+
+    def focus_support_copy_button(expander, full):
+        report["stage"] = "D13_focus_support_full_copy_button"
+        buttons = [
+            w for w in walk(page[0])
+            if isinstance(w, Gtk.Button)
+            and w.get_tooltip_text() == "Copier le diagnostic support expurgé"
+        ]
+        assert len(buttons) == 1
+        button = buttons[0]
+        content = page[0].get_child()
+        ok, bounds = button.compute_bounds(content)
+        assert ok
+        outer = page[0].get_vadjustment()
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 32,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: trigger_support_full_copy(button, expander, full), 220)
+
+    def trigger_support_full_copy(button, expander, full):
+        assert button.grab_focus() is not False
+        until(lambda: button.has_focus(),
+              lambda: press_support_full_copy(expander, full), seconds=5)
+
+    def press_support_full_copy(expander, full):
+        report["stage"] = "D13_copy_full_support_button_xtest"
+        press("space")
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+            None,
+            lambda clipboard, task: verify_support_full_copy(
+                clipboard, task, expander, full),
+        ), 270)
+
+    def verify_support_full_copy(clipboard, task, expander, full):
+        try:
+            copied = clipboard.read_text_finish(task)
+            assert copied == full, "Copier support doit renvoyer le rapport complet"
+            assert "RAPPORT SUPPORT EXPURGÉ" in copied
+            assert copied.count("Événement fictif.") >= 250
+            assert "SECRET-UX-TEST" not in copied
+            assert "EXEMPLE-PRIVE-UX" not in copied
+            report["checks"]["D13_support_full_copy_button_xtest"] = True
+            report["audit"]["D13_copy_selected_vs_full_distinct"] = True
+            screenshot("12-support-full-copy-1600")
+            # Closing the expander after interacting with both clipboard paths
+            # must preserve the existing focus/selection observations for D05.
+            later(lambda: audit_expander_keyboard_close(expander), 120)
+        except Exception as exc:
+            fail(f"Copie support complète: {type(exc).__name__}: {exc}")
 
     def audit_expander_keyboard_close(expander):
         report["stage"] = "audit_report_close_focus"
         views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
         assert len(views) == 1
         buffer = views[0].get_buffer()
+        # Re-establish a known selection immediately before the close action:
+        # previous D13 clipboard/focus gestures may have cleared it already.
+        buffer.select_range(buffer.get_end_iter(), buffer.get_start_iter())
+        assert buffer.get_has_selection(), "Sélection préalable D05 introuvable"
+        report["audit"]["D05_selection_reestablished_before_close"] = True
         focusable = expander.grab_focus() is not False and expander.has_focus()
         report["audit"]["D05_expander_focusable"] = focusable
+        report["audit"]["D05_selection_after_focus_transfer"] = buffer.get_has_selection()
         if focusable:
             press("Return")
         later(lambda: finish_expander_audit(expander, buffer, focusable), 280)
@@ -770,9 +972,9 @@ def main():
             report["checks"]["D05_keyboard_collapse_focus_and_selection"] = True
         else:
             report["unmet_criteria"].append(
-                "D05: fermeture du volet par Entrée avec conservation focus/sélection non établie"
+                "D05: perte de la sélection pendant transfert de focus ou fermeture du volet Entrée"
             )
-        screenshot("11-report-collapse-focus-audit-1600")
+        screenshot("13-report-collapse-focus-audit-1600")
         pass_scenario()
 
     class Application(Gtk.Application):

@@ -16,6 +16,15 @@ StreamEventKind = Literal["upsert", "remove", "progress", "error", "done", "rese
 
 @dataclass(frozen=True, slots=True)
 class ProviderSearchEvent:
+    """Provider-side event, not a directly displayable UI message.
+
+    Core only publishes event-relevant structured fields. Free-text
+    'message' and the opaque 'resume_token' never leave the provider
+    stream boundary. Error codes are projected onto a Core-controlled
+    public vocabulary; any unknown code becomes 'provider_error'.
+    These fields may remain available inside provider-specific transport
+    implementations, but must never be logged or exposed through callbacks.
+    """
     provider_id: str
     catalog_generation: int
     sequence: int

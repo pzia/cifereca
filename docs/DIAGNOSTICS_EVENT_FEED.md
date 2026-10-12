@@ -54,6 +54,15 @@ l'éviction des premières entrées peut renuméroter des doublons.
 restauration ou réécriture du fichier peut changer cette empreinte ; elle
 n'est pas un identifiant global ou une preuve de corrélation métier.
 
+**Couverture multi-source :** le champ global `status` devient `partial`
+si une source demandée est partielle, ou si une source consultable coexiste
+avec une source `disabled` ou `unavailable`. Il reste `unavailable`
+si toutes les sources sont désactivées ou indisponibles ; il indique
+`empty` seulement sans événement ni source manquante et `available`
+lorsque des événements sont publiés sans lacune signalée. Les états de
+`sources[]` restent la référence pour savoir quelle source manque.
+Ce résumé ne garantit jamais l'exhaustivité historique.
+
 **Limites connues :** le flux est un **snapshot borné**, pas une archive
 historique globale. Lorsque le journal est tronqué ou rotaté, son état est
 `partial`; on ne prétend pas retrouver tous les événements. L'explorateur

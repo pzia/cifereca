@@ -12,7 +12,9 @@ from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, source_summaries, explorer_header,
     next_page_offset, selectable_event_ids, export_selected_events,
+    empty_observation,
 )
+from diagnostics_support import SupportReportExport, preserve_report_selection
 
 # The broker provides already-redacted data. This is a second, stricter
 # presentation boundary: neither UI modes nor clipboard may expose raw secrets.
@@ -42,11 +44,12 @@ _MAX_DETAIL_CHILDREN = 50
 _MAX_DETAIL_TEXT = 800
 
 
-def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT) -> str:
+def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT,
+                   max_input_chars: int = _MAX_DETAIL_BYTES) -> str:
     # A partial email, URL or token can straddle the preview cut. Redact
     # complete values BEFORE truncating anything shown or copied to the UI.
     # Fail closed on oversized untrusted text to bound regex scanning.
-    if len(value) > _MAX_DETAIL_BYTES:
+    if len(value) > max_input_chars:
         return "<texte trop long : contenu masqué>"
     text = _DIAGNOSTIC_URL.sub("<URL expurgée>", value)
     text = _DIAGNOSTIC_MAIL.sub("<courriel expurgé>", text)
@@ -295,6 +298,30 @@ def _run_once_on_first_map(widget, callback):
         on_map(widget)
 
 
+def _install_report_escape(Gtk, Gdk, container, scroller, resize):
+    """Reduce only this report; preserve its buffer, selection and focus."""
+    controller = Gtk.EventControllerKey()
+    # Catch Escape before a focused TextView consumes it. The controller is
+    # scoped to the report, so other Diagnostics controls keep their bindings.
+    controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def key_pressed(_controller, keyval, _keycode, state):
+        modified = state & (
+            Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.META_MASK
+        )
+        if keyval != Gdk.KEY_Escape or modified:
+            return False
+        if resize.get_label() != "Réduire":
+            return False
+        scroller.set_size_request(-1, 320)
+        resize.set_label("Agrandir")
+        return True
+
+    controller.connect("key-pressed", key_pressed)
+    container.add_controller(controller)
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
@@ -327,7 +354,7 @@ class DiagnosticsPagePlugin:
         ]
 
     def _build(self, host):
-        from gi.repository import Gdk, Gtk, Pango
+        from gi.repository import Gdk, Gtk, Pango, Gio, GLib
 
         broker = self.diagnostics
         if broker is None:
@@ -357,6 +384,9 @@ class DiagnosticsPagePlugin:
         action_row.append(refresh)
         action_row.append(check)
         action_row.append(copy)
+        save_report = Gtk.Button(label="Enregistrer le rapport support…")
+        save_report.set_tooltip_text("Exporter le rapport support expurgé vers un fichier choisi")
+        action_row.append(save_report)
         outer.append(action_row)
 
         status_title = Gtk.Label(label="État système", xalign=0)
@@ -564,6 +594,22 @@ class DiagnosticsPagePlugin:
 
         report_resize.connect("clicked", toggle_report_size)
         report_wrap.connect("toggled", toggle_report_wrap)
+        _install_report_escape(
+            Gtk, Gdk, report_container, report_scroll, report_resize,
+        )
+        preserve_report_selection(GLib, report_expander, export_view.get_buffer())
+
+        def report_text():
+            buffer = export_view.get_buffer()
+            return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+
+        report_export = SupportReportExport(
+            Gtk, Gio, save_report, scroll.get_root, report_text, host.toast,
+        )
+        if not hasattr(self, "_support_exports"):
+            self._support_exports = []
+        self._support_exports.append(report_export)
+        save_report.connect("clicked", report_export.choose)
 
         def clear_container(container) -> None:
             child = container.get_first_child()
@@ -688,6 +734,7 @@ class DiagnosticsPagePlugin:
             rows = sanitized_rows(
                 current_page, search=search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
+                include_detail=True,
             )
             valid_ids = selectable_event_ids(rows)
             selected_event_ids.intersection_update(valid_ids)
@@ -761,8 +808,14 @@ class DiagnosticsPagePlugin:
                 expander.set_child(group_box)
                 journals_box.append(expander)
             if not rows:
+                observation = empty_observation(
+                    current_page, period=PERIODS[int(period_selector.get_selected())],
+                    severity=SEVERITIES[int(severity_selector.get_selected())],
+                    module=module_filter.get_text().strip(),
+                    search=search_filter.get_text().strip(),
+                )
                 empty = Gtk.Label(
-                    label="Aucun événement sur cette page. "
+                    label=observation + "\nAucun événement sur cette page. "
                           "Vérifier la période, les filtres ou la disponibilité des sources.",
                     xalign=0,
                 )
@@ -1289,6 +1342,9 @@ class DiagnosticsPagePlugin:
         return scroll
 
     def deactivate(self):
+        for exporter in getattr(self, "_support_exports", ()):
+            exporter.close()
+        self._support_exports = []
         if self._check_handle is not None:
             try:
                 self._check_handle.cancel()

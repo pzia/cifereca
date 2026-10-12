@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 from pathlib import Path
 
@@ -70,7 +71,7 @@ def test_generic_relation_requires_explicit_label():
 
 
 def test_shared_detail_renderer_uses_external_link_buttons_and_dedupes_catalogue_action():
-    source = MAIN.read_text(encoding='utf-8')
+    source = gui_source_text(MAIN)
     assert 'for link in presentation.links:' in source
     assert 'Gtk.LinkButton(uri=uri, label=str(link.label))' in source
     assert 'self._rendered_document_urls.add(uri)' in source

@@ -254,3 +254,55 @@ toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
 fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
 sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
+
+### MainWindow preparation baseline (#1123)
+
+`mainwindow-baseline-1366` and `mainwindow-baseline-1600` reuse the real
+Diagnostics navigation probe with the two-identity local search fixture.
+They add XTEST keyboard focus and identity round-trip, then normal window
+closure and refusal of new runner work. Async Diagnostics is simulated;
+this proves shell responsiveness, not live provider/LLM behavior.
+Run each through `e2e/run.py --scenario <name>` on an existing GTK runtime.
+No new workflow or network account is required.
+
+### Shared book-detail comparison at 1600 (#1124)
+
+The existing `e2e/book_detail_probe.py` accepts `--width 1366` and `--width 1600`.
+Use the matching Xvfb screen (1366x900 or 1600x1000) and the local
+`search-filters` fixture through the existing GTK environment. The same
+MainWindow probe checks multivalued Search/Library metadata, independent
+subject clipboard copy and the explicit typed ISBN action without remote I/O.
+It does not certify live account behavior or resolve the pre-existing duplicate
+author copy tooltips. Preserve source hashes with before/after reports.
+
+### CoreUI component lifecycle
+
+`book_detail_probe.py --out <directory> --width 1366 --component-contracts`
+(or `--width 1600`) extends the loaded Search/Library detail recipe with empty
+and long summaries, XTEST expand/collapse and overflow actions, 0/1/N list
+reconciliation, stable-key selection and Escape. The real MainWindow identity
+transition cancels a controlled pending observer and clears the old GTK detail;
+its scheduler is controlled during this last stage. Deferred worker delivery
+is separately covered by the deterministic resolver coordination tests.
+Synthetic list keys have no business callbacks. This recipe neither acquires
+books nor connects to remote accounts. Jeunesse's existing `--library-search`
+recipe also accepts 1366/1600 for local-cache navigation through its real plugin.
+
+`search_filter_probe.py --width 1366|1600` uses the same loaded local-index
+fixture to check query, rows, count, selected key, scroll and absence of extra
+searches when opening/closing filter menus. `--short-component-actions` keeps
+the pre-existing overflow reproduction from #1216; its failure is not hidden.
+
+### Settings IA — explicit loopback qualification
+
+`llm_settings_probe.py --out <directory> --width 1366|1600` uses the real
+MainWindow, settings widgets, TaskRunner and Core HTTP transport with
+`simulation/common/llm_http_fixture.py`. Six synthetic POSTs exercise success,
+401/404/429, late-result invalidation after reset and bounded timeout.
+Opening, editing, prevalidation, remote-consent cancellation, reset and saving
+make no extra POST. The recipe rejects HTTP remote/credential/query/fragment
+URLs and invalid limits/key names, checks environment-name-only display and
+needs-restart feedback after saving. The already sent delayed request is not
+undone by reset; the UI ignores its stale result. No distant test is accepted.
+Initial Tab focus is exercised; loss of focus after the disabled test button
+is recorded. This does not certify screen-reader speech or live HTTPS servers.

@@ -65,7 +65,7 @@ def fetch_explorer_page(
 
 
 def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
-                   newest_first: bool = True) -> list[dict[str, str]]:
+                   newest_first: bool = True, include_detail: bool = False) -> list[dict[str, Any]]:
     """Normalize only Core-published fields; omit unexpected keys entirely."""
     if not isinstance(payload, Mapping):
         return []
@@ -94,6 +94,10 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
         ).casefold():
             continue
+        # Detailed GTK inspection is opt-in. AI previews keep the minimal
+        # operational projection and must never inherit arbitrary detail.
+        if include_detail is True and "detail" in raw:
+            safe["detail"] = redacted_detail(raw["detail"])
         results.append(safe)
     def chronological_key(row: dict[str, str]) -> tuple[datetime, str]:
         try:
@@ -202,6 +206,27 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
         return "Sources non alimentées — aucune donnée disponible"
     suffix = " · recherche dans cette page uniquement" if search else ""
     return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}"
+
+
+def empty_observation(payload: Mapping[str, Any], *, period: str,
+                      severity: str = "", module: str = "", search: str = "") -> str:
+    """A filtered empty feed is neither a health check nor complete coverage."""
+    labels = {"all": "tout l’historique disponible", "hour": "dernière heure",
+              "day": "24 heures", "week": "7 jours", "month": "30 jours"}
+    states = source_summaries(payload)
+    if not states or not any(s["status"] in {"available", "empty", "partial"} for s in states):
+        return "Aucune donnée exploitable dans les sources consultées."
+    total = payload.get("total")
+    if type(total) is not int or total != 0:
+        return ""
+    window = labels.get(period, "période inconnue")
+    if severity or module or search:
+        return f"Aucun événement correspondant aux filtres · période : {window}."
+    if any(s["status"] not in {"available", "empty"} for s in states):
+        return (f"Aucune anomalie rapportée dans les sources consultées · période : {window}. "
+                "Couverture partielle ; les sources indisponibles ne sont pas évaluées.")
+    return (f"Pas d’erreur observée dans les sources consultées · période : {window}. "
+            "Cette observation ne garantit pas la disponibilité des services.")
 
 
 def next_page_offset(payload: Mapping[str, Any], *, current_offset: int) -> int | None:

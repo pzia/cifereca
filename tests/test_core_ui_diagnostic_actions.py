@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -7,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN_WINDOW = ROOT / "src/cifereca/gui/main_window.py"
 
 def _method(class_name: str, method_name: str) -> ast.FunctionDef:
-    tree = ast.parse(MAIN_WINDOW.read_text())
+    tree = ast.parse(gui_source_text(MAIN_WINDOW))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
 

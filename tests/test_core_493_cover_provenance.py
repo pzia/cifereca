@@ -7,7 +7,7 @@ from cifereca.core.covers import CoverCandidate, candidate, resolve_cover
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ROOT / 'src/cifereca/services.py'
+SERVICES = ROOT / 'src/cifereca/core/library_projection.py'
 COVERS = ROOT / 'src/cifereca/core/covers.py'
 
 

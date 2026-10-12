@@ -21,6 +21,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
         "search-filter-p0", "book-detail-1366",
+        "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "startup", "core-navigation",
     ]
 
@@ -62,6 +63,12 @@ def test_diagnostics_structured_real_gtk_redacts_and_preserves_types():
         "D07_json_indented_typed_and_redacted",
         "D07_raw_matches_json_without_secret",
         "D13_ctrl_c_selection_expurgated",
+        "D13_support_copy_button_xtest_exact_redacted",
+        "D13_support_partial_selection_ctrl_c_xtest",
+        "D13_report_provenance_visible_in_copy",
+        'physical("space")',
+        '"Provenance : Core local"',
+        'content != SUPPORT_REPORT',
         'physical("c")',
         'device[0].key("Control_L", True)',
         'get_has_selection()',
@@ -116,6 +123,10 @@ def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
         "D14_support_active_and_ai_states_independent_during_check",
         "D14_active_result_not_confused_with_ai",
         "D14_support_report_freshness_explicit",
+        "D16_1366_display_narrow_no_horizontal_overflow",
+        "D16_narrow_actions_keyboard_reachable",
+        "D16_restore_without_losing_diagnostics_state",
+        "D16_full_multi_monitor_coverage",
 
         "D02_explicit_zero_anomaly_with_period",
         "D04_full_mainwindow_navigation",
@@ -128,6 +139,26 @@ def test_diagnostics_states_real_gtk_and_slow_broker_without_network():
     assert 'Thread(target=worker' in probe
     assert 'device[0].click_widget(check)' in probe
     assert 'report["unmet_criteria"]' in probe
+
+
+def test_diagnostics_1366_physical_keyboard_module_filters():
+    runner = _module()
+    scenario = runner.SCENARIOS["diagnostics-1366"]
+    assert scenario["runner"] == "gtk-diagnostics"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/diagnostics_page_probe.py").read_text(encoding="utf-8")
+    for expected in (
+        "D15_typing_does_not_implicitly_query",
+        "D15_tab_and_shift_tab_between_filters_xtest",
+        "D15_enter_applies_filter_and_resets_pagination",
+        "D15_ctrl_a_delete_return_restores_results",
+        'device[0].type_text("paris")',
+        'press("Return")',
+        'press("BackSpace")',
+        'device[0].key("Control_L", True)',
+        'broker.event_queries[-1]["offset"] == 0',
+    ):
+        assert expected in source
 
 
 def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
@@ -148,6 +179,11 @@ def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
         "D13_support_textview_ctrl_c_exact_selection",
         'XTestFakeButtonEvent(device[0].display, 5, True, 0)',
         'device[0].key("Control_L", True)',
+        "D13_support_partial_selection_ctrl_c_xtest",
+        "D13_support_full_copy_button_xtest",
+        "D13_copy_selected_vs_full_distinct",
+        'buf.select_range(start_iter, end_iter)',
+        'press("c")',
         "D05_keyboard_collapse_focus_and_selection",
         "D05_focus_after_collapse",
         "D05_text_selection_after_collapse",
@@ -470,3 +506,15 @@ def test_xvfb_display_retry_is_limited_to_transport_initialization():
     assert 'name in {"startup", "core-navigation"}' in source
     assert '"xvfb_display_retry"' in source
     assert "attempt=2" in source
+
+def test_e2e_workflow_does_not_replay_core_search_filter_twice():
+    """The core group already exercises search-filter-p0 in real GTK/XTEST."""
+    runner = _module()
+    assert [name for name, _ in runner.select(None, "core")].count(
+        "search-filter-p0"
+    ) == 1
+    workflow = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+    assert workflow.count("e2e/run.py --plugin core") == 1
+    assert "--scenario search-filter-p0" not in workflow
