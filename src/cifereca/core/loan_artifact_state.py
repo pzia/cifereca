@@ -82,3 +82,46 @@ def inspect_previous_loan_artifact(
         previous, previous_meta, previous_path, previous_inspection,
         legacy_acsm_artifact, previous_complete_local,
     )
+
+
+def local_catalog_candidates(
+    entries: Iterable[Mapping[str, Any]],
+    *,
+    identity_id: str,
+    source_provider: str,
+    item_id: str,
+) -> list[Mapping[str, Any]]:
+    """Select existing local rows without inferring ownership from a filename.
+
+    Preserve the original catalog row order and match all three dimensions:
+    destination identity, source provider and provider item ID. The caller
+    still validates every matching artifact before trusting this projection.
+    """
+    return [
+        row for row in entries
+        if row.get("identity_id") == identity_id
+        and row.get("provider_id") == source_provider
+        and str(row.get("item_id") or "") == item_id
+        and row.get("local_state") == "local"
+    ]
+
+
+def inspect_catalog_local_file(
+    entry: Mapping[str, Any],
+    *,
+    artifact_inspector: Callable[..., Any],
+) -> tuple[bool, Path | None]:
+    """Check one local projection without changing storage or the file.
+
+    Return (usable, path). Only a valid artifact whose protected flag is not
+    explicitly True may be reused. Inject the service's inspector so existing
+    monkeypatch and test seams remain active. The caller owns the original
+    missing/invalid persistence and tracing under its existing locks.
+    """
+    path_text = str((entry.get("metadata") or {}).get("path") or "")
+    path = Path(path_text) if path_text else None
+    if path is not None and path.is_file():
+        inspection = artifact_inspector(path)
+        if inspection.valid and inspection.protected is not True:
+            return True, path
+    return False, path

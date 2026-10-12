@@ -34,7 +34,8 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .settings_context import settings_action_state
-from .settings_model import SettingsCommitController
+from .settings_model import SettingsCommitController, SettingsRevisionState
+from .settings_draft import build_settings_draft, SettingsValidationError
 from .llm_settings import (
     LLMSettingsError, normalize_llm_settings, destination_summary,
     env_key_is_set, probe_llm_connection,
@@ -3962,8 +3963,7 @@ class MainWindow(Adw.ApplicationWindow):
             section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
             sections[key] = section; tabs.add_titled(section, key, label)
 
-        settings_revisions = {key: 0 for key in sections}
-        saved_settings_revisions = dict(settings_revisions)
+        settings_state = SettingsRevisionState(sections)
         tracked_settings_widgets: set[int] = set()
         settings_action_widgets: dict[str, Any] = {}
 
@@ -3974,7 +3974,7 @@ class MainWindow(Adw.ApplicationWindow):
             tab = current_settings_tab()
             state = settings_action_state(
                 tab,
-                dirty=settings_revisions.get(tab, 0) != saved_settings_revisions.get(tab, 0),
+                dirty=settings_state.dirty(tab),
             )
             save_widgets = tuple(settings_action_widgets.get("save", ()))
             reconnect_widgets = tuple(settings_action_widgets.get("reconnect", ()))
@@ -3988,9 +3988,8 @@ class MainWindow(Adw.ApplicationWindow):
                 widget.set_visible(state.show_save or state.show_reconnect)
 
         def mark_settings_dirty(tab: str) -> None:
-            if tab == "diagnostic":
+            if not settings_state.mark_dirty(tab):
                 return
-            settings_revisions[tab] = settings_revisions.get(tab, 0) + 1
             update_settings_actions()
 
         def track_settings_tree(tab: str, widget: Gtk.Widget) -> None:
@@ -4379,8 +4378,8 @@ class MainWindow(Adw.ApplicationWindow):
         ai_buttons.append(ai_reset)
         ai_box.append(ai_buttons)
 
-        def read_ai_settings():
-            return normalize_llm_settings({
+        def capture_ai_settings():
+            return {
                 "enabled": ai_enabled.get_active(),
                 "provider": "openai-compatible",
                 "endpoint": ai_endpoint.get_text(),
@@ -4390,7 +4389,10 @@ class MainWindow(Adw.ApplicationWindow):
                 "timeout_seconds": ai_timeout.get_text(),
                 "max_input_chars": ai_input_limit.get_text(),
                 "max_output_tokens": ai_output_limit.get_text(),
-            })
+            }
+
+        def read_ai_settings():
+            return normalize_llm_settings(capture_ai_settings())
 
         ai_probe_version = [0]
 
@@ -4437,7 +4439,7 @@ class MainWindow(Adw.ApplicationWindow):
             ai_timeout.set_text(str(ai_cfg.get("timeout_seconds", 5)))
             ai_input_limit.set_text(str(ai_cfg.get("max_input_chars", 4000)))
             ai_output_limit.set_text(str(ai_cfg.get("max_output_tokens", 256)))
-            settings_revisions["ai"] = saved_settings_revisions["ai"]
+            settings_state.reset("ai")
             ai_status.set_text("Modifications annulées ; aucun test réseau lancé")
             update_settings_actions()
 
@@ -4600,175 +4602,75 @@ class MainWindow(Adw.ApplicationWindow):
             self.service.save_configuration, self.runner.submit, self.runner.present_error,
         )
 
-        def save_settings(_button=None, *, reconnect_after=False) -> bool:
-            if settings_committer.pending:
-                return False
-            from pathlib import Path
-            from copy import deepcopy
-            draft = deepcopy(self.config)
-            saved_identities: list[dict[str, Any]] = []
-            identity_ids: set[str] = set()
-            directory_names: set[str] = set()
+        def capture_settings_values():
+            identities = []
             for editor in identity_editors:
                 if editor.get("deleted"):
                     continue
-                identity_id = editor["id"].get_text().strip()
-                if not identity_id or not re.fullmatch(r"[A-Za-z0-9._-]+", identity_id):
-                    self.show_error("Identité invalide : utilisez uniquement lettres, chiffres, point, tiret ou underscore.")
-                    return False
-                if identity_id in identity_ids:
-                    self.show_error(f"Identité dupliquée : {identity_id}")
-                    return False
-                identity_ids.add(identity_id)
-                from ..identities.directory_selection import directory_choice
-                try:
-                    directory_name = directory_choice(editor["directory"].get_text(), Path(library_dir_row.get_text().strip() or "~/EBooks"))
-                except ValueError as exc:
-                    self.show_error(str(exc)); return False
-                except RuntimeError as exc:
-                    self.show_error(str(exc)); return False
-                if directory_name in directory_names:
-                    self.show_error(f"Répertoire d’identité dupliqué : {directory_name}")
-                    return False
-                directory_names.add(directory_name)
-                languages = [part.strip().lower() for part in editor["languages"].get_text().split(",") if part.strip()]
-                if not languages:
-                    languages = ["fr"]
-                saved_identities.append({
-                    "id": identity_id,
-                    "label": editor["label"].get_text().strip() or identity_id,
-                    "directory_name": directory_name,
-                    "adept_profile": editor["adept_profile"].get_text().strip(),
-                    "preferences": {
-                        "prefer_original_language": editor["prefer_vo"].get_active(),
-                        "reading_languages": languages,
-                    },
-                })
-            if not saved_identities:
-                self.show_error("cifereca doit conserver au moins une identité.")
-                return False
-            draft.set("identities", saved_identities)
-            preserved = []
-            for row in draft.provider_accounts():
-                descriptor = descriptors.get(str(row.get("provider") or "").lower())
-                if descriptor is None or descriptor.state != "ready" or descriptor.id in public_ids:
-                    preserved.append(row)
-            saved_accounts = list(preserved)
-            kobo_identity_accounts: dict[str, str] = {}
-            for row in preserved:
-                if str(row.get("provider") or "").lower() == "kobo":
-                    iid = str(row.get("identity_id") or "").strip()
-                    if iid:
-                        kobo_identity_accounts[iid] = str(row.get("id") or "kobo")
+                row = {key: editor[key].get_text() for key in
+                       ("id", "label", "directory", "adept_profile", "languages")}
+                row["prefer_vo"] = editor["prefer_vo"].get_active()
+                identities.append(row)
+            accounts = []
             for editor in account_editors:
                 if editor.get("deleted"):
                     continue
-                descriptor = descriptors[editor["provider"]]
-                credentials: dict[str, str] = {}
-                for field in descriptor.credential_fields:
-                    credentials[field.key] = editor["fields"][field.key].get_text()
-                options: dict[str, Any] = dict(editor.get("original_options") or {})
-                if editor.get("base_url") is not None:
-                    options["base_url"] = editor["base_url"].get_text().strip() or "https://bibliotheques.paris.fr"
-                if editor.get("opds_url") is not None:
-                    options["opds_url"] = editor["opds_url"].get_text().strip() or "https://gallica.bnf.fr/opds"
-                if editor.get("vault_url") is not None:
-                    options["base_url"] = editor["vault_url"].get_text().strip()
-                account_identity_id = editor["identity"].get_text().strip() or saved_identities[0]["id"]
-                if account_identity_id not in identity_ids:
-                    self.show_error(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
-                    return False
-                if editor["provider"] == "kobo":
-                    previous = kobo_identity_accounts.get(account_identity_id)
-                    if previous and previous != editor["id"]:
-                        self.show_error(
-                            f"Une identité ne peut avoir qu'un compte Kobo Vault : {account_identity_id} "
-                            f"est déjà lié à {previous}."
-                        )
-                        return False
-                    kobo_identity_accounts[account_identity_id] = editor["id"]
-                saved_accounts.append({
-                    "id": editor["id"],
-                    "provider": editor["provider"],
-                    "identity_id": account_identity_id,
-                    "label": editor["label"].get_text().strip() or descriptor.display_name,
-                    "enabled": editor["enabled"].get_active(),
-                    "anonymous": not bool(descriptor.credential_fields),
-                    "credentials": credentials,
-                    "options": options,
-                })
-            draft.set("providers.accounts", saved_accounts)
-            try:
-                global_command = shlex.split(global_cmd_row.get_text()) if global_cmd_row.get_text().strip() else []
-                global_post_command = shlex.split(global_post_row.get_text()) if global_post_row.get_text().strip() else []
-                provider_commands: dict[str, tuple[list[str], list[str]]] = {}
-                for provider_id, editor in provider_download_editors.items():
-                    provider_commands[provider_id] = (
-                        shlex.split(editor["command"].get_text()) if editor["command"].get_text().strip() else [],
-                        shlex.split(editor["post"].get_text()) if editor["post"].get_text().strip() else [],
-                    )
-            except ValueError as exc:
-                self.show_error(f"Commande de téléchargement invalide : {exc}")
-                return False
-            draft.set("downloads", {
-                "directory": global_dir_row.get_text().strip(),
-                "content_type_directories": {
-                    "ebook": global_ebook_row.get_text().strip(),
-                    "audiobook": global_audio_row.get_text().strip(),
+                row = {key: editor[key] for key in ("id", "provider")}
+                row.update({key: editor[key].get_text() for key in ("label", "identity")})
+                row["enabled"] = editor["enabled"].get_active()
+                row["original_options"] = settings_committer.stage(editor.get("original_options") or {})
+                row["fields"] = {key: widget.get_text() for key, widget in editor["fields"].items()}
+                for key in ("base_url", "opds_url", "vault_url"):
+                    widget = editor.get(key)
+                    row[key] = widget.get_text() if widget is not None else None
+                accounts.append(row)
+            values = {
+                "identities": identities, "accounts": accounts,
+                "provider_downloads": {
+                    pid: {key: widget.get_text() for key, widget in editor.items()}
+                    for pid, editor in provider_download_editors.items()
                 },
-                "command": global_command,
-                "post_download_command": global_post_command,
-            })
-            for provider_id, editor in provider_download_editors.items():
-                settings = draft.provider_settings(provider_id)
-                command, post_command = provider_commands[provider_id]
-                settings["downloads"] = {
-                    "directory": editor["directory"].get_text().strip(),
-                    "content_type_directories": {
-                        "ebook": editor["ebook"].get_text().strip(),
-                        "audiobook": editor["audiobook"].get_text().strip(),
-                    },
-                    "command": command,
-                    "post_download_command": post_command,
-                }
-                draft.set_provider_settings(provider_id, settings)
-            draft.set("diagnostics.enabled", diag_switch.get_active())
-            draft.set("diagnostics.level", levels[level_drop.get_selected()])
-            draft.set("experimental_actions", exp_switch.get_active())
-            ai_restart_required = False
-            if settings_revisions.get("ai", 0) != saved_settings_revisions.get("ai", 0):
-                try:
-                    new_ai_settings = read_ai_settings()
-                except LLMSettingsError as exc:
-                    self.show_error(str(exc), "Configuration IA invalide")
-                    return False
-                ai_restart_required = new_ai_settings != self.config.get("llm", {})
-                draft.set("llm", new_ai_settings)
+                "levels": tuple(levels), "vault_profiles": tuple(vault_profiles),
+                "ai": capture_ai_settings() if settings_state.dirty("ai") else {},
+            }
+            values["backup_directory"] = backup_dir_row.get_text()
+            values["backup_interval"] = backup_interval_row.get_text()
+            values["backup_enabled"] = backup_switch.get_active()
+            values["diagnostics_enabled"] = diag_switch.get_active()
+            values["experimental_actions"] = exp_switch.get_active()
+            values["audiobook_directory"] = global_audio_row.get_text()
+            values["download_command"] = global_cmd_row.get_text()
+            values["download_directory"] = global_dir_row.get_text()
+            values["ebook_directory"] = global_ebook_row.get_text()
+            values["post_download_command"] = global_post_row.get_text()
+            values["diagnostics_level_index"] = level_drop.get_selected()
+            values["library_directory"] = library_dir_row.get_text()
+            values["allow_unlinked_acquisition"] = unlinked_switch.get_active()
+            values["vault_profile_index"] = vault_profile_drop.get_selected()
+            return values
 
+        def save_settings(_button=None, *, reconnect_after=False) -> bool:
+            if settings_committer.pending:
+                return False
             try:
-                backup_interval = max(15, int(backup_interval_row.get_text().strip() or "60"))
-            except ValueError as exc:
-                self.show_error(f"Configuration Kobo invalide : {exc}")
+                draft = build_settings_draft(
+                    self.config, capture_settings_values(), descriptors=descriptors,
+                    public_ids=public_ids,
+                    current_dirs={i.identity_id: i.directory_name for i in self.service.identities},
+                    has_active_tasks=bool(getattr(self, "_active_tasks", {})),
+                    ai_dirty=settings_state.dirty("ai"),
+                )
+            except SettingsValidationError as exc:
+                if exc.title is None:
+                    self.show_error(str(exc))
+                else:
+                    self.show_error(str(exc), exc.title)
                 return False
-            draft.set("library.directory", library_dir_row.get_text().strip() or "~/EBooks")
-            draft.set("kobo_backup.enabled", backup_switch.get_active())
-            draft.set("kobo_backup.allow_unlinked_acquisition", unlinked_switch.get_active())
-            draft.set("kobo_backup.directory", backup_dir_row.get_text().strip())
-            draft.set("kobo_backup.interval_minutes", backup_interval)
-            selected_profile = int(vault_profile_drop.get_selected())
-            draft.set("kobo_backup.display_profile", vault_profiles[selected_profile] if 0 <= selected_profile < len(vault_profiles) else "Android")
-            draft.set("kobo_backup.format", "epub")
-            current_dirs = {i.identity_id: i.directory_name for i in self.service.identities}
-            directory_change = any(row["id"] in current_dirs and row["directory_name"] != current_dirs[row["id"]] for row in saved_identities)
-            if directory_change and getattr(self, "_active_tasks", {}):
-                self.show_error("Attendez la fin des opérations en cours avant de changer un répertoire d’identité.")
-                return False
+            directory_change = draft.directory_change
+            ai_restart_required = draft.ai_restart_required
+            new_ai_settings = draft.data.get("llm", {})
             staged = settings_committer.stage(draft.data)
-            try:
-                staged_settings_revisions = dict(settings_revisions)
-            except NameError:
-                # Legacy unit tests execute this nested handler in isolation.
-                staged_settings_revisions = {}
+            staged_settings_revisions = settings_state.snapshot()
             def ok(result):
                 self.diagnostics.enabled = bool(staged["diagnostics"]["enabled"])
                 self.diagnostics.level = staged["diagnostics"]["level"]
@@ -4798,14 +4700,9 @@ class MainWindow(Adw.ApplicationWindow):
                     self.toast(message, 5)
                 self._configure_kobo_backup_timer(run_now=False)
                 refresh_text()
-                try:
-                    for tab, revision in staged_settings_revisions.items():
-                        saved_settings_revisions[tab] = revision
-                    track_all_settings_widgets()
-                    update_settings_actions()
-                except NameError:
-                    # Same isolated-handler compatibility path as above.
-                    pass
+                settings_state.commit(staged_settings_revisions)
+                track_all_settings_widgets()
+                update_settings_actions()
                 if reconnect_after:
                     self.reconnect_sources()
             return settings_committer.submit(

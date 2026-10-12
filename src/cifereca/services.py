@@ -2949,23 +2949,23 @@ class LibraryService:
             if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
         ]
         entitlement_id = entitlement_rows[0]["entitlement_id"] if entitlement_rows else None
-        existing = [
-            row for row in self.storage.catalog_entries()
-            if row.get("identity_id") == identity.identity_id
-            and row.get("provider_id") == loan.source_provider
-            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
-            and row.get("local_state") == "local"
-        ]
+        existing = loan_artifact_state.local_catalog_candidates(
+            self.storage.catalog_entries(),
+            identity_id=identity.identity_id,
+            source_provider=loan.source_provider,
+            item_id=str(loan.record_id or loan.id),
+        )
         # Inventory is a projection. Validate its files before deciding to skip.
+        # Keep invalidation writes inline, in the same candidate order and under
+        # the existing per-loan locks. No side effects occur in the helper.
         valid_existing = []
         for entry in existing:
-            path_text = str((entry.get("metadata") or {}).get("path") or "")
-            path = Path(path_text) if path_text else None
-            if path is not None and path.is_file():
-                inspection = inspect_artifact(path)
-                if inspection.valid and inspection.protected is not True:
-                    valid_existing.append(entry)
-                    continue
+            usable, path = loan_artifact_state.inspect_catalog_local_file(
+                entry, artifact_inspector=inspect_artifact,
+            )
+            if usable:
+                valid_existing.append(entry)
+                continue
             self.storage.catalog_entry_put({**entry, "local_state": "missing" if path is None or not path.is_file() else "invalid"})
             _TRACE_LOG.info("TRACE download local-recheck provider_loan_id=%s catalog_state=%s", loan.id, "missing" if path is None or not path.is_file() else "invalid")
         existing = valid_existing
