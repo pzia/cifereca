@@ -105,6 +105,29 @@ Artefacts : `e2e-artifacts/search-filter-p0/00-before.png`,
 du runner. En cas d'échec, conserver ces preuves et ouvrir un correctif
 CoreUI ; ce test ne clôt pas à lui seul #660 avant sa recette sur CI.
 
+### P1 #942 — compteur réel et données exclues (GTK 1366)
+
+Le même scénario `book-detail-1366` vérifie après le parcours normal
+Recherche/Bibliothèque deux jeux de lignes supplémentaires au **point de
+rendu final GTK** `DetailPanel._group("Détail", ...)`. Il évite volontairement
+la normalisation en amont afin de tester aussi la sécurité du dernier
+composant de présentation.
+
+- Cinq valeurs en entrée, dont une URL signée et un jeton : seules trois
+  lignes publiques (Alice, Bob, nature) doivent rester visibles. Le compteur
+  annoncé doit être exactement `3 champ(s) bibliographiques`.
+- Deux valeurs sensibles sans donnée publique : aucune section « Détail »
+  vide ne doit être créée.
+- Aucun nouvel HTTP ni recherche en ligne provoquée par ces rendus.
+  Les champs secrets ne sont jamais recopiés dans le JSON de preuves.
+
+Rapport : `security_detail_mixed_942` et
+`security_detail_all_private_942` dans `screen.json`. Captures
+`04-library-detail-mixed-safety-gtk.png` et
+`05-library-detail-all-private-gtk.png` à 1366 px. Ce contrôle
+d'acceptation reste rouge tant que CoreUI n'a pas corrigé le compteur et
+la section sans contenu. Aucun scénario/workflow supplémentaire.
+
 ## Recette Jeunesse P1 (#758)
 
 La recette `catalog.youth` utilise la vraie page `ui.page.youth`, le Core et
