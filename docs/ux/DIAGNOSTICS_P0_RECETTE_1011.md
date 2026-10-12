@@ -1,7 +1,7 @@
 # Recette UX P0 — Diagnostics (#1011)
 
-Statut : contrat UX, à exécuter sur l'application GTK réelle ; **aucune validation E2E revendiquée ici**.  
-Référence : branche `main`, environnement GTK sous `environnement/` du dépôt. Les ZIP GTK joints aux conversations sont obsolètes.  
+Statut au **12/10/2026** : **recette GTK/XTEST partielle** (D01–D04, D07, D10–D11, D13 et D15 ciblés), critères D01–D16 **non clos**. D05 reste **FAIL produit P0** : [#1188](https://github.com/pzia/cifereca/issues/1188) ; la PR de test [#1184](https://github.com/pzia/cifereca/pull/1184) est fusionnée mais ne répare pas le défilement. Voir [l'état détaillé des preuves et limites](DIAGNOSTICS_GTK_PROBE_1011.md).  
+Référence : branche `main`, infrastructure `environnements/E2E-UX.md` et vrais scénarios GTK de `e2e/`. Les ZIP de laboratoire n'attestent pas l'application Cifereca.  
 Propriétaire : UX (spécification et validation) ; Plugins/CoreUI (implémentation). Pas de modification CI/CD.
 
 ## Architecture d'information

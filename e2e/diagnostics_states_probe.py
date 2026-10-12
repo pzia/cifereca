@@ -216,8 +216,13 @@ def main():
         tasks = StateTasks()
         host[0] = Host()
         plugin[0] = module.DiagnosticsPagePlugin().activate(Context(broker[0], tasks))
-        page[0] = plugin[0]._build(host[0])
-        window[0].set_child(page[0])
+        root = plugin[0]._build(host[0])
+        window[0].set_child(root)
+        # This probe directly drives the main Diagnostics scroll adjustment.
+        # The outer Gtk.ScrolledWindow is now wrapped by the P0 wheel router.
+        scrollers = [w for w in walk(root) if isinstance(w, Gtk.ScrolledWindow)]
+        assert scrollers, "Page scroller absent"
+        page[0] = scrollers[0]
 
     def d01():
         switch("empty")

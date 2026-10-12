@@ -674,8 +674,11 @@ class YouthView:
             str(row.get("label") or row.get("name") or row.get("identity_id") or "Profil")
             for row in self.identities
         ])
-        self.identity.set_tooltip_text("Profil de bibliothèque")
+        self.identity.set_tooltip_text("Choisit le profil dont le cache Jeunesse est affiché. Aucun changement d’identité implicite.")
         self.identity.connect("notify::selected", lambda *_: self.identity_changed())
+        identity_label = Gtk.Label(label="_Profil", use_underline=True, xalign=0)
+        identity_label.set_mnemonic_widget(self.identity)
+        self.widget.append(identity_label)
         self.widget.append(self.identity)
 
         filters = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5)
@@ -690,8 +693,34 @@ class YouthView:
         self.book_type = Gtk.Entry(placeholder_text="Type (fiction, documentaire…)")
         self.themes = Gtk.Entry(placeholder_text="Thèmes, séparés par des virgules")
         self.inferred = Gtk.CheckButton(label="Inclure les âges inférés", active=False)
-        for widget in (self.query, self.age, self.age_kind, self.source, self.language, self.format, self.book_type, self.themes, self.inferred):
-            filters.append(widget)
+        # Visible names persist after typing; Gtk.Label mnemonic relations also
+        # expose the controls to keyboard navigation and assistive technology.
+        controls = (
+            ("_Recherche", self.query, "Filtre le cache local par titre, auteur ou thème. Première Entrée : cache ; deuxième Entrée : collecte de la source choisie uniquement."),
+            ("_Âge", self.age, "Filtre les tranches d’âge connues de 0 à 17 ans ; les notices sans âge attesté peuvent être exclues."),
+            ("_Type d’âge", self.age_kind, "Distingue âge recommandé, d’intérêt, de lecture ou indiqué par l’éditeur."),
+            ("_Source", self.source, "Filtre l’origine des notices en cache. Choisir une source précise pour la collecter ; toutes les sources ne déclenche pas de réseau."),
+            ("_Langue", self.language, "Code de langue des notices, par exemple fr ou en."),
+            ("_Format", self.format, "Format connu, par exemple epub ou pdf. Inconnu ne signifie pas absent."),
+            ("T_ype de livre", self.book_type, "Catégorie de notice, par exemple fiction ou documentaire."),
+            ("_Thèmes", self.themes, "Filtre les thèmes renseignés ; séparer plusieurs thèmes par une virgule."),
+        )
+        for caption, control, help_text in controls:
+            field = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            label = Gtk.Label(label=caption, use_underline=True, xalign=0)
+            label.set_mnemonic_widget(control)
+            control.set_tooltip_text(help_text)
+            field.append(label)
+            field.append(control)
+            filters.append(field)
+        self.inferred.set_tooltip_text(
+            "Inclut les estimations d’âge dans le filtre ; désactivé, seuls les âges attestés sont retenus."
+        )
+        filters.append(self.inferred)
+        for index in range(len(controls) + 1):
+            child = filters.get_child_at_index(index)
+            if child is not None:
+                child.set_focusable(False)
         for entry in (self.query, self.language, self.format, self.book_type, self.themes):
             entry.connect("changed", lambda *_: self.filters_changed())
         self.query.connect("activate", lambda *_: self.query_activated())

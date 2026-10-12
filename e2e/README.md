@@ -128,6 +128,34 @@ Rapport : `security_detail_mixed_942` et
 d'acceptation reste rouge tant que CoreUI n'a pas corrigé le compteur et
 la section sans contenu. Aucun scénario/workflow supplémentaire.
 
+
+### UX P1 #922 — aides et étiquettes des filtres Jeunesse (recette distincte)
+
+La recette dédiée (1366 px uniquement) s'exécute avec :
+
+    dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario youth-filter-help-1366
+
+Elle ouvre la vraie page GTK, inspecte les dix contrôles (profil, recherche,
+âge, nature d'âge, source, langue, format, type, thèmes et âges inférés)
+et vérifie une aide contextuelle non vide pour chacun. Les étiquettes doivent
+être visibles et explicitement liées au widget via Gtk.Label.set_mnemonic_widget ;
+la case à cocher peut porter son libellé intrinsèque.
+
+Après un clic XTEST suivi de la saisie « Forest », le test vérifie la
+persistance des étiquettes, la distinction cache local / collecte explicite
+et l'absence de requête réseau. Il traverse également les contrôles avec
+de vraies touches XTEST Tab/Shift+Tab, journalise les focus GTK réels (y
+compris GtkText interne) et contrôle qu'aucune collecte n'est induite.
+Le rapport screen.json et trois captures documentent les dix champs, le
+parcours clavier et toute absence d'aide. Un contrôle non atteint ou un
+double arrêt Tab anonyme sur un Gtk.FlowBoxChild non interactif est signalé,
+sans déduire l'accessibilité de la seule capture visuelle.
+
+**Test d'acceptation intentionnellement bloquant tant que le plugin n'a pas
+ajouté les libellés et tooltips du P1 #922.** Les anciens scénarios Jeunesse
+restent inchangés. Ne pas contourner le test par des placeholders.
+Aucun scénario de largeur basse et aucun workflow CI nouveau.
+
 ## Recette Jeunesse P1 (#758)
 
 La recette `catalog.youth` utilise la vraie page `ui.page.youth`, le Core et

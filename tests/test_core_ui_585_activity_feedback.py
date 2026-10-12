@@ -9,12 +9,16 @@ from cifereca.gui.activity_feedback import ActivityFeedback
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "src/cifereca/gui/main_window.py"
 RUNNER = ROOT / "src/cifereca/gui/task_runner.py"
+SYNC = ROOT / "src/cifereca/gui/sync_controller.py"
 
 
 def _method(path: Path, class_name: str, name: str) -> str:
+    if name in {"run_opening_sync", "run_kobo_backup", "_build_sync_page"}:
+        path = SYNC
+        class_name = None
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
+    scope = (tree.body if class_name is None else next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name).body)
+    method = next(node for node in scope if isinstance(node, ast.FunctionDef) and node.name == name)
     return ast.unparse(method)
 
 
