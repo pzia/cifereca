@@ -38,7 +38,7 @@ LOCAL_GUI = {
     "facet_text.py": ("search-filter-p0",),
     "query_controls.py": ("search-filter-p0", "core-navigation"),
     # youth_page_probe imports QueryState from this module directly.
-    "query_model.py": ("search-filter-p0",) + YOUTH,
+    "query_model.py": ("search-filter-p0", "book-detail-1366") + YOUTH,
     "search_intent.py": ("search-filter-p0",),
 }
 PROBES = {
