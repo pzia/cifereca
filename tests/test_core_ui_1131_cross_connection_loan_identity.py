@@ -10,13 +10,14 @@ from cifereca.core.loan_source_identity import loan_source_key, unique_library_l
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+LOANS = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controller.py"
 
 
 def _method(name):
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
-               and node.name == "MainWindow")
-    return ast.unparse(next(node for node in cls.body if isinstance(node, ast.FunctionDef)
+    moved = name in {"_populate_loans", "_render_loans", "_loan_selected"}
+    tree = ast.parse((LOANS if moved else MAIN).read_text(encoding="utf-8"))
+    scope = (tree.body if moved else next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow").body)
+    return ast.unparse(next(node for node in scope if isinstance(node, ast.FunctionDef)
                             and node.name == name))
 
 
