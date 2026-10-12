@@ -3631,6 +3631,7 @@ class MainWindow(Adw.ApplicationWindow):
         scroll = shell.scroll
         box = shell.root
         settings_root = shell.root
+        settings_heading = shell.heading
         tabs = shell.tabs
         sections = shell.sections
         if not standalone:
