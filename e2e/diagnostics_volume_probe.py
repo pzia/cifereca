@@ -240,7 +240,12 @@ def main():
         assert entry.grab_focus() is not False
 
         def enter_text():
-            assert entry.has_focus(), "D06: filtre Module inaccessible au clavier"
+            # Gtk.Entry delegates focus to its GtkText child in GTK4.
+            # Test the actual focused descendant, not only entry.has_focus().
+            focused = window[0].get_focus()
+            assert focused is not None and (
+                focused is entry or focused.is_ancestor(entry)
+            ), "D06: le champ Module et ses enfants n'ont pas le focus"
             device[0].type_text(mod)
             until(lambda: entry.get_text() == mod, submit_filter, seconds=5)
 
