@@ -64,3 +64,31 @@ class SettingsCommitController:
             failed(exc)
             return False
         return True
+
+
+class SettingsRevisionState:
+    """Track edits separately from the revision captured by a successful save."""
+
+    def __init__(self, sections):
+        self._current = {key: 0 for key in sections}
+        self._saved = dict(self._current)
+
+    def dirty(self, section):
+        return self._current.get(section, 0) != self._saved.get(section, 0)
+
+    def mark_dirty(self, section):
+        if section == "diagnostic":
+            return False
+        self._current[section] = self._current.get(section, 0) + 1
+        return True
+
+    def snapshot(self):
+        return dict(self._current)
+
+    def commit(self, snapshot):
+        # Edits made while the worker was running remain pending.
+        for section, revision in snapshot.items():
+            self._saved[section] = revision
+
+    def reset(self, section):
+        self._current[section] = self._saved.get(section, 0)
