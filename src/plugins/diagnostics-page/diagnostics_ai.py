@@ -347,7 +347,7 @@ def llm_destination(llm: Any) -> dict[str, str | bool]:
 # titles and control characters can otherwise pass regex-only redaction.
 _SINCE_ISO = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-    r"(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\\Z"
+    r"(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z"
 )
 
 
