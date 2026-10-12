@@ -147,7 +147,8 @@ def test_subscription_and_shutdown_do_not_leak_plugin_callbacks():
     assert "subscribe_cached_book_detail_changes(" in _source("_subscribe_cached_book_details")
     assert "GLib.idle_add(self._cached_book_cache_invalidated)" in _source("_subscribe_cached_book_details")
     assert "self._subscribe_cached_book_details()" in _source("_plugins_changed")
-    assert "self._cached_book_unsubscribe()" in _source("_on_close_request")
+    assert "close_window_resources(self, source_remove=GLib.source_remove)" in _source("_on_close_request")
+    assert "window._cached_book_unsubscribe()" in (MAIN.parent / "window_close.py").read_text(encoding="utf-8")
 
 
 def test_rendering_keeps_provenance_freshness_and_validated_links():

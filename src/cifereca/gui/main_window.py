@@ -50,6 +50,7 @@ from .settings_library_downloads import build_library_download_section
 from .settings_ai_section import build_ai_settings_section
 from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_lifetime import SettingsPageLifetime
+from .window_close import close_window_resources
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -507,52 +508,7 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _on_close_request(self, *_args) -> bool:
-        if self._closed:
-            return False
-        self._closed = True
-        for name in ("_settings_main_lifetime", "_settings_standalone_lifetime"):
-            lifetime = getattr(self, name, None)
-            if lifetime is not None:
-                lifetime.dispose()
-                setattr(self, name, None)
-        self._diag_refresh = None
-        try:
-            self.config.set("ui.width", self.get_width())
-            self.config.set("ui.height", self.get_height())
-            self.config.save()
-        except Exception:
-            pass
-        try:
-            if self._kobo_backup_timer_id is not None:
-                GLib.source_remove(self._kobo_backup_timer_id)
-                self._kobo_backup_timer_id = None
-        except Exception:
-            pass
-        try:
-            self._cancel_activity_hide()
-        except Exception:
-            pass
-        try:
-            self._cached_book_unsubscribe()
-        except Exception:
-            pass
-        try:
-            self.runner.close()
-        except Exception:
-            pass
-        try:
-            self.history_cover_resolver.close()
-        except Exception:
-            pass
-        try:
-            self.covers.close()
-        except Exception:
-            pass
-        try:
-            self.service.close()
-        except Exception:
-            pass
-        return False
+        return close_window_resources(self, source_remove=GLib.source_remove)
 
     # ---------- provider startup ----------
     def _build_startup(self) -> Gtk.Widget:
