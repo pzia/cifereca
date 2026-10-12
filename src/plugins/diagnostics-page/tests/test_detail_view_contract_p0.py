@@ -41,7 +41,7 @@ def test_json_file_export_uses_same_safe_detail_snapshot_and_local_async_writer(
     assert "prepare_bytes=diagnostic_json_bytes" in src
     assert "filename=\"cifereca-diagnostic.json\"" in src
     assert 'save_json.connect("clicked", json_export.choose)' in src
-    assert 'expander.connect("unroot", on_detail_unroot)' in src
+    assert 'expander.connect("unmap", on_detail_unmap)' in src
     assert "json_export.close()" in src
     assert "self._support_exports.append(json_export)" in src
     assert "self._support_exports.remove(json_export)" in src
