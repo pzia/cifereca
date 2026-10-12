@@ -199,7 +199,7 @@ def window_coordinator():
     names={'run_search','_library_search_online','_reset_search_enter'}
     methods=[n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name in names]
     module=ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0),ast.ClassDef(name='Coordinator',bases=[],keywords=[],body=methods,decorator_list=[])],type_ignores=[])
-    namespace=dict(online_search=online_search,progressive_online_search=progressive_online_search,merge_results=merge_results,TaskPriority=NS(USER_ACTION=0))
+    namespace=dict(__name__='cifereca.gui.test_search_ast',__package__='cifereca.gui',online_search=online_search,progressive_online_search=progressive_online_search,merge_results=merge_results,TaskPriority=NS(USER_ACTION=0))
     exec(compile(ast.fix_missing_locations(module),str(source),'exec'),namespace)
     return namespace['Coordinator']()
 
