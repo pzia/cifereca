@@ -113,6 +113,7 @@ def main() -> int:
     rc = [1]
     diagnostics_deadline = [None]
     slow_started = [None]
+    d16_original_size = [None]
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -303,10 +304,126 @@ def main() -> int:
         assert window[0].nav_list.get_selected_row() is window[0].nav_rows["diagnostics"]
         report["checks"]["D04_check_result_visible_on_return"] = True
         capture("05-diagnostics-result-after-navigation")
+        if args.window_baseline:
+            # D16: unlike the isolated widget tests, this measures the real
+            # MainWindow + sidebar + actual Diagnostics contribution on both
+            # 1366 and 1600 X11 displays, after a completed active check.
+            later(150, begin_d16_mainwindow)
+            return
+        return_to_library_after_diagnostics()
+
+    def return_to_library_after_diagnostics():
         report["pointer_actions"].append(
             device[0].click_widget(window[0].nav_rows["library"])
         )
         await_route("library", returned_to_library)
+
+    def d16_geometry():
+        w = window[0]
+        widget = w._plugin_page_widgets["diagnostics"]
+        assert widget.get_mapped(), "D16: Diagnostics absent de MainWindow"
+        scrollers = [node for node in walk(widget)
+                     if isinstance(node, Gtk.ScrolledWindow)]
+        assert scrollers, "D16: viewport Diagnostics introuvable"
+        outer = scrollers[0]
+        adjustment = outer.get_hadjustment()
+        overflow = max(0.0, adjustment.get_upper() - adjustment.get_page_size())
+        assert adjustment.get_page_size() > 100, "D16: viewport sans allocation GTK"
+        assert overflow <= 5, f"D16: débordement horizontal global {overflow:.1f} px"
+        actions = (
+            "Actualiser les diagnostics",
+            "Vérifier les services configurés et runtimes",
+        )
+        geometry = []
+        for tooltip in actions:
+            found = [node for node in walk(widget)
+                     if isinstance(node, Gtk.Button)
+                     and node.get_tooltip_text() == tooltip]
+            assert len(found) == 1, f"D16: bouton absent ou doublé: {tooltip}"
+            button = found[0]
+            assert button.get_mapped() and button.get_sensitive(), (
+                "D16: bouton essentiel inactif ou non rendu", tooltip
+            )
+            ok, bounds = button.compute_bounds(outer.get_child())
+            assert ok and bounds.get_width() > 0 and bounds.get_height() > 0, (
+                "D16: contrôle essentiel sans géométrie", tooltip
+            )
+            geometry.append({
+                "tooltip": tooltip,
+                "x": round(bounds.get_x(), 2),
+                "width": round(bounds.get_width(), 2),
+            })
+        assert labels_have("Rapport support") and labels_have("Analyse IA")
+        assert w.header_subtitle.get_text() == "Diagnostics"
+        assert w.nav_list.get_selected_row() is w.nav_rows["diagnostics"]
+        return {
+            "window_size": [w.get_width(), w.get_height()],
+            "diagnostics_horizontal_overflow": round(overflow, 2),
+            "essential_actions": geometry,
+        }
+
+    def begin_d16_mainwindow():
+        report["stage"] = "D16_full_mainwindow_native"
+        report["D16_native"] = d16_geometry()
+        d16_original_size[0] = (window[0].get_width(), window[0].get_height())
+        report["checks"]["D16_real_mainwindow_native_1366_or_1600"] = True
+        capture("08-d16-diagnostics-native-mainwindow")
+        # Resize the *GTK window*, not the Xvfb display. No services are called.
+        window[0].set_default_size(1240, 760 if args.width == 1366 else 800)
+        deadline = monotonic() + 7
+
+        def wait_narrow():
+            size = (window[0].get_width(), window[0].get_height())
+            if size[0] <= 1260 and size[1] <= (790 if args.width == 1366 else 830):
+                d16_narrow()
+            elif monotonic() >= deadline:
+                raise AssertionError(f"D16: redimensionnement étroit non appliqué: {size}")
+            else:
+                later(95, wait_narrow)
+        later(180, wait_narrow)
+
+    def d16_narrow():
+        report["stage"] = "D16_full_mainwindow_narrow"
+        report["D16_narrow"] = d16_geometry()
+        assert window[0].get_width() < d16_original_size[0][0] - 50
+        assert broker.checks == 1 and len(broker.event_queries) == 1
+        assert labels_have("Contrôle local fictif terminé")
+        report["checks"]["D16_real_mainwindow_narrow_no_horizontal_overflow"] = True
+        buttons = [node for node in walk(window[0]._plugin_page_widgets["diagnostics"])
+                   if isinstance(node, Gtk.Button)
+                   and node.get_tooltip_text() == "Vérifier les services configurés et runtimes"]
+        assert len(buttons) == 1 and buttons[0].grab_focus() is not False
+        deadline = monotonic() + 4
+
+        def verify_focus():
+            if buttons[0].has_focus():
+                report["checks"]["D16_real_mainwindow_narrow_action_keyboard_focus"] = True
+                capture("09-d16-diagnostics-narrow-mainwindow")
+                window[0].set_default_size(*d16_original_size[0])
+                later(180, d16_wait_restored)
+            elif monotonic() >= deadline:
+                raise AssertionError("D16: focus clavier sur Vérifier indisponible")
+            else:
+                later(90, verify_focus)
+        later(160, verify_focus)
+
+    def d16_wait_restored():
+        native = d16_original_size[0]
+        size = (window[0].get_width(), window[0].get_height())
+        if size[0] >= native[0] - 20 and size[1] >= native[1] - 20:
+            report["stage"] = "D16_full_mainwindow_restored"
+            report["D16_restored"] = d16_geometry()
+            assert broker.checks == 1 and len(broker.event_queries) == 1
+            assert labels_have("Contrôle local fictif terminé")
+            report["checks"]["D16_real_mainwindow_restored_preserves_state"] = True
+            capture("10-d16-diagnostics-restored-mainwindow")
+            return_to_library_after_diagnostics()
+        else:
+            report["D16_resize_poll"] = report.get("D16_resize_poll", 0) + 1
+            assert report["D16_resize_poll"] <= 70, (
+                "D16: restauration fenêtre non appliquée", size, native
+            )
+            later(100, d16_wait_restored)
 
     def returned_to_library():
         w = window[0]
