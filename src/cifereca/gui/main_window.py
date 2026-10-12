@@ -65,6 +65,7 @@ from .loan_view import (
 )
 from ..core.loan_source_identity import loan_source_key, unique_library_loan
 from .recent_time import format_recent_timestamp
+from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
@@ -2538,34 +2539,14 @@ class MainWindow(Adw.ApplicationWindow):
         if entries is None:
             entries = list(self._library_entries_cache)
         self._library_entries_cache = list(entries)
-        rows: list[BookListItem] = []
-        self._library_objects = {}
-        for item in self.library_controls.state().filter(entries):
-            provider = str(item.get("provider_id") or "local")
-            providers = list(item.get("providers") or [provider])
-            provider_label = (f"{len(providers)} sources" if len(providers) > 1 else self.service.provider_display_name(provider))
-            state = self._library_availability_label(item)
-            key = str(item.get("key") or f"library:{len(self._library_objects)}")
-            self._library_objects[key] = item
-            metadata = item.get("metadata") or {}
-            meta_parts = [state] if state else []
-            if item.get("due_at"):
-                meta_parts.append(f"retour {fr_date(str(item.get('due_at')))}")
-            sync_status = item.get("sync_status")
-            if sync_status and not item.get("local"):
-                meta_parts.append(self._kobo_backup_status_label(str(sync_status)))
-            device_statuses = item.get("device_statuses") if isinstance(item.get("device_statuses"), list) else []
-            if device_statuses:
-                present_count = sum(1 for status_row in device_statuses if status_row.get("observed_state") == "present")
-                keep_count = sum(1 for status_row in device_statuses if status_row.get("desired_state") == "keep")
-                if present_count:
-                    meta_parts.append(f"Kobo {present_count}/{len(device_statuses)}")
-                elif keep_count:
-                    meta_parts.append("Kobo à synchroniser")
-            rows.append(BookListItem(
-                key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
-                " · ".join(part for part in meta_parts if part), provider_label, item.get("thumbnail_url"),
-            ))
+        rows, self._library_objects = project_library_rows(
+            self.library_controls.state().filter(entries),
+            row_factory=BookListItem,
+            provider_display_name=self.service.provider_display_name,
+            availability_label=self._library_availability_label,
+            backup_status_label=self._kobo_backup_status_label,
+            format_date=fr_date,
+        )
         self._attach_row_facets(rows, self._library_objects, self.library_controls)
         self.library_page.show_rows(rows, total_count=len(entries))
         restored_pending = self._select_pending_library_item()

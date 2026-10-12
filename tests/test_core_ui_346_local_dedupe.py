@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+LIBRARY_ROWS = MAIN.with_name("library_rows.py")
 
 
 def _method(name: str):
@@ -44,10 +45,17 @@ def test_non_trivial_states_remain_visible():
 
 
 def test_library_list_does_not_add_empty_redundant_state():
-    source = ast.unparse(_method("_render_library"))
-
-    assert "state = self._library_availability_label(item)" in source
+    # Inspect the real owner of the projection, not a stale window facade.
+    module = ast.parse(LIBRARY_ROWS.read_text(encoding="utf-8"))
+    source = ast.unparse(next(
+        node for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "project_library_rows"
+    ))
+    assert "state = availability_label(item)" in source
     assert "meta_parts = [state] if state else []" in source
+    facade = ast.unparse(_method("_render_library"))
+    assert "project_library_rows(" in facade
+    assert "availability_label=self._library_availability_label" in facade
 
 
 def test_library_detail_omits_redundant_availability_row_and_badge():
