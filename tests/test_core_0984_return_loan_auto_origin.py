@@ -27,9 +27,28 @@ def _confirmed_service(tmp_path):
 def test_unrelated_completed_strategy_cannot_authorize_adobe_return(tmp_path, strategy):
     service, loan = _confirmed_service(tmp_path)
     try:
-        acquisition_id = _acquisition(service, loan, acquisition_id="unrelated")
-        row = service.storage.acquisition_get(acquisition_id)
-        service.storage.acquisition_put({**row, "strategy": strategy})
+        acquisition_id = service.storage.acquisition_put({
+            "acquisition_id": "unrelated",
+            "provider_id": loan.source_provider,
+            "credential_id": loan.source_credential,
+            "account_id": loan.source_account_id,
+            "identity_id": "alice",
+            "item_id": loan.record_id,
+            "status": "complete",
+            "strategy": strategy,
+            "executor": "kobo-adept",
+            "metadata": {
+                "provider_loan_id": loan.id,
+                "adept_binding": {
+                    "adept_profile_id": "bob-profile",
+                    "adept_profile_name": "bob-cli",
+                    "adept_loan_id": "adobe-loan",
+                    "loan_state": "active",
+                    "token_present": True,
+                    "return_available": True,
+                },
+            },
+        })
         before = service.storage.acquisition_get(acquisition_id)
         state = service.adept_return_status_for_loan(loan)
         assert state == {"status": "no_acquisition", "return_available": False}
