@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
+from itertools import islice
 import re
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -15,6 +16,11 @@ _FEED_TYPES = {
     "application/atom+xml": "atom",
     "application/feed+json": "jsonfeed",
 }
+# Discovery preview is not bulk scraping: never exhaust a third-party stream.
+MAX_DISCOVERY_HTML_CHARS = 128_000
+MAX_FEED_LINKS_PER_PAGE = 32
+MAX_FEED_URLS_PER_ROW = 8
+MAX_SEARCH_ROWS_PER_RESULT = 4
 
 
 def _text(value: object) -> str:
@@ -226,17 +232,21 @@ class _FeedLinkParser(HTMLParser):
         rel = {item.casefold() for item in row.get("rel", "").split()}
         media_type = row.get("type", "").split(";", 1)[0].strip().casefold()
         href = row.get("href", "")
-        if "alternate" in rel and href and media_type in _FEED_TYPES:
+        if ("alternate" in rel and href and media_type in _FEED_TYPES
+                and len(self.links) < MAX_FEED_LINKS_PER_PAGE):
             self.links.append((href, media_type, row.get("title", "")))
 
 
 def discover_feed_links(page_url: str, html: str) -> tuple[FeedCandidate, ...]:
     base = canonical_url(page_url)
-    if not base:
+    if not base or not isinstance(html, str) or len(html) > MAX_DISCOVERY_HTML_CHARS:
+        # Oversized or non-text payload is not evidence of zero feeds.
+        # A preview must never parse a third-party multi-megabyte document.
         return ()
     parser = _FeedLinkParser()
     try:
-        parser.feed(str(html or ""))
+        parser.feed(html)
+        parser.close()
     except Exception:
         return ()
     out: list[FeedCandidate] = []
@@ -254,6 +264,20 @@ def discover_feed_links(page_url: str, html: str) -> tuple[FeedCandidate, ...]:
             evidence="html-alternate",
         ))
     return tuple(out)
+
+
+def _limited_feed_values(value: object) -> tuple[object, ...]:
+    """Extract only bounded candidate URLs, including hostile generators."""
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        return (value,)
+    if isinstance(value, Mapping):
+        value = value.values()
+    try:
+        return tuple(islice(iter(value), MAX_FEED_URLS_PER_ROW))
+    except (TypeError, ValueError, RuntimeError):
+        return (value,) if not hasattr(value, "__iter__") else ()
 
 
 def discover_feeds(
@@ -277,30 +301,52 @@ def discover_feeds(
         return ()
     candidates: list[FeedCandidate] = []
     seen: set[str] = set()
-    for row in rows or ():
-        page_url = canonical_url(_field(row, "url"))
-        title = _text(_field(row, "title"))
-        explicit = list(_iter_values(_field(row, "feed_url")))
-        explicit.extend(_iter_values(_field(row, "feed_urls")))
-        for raw_url in explicit:
-            url = canonical_url(raw_url, base_url=page_url)
-            if url and url not in seen:
-                seen.add(url)
-                candidates.append(FeedCandidate(
-                    url=url,
-                    page_url=page_url,
-                    title=title,
-                    evidence="metasearch-explicit-feed",
-                ))
-        html = str(_field(row, "html", "") or "")
-        if page_url and html:
-            for item in discover_feed_links(page_url, html):
-                if item.url in seen:
-                    continue
-                seen.add(item.url)
-                candidates.append(replace(item, title=item.title or title))
-        if len(candidates) >= bounded:
+    # Search engines can return more rows than requested or a never-ending
+    # iterator without valid feeds. Read <= 4 * requested rows at most.
+    try:
+        rows_iter = iter(rows or ())
+    except (TypeError, ValueError, RuntimeError):
+        return ()
+    for _ in range(bounded * MAX_SEARCH_ROWS_PER_RESULT):
+        try:
+            row = next(rows_iter)
+        except StopIteration:
             break
+        except Exception:
+            # Third-party iterator failures can carry tokens in exception
+            # messages. Keep already discovered candidates; emit no raw error.
+            break
+        try:
+            page_url = canonical_url(_field(row, "url"))
+            title = _text(_field(row, "title"))
+            for field_name in ("feed_url", "feed_urls"):
+                for raw_url in _limited_feed_values(_field(row, field_name)):
+                    if not isinstance(raw_url, str) or not 0 < len(raw_url) <= 2048:
+                        continue
+                    url = canonical_url(raw_url, base_url=page_url)
+                    if url and url not in seen:
+                        seen.add(url)
+                        candidates.append(FeedCandidate(
+                            url=url,
+                            page_url=page_url,
+                            title=title,
+                            evidence="metasearch-explicit-feed",
+                        ))
+                        if len(candidates) >= bounded:
+                            return tuple(candidates)
+            html = _field(row, "html", "")
+            if page_url and isinstance(html, str) and html:
+                for item in discover_feed_links(page_url, html):
+                    if item.url in seen:
+                        continue
+                    seen.add(item.url)
+                    candidates.append(replace(item, title=item.title or title))
+                    if len(candidates) >= bounded:
+                        return tuple(candidates)
+        except Exception:
+            # Invalid result rows are isolated; remaining rows still count
+            # against the finite discovery work budget.
+            continue
     return tuple(candidates[:bounded])
 
 
