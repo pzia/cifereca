@@ -128,7 +128,12 @@ def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
         Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
     ).read_text(encoding="utf-8")
     ast.parse(source)
-    assert '("ai", "Intelligence artificielle")' in source
+    shell_source = (
+        Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_shell.py"
+    ).read_text(encoding="utf-8")
+    ast.parse(shell_source)
+    assert '("ai", "Intelligence artificielle")' in shell_source
+    assert "build_settings_shell(" in source
     draft_source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_draft.py").read_text()
     assert "draft.set('llm', new_ai_settings)" in draft_source
     assert "redémarrage nécessaire" in source
