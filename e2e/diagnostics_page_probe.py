@@ -156,6 +156,7 @@ def main():
         raise SystemExit("GTK/X11/Xvfb requis")
     git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"],
                                       cwd=ROOT, text=True).strip()
+    os.environ["CIFERECA_E2E_WHEEL_DEBUG"] = "1"
     module = importlib.import_module("cifereca_diagnostics_page")
     broker, tasks, host = Broker(), Tasks(), Host()
     plugin = module.DiagnosticsPagePlugin().activate(Context(broker, tasks))

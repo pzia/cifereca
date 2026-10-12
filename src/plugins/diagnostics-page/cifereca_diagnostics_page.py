@@ -367,13 +367,31 @@ def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
                 return False
         offset_x, offset_y = native.get_surface_transform()
         picked = native.pick(x + offset_x, y + offset_y, Gtk.PickFlags.DEFAULT)
-        while picked is not None:
-            if picked is report_scroll:
-                return True
-            if picked is root:
+        raw_picked = native.pick(x, y, Gtk.PickFlags.DEFAULT)
+        root_picked = root.pick(x - offset_x, y - offset_y, Gtk.PickFlags.DEFAULT)
+        over = False
+        widget = picked
+        while widget is not None:
+            if widget is report_scroll:
+                over = True
                 break
-            picked = picked.get_parent()
-        return False
+            if widget is root:
+                break
+            widget = widget.get_parent()
+        if __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1":
+            import sys
+            ok, bounds = report_scroll.compute_bounds(native)
+            print("D05_PICK_DEBUG", {
+                "position": (round(x, 2), round(y, 2)),
+                "native_offset": (round(offset_x, 2), round(offset_y, 2)),
+                "native_pick": type(picked).__name__ if picked else None,
+                "unoffset_pick": type(raw_picked).__name__ if raw_picked else None,
+                "root_pick": type(root_picked).__name__ if root_picked else None,
+                "report_bounds": (round(bounds.get_x(), 2), round(bounds.get_y(), 2),
+                                  round(bounds.get_width(), 2), round(bounds.get_height(), 2)) if ok else None,
+                "over": over,
+            }, file=sys.stderr, flush=True)
+        return over
 
     def on_wheel(controller, dx, dy):
         if not report_expander.get_expanded() or not report_scroll.get_mapped():
