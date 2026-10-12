@@ -322,6 +322,136 @@ def _install_report_escape(Gtk, Gdk, container, scroller, resize):
     container.add_controller(controller)
 
 
+def _scroll_report_adjustment(adjustment, delta: float, unit, Gdk) -> bool:
+    """Move only an inner GTK adjustment, without scrolling its parent.
+
+    Return False at an edge so GTK can chain the wheel to the page normally.
+    Match GTK4's wheel/page-size and surface scroll factors.
+    """
+    if not math.isfinite(delta) or not delta:
+        return False
+    page = adjustment.get_page_size()
+    lower = adjustment.get_lower()
+    upper = max(lower, adjustment.get_upper() - page)
+    value = adjustment.get_value()
+    factor = max(0.0, page) ** (2.0 / 3.0) if unit == Gdk.ScrollUnit.WHEEL else 2.5
+    new_value = min(upper, max(lower, value + delta * factor))
+    if abs(new_value - value) < 0.0001:
+        return False
+    adjustment.set_value(new_value)
+    return True
+
+
+def _install_report_wheel(Gtk, Gdk, GLib, root, outer_scroll, report_scroll, report_expander):
+    """Keep a wheel over the report inside its own scroller.
+
+    Discrete X11/XTEST scroll events may expose no position at all through
+    Gdk.Event.get_position() or Gdk.Device.get_surface_at_position().
+    GTK's motion controller, attached before the outer scroller capture,
+    maintains a position in *root widget coordinates* instead. Hit-test
+    against the current visible widget tree, never cached allocation bounds.
+    Events outside the report or at its edge continue native propagation.
+    """
+    pointer = [None]
+    tracking = Gtk.EventControllerMotion()
+    tracking.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def pointer_moved(_controller, x, y):
+        pointer[0] = (x, y)
+
+    def pointer_left(_controller):
+        pointer[0] = None
+        release_guard()
+
+    tracking.connect("enter", pointer_moved)
+    tracking.connect("motion", pointer_moved)
+    tracking.connect("leave", pointer_left)
+    root.add_controller(tracking)
+
+    # GTK4 may move the ancestor adjustment even after a nested wheel
+    # handler returns TRUE. Keep the parent fixed during an actual inner
+    # wheel gesture, without disabling normal scroll or keyboard navigation.
+    page_adjustment = outer_scroll.get_vadjustment()
+    guard = {"anchor": None, "restoring": False, "serial": 0}
+
+    def release_guard():
+        guard["serial"] += 1
+        guard["anchor"] = None
+
+    def hold_parent():
+        if guard["anchor"] is None:
+            guard["anchor"] = page_adjustment.get_value()
+        guard["serial"] += 1
+        token = guard["serial"]
+
+        def release_later():
+            if guard["serial"] == token:
+                guard["anchor"] = None
+            return False
+
+        GLib.timeout_add(350, release_later)
+
+    def keep_page_fixed(adjustment):
+        if guard["anchor"] is None or guard["restoring"]:
+            return
+        limit = max(adjustment.get_lower(),
+                    adjustment.get_upper() - adjustment.get_page_size())
+        anchor = max(adjustment.get_lower(), min(limit, guard["anchor"]))
+        if abs(adjustment.get_value() - anchor) <= 0.001:
+            return
+        guard["restoring"] = True
+        try:
+            adjustment.set_value(anchor)
+        finally:
+            guard["restoring"] = False
+
+    page_adjustment.connect("value-changed", keep_page_fixed)
+
+    wheel = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.BOTH_AXES)
+    wheel.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+    def over_report():
+        position = pointer[0]
+        if position is None:
+            return False
+        picked = root.pick(*position, Gtk.PickFlags.DEFAULT)
+        while picked is not None and picked is not root:
+            if picked is report_scroll:
+                return True
+            picked = picked.get_parent()
+        return False
+
+    def on_wheel(controller, dx, dy):
+        if not report_expander.get_expanded() or not report_scroll.get_mapped():
+            release_guard()
+            return False
+        if not over_report():
+            release_guard()
+            return False
+        if controller.get_current_event_state() & Gdk.ModifierType.SHIFT_MASK:
+            dx, dy = dy, dx
+        unit = controller.get_unit()
+        # Arm before the inner adjustment changes, in case Gtk tries to
+        # propagate the same physical wheel event to the outer viewport.
+        hold_parent()
+        moved = False
+        if dy:
+            moved = _scroll_report_adjustment(
+                report_scroll.get_vadjustment(), dy, unit, Gdk,
+            )
+        if dx:
+            moved = _scroll_report_adjustment(
+                report_scroll.get_hadjustment(), dx, unit, Gdk,
+            ) or moved
+        if not moved:
+            # The report is at an edge: let the page scroll naturally.
+            release_guard()
+        return moved
+
+    wheel.connect("scroll", on_wheel)
+    root.add_controller(wheel)
+
+
 class DiagnosticsPagePlugin:
     def __init__(self) -> None:
         self.context = None
@@ -366,6 +496,12 @@ class DiagnosticsPagePlugin:
         for margin in ("top", "bottom", "start", "end"):
             getattr(outer, "set_margin_" + margin)(18)
         scroll.set_child(outer)
+        # A parent capture controller must run before GTK4's outer scroller
+        # when a pointer wheel is inside the long support report.
+        page_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        scroll.set_hexpand(True)
+        scroll.set_vexpand(True)
+        page_root.append(scroll)
 
         intro = Gtk.Label(
             label="État technique expurgé fourni par le Core. Les plugins ne lisent ni fichiers internes, ni cookies, ni secrets."
@@ -596,6 +732,9 @@ class DiagnosticsPagePlugin:
         report_wrap.connect("toggled", toggle_report_wrap)
         _install_report_escape(
             Gtk, Gdk, report_container, report_scroll, report_resize,
+        )
+        _install_report_wheel(
+            Gtk, Gdk, GLib, page_root, scroll, report_scroll, report_expander,
         )
         preserve_report_selection(GLib, report_expander, export_view.get_buffer())
 
@@ -1339,7 +1478,7 @@ class DiagnosticsPagePlugin:
             load_events()
 
         _run_once_on_first_map(scroll, initial_load)
-        return scroll
+        return page_root
 
     def deactivate(self):
         for exporter in getattr(self, "_support_exports", ()):
