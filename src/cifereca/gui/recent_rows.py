@@ -6,7 +6,7 @@ nor reads a file or cache.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from .recent_time import format_recent_timestamp
