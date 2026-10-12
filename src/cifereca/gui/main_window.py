@@ -46,6 +46,7 @@ from . import loans_controller, sync_controller
 from .settings_sync_section import build_kobo_sync_section
 from .settings_account_editor import build_provider_account_editor
 from .settings_identity_editor import build_identity_settings_editor
+from .settings_library_downloads import build_library_download_section
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -3814,46 +3815,18 @@ class MainWindow(Adw.ApplicationWindow):
         # ADE is bound only at Paris Identity scope. Provider sub-accounts
         # intentionally have no ADE binding UI.
 
-        # Download policy is intentionally independent from provider accounts:
-        # all credentials of one plugin share the same download override.
-        box = sections["library"]
-        download_group = Adw.PreferencesGroup(); download_group.set_title("Téléchargements — réglages globaux"); box.append(download_group)
-        global_downloads = dict(self.config.get("downloads", {}) or {})
-        global_types = dict(global_downloads.get("content_type_directories", {}) or {})
-        global_dir_row = Adw.EntryRow(); global_dir_row.set_title("Répertoire global")
-        global_dir_row.set_text(str(global_downloads.get("directory") or "")); download_group.add(global_dir_row)
-        global_ebook_row = Adw.EntryRow(); global_ebook_row.set_title("Répertoire livres numériques")
-        global_ebook_row.set_text(str(global_types.get("ebook") or "")); download_group.add(global_ebook_row)
-        global_audio_row = Adw.EntryRow(); global_audio_row.set_title("Répertoire livres audio")
-        global_audio_row.set_text(str(global_types.get("audiobook") or "")); download_group.add(global_audio_row)
-        global_cmd_row = Adw.EntryRow(); global_cmd_row.set_title("Commande de téléchargement (optionnelle)")
-        global_cmd = global_downloads.get("command", []) or []
-        global_cmd_row.set_text(" ".join(shlex.quote(str(x)) for x in global_cmd)); download_group.add(global_cmd_row)
-        global_post_row = Adw.EntryRow(); global_post_row.set_title("Hook post-téléchargement (optionnel)")
-        global_post = global_downloads.get("post_download_command", []) or []
-        global_post_row.set_text(" ".join(shlex.quote(str(x)) for x in global_post)); download_group.add(global_post_row)
-        download_hint = Gtk.Label(
-            label="Priorité des répertoires : type+plugin → plugin → type global → global. Placeholders commandes : {url} {file} {directory} {title} {record_id} {provider} {content_type} {format}.",
-            xalign=0,
+        # Source download policies remain independent of account credentials.
+        download_settings = build_library_download_section(
+            section=sections["library"], config=self.config,
+            descriptors=descriptors, Gtk=Gtk, Adw=Adw, add_css=add_css,
         )
-        download_hint.set_wrap(True); add_css(download_hint, "caption", "dim-label"); box.append(download_hint)
-
-        provider_download_editors: dict[str, dict[str, Adw.EntryRow]] = {}
-        for descriptor in descriptors.values():
-            if descriptor.state != "ready":
-                continue
-            settings = self.config.provider_settings(descriptor.id)
-            dcfg = dict(settings.get("downloads", {}) or {})
-            tcfg = dict(dcfg.get("content_type_directories", {}) or {})
-            group = Adw.PreferencesGroup(); group.set_title(f"Téléchargements — {descriptor.display_name}"); box.append(group)
-            drow = Adw.EntryRow(); drow.set_title("Répertoire du plugin"); drow.set_text(str(dcfg.get("directory") or "")); group.add(drow)
-            erow = Adw.EntryRow(); erow.set_title("Répertoire livres numériques"); erow.set_text(str(tcfg.get("ebook") or "")); group.add(erow)
-            arow = Adw.EntryRow(); arow.set_title("Répertoire livres audio"); arow.set_text(str(tcfg.get("audiobook") or "")); group.add(arow)
-            crow = Adw.EntryRow(); crow.set_title("Commande de téléchargement (surcharge)")
-            crow.set_text(" ".join(shlex.quote(str(x)) for x in (dcfg.get("command", []) or []))); group.add(crow)
-            prow = Adw.EntryRow(); prow.set_title("Hook post-téléchargement du plugin")
-            prow.set_text(" ".join(shlex.quote(str(x)) for x in (dcfg.get("post_download_command", []) or []))); group.add(prow)
-            provider_download_editors[descriptor.id] = {"directory": drow, "ebook": erow, "audiobook": arow, "command": crow, "post": prow}
+        download_group = download_settings.download_group
+        global_dir_row = download_settings.global_dir_row
+        global_ebook_row = download_settings.global_ebook_row
+        global_audio_row = download_settings.global_audio_row
+        global_cmd_row = download_settings.global_cmd_row
+        global_post_row = download_settings.global_post_row
+        provider_download_editors = download_settings.provider_download_editors
 
         box = sections["diagnostic"]
         config_group = Adw.PreferencesGroup(); config_group.set_title("Application"); box.append(config_group)
