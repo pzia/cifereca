@@ -765,12 +765,42 @@ def main():
         # Keep room below the page scroll position; otherwise a valid
         # propagation would be invisible when the parent is already at end.
         outer.set_value(min(outer.get_value(), max(outer.get_lower(), outer_max - 180)))
+        # The parent was repositioned to leave scroll room, so the report
+        # has moved on screen. Re-aim the physical XTEST pointer into the
+        # newly visible part of its viewport before testing propagation.
+        pointed = device[0].click_widget(scroller)
+        ok, box = scroller.compute_bounds(page[0])
+        assert ok, "D05: edge report bounds unavailable"
+        visible_top = max(0, float(box.get_y()))
+        visible_bottom = min(
+            float(page[0].get_height()),
+            float(box.get_y() + box.get_height()),
+        )
+        assert visible_bottom - visible_top > 100, (
+            "D05: report viewport clipped after page reposition",
+            visible_top, visible_bottom,
+        )
+        widget_middle = float(box.get_y() + box.get_height() / 2)
+        new_y = pointed["y"] + round(
+            (visible_top + visible_bottom) / 2 - widget_middle
+        )
+        assert 40 < new_y < 900, ("D05: edge pointer outside Xvfb", new_y)
+        device[0].xtst.XTestFakeMotionEvent(
+            device[0].display, -1, pointed["x"], new_y, 0,
+        )
+        device[0].x11.XSync(device[0].display, False)
+        report["wheel_edge_pointer"] = {
+            **pointed, "y": new_y,
+            "clipped_viewport_height": round(visible_bottom - visible_top, 2),
+        }
+
         outer_before = outer.get_value()
         assert outer_max - outer_before > 20, "D05: no outer scroll range for edge test"
         assert abs(inner.get_value() - inner_max) <= 2, "D05: report not at bottom"
         report["wheel_edge_outer_before"] = round(outer_before, 2)
         report["wheel_edge_inner_before"] = round(inner.get_value(), 2)
-        later(lambda: send_wheel_at_report_edge(view, inner_max, outer_before), 170)
+        # Let GLib dispatch pointer crossing; XSync alone only flushes X11.
+        later(lambda: send_wheel_at_report_edge(view, inner_max, outer_before), 180)
 
     def send_wheel_at_report_edge(view, inner_max, outer_before):
         report["stage"] = "D05_xtest_wheel_at_report_bottom"
