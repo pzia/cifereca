@@ -26,7 +26,7 @@ _LEVELS = ("critical", "error", "warning", "info", "debug")
 # and reason codes. Free-form source labels and reasons can contain names
 # and titles that regex redaction cannot reliably recognise.
 PUBLIC_SOURCE_REASONS = {
-    "app_log": frozenset({"", "log_tail_bounded", "no_matching_events"}),
+    "app_log": frozenset({"", "log_tail_bounded", "log_source_incomplete", "no_matching_events"}),
     "core_events": frozenset({
         "", "diagnostics_disabled", "snapshot_unavailable", "no_recorded_events",
     }),
