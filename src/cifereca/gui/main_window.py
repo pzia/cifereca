@@ -563,6 +563,8 @@ class MainWindow(Adw.ApplicationWindow):
         return build_startup_page(self)
 
     def connect_configured_sources(self) -> bool:
+        if getattr(self, "_closed", False):
+            return False
         _TRACE_LOG.info("TRACE gui connect-configured-sources begin")
         if hasattr(self, "startup_status"):
             self.startup_status.set_label("Connexion aux sources configurées…")
@@ -608,6 +610,10 @@ class MainWindow(Adw.ApplicationWindow):
         self.connect_configured_sources()
 
     def activate_startup_plugins(self) -> bool:
+        # Activation is posted to GTK after the window is presented. That
+        # queued callback may fire after the user has closed the window.
+        if getattr(self, "_closed", False):
+            return False
         if self.plugin_manager is None:
             return False
         _TRACE_LOG.info("TRACE gui plugin-activation begin")
@@ -625,8 +631,9 @@ class MainWindow(Adw.ApplicationWindow):
             # Provider connection must not depend on successful page/header
             # reconstruction. A CoreUI exception must never strand startup in
             # local-only mode after plugins have been activated.
-            _TRACE_LOG.info("TRACE gui schedule connect-configured")
-            GLib.idle_add(self.connect_configured_sources)
+            if not getattr(self, "_closed", False):
+                _TRACE_LOG.info("TRACE gui schedule connect-configured")
+                GLib.idle_add(self.connect_configured_sources)
             duration_ms = (time.perf_counter() - started) * 1000.0
             self.ui_perf.record("startup.plugins_activation", duration_ms)
             _TRACE_LOG.info("TRACE gui plugin-activation end duration_ms=%.1f", duration_ms)
