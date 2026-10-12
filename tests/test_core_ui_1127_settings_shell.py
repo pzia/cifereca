@@ -68,6 +68,7 @@ def test_scroll_clamp_heading_and_tab_switcher_match_baseline():
     assert shell.root.margins == {"top": 22, "bottom": 28, "start": 18, "end": 18}
     assert shell.root.spacing == 18
     heading, subtitle, tab_scroller, tabs = shell.root.children
+    assert shell.heading is heading
     assert heading.children[0].label == "Configuration et diagnostic"
     assert subtitle.label.startswith("Identités, sources")
     assert tab_scroller.policy == ("auto", "never")
@@ -91,6 +92,7 @@ def test_main_window_preserves_standalone_and_revision_host_ownership():
                   and n.name == "_build_settings_page")
     source = ast.unparse(method)
     assert "build_settings_shell(" in source
+    assert "settings_heading = shell.heading" in source
     assert "if not standalone:" in source
     assert "self._settings_tabs = tabs" in source
     assert "SettingsRevisionState(sections)" in source
