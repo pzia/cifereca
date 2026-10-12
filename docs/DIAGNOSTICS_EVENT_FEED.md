@@ -30,6 +30,16 @@ rotation, 200 événements maximum par fichier, 500 événements structurés
 maximum en mémoire. Aucune lecture de base SQLite, credential, ACSM,
 stdout/stderr brut, autre répertoire, réseau ou opération fournisseur.
 
+Les suffixes de rotation absents (`.1`, `.2`, `.3`) sont normaux
+et n'affectent pas la couverture. En revanche, si un journal actif lisible
+coexiste avec une rotation présente mais illisible (lien symbolique,
+permissions, fichier non régulier), ou si seule une rotation est lisible sans
+journal actif, la source est **`partial`** avec la raison publique
+`log_source_incomplete`. Aucun chemin ni contenu refusé n'est exposé au
+plugin. Une source totalement absente demeure `unavailable`, et une simple
+troncation reste `partial` avec `log_tail_bounded`. La couverture ne prouve
+jamais l'exhaustivité des rotations.
+
 Pour les journaux libres, la sortie **ne restitue pas le texte original** :
 les seules données conservées sont le module, le niveau, le timestamp et une
 signature opérationnelle `TRACE` à vocabulaire borné, éventuellement enrichie
