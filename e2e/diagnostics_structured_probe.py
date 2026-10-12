@@ -46,6 +46,7 @@ STRUCTURED = {
     "empty_array": [],
     "empty_object": {},
     "unicode": "Élève 🌍 漢字",
+    "multiline": "Ligne A\nLigne B",
     "nested": {
         "items": [None, False, 0, [], {}],
         "token": SECRET,
@@ -181,6 +182,22 @@ def main():
         device[0].key(key, True)
         device[0].key(key, False)
 
+    def choose_mode_keyboard(selector, keys, wanted, next_step):
+        """Change the actual GTK DropDown via physical XTEST, not set_selected."""
+        assert selector.grab_focus() is not False
+
+        def press():
+            # Gtk.DropDown may delegate focus to an internal toggle child.
+            focused = window[0].get_focus()
+            assert focused is not None and (
+                focused is selector or focused.is_ancestor(selector)
+            ), "D07 : mode de détail inaccessible au clavier"
+            for key in ("space", *keys, "Return"):
+                physical(key)
+            until(lambda: selector.get_selected() == wanted, next_step, seconds=6)
+
+        later(press, 190)
+
     def start():
         assert page[0].get_mapped()
         assert len(broker.event_queries) == 1
@@ -196,11 +213,18 @@ def main():
         for marker in ("null: null", "false: false", "zero: 0", "Élève 🌍 漢字"):
             assert marker in body, (marker, body[:400])
         assert "empty_array:" in body and "empty_object:" in body
+        assert "multiline:" in body and "Ligne A\\nLigne B" in body
+        assert "absent:" not in body, "Champ absent inventé dans le détail"
         assert SECRET not in body
         report["checks"]["D07_readable_preserves_false_zero_null_empty_and_unicode"] = True
         screenshot("00-structure-lisible")
-        selector.set_selected(1)
-        until(lambda: text(view).lstrip().startswith("{"), lambda: json_mode(view))
+        choose_mode_keyboard(
+            selector, ("End", "Up"), 1,
+            lambda: until(
+                lambda: text(view).lstrip().startswith("{") and "\n  " in text(view),
+                lambda: json_mode(view),
+            ),
+        )
 
     def json_mode(view):
         body = text(view)
@@ -213,15 +237,22 @@ def main():
         assert data["unicode"] == "Élève 🌍 漢字"
         assert data["nested"]["items"] == [None, False, 0, [], {}]
         assert data["nested"]["token"] == "<expurgé>"
+        assert data["multiline"] == "Ligne A\nLigne B"
+        assert "absent" not in data, "Clé absente ajoutée au JSON"
         assert SECRET not in body
         assert "\n  " in body
         report["checks"]["D07_json_indented_typed_and_redacted"] = True
+        report["checks"]["D07_json_mode_selected_by_real_keyboard_xtest"] = True
         screenshot("01-structure-json-indent")
         report["json_sha256"] = hashlib.sha256(body.encode("utf-8")).hexdigest()
         selector, _view, _copy = detail_controls()
-        selector.set_selected(2)
-        until(lambda: text(view).lstrip().startswith("{") and "\n  " not in text(view),
-              lambda: raw_mode(view))
+        choose_mode_keyboard(
+            selector, ("End",), 2,
+            lambda: until(
+                lambda: text(view).lstrip().startswith("{") and "\n  " not in text(view),
+                lambda: raw_mode(view),
+            ),
+        )
 
     def raw_mode(view):
         body = text(view)
@@ -230,11 +261,58 @@ def main():
         assert parsed["empty_array"] == []
         assert SECRET not in body
         assert "Élève 🌍 漢字" in body
+        assert parsed["multiline"] == "Ligne A\nLigne B"
+        assert "absent" not in parsed
         report["checks"]["D07_raw_matches_json_without_secret"] = True
+        report["checks"]["D07_raw_mode_selected_by_real_keyboard_xtest"] = True
         screenshot("02-structure-brut-expurge")
         selector, _view, _copy = detail_controls()
-        selector.set_selected(1)
-        until(lambda: "\n  " in text(view), lambda: select_and_copy(view))
+        choose_mode_keyboard(
+            selector, ("End", "Up"), 1,
+            lambda: until(lambda: "\n  " in text(view), lambda: copy_json_button(view)),
+        )
+
+    def copy_json_button(view):
+        # Distinct from TextView Ctrl+C: exercise the real Copy detail button
+        # by keyboard and prove it copies exactly the visible JSON snapshot.
+        selector, _view, button = detail_controls()
+        assert selector.get_selected() == 1
+        expected = text(view)
+        assert json.loads(expected)["multiline"] == "Ligne A\nLigne B"
+        assert SECRET not in expected
+        Gdk.Display.get_default().get_clipboard().set("D07-before-copy-sentinel")
+        assert button.grab_focus() is not False
+
+        def press_button():
+            assert button.has_focus(), "D07 : bouton Copier inaccessible au clavier"
+            physical("space")
+            later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+                None, lambda clipboard, task: json_button_clipboard_done(
+                    clipboard, task, view, expected,
+                ),
+            ), 250)
+
+        later(press_button, 190)
+
+    def json_button_clipboard_done(clipboard, task, view, expected):
+        try:
+            copied = clipboard.read_text_finish(task)
+            assert copied == expected, "D07 : bouton Copier ≠ JSON affiché"
+            assert copied != "D07-before-copy-sentinel"
+            assert json.loads(copied)["nested"]["items"] == [None, False, 0, [], {}]
+            assert "absent" not in json.loads(copied)
+            assert SECRET not in copied
+            assert len(broker.event_queries) == 1 and broker.checks == 0
+            report["checks"]["D07_json_copy_button_keyboard_xtest_exact"] = True
+            report["audits"]["D07_json_copy_sha256_matches_visible"] = (
+                hashlib.sha256(copied.encode("utf-8")).hexdigest()
+                == report["json_sha256"]
+            )
+            assert report["audits"]["D07_json_copy_sha256_matches_visible"]
+            screenshot("02b-copie-json-bouton-xtest")
+            later(lambda: select_and_copy(view), 160)
+        except Exception as exc:
+            fail(f"Copie JSON via bouton GTK : {type(exc).__name__}: {exc}")
 
     def select_and_copy(view):
         # A real GTK selection and XTEST Ctrl+C, not a direct clipboard set().

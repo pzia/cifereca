@@ -31,3 +31,20 @@ def test_active_checks_and_runtime_diagnostics_use_same_formatter():
     assert "def add_detail_view(container, value:" in src
     assert 'add_detail_view(card, row["detail"])' in src
     assert "add_detail_view(card, value)" in src
+
+
+def test_d07_e2e_modes_and_copy_use_real_xtest_keyboard():
+    """#1012: the GTK acceptance gate must not fake mode changes/copy calls."""
+    source = (Path(__file__).resolve().parents[3] / "e2e" /
+              "diagnostics_structured_probe.py").read_text(encoding="utf-8")
+    assert 'for key in ("space", *keys, "Return"):' in source
+    assert 'choose_mode_keyboard(' in source
+    assert "physical(key)" in source
+    assert "def copy_json_button(view):" in source
+    assert 'physical("space")' in source
+    assert "assert copied == expected" in source
+    assert "json.loads(copied)" in source
+    assert "D07_json_copy_button_keyboard_xtest_exact" in source
+    assert "D07_json_mode_selected_by_real_keyboard_xtest" in source
+    assert "D07_raw_mode_selected_by_real_keyboard_xtest" in source
+    assert ".set_selected(" not in source
