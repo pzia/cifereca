@@ -342,6 +342,25 @@ def llm_destination(llm: Any) -> dict[str, str | bool]:
     return {"model": model, "provider": provider, "host": host, "remote": remote}
 
 
+# The API accepts a date filter from the GTK period control. Do not send an
+# arbitrary string to the remote model as a purported timestamp: names, book
+# titles and control characters can otherwise pass regex-only redaction.
+_SINCE_ISO = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})\\Z"
+)
+
+
+def _valid_since(since: object) -> bool:
+    if type(since) is not str or len(since) > 40 or not _SINCE_ISO.fullmatch(since):
+        return False
+    try:
+        stamp = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        return stamp.tzinfo is not None and stamp.utcoffset() is not None
+    except (ValueError, OverflowError):
+        return False
+
+
 def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
@@ -361,11 +380,7 @@ def prepare_analysis(
         "", "debug", "info", "warning", "error", "critical",
     ):
         raise ValueError("unsupported_severity")
-    if since is not None and (
-        type(since) is not str or len(since) > 64 or any(
-            ord(char) < 32 or ord(char) == 127 for char in since
-        )
-    ):
+    if since is not None and not _valid_since(since):
         raise ValueError("unsupported_since")
     if type(include_snapshot) is not bool:
         raise ValueError("unsupported_structured_scope")
