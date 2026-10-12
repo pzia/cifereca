@@ -58,9 +58,11 @@ def test_window_lifecycle_disposes_on_close_rebuild_and_standalone():
     assert "'_settings_main_lifetime'" in build
     assert "'_settings_standalone_lifetime'" in build
     assert "getattr(self, lifetime_name, None)" in build
-    assert "lifetime.dispose()" in close
+    assert "close_window_resources(self, source_remove=GLib.source_remove)" in close
+    teardown = (path.parent / "window_close.py").read_text(encoding="utf-8")
+    assert "lifetime.dispose()" in teardown
     assert "standalone_lifetime.dispose()" in standalone
-    assert "self._diag_refresh = None" in close
+    assert "window._diag_refresh = None" in teardown
     assert "_settings_main_lifetime" in init
 
 
