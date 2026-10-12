@@ -744,6 +744,100 @@ def main():
         )
         report["checks"]["D05_xtest_wheel_keeps_outer_page_fixed"] = True
         screenshot("09b-report-physical-wheel-1600")
+        # A nested scroller must not trap the physical wheel at its lower
+        # bound. After the parent guard expires, the same XTEST wheel must
+        # propagate to the outer Diagnostics page when the report is at end.
+        later(lambda: prepare_wheel_at_report_edge(view), 130)
+
+    def prepare_wheel_at_report_edge(view):
+        report["stage"] = "D05_prepare_wheel_at_report_edge"
+        scroller = view.get_parent()
+        while scroller is not None and not isinstance(scroller, Gtk.ScrolledWindow):
+            scroller = scroller.get_parent()
+        assert scroller is not None, "D05: support report scroll parent missing"
+        inner = scroller.get_vadjustment()
+        inner_max = max(inner.get_lower(), inner.get_upper() - inner.get_page_size())
+        assert inner_max > 400, "D05: edge test requires a long report"
+        inner.set_value(inner_max)
+
+        outer = page[0].get_vadjustment()
+        outer_max = max(outer.get_lower(), outer.get_upper() - outer.get_page_size())
+        # Keep room below the page scroll position; otherwise a valid
+        # propagation would be invisible when the parent is already at end.
+        outer.set_value(min(outer.get_value(), max(outer.get_lower(), outer_max - 180)))
+        # The parent was repositioned to leave scroll room, so the report
+        # has moved on screen. Re-aim the physical XTEST pointer into the
+        # newly visible part of its viewport before testing propagation.
+        pointed = device[0].click_widget(scroller)
+        ok, box = scroller.compute_bounds(page[0])
+        assert ok, "D05: edge report bounds unavailable"
+        visible_top = max(0, float(box.get_y()))
+        visible_bottom = min(
+            float(page[0].get_height()),
+            float(box.get_y() + box.get_height()),
+        )
+        assert visible_bottom - visible_top > 100, (
+            "D05: report viewport clipped after page reposition",
+            visible_top, visible_bottom,
+        )
+        widget_middle = float(box.get_y() + box.get_height() / 2)
+        new_y = pointed["y"] + round(
+            (visible_top + visible_bottom) / 2 - widget_middle
+        )
+        assert 40 < new_y < 900, ("D05: edge pointer outside Xvfb", new_y)
+        device[0].xtst.XTestFakeMotionEvent(
+            device[0].display, -1, pointed["x"], new_y, 0,
+        )
+        device[0].x11.XSync(device[0].display, False)
+        report["wheel_edge_pointer"] = {
+            **pointed, "y": new_y,
+            "clipped_viewport_height": round(visible_bottom - visible_top, 2),
+        }
+
+        outer_before = outer.get_value()
+        assert outer_max - outer_before > 20, "D05: no outer scroll range for edge test"
+        assert abs(inner.get_value() - inner_max) <= 2, "D05: report not at bottom"
+        report["wheel_edge_outer_before"] = round(outer_before, 2)
+        report["wheel_edge_inner_before"] = round(inner.get_value(), 2)
+        # Let GLib dispatch pointer crossing; XSync alone only flushes X11.
+        later(lambda: send_wheel_at_report_edge(view, inner_max, outer_before), 180)
+
+    def send_wheel_at_report_edge(view, inner_max, outer_before):
+        report["stage"] = "D05_xtest_wheel_at_report_bottom"
+        for _ in range(4):
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, True, 0)
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, False, 0)
+        device[0].x11.XSync(device[0].display, False)
+        # Measure after GTK has handled the physical input. A positive
+        # timeout otherwise hides the actual edge values behind a generic
+        # "condition GTK" failure and wastes five seconds per run.
+        later(lambda: verify_wheel_at_report_edge(view, inner_max, outer_before), 700)
+
+    def verify_wheel_at_report_edge(view, inner_max, outer_before):
+        report["stage"] = "D05_verify_wheel_at_report_bottom"
+        scroller = view.get_parent()
+        while scroller is not None and not isinstance(scroller, Gtk.ScrolledWindow):
+            scroller = scroller.get_parent()
+        assert scroller is not None
+        inner_after = scroller.get_vadjustment().get_value()
+        outer_after = page[0].get_vadjustment().get_value()
+        report["wheel_edge_inner_after"] = round(inner_after, 2)
+        report["wheel_edge_outer_after"] = round(outer_after, 2)
+        inside_at_end = abs(inner_after - inner_max) <= 2
+        outer_propagated = outer_after > outer_before + 5
+        report.setdefault("audit", {})[
+            "D05_xtest_wheel_at_inner_edge_scrolls_outer_page"
+        ] = outer_propagated
+        # Save the actual post-wheel GTK state even on a genuine product FAIL.
+        screenshot("09bb-report-wheel-edge-propagates-1600")
+        assert inside_at_end, (
+            "D05: inner adjustment should stay at its lower edge", inner_after, inner_max,
+        )
+        assert outer_propagated, (
+            "D05: physical wheel is trapped by report at the lower edge",
+            outer_before, outer_after,
+        )
+        report["checks"]["D05_xtest_wheel_at_inner_edge_scrolls_outer_page"] = True
         select_support_report(view)
 
     def select_support_report(view):

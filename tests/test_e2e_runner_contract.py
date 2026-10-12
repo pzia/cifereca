@@ -181,6 +181,8 @@ def test_diagnostics_large_1600_reuses_real_probe_and_tests_keyboard_scroll():
         "D15_return_xtest_activates_button_and_keeps_focus",
         "D05_reexpand_preserves_focus_and_selection",
         "D05_xtest_wheel_keeps_outer_page_fixed",
+        "D05_xtest_wheel_at_inner_edge_scrolls_outer_page",
+        "09bb-report-wheel-edge-propagates-1600",
         "D13_support_textview_ctrl_c_exact_selection",
         'XTestFakeButtonEvent(device[0].display, 5, True, 0)',
         'device[0].key("Control_L", True)',
