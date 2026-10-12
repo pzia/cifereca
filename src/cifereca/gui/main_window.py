@@ -43,7 +43,6 @@ from .llm_settings import (
 )
 from .diagnostic_presentation import diagnostic_plugin_rows
 from . import loans_controller, sync_controller
-from .search_pending import pending_online_search_matches
 from .settings_sync_section import build_kobo_sync_section
 from .settings_account_editor import build_provider_account_editor
 from .settings_identity_editor import build_identity_settings_editor
@@ -1881,6 +1880,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _search_enter(self):
         from .search_intent import SearchEnterSequence
+        from .search_pending import pending_online_search_matches
         if not hasattr(self, "_search_enter_sequence"):
             self._search_enter_sequence = SearchEnterSequence()
         state = self.search_controls.state()
@@ -1960,6 +1960,7 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
+        from .search_pending import pending_online_search_matches
         if not keyboard:
             self._reset_search_enter()
         state = self.search_controls.state()
