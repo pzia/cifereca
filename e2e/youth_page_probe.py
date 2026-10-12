@@ -222,6 +222,10 @@ def main() -> int:
               <div class="card-cover"><img src="/assets/cover-roman.jpg"></div>
             </div>
           </div>
+          <div id="products-thumb-wrapper">
+            <div class="product-item-thumb"><a href="/livre/histoire-petit-loup">Vue miniature du loup</a></div>
+            <div class="product-item-thumb"><a href="/livre/roman-ado">Vue miniature du roman</a></div>
+          </div>
         </body></html>
         """
 
@@ -1090,12 +1094,16 @@ def main() -> int:
         assert current["pipeline"].get("missing_isbn") == 2, current
         assert current["pipeline"].get("cards_detected") == 2, current
         assert current["pipeline"].get("cards_complete") == 2, current
+        assert current["pipeline"].get("thumbnail_card_count") == 2, current
+        assert current["pipeline"].get("thumbnail_duplicate_count") == 2, current
         assert current["pipeline"].get("cover_urls_valid") == 2, current
         assert "2 notice(s) reçue(s)" in page.view.status.get_text()
         labels = " ".join(diagnostic_labels())
         assert "L'École des loisirs" in labels and "collecte avec notices" in labels, labels
         assert "notices sans ISBN publié : 2" in labels, labels
         assert "cartes catalogue : 2" in labels, labels
+        assert "vignettes secondaires : 2" in labels, labels
+        assert "vignettes d’éditions déjà présentes : 2" in labels, labels
         assert "loup" not in labels.lower(), "Query leaked into Diagnostics"
         assert diagnostic_for("camille")["ecole-loisirs"]["collection_state"] == "not_tested"
         assert diagnostic_for("alex")["milan"]["collection_state"] == "not_tested"

@@ -35,6 +35,69 @@ def test_cards_without_isbn_keep_age_and_source_identity():
     assert diagnostic["missing_isbn"] == 2
 
 
+def test_thumbnail_duplicates_and_rejected_cards_are_observed_without_exposing_urls():
+    html = """
+    <div id="products-wrapper">
+      <div class="product-item">
+        <a href="/livre/a"><span class="card-title">Alpha</span></a>
+        <div class="card-infos">Age : 8 à 11 ans</div>
+      </div>
+      <div class="product-item">
+        <a href="/livre/a"><span class="card-title">Same edition</span></a>
+        <div class="card-infos">Age : 8 à 11 ans</div>
+      </div>
+      <div class="product-item">
+        <a href="/livre/no-age"><span class="card-title">No age</span></a>
+      </div>
+      <div class="product-item">
+        <a href="/livre/no-title"></a><div class="card-infos">Age : 8 à 11 ans</div>
+      </div>
+      <div class="product-item">
+        <a href="https://other.example/private?token=SECRET"><span class="card-title">Not public</span></a>
+        <div class="card-infos">Age : 8 à 11 ans</div>
+      </div>
+    </div>
+    <div id="products-thumb-wrapper">
+      <div class="product-item-thumb"><a href="/livre/a">Duplicate thumbnail</a></div>
+      <div class="product-item-thumb"><div><a href="/livre/a">Another thumbnail of A</a></div></div>
+      <div class="product-item-thumb"><a href="/livre/not-in-primary">Unrelated thumbnail</a></div>
+    </div>
+    """
+    d = {}
+    rows = parse_catalogue_cards(html, diagnostic=d)
+    assert [r["record_id"] for r in rows] == ["a"]
+    assert d["cards_detected"] == 5
+    assert d["cards_complete"] == 1
+    assert d["thumbnail_card_count"] == 3
+    assert d["thumbnail_duplicate_count"] == 1  # distinct editions, not 2 thumbnails
+    assert d["candidate_count"] == 3
+    assert d["analyzed_count"] == 5
+    assert d["rejection_reasons"] == {
+        "duplicate": 1, "age_unattested": 1, "title_missing": 1,
+        "unexpected_markup": 1,
+    }
+    assert d["truncated_by_limit"] is False
+    for secret in ("SECRET", "other.example", "not-in-primary", "Alpha"):
+        assert secret not in str(d)
+
+
+def test_cards_bounded_collection_never_claims_all_candidates_examined():
+    html = "<div id='products-wrapper'>" + "".join(
+        f'<div class="product-item"><a href="/livre/notice-{i}">'
+        f'<span class="card-title">Notice {i}</span></a>'
+        '<div class="card-infos">Age : 8 à 11 ans</div></div>'
+        for i in range(4)
+    ) + "</div>"
+    d = {}
+    assert len(parse_catalogue_cards(html, limit=2, diagnostic=d)) == 2
+    assert d["cards_detected"] == 4
+    assert d["cards_complete"] == 2
+    assert d["analyzed_count"] == 2
+    assert d["candidate_count"] == 2
+    assert d["truncated_by_limit"] is True
+    assert d["rejection_reasons"] == {}
+
+
 def test_cards_reject_unattested_age_and_non_public_links():
     html = """
     <div class="product-item"><a href="https://invalid.example/livre/other">

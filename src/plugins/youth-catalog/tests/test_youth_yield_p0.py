@@ -152,6 +152,44 @@ def test_card_metrics_are_strictly_bounded_before_support_and_ui():
     assert "PRIVATE_TOKEN" not in payload
 
 
+def test_secondary_thumbnails_survive_only_as_safe_per_identity_counts():
+    index = YouthCatalogIndex()
+    index.record_collection(
+        "camille-PRIVATE", "ecole-loisirs", state="items", accepted=2,
+        pipeline={
+            "cards_detected": 2, "cards_complete": 2,
+            "thumbnail_card_count": 20,
+            "thumbnail_duplicate_count": 2,
+            "rejection_reasons": {"duplicate": 1, "age_unattested": 1},
+            "thumbnail_urls": ["https://private.example/?token=SECRET"],
+        },
+    )
+    camille = {x["source_id"]: x for x in index.source_diagnostics("camille-PRIVATE")}
+    alex = {x["source_id"]: x for x in index.source_diagnostics("alex-PRIVATE")}
+    p = camille["ecole-loisirs"]["pipeline"]
+    assert p["thumbnail_card_count"] == 20
+    assert p["thumbnail_duplicate_count"] == 2
+    assert p["rejection_reasons"] == {"duplicate": 1, "age_unattested": 1}
+    assert alex["ecole-loisirs"]["collection_state"] == "not_tested"
+    assert alex["ecole-loisirs"]["pipeline"] == {}
+    summary, lines = source_diagnostic_presentation((camille["ecole-loisirs"],))
+    assert "vignettes secondaires : 20" in lines[0]
+    assert "vignettes d’éditions déjà présentes : 2" in lines[0]
+    report = youth_source_support_snapshot((camille["ecole-loisirs"],))
+    counts = report["sources"][0]["counts"]
+    assert counts["thumbnail_card_count"] == 20
+    assert counts["thumbnail_duplicate_count"] == 2
+    encoded = json.dumps(report, ensure_ascii=False) + " ".join(lines)
+    assert "SECRET" not in encoded and "PRIVATE" not in encoded
+
+    source = {
+        "thumbnail_card_count": "20", "thumbnail_duplicate_count": True,
+        "cards_detected": 2, "cards_complete": 2,
+    }
+    assert "thumbnail_card_count" not in source_yield_diagnostic(row("items", **source))["counts"]
+    assert "thumbnail_duplicate_count" not in source_yield_diagnostic(row("items", **source))["counts"]
+
+
 def test_http_errors_and_success_are_not_mixed_with_undetermined_empty():
     assert source_yield_diagnostic(row("http_error"))["cause"] == "http_echec"
     assert source_yield_diagnostic(row("timeout"))["cause"] == "delai_depasse"

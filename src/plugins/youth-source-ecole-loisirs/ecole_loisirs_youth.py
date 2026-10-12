@@ -220,6 +220,9 @@ class _ProductCards(HTMLParser):
         self.cards = []
         self.field = None
         self._ignored = 0
+        self.thumbnail_count = 0
+        self.thumbnail_urls = set()
+        self._thumbnail_depth = 0
 
     def handle_starttag(self, tag, attrs):
         if tag in {"script", "style", "noscript", "svg"}:
@@ -230,6 +233,18 @@ class _ProductCards(HTMLParser):
         a = dict(attrs)
         classes = set(a.get("class", "").split())
         if self.card is None:
+            if self._thumbnail_depth:
+                if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
+                    self._thumbnail_depth += 1
+                if tag == "a":
+                    url = _product_url(a.get("href"))
+                    if url:
+                        self.thumbnail_urls.add(url)
+                return
+            if tag == "div" and "product-item-thumb" in classes:
+                self.thumbnail_count += 1
+                self._thumbnail_depth = 1
+                return
             if tag == "div" and "product-item" in classes:
                 self.card = {"title": [], "authors": [], "info": [], "summary": [], "url": "", "cover_url": "", "cover_seen": False}
                 self.stack = [tag]
@@ -265,7 +280,13 @@ class _ProductCards(HTMLParser):
         if tag in {"script", "style", "noscript", "svg"} and self._ignored:
             self._ignored -= 1
             return
-        if self._ignored or self.card is None:
+        if self._ignored:
+            return
+        if self._thumbnail_depth and self.card is None:
+            if tag not in {"img", "br", "input", "hr", "meta", "link", "source"}:
+                self._thumbnail_depth -= 1
+            return
+        if self.card is None:
             return
         # HTMLParser also emits an end callback for self-closing void tags.
         if tag in {"img", "br", "input", "hr", "meta", "link", "source"}:
@@ -284,16 +305,33 @@ def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
     parser.feed(html or "")
     parser.close()
     out, seen = [], set()
+    rejection = {"duplicate": 0, "unexpected_markup": 0,
+                 "title_missing": 0, "age_unattested": 0}
+    bounded = max(1, min(int(limit), 40))
+    examined = 0
+    truncated = False
     for card in parser.cards:
+        if len(out) >= bounded:
+            truncated = True
+            break
+        examined += 1
         url = card["url"]
-        if not url or url in seen:
+        if not url:
+            rejection["unexpected_markup"] += 1
+            continue
+        if url in seen:
+            rejection["duplicate"] += 1
             continue
         seen.add(url)
         info = _text(" ".join(card["info"]))
         age_match = re.search(r"(?:âge|age)\s*:\s*(\d{1,2}\s*à\s*\d{1,2}\s*ans|\d{1,2}\s*ans\s*et\s*\+)", info, re.I)
         age = parse_age_label(age_match.group(1)) if age_match else None
         title = _text(" ".join(card["title"]))
-        if not title or age is None or not age.qualified:
+        if not title:
+            rejection["title_missing"] += 1
+            continue
+        if age is None or not age.qualified:
+            rejection["age_unattested"] += 1
             continue
         slug = urlsplit(url).path.removeprefix("/livre/")
         item = {
@@ -314,17 +352,25 @@ def parse_catalogue_cards(html: str, *, limit: int = 40, diagnostic=None):
             if collection:
                 item["collection"] = collection
         out.append(item)
-        if len(out) >= max(1, min(int(limit), 40)):
-            break
     if diagnostic is not None:
+        # Only bounded counters and fixed reason keys leave the adapter; the
+        # transient URLs needed for deduplication never enter Diagnostics.
+        primary_urls = {card["url"] for card in parser.cards if card["url"]}
         diagnostic.update({
-            "cards_detected": len(parser.cards), "cards_complete": len(out),
-            "candidate_count": len(seen), "analyzed_count": len(seen),
-            "age_qualified_count": len(out), "returned_items": len(out),
+            "cards_detected": min(100_000, len(parser.cards)),
+            "cards_complete": len(out),
+            "thumbnail_card_count": min(100_000, parser.thumbnail_count),
+            "thumbnail_duplicate_count": min(100_000, len(parser.thumbnail_urls & primary_urls)),
+            "candidate_count": min(100_000, len(seen)),
+            "analyzed_count": min(100_000, examined),
+            "age_qualified_count": len(out),
+            "returned_items": len(out),
             "missing_isbn": len(out), "isbn_valid_count": 0,
             "author_count": sum(len(row["authors"]) for row in out),
             "covers_seen": sum(bool(card["cover_seen"]) for card in parser.cards),
             "cover_urls_valid": sum(bool(row.get("cover_url")) for row in out),
+            "truncated_by_limit": truncated,
+            "rejection_reasons": {key: min(100_000, n) for key, n in rejection.items() if n},
         })
     return tuple(out)
 
