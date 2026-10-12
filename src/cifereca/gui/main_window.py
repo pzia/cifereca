@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .settings_context import settings_action_state
+from .settings_model import SettingsCommitController
 from .llm_settings import (
     LLMSettingsError, normalize_llm_settings, destination_summary,
     env_key_is_set, probe_llm_connection,
@@ -4595,7 +4596,13 @@ class MainWindow(Adw.ApplicationWindow):
             })
             diag_text.get_buffer().set_text(content)
 
+        settings_committer = SettingsCommitController(
+            self.service.save_configuration, self.runner.submit, self.runner.present_error,
+        )
+
         def save_settings(_button=None, *, reconnect_after=False) -> bool:
+            if settings_committer.pending:
+                return False
             from pathlib import Path
             from copy import deepcopy
             draft = deepcopy(self.config)
@@ -4756,7 +4763,7 @@ class MainWindow(Adw.ApplicationWindow):
             if directory_change and getattr(self, "_active_tasks", {}):
                 self.show_error("Attendez la fin des opérations en cours avant de changer un répertoire d’identité.")
                 return False
-            staged = deepcopy(draft.data)
+            staged = settings_committer.stage(draft.data)
             try:
                 staged_settings_revisions = dict(settings_revisions)
             except NameError:
@@ -4801,10 +4808,10 @@ class MainWindow(Adw.ApplicationWindow):
                     pass
                 if reconnect_after:
                     self.reconnect_sources()
-            self.runner.submit("Enregistrement et migration des répertoires…" if directory_change else "Enregistrement de la configuration…",
-                lambda: self.service.save_configuration(staged), ok,
-                control=_button or save, priority=TaskPriority.USER_ACTION, kind="settings")
-            return True
+            return settings_committer.submit(
+                "Enregistrement et migration des répertoires…" if directory_change else "Enregistrement de la configuration…",
+                staged, ok, control=_button or save,
+            )
 
         def save_and_reconnect(_button=None) -> None:
             save_settings(_button or reconnect, reconnect_after=True)
