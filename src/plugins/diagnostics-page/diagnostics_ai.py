@@ -259,7 +259,12 @@ def _public_event_row(item: Mapping[str, Any]) -> dict[str, str]:
         if type(value) is str and value.casefold() in allowed:
             row[field] = value.casefold()
     event_id = item.get("event_id")
-    if type(event_id) is str and len(event_id) <= 64 and _REF.fullmatch(event_id):
+    if (
+        "source" in row and "timestamp" in row
+        and type(event_id) is str and len(event_id) <= 64
+        and _REF.fullmatch(event_id)
+    ):
+        # IDs without an attested source and date cannot be cited as evidence.
         row["event_id"] = event_id
     message = item.get("message")
     if type(message) is str:
