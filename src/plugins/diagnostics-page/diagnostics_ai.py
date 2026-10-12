@@ -239,9 +239,8 @@ def _public_event_row(item: Mapping[str, Any]) -> dict[str, str]:
         try:
             instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
             if instant.tzinfo is not None and instant.utcoffset() is not None:
-                row["timestamp"] = instant.astimezone(timezone.utc).isoformat(
-                    timespec="seconds",
-                )
+                # Preserve subsecond precision for same-second events.
+                row["timestamp"] = instant.astimezone(timezone.utc).isoformat()
         except (ValueError, OverflowError):
             pass
     source = item.get("source")
