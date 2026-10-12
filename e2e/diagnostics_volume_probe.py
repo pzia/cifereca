@@ -451,9 +451,9 @@ def main():
             if w.get_tooltip_text() == "Source des événements"
         ]
         assert len(dropdowns) == 1
-        choose_source_keyboard(dropdowns[0], "End", 2, "app_log", source_filtered)
+        choose_source_keyboard(dropdowns[0], ("End",), 2, "app_log", source_filtered)
 
-    def choose_source_keyboard(dropdown, key, selected, source, next_step):
+    def choose_source_keyboard(dropdown, keys, selected, source, next_step):
         previous = len(broker.requests)
         assert dropdown.grab_focus() is not False, "D09: filtre Source sans focus"
 
@@ -465,7 +465,7 @@ def main():
             assert focused is not None and (
                 focused is dropdown or focused.is_ancestor(dropdown)
             ), "D09: le choix Source et ses enfants n'ont pas le focus"
-            for keysym in ("space", key, "Return"):
+            for keysym in ("space", *keys, "Return"):
                 device[0].key(keysym, True)
                 device[0].key(keysym, False)
             until(
@@ -495,7 +495,7 @@ def main():
             w for w in widgets(Gtk.DropDown)
             if w.get_tooltip_text() == "Source des événements"
         ][0]
-        choose_source_keyboard(src, "Up", 1, "core_events", source_core_filtered)
+        choose_source_keyboard(src, ("End", "Up"), 1, "core_events", source_core_filtered)
 
     def source_core_filtered():
         assert broker.requests[-1]["module"] == "kobo"
@@ -514,7 +514,7 @@ def main():
             if w.get_tooltip_text() == "Source des événements"
         ][0]
         choose_source_keyboard(
-            src, "Home", 0, "all",
+            src, ("Home",), 0, "all",
             lambda: query_module("paris", "paris.lending", paris_copy_loaded),
         )
 
