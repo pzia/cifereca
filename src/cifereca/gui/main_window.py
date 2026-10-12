@@ -620,13 +620,18 @@ class MainWindow(Adw.ApplicationWindow):
         started = time.perf_counter()
         try:
             self.plugin_manager.activate()
+            if getattr(self, "_closed", False):
+                return False
             self.service.attach_plugin_manager(self.plugin_manager)
+            if getattr(self, "_closed", False):
+                return False
             self._plugins_changed()
         except Exception as exc:
-            self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
-            if hasattr(self, "dashboard_loading_status"):
-                self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
-                self.dashboard_loading_status.set_visible(True)
+            if not getattr(self, "_closed", False):
+                self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
+                if hasattr(self, "dashboard_loading_status"):
+                    self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
+                    self.dashboard_loading_status.set_visible(True)
         finally:
             # Provider connection must not depend on successful page/header
             # reconstruction. A CoreUI exception must never strand startup in
