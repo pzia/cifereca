@@ -30,6 +30,7 @@ from gi.repository import GLib, Gio, Gtk
 from PIL import ImageGrab
 
 from diagnostics_page_probe import Broker, Context, Host, Tasks, walk
+from cifereca.plugin_api import LLMResult
 from x11_input import X11Input
 
 
@@ -59,8 +60,15 @@ class StateBroker(Broker):
         self.event_queries.append(dict(query))
         if self.fail:
             raise RuntimeError("fixture-source-indisponible")
+        events = [{
+            "event_id": "event-ux-001",
+            "timestamp": "2026-10-11T05:20:00+00:00",
+            "source": "app_log", "module": "core.sync", "severity": "warning",
+            "status": "partial", "message": "Incident simulé sans donnée réelle",
+            "secret": "UX_FICTIF_NON_EXPORTABLE",
+        }] if self.state == "ai" else []
         return {
-            "events": [], "total": 0, "offset": 0, "next_offset": None,
+            "events": events, "total": len(events), "offset": 0, "next_offset": None,
             "sources": [] if self.state == "empty" else [
                 {"source": "core_events", "status": "available"},
                 *([{"source": "app_log", "status": "unavailable"}]
@@ -72,6 +80,40 @@ class StateBroker(Broker):
         self.checks += 1
         sleep(1.15)  # Only in the daemon worker, NEVER the GTK main thread.
         return [{"status": "ok", "message": "Contrôle local fictif terminé"}]
+
+
+class FictionalLLM:
+    """Deterministic opt-in UX fixture: no HTTP client, no network calls."""
+
+    def __init__(self):
+        self.calls = 0
+        self.requests = []
+
+    def available(self):
+        return True
+
+    def destination(self):
+        return {
+            "available": True, "remote": True, "host": "model.example",
+            "model": "ux-fictif", "provider": "fixture-ux",
+        }
+
+    def generate(self, request, *, control=None):
+        self.calls += 1
+        self.requests.append(request)
+        return LLMResult(
+            True, text="Hypothèse fictive : rapprocher event-ux-001 avant conclusion.",
+            provider="fixture-ux", model="ux-fictif", generated=True, remote=True,
+        )
+
+
+class FictionalLLMContext(Context):
+    def __init__(self, broker, tasks, llm):
+        super().__init__(broker, tasks)
+        self.llm = llm
+
+    def service(self, name):
+        return self.llm if name == "llm" else None
 
 
 class SlowHandle:
@@ -144,6 +186,7 @@ def main():
     host = [None]
     device = [None]
     checks_started_at = [None]
+    ai_fixture = [None]
     rc = [1]
     tick = [0]
 
@@ -215,7 +258,12 @@ def main():
         broker[0] = StateBroker(state)
         tasks = StateTasks()
         host[0] = Host()
-        plugin[0] = module.DiagnosticsPagePlugin().activate(Context(broker[0], tasks))
+        ai_fixture[0] = FictionalLLM() if state == "ai" else None
+        context = (
+            FictionalLLMContext(broker[0], tasks, ai_fixture[0])
+            if state == "ai" else Context(broker[0], tasks)
+        )
+        plugin[0] = module.DiagnosticsPagePlugin().activate(context)
         root = plugin[0]._build(host[0])
         window[0].set_child(root)
         # This probe directly drives the main Diagnostics scroll adjustment.
@@ -475,7 +523,116 @@ def main():
                  report["audits"]["D14_support_report_freshness_explicit"]),
             ) if not ok
         ]
+
         report["audits"]["D16_full_multi_monitor_coverage"] = False
+        # D14/#1009: exercise the complete preview -> invalidated preview ->
+        # explicit consent journey with a NO-NETWORK fictional LLM. No implicit
+        # model call may occur when the page is created.
+        switch("ai")
+        until(lambda: len(broker[0].event_queries) == 1
+              and has("1 événements affichés"), d14_preview_entry, seconds=6)
+
+    def ai_button(label):
+        found = [w for w in walk(page[0])
+                 if isinstance(w, Gtk.Button) and w.get_label() == label]
+        assert len(found) == 1, ("D14 bouton absent", label, len(found))
+        return found[0]
+
+    def ai_status():
+        return " ".join(labels())
+
+    def click_ai(button, callback):
+        # A mapped GTK control may be outside the viewport; scroll the *real*
+        # Diagnostics page until its bounds are onscreen before physical XTEST.
+        outer = page[0]
+        ok, bounds = button.compute_bounds(outer.get_child())
+        assert ok and bounds.get_width() > 0, "D14: contrôle sans allocation"
+        adjustment = outer.get_vadjustment()
+        target = max(0.0, min(
+            float(bounds.get_y()) - 110,
+            max(0.0, adjustment.get_upper() - adjustment.get_page_size()),
+        ))
+        adjustment.set_value(target)
+        later(lambda: (device[0].click_widget(button), callback()), 240)
+
+    def d14_preview_entry():
+        report["stage"] = "D14_no_implicit_ai"
+        assert ai_fixture[0] is not None and ai_fixture[0].calls == 0
+        assert broker[0].checks == 0
+        assert plugin[0].llm is ai_fixture[0]
+        assert not ai_button("Autoriser et analyser").get_sensitive()
+        assert has("IA non configurée ou non consultée")
+        report["checks"]["D14_no_implicit_ai_or_active_check"] = True
+        capture("08-d14-before-preview-no-llm-call")
+        click_ai(ai_button("Prévisualiser pour l’IA"), d14_wait_preview)
+
+    def d14_wait_preview():
+        until(lambda: ai_button("Autoriser et analyser").get_sensitive()
+              and has("DISTANT — aucun envoi avant autorisation"),
+              d14_preview_ready, seconds=7)
+
+    def d14_preview_ready():
+        assert ai_fixture[0].calls == 0
+        assert "modèle ux-fictif" in ai_status()
+        assert "Le modèle produit des hypothèses, jamais une preuve" in ai_status()
+        assert "rapport support : non" in ai_status()
+        report["checks"]["D14_remote_destination_disclosed_before_consent"] = True
+        capture("09-d14-remote-preview-not-sent")
+        # Change the source scope after the preview: the previous approval
+        # MUST become invalid; do not simulate invalidation by disabling
+        # buttons directly.
+        selected = [w for w in walk(page[0])
+                    if isinstance(w, Gtk.CheckButton)
+                    and w.get_label() == "Inclure les diagnostics structurés Core (lecture seule)"]
+        assert len(selected) == 1
+        selected[0].set_active(True)
+        later(d14_invalidated, 130)
+
+    def d14_invalidated():
+        assert not ai_button("Autoriser et analyser").get_sensitive()
+        assert has("Aperçu à actualiser avant toute nouvelle analyse")
+        assert ai_fixture[0].calls == 0
+        report["checks"]["D14_changed_scope_invalidates_consent"] = True
+        capture("10-d14-preview-invalidated-by-scope")
+        click_ai(ai_button("Prévisualiser pour l’IA"), d14_wait_repreview)
+
+    def d14_wait_repreview():
+        until(lambda: ai_button("Autoriser et analyser").get_sensitive()
+              and has("diagnostics structurés : oui"),
+              d14_ready_to_consent, seconds=7)
+
+    def d14_ready_to_consent():
+        assert ai_fixture[0].calls == 0
+        assert broker[0].checks == 0
+        report["checks"]["D14_repreview_still_no_llm_call"] = True
+        capture("11-d14-explicit-approval-available")
+        click_ai(ai_button("Autoriser et analyser"), d14_wait_generated)
+
+    def d14_wait_generated():
+        until(lambda: ai_fixture[0].calls == 1
+              and has("Analyse IA générée ; vérifier toutes les références avant décision."),
+              d14_after_consent, seconds=8)
+
+    def d14_after_consent():
+        assert ai_fixture[0].calls == 1, "D14: plus d'un appel fictif au LLM"
+        assert broker[0].checks == 0, "D14: vérification active implicite"
+        assert not ai_button("Autoriser et analyser").get_sensitive()
+        assert ai_button("Copier JSON IA").get_sensitive()
+        assert len(ai_fixture[0].requests) == 1
+        prompt = ai_fixture[0].requests[0].prompt
+        assert "event-ux-001" in prompt
+        assert "UX_FICTIF_NON_EXPORTABLE" not in prompt
+        views = [w for w in walk(page[0]) if isinstance(w, Gtk.TextView)]
+        texts = [v.get_buffer().get_text(
+            v.get_buffer().get_start_iter(), v.get_buffer().get_end_iter(), False,
+        ) for v in views]
+        assert any("hypothèses NON vérifiées" in value
+                   and "event-ux-001" in value for value in texts)
+        report["checks"]["D14_exactly_one_explicit_ai_call"] = True
+        report["checks"]["D14_inference_not_confused_with_core_proof"] = True
+        report["checks"]["D14_fictional_secret_not_sent_to_llm"] = True
+        report["audits"]["D14_real_remote_llm_or_temporal_freshness_tested"] = False
+        capture("12-d14-generated-inference-disclaimer")
         report["status"] = "PASS"
         save()
         rc[0] = 0
