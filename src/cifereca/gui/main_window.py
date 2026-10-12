@@ -44,6 +44,7 @@ from .llm_settings import (
 from .diagnostic_presentation import diagnostic_plugin_rows
 from . import loans_controller, sync_controller
 from .settings_sync_section import build_kobo_sync_section
+from .settings_accounts_section import (build_identity_settings_header, build_provider_accounts_header, build_provider_account_buttons)
 from .settings_application_interface import build_settings_application_interface
 from .settings_account_editor import build_provider_account_editor
 from .settings_identity_editor import build_identity_settings_editor
@@ -3613,19 +3614,9 @@ class MainWindow(Adw.ApplicationWindow):
         public_ids = {provider_id for provider_id in descriptors
                       if getattr(getattr(self.service._provider_plugin_status(provider_id), "descriptor", None), "instantiation", "multiple") == "singleton_public"}
 
-        warning = Gtk.Label(
-            label="Les credentials fournisseurs sont actuellement stockés en clair dans le fichier de configuration local (permissions 0600). Ils ne sont jamais inclus dans les diagnostics.",
-            xalign=0,
+        identities_container = build_identity_settings_header(
+            section=box, Gtk=Gtk, add_css=add_css,
         )
-        warning.set_wrap(True); add_css(warning, "caption", "dim-label"); box.append(warning)
-
-        identities_title = Gtk.Label(label="Identités", xalign=0); add_css(identities_title, "book-title"); box.append(identities_title)
-        identities_hint = Gtk.Label(
-            label="Une identité regroupe ses connexions fournisseurs, ses préférences et son profil ADE. Les secrets ADE restent gérés par Kobo-Adept.",
-            xalign=0,
-        )
-        identities_hint.set_wrap(True); add_css(identities_hint, "caption", "dim-label"); box.append(identities_hint)
-        identities_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14); box.append(identities_container)
         identity_editors: list[dict[str, Any]] = []
         configured_identities = self.config.identities()
 
@@ -3683,16 +3674,11 @@ class MainWindow(Adw.ApplicationWindow):
             mark_settings_dirty("accounts")
         add_identity.connect("clicked", add_identity_clicked); box.append(add_identity)
 
-        public_info = Gtk.Button(label="Gérer les plugins et leurs capacités techniques…")
-        public_info.set_tooltip_text("Ouvrir Plugins pour l’activation et les capacités détaillées ; Diagnostic conserve l’état technique.")
-        public_info.connect("clicked", lambda _b: self.navigate("plugins")); box.append(public_info)
-        accounts_title = Gtk.Label(label="Sources et comptes fournisseurs", xalign=0); add_css(accounts_title, "book-title"); box.append(accounts_title)
-        accounts_hint = Gtk.Label(
-            label="Ajoutez et configurez ici les comptes utilisés par vos identités. Les capacités internes des plugins restent dans Plugins et Diagnostic.",
-            xalign=0,
+        account_section = build_provider_accounts_header(
+            section=box, Gtk=Gtk, add_css=add_css,
         )
-        accounts_hint.set_wrap(True); add_css(accounts_hint, "caption", "dim-label"); box.append(accounts_hint)
-        accounts_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14); box.append(accounts_container)
+        account_section.plugins_button.connect("clicked", lambda _b: self.navigate("plugins"))
+        accounts_container = account_section.accounts_container
         account_editors: list[dict[str, Any]] = []
         configured_rows = self.config.provider_accounts()
 
@@ -3727,17 +3713,14 @@ class MainWindow(Adw.ApplicationWindow):
         for configured in configured_rows:
             add_account_editor(configured, str(configured.get("provider") or "paris"))
 
-        add_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for descriptor in descriptors.values():
-            if descriptor.state != "ready" or descriptor.id in public_ids:
-                continue
-            add_label = f"Ajouter un compte {descriptor.display_name}" if descriptor.credential_fields else f"Ajouter la source {descriptor.display_name}"
-            add = Gtk.Button(label=add_label)
-            def add_account_clicked(_button, pid=descriptor.id):
+        for add, provider_id in build_provider_account_buttons(
+            section=box, descriptors=descriptors.values(),
+            public_ids=public_ids, Gtk=Gtk,
+        ):
+            def add_account_clicked(_button, pid=provider_id):
                 add_account_editor({}, pid)
                 mark_settings_dirty("accounts")
-            add.connect("clicked", add_account_clicked); add_buttons.append(add)
-        box.append(add_buttons)
+            add.connect("clicked", add_account_clicked)
 
         # ADE is bound only at Paris Identity scope. Provider sub-accounts
         # intentionally have no ADE binding UI.
