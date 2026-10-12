@@ -195,6 +195,7 @@ def main():
     checks_started_at = [None]
     ai_fixture = [None]
     ai_refresh_queries_before = [None]
+    ai_journals_queries_before = [None]
     rc = [1]
     tick = [0]
 
@@ -606,6 +607,19 @@ def main():
         device[0].key("space", True)
         device[0].key("space", False)
         report["checks"]["D14_explicit_refresh_keyboard_xtest"] = True
+        # P0 #1255: fail closed SYNCHRONOUSLY, before the next broker result.
+        assert not ai_button("Autoriser et analyser").get_sensitive(), (
+            "D14: actualiser Diagnostics laisse le consentement IA actif"
+        )
+        assert has("Aperçu à actualiser avant toute nouvelle analyse")
+        assert not any(
+            "event-ux-001" in view.get_buffer().get_text(
+                view.get_buffer().get_start_iter(), view.get_buffer().get_end_iter(), False,
+            )
+            for view in walk(page[0]) if isinstance(view, Gtk.TextView)
+        ), "D14: l'ancien prompt IA reste visible après actualisation"
+        assert ai_fixture[0].calls == 0
+        report["checks"]["D14_full_refresh_revokes_consent_before_broker_result"] = True
         until(
             lambda: len(broker[0].event_queries) > ai_refresh_queries_before[0]
             and not has("Actualisation en cours")
@@ -652,16 +666,15 @@ def main():
         report["checks"]["D14_refresh_changes_public_feed_without_ai_call"] = (
             new_journal and ai_fixture[0].calls == 0
         )
-        assert old_preview or not still_sendable, (
-            "D14: impossible de caractériser la fraîcheur de l'aperçu"
+        # Since #1255 is fixed and merged, these are now acceptance
+        # assertions, NOT an observational PASS that can hide a product FAIL.
+        assert new_journal and not old_preview and not still_sendable, (
+            "D14 #1255: ancien aperçu/consentement survivant au refresh",
+            new_journal, old_preview, still_sendable,
         )
-        if still_sendable:
-            report.setdefault("unmet_criteria", []).append(
-                "D14 P0: actualisation explicite du broker laisse utilisable "
-                "un consentement IA établi sur les anciens événements"
-            )
+        report["checks"]["D14_full_refresh_revokes_stale_ai_approval"] = True
         # Two *distinct rendered* screenshots: journal revision 2, then
-        # the stale preview/active authorization, with a settled GTK frame.
+        # the revoked preview and disabled approval, after settling GTK.
         later(d14_capture_new_revision, 250)
 
     def d14_capture_new_revision():
@@ -684,9 +697,105 @@ def main():
         assert ai_button("Autoriser et analyser").get_sensitive() == (
             report["audits"]["D14_stale_consent_button_still_sensitive"]
         )
-        capture("09b-d14-stale-consent-after-refresh")
-        # Existing correct behavior: changing the analysis scope invalidates
-        # the preview. It must remain distinct from the refresh audit.
+        assert not ai_button("Autoriser et analyser").get_sensitive()
+        assert has("Aperçu à actualiser avant toute nouvelle analyse")
+        capture("09b-d14-consent-revoked-after-full-refresh")
+        # Recreate a genuinely sendable preview on revision 002, then prove
+        # the OTHER user-facing refresh entry point revokes it too.
+        prep = ai_button("Prévisualiser pour l’IA")
+        assert prep.grab_focus() is not False
+        later(lambda: d14_repreview_for_journals(prep), 200)
+
+    def d14_repreview_for_journals(prep):
+        assert prep.has_focus()
+        device[0].key("space", True)
+        device[0].key("space", False)
+        until(
+            lambda: ai_button("Autoriser et analyser").get_sensitive()
+            and "event-ux-002" in ai_prompt_text(),
+            d14_journals_entry, seconds=7,
+        )
+
+    def ai_prompt_text():
+        # Use the text shown in the REAL GTK preview expander, not broker
+        # state or a model callback, to attest the approved revision.
+        panes = [
+            exp for exp in walk(page[0]) if isinstance(exp, Gtk.Expander)
+            and exp.get_label() == "Données expurgées proposées à l’IA"
+        ]
+        assert len(panes) == 1
+        views = [view for view in walk(panes[0]) if isinstance(view, Gtk.TextView)]
+        assert len(views) == 1
+        buffer = views[0].get_buffer()
+        return buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+
+    def d14_journals_entry():
+        assert ai_fixture[0].calls == 0
+        assert "event-ux-001" not in ai_prompt_text()
+        ai_journals_queries_before[0] = len(broker[0].event_queries)
+        refresh = button_tooltip("Actualiser les journaux sans synchronisation")
+        assert refresh.grab_focus() is not False
+        later(lambda: d14_journals_refresh_xtest(refresh), 210)
+
+    def d14_journals_refresh_xtest(refresh):
+        assert refresh.has_focus(), "D14: bouton Journaux sans focus"
+        assert ai_button("Autoriser et analyser").get_sensitive()
+        device[0].key("space", True)
+        device[0].key("space", False)
+        # Immediate revocation must precede the asynchronous broker reply.
+        assert not ai_button("Autoriser et analyser").get_sensitive(), (
+            "D14: rafraîchir les journaux laisse le consentement IA actif"
+        )
+        assert ai_prompt_text() == "", "D14: ancien prompt visible après refresh journaux"
+        assert has("Aperçu à actualiser avant toute nouvelle analyse")
+        assert ai_fixture[0].calls == 0
+        report["checks"]["D14_journals_refresh_revokes_consent_before_broker_result"] = True
+        until(
+            lambda: len(broker[0].event_queries) > ai_journals_queries_before[0]
+            and not has("Actualisation en cours") and d14_updated_event_visible(),
+            d14_journals_after_refresh, seconds=7,
+        )
+
+    def d14_journals_after_refresh():
+        assert not ai_button("Autoriser et analyser").get_sensitive()
+        assert ai_prompt_text() == ""
+        assert ai_fixture[0].calls == 0
+        assert broker[0].checks == 0
+        report["checks"]["D14_journals_refresh_stays_revoked_after_broker_result"] = True
+        later(d14_capture_journals_revocation, 230)
+
+    def d14_capture_journals_revocation():
+        send = ai_button("Autoriser et analyser")
+        ok, bounds = send.compute_bounds(page[0].get_child())
+        assert ok
+        adjustment = page[0].get_vadjustment()
+        adjustment.set_value(max(0.0, min(
+            float(bounds.get_y()) - 150,
+            max(0.0, adjustment.get_upper() - adjustment.get_page_size()),
+        )))
+        later(d14_journals_repreview_to_scope, 250)
+
+    def d14_journals_repreview_to_scope():
+        assert not ai_button("Autoriser et analyser").get_sensitive()
+        capture("09c-d14-consent-revoked-after-journals-refresh")
+        # Recreate a valid consent opportunity before the EXISTING
+        # scope-change invalidation test. Keep each mechanism independent.
+        prep = ai_button("Prévisualiser pour l’IA")
+        assert prep.grab_focus() is not False
+        later(lambda: d14_repreview_for_scope(prep), 190)
+
+    def d14_repreview_for_scope(prep):
+        assert prep.has_focus()
+        device[0].key("space", True)
+        device[0].key("space", False)
+        until(
+            lambda: ai_button("Autoriser et analyser").get_sensitive()
+            and "event-ux-002" in ai_prompt_text(),
+            d14_scope_change, seconds=7,
+        )
+
+    def d14_scope_change():
+        assert ai_fixture[0].calls == 0
         selected = [w for w in walk(page[0])
                     if isinstance(w, Gtk.CheckButton)
                     and w.get_label() == "Inclure les diagnostics structurés Core (lecture seule)"]
