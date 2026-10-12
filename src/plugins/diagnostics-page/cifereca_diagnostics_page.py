@@ -1084,7 +1084,13 @@ class DiagnosticsPagePlugin:
             display.get_clipboard().set(exported)
             host.toast("Sélection expurgée copiée")
 
-        journals_refresh.connect("clicked", reset_events)
+        # An explicit refresh changes the underlying evidence. Any old AI
+        # preview or consent must be revoked *before* starting broker I/O.
+        def refresh_journals(_button):
+            invalidate_ai()
+            reset_events()
+
+        journals_refresh.connect("clicked", refresh_journals)
         journals_previous.connect("clicked", previous_events)
         journals_next.connect("clicked", next_events)
         journals_copy.connect("clicked", copy_selected)
@@ -1470,7 +1476,14 @@ class DiagnosticsPagePlugin:
             except Exception as exc:
                 host.toast(f"Copie impossible : {type(exc).__name__}")
 
-        refresh.connect("clicked", lambda *_: (render(), reset_events()))
+        def refresh_diagnostics(_button):
+            # Fail closed even when the next broker read fails or is partial.
+            # Generation revocation also ignores any old async AI response.
+            invalidate_ai()
+            render()
+            reset_events()
+
+        refresh.connect("clicked", refresh_diagnostics)
         check.connect("clicked", run_checks)
         copy.connect("clicked", copy_report)
         def initial_load() -> None:
