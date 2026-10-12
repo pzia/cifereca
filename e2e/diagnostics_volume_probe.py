@@ -458,7 +458,13 @@ def main():
         assert dropdown.grab_focus() is not False, "D09: filtre Source sans focus"
 
         def press_dropdown():
-            assert dropdown.has_focus(), "D09: le choix Source ne reçoit pas le focus"
+            # Gtk.DropDown delegates keyboard focus to its internal toggle
+            # child. The focus-ring is visible, but dropdown.has_focus()
+            # itself can be False despite valid keyboard ownership.
+            focused = window[0].get_focus()
+            assert focused is not None and (
+                focused is dropdown or focused.is_ancestor(dropdown)
+            ), "D09: le choix Source et ses enfants n'ont pas le focus"
             for keysym in ("space", key, "Return"):
                 device[0].key(keysym, True)
                 device[0].key(keysym, False)
