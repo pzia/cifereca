@@ -28,6 +28,10 @@ def test_overlapping_manual_refresh_last_success_wins(method, shown, pending):
     first.ok([{"title": "older"}])
     assert getattr(host, shown) == []
     assert getattr(host, pending) is True
+    # A normal background refresh must not spawn a third request while the
+    # newer user-triggered refresh is still the one in flight.
+    getattr(host, method)()
+    assert len(host.runner.requests) == 2
     second.ok([{"title": "newest"}])
     assert getattr(host, shown) == [[{"title": "newest"}]]
     assert getattr(host, pending) is False
