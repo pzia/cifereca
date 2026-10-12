@@ -3,6 +3,12 @@ from cifereca.plugin_api import (UiPageContribution, UiActionContribution,
     UiBookDetailPresentation, DetailSection, DetailField, DocumentLink)
 from constellation_view_model import (node_from_row, merge_nodes, neighbours,
     promenade, replace_step, Navigation)
+from itertools import islice
+
+# Read no more than N+1 books from the metadata broker, even if it yields
+# thousands of entries or an unbounded iterator.
+LOCAL_NODE_LIMIT = 300
+PAGE_CACHE_PROFILES = 8
 
 
 def neighbour_card_fields(edge):
@@ -150,12 +156,29 @@ class View:
         self.nav = Navigation()
         self.render()
         cached = None if refresh else self.cache.get(identity)
-        pending = self.plugin.pending
+        if cached is not None:
+            # Refresh page-cache LRU order without reading from the broker.
+            self.cache[identity] = self.cache.pop(identity)
+        # A contextual book from profile A must not be injected into B.
+        pending_identity = str(getattr(self.plugin, 'pending_identity', '') or '')
+        pending = self.plugin.pending if not pending_identity or pending_identity == identity else None
         context = self.plugin.context
         self.status.set_label('Chargement…')
         def operation(control):
-            rows = cached if cached is not None else tuple(context.broker('metadata').library_entries(identity_id=identity, scan=False))
-            local = tuple(node_from_row(r, origin='bibliothèque') for r in rows[:300])
+            if control.cancelled():
+                return None
+            if cached is None:
+                # Use N+1 to detect truncation *without* exhausting the
+                # metadata iterator or retaining the rest of the catalogue.
+                entries = context.broker('metadata').library_entries(identity_id=identity, scan=False)
+                sample = tuple(islice(iter(entries), LOCAL_NODE_LIMIT + 1))
+                truncated = len(sample) > LOCAL_NODE_LIMIT
+                rows = sample[:LOCAL_NODE_LIMIT]
+            else:
+                rows, truncated = cached
+            if control.cancelled():
+                return None
+            local = tuple(node_from_row(r, origin='bibliothèque') for r in rows)
             extra = ()
             if remote and not control.cancelled():
                 extra = tuple(node_from_row(r) for r in context.broker('catalog').search(remote, identity_id=identity, limit=100)[:100])
@@ -163,7 +186,7 @@ class View:
                 return None
             seed = node_from_row(pending, origin='sélection') if pending else None
             nodes = merge_nodes(local + extra + ((seed,) if seed else ()))
-            return rows, local, nodes, seed.key if seed else None
+            return rows, local, nodes, seed.key if seed else None, truncated
         self.run_calculation(operation, lambda result: self.loaded(self.generation, identity, result, ''), 'Chargement Constellations')
 
     def run_calculation(self, operation, complete, label):
@@ -196,12 +219,25 @@ class View:
             return False
         if error:
             self.status.set_label(error); return False
-        rows, self.local, self.nodes, seed_key = result
-        self.cache[identity] = rows
-        self.status.set_label(
-            f'{len(self.nodes)} notices connues pour ce profil · voisinage local sans collecte automatique'
+        rows, self.local, self.nodes, seed_key, *extra = result
+        truncated = bool(extra[0]) if extra else False
+        self.cache.pop(identity, None)
+        self.cache[identity] = (rows, truncated)
+        while len(self.cache) > PAGE_CACHE_PROFILES:
+            self.cache.pop(next(iter(self.cache)))
+        coverage = (
+            f'{LOCAL_NODE_LIMIT} premières notices locales seulement ; '
+            'bibliothèque plus grande que le plafond'
+            if truncated else f'{len(rows)} notices locales examinées'
         )
-        self.plugin.pending = None
+        self.status.set_label(
+            f'{coverage} · {len(self.nodes)} nœud(s) pour ce profil · '
+            'voisinage local sans collecte automatique'
+        )
+        if seed_key or not getattr(self.plugin, 'pending_identity', '') or (
+            self.plugin.pending_identity == identity
+        ):
+            self.plugin.pending = None
         if seed_key:
             seed = next((n for n in self.nodes if n.key == seed_key), None)
             if seed is not None:
