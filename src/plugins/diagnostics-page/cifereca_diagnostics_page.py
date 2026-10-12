@@ -383,6 +383,19 @@ def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
             report_bounds.get_y() + report_bounds.get_height(),
             page_bounds.get_y() + page_bounds.get_height(),
         )
+        if __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1":
+            import sys
+            print(
+                "D05_wheel_capture",
+                {"x": x, "y": y, "report": (
+                    report_bounds.get_x(), report_bounds.get_y(),
+                    report_bounds.get_width(), report_bounds.get_height()
+                ), "page": (
+                    page_bounds.get_x(), page_bounds.get_y(),
+                    page_bounds.get_width(), page_bounds.get_height()
+                ), "hit": left <= x < right and top <= y < bottom},
+                file=sys.stderr, flush=True,
+            )
         return left <= x < right and top <= y < bottom
 
     def on_wheel(controller, dx, dy):
