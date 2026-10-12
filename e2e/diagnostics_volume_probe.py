@@ -351,12 +351,18 @@ def main():
         assert LONG_PATH not in detail_text
         report["audits"]["D08_raw_detail_field_preserved"] = "detail:" in detail_text
         assert report["audits"]["D08_raw_detail_field_preserved"]
-        assert 'path: "<expurgé>"' in detail_text
-        assert 'secret: "<expurgé>"' in detail_text
-        assert "SECRET-FICTIF-NE-PAS-AFFICHER" not in detail_text
-        assert "etape-fictive-000" in detail_text
-        assert "etape-fictive-039" in detail_text
-        assert len(detail_text) < 24000
+        # Report ONLY test-safe presence flags, not GTK text or private data.
+        expected = {
+            "path_redacted": 'path: "<expurgé>"' in detail_text,
+            "secret_redacted": 'secret: "<expurgé>"' in detail_text,
+            "secret_absent": "SECRET-FICTIF-NE-PAS-AFFICHER" not in detail_text,
+            "trace_first": "etape-fictive-000" in detail_text,
+            "trace_last": "etape-fictive-039" in detail_text,
+            "bounded": len(detail_text) < 24000,
+        }
+        report["audits"]["D08_long_detail_safe_presence_flags"] = expected
+        missing = [key for key, present in expected.items() if not present]
+        assert not missing, "D08: segments absents ou non expurges: " + ", ".join(missing)
         detail_scrollers = [
             w for w in walk(panes[0]) if isinstance(w, Gtk.ScrolledWindow)
         ]
