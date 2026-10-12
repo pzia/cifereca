@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .core import adept_profiles
+
 import logging
 import time
 import json
@@ -1626,14 +1628,12 @@ class LibraryService:
         raise ProviderConfigurationError(f"Type de source d'acquisition non supporté: {source_type or 'unknown'}")
 
     def _originating_adept_profile_id(self, identity_id: str, profile_name: str) -> str | None:
-        reference = self.storage.adept_profile_binding_get("identity", identity_id)
-        if reference:
-            return reference
-        try:
-            rows = [r for r in self.kobo_profiles() if self._adept_profile_name(r) == profile_name]
-        except Exception:
-            return None
-        return self._adept_profile_ref(rows[0]) if len(rows) == 1 else None
+        return adept_profiles.originating_profile_id(
+            identity_id, profile_name,
+            binding_get=self.storage.adept_profile_binding_get,
+            list_profiles=self.kobo_profiles, name_of=self._adept_profile_name,
+            reference_of=self._adept_profile_ref,
+        )
 
     def _adept_return_capability(self) -> bool:
         try:
@@ -2234,26 +2234,20 @@ class LibraryService:
 
     @staticmethod
     def _adept_profile_ref(row: dict[str, Any]) -> str:
-        return str(row.get("profile_id") or row.get("id") or row.get("name") or row.get("profile") or "").strip()
+        return adept_profiles.profile_reference(row)
 
     @staticmethod
     def _adept_profile_name(row: dict[str, Any]) -> str:
-        return str(row.get("name") or row.get("profile") or row.get("profile_id") or row.get("id") or "").strip()
+        return adept_profiles.profile_name(row)
 
     def _adept_profile_row(self, reference: str | None, profiles: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
-        ref = str(reference or "").strip()
-        if not ref:
-            return None
-        rows = profiles if profiles is not None else self.kobo_profiles()
-        matches = [row for row in rows if ref in {str(row.get(key) or "").strip() for key in ("profile_id", "id", "name", "profile")}]
-        return matches[0] if len(matches) == 1 else None
+        return adept_profiles.profile_row(reference, profiles, list_profiles=self.kobo_profiles)
 
     def _adept_profile_cli_name(self, reference: str | None, profiles: list[dict[str, Any]] | None = None) -> str | None:
-        ref = str(reference or "").strip()
-        if not ref:
-            return None
-        row = self._adept_profile_row(ref, profiles)
-        return self._adept_profile_name(row) if row else ref
+        return adept_profiles.profile_cli_name(
+            reference, profiles, resolve_row=self._adept_profile_row,
+            name_of=self._adept_profile_name,
+        )
 
     def can_direct_download(self, item: SearchResult) -> bool:
         """Whether Paris can execute an acquisition with the published contracts."""
