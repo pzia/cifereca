@@ -336,7 +336,7 @@ def main():
                 e.filename == "cifereca-diagnostic.json" and e.dialog is not None
                 for e in plugin._support_exports
             ),
-            lambda: export_json_select_fixture_path(expected),
+            lambda: later(lambda: export_json_select_fixture_path(expected), 400),
         )
 
     def export_json_select_fixture_path(expected):
@@ -362,16 +362,24 @@ def main():
         assert dialog.set_file(Gio.File.new_for_path(str(target))), (
             "D07: native file chooser refused local fixture destination"
         )
+        # Native GtkFileChooser may update its selected GFile asynchronously.
+        # Let GLib finish folder selection before accepting the GTK dialog.
+        later(lambda: export_json_accept_fixture_path(exporter, expected, target), 500)
+
+    def export_json_accept_fixture_path(exporter, expected, target):
+        dialog = exporter.dialog
+        assert dialog is not None and dialog.get_visible()
         selected = dialog.get_file()
         assert selected is not None and selected.get_path() == str(target), (
-            "D07: chemin sélectionné incorrect",
+            "D07: FileChooserNative ignore la destination locale après GLib",
             selected.get_path() if selected is not None else None,
         )
         report["audits"]["D07_real_gtk_file_chooser_opened_by_xtest"] = True
         screenshot("02c-dialogue-enregistrer-json-gtk")
         dialog.emit("response", Gtk.ResponseType.ACCEPT)
         until(
-            lambda: target.is_file() and exporter.data is None,
+            lambda: target.is_file() and exporter.data is None
+            and target.read_bytes() != b"D07-EXPORT-FIXTURE-MUST-BE-REPLACED",
             lambda: export_json_verify_file(expected, target),
         )
 
