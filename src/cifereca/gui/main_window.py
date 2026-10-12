@@ -44,6 +44,7 @@ from .llm_settings import (
 from .diagnostic_presentation import diagnostic_plugin_rows
 from . import loans_controller, sync_controller
 from .settings_sync_section import build_kobo_sync_section
+from .settings_application_interface import build_settings_application_interface
 from .settings_account_editor import build_provider_account_editor
 from .settings_identity_editor import build_identity_settings_editor
 from .settings_library_downloads import build_library_download_section
@@ -3754,21 +3755,18 @@ class MainWindow(Adw.ApplicationWindow):
         global_post_row = download_settings.global_post_row
         provider_download_editors = download_settings.provider_download_editors
 
-        box = sections["diagnostic"]
-        config_group = Adw.PreferencesGroup(); config_group.set_title("Application"); box.append(config_group)
-        diag_row = Adw.ActionRow(); diag_row.set_title("Logs de diagnostic"); diag_row.set_subtitle("Conserver un journal technique expurgé des secrets")
-        diag_switch = Gtk.Switch(); diag_switch.set_active(bool(self.config.get("diagnostics.enabled", True))); diag_switch.set_valign(Gtk.Align.CENTER); diag_row.add_suffix(diag_switch); config_group.add(diag_row)
-        exp_row = Adw.ActionRow(); exp_row.set_title("Actions expérimentales"); exp_row.set_subtitle("Prolongation et retour anticipé numérique")
-        exp_switch = Gtk.Switch(); exp_switch.set_active(bool(self.config.get("experimental_actions", False))); exp_switch.set_valign(Gtk.Align.CENTER); exp_row.add_suffix(exp_switch); interface_group = Adw.PreferencesGroup(); interface_group.set_title("Interface et actions"); interface_group.add(exp_row); sections["interface"].append(interface_group)
-        interface_button = Gtk.Button(label="Configurer la barre de titre et les actions…")
-        interface_button.connect("clicked", lambda _b: self.navigate("plugins")); sections["interface"].append(interface_button)
-        level_row = Adw.ActionRow(); level_row.set_title("Niveau de diagnostic")
-        level_row.set_subtitle("Appliqué et enregistré dès modification")
-        level_drop = Gtk.DropDown.new_from_strings(["errors", "normal", "verbose", "trace"])
-        levels = ["errors", "normal", "verbose", "trace"]
-        try: level_drop.set_selected(levels.index({"detailed":"verbose"}.get(str(self.config.get("diagnostics.level", "normal")), str(self.config.get("diagnostics.level", "normal")))))
-        except ValueError: level_drop.set_selected(1)
-        level_row.add_suffix(level_drop); config_group.add(level_row)
+        application_ui = build_settings_application_interface(
+            diagnostic_section=sections["diagnostic"],
+            interface_section=sections["interface"],
+            config=self.config, Gtk=Gtk, Adw=Adw,
+        )
+        diag_switch = application_ui.diagnostics_switch
+        exp_switch = application_ui.experimental_switch
+        level_drop = application_ui.level_dropdown
+        levels = application_ui.levels
+        application_ui.plugins_button.connect(
+            "clicked", lambda _b: self.navigate("plugins"),
+        )
 
         kobo_settings = build_kobo_sync_section(
             section=sections["sync"], download_group=download_group,
