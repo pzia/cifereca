@@ -16,7 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from threading import Thread
+from threading import Event, Thread
 from time import monotonic, sleep
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +39,7 @@ class StateBroker(Broker):
         super().__init__()
         self.state = state
         self.ai_revision = 1
+        self.refresh_gate = None
         self.fail = state == "unavailable"
 
     def system_status(self):
@@ -59,6 +60,11 @@ class StateBroker(Broker):
 
     def events(self, **query):
         self.event_queries.append(dict(query))
+        # Permit a TRUE pre-result UI assertion, not a race with the worker.
+        # Only the fictitious AI fixture uses this short-lived worker gate.
+        gate = self.refresh_gate if self.state == "ai" else None
+        if gate is not None and not gate.wait(6.0):
+            raise RuntimeError("fixture-refresh-gate-timeout")
         if self.fail:
             raise RuntimeError("fixture-source-indisponible")
         events = [{
@@ -598,6 +604,7 @@ def main():
         # Reproduction uses a *real GTK user keystroke*; no real LLM call.
         ai_refresh_queries_before[0] = len(broker[0].event_queries)
         broker[0].ai_revision = 2
+        broker[0].refresh_gate = Event()
         refresh = button_tooltip("Actualiser les diagnostics")
         assert refresh.grab_focus() is not False
         later(lambda: d14_refresh_physical(refresh), 210)
@@ -607,7 +614,17 @@ def main():
         device[0].key("space", True)
         device[0].key("space", False)
         report["checks"]["D14_explicit_refresh_keyboard_xtest"] = True
-        # P0 #1255: fail closed SYNCHRONOUSLY, before the next broker result.
+        # XTEST enqueues a key event; wait until GTK dispatches the click
+        # and the fake broker enters its BLOCKED worker before asserting.
+        until(
+            lambda: len(broker[0].event_queries) > ai_refresh_queries_before[0],
+            d14_full_refresh_in_flight, seconds=5,
+        )
+
+    def d14_full_refresh_in_flight():
+        assert broker[0].refresh_gate is not None
+        assert not broker[0].refresh_gate.is_set()
+        # P0 #1255: fail closed after GTK click, BEFORE the broker replies.
         assert not ai_button("Autoriser et analyser").get_sensitive(), (
             "D14: actualiser Diagnostics laisse le consentement IA actif"
         )
@@ -620,6 +637,8 @@ def main():
         ), "D14: l'ancien prompt IA reste visible après actualisation"
         assert ai_fixture[0].calls == 0
         report["checks"]["D14_full_refresh_revokes_consent_before_broker_result"] = True
+        broker[0].refresh_gate.set()  # release simulated slow broker read
+        broker[0].refresh_gate = None
         until(
             lambda: len(broker[0].event_queries) > ai_refresh_queries_before[0]
             and not has("Actualisation en cours")
@@ -733,6 +752,7 @@ def main():
         assert ai_fixture[0].calls == 0
         assert "event-ux-001" not in ai_prompt_text()
         ai_journals_queries_before[0] = len(broker[0].event_queries)
+        broker[0].refresh_gate = Event()
         refresh = button_tooltip("Actualiser les journaux sans synchronisation")
         assert refresh.grab_focus() is not False
         later(lambda: d14_journals_refresh_xtest(refresh), 210)
@@ -742,7 +762,15 @@ def main():
         assert ai_button("Autoriser et analyser").get_sensitive()
         device[0].key("space", True)
         device[0].key("space", False)
-        # Immediate revocation must precede the asynchronous broker reply.
+        until(
+            lambda: len(broker[0].event_queries) > ai_journals_queries_before[0],
+            d14_journals_refresh_in_flight, seconds=5,
+        )
+
+    def d14_journals_refresh_in_flight():
+        assert broker[0].refresh_gate is not None
+        assert not broker[0].refresh_gate.is_set()
+        # Revocation must precede the simulated blocked broker reply.
         assert not ai_button("Autoriser et analyser").get_sensitive(), (
             "D14: rafraîchir les journaux laisse le consentement IA actif"
         )
@@ -750,6 +778,8 @@ def main():
         assert has("Aperçu à actualiser avant toute nouvelle analyse")
         assert ai_fixture[0].calls == 0
         report["checks"]["D14_journals_refresh_revokes_consent_before_broker_result"] = True
+        broker[0].refresh_gate.set()
+        broker[0].refresh_gate = None
         until(
             lambda: len(broker[0].event_queries) > ai_journals_queries_before[0]
             and not has("Actualisation en cours") and d14_updated_event_visible(),
