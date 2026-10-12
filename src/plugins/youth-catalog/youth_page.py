@@ -22,7 +22,9 @@ from cifereca.plugin_api import (
 from youth_catalog import (InvalidYouthSourcePage, _extract_page,
                            collection_failure_diagnostic, normalize_isbn,
                            safe_ingest_rejection_categories,
-                           source_yield_diagnostic, youth_source_support_snapshot)
+                           source_yield_diagnostic, youth_source_support_snapshot,
+                           KNOWN_AGE_SOURCES, KNOWN_BIBLIOGRAPHY_PLUGINS,
+                           public_source_id)
 
 
 KIND_LABELS = {
@@ -467,7 +469,12 @@ def source_diagnostic_presentation(rows):
     }
     lines = []
     for row in sources:
-        name = _text(row.get("label"))[:72] or _text(row.get("source_id"))[:64] or "Source"
+        # Runtime-provided labels may contain private URLs, account names or
+        # signed queries. Render canonical names or public source slugs only.
+        sid = public_source_id(row.get("source_id"))
+        name = (KNOWN_AGE_SOURCES.get(sid)
+                or KNOWN_BIBLIOGRAPHY_PLUGINS.get(sid)
+                or sid or "Source inconnue")
         plugin_state = _text(row.get("plugin_state"))
         active = (
             "non installée" if plugin_state == "not_installed"
