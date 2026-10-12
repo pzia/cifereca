@@ -650,7 +650,7 @@ def test_structured_opt_in_never_displaces_primary_event_evidence():
     assert model.calls == 0
 
 
-def test_broker_source_status_and_reason_redacted_before_prompt_and_ui():
+def test_broker_source_status_and_reason_allow_only_core_operational_vocabulary():
     class PartialBroker(FakeBroker):
         def events(self, **kwargs):
             feed = super().events(**kwargs)
@@ -658,19 +658,58 @@ def test_broker_source_status_and_reason_redacted_before_prompt_and_ui():
                 {"source": "alice@example.com", "status": "partial",
                  "reason": "token=PRIVATE_STATUS_KEY"},
                 {"source": "app_log", "status": "unavailable",
-                 "reason": "journal rotaté"},
+                 "reason": "journal rotaté par Alice Dupont"},
+                {"source": "core_events", "status": "disabled",
+                 "reason": "diagnostics_disabled"},
+                {"source": "app_log", "status": "partial",
+                 "reason": "log_tail_bounded"},
             ]
             return feed
 
     model = FakeLLM(remote=True)
     preview = prepare_analysis(model, PartialBroker([event()]))
-    assert [state["status"] for state in preview["source_states"]] == [
-        "partial", "unavailable",
+    assert preview["source_states"] == [
+        {"source": "inconnue", "status": "partial", "reason": ""},
+        {"source": "app_log", "status": "unavailable", "reason": ""},
+        {"source": "core_events", "status": "disabled", "reason": "diagnostics_disabled"},
+        {"source": "app_log", "status": "partial", "reason": "log_tail_bounded"},
     ]
-    assert "courriel expurgé" in preview["prompt"]
-    assert "journal rotaté" in preview["prompt"]
-    assert "PRIVATE_STATUS_KEY" not in preview["prompt"]
-    assert "alice@example.com" not in preview["prompt"]
+    for private in ("PRIVATE_STATUS_KEY", "alice@example.com", "journal rotaté",
+                    "Alice Dupont"):
+        assert private not in preview["prompt"]
+    assert "log_tail_bounded" in preview["prompt"]
+    assert "diagnostics_disabled" in preview["prompt"]
+    assert model.calls == 0
+    answer = analyze_with_consent(model, preview, approval_id=preview["approval_id"])
+    assert answer["ok"] and model.calls == 1
+    exported = export_analysis_json(answer)
+    for private in ("PRIVATE_STATUS_KEY", "Alice Dupont", "alice@example.com"):
+        assert private not in model.sent[0].prompt
+        assert private not in exported
+
+
+@pytest.mark.parametrize("source,reason,expected", [
+    ("app_log", "log_tail_bounded", "log_tail_bounded"),
+    ("app_log", "no_matching_events", "no_matching_events"),
+    ("core_events", "snapshot_unavailable", "snapshot_unavailable"),
+    ("core_events", "no_recorded_events", "no_recorded_events"),
+    ("core_events", "diagnostics_disabled", "diagnostics_disabled"),
+    ("app_log", "snapshot_unavailable", ""),
+    ("core_events", "log_tail_bounded", ""),
+    ("app_log", "private_client_name", ""),
+    ("app_log", "log_tail_bounded\\nAlice Dupont", ""),
+])
+def test_source_reason_is_not_free_text_in_ai_preview(source, reason, expected):
+    class Broker(FakeBroker):
+        def events(self, **kwargs):
+            feed = super().events(**kwargs)
+            feed["sources"] = [{"source": source, "status": "partial", "reason": reason}]
+            return feed
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, Broker([event()]))
+    assert preview["source_states"][0]["reason"] == expected
+    if not expected:
+        assert reason not in preview["prompt"]
     assert model.calls == 0
 
 
