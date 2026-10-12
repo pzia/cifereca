@@ -10,6 +10,7 @@ from cifereca.gui.recent_time import format_recent_timestamp
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "src/cifereca/gui/main_window.py"
 SERVICES = ROOT / "src/cifereca/services.py"
+RECENT_ROWS = ROOT / "src/cifereca/gui/recent_rows.py"
 
 
 def _method(path: Path, class_name: str, method_name: str) -> str:
@@ -45,9 +46,16 @@ def test_recent_service_orders_by_materialization_created_at_not_updated_at():
 
 
 def test_recent_list_exposes_compact_temporal_label():
-    source = _method(MAIN, "MainWindow", "_render_recent")
+    tree = ast.parse(RECENT_ROWS.read_text(encoding="utf-8"))
+    source = ast.unparse(next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "project_recent_rows"
+    ))
     assert "format_recent_timestamp(item.get('acquired_at'))" in source
     assert "temporal" in source
+    facade = _method(MAIN, "MainWindow", "_render_recent")
+    assert "project_recent_rows(items, row_factory=BookListItem)" in facade
+    assert "self._attach_row_facets(rows, self._recent_objects, self.search_controls)" in facade
 
 
 def test_recent_detail_prioritizes_filename_date_and_provenance():
