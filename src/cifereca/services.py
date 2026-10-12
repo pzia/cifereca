@@ -40,6 +40,7 @@ from .kobo.acquisition import KoboOfferAdapter, KoboAcquisitionSelectionError
 from .kobo.executor import execute_kobo_acquisition
 from .kobo.vault import KoboVaultError
 from .identities import Identity, IdentityPreferences, AdeptProfileResolver, AdeptProfileResolutionError
+from .core import adept_profiles
 from .locking import InterProcessLock, LockBusyError
 from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
@@ -47,6 +48,7 @@ from .core.acquisition_decision import decide_artifact_reuse
 from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attention_code
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
+from .core import loan_accounts
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
 from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
@@ -1030,32 +1032,9 @@ class LibraryService:
 
     def _return_loan_identity(self, loan: Loan) -> tuple[Account, Any, str]:
         """Require *exact* Paris borrower provenance before mutating anything."""
-        from .core.loan_return_guard import return_key
-        if not loan.id or loan.source_account_id is None:
-            raise AttentionRequired(
-                "Le compte emprunteur de ce prêt est inconnu. Actualisez les emprunts.",
-                code="loan_return_borrower_unproven",
-            )
-        account = self._account_for_loan(loan)
-        expected = str(loan.source_account_id or "primary")
-        actual = str(account.unique_id or "primary")
-        if (expected != actual or account.provider_id != loan.source_provider
-                or account.credential_id != loan.source_credential):
-            raise AttentionRequired(
-                "Le compte emprunteur de ce prêt ne correspond pas à sa provenance.",
-                code="loan_return_borrower_mismatch",
-            )
-        # Do not let a disconnected session or the first available Paris login
-        # stand in for the exact credential that owns this borrow.
-        key = self._session_key(loan.source_provider, loan.source_credential)
-        session = self._sessions.get(key)
-        if session is None or not session.connected:
-            raise AttentionRequired(
-                "La connexion exacte de l'emprunteur est indisponible.",
-                code="loan_return_source_unavailable",
-            )
-        return account, session, return_key(
-            loan.source_provider, loan.source_credential, expected, str(loan.id),
+        return loan_accounts.return_loan_identity(
+            loan, resolve_account=self._account_for_loan, session_key=self._session_key,
+            lookup_session=lambda key: self._sessions.get(key), attention_error=AttentionRequired,
         )
 
     def loan_return_state(self, loan: Loan) -> dict[str, Any] | None:
@@ -1628,14 +1607,12 @@ class LibraryService:
         raise ProviderConfigurationError(f"Type de source d'acquisition non supporté: {source_type or 'unknown'}")
 
     def _originating_adept_profile_id(self, identity_id: str, profile_name: str) -> str | None:
-        reference = self.storage.adept_profile_binding_get("identity", identity_id)
-        if reference:
-            return reference
-        try:
-            rows = [r for r in self.kobo_profiles() if self._adept_profile_name(r) == profile_name]
-        except Exception:
-            return None
-        return self._adept_profile_ref(rows[0]) if len(rows) == 1 else None
+        return adept_profiles.originating_profile_id(
+            identity_id, profile_name,
+            binding_get=self.storage.adept_profile_binding_get,
+            list_profiles=self.kobo_profiles, name_of=self._adept_profile_name,
+            reference_of=self._adept_profile_ref,
+        )
 
     def _adept_return_capability(self) -> bool:
         try:
@@ -2236,26 +2213,20 @@ class LibraryService:
 
     @staticmethod
     def _adept_profile_ref(row: dict[str, Any]) -> str:
-        return str(row.get("profile_id") or row.get("id") or row.get("name") or row.get("profile") or "").strip()
+        return adept_profiles.profile_reference(row)
 
     @staticmethod
     def _adept_profile_name(row: dict[str, Any]) -> str:
-        return str(row.get("name") or row.get("profile") or row.get("profile_id") or row.get("id") or "").strip()
+        return adept_profiles.profile_name(row)
 
     def _adept_profile_row(self, reference: str | None, profiles: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
-        ref = str(reference or "").strip()
-        if not ref:
-            return None
-        rows = profiles if profiles is not None else self.kobo_profiles()
-        matches = [row for row in rows if ref in {str(row.get(key) or "").strip() for key in ("profile_id", "id", "name", "profile")}]
-        return matches[0] if len(matches) == 1 else None
+        return adept_profiles.profile_row(reference, profiles, list_profiles=self.kobo_profiles)
 
     def _adept_profile_cli_name(self, reference: str | None, profiles: list[dict[str, Any]] | None = None) -> str | None:
-        ref = str(reference or "").strip()
-        if not ref:
-            return None
-        row = self._adept_profile_row(ref, profiles)
-        return self._adept_profile_name(row) if row else ref
+        return adept_profiles.profile_cli_name(
+            reference, profiles, resolve_row=self._adept_profile_row,
+            name_of=self._adept_profile_name,
+        )
 
     def can_direct_download(self, item: SearchResult) -> bool:
         """Whether Paris can execute an acquisition with the published contracts."""
@@ -3574,36 +3545,9 @@ class LibraryService:
         the primary account for a linked-account loan. New loans carry
         ``source_account_id``; old cached loans keep a conservative fallback.
         """
-        candidates = [
-            a for a in self.accounts
-            if a.provider_id == loan.source_provider and a.credential_id == loan.source_credential
-        ]
-        if loan.source_account_id is not None:
-            # "primary" is Paris' stable provenance sentinel for the primary
-            # borrower. The provider API itself still expects an empty UID for
-            # that account, so return the real Account object (unique_id="").
-            if loan.source_account_id == "primary":
-                primary = next((a for a in candidates if a.is_primary), None)
-                if primary is not None:
-                    return primary
-            for account in candidates:
-                if account.unique_id == loan.source_account_id:
-                    return account
-            raise ProviderConfigurationError(
-                f"Compte emprunteur introuvable pour le prêt {loan.id}: "
-                f"{loan.source_provider}/{loan.source_credential}/{loan.source_account_id!r}"
-            )
-        # Compatibility for cache/data produced before 0.3.3. Prefer the
-        # current account only when it belongs to the same provider identity.
-        if self.current_account in candidates:
-            return self.current_account
-        primary = next((a for a in candidates if a.is_primary), None)
-        if primary is not None:
-            return primary
-        if candidates:
-            return candidates[0]
-        raise ProviderConfigurationError(
-            f"Aucun compte connecté pour {loan.source_provider}/{loan.source_credential}"
+        return loan_accounts.account_for_loan(
+            loan, accounts=self.accounts, current_account_get=lambda: self.current_account,
+            configuration_error=ProviderConfigurationError,
         )
 
     def _acquisition_work_dir(self, identity_id: str, provider_id: str, loan_id: str | None = None) -> Path:

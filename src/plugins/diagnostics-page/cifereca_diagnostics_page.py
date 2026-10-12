@@ -425,8 +425,21 @@ def _install_report_wheel(Gtk, Gdk, GLib, root, outer_scroll, report_scroll, rep
                 report_scroll.get_hadjustment(), dx, unit, Gdk,
             ) or moved
         if not moved:
-            # The report is at an edge: let the page scroll naturally.
+            # GTK4's nested ScrolledWindow may consume a physical wheel even
+            # when our root capture controller returns False. An unhandled
+            # scroll event is therefore NOT proof that it reaches the parent.
+            # Release the protection before routing the same gesture to the
+            # outer adjustment. Return True if the parent moved, preventing
+            # GTK from processing the event a second time.
             release_guard()
+            if dy:
+                moved = _scroll_report_adjustment(
+                    page_adjustment, dy, unit, Gdk,
+                )
+            if dx:
+                moved = _scroll_report_adjustment(
+                    outer_scroll.get_hadjustment(), dx, unit, Gdk,
+                ) or moved
         return moved
 
     wheel.connect("scroll", on_wheel)
