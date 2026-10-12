@@ -38,6 +38,7 @@ class StateBroker(Broker):
     def __init__(self, state):
         super().__init__()
         self.state = state
+        self.ai_revision = 1
         self.fail = state == "unavailable"
 
     def system_status(self):
@@ -61,10 +62,13 @@ class StateBroker(Broker):
         if self.fail:
             raise RuntimeError("fixture-source-indisponible")
         events = [{
-            "event_id": "event-ux-001",
-            "timestamp": "2026-10-11T05:20:00+00:00",
+            "event_id": f"event-ux-{self.ai_revision:03d}",
+            "timestamp": "2026-10-11T05:20:00+00:00"
+                if self.ai_revision == 1 else "2026-10-12T07:20:00+00:00",
             "source": "core_events", "module": "core.sync", "severity": "warning",
-            "status": "partial", "message": "Incident simulé sans donnée réelle",
+            "status": "partial", "message": (
+                f"Incident simulé révision {self.ai_revision} sans donnée réelle"
+            ),
             "secret": "UX_FICTIF_NON_EXPORTABLE",
         }] if self.state == "ai" else []
         return {
@@ -187,6 +191,7 @@ def main():
     device = [None]
     checks_started_at = [None]
     ai_fixture = [None]
+    ai_refresh_queries_before = [None]
     rc = [1]
     tick = [0]
 
@@ -577,10 +582,68 @@ def main():
         assert "Le modèle produit des hypothèses, jamais une preuve" in ai_status()
         assert "rapport support : non" in ai_status()
         report["checks"]["D14_remote_destination_disclosed_before_consent"] = True
+        assert any(
+            "event-ux-001" in view.get_buffer().get_text(
+                view.get_buffer().get_start_iter(),
+                view.get_buffer().get_end_iter(), False,
+            ) for view in walk(page[0]) if isinstance(view, Gtk.TextView)
+        ), "D14: l'aperçu initial n'inclut pas l'événement fictif 001"
         capture("09-d14-remote-preview-not-sent")
-        # Change the source scope after the preview: the previous approval
-        # MUST become invalid; do not simulate invalidation by disabling
-        # buttons directly.
+        # Freshness regression: refresh MUST revoke the previously approved
+        # preview if the underlying public broker feed has since changed.
+        # Reproduction uses a *real GTK user keystroke*; no real LLM call.
+        ai_refresh_queries_before[0] = len(broker[0].event_queries)
+        broker[0].ai_revision = 2
+        refresh = button_tooltip("Actualiser les diagnostics")
+        assert refresh.grab_focus() is not False
+        later(lambda: d14_refresh_physical(refresh), 210)
+
+    def d14_refresh_physical(refresh):
+        assert refresh.has_focus(), "D14: l'actualisation ne reçoit pas le focus"
+        device[0].key("space", True)
+        device[0].key("space", False)
+        report["checks"]["D14_explicit_refresh_keyboard_xtest"] = True
+        until(
+            lambda: len(broker[0].event_queries) > ai_refresh_queries_before[0]
+            and not has("Actualisation en cours")
+            and any("event-ux-002" in label for label in labels()),
+            d14_after_refresh, seconds=7,
+        )
+
+    def d14_after_refresh():
+        # The journal now displays revision 2. Inspect the *unchanged*
+        # preview and the consent button separately. This audit may identify
+        # a product FAIL without turning an exploratory probe into a
+        # fictitious product PASS.
+        assert ai_fixture[0].calls == 0
+        assert broker[0].checks == 0
+        old_preview = any(
+            "event-ux-001" in view.get_buffer().get_text(
+                view.get_buffer().get_start_iter(),
+                view.get_buffer().get_end_iter(), False,
+            ) for view in walk(page[0]) if isinstance(view, Gtk.TextView)
+        )
+        new_journal = any("event-ux-002" in label for label in labels())
+        still_sendable = ai_button("Autoriser et analyser").get_sensitive()
+        report["audits"]["D14_new_broker_event_visible_after_explicit_refresh"] = new_journal
+        report["audits"]["D14_old_ai_preview_still_displayed"] = old_preview
+        report["audits"]["D14_stale_consent_button_still_sensitive"] = still_sendable
+        report["audits"]["D14_refresh_revokes_outdated_ai_approval"] = not still_sendable
+        report["audits"]["D14_llm_calls_before_any_consent"] = ai_fixture[0].calls
+        report["checks"]["D14_refresh_changes_public_feed_without_ai_call"] = (
+            new_journal and ai_fixture[0].calls == 0
+        )
+        assert old_preview or not still_sendable, (
+            "D14: impossible de caractériser la fraîcheur de l'aperçu"
+        )
+        if still_sendable:
+            report.setdefault("unmet_criteria", []).append(
+                "D14 P0: actualisation explicite du broker laisse utilisable "
+                "un consentement IA établi sur les anciens événements"
+            )
+        capture("09b-d14-stale-consent-after-refresh")
+        # Existing correct behavior: changing the analysis scope invalidates
+        # the preview. It must remain distinct from the refresh audit.
         selected = [w for w in walk(page[0])
                     if isinstance(w, Gtk.CheckButton)
                     and w.get_label() == "Inclure les diagnostics structurés Core (lecture seule)"]
@@ -645,14 +708,15 @@ def main():
         assert ai_button("Copier JSON IA").get_sensitive()
         assert len(ai_fixture[0].requests) == 1
         prompt = ai_fixture[0].requests[0].prompt
-        assert "event-ux-001" in prompt
+        assert "event-ux-002" in prompt
+        assert "event-ux-001" not in prompt
         assert "UX_FICTIF_NON_EXPORTABLE" not in prompt
         views = [w for w in walk(page[0]) if isinstance(w, Gtk.TextView)]
         texts = [v.get_buffer().get_text(
             v.get_buffer().get_start_iter(), v.get_buffer().get_end_iter(), False,
         ) for v in views]
         assert any("hypothèses NON vérifiées" in value
-                   and "event-ux-001" in value for value in texts)
+                   and "event-ux-002" in value for value in texts)
         report["checks"]["D14_exactly_one_explicit_ai_call"] = True
         report["checks"]["D14_inference_not_confused_with_core_proof"] = True
         report["checks"]["D14_fictional_secret_not_sent_to_llm"] = True
