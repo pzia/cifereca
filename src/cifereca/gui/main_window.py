@@ -4310,6 +4310,10 @@ class MainWindow(Adw.ApplicationWindow):
                 return
 
             def verified(source, result, *_args) -> None:
+                # Async clipboard verification may arrive after the Settings
+                # view was rebuilt, or after its window was closed.
+                if not page_lifetime.alive:
+                    return
                 try:
                     copied = source.read_text_finish(result)
                 except Exception as exc:
@@ -4346,8 +4350,6 @@ class MainWindow(Adw.ApplicationWindow):
             """Enregistrer le rapport expurgé visible dans Diagnostic."""
             if not page_lifetime.alive:
                 return
-            if not page_lifetime.alive:
-                return
             refresh_text()
             buffer = diag_text.get_buffer()
             start, end = buffer.get_bounds()
@@ -4363,6 +4365,10 @@ class MainWindow(Adw.ApplicationWindow):
 
             def chosen(dialog, response) -> None:
                 try:
+                    # A native chooser can respond after its originating page
+                    # was disposed. Do not export or show a stale success/error.
+                    if not page_lifetime.alive:
+                        return
                     if response != Gtk.ResponseType.ACCEPT:
                         return
                     selected = dialog.get_file()
