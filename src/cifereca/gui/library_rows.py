@@ -1,0 +1,62 @@
+"""GTK-free Library row projection, with business decisions injected (#1129).
+
+The Core retains ownership of identities, permissions, acquisition state and
+the library snapshot. Rendering must never rescan or fetch a provider.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+from typing import Any
+
+
+def project_library_rows(
+    filtered_entries: Iterable[dict[str, Any]], *,
+    row_factory: Callable[..., Any],
+    provider_display_name: Callable[[str], str],
+    availability_label: Callable[[dict[str, Any]], str],
+    backup_status_label: Callable[[str], str],
+    format_date: Callable[[str], str],
+) -> tuple[list[Any], dict[str, dict[str, Any]]]:
+    """Project the already-filtered snapshot, preserving keys and display order."""
+    rows: list[Any] = []
+    objects: dict[str, dict[str, Any]] = {}
+    for item in filtered_entries:
+        provider = str(item.get("provider_id") or "local")
+        providers = list(item.get("providers") or [provider])
+        provider_label = (
+            f"{len(providers)} sources" if len(providers) > 1
+            else provider_display_name(provider)
+        )
+        state = availability_label(item)
+        key = str(item.get("key") or f"library:{len(objects)}")
+        objects[key] = item
+        meta_parts = [state] if state else []
+        if item.get("due_at"):
+            meta_parts.append(f"retour {format_date(str(item.get('due_at')))}")
+        sync_status = item.get("sync_status")
+        if sync_status and not item.get("local"):
+            meta_parts.append(backup_status_label(str(sync_status)))
+        device_statuses = (
+            item.get("device_statuses")
+            if isinstance(item.get("device_statuses"), list) else []
+        )
+        if device_statuses:
+            present_count = sum(
+                1 for row in device_statuses
+                if row.get("observed_state") == "present"
+            )
+            keep_count = sum(
+                1 for row in device_statuses
+                if row.get("desired_state") == "keep"
+            )
+            if present_count:
+                meta_parts.append(f"Kobo {present_count}/{len(device_statuses)}")
+            elif keep_count:
+                meta_parts.append("Kobo à synchroniser")
+        rows.append(row_factory(
+            key, str(item.get("title") or "Sans titre"),
+            str(item.get("author") or ""),
+            " · ".join(part for part in meta_parts if part),
+            provider_label, item.get("thumbnail_url"),
+        ))
+    return rows, objects
