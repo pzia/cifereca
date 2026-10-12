@@ -29,6 +29,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 from PIL import ImageGrab
 from diagnostics_page_probe import Broker, Context, Host, Tasks, walk
+from x11_input import X11Input
 
 
 MODULES = ("core.sync", "paris.lending", "kobo.catalog", "adept.runtime", "plugins.read")
@@ -77,7 +78,16 @@ class VolumeBroker(Broker):
         if mod == "kobo.catalog" and case == 0:
             level = "error"
             message = "Erreur fictive longue : " + "échec temporaire " * 45 + LONG_PATH
-            detail = {"path": LONG_PATH, "secret": "SECRET-FICTIF-NE-PAS-AFFICHER"}
+            detail = {
+                "path": LONG_PATH,
+                "secret": "SECRET-FICTIF-NE-PAS-AFFICHER",
+                # Forty harmless, locally generated entries force the real
+                # 250px detail viewport to scroll; no external provider data.
+                "trace_steps": [
+                    f"etape-fictive-{j:03d} : information locale sans reseau"
+                    for j in range(40)
+                ],
+            }
         return {
             "event_id": f"ux-evt-{i:05d}", "timestamp": stamp,
             "source": "app_log" if i % 7 == 0 else "core_events",
@@ -138,7 +148,7 @@ def main():
         "status": "RUNNING", "checks": {}, "audits": {}, "screenshots": [],
         "broker_total": TOTAL, "scope": "vrai widget GTK, broker synthétique paginé",
     }
-    window, page = [None], [None]
+    window, page, device, long_detail = [None], [None], [None], [None]
     rc = [1]
     started = monotonic()
 
@@ -344,7 +354,14 @@ def main():
         assert 'path: "<expurgé>"' in detail_text
         assert 'secret: "<expurgé>"' in detail_text
         assert "SECRET-FICTIF-NE-PAS-AFFICHER" not in detail_text
+        assert "etape-fictive-000" in detail_text
+        assert "etape-fictive-039" in detail_text
         assert len(detail_text) < 24000
+        detail_scrollers = [
+            w for w in walk(panes[0]) if isinstance(w, Gtk.ScrolledWindow)
+        ]
+        assert len(detail_scrollers) == 1
+        long_detail[0] = (views[0], detail_scrollers[0], detail_text)
         report["audits"]["D08_complete_redacted_long_detail_available"] = True
         report["checks"]["D08_real_detail_panel_available_and_redacted"] = True
         journal_scroll = error_labels[0].get_parent()
@@ -363,7 +380,37 @@ def main():
         later(kobo_detail_visible, 260)
 
     def kobo_detail_visible():
+        view, scroller, detail_text = long_detail[0]
+        assert view.get_mapped(), "D08 TextView GTK non monte"
+        adjustment = scroller.get_vadjustment()
+        maximum = adjustment.get_upper() - adjustment.get_page_size()
+        assert maximum > 80, ("D08: detail non defilable", maximum)
+        adjustment.set_value(0)
+        assert view.grab_focus(), "D08: detail inaccessible au clavier"
+        assert window[0].get_focus() is view, "D08: focus TextView perdu"
+        report["audits"]["D08_scroll_range_px"] = round(maximum, 2)
         screenshot("04b-kobo-detail-rendered")
+        # Physical XTEST keyboard navigation, not an adjustment fabricated
+        # by the probe to claim that the end of the long detail is readable.
+        device[0].key("Control_L", True)
+        device[0].key("End", True)
+        device[0].key("End", False)
+        device[0].key("Control_L", False)
+        later(lambda: verify_kobo_detail_keyboard_end(adjustment, detail_text), 260)
+
+    def verify_kobo_detail_keyboard_end(adjustment, detail_text):
+        bottom = max(0, adjustment.get_upper() - adjustment.get_page_size())
+        assert bottom > 80, ("D08: contenu trop court", bottom)
+        assert adjustment.get_value() >= bottom - 5, (
+            "D08: Ctrl+Fin XTEST n'atteint pas la fin du detail",
+            round(adjustment.get_value(), 2), round(bottom, 2),
+        )
+        assert "etape-fictive-039" in detail_text
+        assert len(broker.requests) == 5, "La lecture ne doit pas relancer de consultation"
+        report["audits"]["D08_long_path_text_end_to_end_consultable"] = True
+        report["checks"]["D08_long_detail_keyboard_end_xtest"] = True
+        report["audits"]["D08_keyboard_end_scroll_px"] = round(adjustment.get_value(), 2)
+        screenshot("04c-kobo-detail-bottom-xtest")
         # Filter period is really sent as a bounded UTC 'since' query.
         selectors = [w for w in widgets(Gtk.DropDown) if w.get_tooltip_text() == "Période de la consultation"]
         assert len(selectors) == 1
@@ -381,7 +428,7 @@ def main():
         report["checks"]["D09_period_changes_broker_query"] = True
         screenshot("05-periode-7-jours")
         report["audits"]["D09_all_domain_source_provenance_complete"] = False
-        report["audits"]["D08_long_path_text_end_to_end_consultable"] = False
+        assert report["audits"]["D08_long_path_text_end_to_end_consultable"] is True
         # The only public source categories are core_events and app_log.
         # Verify a real GTK source switch and the absence of misattribution.
         dropdowns = [
@@ -512,9 +559,12 @@ def main():
             page[0] = plugin._build(host)
             window[0].set_child(page[0])
             window[0].present()
+            device[0] = X11Input()
             until(lambda: seen("10000 disponibles"), start)
 
         def do_shutdown(self):
+            if device[0] is not None:
+                device[0].close()
             plugin.deactivate()
             Gio.Application.do_shutdown(self)
 
