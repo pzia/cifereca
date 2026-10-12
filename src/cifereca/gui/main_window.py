@@ -49,6 +49,7 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_library_downloads import build_library_download_section
 from .settings_ai_section import build_ai_settings_section
 from .settings_diagnostics_section import build_settings_diagnostics_section
+from .settings_lifetime import SettingsPageLifetime
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -113,6 +114,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.plugin_manager = getattr(service, "plugin_manager", None)
         self._plugin_page_widgets: dict[str, Gtk.Widget] = {}
         self._closed = False
+        self._settings_main_lifetime: SettingsPageLifetime | None = None
+        self._settings_standalone_lifetime: SettingsPageLifetime | None = None
         self._account_changing = False
         self._identity_changing = False
         self._identity_context_generation = 0
@@ -507,6 +510,12 @@ class MainWindow(Adw.ApplicationWindow):
         if self._closed:
             return False
         self._closed = True
+        for name in ("_settings_main_lifetime", "_settings_standalone_lifetime"):
+            lifetime = getattr(self, name, None)
+            if lifetime is not None:
+                lifetime.dispose()
+                setattr(self, name, None)
+        self._diag_refresh = None
         try:
             self.config.set("ui.width", self.get_width())
             self.config.set("ui.height", self.get_height())
@@ -672,7 +681,15 @@ class MainWindow(Adw.ApplicationWindow):
         win.add_controller(keys)
         # Garder une référence explicite pendant toute la vie de la fenêtre.
         self._standalone_settings_window = win
-        win.connect("close-request", lambda _w: setattr(self, "_standalone_settings_window", None) or False)
+        def standalone_closed(_window):
+            if getattr(self, "_standalone_settings_window", None) is win:
+                standalone_lifetime = self._settings_standalone_lifetime
+                if standalone_lifetime is not None:
+                    standalone_lifetime.dispose()
+                    self._settings_standalone_lifetime = None
+                self._standalone_settings_window = None
+            return False
+        win.connect("close-request", standalone_closed)
         win.present()
 
     # ---------- shell / navigation ----------
@@ -3603,6 +3620,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- settings / diagnostics ----------
     def _build_settings_page(self, standalone: bool = False) -> Gtk.Widget:
+        page_lifetime = SettingsPageLifetime()
+        lifetime_name = "_settings_standalone_lifetime" if standalone else "_settings_main_lifetime"
+        previous = getattr(self, lifetime_name, None)
+        if previous is not None:
+            previous.dispose()
+        setattr(self, lifetime_name, page_lifetime)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         clamp = Adw.Clamp(); clamp.set_maximum_size(980); scroll.set_child(clamp)
@@ -3635,6 +3658,8 @@ class MainWindow(Adw.ApplicationWindow):
             return str(tabs.get_visible_child_name() or "accounts")
 
         def update_settings_actions(*_args) -> None:
+            if not page_lifetime.alive:
+                return
             tab = current_settings_tab()
             state = settings_action_state(
                 tab,
@@ -3652,6 +3677,8 @@ class MainWindow(Adw.ApplicationWindow):
                 widget.set_visible(state.show_save or state.show_reconnect)
 
         def mark_settings_dirty(tab: str) -> None:
+            if not page_lifetime.alive:
+                return
             if not settings_state.mark_dirty(tab):
                 return
             update_settings_actions()
@@ -3978,15 +4005,17 @@ class MainWindow(Adw.ApplicationWindow):
         ai_reset.connect("clicked", reset_ai)
 
         def submit_ai_probe(settings, *, confirmed=False):
+            if not page_lifetime.alive:
+                return
             ai_probe_version[0] += 1
             version = ai_probe_version[0]
             ai_status.set_text("Test synthétique en cours…")
             def done(result):
-                if version == ai_probe_version[0]:
+                if version == ai_probe_version[0] and page_lifetime.alive:
                     host, _ = destination_summary(settings)
                     ai_status.set_text(f"{result} · {host} · modèle {settings['model']}")
             def failed(_exc):
-                if version == ai_probe_version[0]:
+                if version == ai_probe_version[0] and page_lifetime.alive:
                     ai_status.set_text("Test non concluant ; vérifier la configuration")
             try:
                 self.runner.submit(
@@ -4000,6 +4029,8 @@ class MainWindow(Adw.ApplicationWindow):
                 ai_status.set_text("Impossible de démarrer le test")
 
         def test_ai_connection(_button):
+            if not page_lifetime.alive:
+                return
             try:
                 settings = read_ai_settings()
             except LLMSettingsError as exc:
@@ -4022,6 +4053,8 @@ class MainWindow(Adw.ApplicationWindow):
                 confirm.set_default_response("cancel")
                 confirm.set_close_response("cancel")
                 def confirmed_probe(_dialog, response):
+                    if not page_lifetime.alive:
+                        return
                     if response != "accept":
                         return
                     # Never send to a stale destination after edits while
@@ -4079,6 +4112,8 @@ class MainWindow(Adw.ApplicationWindow):
                 focus(plugin_id)
 
         def refresh_text() -> None:
+            if not page_lifetime.alive:
+                return
             from ..system_status import system_status
             data = system_status(self.plugin_manager)
             attention = int(data.get("attention") or 0)
@@ -4172,6 +4207,8 @@ class MainWindow(Adw.ApplicationWindow):
             return values
 
         def save_settings(_button=None, *, reconnect_after=False) -> bool:
+            if not page_lifetime.alive:
+                return False
             if settings_committer.pending:
                 return False
             try:
@@ -4194,6 +4231,8 @@ class MainWindow(Adw.ApplicationWindow):
             staged = settings_committer.stage(draft.data)
             staged_settings_revisions = settings_state.snapshot()
             def ok(result):
+                if not page_lifetime.alive:
+                    return
                 self.diagnostics.enabled = bool(staged["diagnostics"]["enabled"])
                 self.diagnostics.level = staged["diagnostics"]["level"]
                 from ..logging_utils import set_diagnostics_level
@@ -4243,6 +4282,8 @@ class MainWindow(Adw.ApplicationWindow):
             fonctionne sur GTK4/Wayland/X11 et remplace correctement un ancien
             contenu du presse-papiers.
             """
+            if not page_lifetime.alive:
+                return
             refresh_text()
             buffer = diag_text.get_buffer()
             start, end = buffer.get_bounds()
@@ -4303,6 +4344,10 @@ class MainWindow(Adw.ApplicationWindow):
 
         def export_text(_button=None) -> None:
             """Enregistrer le rapport expurgé visible dans Diagnostic."""
+            if not page_lifetime.alive:
+                return
+            if not page_lifetime.alive:
+                return
             refresh_text()
             buffer = diag_text.get_buffer()
             start, end = buffer.get_bounds()
@@ -4353,6 +4398,8 @@ class MainWindow(Adw.ApplicationWindow):
         copy.connect("clicked", copy_text)
         export.connect("clicked", export_text)
         def persist_diagnostics(*_args):
+            if not page_lifetime.alive:
+                return
             selected = int(level_drop.get_selected())
             if not 0 <= selected < len(levels):
                 return
@@ -4366,7 +4413,7 @@ class MainWindow(Adw.ApplicationWindow):
         clear.connect("clicked", lambda _b: (self.diagnostics.clear(), refresh_text()))
         refresh_text()
         if not standalone:
-            self._diag_refresh = refresh_text
+            self._diag_refresh = lambda: refresh_text() if page_lifetime.alive else None
         return scroll
 
     def refresh_diagnostics_text(self) -> None:
