@@ -21,7 +21,7 @@ from threading import Lock, RLock
 from typing import Any, Callable
 from urllib.parse import urlparse, urljoin
 from . import acsm_cache
-from .core import adept_borrower, loan_artifact_state
+from .core import adept_borrower, loan_artifact_state, adept_acsm_plan
 from .core import kobo_backup
 from .core import sync_coordination, sync_projection
 from .core import library_projection, library_mutation
@@ -3161,16 +3161,9 @@ class LibraryService:
                         )
                         return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
 
-                acsm_format = detect_acsm_format(acquisition.acsm_path)
-                if acsm_format is None:
-                    # Contract v8 requires an exact caller-owned destination.
-                    # Retain the historical EPUB fallback only when the ACSM
-                    # itself provides no usable format metadata.
-                    acsm_format = "epub"
-                    format_source = "fallback"
-                else:
-                    format_source = "acsm"
-                suffix = ".pdf" if acsm_format == "pdf" else ".epub"
+                acsm_format, format_source, suffix = adept_acsm_plan.select_acsm_format(
+                    detect_acsm_format(acquisition.acsm_path),
+                )
                 destination = self.library_identity_provider_dir(identity.identity_id, loan.source_provider) / self._loan_destination_name(loan.title, suffix)
                 repair_mode = bool(not force_refresh and legacy_acsm_artifact and previous_path is not None and previous_path.is_file())
                 # Explicit re-acquisition never replaces a preserved local file.
@@ -3182,17 +3175,15 @@ class LibraryService:
                     adept_destination.unlink(missing_ok=True)
                 except OSError:
                     pass
-                request = {
-                    "schema_version": 2,
-                    "source": {"type": "acsm", "provider": loan.source_provider, "path": str(acquisition.acsm_path), "headers": {}},
-                    "destination": str(adept_destination),
-                    "format": acsm_format,
-                    "profile": profile_name,
-                    "metadata": {"title": loan.title, "loan_id": loan.id},
-                    # Kobo-Adept owns its post-download policy. Do not override
-                    # run_hook; its public schema defaults it to true.
-                    "options": {"force": False},
-                }
+                request = adept_acsm_plan.build_fulfillment_request(
+                    acsm_path=acquisition.acsm_path,
+                    destination=adept_destination,
+                    acsm_format=acsm_format,
+                    profile_name=profile_name,
+                    provider=loan.source_provider,
+                    title=loan.title,
+                    loan_id=loan.id,
+                )
                 _TRACE_LOG.info(
                     "TRACE download adept begin provider_loan_id=%s profile=%s source_file=%s destination=%s format=%s format_source=%s",
                     loan.id, profile_name, acquisition.acsm_path.name, adept_destination, acsm_format, format_source,
