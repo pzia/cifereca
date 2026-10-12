@@ -35,7 +35,7 @@ def test_active_checks_and_runtime_diagnostics_use_same_formatter():
 
 def test_d07_e2e_modes_and_copy_use_real_xtest_keyboard():
     """#1012: the GTK acceptance gate must not fake mode changes/copy calls."""
-    source = (Path(__file__).resolve().parents[3] / "e2e" /
+    source = (Path(__file__).resolve().parents[4] / "e2e" /
               "diagnostics_structured_probe.py").read_text(encoding="utf-8")
     assert 'for key in ("space", *keys, "Return"):' in source
     assert 'choose_mode_keyboard(' in source
