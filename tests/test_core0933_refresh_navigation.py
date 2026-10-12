@@ -23,6 +23,11 @@ def _module_source(path: Path) -> str:
 
 
 def _nested_class_source(path: Path, outer_name: str, inner_name: str) -> str:
+    if path.name == "main_window.py" and inner_name == "_UiHost":
+        from tests.gui_source import gui_source_text
+        owner = ast.parse(gui_source_text(path))
+        return ast.unparse(next(node for node in owner.body
+                               if isinstance(node, ast.ClassDef) and node.name == inner_name))
     tree = ast.parse(path.read_text())
     outer = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == outer_name)
     inner = next(node for node in outer.body if isinstance(node, ast.ClassDef) and node.name == inner_name)

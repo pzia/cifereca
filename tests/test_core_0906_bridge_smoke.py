@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, replace
+from tests.gui_source import gui_source_text
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -44,7 +45,7 @@ def _text(value):
 
 
 def _method(path, class_name, name, env):
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(path))
     cls = next(item for item in ast.walk(tree)
                if isinstance(item, ast.ClassDef) and item.name == class_name)
     fn = next(item for item in cls.body

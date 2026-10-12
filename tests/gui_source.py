@@ -8,6 +8,7 @@ from pathlib import Path
 
 EXPORTS = {
     'master_detail': {'MasterDetailPage'},
+    'plugin_ui_host': {'_UiHost'},
     'public_book_view': {'PublicBookMasterDetailView'},
     'detail_model': None,
     'detail_panel': {'DetailPanel'},

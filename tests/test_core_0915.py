@@ -74,7 +74,13 @@ class Core0915(unittest.TestCase):
         self.assertEqual(self.service.dashboard_state()[0]['sources'],[]);self.service._sessions={}
     def extract(self,name):
         path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py';tree=ast.parse(gui_source_text(path))
-        fn=next(n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.ClassDef)) and n.name==name)
+        if name == '_UiHost':
+            fn=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name==name)
+        else:
+            window=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MainWindow')
+            matches=[n for n in window.body if isinstance(n,ast.FunctionDef) and n.name==name]
+            fn=matches[0] if matches else next(n for n in ast.walk(tree)
+                                             if isinstance(n,ast.FunctionDef) and n.name==name)
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         return compile(ast.fix_missing_locations(ast.Module(body=[future,fn],type_ignores=[])),str(path),'exec')
     def test_public_host_snapshot_is_detached_and_selection_brokered(self):

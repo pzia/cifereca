@@ -1,0 +1,97 @@
+"""GTK adapter implementing the public plugin UI host contracts.
+
+MainWindow owns identity, routes, listeners and widget lifetime. This adapter
+only forwards public contributions to that owner; plugins consume plugin_api.
+"""
+from __future__ import annotations
+
+from typing import Any, TYPE_CHECKING
+
+from ..plugin_api import BookRef
+from .action_widgets import AdaptiveActionBar, action_button
+from .public_book_view import PublicBookMasterDetailView
+
+if TYPE_CHECKING:
+    from .main_window import MainWindow
+
+
+class _UiHost:
+    def __init__(self, window: "MainWindow", action_context=None) -> None:
+        self.window = window
+        self._action_context = action_context
+    def toast(self, message: str, timeout: int = 3) -> None:
+        self.window.toast(message, timeout)
+    def action_context(self):
+        if self._action_context is None:
+            from cifereca.plugin_api import UiActionContext
+            route = self.window.view_stack.get_visible_child_name() if hasattr(self.window, "view_stack") else ""
+            self._action_context = UiActionContext(target="page", route=route)
+        return self._action_context
+    def refresh_context(self) -> None:
+        route = self.action_context().route
+        if route in {"library", "recent"}:
+            self.window.refresh_library(False)
+            self.window.refresh_recent()
+        elif route == "search":
+            self.window.run_search(False)
+    def current_book(self):
+        return self.action_context().book
+    def detail_sections(self):
+        return ()
+    def refresh_detail(self) -> None:
+        self.refresh_context()
+    def open_plugin_settings(self, plugin_id: str) -> None:
+        self.window.navigate("plugins")
+        page = getattr(self.window, "plugins_page", None)
+        opener = getattr(page, "focus_plugin", None)
+        if callable(opener):
+            opener(plugin_id)
+    def navigate(self, route: str) -> None:
+        self.window.navigate(route)
+    def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool:
+        return self.window.open_book_detail(book, identity_id=identity_id)
+    def search_books(
+        self, query: str, *, field: str = "title",
+        online: bool = False, identity_id: str | None = None,
+    ) -> bool:
+        return self.window.search_books(
+            query, field=field, online=online, identity_id=identity_id,
+        )
+    def build_action_bar(self, actions):
+        bar = AdaptiveActionBar()
+        for action in actions:
+            button = action_button(action.title, action.icon_name)
+            button.connect('clicked', lambda _button, contribution=action: contribution.callback(self))
+            bar.append(button)
+        return bar
+    def build_book_master_detail(self, *, title: str, subtitle: str = "", empty_title: str = "Aucun document", empty_desc: str = "Aucun document à afficher."):
+        return PublicBookMasterDetailView(
+            self.window, title=title, subtitle=subtitle,
+            empty_title=empty_title, empty_desc=empty_desc,
+        )
+    def build_standard_page(self, route: str):
+        return self.window._build_standard_page(route)
+    def import_acsm(self):
+        self.window.choose_acsm()
+    def identity_overview(self) -> list[dict[str, Any]]:
+        from copy import deepcopy
+        return deepcopy(self.window.service.dashboard_state())
+    def open_identity_library(self, identity_id: str) -> None:
+        self.window.open_identity_library(identity_id)
+    def supports_identity_view_filters(self) -> bool:
+        return True
+    def open_identity_view(self, identity_id: str, *, route: str, providers=()) -> None:
+        self.window.open_identity_view(identity_id, route=route, providers=providers)
+    def synchronize(self, *, deep: bool = False, control=None) -> None:
+        self.window.run_opening_sync(control, deep=deep)
+    def subscribe_identity_overview(self, callback):
+        listeners = getattr(self.window, "_overview_listeners", None)
+        if listeners is None:
+            listeners = []; self.window._overview_listeners = listeners
+        listeners.append(callback)
+        def cancel():
+            if callback in listeners: listeners.remove(callback)
+        return cancel
+    def plugin_statuses(self) -> list[dict[str, Any]]:
+        manager = self.window.plugin_manager
+        return manager.diagnostic() if manager is not None else []
