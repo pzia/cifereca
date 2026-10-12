@@ -314,13 +314,13 @@ def parse_listing(
         })
     return tuple(out)
 
-def next_cursor(html: str, *, current_page: int) -> str:
+def next_cursor(html: str, *, current_page: int, current_route: str = "advanced") -> str:
     for kind, label, href in _tokens(html):
         if kind != "link" or _fold(label) != "afficher plus de résultats":
             continue
         raw = _text(href)
         if raw.startswith("?"):
-            url = SEARCH + raw
+            url = SEARCH + ("/romans" if current_route == "romans" else "") + raw
         else:
             url = _allowed_url(raw)
         if not url or urlsplit(url).path not in {"/recherche-avancee", "/recherche-avancee/romans"}:
@@ -341,6 +341,8 @@ def search_url(query: str, *, page: int, route: str = "advanced") -> str:
         "search_api_views_fulltext": _text(query)[:_MAX_QUERY_CHARS],
         "types": "livre",
     }
+    if route not in {"advanced", "romans"}:
+        raise ValueError("invalid l\u0027école des loisirs search route")
     if route == "romans":
         return SEARCH + "/romans?" + urlencode({
             "page": params["page"], "type": "romans", "search": _text(query)[:_MAX_QUERY_CHARS],
@@ -472,7 +474,7 @@ class EcoleLoisirsYouthSource:
                 if kind == "link" and _product_url(href)
                 and _fold(label) != "lire la suite"
             }
-            cursor_out = next_cursor(html, current_page=page)
+            cursor_out = next_cursor(html, current_page=page, current_route=route)
             if cursor_out and not product_urls:
                 raise InvalidCatalogueStructureError(
                     "Ecole des loisirs paginated catalogue has no recognizable book links"

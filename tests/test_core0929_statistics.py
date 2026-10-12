@@ -7,14 +7,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ROOT / "src/cifereca/services.py"
+SERVICES = ROOT / "src/cifereca/core/sync_projection.py"
 CLI = ROOT / "src/cifereca/cli.py"
 
 
 def _method_source(path: Path, class_name: str, method_name: str) -> str:
     tree = ast.parse(path.read_text())
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+    method = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
     body = method.body
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
         body = body[1:]

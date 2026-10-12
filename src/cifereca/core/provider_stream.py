@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..models import SearchResult
 from ..plugin_api import ProviderSearchEvent
@@ -26,6 +26,41 @@ class StreamResult:
 
 MAX_STREAM_EVENTS = 20000
 MAX_STREAM_RESULTS = 5000
+
+# Only semantic, public provider failures may leave the Core boundary.
+# Raw server diagnostics, HTTP URLs and auth tokens are never event codes.
+PUBLIC_STREAM_ERROR_CODES = frozenset({
+    "provider_error", "upstream_error", "unavailable", "timeout",
+    "rate_limited", "quota_exceeded", "unauthorized", "forbidden",
+    "invalid_response", "protocol_error", "partial", "disconnected",
+    "cancelled", "stale",
+})
+
+
+def _safe_public_event(event: ProviderSearchEvent) -> ProviderSearchEvent:
+    """Project only event-relevant public fields across Core's callback.
+
+    Free-text messages may contain URLs, secrets or a reader's query.
+    Resume tokens are private transport state, not UI data.
+    """
+    fields = dict(
+        item_key="", result=None, current=None, total=None,
+        message="", error_code="", resume_token="",
+    )
+    if event.kind == "upsert":
+        fields.update(item_key=event.item_key, result=event.result)
+    elif event.kind == "remove":
+        fields["item_key"] = event.item_key
+    elif event.kind == "progress":
+        fields.update(current=event.current, total=event.total)
+    elif event.kind == "error":
+        fields["error_code"] = (
+            event.error_code
+            if type(event.error_code) is str
+            and event.error_code in PUBLIC_STREAM_ERROR_CODES
+            else "provider_error"
+        )
+    return replace(event, **fields)
 
 
 def consume_provider_stream(
@@ -75,9 +110,9 @@ def consume_provider_stream(
                 raise SearchStreamFailure("stream result limit exceeded")
             rows[key] = row
         elif event.kind == "remove":
-            if not event.item_key:
-                raise SearchStreamFailure("remove item key required")
-            rows.pop(event.item_key, None)
+            if not isinstance(event.item_key, str) or event.item_key not in rows:
+                raise SearchStreamFailure("remove references unknown item")
+            rows.pop(event.item_key)
         elif event.kind == "progress":
             for value in (event.current, event.total):
                 if value is not None and (type(value) is not int or value < 0):
@@ -85,14 +120,15 @@ def consume_provider_stream(
             if event.total is not None and event.current is not None and event.current > event.total:
                 raise SearchStreamFailure("progress exceeds total")
         elif event.kind == "error":
-            if not event.error_code:
+            if not isinstance(event.error_code, str) or not event.error_code:
                 raise SearchStreamFailure("error_code required")
-            warnings.append(f"{provider_id}: {event.error_code}")
+            safe_code = _safe_public_event(event).error_code
+            warnings.append(f"{provider_id}: {safe_code}")
         elif event.kind == "done":
             ended = True
         else:
             raise SearchStreamFailure("invalid stream event kind")
-        publish(event)
+        publish(_safe_public_event(event))
         if ended:
             break
     if cancelled():
@@ -108,5 +144,5 @@ def consume_provider_stream(
 
 __all__ = [
     "consume_provider_stream", "SearchStreamCancelled", "SearchStreamFailure",
-    "StreamResult",
+    "StreamResult", "PUBLIC_STREAM_ERROR_CODES",
 ]

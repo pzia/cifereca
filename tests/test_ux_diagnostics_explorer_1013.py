@@ -36,12 +36,33 @@ def test_explorer_exposes_module_severity_period_and_search_filters():
         assert label.casefold() in source.casefold(), f"Missing visible control: {label}"
 
 
-@pytest.mark.xfail(strict=True, reason="#1013: no explicit source availability feedback")
 def test_explorer_distinguishes_missing_sources_from_empty_results():
+    """#1013: now implemented; retain a positive regression gate, not XPASS(strict).
+
+    This characterizes the real page's distinct *source availability* and
+    *event count* presentations. A dated zero-anomaly conclusion is a separate,
+    still-open product requirement tracked by #1161, not implied by this test.
+    The widget states are additionally exercised by real GTK E2E D01-D03.
+    """
     source = ast.get_source_segment(SOURCE.read_text(encoding="utf-8"), _build()) or ""
-    assert "unavailable" in source or "indisponible" in source.casefold()
-    assert "empty" in source or "aucun événement" in source.casefold()
-    assert "partial" in source or "partiel" in source.casefold()
+    for fragment in (
+        "source_summaries(current_page)",
+        "journals_sources.set_text",
+        "Sources non alimentées ou indisponibles",
+        "Aucun événement sur cette page.",
+        "Données indisponibles",
+        "Source indisponible",
+        "journals_summary.set_text",
+    ):
+        assert fragment in source, f"Missing diagnostics availability/empty distinction: {fragment}"
+    helper = SOURCE.with_name("diagnostics_explorer.py").read_text(encoding="utf-8")
+    for fragment in (
+        '"empty": "Pas d’événement enregistré"',
+        '"unavailable": "Indisponible"',
+        '"partial": "Journal partiel (rotation / troncation)"',
+        'if not payload.get("sources"):',
+    ):
+        assert fragment in helper, f"Missing source availability contract: {fragment}"
 
 
 def test_explorer_has_no_direct_private_log_access():

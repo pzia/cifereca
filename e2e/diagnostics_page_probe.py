@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UX #1011: vrai widget GTK4 Diagnostics, brokers simulés, Xvfb 1366.
+"""UX #1011: vrai widget GTK4 Diagnostics, brokers simulés, Xvfb 1366/1600.
 
 Recette d'intégration du plugin (pas une preuve de toute la fenêtre Cifereca).
 Aucune identité ou service distant n'est utilisé.
@@ -74,6 +74,8 @@ class Broker:
         self.event_queries.append(dict(query))
         offset = int(query.get("offset", 0))
         limit = int(query.get("limit", 50))
+        module = str(query.get("module") or "").strip().casefold()
+        total = 65 if not module or "core.sync".startswith(module) else 0
         events = [
             {"event_id": f"evt-{i:03d}",
              "timestamp": f"2026-10-11T06:{i % 60:02d}:00+00:00",
@@ -81,11 +83,11 @@ class Broker:
              "severity": "error" if i == 51 else "info",
              "status": "partial" if i == 51 else "ok",
              "message": f"Événement fictif {i}"}
-            for i in range(offset, min(offset + limit, 65))
+            for i in range(offset, min(offset + limit, total))
         ]
         return {
-            "events": events, "offset": offset, "total": 65,
-            "next_offset": offset + len(events) if offset + len(events) < 65 else None,
+            "events": events, "offset": offset, "total": total,
+            "next_offset": offset + len(events) if offset + len(events) < total else None,
             "sources": [
                 {"source": "core_events", "status": "available"},
                 {"source": "app_log", "status": "unavailable"},
@@ -146,7 +148,7 @@ class Host:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366,))
+    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -177,7 +179,7 @@ def main():
 
     def screenshot(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
-        assert image.width == args.width, image.size
+        assert image.size == (args.width, 1000 if args.width == 1600 else 900), image.size
         assert image.getbbox() is not None, "capture entièrement vide"
         path = out / (stage + ".png")
         image.save(path)
@@ -329,10 +331,657 @@ def main():
         assert plugin.llm is None
         report["checks"]["pagination_50_then_15"] = True
         screenshot("03-journals-second-page")
+        if args.width == 1600:
+            later(extended_keyboard, 120)
+            return
+        # D15: keyboard-only module filtering, using actual XTEST events.
+        later(begin_keyboard_filter, 140)
+
+    def entry_with_placeholder(placeholder):
+        rows = [
+            w for w in walk(page[0])
+            if isinstance(w, Gtk.Entry)
+            and w.get_placeholder_text() == placeholder
+        ]
+        assert len(rows) == 1, (placeholder, len(rows))
+        return rows[0]
+
+    def focus_inside(widget):
+        # Gtk.Entry delegates keyboard focus to its internal Gtk.Text child:
+        # entry.has_focus() can be False although the entry is visibly focused.
+        current = window[0].get_focus()
+        while current is not None:
+            if current is widget:
+                return True
+            current = current.get_parent()
+        return False
+
+    def begin_keyboard_filter():
+        assert args.width == 1366
+        assert len(broker.event_queries) == 2
+        module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
+        search = entry_with_placeholder("Rechercher dans cette page")
+        assert module.grab_focus() is not False
+        until(lambda: focus_inside(module),
+              lambda: type_keyboard_module(module, search), seconds=5)
+
+    def type_keyboard_module(module, search):
+        report["stage"] = "D15_type_physical_module_filter"
+        device[0].type_text("paris")
+        until(lambda: module.get_text() == "paris",
+              lambda: keyboard_tab_forward(module, search), seconds=5)
+
+    def keyboard_tab_forward(module, search):
+        # Typing should not fetch until Enter explicitly submits the filter.
+        assert len(broker.event_queries) == 2
+        report["checks"]["D15_typing_does_not_implicitly_query"] = True
+        press("Tab")
+        until(lambda: focus_inside(search),
+              lambda: keyboard_tab_backward(module), seconds=5)
+
+    def keyboard_tab_backward(module):
+        device[0].key("Shift_L", True)
+        try:
+            press("Tab")
+        finally:
+            device[0].key("Shift_L", False)
+        until(lambda: focus_inside(module),
+              keyboard_filter_submit, seconds=5)
+
+    def keyboard_filter_submit():
+        report["checks"]["D15_tab_and_shift_tab_between_filters_xtest"] = True
+        press("Return")
+        until(lambda: len(broker.event_queries) == 3
+              and broker.event_queries[-1]["module"] == "paris"
+              and broker.event_queries[-1]["offset"] == 0
+              and find_label("0 événements affichés"),
+              keyboard_filter_result, seconds=8)
+
+    def keyboard_filter_result():
+        assert find_label("Aucun événement sur cette page")
+        assert not find_button("Suivant").get_sensitive()
+        assert not find_button("Précédent").get_sensitive()
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["D15_enter_applies_filter_and_resets_pagination"] = True
+        screenshot("04-module-filter-enter-1366")
+        module = entry_with_placeholder("Préfixe module (Entrée pour appliquer)")
+        assert module.grab_focus() is not False
+        until(lambda: focus_inside(module),
+              lambda: clear_keyboard_filter(module), seconds=5)
+
+    def clear_keyboard_filter(module):
+        device[0].key("Control_L", True)
+        try:
+            press("a")
+        finally:
+            device[0].key("Control_L", False)
+        press("BackSpace")
+        until(lambda: module.get_text() == "",
+              keyboard_filter_clear_submit, seconds=5)
+
+    def keyboard_filter_clear_submit():
+        assert len(broker.event_queries) == 3
+        press("Return")
+        until(lambda: len(broker.event_queries) == 4
+              and broker.event_queries[-1]["module"] == ""
+              and find_label("50 événements affichés"),
+              keyboard_filter_restored, seconds=8)
+
+    def keyboard_filter_restored():
+        assert find_button("Suivant").get_sensitive()
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["D15_ctrl_a_delete_return_restores_results"] = True
+        screenshot("05-module-filter-restored-1366")
+        pass_scenario()
+
+    def pass_scenario():
         report["status"] = "PASS"
         save()
         rc[0] = 0
         app.quit()
+
+    def press(key):
+        device[0].key(key, True)
+        device[0].key(key, False)
+
+    def extended_keyboard():
+        # Deliberately keep the 1366 baseline unchanged: this adds only
+        # a large-display, long-report and physical keyboard exercise.
+        assert args.width == 1600
+        assert window[0].get_width() <= args.width
+        expander = find_expander("Ouvrir le rapport support")
+        assert expander.get_expanded(), "Rapport refermé pendant la navigation"
+        scrollers = [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)]
+        texts = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        wraps = [w for w in walk(expander) if isinstance(w, Gtk.CheckButton)
+                 and w.get_label() == "Retour à la ligne"]
+        assert len(scrollers) == len(texts) == len(wraps) == 1
+        text = texts[0].get_buffer()
+        contents = text.get_text(text.get_start_iter(), text.get_end_iter(), False)
+        assert contents.count("Événement fictif.") >= 250, "Rapport multipage absent"
+        assert "SECRET-UX-TEST" not in contents
+        assert "EXEMPLE-PRIVE-UX" not in contents
+        report["checks"]["long_redacted_report_1600"] = True
+        resize = find_button("Agrandir")
+        # Journals paging can leave the report below the visible viewport.
+        # Scroll the real outer page to the actual GTK button allocation
+        # before asking for keyboard focus: no guessed pixel coordinates.
+        content = page[0].get_child()
+        ok, bounds = resize.compute_bounds(content)
+        assert ok, "Position GTK du bouton Agrandir introuvable"
+        outer = page[0].get_vadjustment()
+        destination = max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        ))
+        outer.set_value(destination)
+        report["outer_scroll_to_report"] = round(destination, 2)
+        report["stage"] = "scroll_to_report_button"
+        later(lambda: focus_report_resize(resize, wraps[0], scrollers[0]), 200)
+
+    def focus_report_resize(resize, wrap, scroller):
+        report["stage"] = "focus_report_resize"
+        focused = resize.grab_focus()
+        assert focused is not False, "Agrandir refuse le focus clavier GTK"
+        until(lambda: resize.has_focus(),
+              lambda: activate_report_resize(resize, wrap, scroller), seconds=4)
+
+    def activate_report_resize(resize, wrap, scroller):
+        report["stage"] = "activate_resize_space_xtest"
+        assert resize.has_focus(), "Agrandir n'a pas de focus clavier"
+        # A real XTEST key event changes the GTK button and its scroller.
+        press("space")
+        until(lambda: resize.get_label() == "Réduire" and
+              scroller.get_size_request()[1] == 560,
+              lambda: tab_forward(resize, wrap, scroller), seconds=4)
+
+    def tab_forward(resize, wrap, scroller):
+        report["stage"] = "tab_forward_xtest"
+        assert resize.has_focus(), "Le focus a quitté le bouton après Space"
+        press("Tab")
+        until(lambda: wrap.has_focus(),
+              lambda: tab_backward(resize, wrap, scroller), seconds=4)
+
+    def tab_backward(resize, wrap, scroller):
+        report["stage"] = "shift_tab_back_xtest"
+        assert wrap.has_focus(), "Tab ne rejoint pas Retour à la ligne"
+        device[0].key("Shift_L", True)
+        try:
+            press("Tab")
+        finally:
+            device[0].key("Shift_L", False)
+        until(lambda: resize.has_focus(),
+              lambda: verify_tab(resize, scroller), seconds=4)
+
+    def verify_tab(resize, scroller):
+        report["stage"] = "verify_scroll_independent"
+        assert resize.has_focus(), "Shift+Tab ne revient pas à Agrandir/Réduire"
+        report["checks"]["tab_shift_tab_and_space_xtest"] = True
+        screenshot("04-report-keyboard-1600")
+        adjustment = scroller.get_vadjustment()
+        bottom = max(0, adjustment.get_upper() - adjustment.get_page_size())
+        assert bottom > 500, ("Rapport sans défilement interne", bottom)
+        outer = page[0].get_vadjustment()
+        outer_before = outer.get_value()
+        adjustment.set_value(bottom)
+        later(lambda: verify_scrolled(scroller, outer_before, bottom), 200)
+
+    def verify_scrolled(scroller, outer_before, bottom):
+        adjustment = scroller.get_vadjustment()
+        assert adjustment.get_value() >= bottom - 3, (
+            "Bas du rapport inaccessible", adjustment.get_value(), bottom
+        )
+        outer = page[0].get_vadjustment()
+        assert abs(outer.get_value() - outer_before) <= 4, (
+            "Défilement interne modifie la page", outer_before, outer.get_value()
+        )
+        report["checks"]["independent_scroll_to_report_end"] = True
+        report["scroll"] = {
+            "inner_bottom": round(bottom, 2),
+            "inner_value": round(adjustment.get_value(), 2),
+            "outer_before": round(outer_before, 2),
+            "outer_after": round(outer.get_value(), 2),
+        }
+        screenshot("05-report-bottom-1600")
+        assert broker.checks == 0 and plugin.llm is None
+        # D16: resize the *visible* GTK window; Xvfb remains 1600x1000.
+        report["stage"] = "resize_visible_window_narrow"
+        report["window_before_resize"] = [
+            window[0].get_width(), window[0].get_height()
+        ]
+        window[0].set_default_size(1240, 800)
+        until(
+            lambda: window[0].get_width() <= 1280
+            and window[0].get_height() <= 820,
+            resized_narrow,
+            seconds=6,
+        )
+
+    def resized_narrow():
+        report["stage"] = "validate_resize_narrow"
+        window_width = window[0].get_width()
+        window_height = window[0].get_height()
+        assert window_width >= 760, ("Fenêtre trop petite", window_width)
+        assert window_height >= 540, ("Fenêtre trop basse", window_height)
+        assert page[0].get_mapped() and find_label("Rapport support")
+        assert find_label("Journaux par composant")
+        horizontal = page[0].get_hadjustment()
+        overflow = max(0, horizontal.get_upper() - horizontal.get_page_size())
+        assert overflow < 5, ("Débordement horizontal global", overflow)
+        report["window_narrow"] = [window_width, window_height]
+        report["horizontal_overflow_narrow"] = round(overflow, 2)
+        screenshot("06-live-resized-narrow-1600")
+        window[0].set_default_size(1560, 870)
+        until(
+            lambda: window[0].get_width() >= 1510
+            and window[0].get_height() >= 840,
+            resized_wide,
+            seconds=6,
+        )
+
+    def resized_wide():
+        report["stage"] = "validate_resize_wide"
+        assert page[0].get_mapped() and find_label("Rapport support")
+        assert window[0].get_width() > report["window_narrow"][0]
+        report["window_wide_again"] = [
+            window[0].get_width(), window[0].get_height()
+        ]
+        report["checks"]["live_resize_narrow_and_wide_without_global_horizontal_overflow"] = True
+        screenshot("07-live-resized-wide-1600")
+        # D05/D15: reduce the actual long support report with Enter XTEST,
+        # retaining the focus and an already selected portion of its text.
+        # This must not be confused with the still-unimplemented Escape action.
+        report["stage"] = "keyboard_enter_reduce"
+        expander = find_expander("Ouvrir le rapport support")
+        report_view = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(report_view) == 1
+        buffer = report_view[0].get_buffer()
+        assert buffer.get_char_count() > 4000
+        buffer.select_range(buffer.get_end_iter(), buffer.get_start_iter())
+        assert buffer.get_has_selection()
+        report["audit"] = {"D05_selection_before_reduce": True}
+        resize = find_button("Réduire")
+        outer = page[0].get_vadjustment()
+        content = page[0].get_child()
+        ok, bounds = resize.compute_bounds(content)
+        assert ok
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: focus_enter_reduce(expander, resize, buffer), 180)
+
+    def focus_enter_reduce(expander, resize, buffer):
+        assert resize.grab_focus() is not False
+        until(lambda: resize.has_focus(),
+              lambda: press_enter_reduce(expander, resize, buffer), seconds=4)
+
+    def press_enter_reduce(expander, resize, buffer):
+        report["stage"] = "enter_xtest_reduce"
+        assert resize.has_focus()
+        press("Return")
+        until(lambda: resize.get_label() == "Agrandir"
+              and [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)][0]
+                  .get_size_request()[1] == 320,
+              lambda: verify_enter_reduce(expander, resize, buffer), seconds=4)
+
+    def verify_enter_reduce(expander, resize, buffer):
+        assert resize.has_focus(), "Le focus a quitté le bouton après Entrée"
+        assert buffer.get_has_selection(), "La sélection a disparu à la réduction"
+        report["checks"]["D05_report_reduced_with_selection_preserved"] = True
+        report["checks"]["D15_return_xtest_activates_button_and_keeps_focus"] = True
+        screenshot("08-report-reduced-enter-1600")
+        report["stage"] = "enter_xtest_reexpand"
+        press("Return")
+        until(lambda: resize.get_label() == "Réduire"
+              and [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)][0]
+                  .get_size_request()[1] == 560,
+              lambda: verify_enter_reexpand(expander, resize, buffer), seconds=4)
+
+    def verify_enter_reexpand(expander, resize, buffer):
+        assert resize.has_focus(), "Le focus n'est pas revenu à la réouverture"
+        assert buffer.get_has_selection(), "La sélection a disparu à la réouverture"
+        report["checks"]["D05_reexpand_preserves_focus_and_selection"] = True
+        screenshot("09-report-reexpanded-enter-1600")
+        # D05: use a genuine XTEST mouse-wheel event, not a direct GTK
+        # adjustment assignment. A direct assignment is only used to reset
+        # the test position and bring the control into the outer viewport.
+        later(prepare_wheel_scroll, 130)
+
+    def prepare_wheel_scroll():
+        report["stage"] = "D05_prepare_physical_wheel"
+        expander = find_expander("Ouvrir le rapport support")
+        scrollers = [w for w in walk(expander) if isinstance(w, Gtk.ScrolledWindow)]
+        views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(scrollers) == len(views) == 1
+        scroller, view = scrollers[0], views[0]
+        content = page[0].get_child()
+        ok, bounds = scroller.compute_bounds(content)
+        assert ok, "Rapport scroller not allocated"
+        outer = page[0].get_vadjustment()
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 70,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: send_wheel_scroll(scroller, view), 260)
+
+    def send_wheel_scroll(scroller, view):
+        report["stage"] = "D05_xtest_mousewheel_inside_report"
+        inner = scroller.get_vadjustment()
+        assert inner.get_upper() - inner.get_page_size() > 400
+        # Gtk.TextView can allocate a taller rectangle than the clipped
+        # viewport. Its geometric centre can be near/below the window edge,
+        # causing the outer page to handle a real XTEST wheel event instead.
+        # Target the Gtk.ScrolledWindow viewport itself, whose visible centre
+        # is unambiguous. Keep the strict outer-scroll assertion unchanged.
+        pointed = device[0].click_widget(scroller)
+        # Gtk.ScrolledWindow itself may be partly clipped by the page.
+        # Reposition the XTEST pointer inside the intersection of its GTK
+        # allocation with the VISIBLE parent viewport. The first two traces
+        # selected y=804 (near the lower window edge) on both widget types.
+        ok, box = scroller.compute_bounds(page[0])
+        assert ok
+        visible_top = max(0, float(box.get_y()))
+        visible_bottom = min(
+            float(page[0].get_height()),
+            float(box.get_y() + box.get_height()),
+        )
+        assert visible_bottom - visible_top > 120, (
+            "Report viewport too small for physical mouse wheel",
+            visible_top, visible_bottom,
+        )
+        widget_middle = float(box.get_y() + box.get_height() / 2)
+        visible_middle = (visible_top + visible_bottom) / 2
+        new_y = pointed["y"] + round(visible_middle - widget_middle)
+        assert 40 < new_y < 900, ("Wheel pointer outside Xvfb", new_y)
+        device[0].xtst.XTestFakeMotionEvent(
+            device[0].display, -1, pointed["x"], new_y, 0,
+        )
+        device[0].x11.XSync(device[0].display, False)
+        report["wheel_pointer"] = {
+            **pointed, "y": new_y, "clipped_viewport_height": round(
+                visible_bottom - visible_top, 2
+            ),
+        }
+        inner.set_value(0)
+        outer_before = page[0].get_vadjustment().get_value()
+        report["wheel_outer_before"] = round(outer_before, 2)
+        for _ in range(4):
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, True, 0)
+            device[0].xtst.XTestFakeButtonEvent(device[0].display, 5, False, 0)
+        device[0].x11.XSync(device[0].display, False)
+        until(lambda: inner.get_value() > 8,
+              lambda: verify_wheel_scroll(scroller, view, outer_before),
+              seconds=5)
+
+    def verify_wheel_scroll(scroller, view, outer_before):
+        report["stage"] = "D05_verify_xtest_wheel"
+        inner = scroller.get_vadjustment()
+        outer = page[0].get_vadjustment()
+        assert inner.get_value() > 8, "XTEST wheel did not scroll inside report"
+        outer_fixed = abs(outer.get_value() - outer_before) <= 5
+        report.setdefault("audit", {})["D05_xtest_wheel_outer_page_fixed"] = outer_fixed
+        report["wheel_inner_after"] = round(inner.get_value(), 2)
+        report["wheel_outer_after"] = round(outer.get_value(), 2)
+        assert outer_fixed, (
+            "D05: molette XTEST fait aussi défiler la page externe",
+            outer_before, outer.get_value(),
+        )
+        # Detect delayed ancestor scrolling as well, after the guard expires.
+        later(lambda: verify_wheel_settled(view, outer_before), 530)
+
+    def verify_wheel_settled(view, outer_before):
+        outer = page[0].get_vadjustment()
+        assert abs(outer.get_value() - outer_before) <= 5, (
+            "D05: déplacement retardé de la page après la molette",
+            outer_before, outer.get_value(),
+        )
+        report["checks"]["D05_xtest_wheel_keeps_outer_page_fixed"] = True
+        screenshot("09b-report-physical-wheel-1600")
+        select_support_report(view)
+
+    def select_support_report(view):
+        # D13: use physical Ctrl+C on the actual SUPPORT TextView, not the
+        # already-tested structured diagnostic detail TextView.
+        report["stage"] = "D13_select_support_text"
+        buffer = view.get_buffer()
+        begin = buffer.get_start_iter()
+        end = buffer.get_iter_at_offset(160)
+        buffer.select_range(end, begin)
+        assert buffer.get_has_selection()
+        sel_start, sel_end = buffer.get_selection_bounds()
+        expected = buffer.get_text(sel_start, sel_end, False)
+        assert "RAPPORT SUPPORT EXPURGÉ" in expected
+        assert "SECRET-UX-TEST" not in expected
+        assert "EXEMPLE-PRIVE-UX" not in expected
+        assert view.grab_focus() is not False
+        until(lambda: view.has_focus(),
+              lambda: copy_support_xtest(view, expected), seconds=5)
+
+    def copy_support_xtest(view, expected):
+        report["stage"] = "D13_ctrl_c_support_report_xtest"
+        assert view.has_focus()
+        device[0].key("Control_L", True)
+        try:
+            press("c")
+        finally:
+            device[0].key("Control_L", False)
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+            None,
+            lambda clipboard, task: support_clipboard_done(
+                clipboard, task, expected
+            ),
+        ), 260)
+
+    def support_clipboard_done(clipboard, task, expected):
+        try:
+            actual = clipboard.read_text_finish(task)
+            assert actual == expected, (
+                "Le presse-papiers ne contient pas exactement la sélection support",
+                repr((actual or "")[:100]),
+            )
+            assert "SECRET-UX-TEST" not in actual
+            report["checks"]["D13_support_textview_ctrl_c_exact_selection"] = True
+            report["support_selection_length"] = len(actual)
+            screenshot("09c-support-report-ctrl-c-1600")
+            # Existing Escape/export audits remain negative until #1158
+            # delivers an actual UI feature; retain these as unmet criteria.
+            later(begin_escape_audit, 130)
+        except Exception as exc:
+            fail(f"D13 support clipboard: {type(exc).__name__}: {exc}")
+
+    def begin_escape_audit():
+        # Esc and file export remain separate observations; neither should be
+        # passed solely because Enter works and a clipboard action exists.
+        report["stage"] = "audit_escape_and_file_export"
+        expander = find_expander("Ouvrir le rapport support")
+        report.setdefault("audit", {})["report_open_before_escape"] = expander.get_expanded()
+        focus = find_button("Réduire")
+        outer = page[0].get_vadjustment()
+        content = page[0].get_child()
+        ok, bounds = focus.compute_bounds(content)
+        assert ok
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 36,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: audit_escape(focus, expander), 170)
+
+    def audit_escape(focus, expander):
+        assert focus.grab_focus() is not False
+        until(lambda: focus.has_focus(),
+              lambda: send_escape(expander), seconds=4)
+
+    def send_escape(expander):
+        report["stage"] = "observe_escape_xtest"
+        press("Escape")
+        later(lambda: finish_audit(expander), 260)
+
+    def finish_audit(expander):
+        report["stage"] = "finish_audit"
+        reduced = find_button("Agrandir") if any(
+            isinstance(w, Gtk.Button) and w.get_label() == "Agrandir"
+            for w in walk(page[0])
+        ) else None
+        esc_closes_enlargement = (
+            reduced is not None or not expander.get_expanded()
+        )
+        export_buttons = [
+            (w.get_label() or "", w.get_tooltip_text() or "")
+            for w in walk(page[0]) if isinstance(w, Gtk.Button)
+            and ("export" in ((w.get_label() or "") + " " +
+                             (w.get_tooltip_text() or "")).casefold()
+                 or "enregistrer" in ((w.get_label() or "") + " " +
+                                     (w.get_tooltip_text() or "")).casefold())
+        ]
+        report["audit"].update({
+            "escape_collapses_or_reduces_report": esc_closes_enlargement,
+            "report_open_after_escape": expander.get_expanded(),
+            "file_export_action_present": bool(export_buttons),
+            "file_export_actions": export_buttons,
+            "scope": "Observation de la vraie UI; aucun export de fichier simulé",
+        })
+        report.setdefault("unmet_criteria", []).extend(
+            key for key, ok in (
+                ("D15: Escape ferme l'agrandissement", esc_closes_enlargement),
+                ("D13: export support explicite vers un fichier", bool(export_buttons)),
+            ) if not ok
+        )
+        screenshot("10-escape-export-audit-1600")
+        assert broker.checks == 0 and plugin.llm is None
+        # D13: prove Ctrl+C only copies a selection in the REAL support
+        # report, not an entire block or the previous JSON clipboard.
+        later(lambda: begin_support_selection_copy(expander), 130)
+
+    def begin_support_selection_copy(expander):
+        report["stage"] = "D13_select_support_excerpt"
+        assert expander.get_expanded()
+        views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(views) == 1
+        view = views[0]
+        buf = view.get_buffer()
+        full = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+        prefix = "RAPPORT SUPPORT EXPURGÉ — FIXTURE UX"
+        assert full.startswith(prefix) and len(full) > len(prefix) * 10
+        start_iter = buf.get_start_iter()
+        end_iter = buf.get_iter_at_offset(len(prefix))
+        buf.select_range(start_iter, end_iter)
+        assert buf.get_has_selection()
+        report["audit"]["D13_support_selected_chars"] = len(prefix)
+        assert view.grab_focus() is not False
+        until(lambda: view.has_focus(),
+              lambda: send_support_selection_copy(expander, full, prefix),
+              seconds=5)
+
+    def send_support_selection_copy(expander, full, prefix):
+        report["stage"] = "D13_ctrl_c_support_excerpt_xtest"
+        device[0].key("Control_L", True)
+        try:
+            press("c")
+        finally:
+            device[0].key("Control_L", False)
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+            None,
+            lambda clipboard, task: verify_support_selection_copy(
+                clipboard, task, expander, full, prefix),
+        ), 260)
+
+    def verify_support_selection_copy(clipboard, task, expander, full, prefix):
+        try:
+            selected = clipboard.read_text_finish(task)
+            assert selected == prefix, ("Ctrl+C n'a pas copié l'extrait exact", repr(selected))
+            assert selected != full
+            assert "SECRET-UX-TEST" not in selected
+            assert "EXEMPLE-PRIVE-UX" not in selected
+            assert expander.get_expanded()
+            report["checks"]["D13_support_partial_selection_ctrl_c_xtest"] = True
+            screenshot("11-support-excerpt-ctrl-c-1600")
+            later(lambda: focus_support_copy_button(expander, full), 130)
+        except Exception as exc:
+            fail(f"Ctrl+C support: {type(exc).__name__}: {exc}")
+
+    def focus_support_copy_button(expander, full):
+        report["stage"] = "D13_focus_support_full_copy_button"
+        buttons = [
+            w for w in walk(page[0])
+            if isinstance(w, Gtk.Button)
+            and w.get_tooltip_text() == "Copier le diagnostic support expurgé"
+        ]
+        assert len(buttons) == 1
+        button = buttons[0]
+        content = page[0].get_child()
+        ok, bounds = button.compute_bounds(content)
+        assert ok
+        outer = page[0].get_vadjustment()
+        outer.set_value(max(0, min(
+            float(bounds.get_y()) - 32,
+            outer.get_upper() - outer.get_page_size(),
+        )))
+        later(lambda: trigger_support_full_copy(button, expander, full), 220)
+
+    def trigger_support_full_copy(button, expander, full):
+        assert button.grab_focus() is not False
+        until(lambda: button.has_focus(),
+              lambda: press_support_full_copy(expander, full), seconds=5)
+
+    def press_support_full_copy(expander, full):
+        report["stage"] = "D13_copy_full_support_button_xtest"
+        press("space")
+        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(
+            None,
+            lambda clipboard, task: verify_support_full_copy(
+                clipboard, task, expander, full),
+        ), 270)
+
+    def verify_support_full_copy(clipboard, task, expander, full):
+        try:
+            copied = clipboard.read_text_finish(task)
+            assert copied == full, "Copier support doit renvoyer le rapport complet"
+            assert "RAPPORT SUPPORT EXPURGÉ" in copied
+            assert copied.count("Événement fictif.") >= 250
+            assert "SECRET-UX-TEST" not in copied
+            assert "EXEMPLE-PRIVE-UX" not in copied
+            report["checks"]["D13_support_full_copy_button_xtest"] = True
+            report["audit"]["D13_copy_selected_vs_full_distinct"] = True
+            screenshot("12-support-full-copy-1600")
+            # Closing the expander after interacting with both clipboard paths
+            # must preserve the existing focus/selection observations for D05.
+            later(lambda: audit_expander_keyboard_close(expander), 120)
+        except Exception as exc:
+            fail(f"Copie support complète: {type(exc).__name__}: {exc}")
+
+    def audit_expander_keyboard_close(expander):
+        report["stage"] = "audit_report_close_focus"
+        views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(views) == 1
+        buffer = views[0].get_buffer()
+        # Re-establish a known selection immediately before the close action:
+        # previous D13 clipboard/focus gestures may have cleared it already.
+        buffer.select_range(buffer.get_end_iter(), buffer.get_start_iter())
+        assert buffer.get_has_selection(), "Sélection préalable D05 introuvable"
+        report["audit"]["D05_selection_reestablished_before_close"] = True
+        focusable = expander.grab_focus() is not False and expander.has_focus()
+        report["audit"]["D05_expander_focusable"] = focusable
+        report["audit"]["D05_selection_after_focus_transfer"] = buffer.get_has_selection()
+        if focusable:
+            press("Return")
+        later(lambda: finish_expander_audit(expander, buffer, focusable), 280)
+
+    def finish_expander_audit(expander, buffer, focusable):
+        collapsed = not expander.get_expanded()
+        focused = expander.has_focus()
+        selected = buffer.get_has_selection()
+        report["audit"]["D05_return_collapsed_expander"] = focusable and collapsed
+        report["audit"]["D05_focus_after_collapse"] = focused if collapsed else False
+        report["audit"]["D05_text_selection_after_collapse"] = selected
+        if focusable and collapsed and focused and selected:
+            report["checks"]["D05_keyboard_collapse_focus_and_selection"] = True
+        else:
+            report["unmet_criteria"].append(
+                "D05: perte de la sélection pendant transfert de focus ou fermeture du volet Entrée"
+            )
+        screenshot("13-report-collapse-focus-audit-1600")
+        pass_scenario()
 
     class Application(Gtk.Application):
         def __init__(self):
@@ -341,10 +990,17 @@ def main():
         def do_activate(self):
             window[0] = Gtk.ApplicationWindow(application=self)
             window[0].set_title("Diagnostics UX GTK isolé")
-            window[0].set_default_size(args.width - 40, 790)
+            window[0].set_default_size(args.width - 40, 870 if args.width == 1600 else 790)
             device[0] = X11Input()
-            page[0] = plugin._build(host)
-            window[0].set_child(page[0])
+            root = plugin._build(host)
+            window[0].set_child(root)
+            # The Diagnostics root now captures nested wheel events before
+            # GTK's outer ScrolledWindow; keep existing viewport assertions.
+            outer_scrollers = [
+                w for w in walk(root) if isinstance(w, Gtk.ScrolledWindow)
+            ]
+            assert outer_scrollers, "Page scroller absent"
+            page[0] = outer_scrollers[0]
             window[0].present()
             until(lambda: find_label("50 événements affichés"), initial)
 
@@ -356,7 +1012,7 @@ def main():
 
     app = Application()
     GLib.timeout_add_seconds(
-        35, lambda: (fail("Timeout GTK 35s"), False)[1]
+        65, lambda: (fail("Timeout GTK 65s"), False)[1]
         if report["status"] == "RUNNING" else False)
     app.run([sys.argv[0]])
     if not (out / "screen.json").exists():

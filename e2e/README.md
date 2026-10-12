@@ -1,9 +1,16 @@
 # Tests E2E GTK
 
-Le runner canonique est :
+**Lire d'abord [environnements/E2E-UX.md](../environnements/E2E-UX.md)**
+avant d'exécuter ces scénarios : le guide explique l'environnement rootless,
+la simulation, les niveaux de preuve et l'exécution autorisée sur
+les runners GitHub standard.
+
+
+Pour les hôtes avec GTK4/PyGObject installés et accessibles au Python du
+scénario, le runner est :
 
 ```bash
-python e2e/run.py
+python3 e2e/run.py
 ```
 
 Il lance la vraie application CIFERECA sous Xvfb, avec HOME/XDG isolés, puis attend
@@ -45,6 +52,19 @@ Core seul, maintien du processus et apparition effective d'une surface GTK rendu
 changement visuel significatif avant d'accepter la capture. L'écran Xvfb est
 fixé à `1280x1024x24` afin que les coordonnées du scénario restent déterministes.
 
+## Attention : runtime Debian rootless
+
+`environnements/openai-chat-debian/gtk-python` utilise les dépendances
+isolées sous `runtime/root`. **`e2e/run.py` remplace actuellement `PYTHONPATH` par `src/` dans
+l'environnement du probe**. Pour le runtime Debian local rootless,
+transmettre `environnements/openai-chat-debian/gtk-python` par
+`--python` : ce lanceur restaure `env.sh` au démarrage du sous-processus.
+Sur les runners standard `E2E Smoke`, le venv Python
+`--system-site-packages` accède directement à GI/GTK4. Le guide
+[`environnements/E2E-UX.md`](../environnements/E2E-UX.md)
+distingue les deux chemins. Aucun scénario PASS n'est présumé sans rapport
+et captures vérifiés.
+
 ## Dépendances Linux
 
 Le runner exige `xvfb-run`, GTK4/libadwaita, PyGObject, Pillow, `libXtst` et
@@ -84,6 +104,57 @@ Artefacts : `e2e-artifacts/search-filter-p0/00-before.png`,
 `screen.json` (SHA de commit, mesures et empreintes de captures), et traces
 du runner. En cas d'échec, conserver ces preuves et ouvrir un correctif
 CoreUI ; ce test ne clôt pas à lui seul #660 avant sa recette sur CI.
+
+### P1 #942 — compteur réel et données exclues (GTK 1366)
+
+Le même scénario `book-detail-1366` vérifie après le parcours normal
+Recherche/Bibliothèque deux jeux de lignes supplémentaires au **point de
+rendu final GTK** `DetailPanel._group("Détail", ...)`. Il évite volontairement
+la normalisation en amont afin de tester aussi la sécurité du dernier
+composant de présentation.
+
+- Cinq valeurs en entrée, dont une URL signée et un jeton : seules trois
+  lignes publiques (Alice, Bob, nature) doivent rester visibles. Le compteur
+  annoncé doit être exactement `3 champ(s) bibliographiques`.
+- Deux valeurs sensibles sans donnée publique : aucune section « Détail »
+  vide ne doit être créée.
+- Aucun nouvel HTTP ni recherche en ligne provoquée par ces rendus.
+  Les champs secrets ne sont jamais recopiés dans le JSON de preuves.
+
+Rapport : `security_detail_mixed_942` et
+`security_detail_all_private_942` dans `screen.json`. Captures
+`04-library-detail-mixed-safety-gtk.png` et
+`05-library-detail-all-private-gtk.png` à 1366 px. Ce contrôle
+d'acceptation reste rouge tant que CoreUI n'a pas corrigé le compteur et
+la section sans contenu. Aucun scénario/workflow supplémentaire.
+
+
+### UX P1 #922 — aides et étiquettes des filtres Jeunesse (recette distincte)
+
+La recette dédiée (1366 px uniquement) s'exécute avec :
+
+    dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario youth-filter-help-1366
+
+Elle ouvre la vraie page GTK, inspecte les dix contrôles (profil, recherche,
+âge, nature d'âge, source, langue, format, type, thèmes et âges inférés)
+et vérifie une aide contextuelle non vide pour chacun. Les étiquettes doivent
+être visibles et explicitement liées au widget via Gtk.Label.set_mnemonic_widget ;
+la case à cocher peut porter son libellé intrinsèque.
+
+Après un clic XTEST suivi de la saisie « Forest », le test vérifie la
+persistance des étiquettes, la distinction cache local / collecte explicite
+et l'absence de requête réseau. Il traverse également les contrôles avec
+de vraies touches XTEST Tab/Shift+Tab, journalise les focus GTK réels (y
+compris GtkText interne) et contrôle qu'aucune collecte n'est induite.
+Le rapport screen.json et trois captures documentent les dix champs, le
+parcours clavier et toute absence d'aide. Un contrôle non atteint ou un
+double arrêt Tab anonyme sur un Gtk.FlowBoxChild non interactif est signalé,
+sans déduire l'accessibilité de la seule capture visuelle.
+
+**Test d'acceptation intentionnellement bloquant tant que le plugin n'a pas
+ajouté les libellés et tooltips du P1 #922.** Les anciens scénarios Jeunesse
+restent inchangés. Ne pas contourner le test par des placeholders.
+Aucun scénario de largeur basse et aucun workflow CI nouveau.
 
 ## Recette Jeunesse P1 (#758)
 
@@ -234,3 +305,55 @@ toujours tout réseau implicite. Le PASS ne couvre pas encore, dans la vraie
 fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
 sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
+
+### MainWindow preparation baseline (#1123)
+
+`mainwindow-baseline-1366` and `mainwindow-baseline-1600` reuse the real
+Diagnostics navigation probe with the two-identity local search fixture.
+They add XTEST keyboard focus and identity round-trip, then normal window
+closure and refusal of new runner work. Async Diagnostics is simulated;
+this proves shell responsiveness, not live provider/LLM behavior.
+Run each through `e2e/run.py --scenario <name>` on an existing GTK runtime.
+No new workflow or network account is required.
+
+### Shared book-detail comparison at 1600 (#1124)
+
+The existing `e2e/book_detail_probe.py` accepts `--width 1366` and `--width 1600`.
+Use the matching Xvfb screen (1366x900 or 1600x1000) and the local
+`search-filters` fixture through the existing GTK environment. The same
+MainWindow probe checks multivalued Search/Library metadata, independent
+subject clipboard copy and the explicit typed ISBN action without remote I/O.
+It does not certify live account behavior or resolve the pre-existing duplicate
+author copy tooltips. Preserve source hashes with before/after reports.
+
+### CoreUI component lifecycle
+
+`book_detail_probe.py --out <directory> --width 1366 --component-contracts`
+(or `--width 1600`) extends the loaded Search/Library detail recipe with empty
+and long summaries, XTEST expand/collapse and overflow actions, 0/1/N list
+reconciliation, stable-key selection and Escape. The real MainWindow identity
+transition cancels a controlled pending observer and clears the old GTK detail;
+its scheduler is controlled during this last stage. Deferred worker delivery
+is separately covered by the deterministic resolver coordination tests.
+Synthetic list keys have no business callbacks. This recipe neither acquires
+books nor connects to remote accounts. Jeunesse's existing `--library-search`
+recipe also accepts 1366/1600 for local-cache navigation through its real plugin.
+
+`search_filter_probe.py --width 1366|1600` uses the same loaded local-index
+fixture to check query, rows, count, selected key, scroll and absence of extra
+searches when opening/closing filter menus. `--short-component-actions` keeps
+the pre-existing overflow reproduction from #1216; its failure is not hidden.
+
+### Settings IA — explicit loopback qualification
+
+`llm_settings_probe.py --out <directory> --width 1366|1600` uses the real
+MainWindow, settings widgets, TaskRunner and Core HTTP transport with
+`simulation/common/llm_http_fixture.py`. Six synthetic POSTs exercise success,
+401/404/429, late-result invalidation after reset and bounded timeout.
+Opening, editing, prevalidation, remote-consent cancellation, reset and saving
+make no extra POST. The recipe rejects HTTP remote/credential/query/fragment
+URLs and invalid limits/key names, checks environment-name-only display and
+needs-restart feedback after saving. The already sent delayed request is not
+undone by reset; the UI ignores its stale result. No distant test is accepted.
+Initial Tab focus is exercised; loss of focus after the disabled test button
+is recorded. This does not certify screen-reader speech or live HTTPS servers.

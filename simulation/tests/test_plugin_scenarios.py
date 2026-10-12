@@ -29,6 +29,19 @@ class PluginCoverageTests(unittest.TestCase):
         self.assertFalse(any(row["e2e_gtk_verified"] for row in result["packages"]))
         self.assertIn("baen", [row["package"] for row in result["packages"] if not row["data"]])
 
+    def test_pilot_plugins_classified_without_claiming_real_e2e(self):
+        report = plugin_coverage.build_report()
+        packages = {row["package"]: row for row in report["packages"]}
+        for name in ("cifericaopds", "dev-updater"):
+            self.assertIn(name, packages)
+            row = packages[name]
+            self.assertEqual(row["data"], [])
+            self.assertEqual(row["services"], [])
+            self.assertFalse(row["e2e_gtk_verified"])
+            self.assertTrue(row["gap"])
+        self.assertNotIn("cifericaopds", report["unclassified"])
+        self.assertNotIn("dev-updater", report["unclassified"])
+
     def test_all_services_profiles_include_ebooksgratuits(self):
         import datasetctl
         catalog = datasetctl.load_catalog()

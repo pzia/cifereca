@@ -34,13 +34,25 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from .settings_context import settings_action_state
+from .paris_adept_presentation import normal_paris_adept_summary
+from .settings_model import SettingsCommitController, SettingsRevisionState
+from .settings_draft import build_settings_draft, SettingsValidationError
+from .llm_settings import (
+    LLMSettingsError, normalize_llm_settings, destination_summary,
+    env_key_is_set, probe_llm_connection,
+)
 from .diagnostic_presentation import diagnostic_plugin_rows
+from . import loans_controller, sync_controller
+from .settings_sync_section import build_kobo_sync_section
+from .settings_account_editor import build_provider_account_editor
+from .settings_identity_editor import build_identity_settings_editor
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
     loan_due_presentation,
     loan_medium_counts,
 )
+from ..core.loan_source_identity import loan_source_key, unique_library_loan
 from .recent_time import format_recent_timestamp
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
@@ -61,1457 +73,21 @@ from ..plugin_api import (
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
-def fr_date(value: str | None, with_time: bool = False) -> str:
-    if not value:
-        return "—"
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
-        return dt.strftime("%d/%m/%Y %H:%M" if with_time else "%d/%m/%Y")
-    except Exception:
-        return str(value)
+from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation
 
+from .action_widgets import clear_box, add_css, action_button
 
-def text_or_dash(value: Any) -> str:
-    text = str(value or "").strip()
-    return text or "—"
 
+# Historical imports remain compatible during GUI extraction.
+from .history_cover_resolver import HistoryCoverResolver, _MetaRequest
 
-def detail_display_value(label: str, value: Any) -> tuple[str, str]:
-    """Return the compact value and the complete tooltip value for a detail row."""
-    full = text_or_dash(value)
-    if label == "Fichier local" and full != "—":
-        compact = Path(full).name or full
-        return compact, full
-    return full, full
 
+from .detail_panel import DetailPanel
 
-def detail_language(metadata: object) -> str:
-    """Return a compact, human-readable language list for shared book details."""
-    data = metadata if isinstance(metadata, dict) else {}
-    raw = data.get("languages") or data.get("language") or ()
-    values = raw if isinstance(raw, (list, tuple, set)) else (raw,)
-    labels: list[str] = []
-    for value in values:
-        label = language_label(value)
-        if label and label not in labels:
-            labels.append(label)
-    return ", ".join(labels)
+from .master_detail import MasterDetailPage
 
 
-def compact_availability_label(value: object) -> str:
-    """Normalize verbose provider prose into a short business status."""
-    text = str(value or "").strip()
-    folded = text.casefold()
-    if not text:
-        return ""
-    if "non vérifi" in folded or "non verifi" in folded:
-        return "Non vérifiée"
-    if "dans votre bibliothèque" in folded or "dans votre bibliotheque" in folded:
-        return "Dans la bibliothèque"
-    if "téléchargement libre" in folded or "telechargement libre" in folded:
-        return "Téléchargement libre"
-    if "disponible à l’emprunt" in folded or "disponible a l'emprunt" in folded:
-        return "Empruntable"
-    if "disponible" in folded and len(text) > 32:
-        return "Disponible"
-    if len(text) > 40 and " — " in text:
-        return text.split(" — ", 1)[0].strip()
-    return text
-
-
-def compact_detail_rows(rows: Iterable[tuple[str, object]]) -> tuple[tuple[str, object], ...]:
-    """Drop empty filler cells from dense detail sections."""
-    result: list[tuple[str, object]] = []
-    for label, value in rows:
-        text = str(value or "").strip()
-        if not text or text in {"—", "Inconnu"}:
-            continue
-        result.append((str(label), value))
-    return tuple(result)
-
-
-def detail_subtitle_lines(section: str, value: object) -> int:
-    """Keep short metadata dense while leaving long values fully readable."""
-    text = str(value or "")
-    if "\n" in text:
-        return 0
-    limit = 36 if section == "Essentiel" else 72
-    if len(text) > limit:
-        return 0
-    return 1 if section == "Essentiel" else 2
-
-
-
-def book_detail_presentation(
-    *,
-    title: str,
-    subtitle: str | None = None,
-    thumbnail: str | None = None,
-    badges: Iterable[str] = (),
-    group_title: str | None = None,
-    rows: Iterable[tuple[str, object]] = (),
-    section_rows: Iterable[tuple[str, Iterable[tuple[str, object]]]] = (),
-    links: Iterable[DocumentLink] = (),
-    metadata: object = None,
-) -> UiBookDetailPresentation:
-    """Build the neutral book-detail projection used by Core and plugin views."""
-    sections_list: list[DetailSection] = []
-    for order, (section_title, section_values) in enumerate(section_rows):
-        compact_rows = compact_detail_rows(section_values)
-        fields = tuple(
-            DetailField(id=f"section-{order}-field-{index}", label=str(label), value=value)
-            for index, (label, value) in enumerate(compact_rows)
-        )
-        if fields:
-            sections_list.append(
-                DetailSection(id=f"section-{order}", title=str(section_title), fields=fields, order=order)
-            )
-    if not sections_list and group_title:
-        fields = tuple(
-            DetailField(id=f"field-{index}", label=str(label), value=value)
-            for index, (label, value) in enumerate(compact_detail_rows(rows))
-        )
-        if fields:
-            sections_list.append(DetailSection(id="primary", title=group_title, fields=fields, order=0))
-    details = list(detail_metadata_items(metadata))
-    # Legacy summaries and loans without bibliographic metadata keep their
-    # original shape: the generic helper must not fabricate a new section.
-    if metadata is not None:
-        primary_title = safe_detail_value(title)
-        if primary_title and not any(label == "Titre" and value == primary_title
-                                     for label, value, _kind in details):
-            details.insert(0, ("Titre", primary_title, "title"))
-        # Avoid merging known individual authors into a synthetic author field.
-        if subtitle and not any(kind == "author" for _label, _value, kind in details):
-            single_author = safe_detail_value(subtitle)
-            if single_author:
-                details.append(("Auteur", single_author, "author"))
-    if details:
-        already_shown = {(field.label, str(field.value))
-                         for section in sections_list for field in section.fields}
-        extra = tuple(
-            DetailField(id=f"detail-{index}", label=label, value=value, kind=kind)
-            for index, (label, value, kind) in enumerate(details)
-            if (label, value) not in already_shown
-        )
-        if extra:
-            sections_list.append(DetailSection(
-                id="metadata-detail", title="Détail", fields=extra, order=1000,
-            ))
-    return UiBookDetailPresentation(
-        title=str(title or "Sans titre"),
-        subtitle=str(subtitle or ""),
-        thumbnail_url=thumbnail,
-        badges=tuple(dict.fromkeys(str(value) for value in badges if value)),
-        sections=tuple(sections_list),
-        links=tuple(links),
-    )
-
-def clear_box(box: Gtk.Box) -> None:
-    child = box.get_first_child()
-    while child is not None:
-        nxt = child.get_next_sibling()
-        box.remove(child)
-        child = nxt
-
-
-def add_css(widget: Gtk.Widget, *classes: str) -> Gtk.Widget:
-    for name in classes:
-        widget.add_css_class(name)
-    return widget
-
-
-def action_button(
-    label: str,
-    icon_name: str | None = None,
-    *,
-    suggested: bool = False,
-    destructive: bool = False,
-    tooltip: str | None = None,
-) -> Gtk.Button:
-    """Create a consistently labelled action button with an optional icon."""
-    button = Gtk.Button()
-    button._cifereca_action_label = label
-    button._cifereca_action_icon = icon_name or 'view-more-symbolic'
-    if icon_name:
-        try:
-            content = Adw.ButtonContent()
-            content.set_label(label)
-            content.set_icon_name(icon_name)
-            button.set_child(content)
-        except (AttributeError, TypeError):
-            # Keep the action usable on older libadwaita runtimes where
-            # ButtonContent is not available. The label remains authoritative.
-            button.set_label(label)
-    else:
-        button.set_label(label)
-    if suggested:
-        button.add_css_class("suggested-action")
-    if destructive:
-        button.add_css_class("destructive-action")
-    button.set_tooltip_text(tooltip or label)
-    return button
-
-
-class _MetaRequest:
-    def __init__(self, holder: dict[str, bool]):
-        self.holder = holder
-
-    def cancel(self) -> None:
-        self.holder["active"] = False
-
-
-class HistoryCoverResolver:
-    """Résolution lazy des couvertures absentes de l'historique lié.
-
-    La 0.2.6 n'utilise plus les RecordId ListHandings pour GetListHoldings : les RecordId observés sur un
-    profil lié provoquent systématiquement une erreur Syracuse. On recherche
-    donc le document par titre/auteur/année uniquement pour les cellules
-    réellement matérialisées, avec deux workers et déduplication.
-    """
-
-    def __init__(self, service: LibraryService, diagnostics: Diagnostics):
-        self.service = service
-        self.diagnostics = diagnostics
-        self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cifereca-history-cover")
-        self._lock = threading.Lock()
-        self._pending: dict[str, list[tuple[dict[str, bool], Callable[[str | None], None]]]] = {}
-        self._memory: dict[str, tuple[str | None, str]] = {}
-        self._stats = {
-            "requested": 0,
-            "memory_hit": 0,
-            "matched": 0,
-            "ambiguous": 0,
-            "not_found": 0,
-            "no_cover": 0,
-            "error": 0,
-            "completed": 0,
-        }
-
-    def close(self) -> None:
-        self.pool.shutdown(wait=False, cancel_futures=True)
-
-    def stats(self) -> dict[str, int]:
-        with self._lock:
-            out = dict(self._stats)
-            out["pending"] = len(self._pending)
-        out["workers"] = 2
-        return out
-
-    @staticmethod
-    def _key(provider: str, record_id: str | None, title: str, author: str | None, year: str | None) -> str:
-        return "\0".join([
-            str(provider or ""), str(record_id or ""), str(title or ""),
-            str(author or ""), str(year or ""),
-        ])
-
-    def request(
-        self,
-        provider: str,
-        record_id: str | None,
-        title: str,
-        author: str | None,
-        year: str | None,
-        default_url: str | None,
-        callback: Callable[[str | None], None],
-    ) -> _MetaRequest:
-        holder = {"active": True}
-        request = _MetaRequest(holder)
-        title = str(title or "").strip()
-        if not title:
-            GLib.idle_add(callback, default_url)
-            return request
-        key = self._key(provider, record_id, title, author, year)
-        with self._lock:
-            self._stats["requested"] += 1
-            if key in self._memory:
-                self._stats["memory_hit"] += 1
-                value, _status = self._memory[key]
-                GLib.idle_add(callback, value or default_url)
-                return request
-            callbacks = self._pending.setdefault(key, [])
-            callbacks.append((holder, callback))
-            if len(callbacks) > 1:
-                return request
-
-        future = self.pool.submit(
-            self.service.resolve_history_thumbnail,
-            provider, record_id, title, author, year, default_url,
-        )
-
-        def done(fut) -> None:
-            try:
-                value, status = fut.result()
-            except Exception:
-                value, status = default_url, "error"
-            with self._lock:
-                self._memory[key] = (value, status)
-                callbacks = self._pending.pop(key, [])
-                self._stats[status if status in {"matched", "ambiguous", "not_found", "no_cover", "error"} else "error"] += 1
-                self._stats["completed"] += 1
-                snapshot = dict(self._stats)
-                snapshot["pending"] = len(self._pending)
-                should_log = self._stats["completed"] == 1 or self._stats["completed"] % 10 == 0
-            if should_log:
-                snapshot["workers"] = 2
-                self.diagnostics.add(
-                    "COVER", "history search pipeline", "ok",
-                    detail=snapshot,
-                    level="detailed",
-                )
-            for state, cb in callbacks:
-                if state.get("active"):
-                    GLib.idle_add(cb, value)
-
-        future.add_done_callback(done)
-        return request
-
-
-class DetailPanel(Gtk.Box):
-    def __init__(self, window: "MainWindow"):
-        super().__init__()
-        self.window = window
-        self._meta_request = None
-        self._pending_action_focus_key = ""
-        self.set_orientation(Gtk.Orientation.VERTICAL)
-        self.set_vexpand(True)
-        self.action_scroll = AdaptiveActionBar(
-            fraction=1.0,
-            source=self,
-            overflow=True,
-            preserve_primary_label=True,
-        )
-        self._action_bar = self.action_scroll.box
-        self._action_bar.add_css_class('toolbar')
-        self._action_bar.add_css_class('detail-actions')
-        self._action_bar.set_margin_start(12); self._action_bar.set_margin_end(12)
-        self.append(self.action_scroll)
-        self.body_scroll = Gtk.ScrolledWindow()
-        self.body_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.body_scroll.set_propagate_natural_height(False)
-        self.body_scroll.set_min_content_height(0)
-        self.body_scroll.set_min_content_width(240)
-        self.body_scroll.set_vexpand(True); self.body_scroll.set_hexpand(True)
-        self.append(self.body_scroll)
-        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        self.content.set_margin_top(20)
-        self.content.set_margin_bottom(20)
-        self.content.set_margin_start(20)
-        self.content.set_margin_end(20)
-        self.body_scroll.set_child(self.content)
-        self.empty("Sélectionnez un livre", "Les détails et actions apparaîtront ici.")
-
-    def _cancel_meta_request(self) -> None:
-        if self._meta_request is not None:
-            try:
-                self._meta_request.cancel()
-            except Exception:
-                pass
-            self._meta_request = None
-
-    def empty(self, title: str, description: str, icon: str = "book-open-symbolic") -> None:
-        self._cancel_meta_request()
-        self._pending_action_focus_key = ""
-        clear_box(self.content)
-        self._clear_actions()
-        status = Adw.StatusPage()
-        status.set_title(title)
-        status.set_description(description)
-        status.set_icon_name(icon)
-        status.set_vexpand(True)
-        self._append_content(status)
-
-    def _cover_and_title(
-        self,
-        title: str,
-        subtitle: str | None,
-        thumbnail: str | None,
-        badges: Iterable[str] = (),
-    ) -> CoverView:
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
-        self._append_content(header)
-        cover = CoverView(112, 168)
-        cover.set_missing_size(40, 60)
-        header.append(cover)
-        cover.bind_url(self.window.covers, thumbnail, priority=0)
-        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        text.set_hexpand(True)
-        text.set_valign(Gtk.Align.START)
-        header.append(text)
-        label = Gtk.Label(label=title or "Sans titre", xalign=0)
-        label.set_wrap(True)
-        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        label.set_lines(3)
-        label.set_ellipsize(Pango.EllipsizeMode.END)
-        label.set_tooltip_text(title or "Sans titre")
-        add_css(label, "detail-title")
-        text.append(label)
-        if subtitle:
-            sub = Gtk.Label(label=subtitle, xalign=0)
-            sub.set_wrap(True)
-            sub.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            sub.set_lines(2)
-            sub.set_ellipsize(Pango.EllipsizeMode.END)
-            sub.set_tooltip_text(subtitle)
-            add_css(sub, "detail-subtitle", "dim-label")
-            text.append(sub)
-            self._subtitle_label = sub
-        else:
-            self._subtitle_label = None
-        badges_box = Gtk.FlowBox()
-        badges_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        badges_box.set_halign(Gtk.Align.START)
-        badges_box.set_hexpand(True)
-        badges_box.set_min_children_per_line(1)
-        badges_box.set_max_children_per_line(4)
-        badges_box.set_column_spacing(6)
-        badges_box.set_row_spacing(6)
-        for value in badges:
-            if not value:
-                continue
-            chip = Gtk.Label(label=value, xalign=0)
-            chip.set_wrap(True)
-            chip.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            chip.set_tooltip_text(str(value))
-            add_css(chip, "badge")
-            badges_box.insert(chip, -1)
-        text.append(badges_box)
-        return cover
-
-
-    def _group(self, title: str, rows: list[tuple[str, str]], *, fields=()) -> None:
-        if title == "Détail":
-            # Explicit and local-only. Per-element actions; no network on display.
-            group = Adw.PreferencesGroup()
-            expander = Adw.ExpanderRow()
-            expander.set_title("Détail")
-            expander.set_subtitle(f"{len(rows)} champ(s) bibliographiques")
-            expander.set_expanded(bool(getattr(self, "_detail_expanded", False)))
-
-            def save_expanded(widget, _pspec):
-                self._detail_expanded = bool(widget.get_expanded())
-
-            expander.connect("notify::expanded", save_expanded)
-            search = getattr(self.window, "search_books", None)
-            current = getattr(self.window.service, "current_identity", None)
-            identity_id = getattr(current, "identity_id", None)
-            for index, (label, value) in enumerate(rows):
-                safe_value = safe_detail_value(value)
-                if not safe_value:
-                    continue
-                field = fields[index] if index < len(fields) else None
-                kind = getattr(field, "kind", "copy")
-                row = Adw.ActionRow()
-                display_value, full_value = detail_display_value(label, safe_value)
-                row.set_title(label)
-                row.set_subtitle(display_value)
-                row.set_subtitle_lines(0)
-                row.set_tooltip_text(label + " : " + full_value)
-
-                copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
-                copy.add_css_class("flat")
-                copy.set_tooltip_text("Copier " + label)
-                def copy_one(_button, value=safe_value):
-                    display = Gdk.Display.get_default()
-                    if display is None:
-                        self.window.toast("Presse-papiers indisponible")
-                        return
-                    # Some PyGObject GTK4 bindings lack Clipboard.set_text.
-                    # Keep the provider alive for asynchronous X11/Wayland reads.
-                    provider = Gdk.ContentProvider.new_for_value(value)
-                    self.window._clipboard_provider = provider
-                    if display.get_clipboard().set_content(provider):
-                        self.window.toast("Copié")
-                    else:
-                        self.window.toast("Copie impossible")
-                copy.connect("clicked", copy_one)
-                row.add_suffix(copy)
-
-                query_field = kind if kind in {
-                    "title", "author", "subject", "series", "collection",
-                    "language", "isbn", "all",
-                } else ("all" if kind == "text" else "")
-                query_value = safe_value
-                if query_field == "isbn":
-                    query_value = canonical_book_isbn(query_value)
-                    if not query_value:
-                        query_field = "all"  # Never treat an EAN/invalid ID as ISBN
-                if callable(search) and query_field and 2 <= len(query_value) <= 512:
-                    lookup = Gtk.Button.new_from_icon_name("system-search-symbolic")
-                    lookup.add_css_class("flat")
-                    tooltip = ("Rechercher en ligne dans tous les attributs disponibles"
-                               if query_field == "all" else
-                               "Rechercher en ligne : " + label)
-                    lookup.set_tooltip_text(tooltip)
-                    lookup.connect(
-                        "clicked",
-                        lambda _button, value=query_value, field=query_field,
-                        identity=identity_id: search(
-                            value, field=field, online=True, identity_id=identity,
-                        ),
-                    )
-                    row.add_suffix(lookup)
-                expander.add_row(row)
-            group.add(expander)
-            self._append_content(group)
-            return
-        group = Adw.PreferencesGroup()
-        group.set_title(title)
-        grid = None
-        if title in {"Essentiel","Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
-            grid = Gtk.FlowBox(); grid.set_selection_mode(Gtk.SelectionMode.NONE)
-            columns = 2 if title == "Essentiel" else 3
-            grid.set_min_children_per_line(1); grid.set_max_children_per_line(columns)
-            grid.set_homogeneous(True); grid.set_column_spacing(12); grid.set_row_spacing(8)
-            group.add(grid)
-        for label, value in rows:
-            row = Adw.ActionRow()
-            display_value, tooltip_value = detail_display_value(label, value)
-            row.set_title(label); row.set_subtitle(display_value)
-            row.set_subtitle_lines(detail_subtitle_lines(title, display_value) if grid is not None else 0)
-            row.set_tooltip_text(label+' : '+tooltip_value)
-            if grid is not None:
-                row.set_size_request(160, -1); grid.insert(row, -1)
-            else:
-                group.add(row)
-        self._append_content(group)
-
-    def _append_content(self, widget):
-        self.content.append(widget)
-
-    @staticmethod
-    def _action_focus_key(button) -> str:
-        identifier = str(getattr(button, '_cifereca_action_id', '') or '')
-        if identifier:
-            return 'id:' + identifier
-        label = str(getattr(button, '_cifereca_action_label', '') or '')
-        if not label:
-            getter = getattr(button, 'get_label', None)
-            if callable(getter):
-                label = str(getter() or '')
-        return 'label:' + label if label else ''
-
-    def _focused_action_key(self) -> str:
-        for button in getattr(self, '_action_buttons', ()):
-            has_focus = getattr(button, 'has_focus', None)
-            if callable(has_focus) and has_focus():
-                return self._action_focus_key(button)
-        return ''
-
-    def _clear_actions(self):
-        # show_presentation()/empty() clear the whole detail body before this.
-        self._cached_section_widgets = []
-        self._cached_action_ids = set()
-        self._action_ids = set()
-        self._action_buttons = []
-        self._rendered_action_count = 0
-        self.action_scroll.clear()
-        self.action_scroll.set_visible(False)
-
-    @staticmethod
-    def _detail_action_priority(button) -> int:
-        explicit = getattr(button, '_cifereca_action_priority', None)
-        if isinstance(explicit, int):
-            return explicit
-        identifier = str(getattr(button, '_cifereca_action_id', '') or '')
-        label = str(getattr(button, '_cifereca_action_label', '') or '')
-        if not label:
-            getter = getattr(button, 'get_label', None)
-            if callable(getter):
-                label = str(getter() or '')
-        folded = label.casefold()
-        if identifier in {'open-catalogue', 'open-notice'}:
-            return 30
-        if identifier == 'open-local' or folded.startswith('ouvrir'):
-            return 10
-        if folded.startswith('emprunter'):
-            return 11
-        if folded.startswith(('télécharger', 'sauvegarder')):
-            return 12
-        if 'voir dans bibliothèque' in folded:
-            return 20
-        if identifier == 'open-catalogue' or folded.startswith(('disponibilités', 'étendre en ligne', 'en ligne', 'chercher en ligne', 'catalogue en ligne')):
-            return 30
-        if identifier.startswith('send-local:') or identifier == 'artifact-routing' or folded.startswith('envoyer'):
-            return 40
-        return 50
-
-    def _actions(self, buttons: list[Gtk.Button]) -> None:
-        if not buttons:
-            return
-        current = getattr(self, '_action_buttons', None)
-        if current is None:
-            current = []
-            self._action_buttons = current
-        changed = False
-        for button in buttons:
-            identifier = getattr(button, '_cifereca_action_id', None)
-            if identifier:
-                seen = getattr(self, '_action_ids', set())
-                if identifier in seen:
-                    continue
-                seen.add(identifier)
-                self._action_ids = seen
-            current.append(button)
-            changed = True
-        if not changed:
-            return
-        priority = getattr(self, '_detail_action_priority', None)
-        if not callable(priority):
-            priority = lambda _button: 50
-        ordered = sorted(
-            enumerate(current),
-            key=lambda item: (priority(item[1]), item[0]),
-        )
-        current[:] = [button for _index, button in ordered]
-        primary_styled = False
-        for button in current:
-            remover = getattr(button, 'remove_css_class', None)
-            if callable(remover):
-                remover('suggested-action')
-        for button in current:
-            if not primary_styled and priority(button) < 20:
-                adder = getattr(button, 'add_css_class', None)
-                if callable(adder):
-                    adder('suggested-action')
-                primary_styled = True
-        clear = getattr(self.action_scroll, 'clear', None)
-        if callable(clear):
-            clear()
-        else:
-            existing = getattr(self, '_rendered_action_count', 0)
-            if existing:
-                return
-        for button in current:
-            self.action_scroll.append(button)
-        self._rendered_action_count = len(current)
-        self.action_scroll.set_visible(True)
-        pending_focus = getattr(self, '_pending_action_focus_key', '')
-        if pending_focus:
-            for button in current:
-                if self._action_focus_key(button) == pending_focus:
-                    button.grab_focus()
-                    self._pending_action_focus_key = ''
-                    break
-
-    def show_presentation(
-        self,
-        presentation: UiBookDetailPresentation,
-        *,
-        description: object | None = None,
-    ) -> None:
-        """Render the shared neutral book-detail projection.
-
-        When present, the editorial summary is kept in the primary reading
-        flow: immediately after Essentiel and before bibliographic sections.
-        """
-        self._cancel_meta_request()
-        self._pending_action_focus_key = self._focused_action_key()
-        clear_box(self.content)
-        self._clear_actions()
-        self._cover_and_title(
-            presentation.title,
-            presentation.subtitle or None,
-            presentation.thumbnail_url,
-            presentation.badges,
-        )
-        summary_rendered = False
-        for section in sorted(presentation.sections, key=lambda item: item.order):
-            rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
-            if rows:
-                if section.title == "Détail":
-                    self._group(section.title, rows, fields=section.fields)
-                else:
-                    self._group(section.title, rows)
-            if section.title == "Essentiel":
-                self._show_description(description)
-                summary_rendered = True
-        if not summary_rendered:
-            self._show_description(description)
-        link_buttons = []
-        self._rendered_document_urls = set()
-        for link in presentation.links:
-            # Plugins can supply UiBookDetailPresentation.links directly:
-            # enforce the public URL contract at the final GTK link sink too.
-            uri = safe_document_link_url(link.url, relation=link.relation)
-            if not uri or uri in self._rendered_document_urls:
-                continue
-            button = Gtk.LinkButton(uri=uri, label=str(link.label))
-            button.set_tooltip_text(str(link.label))
-            button._cifereca_action_id = f"document-link:{link.id}"
-            button._cifereca_action_priority = 30
-            link_buttons.append(button)
-            self._rendered_document_urls.add(uri)
-        if link_buttons:
-            self._actions(link_buttons)
-
-    def show_summary(
-        self,
-        *,
-        title: str,
-        subtitle: str | None = None,
-        thumbnail: str | None = None,
-        badges: Iterable[str] = (),
-        group_title: str | None = None,
-        rows: list[tuple[str, str]] | None = None,
-    ) -> None:
-        """Compatibility helper backed by the shared detail projection."""
-        self.show_presentation(book_detail_presentation(
-            title=title,
-            subtitle=subtitle,
-            thumbnail=thumbnail,
-            badges=badges,
-            group_title=group_title,
-            rows=rows or (),
-        ))
-
-    def update_cached_book_details(self, contributions) -> None:
-        """Replace only cached plugin groups/actions; preserve the base detail."""
-        for widget in getattr(self, "_cached_section_widgets", ()):
-            if widget.get_parent() is self.content:
-                self.content.remove(widget)
-        self._cached_section_widgets = []
-        old_ids = set(getattr(self, "_cached_action_ids", ()))
-        self._cached_action_ids = set()
-        if old_ids:
-            # Rebuild the action bar without discarding its ordinary actions.
-            kept = [
-                button for button in getattr(self, "_action_buttons", ())
-                if getattr(button, "_cifereca_action_id", "") not in old_ids
-            ]
-            self._clear_actions()
-            self._actions(kept)
-        buttons = []
-        for contribution in contributions:
-            plugin_id = str(contribution.plugin_id)[:100]
-            cached = contribution.detail
-            source = str(cached.source.source if cached.source else plugin_id)[:100]
-            freshness = "Cache ancien" if cached.stale else "Cache local"
-            updated = str(cached.updated_at or "Date inconnue")[:48]
-            for section in cached.sections:
-                rows = [(str(field.label), str(field.value)) for field in section.fields]
-                rows.append(("Provenance", f"{source} · {freshness} · {updated}"))
-                self._group(f"{section.title} · {plugin_id}", rows)
-                self._cached_section_widgets.append(self.content.get_last_child())
-            for action in cached.actions:
-                if action.uri:
-                    # Already validated by collect_cached_book_details; keep the
-                    # final GTK action sink explicit as defence in depth.
-                    uri = safe_document_link_url(action.uri, relation="related")
-                    if not uri:
-                        continue
-                    button = Gtk.LinkButton(uri=uri, label=str(action.title))
-                elif callable(action.callback):
-                    button = self.window.action_button(str(action.title), str(action.icon_name))
-                    button.connect("clicked", lambda _b, cb=action.callback: cb())
-                else:
-                    continue
-                identifier = f"book-cache:{plugin_id}:{action.id}"
-                button._cifereca_action_id = identifier
-                button._cifereca_action_priority = 35
-                self._cached_action_ids.add(identifier)
-                buttons.append(button)
-        self._actions(buttons)
-
-    def add_group(self, title: str, rows: list[tuple[str, str]]) -> None:
-        self._group(title, rows)
-
-    def add_actions(self, buttons: list[Gtk.Button]) -> None:
-        self._actions(buttons)
-
-    def _direct_download_action(self, item: SearchResult) -> None:
-        if not self.window.service.can_direct_download(item):
-            return
-        content_type = self.window.service.content_type_for(item)
-        action_label = "le livre audio" if content_type == "audiobook" else (file_format(item.format).upper() or "le fichier")
-        label = "Sauvegarder via kobo-adept" if item.source_provider == "kobo" else f"Télécharger {action_label}"
-        direct = self.window.action_button(label, "document-save-symbolic", suggested=True)
-        direct.connect("clicked", lambda _b: self.window.download_direct_item(item, direct))
-        self._actions([direct])
-
-    def show_loan(self, loan: Loan, include_pnb_action: bool = True) -> None:
-        self._cancel_meta_request()
-        source = self.window.service.provider_display_name(str(loan.source_provider or loan.provider))
-        state = "En retard" if loan.is_late else (loan.state or "Emprunté")
-        self.show_presentation(book_detail_presentation(
-            title=loan.title,
-            subtitle=loan.author or "",
-            thumbnail=loan.thumbnail_url,
-            badges=[],
-            section_rows=[
-                ("Essentiel", [
-                    ("Source", source),
-                    ("Format", file_format(loan.media_format).upper()),
-                    ("Langue", detail_language(loan.raw)),
-                    ("Disponibilité", compact_availability_label(state)),
-                ]),
-                ("Prêt", [
-                    ("Retour prévu", fr_date(loan.due_at)),
-                    ("Bibliothèque", loan.library or ""),
-                    ("État", state),
-                    ("Support", loan.access_medium or loan.document_type or ""),
-                ]),
-            ],
-        ))
-        buttons: list[Gtk.Button] = []
-        if include_pnb_action and self.window.service.can_download_loan(loan):
-            prepare = self.window.action_button("Télécharger le livre du prêt", "document-save-symbolic", suggested=True)
-            prepare.connect("clicked", lambda _b: self.window.prepare_pnb_for_loan(loan, send=False, control=prepare))
-            prepare.set_tooltip_text("Récupère le prêt et traite son ACSM avec Kobo-Adept. Un fichier déjà présent est conservé ; une nouvelle copie peut être créée. Aucun nouvel emprunt.")
-            buttons.append(prepare)
-        if loan.medium == "digital":
-            binding = self.window.service.adept_return_status_for_loan(loan)
-            labels = {"ready": "Liaison enregistrée", "loan_id_missing": "Identifiant ADEPT absent du résultat d’acquisition", "profile_missing": "Profil d’origine non identifié", "no_acquisition": "Aucune acquisition liée à ce prêt", "returned": "Retour enregistré dans ADEPT, jeton absent", "returned_unverified": "Ancien état restitué à vérifier dans ADEPT", "provider_conflict": "Retour local enregistré, mais prêt fournisseur encore présent · rattachement possible", "verification_failed": "Confirmation ADEPT indisponible : vérifier le prêt", "expired": "Prêt ADEPT expiré", "token_missing": "Jeton de retour absent", "unresolved": "Fichier absent de l’inventaire ADEPT", "ambiguous": "Plusieurs prêts correspondent au fichier", "inventory_error": "Inventaire ADEPT incomplet", "binding_conflict": "Identifiant ADEPT différent de la liaison enregistrée"}
-            self._group("Restitution ADEPT", [("Liaison", labels.get(binding["status"], "Indisponible")),
-                ("Identifiant ADEPT", binding.get("adept_loan_id") or "—"), ("Profil d’origine", binding.get("profile_name") or "—")])
-            if binding.get("acquisition_id") and hasattr(self.window.service, "reconcile_adept_acquisition"):
-                check = self.window.action_button("Vérifier le prêt ADEPT", "view-refresh-symbolic")
-                check.set_tooltip_text("Interroge le registre public du profil lié à l’identité ; aucun téléchargement.")
-                check.connect("clicked", lambda _b: self.window.reconcile_adept_from_detail(binding["acquisition_id"], loan, check))
-                buttons.append(check)
-            if binding.get("acquisition_id") and hasattr(self.window.service, "adept_loan_choices"):
-                attach = self.window.action_button("Rattacher un prêt ADEPT…", "insert-link-symbolic")
-                attach.set_tooltip_text("Choisir un prêt par titre et profil, puis confirmer le rattachement. Aucun téléchargement ni retour.")
-                attach.connect("clicked", lambda _b: self.window.choose_adept_loan(binding["acquisition_id"], loan, attach))
-                buttons.append(attach)
-            if binding.get("return_available"):
-                ret_adept = self.window.action_button("Restituer le prêt ADEPT", "edit-undo-symbolic")
-                ret_adept.set_tooltip_text("Utilise la liaison ADEPT et le profil d’origine ; conserve les fichiers locaux.")
-                ret_adept.connect("clicked", lambda _b: self.window.return_adept_from_detail(binding["acquisition_id"], ret_adept))
-                buttons.append(ret_adept)
-        experimental = bool(self.window.config.get("experimental_actions", False))
-        if experimental and loan.renewable:
-            renew = Gtk.Button(label="Prolonger")
-            renew.connect("clicked", lambda _b: self.window.confirm_renew(loan, renew))
-            buttons.append(renew)
-        if experimental and loan.can_return:
-            ret = Gtk.Button(label="Rendre maintenant")
-            ret.add_css_class("destructive-action")
-            ret.connect("clicked", lambda _b: self.window.confirm_return(loan, ret))
-            buttons.append(ret)
-        self._actions(buttons)
-        if loan.cannot_renew_reason:
-            note = Gtk.Label(label=loan.cannot_renew_reason, xalign=0)
-            note.set_wrap(True)
-            add_css(note, "dim-label", "caption")
-            self._append_content(note)
-        self._decorate(loan)
-
-    def _decorate(self, item):
-        from dataclasses import asdict
-        decorate = getattr(self.window, '_decorate_book_detail', None)
-        if callable(decorate): decorate(self, asdict(item))
-
-    def show_history(self, item: HistoryItem) -> None:
-        self._cancel_meta_request()
-        clear_box(self.content)
-        self._clear_actions()
-        medium = "Numérique" if item.medium == "digital" else "Physique"
-        cover = self._cover_and_title(
-            item.title, item.author, item.thumbnail_url or item.default_thumbnail_url,
-            [medium, item.year or ""],
-        )
-        if not item.thumbnail_url and self.window.service.current_account.is_primary:
-            cover.show_loading()
-
-            def resolved(url: str | None) -> None:
-                if url:
-                    cover.bind_url(self.window.covers, url, priority=0)
-                else:
-                    cover.reset()
-
-            self._meta_request = self.window.history_cover_resolver.request(
-                item.provider, item.record_id, item.title, item.author, item.year,
-                item.default_thumbnail_url, resolved,
-            )
-        elif not item.thumbnail_url:
-            # Compte lié : pas de requêtes de reconstruction automatiques.
-            cover.reset()
-        self._group("Historique", [
-            ("Emprunté le", fr_date(item.borrowed_at)),
-            ("Retourné le", fr_date(item.returned_at)),
-            ("Type", item.document_type or "—"),
-            ("Fournisseur", item.provider),
-        ])
-        self._decorate(item)
-
-    def show_booking(self, item: Booking) -> None:
-        self._cancel_meta_request()
-        clear_box(self.content)
-        self._clear_actions()
-        medium = "Numérique" if item.medium == "digital" else "Physique"
-        presentation = booking_presentation(item)
-        self._cover_and_title(item.title, None, None, [medium, presentation.status_label])
-        self._group("Réservation", [
-            ("État", presentation.status_label),
-            ("Réservé le", fr_date(item.booking_date)),
-            ("Disponible depuis", fr_date(item.availability_date)),
-            ("Disponible jusqu’au", fr_date(item.available_until)),
-            ("Bibliothèque", item.location or "—"),
-        ])
-        self._decorate(item)
-
-
-    def show_search(self, item: SearchResult, loading: bool = False) -> None:
-        content_type = self.window.service.content_type_for(item)
-        medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
-        source = self.window.service.provider_display_name(item.source_provider)
-        fmt = file_format(item.format).upper()
-        essential_support = medium if not fmt else ""
-        self.show_presentation(book_detail_presentation(
-            title=item.title,
-            subtitle=item.author,
-            thumbnail=item.thumbnail_url,
-            badges=[],
-            section_rows=[
-                ("Essentiel", [
-                    ("Source", source),
-                    ("Format", fmt),
-                    ("Support", essential_support),
-                    ("Langue", detail_language(item.metadata)),
-                    ("Disponibilité", "Non vérifiée"),
-                ]),
-                ("Notice", [
-                    ("Type", item.type or ""),
-                    ("Éditeur", item.publisher or ""),
-                    ("Publication", item.published_at or ""),
-                    ("Support", medium if fmt else ""),
-                ]),
-            ],
-            metadata=item.metadata,
-        ), description=item.description)
-        # A direct-download action must be visible immediately.  Do not wait for
-        # the asynchronous holdings request: Gallica has no meaningful holding
-        # list and a failed availability lookup must never hide the download.
-        self._direct_download_action(item)
-        availability = Adw.PreferencesGroup()
-        availability.set_title("Disponibilités")
-        row = Adw.ActionRow()
-        if loading:
-            row.set_title("Chargement des exemplaires…")
-            spinner = Gtk.Spinner(); spinner.start(); row.add_suffix(spinner)
-        else:
-            row.set_title("Disponibilités non actualisées")
-        availability.add(row)
-        self._append_content(availability)
-        self._decorate(item)
-
-    def _show_description(self, description):
-        text = description_text(description) or ""
-        if not text:
-            return
-        group = Adw.PreferencesGroup(); group.set_title("Résumé")
-        label = Gtk.Label(label=text, xalign=0)
-        label.set_wrap(True)
-        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        label.set_selectable(True)
-        is_long = len(text) > 700 or text.count("\n") >= 6
-        if is_long:
-            label.set_lines(6)
-            label.set_ellipsize(Pango.EllipsizeMode.END)
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            box.append(label)
-            toggle = Gtk.Button(label="Lire la suite")
-            toggle.add_css_class("flat")
-            toggle.set_halign(Gtk.Align.START)
-
-            expanded = {"value": False}
-
-            def toggle_summary(button):
-                expanded["value"] = not expanded["value"]
-                if expanded["value"]:
-                    label.set_lines(-1)
-                    label.set_ellipsize(Pango.EllipsizeMode.NONE)
-                    button.set_label("Réduire")
-                else:
-                    label.set_lines(6)
-                    label.set_ellipsize(Pango.EllipsizeMode.END)
-                    button.set_label("Lire la suite")
-
-            toggle.connect("clicked", toggle_summary)
-            box.append(toggle)
-            group.add(box)
-        else:
-            group.add(label)
-        self._append_content(group)
-
-
-    def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
-        content_type = self.window.service.content_type_for(item)
-        medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
-        source = self.window.service.provider_display_name(item.source_provider)
-        fmt = file_format(item.format).upper()
-        essential_support = medium if not fmt else ""
-        availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
-        self.show_presentation(book_detail_presentation(
-            title=detail.title or item.title,
-            subtitle=detail.author or item.author,
-            thumbnail=detail.thumbnail_url or item.thumbnail_url,
-            badges=[],
-            section_rows=[
-                ("Essentiel", [
-                    ("Source", source),
-                    ("Format", fmt),
-                    ("Support", essential_support),
-                    ("Langue", detail_language(item.metadata)),
-                    ("Disponibilité", availability),
-                ]),
-                ("Notice", [
-                    ("Type", detail.type or item.type or ""),
-                    ("Éditeur", item.publisher or ""),
-                    ("Publication", detail.year or item.published_at or ""),
-                    ("Support", medium if fmt else ""),
-                ]),
-            ],
-            links=document_links(result_row(item)),
-            metadata=item.metadata,
-        ), description=getattr(detail, "description", None) or item.description)
-        direct_download = self.window.service.can_direct_download(item)
-        if direct_download:
-            self._direct_download_action(item)
-        elif item.medium == "digital" and availability == "Empruntable":
-            action = Adw.PreferencesGroup()
-            action.set_title("Action")
-            if self.window.can_borrow_item(item):
-                borrow = self.window.action_button("Emprunter", "document-save-symbolic", suggested=True)
-                borrow.connect("clicked", lambda _b: self.window.borrow_search_item(item, borrow))
-                self._actions([borrow])
-            else:
-                row = Adw.ActionRow()
-                row.set_title("Emprunt requis avant téléchargement")
-                row.set_subtitle("Cette source ne publie pas de primitive d’emprunt utilisable.")
-                action.add(row)
-                self._append_content(action)
-        elif item.source_provider == "kobo" and item.owned:
-            action = Adw.PreferencesGroup()
-            action.set_title("Acquisition locale")
-            row = Adw.ActionRow()
-            row.set_title("Livre possédé · acquisition locale")
-            row.set_subtitle("Le bouton Sauvegarder apparaît lorsque Kobo-Adept est disponible et que Kobo-Vault marque ce titre téléchargeable.")
-            action.add(row)
-            self._append_content(action)
-        self._decorate(item)
-        if direct_download and not detail.holdings:
-            return
-        group = Adw.PreferencesGroup()
-        group.set_title("Disponibilités")
-        if not detail.holdings:
-            row = Adw.ActionRow()
-            row.set_title("Détail des exemplaires non fourni par cette source")
-            group.add(row)
-        for holding in detail.holdings:
-            row = Adw.ActionRow()
-            row.set_title(holding.library or holding.location or "Exemplaire")
-            pieces = [holding.status_label or holding.status]
-            if holding.section:
-                pieces.append(holding.section)
-            if holding.call_number:
-                pieces.append(f"Cote {holding.call_number}")
-            if holding.due_at:
-                pieces.append(f"Retour {fr_date(holding.due_at)}")
-            row.set_subtitle(" · ".join(x for x in pieces if x))
-            if holding.is_available:
-                chip = Gtk.Label(label="Disponible")
-                add_css(chip, "badge", "success-badge")
-                row.add_suffix(chip)
-            elif holding.is_reservable:
-                chip = Gtk.Label(label="Réservable")
-                add_css(chip, "badge")
-                row.add_suffix(chip)
-            group.add(row)
-        self._append_content(group)
-
-class MasterDetailPage(Gtk.Box):
-    """Page maître/détail basée sur Gtk.ListView virtualisé."""
-
-    def __init__(self, window: "MainWindow", title: str, subtitle: str, empty_title: str, empty_desc: str):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.window = window
-        self.title = title
-        self._selected_callbacks: list[Callable[[BookListItem | None], None]] = []
-
-        # Keep headings independent from action controls.  On 1024px-wide
-        # windows the previous single horizontal row forced search/filter
-        # controls to compete with the page title and description.
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.page_header = header
-        header.set_margin_top(16)
-        header.set_margin_start(18)
-        header.set_margin_end(18)
-        headings = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        headings.set_hexpand(True)
-        header.append(headings)
-        heading = Gtk.Label(label=title, xalign=0); add_css(heading, "page-title"); headings.append(heading)
-        if subtitle:
-            desc = Gtk.Label(label=subtitle, xalign=0); desc.set_wrap(True); add_css(desc, "dim-label"); headings.append(desc)
-        self.count_label = Gtk.Label(label="", xalign=1)
-        self._count_total_only = False
-        add_css(self.count_label, "caption", "dim-label")
-        header.append(self.count_label)
-        self.header_actions = AdaptiveActionBar(source=header)
-        self.header_actions.set_halign(Gtk.Align.END); self.header_actions.set_valign(Gtk.Align.START)
-        header.append(self.header_actions)
-        self.append(header)
-
-        self.toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.toolbar.set_margin_top(10)
-        self.toolbar.set_margin_bottom(12)
-        self.toolbar.set_margin_start(18)
-        self.toolbar.set_margin_end(18)
-        self.toolbar.set_hexpand(True)
-        self.append(self.toolbar)
-
-        self.detail_back = Gtk.Button(label="Retour à la liste")
-        self.detail_back.set_tooltip_text("Revenir à la liste des documents")
-        self.detail_back.set_halign(Gtk.Align.START)
-        self.detail_back.set_margin_start(18)
-        self.detail_back.set_margin_bottom(8)
-        self.detail_back.set_visible(False)
-        self.detail_back.connect("clicked", lambda _button: self._show_narrow_list())
-        self.append(self.detail_back)
-
-        self.paned = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
-        self.paned.set_wide_handle(True)
-        self.paned.set_position(440)
-        self.paned.set_shrink_start_child(True)
-        self.paned.set_shrink_end_child(True)
-        self.paned.set_vexpand(True)
-        self._narrow_master_detail = False
-        self._narrow_detail_visible = False
-        self._narrow_sidebar_restore_visible: bool | None = None
-        self._narrow_breakpoint = MASTER_DETAIL_NARROW_WINDOW_WIDTH
-
-        def adapt_paned_position(paned, _pspec=None) -> None:
-            max_position = int(paned.get_property("max-position"))
-            if max_position <= 0:
-                return
-            try:
-                window_width = int(self.window.get_width())
-            except (AttributeError, TypeError, ValueError):
-                window_width = 0
-            narrow = master_detail_is_narrow(
-                window_width,
-                breakpoint=self._narrow_breakpoint,
-            )
-            if narrow != self._narrow_master_detail:
-                self._narrow_master_detail = narrow
-                if not narrow:
-                    self._narrow_detail_visible = False
-                    self._set_narrow_detail_context(False)
-                    self.detail_back.set_visible(False)
-            if self._narrow_master_detail:
-                paned.set_position(0 if self._narrow_detail_visible else max_position)
-                self.detail_back.set_visible(self._narrow_detail_visible)
-            else:
-                paned.set_position(min(440, max(0, max_position - 360)))
-
-        self.paned.connect("notify::max-position", adapt_paned_position)
-        self.append(self.paned)
-
-        self.list_stack = Gtk.Stack()
-        self.list_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.list_stack.set_hexpand(True)
-        self.list_stack.set_vexpand(True)
-        self.empty_page = Adw.StatusPage()
-        self.empty_page.set_title(empty_title)
-        self.empty_page.set_description(empty_desc)
-        self.empty_page.set_icon_name("accessories-dictionary-symbolic")
-        self.list_stack.add_named(self.empty_page, "empty")
-
-        self.store = Gio.ListStore.new(BookListItem)
-        self.selection = Gtk.SingleSelection.new(self.store)
-        self.selection.set_autoselect(False)
-        self.selection.set_can_unselect(True)
-        self.selection.connect("notify::selected-item", self._selection_changed)
-
-        self.factory = Gtk.SignalListItemFactory()
-        self.factory.connect("setup", self._factory_setup)
-        self.factory.connect("bind", self._factory_bind)
-        self.factory.connect("unbind", self._factory_unbind)
-
-        self.listview = Gtk.ListView.new(self.selection, self.factory)
-        self.listview.set_single_click_activate(False)
-        self.listview.set_hexpand(True)
-        self.listview.set_halign(Gtk.Align.FILL)
-        self.scroll = Gtk.ScrolledWindow()
-        # The list viewport must own horizontal allocation. GTK_POLICY_NEVER
-        # lets child natural width drive the scroller, which makes pathological
-        # row metadata capable of shifting the whole list outside the viewport.
-        self.scroll.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.AUTOMATIC)
-        self.scroll.set_propagate_natural_width(False)
-        self.scroll.set_min_content_width(0)
-        self.scroll.set_hexpand(True)
-        self.scroll.set_vexpand(True)
-        self.scroll.set_child(self.listview)
-        self.list_stack.add_named(self.scroll, "list")
-        self.paned.set_start_child(self.list_stack)
-        self.detail = DetailPanel(window)
-        self.paned.set_end_child(self.detail)
-        self.listview.connect("activate", lambda _view, _position: self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD))
-        keys = Gtk.EventControllerKey()
-        def key_pressed(_controller, keyval, _keycode, state):
-            if keyval == Gdk.KEY_Escape:
-                if self._narrow_master_detail and self._narrow_detail_visible:
-                    self._show_narrow_list()
-                else:
-                    self.selection.set_selected(Gtk.INVALID_LIST_POSITION)
-                    self.listview.grab_focus()
-                return True
-            if state & Gdk.ModifierType.CONTROL_MASK and keyval in (Gdk.KEY_f, Gdk.KEY_F):
-                controls = getattr(window, "library_controls" if title == "Bibliothèque" else "search_controls", None)
-                if controls: controls.entry.grab_focus(); return True
-            return False
-        keys.connect("key-pressed", key_pressed); self.add_controller(keys)
-        self.list_stack.set_visible_child_name("empty")
-        # A narrow detail may hide shell navigation. Restore it while this page
-        # is unmapped, then re-apply the detail context if the user comes back.
-        self.connect("unmap", lambda _widget: self._set_narrow_detail_context(False))
-        self.connect("map", lambda _widget: self._set_narrow_detail_context(self._narrow_detail_visible))
-
-    def _factory_setup(self, _factory: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
-        list_item.set_child(BookListCell(self.window))
-
-    def _factory_bind(self, _factory: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
-        cell = list_item.get_child()
-        item = list_item.get_item()
-        if isinstance(cell, BookListCell) and isinstance(item, BookListItem):
-            cell.bind(item)
-
-    def _factory_unbind(self, _factory: Gtk.SignalListItemFactory, list_item: Gtk.ListItem) -> None:
-        cell = list_item.get_child()
-        if isinstance(cell, BookListCell):
-            cell.unbind()
-
-    def connect_selected(self, callback: Callable[[BookListItem | None], None]) -> None:
-        self._selected_callbacks.append(callback)
-
-    def _selection_changed(self, _selection: Gtk.SingleSelection, _pspec) -> None:
-        item = self.selection.get_selected_item()
-        selected = item if isinstance(item, BookListItem) else None
-        if selected is None:
-            self.detail.empty("Aucun document sélectionné", "Sélectionnez un document pour afficher ses détails.")
-        for callback in self._selected_callbacks:
-            callback(selected)
-        if self._narrow_master_detail and selected is not None:
-            self._show_narrow_detail()
-
-    def select_key(self, key: str) -> bool:
-        """Select a visible row by stable key and reveal it without changing filters."""
-        target = str(key)
-        for index in range(self.store.get_n_items()):
-            row = self.store.get_item(index)
-            if isinstance(row, BookListItem) and row.key == target:
-                self.selection.set_selected(index)
-                try:
-                    self.listview.scroll_to(index, Gtk.ListScrollFlags.FOCUS, None)
-                except (AttributeError, TypeError):
-                    pass
-                return True
-        return False
-
-    def _set_narrow_detail_context(self, active: bool) -> None:
-        """Reserve the narrow page for the active detail without losing list state."""
-        self.page_header.set_visible(not active)
-        self.toolbar.set_visible(not active)
-        sidebar = getattr(self.window, "sidebar", None)
-        if sidebar is None:
-            return
-        if active:
-            if self._narrow_sidebar_restore_visible is None:
-                self._narrow_sidebar_restore_visible = bool(sidebar.get_visible())
-            sidebar.set_visible(False)
-            return
-        restore = self._narrow_sidebar_restore_visible
-        self._narrow_sidebar_restore_visible = None
-        if restore is not None:
-            sidebar.set_visible(bool(restore))
-
-    def _show_narrow_detail(self) -> None:
-        if not self._narrow_master_detail:
-            return
-        self._narrow_detail_visible = True
-        self._set_narrow_detail_context(True)
-        self.detail_back.set_visible(True)
-        self.paned.set_position(0)
-        self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD)
-
-    def _show_narrow_list(self) -> None:
-        if not self._narrow_master_detail:
-            return
-        self._narrow_detail_visible = False
-        self._set_narrow_detail_context(False)
-        self.detail_back.set_visible(False)
-        max_position = int(self.paned.get_property("max-position"))
-        if max_position > 0:
-            self.paned.set_position(max_position)
-        self.listview.grab_focus()
-
-    def clear_rows(self) -> None:
-        self.selection.set_selected(0xFFFFFFFF)
-        try:
-            self.store.remove_all()
-        except Exception:
-            while self.store.get_n_items() > 0:
-                self.store.remove(self.store.get_n_items() - 1)
-        self.count_label.set_label("")
-        self._total_count = 0
-        # Never keep stale metadata from a row that belonged to the previous
-        # account/provider/filter. This is especially visible when switching
-        # to an anonymous catalogue account with no selected loan.
-        self.detail.empty("Aucun document sélectionné", "Sélectionnez un document dans la liste.")
-
-    def set_total_only_count(self, enabled: bool = True) -> None:
-        self._count_total_only = bool(enabled)
-        self._update_count()
-
-    @staticmethod
-    def _item_count_label(count: int) -> str:
-        return f"{count} élément" if count == 1 else f"{count} éléments"
-
-    def _update_count(self, total_count: int | None = None) -> None:
-        displayed = self.store.get_n_items()
-        total = int(total_count if total_count is not None else getattr(self, "_total_count", displayed))
-        self._total_count = max(total, displayed)
-        if not displayed:
-            self.count_label.set_label("")
-        elif hasattr(self, "_count_total_only") and self._count_total_only:
-            self.count_label.set_label(self._item_count_label(self._total_count))
-        elif self._total_count > displayed:
-            self.count_label.set_label(f"{displayed} / {self._total_count} élément(s)")
-        else:
-            self.count_label.set_label(f"{displayed} élément(s)")
-
-    def show_rows(self, rows: list[BookListItem], total_count: int | None = None) -> None:
-        started = time.perf_counter()
-        selected = self.selection.get_selected_item()
-        selected_key = selected.key if isinstance(selected, BookListItem) else None
-        existing_count = self.store.get_n_items()
-        existing_keys = [self.store.get_item(index).key for index in range(existing_count)]
-        new_keys = [row.key for row in rows]
-
-        # Progressive search normally grows by appending provider batches. Keep
-        # the already-materialised GTK rows in place instead of splicing the
-        # complete ListStore on every batch. The final authoritative ranking may
-        # reorder rows; that falls through to the full reconciliation below.
-        if existing_count and existing_keys == new_keys[:existing_count] and len(rows) >= existing_count:
-            tail = rows[existing_count:]
-            if tail:
-                try:
-                    self.store.splice(existing_count, 0, tail)
-                except Exception:
-                    for row in tail:
-                        self.store.append(row)
-            self._update_count(total_count if total_count is not None else len(rows))
-            self.list_stack.set_visible_child_name("list" if rows else "empty")
-            if hasattr(self.window, "ui_perf"):
-                self.window.ui_perf.record(f"list:{self.title}:append-fast", (time.perf_counter() - started) * 1000.0)
-            return
-
-        self.selection.set_selected(0xFFFFFFFF)
-        try:
-            self.store.splice(0, self.store.get_n_items(), rows)
-        except Exception:
-            self.clear_rows()
-            for row in rows:
-                self.store.append(row)
-        self._update_count(total_count if total_count is not None else len(rows))
-        self.list_stack.set_visible_child_name("list" if rows else "empty")
-        if rows and selected_key is not None:
-            restored = next((index for index, row in enumerate(rows) if row.key == selected_key), None)
-            if restored is not None:
-                self.selection.set_selected(restored)
-        if hasattr(self.window, "ui_perf"):
-            self.window.ui_perf.record(f"list:{self.title}:replace", (time.perf_counter() - started) * 1000.0)
-
-    def append_rows(self, rows: list[BookListItem], total_count: int | None = None) -> None:
-        started = time.perf_counter()
-        if rows:
-            try:
-                self.store.splice(self.store.get_n_items(), 0, rows)
-            except Exception:
-                for row in rows:
-                    self.store.append(row)
-        self._update_count(total_count)
-        if self.store.get_n_items() > 0:
-            self.list_stack.set_visible_child_name("list")
-        if hasattr(self.window, "ui_perf"):
-            self.window.ui_perf.record(f"list:{self.title}:append", (time.perf_counter() - started) * 1000.0)
-
-
-class PublicBookMasterDetailView:
-    """Public adapter backed by the same MasterDetailPage used by Core pages."""
-
-    def __init__(
-        self, window: "MainWindow", *, title: str, subtitle: str = "",
-        empty_title: str = "Aucun document",
-        empty_desc: str = "Aucun document à afficher.",
-    ) -> None:
-        self._page = MasterDetailPage(window, title, subtitle, empty_title, empty_desc)
-        self._rows: dict[str, Any] = {}
-
-    @property
-    def widget(self):
-        return self._page
-
-    def append_toolbar(self, widget: object) -> None:
-        self._page.toolbar.append(widget)
-
-    def show_rows(self, rows, total_count: int | None = None) -> None:
-        self._rows = {str(row.key): row for row in rows}
-        ui_rows = [
-            BookListItem(
-                str(row.key),
-                str(row.title or "Sans titre"),
-                str(row.subtitle or ""),
-                str(row.meta or ""),
-                str(row.badge or ""),
-                getattr(row, "thumbnail_url", None),
-            )
-            for row in rows
-        ]
-        self._page.show_rows(ui_rows, total_count=total_count)
-
-    def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None:
-        self._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
-        self._page.empty_page.set_title(str(title))
-        self._page.empty_page.set_description(str(description or ""))
-        self._page.empty_page.set_icon_name(str(icon_name or "system-search-symbolic"))
-        self._page.list_stack.set_visible_child_name("empty")
-
-    def connect_selected(self, callback) -> None:
-        def selected(item):
-            callback(self._rows.get(str(item.key)) if item is not None else None)
-        self._page.connect_selected(selected)
-
-    def show_detail(self, detail) -> None:
-        panel = self._page.detail
-        panel.show_presentation(detail)
-        buttons = []
-        for action in getattr(detail, "actions", ()) or ():
-            raw_uri = str(getattr(action, "uri", "") or "")
-            if raw_uri:
-                # Plugin actions share the same URL security boundary as
-                # document links. Drop invalid URI actions completely.
-                uri = safe_document_link_url(raw_uri, relation="related")
-                if not uri:
-                    continue
-                button = Gtk.LinkButton(uri=uri, label=str(action.title))
-                button.set_tooltip_text(str(action.title))
-            else:
-                button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
-                callback = getattr(action, "callback", None)
-                if callable(callback):
-                    button.connect("clicked", lambda _button, cb=callback: cb())
-            button._cifereca_action_id = str(action.id)
-            buttons.append(button)
-        panel.add_actions(buttons)
-
-    def empty_detail(
-        self,
-        title: str = "Aucun document sélectionné",
-        description: str = "Sélectionnez un document pour afficher ses détails.",
-    ) -> None:
-        self._page.detail.empty(title, description)
+from .public_book_view import PublicBookMasterDetailView
 
 
 
@@ -3105,91 +1681,10 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.present()
 
     def _build_sync_page(self):
-        scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        for edge in ("top", "bottom", "start", "end"):
-            getattr(outer, "set_margin_" + edge)(20)
-        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
-        actions = AdaptiveActionBar(source=heading)
-        refresh = self.action_button("Actualiser", "view-refresh-symbolic")
-        all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
-        self._sync_all_button = all_now
-        actions.append(refresh); actions.append(all_now)
-        heading.append(title); heading.append(actions); outer.append(heading)
-        self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
-        refresh.connect("clicked", lambda _b: self._refresh_sync_page())
-        def sync_all(button):
-            broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
-            identity = self.service.current_identity
-            if broker is None: return
-            request = SyncRequest(identity_id=identity.identity_id if identity else None)
-            self.runner.submit(
-                "Synchronisation des sources…",
-                lambda: broker.synchronize(request),
-                lambda _r: (self._refresh_sync_page(), self.refresh_library(False)),
-                control=button,
-                priority=TaskPriority.USER_ACTION,
-                kind="source-sync",
-            )
-        all_now.connect("clicked", sync_all)
-        scroll.set_child(outer); return scroll
+        return sync_controller._build_sync_page(self)
 
     def _refresh_sync_page(self) -> None:
-        box = getattr(self, "_sync_sources_box", None)
-        if box is None: return
-        clear_box(box)
-        broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
-        identity = self.service.current_identity
-        all_now = getattr(self, "_sync_all_button", None)
-        global_label = sync_identity_action_label(identity)
-        if all_now is not None:
-            all_now._cifereca_action_label = global_label
-            child = all_now.get_child()
-            if child is not None and callable(getattr(child, "set_label", None)):
-                child.set_label(global_label)
-            else:
-                all_now.set_label(global_label)
-            all_now.set_sensitive(False)
-        if broker is None:
-            if all_now is not None:
-                all_now.set_tooltip_text("Synchronisation indisponible : broker absent")
-            box.append(Gtk.Label(label="Broker de synchronisation indisponible", xalign=0)); return
-        rows = broker.sources(identity.identity_id if identity else None)
-        presentations = [sync_source_presentation(source) for source in rows]
-        actionable = any(item.action_enabled for item in presentations)
-        if all_now is not None:
-            all_now.set_sensitive(actionable)
-            all_now.set_tooltip_text(
-                global_label if actionable
-                else "Aucune source activée, connectée et synchronisable pour cette identité"
-            )
-        if not rows:
-            box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
-        for source, presentation in zip(rows, presentations):
-            group = Adw.PreferencesGroup(); box.append(group)
-            row = Adw.ActionRow(); row.set_title(source.label or source.provider_id)
-            row.set_subtitle(presentation.summary)
-            row.set_subtitle_lines(0)
-            toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
-            toggle.set_tooltip_text("Activation : inclure cette source dans les synchronisations")
-            def toggled(widget, _param, sid=source.source_id):
-                try:
-                    broker.set_enabled(sid, widget.get_active())
-                    self._refresh_sync_page()
-                except Exception as exc:
-                    self.show_error(str(exc), "Synchronisation")
-            toggle.connect("notify::active", toggled); row.add_suffix(toggle)
-            now = self.action_button(presentation.action_label, "emblem-synchronizing-symbolic")
-            now.set_sensitive(presentation.action_enabled)
-            now.set_tooltip_text(
-                presentation.action_label if presentation.action_enabled else presentation.disabled_reason
-            )
-            def one(_button, sid=source.source_id, label=source.label or source.provider_id):
-                self.runner.submit(f"Synchronisation {label}…", lambda: broker.synchronize_source(sid),
-                    lambda _r: (self._refresh_sync_page(), self.refresh_library(False)), control=_button,
-                    priority=TaskPriority.USER_ACTION, kind="source-sync")
-            now.connect("clicked", one); row.add_suffix(now); group.add(row)
+        return sync_controller._refresh_sync_page(self)
 
     def _build_tools_page(self):
         scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -3275,35 +1770,7 @@ class MainWindow(Adw.ApplicationWindow):
             run.connect("clicked", prepare)
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
-        def progress(event: dict[str, Any]) -> None:
-            kind = str(event.get("event") or "")
-            if kind == "identity_begin":
-                label = f"Synchronisation · {event.get('label') or event.get('identity_id')}…"
-                GLib.idle_add(self._task_progress, label)
-        def ok(summary: dict[str, Any]) -> None:
-            self._render_dashboard(); self._populate_loans(self.service.last_loans); self.refresh_library(False); self.refresh_recent()
-            acquisitions = sum(int(x.get("new_acquisitions") or 0) for x in summary.get("identities", []))
-            attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
-            errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
-            if acquisitions or attention or errors:
-                self._activity_result(
-                    f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)",
-                    success=not bool(attention or errors),
-                    persistent=bool(attention or errors),
-                )
-        def err(exc: BaseException) -> None:
-            self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-            self._render_dashboard()
-            if control is not None: self.show_error(str(exc), "Synchronisation impossible")
-        task_label = "Vérification complète de la bibliothèque…" if deep else "Synchronisation des bibliothèques…"
-        self.runner.submit(
-            task_label, lambda: self.service.opening_sync(progress=progress, deep=deep), ok, err, control=control,
-            priority=TaskPriority.USER_ACTION if control is not None else (TaskPriority.MAINTENANCE if deep else TaskPriority.ACTIVE_LOAN),
-            kind="deep-sync" if deep else "opening-sync",
-        )
-
-    # Reader/storage targets are provided by storage.target plugins.
-    # The first 0.9.2 prototype intentionally has no brand-specific reader UI.
+        return sync_controller.run_opening_sync(self, control, deep=deep)
 
     def _known_item_languages(self, provider_id: str, item_id: str | None, metadata: dict[str, Any] | None = None) -> set[str]:
         from cifereca.language import normalize_language_tag
@@ -3321,211 +1788,43 @@ class MainWindow(Adw.ApplicationWindow):
         return {tag for value in values if (tag := normalize_language_tag(value))}
 
     def _build_loans_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Mes emprunts", "Prêts physiques et numériques", "Aucun emprunt", "Vos prêts actifs apparaîtront ici.")
-        history = Gtk.Button(label="Historique"); history.connect("clicked", lambda _b: self.navigate("history")); page.header_actions.append(history)
-        bookings = Gtk.Button(label="Réservations"); bookings.connect("clicked", lambda _b: self.navigate("bookings")); page.header_actions.append(bookings)
-        self.loan_filter = "digital"
-        segment = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        buttons: list[Gtk.ToggleButton] = []
-        self.loan_filter_buttons: dict[str, Gtk.ToggleButton] = {}
-        for value, label in [("all", "Tous"), ("physical", "Physiques"), ("digital", "Numériques")]:
-            b = Gtk.ToggleButton(label=label); b.set_name(value)
-            if buttons: b.set_group(buttons[0])
-            if value == "digital": b.set_active(True)
-            b.connect("toggled", self._loan_filter_toggled)
-            segment.append(b); buttons.append(b)
-            self.loan_filter_buttons[value] = b
-        page.toolbar.append(segment)
-        self.loan_scope_count = Gtk.Label(label="", xalign=0)
-        self.loan_scope_count.add_css_class("caption")
-        self.loan_scope_count.add_css_class("dim-label")
-        self.loan_scope_count.set_tooltip_text(
-            "Nombre affiché dans le filtre actif, comparé au volume total des prêts"
-        )
-        page.toolbar.append(self.loan_scope_count)
-        from cifereca.language import language_label
-        self.loan_languages = MultiSelect('Langues', [(code, language_label(code)) for code in ('fr','en','de','es','it','pt','nl')], self._render_loans)
-        page.toolbar.append(self.loan_languages)
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser les emprunts")
-        refresh.set_tooltip_text("Actualiser les catalogues de prêts et vérifier ADEPT, sans acquisition ni synchronisation des stores")
-        refresh.connect("clicked", lambda _b: self.refresh_loans(True, refresh)); page.header_actions.append(refresh)
-        page.connect_selected(self._loan_selected)
-        return page
+        return loans_controller._build_loans_page(self)
 
     def _loan_filter_toggled(self, button: Gtk.ToggleButton) -> None:
-        if button.get_active():
-            self.loan_filter = button.get_name() or "all"
-            self._render_loans()
+        return loans_controller._loan_filter_toggled(self, button)
 
     def _populate_loans(self, rows: list[Loan]) -> None:
-        self.service.last_loans = rows
-        self.loan_objects = {x.id: x for x in rows}
-        self._render_loans()
-        self._render_kobo_loans()
-        if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
+        return loans_controller._populate_loans(self, rows)
 
     def _render_loans(self) -> None:
-        if not hasattr(self, "loan_page"):
-            return
-        all_loans = list(self.service.last_loans)
-        counts = loan_medium_counts(all_loans)
-        if hasattr(self, "loan_filter_buttons"):
-            for key, button in self.loan_filter_buttons.items():
-                label = LOAN_FILTER_LABELS.get(key, key)
-                button.set_label(f"{label} · {counts.get(key, 0)}")
-        ranked_rows: list[tuple[tuple[int, int], BookListItem]] = []
-        wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
-        for loan in all_loans:
-            if self.loan_filter != "all" and loan.medium != self.loan_filter:
-                continue
-            raw = dict(loan.raw or {})
-            meta = dict(raw.get('_cifereca') or {}) if isinstance(raw.get('_cifereca'), dict) else raw
-            loan_languages = self._known_item_languages(loan.source_provider, loan.record_id or loan.id, meta)
-            if wanted_languages and not loan_languages.intersection(wanted_languages):
-                continue
-            due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
-            subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
-            meta = f"Retour {fr_date(loan.due_at)} · {loan.document_type or loan.provider}"
-            ranked_rows.append((
-                due.sort_key,
-                BookListItem(
-                    loan.id,
-                    loan.title,
-                    subtitle,
-                    meta,
-                    due.label,
-                    loan.thumbnail_url,
-                    badge_style=due.style,
-                ),
-            ))
-        ranked_rows.sort(key=lambda item: item[0])
-        rows = [row for _rank, row in ranked_rows]
-        if hasattr(self, "loan_scope_count"):
-            self.loan_scope_count.set_label(
-                loan_context_label(
-                    filter_key=self.loan_filter,
-                    visible_count=len(rows),
-                    medium_count=counts.get(self.loan_filter, counts["all"]),
-                    total_count=counts["all"],
-                    language_filtered=bool(wanted_languages),
-                )
-            )
-        objects={key:{"source_provider":loan.source_provider,"media_format":loan.media_format,"author":loan.author,"metadata":(dict((loan.raw or {}).get('_cifereca') or {}) if isinstance((loan.raw or {}).get('_cifereca'),dict) else dict(loan.raw or {}))} for key,loan in self.loan_objects.items()}
-        self._attach_row_facets(rows,objects,self.search_controls)
-        self.loan_page.show_rows(rows, total_count=len(rows))
+        return loans_controller._render_loans(self)
 
     def _loan_selected(self, row: BookListItem | None) -> None:
-        if row is None: return
-        loan = self.loan_objects.get(row.key)
-        if loan:
-            self._displayed_loan = loan
-            self.loan_page.detail.show_loan(loan)
-            self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
-                'source_credential':loan.source_credential,'record_id':loan.record_id})
-            self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
-                'author':loan.author,'media_format':loan.media_format}, self.search_controls)
+        return loans_controller._loan_selected(self, row)
 
     def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -> None:
-        identity = self.service.current_identity
-        identity_id = identity.identity_id if identity else None
-        def done(rows):
-            current = self.service.current_identity
-            if (current.identity_id if current else None) == identity_id:
-                self._loans_refreshed(rows)
-        self.runner.submit(
-            "Actualisation des emprunts…",
-            lambda: self.service.refresh_identity_loans(force=force, identity_id=identity_id),
-            done,
-            control=control,
-            priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.ACTIVE_LOAN,
-            kind="loans",
-        )
+        return loans_controller.refresh_loans(self, force, control)
 
     def _loans_refreshed(self, rows):
-        displayed=getattr(self, '_displayed_loan', None)
-        self._populate_loans(rows)
-        if displayed:
-            fresh=next((r for r in rows if (r.id,r.source_provider,r.source_credential,r.source_account_id)==
-                        (displayed.id,displayed.source_provider,displayed.source_credential,displayed.source_account_id)),None)
-            self._displayed_loan=fresh
-            if fresh:self.loan_page.detail.show_loan(fresh)
-            else:self.loan_page.detail.empty("Prêt absent du catalogue", "La liste des prêts a été actualisée ; les fichiers locaux sont conservés.")
-        self.toast(f"{len(rows)} emprunt(s) actualisé(s)")
+        return loans_controller._loans_refreshed(self, rows)
 
     def confirm_renew(self, loan: Loan, control: Gtk.Widget) -> None:
-        dialog = Adw.MessageDialog.new(self, "Prolonger ce prêt ?", loan.title)
-        dialog.add_response("cancel", "Annuler"); dialog.add_response("ok", "Prolonger")
-        dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-        dialog.connect("response", lambda _d, response: self._renew(loan, control) if response == "ok" else None)
-        dialog.present()
+        return loans_controller.confirm_renew(self, loan, control)
 
     def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
-        self.runner.submit(
-            "Prolongation du prêt…", lambda: self.service.renew(loan), lambda _r: self.refresh_loans(True),
-            control=control, success_toast="Prêt prolongé", priority=TaskPriority.USER_ACTION, kind="loan-renew",
-        )
+        return loans_controller._renew(self, loan, control)
 
     def confirm_return(self, loan: Loan, control: Gtk.Widget) -> None:
-        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
-            dialog = Adw.MessageDialog.new(self, "Rendre ce livre numérique ?", "Confirmer la demande de restitution au fournisseur.")
-            dialog.add_response("cancel", "Annuler")
-            dialog.add_response("provider", "Restituer")
-            dialog.set_response_appearance("provider", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.connect(
-                "response",
-                lambda _d, response: self._return_loan_pnb(loan, control)
-                if response == "provider" else None,
-            )
-            dialog.present()
-            return
-
-        dialog = Adw.MessageDialog.new(
-            self, "Restituer ce prêt numérique ?",
-            "ADEPT restitue la licence Adobe d’origine, puis vérifie Paris. "
-            "Paris (PNB) est une action séparée, qui ne peut être déclenchée automatiquement.",
-        )
-        dialog.add_response("cancel", "Annuler")
-        dialog.add_response("adept", "Restituer la licence ADEPT")
-        dialog.add_response("pnb", "Restituer à Paris (PNB)")
-        dialog.set_response_appearance("adept", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_response_appearance("pnb", Adw.ResponseAppearance.DESTRUCTIVE)
-
-        def on_response(_dialog, response):
-            if response == "adept":
-                self._return_loan(loan, control)
-            elif response == "pnb":
-                self._return_loan_pnb(loan, control)
-
-        dialog.connect("response", on_response)
-        dialog.present()
+        return loans_controller.confirm_return(self, loan, control)
 
     def _return_loan_result(self, result: Any, *, channel: str) -> None:
-        """The background task completed; the loan return may still be partial."""
-        self.refresh_loans(True)
-        kind, message = loan_return_feedback(result, channel=channel)
-        if kind == "confirmed":
-            self.toast(message, 6)
-        else:
-            code = result.get("code") if isinstance(result, dict) else None
-            self.show_attention(message, code=str(code or "loan_return_unconfirmed"))
+        return loans_controller._return_loan_result(self, result, channel=channel)
 
     def _return_loan(self, loan: Loan, control: Gtk.Widget) -> None:
-        self.runner.submit(
-            "Vérification de restitution ADEPT…",
-            lambda: self.service.return_loan_prefer_adept(loan),
-            lambda result: self._return_loan_result(result, channel="adept"),
-            control=control,
-            priority=TaskPriority.USER_ACTION, kind="loan-return",
-        )
+        return loans_controller._return_loan(self, loan, control)
 
     def _return_loan_pnb(self, loan: Loan, control: Gtk.Widget) -> None:
-        self.runner.submit(
-            "Vérification de restitution Paris (PNB)…",
-            lambda: self.service.return_digital(loan, explicit_retry=True),
-            lambda result: self._return_loan_result(result, channel="pnb"),
-            control=control,
-            priority=TaskPriority.USER_ACTION, kind="loan-return",
-        )
+        return loans_controller._return_loan_pnb(self, loan, control)
 
     # ---------- search ----------
     def _query_controls(self, changed, activate, *, library=False):
@@ -5042,7 +3341,9 @@ class MainWindow(Adw.ApplicationWindow):
         if not item:
             return
         if item.get("source") == "loan" and item.get("loan_id"):
-            loan = self.loan_objects.get(str(item.get("loan_id")))
+            # A merged catalogue notice may not identify the exact borrower.
+            # In that case never expose an action for an arbitrary loan source.
+            loan = unique_library_loan(self.loan_objects.values(), item)
             if loan:
                 self.library_page.detail.show_loan(loan, include_pnb_action=False)
                 actions = []
@@ -5114,80 +3415,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._library_selected(row)
 
     def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
-        """0.8.2 compatibility shim: automation runs at application opening only.
-
-        The historical interval setting remains readable for rollback compatibility,
-        but Paris no longer installs a recurring in-process timer.
-        """
-        if self._kobo_backup_timer_id is not None:
-            try:
-                GLib.source_remove(self._kobo_backup_timer_id)
-            except Exception:
-                pass
-            self._kobo_backup_timer_id = None
-        if run_now and self.service.kobo_backup_enabled():
-            GLib.idle_add(lambda: (self.run_kobo_backup(False), False)[1])
+        return sync_controller._configure_kobo_backup_timer(self, run_now=run_now)
 
     def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
-        original_label = control.get_label() if isinstance(control, Gtk.Button) else None
-        progress_state = {"last": 0}
-
-        def progress(event: dict[str, Any]) -> None:
-            if not isinstance(control, Gtk.Button):
-                return
-            kind = str(event.get("event") or "")
-            current = int(event.get("current") or 0)
-            total = int(event.get("total") or 0)
-            if kind == "adept_probe":
-                label = "Synchronisation Kobo · vérification Adept…"
-            elif kind in {"manifest_fetch", "manifest"}:
-                label = f"Synchronisation Kobo · manifest {total}" if total else "Synchronisation Kobo · manifest…"
-            elif kind in {"scan", "acquiring", "downloaded", "item_error"} and total:
-                if kind == "scan" and current not in {1, total} and current - progress_state["last"] < 10:
-                    return
-                progress_state["last"] = current
-                label = f"Synchronisation Kobo · {current}/{total}"
-            else:
-                return
-            GLib.idle_add(lambda: (control.set_label(label), False)[1])
-
-        def work() -> dict[str, Any]:
-            return self.service.sync_kobo_backup(progress=progress)
-
-        def restore_label() -> None:
-            if isinstance(control, Gtk.Button) and original_label is not None:
-                control.set_label(original_label)
-
-        def ok(summary: dict[str, Any]) -> None:
-            restore_label()
-            self._render_kobo_loans()
-            attention = int(summary.get("attention_required", 0) or 0)
-            errors = int(summary.get("errors", 0) or 0)
-            if manual:
-                self._activity_result(
-                    f"Synchronisation Kobo : {summary.get('downloaded', 0)} téléchargé(s), "
-                    f"{summary.get('pending', 0)} en attente, {summary.get('unchanged', 0)} à jour, "
-                    f"{summary.get('skipped', 0)} ignoré(s), {attention} action(s), {errors} erreur(s)",
-                    success=not bool(attention or errors),
-                    persistent=bool(attention or errors),
-                )
-            elif summary.get("downloaded") or summary.get("pending") or attention or errors:
-                self._activity_result(
-                    f"Synchronisation Kobo automatique : {summary.get('downloaded', 0)} téléchargé(s), "
-                    f"{summary.get('pending', 0)} en attente, {attention} action(s), {errors} erreur(s)",
-                    success=not bool(attention or errors),
-                    persistent=bool(attention or errors),
-                )
-        def err(exc: BaseException) -> None:
-            restore_label()
-            if manual:
-                self.show_error(str(exc), "Synchronisation Kobo impossible")
-            else:
-                self.diagnostics.add("KOBO", "automatic backup task", "error", detail={"error": type(exc).__name__, "message": str(exc)})
-        self.runner.submit(
-            "Synchronisation locale Kobo…", work, ok, err, control=control,
-            priority=TaskPriority.USER_ACTION if manual else TaskPriority.ACTIVE_LOAN, kind="kobo-acquisition",
-        )
+        return sync_controller.run_kobo_backup(self, manual, control)
 
     def choose_adept_loan(self, acquisition_id, loan, control):
         self.runner.submit("Lecture des prêts ADEPT…", lambda: self.service.adept_loan_choices(acquisition_id),
@@ -5388,12 +3619,12 @@ class MainWindow(Adw.ApplicationWindow):
         tab_scroll.set_child(switcher); settings_root.append(tab_scroll); settings_root.append(tabs)
         sections = {}
         for key, label in (("accounts", "Identités et comptes"), ("library", "Bibliothèque"),
-                           ("sync", "Synchronisation"), ("interface", "Interface"), ("diagnostic", "Diagnostic")):
+                           ("sync", "Synchronisation"), ("interface", "Interface"),
+                           ("ai", "Intelligence artificielle"), ("diagnostic", "Diagnostic")):
             section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
             sections[key] = section; tabs.add_titled(section, key, label)
 
-        settings_revisions = {key: 0 for key in sections}
-        saved_settings_revisions = dict(settings_revisions)
+        settings_state = SettingsRevisionState(sections)
         tracked_settings_widgets: set[int] = set()
         settings_action_widgets: dict[str, Any] = {}
 
@@ -5404,7 +3635,7 @@ class MainWindow(Adw.ApplicationWindow):
             tab = current_settings_tab()
             state = settings_action_state(
                 tab,
-                dirty=settings_revisions.get(tab, 0) != saved_settings_revisions.get(tab, 0),
+                dirty=settings_state.dirty(tab),
             )
             save_widgets = tuple(settings_action_widgets.get("save", ()))
             reconnect_widgets = tuple(settings_action_widgets.get("reconnect", ()))
@@ -5418,9 +3649,8 @@ class MainWindow(Adw.ApplicationWindow):
                 widget.set_visible(state.show_save or state.show_reconnect)
 
         def mark_settings_dirty(tab: str) -> None:
-            if tab == "diagnostic":
+            if not settings_state.mark_dirty(tab):
                 return
-            settings_revisions[tab] = settings_revisions.get(tab, 0) + 1
             update_settings_actions()
 
         def track_settings_tree(tab: str, widget: Gtk.Widget) -> None:
@@ -5479,35 +3709,38 @@ class MainWindow(Adw.ApplicationWindow):
             index = 2
             while identity_id in existing_ids:
                 identity_id = f"{base}-{index}"; index += 1
-            prefs = dict(data.get("preferences") or {})
-            group = Adw.PreferencesGroup(); group.set_title(str(data.get("label") or identity_id)); identities_container.append(group)
-            id_row = Adw.EntryRow(); id_row.set_title("Identifiant stable"); id_row.set_text(identity_id)
-            if data.get("id"):
-                id_row.set_sensitive(False)
-            group.add(id_row)
-            label_row = Adw.EntryRow(); label_row.set_title("Nom affiché"); label_row.set_text(str(data.get("label") or identity_id)); group.add(label_row)
-            directory_row = Adw.EntryRow(); directory_row.set_title("Nom du répertoire bibliothèque")
-            directory_row.set_text(str(data.get("directory_name") or identity_id))
-            directory_row.set_tooltip_text("Changer ce dossier déplace les fichiers, fusionne sans écrasement et actualise la bibliothèque. Le libellé seul ne déplace rien.")
-            group.add(directory_row)
-            choose_directory = Gtk.Button.new_from_icon_name("folder-open-symbolic")
-            choose_directory.set_tooltip_text("Choisir un dossier existant dans la bibliothèque")
-            directory_row.add_suffix(choose_directory)
-            choose_directory.connect("clicked", lambda _b, entry=directory_row: self._choose_identity_directory(entry, Path(library_dir_row.get_text().strip() or "~/EBooks")))
-            languages_row = Adw.EntryRow(); languages_row.set_title("Langues de lecture (ordre, séparées par des virgules)")
-            languages_row.set_text(", ".join(str(x) for x in (prefs.get("reading_languages") or ["fr"]))); group.add(languages_row)
-            vo_row = Adw.ActionRow(); vo_row.set_title("Préférer la langue originale")
-            vo_switch = Gtk.Switch(); vo_switch.set_active(bool(prefs.get("prefer_original_language", False))); vo_switch.set_valign(Gtk.Align.CENTER); vo_row.add_suffix(vo_switch); group.add(vo_row)
-            adept_row = Adw.EntryRow(); adept_row.set_title("Profil ADE lié à cette identité (optionnel)")
-            adept_row.set_text(str(data.get("adept_profile") or self.service.storage.adept_profile_binding_get("identity", identity_id) or "")); group.add(adept_row)
-            choose_adept = Gtk.Button(label="Choisir…"); choose_adept.set_valign(Gtk.Align.CENTER)
-            choose_adept.set_tooltip_text("Lister les profils Adobe capables de récupérer les prêts ACSM")
-            adept_row.add_suffix(choose_adept)
-            choose_adept.connect("clicked", lambda button, entry=adept_row: self._choose_adept_profile(entry, button))
-            delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette identité de la configuration")
-            delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
-            editor = {"group": group, "id": id_row, "label": label_row, "directory": directory_row, "languages": languages_row, "prefer_vo": vo_switch, "adept_profile": adept_row, "deleted": False}
+            # Only the widget tree is extracted; MainWindow keeps bindings,
+            # chooser callbacks, dirty revisions and the async save contract.
+            adept_profile = str(
+                data.get("adept_profile")
+                or self.service.storage.adept_profile_binding_get("identity", identity_id)
+                or ""
+            )
+            normal_subtitle = (
+                normal_paris_adept_summary(
+                    self.service.normal_paris_adept_status(identity_id)
+                )
+                if data.get("id")
+                else "À configurer · enregistrez l’identité pour vérifier ses liaisons."
+            )
+            editor, choose_directory, choose_adept, delete_button = build_identity_settings_editor(
+                data=data, identity_id=identity_id,
+                adept_profile=adept_profile, normal_subtitle=normal_subtitle,
+                identities_container=identities_container, Gtk=Gtk, Adw=Adw,
+            )
             identity_editors.append(editor)
+            directory_row = editor["directory"]
+            adept_row = editor["adept_profile"]
+            choose_directory.connect(
+                "clicked",
+                lambda _b, entry=directory_row: self._choose_identity_directory(
+                    entry, Path(library_dir_row.get_text().strip() or "~/EBooks")
+                ),
+            )
+            choose_adept.connect(
+                "clicked", lambda button, entry=adept_row:
+                self._choose_adept_profile(entry, button),
+            )
             def delete_identity(_button, e=editor):
                 e["deleted"] = True
                 e["group"].set_visible(False)
@@ -5550,47 +3783,12 @@ class MainWindow(Adw.ApplicationWindow):
             while account_id in existing_ids:
                 account_id = f"{provider_id}-{n}"; n += 1
 
-            group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
-            enabled_row = Adw.ActionRow(); enabled_row.set_title("Source activée" if not descriptor.credential_fields else "Compte activé")
-            enabled = Gtk.Switch(); enabled.set_active(bool(data.get("enabled", True))); enabled.set_valign(Gtk.Align.CENTER); enabled_row.add_suffix(enabled); group.add(enabled_row)
-            label_row = Adw.EntryRow(); label_row.set_title("Libellé local"); label_row.set_text(str(data.get("label") or descriptor.display_name)); group.add(label_row)
-            identity_row = Adw.EntryRow(); identity_row.set_title("Identité (ID)")
-            default_identity_id = str((configured_identities[0].get("id") if configured_identities else "default") or "default")
-            identity_row.set_text(str(data.get("identity_id") or default_identity_id)); group.add(identity_row)
-            credentials = dict(data.get("credentials") or {})
-            fields: dict[str, Gtk.Widget] = {}
-            for field in descriptor.credential_fields:
-                if field.secret:
-                    entry = Adw.PasswordEntryRow(); entry.set_title(field.label); entry.set_text(str(credentials.get(field.key) or ""))
-                else:
-                    entry = Adw.EntryRow(); entry.set_title(field.label); entry.set_text(str(credentials.get(field.key) or ""))
-                group.add(entry); fields[field.key] = entry
-            options = dict(data.get("options") or {})
-            base_url_row = None
-            opds_url_row = None
-            vault_url_row = None
-            if provider_id == "paris":
-                base_url_row = Adw.EntryRow(); base_url_row.set_title("URL du portail")
-                base_url_row.set_text(str(options.get("base_url") or (self.config.paris_base_url() if hasattr(self.config, "paris_base_url") else self.config.get("base_url")) or "https://bibliotheques.paris.fr")); group.add(base_url_row)
-            elif provider_id == "gallica":
-                opds_url_row = Adw.EntryRow(); opds_url_row.set_title("URL du catalogue OPDS")
-                opds_url_row.set_text(str(options.get("opds_url") or "https://gallica.bnf.fr/opds")); group.add(opds_url_row)
-                public = Adw.ActionRow(); public.set_title("Accès public")
-                public.set_subtitle("Aucun identifiant requis · EPUB + documents sonores publics Gallica")
-                group.add(public)
-            elif provider_id == "kobo":
-                vault_url_row = Adw.EntryRow(); vault_url_row.set_title("URL API Kobo-Vault")
-                vault_url_row.set_text(str(options.get("base_url") or "")); group.add(vault_url_row)
-                info = Adw.ActionRow(); info.set_title("Connexion indirecte au compte Kobo")
-                info.set_subtitle("Kobo-Vault conserve la session Kobo. cifereca utilise uniquement l'URL API et un token dédié.")
-                group.add(info)
-            delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette source de la configuration")
-            delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
-            editor = {
-                "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
-                "label": label_row, "identity": identity_row, "fields": fields, "base_url": base_url_row, "opds_url": opds_url_row, "vault_url": vault_url_row,
-                "original_options": options, "deleted": False,
-            }
+            editor, delete_button = build_provider_account_editor(
+                data=data, provider_id=provider_id, account_id=account_id,
+                descriptor=descriptor, configured_identities=configured_identities,
+                accounts_container=accounts_container, config=self.config,
+                Gtk=Gtk, Adw=Adw,
+            )
             account_editors.append(editor)
             def delete_account(_button, e=editor):
                 e["deleted"] = True
@@ -5673,29 +3871,17 @@ class MainWindow(Adw.ApplicationWindow):
         except ValueError: level_drop.set_selected(1)
         level_row.add_suffix(level_drop); config_group.add(level_row)
 
-        box = sections["sync"]
-        backup_group = Adw.PreferencesGroup(); backup_group.set_title("Acquisition automatique / activité Kobo"); box.append(backup_group)
-        backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title("Synchroniser automatiquement les ebooks Kobo")
-        backup_auto_row.set_subtitle("Paris résout l’acquisition via Kobo-Vault v2.3+ puis exécute localement via Kobo-Adept contract v8")
-        backup_switch = Gtk.Switch(); backup_switch.set_active(bool(self.config.get("kobo_backup.enabled", False))); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
-        unlinked_row = Adw.ActionRow(); unlinked_row.set_title("Autoriser les acquisitions Kobo malgré des livres locaux sans liaison")
-        unlinked_row.set_subtitle("Désactivé : suspend les acquisitions du lot en présence d’EPUB importés non rapprochés. Activé : des doublons peuvent être téléchargés.")
-        unlinked_switch = Gtk.Switch(); unlinked_switch.set_active(bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False))); unlinked_switch.set_valign(Gtk.Align.CENTER); unlinked_row.add_suffix(unlinked_switch); backup_group.add(unlinked_row)
-        library_dir_row = Adw.EntryRow(); library_dir_row.set_title("Bibliothèque locale possédée par cifereca")
-        library_dir_row.set_text(str(self.config.get("library.directory", "~/EBooks") or "~/EBooks")); download_group.add(library_dir_row)
-        backup_dir_row = Adw.EntryRow(); backup_dir_row.set_title("Sous-répertoire/override Kobo (vide = bibliothèque locale)")
-        backup_dir_row.set_text(str(self.config.get("kobo_backup.directory", "") or "")); backup_group.add(backup_dir_row)
-        backup_interval_row = Adw.EntryRow(); backup_interval_row.set_title("Intervalle automatique (minutes, minimum 15)")
-        backup_interval_row.set_text(str(self.config.get("kobo_backup.interval_minutes", 60) or 60)); backup_group.add(backup_interval_row)
-        vault_profiles = ["Android", "Desktop"]
-        current_vault_profile = str(self.config.get("kobo_backup.display_profile", "Android") or "Android")
-        if current_vault_profile not in vault_profiles:
-            current_vault_profile = "Android"
-        vault_display_row = Adw.ActionRow(); vault_display_row.set_title("DisplayProfile Kobo-Vault")
-        vault_display_row.set_subtitle("v2.3 : ACSM est prioritaire quand disponible ; le DisplayProfile pilote ensuite SignedNoDrm/KDRM")
-        vault_profile_drop = Gtk.DropDown.new_from_strings(vault_profiles)
-        vault_profile_drop.set_selected(vault_profiles.index(current_vault_profile))
-        vault_profile_drop.set_valign(Gtk.Align.CENTER); vault_display_row.add_suffix(vault_profile_drop); backup_group.add(vault_display_row)
+        kobo_settings = build_kobo_sync_section(
+            section=sections["sync"], download_group=download_group,
+            config=self.config, Gtk=Gtk, Adw=Adw,
+        )
+        backup_switch = kobo_settings.backup_switch
+        unlinked_switch = kobo_settings.unlinked_switch
+        library_dir_row = kobo_settings.library_dir_row
+        backup_dir_row = kobo_settings.backup_dir_row
+        backup_interval_row = kobo_settings.backup_interval_row
+        vault_profiles = kobo_settings.vault_profiles
+        vault_profile_drop = kobo_settings.vault_profile_drop
 
         settings_actions = AdaptiveActionBar(source=settings_heading); settings_actions.set_halign(Gtk.Align.END); settings_heading.append(settings_actions)
         save = action_button(
@@ -5723,6 +3909,226 @@ class MainWindow(Adw.ApplicationWindow):
         })
         from .action_widgets import mirror_sensitivity
         mirror_sensitivity(save, save_bottom); mirror_sensitivity(reconnect, reconnect_bottom)
+        # Independent, opt-in Core LLM settings. No backend contact on entry.
+        ai_box = sections["ai"]
+        ai_cfg = self.config.get("llm", {})
+        if not isinstance(ai_cfg, dict):
+            ai_cfg = {}
+        ai_group = Adw.PreferencesGroup()
+        ai_group.set_title("Service IA commun aux plugins")
+        ai_box.append(ai_group)
+        ai_enable_row = Adw.ActionRow()
+        ai_enable_row.set_title("Activer les fonctions d’intelligence artificielle")
+        ai_enable_row.set_subtitle("Désactivé par défaut. Aucun appel réseau à l’ouverture.")
+        ai_enabled = Gtk.Switch()
+        ai_enabled.set_valign(Gtk.Align.CENTER)
+        ai_enabled.set_active(ai_cfg.get("enabled") is True)
+        ai_enable_row.add_suffix(ai_enabled)
+        ai_group.add(ai_enable_row)
+
+        ai_provider = Adw.ActionRow()
+        ai_provider.set_title("Protocole pris en charge")
+        ai_provider.set_subtitle("OpenAI Chat Completions compatible (local ou HTTPS)")
+        ai_group.add(ai_provider)
+        ai_endpoint = Adw.EntryRow()
+        ai_endpoint.set_title("Endpoint complet (…/v1/chat/completions)")
+        ai_endpoint.set_text(str(ai_cfg.get("endpoint") or ""))
+        ai_group.add(ai_endpoint)
+        ai_preset = Gtk.Button(label="Préremplir l’endpoint Ollama local")
+        ai_preset.set_tooltip_text("N’installe ni ne démarre aucun serveur")
+        ai_preset.connect(
+            "clicked", lambda *_: ai_endpoint.set_text(
+                "http://127.0.0.1:11434/v1/chat/completions"
+            ),
+        )
+        ai_box.append(ai_preset)
+        ai_model = Adw.EntryRow()
+        ai_model.set_title("Modèle installé sur le serveur")
+        ai_model.set_text(str(ai_cfg.get("model") or ""))
+        ai_group.add(ai_model)
+
+        ai_remote_row = Adw.ActionRow()
+        ai_remote_row.set_title("Autoriser les requêtes vers un serveur distant")
+        ai_remote_row.set_subtitle(
+            "HTTPS obligatoire ; les plugins demandent toujours leur propre consentement."
+        )
+        ai_remote = Gtk.Switch()
+        ai_remote.set_valign(Gtk.Align.CENTER)
+        ai_remote.set_active(ai_cfg.get("allow_remote") is True)
+        ai_remote_row.add_suffix(ai_remote)
+        ai_group.add(ai_remote_row)
+
+        ai_key = Adw.EntryRow()
+        ai_key.set_title("Nom de variable d’environnement pour la clé (facultatif)")
+        ai_key.set_text(str(ai_cfg.get("api_key_env") or ""))
+        ai_key.set_tooltip_text("Saisir uniquement le NOM de variable, jamais la clé")
+        ai_group.add(ai_key)
+        ai_timeout = Adw.EntryRow()
+        ai_timeout.set_title("Délai maximum en secondes (0,2 à 15)")
+        ai_timeout.set_text(str(ai_cfg.get("timeout_seconds", 5)))
+        ai_group.add(ai_timeout)
+        ai_input_limit = Adw.EntryRow()
+        ai_input_limit.set_title("Taille maximum d’entrée (caractères)")
+        ai_input_limit.set_text(str(ai_cfg.get("max_input_chars", 4000)))
+        ai_group.add(ai_input_limit)
+        ai_output_limit = Adw.EntryRow()
+        ai_output_limit.set_title("Maximum de jetons de réponse")
+        ai_output_limit.set_text(str(ai_cfg.get("max_output_tokens", 256)))
+        ai_group.add(ai_output_limit)
+
+        ai_notice = Gtk.Label(
+            label=("La clé n’est jamais enregistrée : seul son nom de variable est sauvegardé. "
+                   "Une analyse peut coûter de l’argent chez un fournisseur distant. "
+                   "Sauvegarder la configuration requiert un redémarrage de Cifereca."),
+            xalign=0,
+        )
+        ai_notice.set_wrap(True)
+        add_css(ai_notice, "caption", "dim-label")
+        ai_box.append(ai_notice)
+        ai_status = Gtk.Label(label="Désactivé" if not ai_enabled.get_active() else "Configuré (non testé)", xalign=0)
+        ai_status.set_wrap(True)
+        ai_box.append(ai_status)
+        ai_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ai_test = Gtk.Button(label="Tester la connexion")
+        ai_reset = Gtk.Button(label="Annuler les modifications")
+        ai_buttons.append(ai_test)
+        ai_buttons.append(ai_reset)
+        ai_box.append(ai_buttons)
+
+        def capture_ai_settings():
+            return {
+                "enabled": ai_enabled.get_active(),
+                "provider": "openai-compatible",
+                "endpoint": ai_endpoint.get_text(),
+                "model": ai_model.get_text(),
+                "allow_remote": ai_remote.get_active(),
+                "api_key_env": ai_key.get_text(),
+                "timeout_seconds": ai_timeout.get_text(),
+                "max_input_chars": ai_input_limit.get_text(),
+                "max_output_tokens": ai_output_limit.get_text(),
+            }
+
+        def read_ai_settings():
+            return normalize_llm_settings(capture_ai_settings())
+
+        ai_probe_version = [0]
+
+        def ai_setting_changed(*_args):
+            ai_probe_version[0] += 1
+            host, remote = destination_summary({
+                "endpoint": ai_endpoint.get_text(),
+                "model": ai_model.get_text(),
+                "enabled": ai_enabled.get_active(),
+                "allow_remote": ai_remote.get_active(),
+                "api_key_env": ai_key.get_text(),
+                "timeout_seconds": ai_timeout.get_text(),
+                "max_input_chars": ai_input_limit.get_text(),
+                "max_output_tokens": ai_output_limit.get_text(),
+            })
+            ai_status.set_text(
+                "Désactivé (modifications non enregistrées)"
+                if not ai_enabled.get_active() else
+                f"Non testé · {'distant' if remote else 'local'} · {host} · "
+                f"clé d’environnement {'définie' if env_key_is_set({'api_key_env': ai_key.get_text()}) else 'absente'}"
+            )
+
+        def endpoint_changed(*_args):
+            # Editing the endpoint revokes a previously granted remote opt-in.
+            if ai_remote.get_active():
+                ai_remote.set_active(False)
+            ai_setting_changed()
+
+        ai_endpoint.connect("notify::text", endpoint_changed)
+        for widget, signal in (
+            (ai_enabled, "notify::active"), (ai_remote, "notify::active"),
+            (ai_model, "notify::text"), (ai_key, "notify::text"),
+            (ai_timeout, "notify::text"), (ai_input_limit, "notify::text"),
+            (ai_output_limit, "notify::text"),
+        ):
+            widget.connect(signal, ai_setting_changed)
+
+        def reset_ai(_button):
+            ai_enabled.set_active(ai_cfg.get("enabled") is True)
+            ai_endpoint.set_text(str(ai_cfg.get("endpoint") or ""))
+            ai_model.set_text(str(ai_cfg.get("model") or ""))
+            ai_remote.set_active(ai_cfg.get("allow_remote") is True)
+            ai_key.set_text(str(ai_cfg.get("api_key_env") or ""))
+            ai_timeout.set_text(str(ai_cfg.get("timeout_seconds", 5)))
+            ai_input_limit.set_text(str(ai_cfg.get("max_input_chars", 4000)))
+            ai_output_limit.set_text(str(ai_cfg.get("max_output_tokens", 256)))
+            settings_state.reset("ai")
+            ai_status.set_text("Modifications annulées ; aucun test réseau lancé")
+            update_settings_actions()
+
+        ai_reset.connect("clicked", reset_ai)
+
+        def submit_ai_probe(settings, *, confirmed=False):
+            ai_probe_version[0] += 1
+            version = ai_probe_version[0]
+            ai_status.set_text("Test synthétique en cours…")
+            def done(result):
+                if version == ai_probe_version[0]:
+                    host, _ = destination_summary(settings)
+                    ai_status.set_text(f"{result} · {host} · modèle {settings['model']}")
+            def failed(_exc):
+                if version == ai_probe_version[0]:
+                    ai_status.set_text("Test non concluant ; vérifier la configuration")
+            try:
+                self.runner.submit(
+                    "Test connexion IA synthétique",
+                    lambda: probe_llm_connection(settings, remote_confirmed=confirmed),
+                    done, failed, control=ai_test,
+                    priority=TaskPriority.USER_ACTION, kind="settings",
+                )
+            except Exception:
+                ai_test.set_sensitive(True)
+                ai_status.set_text("Impossible de démarrer le test")
+
+        def test_ai_connection(_button):
+            try:
+                settings = read_ai_settings()
+            except LLMSettingsError as exc:
+                ai_status.set_text(str(exc))
+                return
+            if not settings["enabled"]:
+                ai_status.set_text("Activer la fonction IA pour tester la connexion")
+                return
+            host, remote = destination_summary(settings)
+            if remote:
+                confirmation_version = ai_probe_version[0]
+                confirm = Adw.MessageDialog.new(
+                    self, "Tester la connexion distante ?",
+                    f"Une requête synthétique sera envoyée à {host} avec le modèle "
+                    f"{settings['model']}. Ce test peut être facturé. "
+                    "Aucune notice ou donnée personnelle ne sera envoyée.",
+                )
+                confirm.add_response("cancel", "Annuler")
+                confirm.add_response("accept", "Autoriser ce test")
+                confirm.set_default_response("cancel")
+                confirm.set_close_response("cancel")
+                def confirmed_probe(_dialog, response):
+                    if response != "accept":
+                        return
+                    # Never send to a stale destination after edits while
+                    # the confirmation dialog was open.
+                    if confirmation_version != ai_probe_version[0]:
+                        ai_status.set_text("Paramètres modifiés : renouveler la confirmation")
+                        return
+                    try:
+                        if read_ai_settings() != settings:
+                            ai_status.set_text("Paramètres modifiés : renouveler la confirmation")
+                            return
+                    except LLMSettingsError:
+                        ai_status.set_text("Configuration IA invalide")
+                        return
+                    submit_ai_probe(settings, confirmed=True)
+                confirm.connect("response", confirmed_probe)
+                confirm.present()
+                return
+            submit_ai_probe(settings)
+
+        ai_test.connect("clicked", test_ai_connection)
+
         tabs.connect("notify::visible-child-name", update_settings_actions)
         track_all_settings_widgets()
         update_settings_actions()
@@ -5809,169 +4215,95 @@ class MainWindow(Adw.ApplicationWindow):
             })
             diag_text.get_buffer().set_text(content)
 
-        def save_settings(_button=None, *, reconnect_after=False) -> bool:
-            from pathlib import Path
-            from copy import deepcopy
-            draft = deepcopy(self.config)
-            saved_identities: list[dict[str, Any]] = []
-            identity_ids: set[str] = set()
-            directory_names: set[str] = set()
+        settings_committer = SettingsCommitController(
+            self.service.save_configuration, self.runner.submit, self.runner.present_error,
+        )
+
+        def capture_settings_values():
+            identities = []
             for editor in identity_editors:
                 if editor.get("deleted"):
                     continue
-                identity_id = editor["id"].get_text().strip()
-                if not identity_id or not re.fullmatch(r"[A-Za-z0-9._-]+", identity_id):
-                    self.show_error("Identité invalide : utilisez uniquement lettres, chiffres, point, tiret ou underscore.")
-                    return False
-                if identity_id in identity_ids:
-                    self.show_error(f"Identité dupliquée : {identity_id}")
-                    return False
-                identity_ids.add(identity_id)
-                from ..identities.directory_selection import directory_choice
-                try:
-                    directory_name = directory_choice(editor["directory"].get_text(), Path(library_dir_row.get_text().strip() or "~/EBooks"))
-                except ValueError as exc:
-                    self.show_error(str(exc)); return False
-                except RuntimeError as exc:
-                    self.show_error(str(exc)); return False
-                if directory_name in directory_names:
-                    self.show_error(f"Répertoire d’identité dupliqué : {directory_name}")
-                    return False
-                directory_names.add(directory_name)
-                languages = [part.strip().lower() for part in editor["languages"].get_text().split(",") if part.strip()]
-                if not languages:
-                    languages = ["fr"]
-                saved_identities.append({
-                    "id": identity_id,
-                    "label": editor["label"].get_text().strip() or identity_id,
-                    "directory_name": directory_name,
-                    "adept_profile": editor["adept_profile"].get_text().strip(),
-                    "preferences": {
-                        "prefer_original_language": editor["prefer_vo"].get_active(),
-                        "reading_languages": languages,
-                    },
-                })
-            if not saved_identities:
-                self.show_error("cifereca doit conserver au moins une identité.")
-                return False
-            draft.set("identities", saved_identities)
-            preserved = []
-            for row in draft.provider_accounts():
-                descriptor = descriptors.get(str(row.get("provider") or "").lower())
-                if descriptor is None or descriptor.state != "ready" or descriptor.id in public_ids:
-                    preserved.append(row)
-            saved_accounts = list(preserved)
-            kobo_identity_accounts: dict[str, str] = {}
-            for row in preserved:
-                if str(row.get("provider") or "").lower() == "kobo":
-                    iid = str(row.get("identity_id") or "").strip()
-                    if iid:
-                        kobo_identity_accounts[iid] = str(row.get("id") or "kobo")
+                row = {key: editor[key].get_text() for key in
+                       ("id", "label", "directory", "adept_profile", "languages")}
+                row["prefer_vo"] = editor["prefer_vo"].get_active()
+                identities.append(row)
+            accounts = []
             for editor in account_editors:
                 if editor.get("deleted"):
                     continue
-                descriptor = descriptors[editor["provider"]]
-                credentials: dict[str, str] = {}
-                for field in descriptor.credential_fields:
-                    credentials[field.key] = editor["fields"][field.key].get_text()
-                options: dict[str, Any] = dict(editor.get("original_options") or {})
-                if editor.get("base_url") is not None:
-                    options["base_url"] = editor["base_url"].get_text().strip() or "https://bibliotheques.paris.fr"
-                if editor.get("opds_url") is not None:
-                    options["opds_url"] = editor["opds_url"].get_text().strip() or "https://gallica.bnf.fr/opds"
-                if editor.get("vault_url") is not None:
-                    options["base_url"] = editor["vault_url"].get_text().strip()
-                account_identity_id = editor["identity"].get_text().strip() or saved_identities[0]["id"]
-                if account_identity_id not in identity_ids:
-                    self.show_error(f"Identité inconnue pour {editor['id']} : {account_identity_id}")
-                    return False
-                if editor["provider"] == "kobo":
-                    previous = kobo_identity_accounts.get(account_identity_id)
-                    if previous and previous != editor["id"]:
-                        self.show_error(
-                            f"Une identité ne peut avoir qu'un compte Kobo Vault : {account_identity_id} "
-                            f"est déjà lié à {previous}."
-                        )
-                        return False
-                    kobo_identity_accounts[account_identity_id] = editor["id"]
-                saved_accounts.append({
-                    "id": editor["id"],
-                    "provider": editor["provider"],
-                    "identity_id": account_identity_id,
-                    "label": editor["label"].get_text().strip() or descriptor.display_name,
-                    "enabled": editor["enabled"].get_active(),
-                    "anonymous": not bool(descriptor.credential_fields),
-                    "credentials": credentials,
-                    "options": options,
-                })
-            draft.set("providers.accounts", saved_accounts)
-            try:
-                global_command = shlex.split(global_cmd_row.get_text()) if global_cmd_row.get_text().strip() else []
-                global_post_command = shlex.split(global_post_row.get_text()) if global_post_row.get_text().strip() else []
-                provider_commands: dict[str, tuple[list[str], list[str]]] = {}
-                for provider_id, editor in provider_download_editors.items():
-                    provider_commands[provider_id] = (
-                        shlex.split(editor["command"].get_text()) if editor["command"].get_text().strip() else [],
-                        shlex.split(editor["post"].get_text()) if editor["post"].get_text().strip() else [],
-                    )
-            except ValueError as exc:
-                self.show_error(f"Commande de téléchargement invalide : {exc}")
-                return False
-            draft.set("downloads", {
-                "directory": global_dir_row.get_text().strip(),
-                "content_type_directories": {
-                    "ebook": global_ebook_row.get_text().strip(),
-                    "audiobook": global_audio_row.get_text().strip(),
+                row = {key: editor[key] for key in ("id", "provider")}
+                row.update({key: editor[key].get_text() for key in ("label", "identity")})
+                row["enabled"] = editor["enabled"].get_active()
+                row["original_options"] = settings_committer.stage(editor.get("original_options") or {})
+                row["fields"] = {key: widget.get_text() for key, widget in editor["fields"].items()}
+                for key in ("base_url", "opds_url", "vault_url"):
+                    widget = editor.get(key)
+                    row[key] = widget.get_text() if widget is not None else None
+                accounts.append(row)
+            values = {
+                "identities": identities, "accounts": accounts,
+                "provider_downloads": {
+                    pid: {key: widget.get_text() for key, widget in editor.items()}
+                    for pid, editor in provider_download_editors.items()
                 },
-                "command": global_command,
-                "post_download_command": global_post_command,
-            })
-            for provider_id, editor in provider_download_editors.items():
-                settings = draft.provider_settings(provider_id)
-                command, post_command = provider_commands[provider_id]
-                settings["downloads"] = {
-                    "directory": editor["directory"].get_text().strip(),
-                    "content_type_directories": {
-                        "ebook": editor["ebook"].get_text().strip(),
-                        "audiobook": editor["audiobook"].get_text().strip(),
-                    },
-                    "command": command,
-                    "post_download_command": post_command,
-                }
-                draft.set_provider_settings(provider_id, settings)
-            draft.set("diagnostics.enabled", diag_switch.get_active())
-            draft.set("diagnostics.level", levels[level_drop.get_selected()])
-            draft.set("experimental_actions", exp_switch.get_active())
-            try:
-                backup_interval = max(15, int(backup_interval_row.get_text().strip() or "60"))
-            except ValueError as exc:
-                self.show_error(f"Configuration Kobo invalide : {exc}")
+                "levels": tuple(levels), "vault_profiles": tuple(vault_profiles),
+                "ai": capture_ai_settings() if settings_state.dirty("ai") else {},
+            }
+            values["backup_directory"] = backup_dir_row.get_text()
+            values["backup_interval"] = backup_interval_row.get_text()
+            values["backup_enabled"] = backup_switch.get_active()
+            values["diagnostics_enabled"] = diag_switch.get_active()
+            values["experimental_actions"] = exp_switch.get_active()
+            values["audiobook_directory"] = global_audio_row.get_text()
+            values["download_command"] = global_cmd_row.get_text()
+            values["download_directory"] = global_dir_row.get_text()
+            values["ebook_directory"] = global_ebook_row.get_text()
+            values["post_download_command"] = global_post_row.get_text()
+            values["diagnostics_level_index"] = level_drop.get_selected()
+            values["library_directory"] = library_dir_row.get_text()
+            values["allow_unlinked_acquisition"] = unlinked_switch.get_active()
+            values["vault_profile_index"] = vault_profile_drop.get_selected()
+            return values
+
+        def save_settings(_button=None, *, reconnect_after=False) -> bool:
+            if settings_committer.pending:
                 return False
-            draft.set("library.directory", library_dir_row.get_text().strip() or "~/EBooks")
-            draft.set("kobo_backup.enabled", backup_switch.get_active())
-            draft.set("kobo_backup.allow_unlinked_acquisition", unlinked_switch.get_active())
-            draft.set("kobo_backup.directory", backup_dir_row.get_text().strip())
-            draft.set("kobo_backup.interval_minutes", backup_interval)
-            selected_profile = int(vault_profile_drop.get_selected())
-            draft.set("kobo_backup.display_profile", vault_profiles[selected_profile] if 0 <= selected_profile < len(vault_profiles) else "Android")
-            draft.set("kobo_backup.format", "epub")
-            current_dirs = {i.identity_id: i.directory_name for i in self.service.identities}
-            directory_change = any(row["id"] in current_dirs and row["directory_name"] != current_dirs[row["id"]] for row in saved_identities)
-            if directory_change and getattr(self, "_active_tasks", {}):
-                self.show_error("Attendez la fin des opérations en cours avant de changer un répertoire d’identité.")
-                return False
-            staged = deepcopy(draft.data)
             try:
-                staged_settings_revisions = dict(settings_revisions)
-            except NameError:
-                # Legacy unit tests execute this nested handler in isolation.
-                staged_settings_revisions = {}
+                draft = build_settings_draft(
+                    self.config, capture_settings_values(), descriptors=descriptors,
+                    public_ids=public_ids,
+                    current_dirs={i.identity_id: i.directory_name for i in self.service.identities},
+                    has_active_tasks=bool(getattr(self, "_active_tasks", {})),
+                    ai_dirty=settings_state.dirty("ai"),
+                )
+            except SettingsValidationError as exc:
+                if exc.title is None:
+                    self.show_error(str(exc))
+                else:
+                    self.show_error(str(exc), exc.title)
+                return False
+            directory_change = draft.directory_change
+            ai_restart_required = draft.ai_restart_required
+            new_ai_settings = draft.data.get("llm", {})
+            staged = settings_committer.stage(draft.data)
+            staged_settings_revisions = settings_state.snapshot()
             def ok(result):
                 self.diagnostics.enabled = bool(staged["diagnostics"]["enabled"])
                 self.diagnostics.level = staged["diagnostics"]["level"]
                 from ..logging_utils import set_diagnostics_level
                 set_diagnostics_level(self.diagnostics.level)
                 message = "Configuration enregistrée"
+                if ai_restart_required:
+                    # Cancel/reset must now restore the newly saved values.
+                    ai_cfg.clear()
+                    ai_cfg.update(new_ai_settings)
+                    message = "Configuration IA enregistrée — redémarrage nécessaire"
+                    ai_status.set_text(
+                        "Enregistré · redémarrer Cifereca pour actualiser "
+                        "le service IA partagé par les plugins"
+                    )
+
                 if result.get("migrated"):
                     message = f"Répertoire déplacé · {result['collisions']} collision(s) préservée(s) · bibliothèque actualisée"
                     self.refresh_library(False); self.refresh_recent(); self._render_dashboard()
@@ -5985,20 +4317,15 @@ class MainWindow(Adw.ApplicationWindow):
                     self.toast(message, 5)
                 self._configure_kobo_backup_timer(run_now=False)
                 refresh_text()
-                try:
-                    for tab, revision in staged_settings_revisions.items():
-                        saved_settings_revisions[tab] = revision
-                    track_all_settings_widgets()
-                    update_settings_actions()
-                except NameError:
-                    # Same isolated-handler compatibility path as above.
-                    pass
+                settings_state.commit(staged_settings_revisions)
+                track_all_settings_widgets()
+                update_settings_actions()
                 if reconnect_after:
                     self.reconnect_sources()
-            self.runner.submit("Enregistrement et migration des répertoires…" if directory_change else "Enregistrement de la configuration…",
-                lambda: self.service.save_configuration(staged), ok,
-                control=_button or save, priority=TaskPriority.USER_ACTION, kind="settings")
-            return True
+            return settings_committer.submit(
+                "Enregistrement et migration des répertoires…" if directory_change else "Enregistrement de la configuration…",
+                staged, ok, control=_button or save,
+            )
 
         def save_and_reconnect(_button=None) -> None:
             save_settings(_button or reconnect, reconnect_after=True)

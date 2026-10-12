@@ -39,13 +39,50 @@ def test_pipeline_indicates_observed_yield_gap_without_proving_remote_zero():
         anchor_count=20, candidate_count=20, isbn_valid_count=0,
         age_qualified_count=0, query_mode="remote",
     ))
-    assert result["cause"] == "candidats_sans_isbn_atteste"
+    assert result["cause"] == "candidats_sans_age_atteste"
     assert result["confidence"] == "inferred"
     assert result["query_mode"] == "remote"
     assert source_yield_diagnostic(row(
         candidate_count=20, isbn_valid_count=20, age_qualified_count=0,
     ))["cause"] == "candidats_sans_age_atteste"
     assert source_yield_diagnostic(row())["cause"] == "vide_non_verifie"
+
+
+def test_optional_isbn_does_not_explain_missing_notices_without_observed_rejections():
+    item = row(
+        anchor_count=20, candidate_count=20, isbn_valid_count=0,
+        age_qualified_count=20, query_mode="remote",
+    )
+    assert source_yield_diagnostic(item)["cause"] == "perte_apres_qualification_a_examiner"
+    item["pipeline"]["rejection_reasons"] = {"isbn_invalid": 17}
+    assert source_yield_diagnostic(item)["cause"] == "candidats_avec_isbn_rejete"
+
+
+def test_inventory_ids_and_labels_cannot_expose_untrusted_private_source_names():
+    catalog = YouthCatalogIndex()
+    inventory = (
+        {"plugin_id": "youth.source.milan", "type": "youth.source",
+         "state": "ready", "enabled": True,
+         "package_id": "https://account.example/path?token=SECRET"},
+        {"plugin_id": "youth.source.reader@example.com?token=PRIVATE",
+         "type": "youth.source", "state": "ready", "enabled": True},
+        {"plugin_id": "youth.source.custom-source", "type": "youth.source",
+         "state": "ready", "enabled": True},
+    )
+    rows = catalog.source_diagnostics("identity-PRIVATE", inventory)
+    ids = {item["source_id"] for item in rows}
+    assert "milan" in ids and "custom-source" in ids
+    assert "reader@example.com?token=PRIVATE" not in ids
+    assert next(x for x in rows if x["source_id"] == "milan")["package_id"] == ""
+    display = source_diagnostic_presentation((
+        {"source_id": "reader@example.com?token=PRIVATE",
+         "label": "Alice token=PRIVATE", "family": "age"},
+        {"source_id": "custom-source", "label": "Alice token=PRIVATE",
+         "family": "age"},
+    ))
+    message = " ".join(display[1])
+    assert "PRIVATE" not in message and "Alice" not in message
+    assert "Source inconnue" in message and "custom-source" in message
 
 
 def test_http_errors_and_success_are_not_mixed_with_undetermined_empty():

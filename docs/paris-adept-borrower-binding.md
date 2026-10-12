@@ -1,8 +1,18 @@
-# Attribution ADEPT des sous-comptes Paris — exploitation P0 #976
+# Liaisons ADEPT exceptionnelles des comptes Paris — P0 #976
 
 La connexion Paris n'est **pas** une preuve que le titulaire de cette connexion est
 l'emprunteur Adobe. Un sous-compte rattaché doit être lié explicitement à une
 identité Cifereca et à son profil ADEPT stable avant tout fulfillment ACSM.
+
+Le compte principal suit normalement le profil associé à son identité (#1063).
+Une exception attestée peut aussi lier ce compte au profil d'une autre identité :
+utiliser `--borrower primary` dans les commandes `bind` et `unbind` ci-dessous.
+`accounts` affiche cette référence canonique même si Paris expose un identifiant
+principal vide. Cette exception reste limitée à la connexion Paris désignée et
+ne change ni le profil normal de l'identité ni sa bibliothèque de rangement.
+Elle est invalidée si le propriétaire de connexion ou le profil attesté change.
+La révoquer rétablit la configuration normale pour les nouvelles opérations ;
+cela ne modifie aucune acquisition historique et ne déclenche aucun fulfillment.
 
 ## 1. Relever les emprunteurs réellement visibles
 
