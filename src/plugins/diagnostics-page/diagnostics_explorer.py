@@ -192,6 +192,10 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
         # 'available' never advertises a failure reason.
         if reason and status in ("empty", "disabled", "unavailable", "partial"):
             state["reason"] = reason
+        if status == "partial" and evidence["source"] == "core_events" and (
+            reason == "snapshot_records_incomplete"
+        ):
+            state["label"] = "Historique structuré partiel (rejets / limite)"
         # Dates are metadata from the Core, never arbitrary display strings.
         # Validate timezone and normalise UTC; do not stringify hostile types.
         raw_last = raw.get("last_event")
