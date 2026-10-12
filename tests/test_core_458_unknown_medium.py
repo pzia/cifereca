@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.gui_source import gui_source_text
+
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -156,7 +158,7 @@ def test_query_controls_source_exposes_unknown_scope_without_importing_gtk():
 
 
 def test_search_list_labels_unknown_support_instead_of_digital():
-    source = Path("src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    source = gui_source_text(Path("src/cifereca/gui/main_window.py"))
 
     assert 'medium = "Support indéterminé"' in source
     assert 'item.medium == "unknown"' in source
