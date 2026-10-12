@@ -291,6 +291,14 @@ def main():
         assert len(widgets(Gtk.Label)) < 1200, "Rendu de 10000 widgets interdit"
         assert broker.checks == 0
         report["checks"]["D06_10000_events_50_rows_bounded"] = True
+        # The read-only broker can finish before Xvfb has drawn the frame.
+        # Capture the *visible 50 rows*, never the prior "loading" frame.
+        later(d06_first_page_rendered, 340)
+
+    def d06_first_page_rendered():
+        assert seen("50 événements affichés") and seen("10000 disponibles")
+        assert not seen("Actualisation en cours"), "D06: première page pas rendue"
+        assert find_button("Suivant").get_sensitive()
         screenshot("00-10000-evenements-premiere-page")
         next_btn = find_button("Suivant")
         assert next_btn.get_sensitive()
@@ -315,6 +323,12 @@ def main():
         report["audits"]["D06_xtest_next_page_gtk_seconds"] = round(
             monotonic() - d06_next_activated[0], 3,
         )
+        later(d06_next_page_rendered, 340)
+
+    def d06_next_page_rendered():
+        assert seen("page à partir de 51") and seen("50 événements affichés")
+        assert not seen("Actualisation en cours"), "D06: seconde page pas rendue"
+        assert find_button("Précédent").get_sensitive()
         screenshot("01-page-51-sur-10000")
         query_module_physical("adept", "ADEPT code 10", adept_case)
 
