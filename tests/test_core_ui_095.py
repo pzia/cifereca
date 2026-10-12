@@ -1,3 +1,5 @@
+from tests.gui_source import gui_source_text
+
 import ast
 import logging
 import os
@@ -194,7 +196,7 @@ class CoreCompatibility(unittest.TestCase):
 # This validates callbacks and network decisions, not rendering or GTK APIs.
 def window_coordinator():
     source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-    tree=ast.parse(source.read_text())
+    tree=ast.parse(gui_source_text(source))
     cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MainWindow')
     names={'run_search','_library_search_online','_reset_search_enter'}
     methods=[n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name in names]

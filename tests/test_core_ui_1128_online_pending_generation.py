@@ -1,6 +1,8 @@
 """P0 #1128: old online-search dedupe marker cannot block new generation."""
 from __future__ import annotations
 
+from tests.gui_source import gui_source_text
+
 import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -13,7 +15,7 @@ MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _host():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     window = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                   and n.name == "MainWindow")
     methods = [n for n in window.body
@@ -120,7 +122,7 @@ def test_pure_guard_rejects_prior_generation_and_bool_tokens():
 
 
 def test_window_captures_generation_and_clears_only_matching_pending_token():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     window = next(n for n in tree.body if isinstance(n,ast.ClassDef)
                   and n.name == "MainWindow")
     method = next(n for n in window.body if isinstance(n,ast.FunctionDef)

@@ -23,7 +23,7 @@ class QueryState:
 
 
 def _route():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     cls = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
     method = next(x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name == "search_books")
     # Stub just the pure query-model import: no GTK, service or network involved.

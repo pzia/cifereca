@@ -1,3 +1,5 @@
+from tests.gui_source import gui_source_text
+
 import ast, hashlib, unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -163,7 +165,7 @@ class Core0917(unittest.TestCase):
         self.assertIsNone(self.storage.adept_profile_binding_get('identity','stable'))
     def test_third_enter_while_online_running_does_not_invalidate_callback(self):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_search_enter')
+        fn=next(n for n in ast.walk(ast.parse(gui_source_text(source))) if isinstance(n,ast.FunctionDef) and n.name=='_search_enter')
         module=ast.Module(body=[fn],type_ignores=[]);ns={'__package__':'cifereca.gui'}
         exec(compile(ast.fix_missing_locations(module),str(source),'exec'),ns)
         state=QueryState('harari');w=NS(search_controls=NS(state=lambda:state),service=NS(current_identity=NS(identity_id='stable')),run_search=Mock(),_online_pending_key=(state,'stable'),_online_pending_generation=7,_search_generation=7)
