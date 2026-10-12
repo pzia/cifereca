@@ -65,7 +65,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_1269_query_model_includes_youth_query_state_consumers(self):
         selected = mod.select(["src/cifereca/gui/query_model.py"])
-        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.YOUTH))
+        self.assertEqual(set(selected), set(("search-filter-p0", "book-detail-1366") + mod.YOUTH))
 
     def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
