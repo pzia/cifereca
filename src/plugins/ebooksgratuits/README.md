@@ -1,0 +1,71 @@
+# Ebooks libres et gratuits — provenance des dates et droits (0.1.12)
+
+## Audit des métadonnées amont #764 — 11 octobre 2026
+
+Source publique officielle : [liste des ebooks](https://www.ebooksgratuits.com/ebooks.php),
+[fiches Nouveaux contes du Far West](https://www.ebooksgratuits.com/details.php?book=3500)
+et [Le Hussard bleu](https://www.ebooksgratuits.com/details.php?book=3498).
+
+**Preuves sur les pages publiques** : les fiches et les cartes de catalogue
+affichent **« Parution le 31/08/2026 »** pour les nouveautés (date de
+mise à disposition de l'**édition numérique Ebooks libres et gratuits**)
+et une liste de plusieurs formats (ePub, PDF, HTML, etc.) avec tailles.
+La fiche du *Hussard bleu* avertit explicitement :
+**« téléchargement non autorisé dans certains pays »** et affiche
+la date de décès de l'auteur. Ni la date d'origine de l'œuvre, ni les
+droits applicables dans le pays de l'utilisateur ne peuvent être déduits
+de ces éléments.
+
+### Implémentation conditionnelle
+
+L'ancien parseur conservait titre, auteur, description, image, fiche et
+lien EPUB ; il **ne projetait ni la date de parution de l'édition sur ce
+site ni son avertissement territorial**, même lorsqu'ils apparaissaient
+dans la liste déjà téléchargée.
+
+Désormais, sans aucun nouvel appel HTTP et pour **chaque carte isolément** :
+
+- `metadata.ebook_release_date = YYYY-MM-DD` uniquement si le texte
+  contient un libellé explicite `Parution le JJ/MM/AAAA` et si la date
+  est valide. La preuve `ebook_release_evidence =
+  ebooksgratuits.catalogue.parution` accompagne la valeur.
+- `SearchResult.published_at` **reste absent** : ce champ ne doit pas
+  confondre la parution numérique et la publication bibliographique
+  originale ou l'édition imprimée.
+- `metadata.territorial_rights_warning = true` uniquement pour
+  l'avertissement textuel explicite que le téléchargement n'est pas
+  autorisé dans certains pays ; preuve
+  `territorial_rights_evidence = ebooksgratuits.catalogue.warning`.
+  Le champ `license_note` affiche un message non ambigu.
+- **Aucune décision juridique automatique** : le plugin n'affirme ni
+  que le livre est libre de droits dans un pays donné, ni qu'il y
+  est interdit. Le téléchargement reste **sur action explicite**,
+  soumis aux restrictions légales et au transport existant.
+- Aucune date de décès, aucun âge recommandé, aucun ISBN, aucun contenu
+  de commentaire ou script n'est transformé en métadonnée. Les textes
+  de carte sont utilisés transitoirement et **ne sont pas sauvegardés**
+  dans `metadata`. Analyse bornée à 12 000 caractères de texte/carte.
+
+Les filtres publics attestés Genre/Catégorie et la sélection du format
+EPUB existants restent inchangés.
+
+### Tests et limites
+
+`tests/test_release_rights_provenance_p2.py` couvre les trois états
+**date valide / date invalide / date absente**, l'alerte ciblée par livre,
+la distinction entre date de l'œuvre et date de l'édition, le texte HTML
+fragmenté et l'absence de fuite des textes de commentaires/scripts.
+
+Les fragments HTML de tests sont **synthétiques**. Les pages officielles
+consultables établissent l'existence et le sens des libellés, **mais pas
+la structure HTML brute exacte**. Une capture DOM publique expurgée
+reste nécessaire pour une recette bout en bout du nouveau parseur.
+
+### Autres champs amont observés (non livrés)
+
+Les pages affichent aussi des tailles pour plusieurs formats, des
+catégories, genres et des liens vers une page de droits.
+Une extension de ces champs exigerait la vérification des ancres
+effectives et de leur correspondance dans le HTML de catalogue ;
+**ne pas** attribuer une catégorie ou une date de publication
+historique sur la simple base du titre.
