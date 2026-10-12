@@ -17,6 +17,10 @@ EXPORTS = {
 }
 
 DELEGATES = {
+    'search_controller': {
+        '_reset_search_enter', '_search_controls_changed', '_search_enter',
+        '_search_key_interaction', '_build_search_page', 'search_books', 'run_search',
+    },
     'search_details': {
         '_search_selected', '_search_detail_request_context',
         '_search_detail_context_current', '_apply_search_detail',
@@ -61,9 +65,14 @@ def gui_source_text(path: Path) -> str:
     window = next(n for n in ast.parse(source).body
                   if isinstance(n, ast.ClassDef) and n.name == 'MainWindow')
     for method in window.body:
-        if not isinstance(method, ast.FunctionDef) or len(method.body) != 1:
+        if not isinstance(method, ast.FunctionDef):
             continue
-        statement = method.body[0]
+        body = method.body
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+            body = body[1:]
+        if len(body) != 1:
+            continue
+        statement = body[0]
         call = statement.value if isinstance(statement, ast.Return) else None
         if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
             continue
