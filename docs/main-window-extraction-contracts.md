@@ -410,3 +410,12 @@ narrow pane lifecycle. `public_book_view.py` owns the public plugin adapter and
 reuses the same component and URI validation boundary. Both are reexported from
 MainWindow; runtime imports remain acyclic and the window is supplied explicitly.
 Source contracts read the real declarations through the maintained owner map.
+
+## Settings commit ownership
+
+`settings_model.SettingsCommitController` owns immutable staging and a single
+in-flight save through its success/error delivery. The scheduler and existing
+service are injected; directory migration/rollback remain service-owned. Typed
+error presentation stays in TaskRunner. The GTK editor retains validation and
+revision tracking until their separate extraction; success refresh and delayed
+reconnection keep their existing callbacks.
