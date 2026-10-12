@@ -48,7 +48,7 @@ from .core.acquisition_decision import decide_artifact_reuse
 from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attention_code
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
-from .core import loan_accounts
+from .core import loan_accounts, loan_download_projection
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
 from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
@@ -3599,13 +3599,8 @@ class LibraryService:
             "TRACE download provider-download end loan_id=%s file=%s suffix=%s bytes=%s dt=%.3fs",
             loan.id, path.name, path.suffix, path.stat().st_size if path.is_file() else 0, time.monotonic()-started,
         )
-        hook_item = SearchResult(
-            id=loan.id, record_id=str(loan.record_id or loan.id), docbase=loan.provider,
-            medium="digital", title=loan.title, author=None, type=loan.document_type,
-            format="ACSM", publisher=None, published_at=None, description=None,
-            thumbnail_url=loan.thumbnail_url, friendly_url=loan.ebook_url, scenario="LOAN",
-            source_provider=loan.source_provider, source_credential=loan.source_credential,
-            download_url=url, content_type="ebook",
+        hook_item = loan_download_projection.build_hook_item(
+            loan, url, result_factory=SearchResult,
         )
         if cached is None:
             self.acquisition.run_post_download(hook_item, path, url, target_dir)
@@ -3627,28 +3622,10 @@ class LibraryService:
             "PNB", "download artifact",
             detail={"provider": session.provider_id, "file": path.name, "bytes": size},
         )
-        return Acquisition(
-            provider_id=loan.source_provider,
-            credential_id=loan.source_credential,
-            account_id=account_key,
-            item_id=str(loan.record_id or loan.id),
-            loan_id=loan.id,
-            kind="acsm" if is_acsm else "already_local",
-            source_url=url or None,
-            local_path=path,
-            mime_type=self.acquisition.mime_type_for(path, hook_item),
-            drm="adept" if is_acsm else "unknown",
-            expires_at=loan.due_at,
-            metadata={
-                "title": loan.title,
-                "cover_url": loan.thumbnail_url,
-                "content_type": "ebook",
-                "format": path.suffix.lstrip(".").upper() or None,
-            },
-            acsm_path=path if is_acsm else None,
-            artifact_path=None if is_acsm else path,
-            target_dir=library_target_dir,
-            action="download",
+        return loan_download_projection.build_acquisition(
+            loan, account_key=account_key, path=path, url=url,
+            is_acsm=is_acsm, mime_type=self.acquisition.mime_type_for(path, hook_item),
+            library_target_dir=library_target_dir, acquisition_factory=Acquisition,
         )
 
     def prepare_digital_download(self, loan: Loan, *, force_refresh: bool = False) -> tuple[Path, str]:
