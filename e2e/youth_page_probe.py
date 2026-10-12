@@ -226,17 +226,21 @@ def main() -> int:
         """
 
         def ecole_respond(request):
-            # Keep debug evidence structural only: NEVER record query values.
+            # A real publisher adapter may use either public search surface.
+            # Record structural evidence only, never the private search term.
+            route = request.url.path
+            search_key = "search" if route == "/catalogue/romans" else "search_api_views_fulltext"
             result["ecole_request_shape_907"] = {
                 "host_is_publisher": request.url.host == "www.ecoledesloisirs.fr",
-                "path": request.url.path,
-                "query_keys": sorted(request.url.params.keys()),
-                "search_present": bool(request.url.params.get("search_api_views_fulltext")),
+                "path": route, "query_keys": sorted(request.url.params.keys()),
+                "search_present": bool(request.url.params.get(search_key)),
             }
             assert request.url.scheme == "https" and request.url.host == "www.ecoledesloisirs.fr", result["ecole_request_shape_907"]
-            assert request.url.path == "/recherche-avancee", result["ecole_request_shape_907"]
-            assert request.url.params.get("types") == "livre", result["ecole_request_shape_907"]
-            ecole_calls.append(request.url.path)  # Never persist user queries.
+            assert route in {"/catalogue/romans", "/recherche-avancee"}, result["ecole_request_shape_907"]
+            expected_type = ("type", "romans") if route == "/catalogue/romans" else ("types", "livre")
+            assert request.url.params.get(expected_type[0]) == expected_type[1], result["ecole_request_shape_907"]
+            assert result["ecole_request_shape_907"]["search_present"], result["ecole_request_shape_907"]
+            ecole_calls.append(route)  # Never persist user queries.
             return httpx.Response(
                 503 if ecole_outage[0] else 200,
                 headers={"content-type": "text/html; charset=utf-8"},
