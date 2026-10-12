@@ -2,7 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from diagnostics_support import SupportReportExport, support_report_bytes
+from diagnostics_support import (
+    SupportReportExport, support_report_bytes, diagnostic_json_bytes,
+)
 
 
 class Dialog:
@@ -121,3 +123,115 @@ def test_report_larger_than_detail_limit_is_kept_and_redacted():
     output = support_report_bytes(text).decode()
     assert output.count("Ligne expurgée") == 4000
     assert "PRIVATE_HEADER" not in output
+
+
+
+def test_json_detail_export_is_type_preserving_indented_bounded_and_private():
+    import json
+    from cifereca_diagnostics_page import format_diagnostic_detail
+    document = {
+        "null": None, "zero": 0, "false": False,
+        "empty": "", "rows": [None, False, 0, [], {}],
+        "unicode": "Élève 🌍 漢字",
+        "multiline": "ligne 1\nligne 2",
+        "token": "PRIVATE_TOKEN",
+        "password": "PRIVATE_PASSWORD",
+        "message": "alice@example.com /home/alice/secret",
+    }
+    encoded = diagnostic_json_bytes(document)
+    expected = format_diagnostic_detail(document, "json").encode("utf-8")
+    assert encoded == expected and b"\n  " in encoded
+    actual = json.loads(encoded)
+    assert actual["null"] is None and actual["false"] is False
+    assert type(actual["zero"]) is int and actual["zero"] == 0
+    assert actual["rows"] == [None, False, 0, [], {}]
+    assert actual["multiline"] == "ligne 1\nligne 2"
+    assert actual["unicode"] == "Élève 🌍 漢字"
+    for secret in ("PRIVATE_TOKEN", "PRIVATE_PASSWORD", "alice@example.com",
+                   "/home/alice"):
+        assert secret not in encoded.decode()
+    assert len(encoded) <= 24_000
+
+
+def json_exporter(value):
+    dialog, messages, sensitive = Dialog(), [], []
+    gtk = SimpleNamespace(
+        FileChooserNative=SimpleNamespace(new=lambda *a: dialog),
+        FileChooserAction=SimpleNamespace(SAVE=1),
+        ResponseType=SimpleNamespace(ACCEPT=1),
+    )
+    gio = SimpleNamespace(FileCreateFlags=SimpleNamespace(PRIVATE=1),
+                          Cancellable=lambda: SimpleNamespace(cancel=lambda: None))
+    exporter = SupportReportExport(
+        gtk, gio, SimpleNamespace(set_sensitive=sensitive.append),
+        lambda: None, lambda: value, messages.append,
+        filename="cifereca-diagnostic.json",
+        title="Enregistrer le détail JSON expurgé",
+        success_message="Détail JSON expurgé enregistré",
+        prepare_bytes=diagnostic_json_bytes,
+    )
+    return exporter, dialog, messages, sensitive
+
+
+def test_json_export_uses_local_private_async_write_and_exact_gtk_json():
+    import json
+    value = {"nested": [0, None, False], "title": "Été", "token": "SECRET"}
+    export, dialog, messages, sensitive = json_exporter(value)
+    export.choose()
+    assert dialog.name == "cifereca-diagnostic.json"
+    expected = diagnostic_json_bytes(value)
+    assert export.data == expected
+    destination = Destination("/tmp/cifereca-diagnostic.json")
+    dialog.file = destination
+    export.response(dialog, 1)
+    assert dialog.destroyed
+    assert len(destination.writes) == 1
+    data, etag, backup, flags, cancellable, callback, _ = destination.writes[0]
+    assert data == expected and json.loads(data)["nested"] == [0, None, False]
+    assert "SECRET" not in data.decode("utf-8")
+    assert backup is False and flags == 1 and etag is None
+    assert not messages
+    callback(destination, None, None)
+    assert messages == ["Détail JSON expurgé enregistré"]
+    assert sensitive == [False, True]
+    assert export.data is None
+
+
+def test_json_export_remote_cancel_failure_and_deactivation_are_fail_closed():
+    export, dialog, messages, _ = json_exporter({"ok": True})
+    export.choose()
+    remote = Destination(path=None)
+    dialog.file = remote
+    export.response(dialog, 1)
+    assert remote.writes == []
+    assert "fichier local" in messages[0]
+    export.choose()
+    export.response(dialog, 0)
+    assert export.data is None
+    export.choose()
+    local = Destination()
+    dialog.file = local
+    export.response(dialog, 1)
+    export.close()
+    local.callback(local, None, None)
+    assert len(messages) == 1
+    export.choose()
+    assert export.dialog is None
+
+
+@pytest.mark.parametrize("invalid", ["bad-\ud800"])
+def test_json_detail_invalid_unicode_is_never_written_unredacted(invalid):
+    encoded = diagnostic_json_bytes({"message": invalid})
+    parsed = __import__("json").loads(encoded)
+    assert parsed["truncated"] is True
+    assert invalid[:4] not in encoded.decode("utf-8")
+
+
+def test_huge_diagnostic_json_file_uses_renderers_safe_limits():
+    import json
+    raw = {f"field{i:04d}": "é" * 4000 for i in range(500)}
+    result = diagnostic_json_bytes(raw)
+    assert len(result) <= 24_000
+    decoded = json.loads(result)
+    assert decoded.get("truncated") or "[suite]" in str(decoded)
+    assert "field0499" not in result.decode()

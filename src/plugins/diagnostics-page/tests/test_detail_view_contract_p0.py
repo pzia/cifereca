@@ -48,3 +48,16 @@ def test_d07_e2e_modes_and_copy_use_real_xtest_keyboard():
     assert "D07_json_mode_selected_by_real_keyboard_xtest" in source
     assert "D07_raw_mode_selected_by_real_keyboard_xtest" in source
     assert ".set_selected(" not in source
+
+
+def test_json_file_export_uses_same_safe_detail_snapshot_and_local_async_writer():
+    src = PAGE.read_text(encoding="utf-8")
+    assert 'Gtk.Button(label="Enregistrer JSON…")' in src
+    assert "lambda: safe" in src
+    assert "prepare_bytes=diagnostic_json_bytes" in src
+    assert "filename=\"cifereca-diagnostic.json\"" in src
+    assert 'save_json.connect("clicked", json_export.choose)' in src
+    assert 'expander.connect("unmap", on_detail_unmap)' in src
+    assert "json_export.close()" in src
+    assert "self._support_exports.append(json_export)" in src
+    assert "self._support_exports.remove(json_export)" in src
