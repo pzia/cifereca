@@ -16,6 +16,13 @@ EXPORTS = {
     'action_widgets': {'clear_box', 'add_css', 'action_button'},
 }
 
+DELEGATES = {
+    'search_results': {
+        '_sync_search_detail_after_results', '_populate_local_search',
+        '_populate_search', '_render_search_results', '_update_search_count',
+    },
+}
+
 
 def gui_source_text(path: Path) -> str:
     path = Path(path)
@@ -43,4 +50,30 @@ def gui_source_text(path: Path) -> str:
         replacements.append((node.lineno - 1, node.end_lineno, '\n\n'.join(chunks)))
     for first, last, text in sorted(replacements, reverse=True):
         lines[first:last] = [text + '\n']
+    source = ''.join(lines)
+    lines = source.splitlines(keepends=True)
+    replacements = []
+    window = next(n for n in ast.parse(source).body
+                  if isinstance(n, ast.ClassDef) and n.name == 'MainWindow')
+    for method in window.body:
+        if not isinstance(method, ast.FunctionDef) or len(method.body) != 1:
+            continue
+        statement = method.body[0]
+        call = statement.value if isinstance(statement, ast.Return) else None
+        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+            continue
+        module = call.func.value
+        if not isinstance(module, ast.Name) or method.name not in DELEGATES.get(module.id, set()):
+            continue
+        assert call.func.attr == method.name
+        assert call.args and isinstance(call.args[0], ast.Name) and call.args[0].id == 'self'
+        owner = path.parent / (module.id + '.py')
+        owner_text = owner.read_text(encoding='utf-8')
+        declaration = next(n for n in ast.parse(owner_text).body
+                           if isinstance(n, ast.FunctionDef) and n.name == method.name)
+        chunk = owner_text.splitlines(keepends=True)[declaration.lineno - 1:declaration.end_lineno]
+        replacements.append((method.lineno - 1, method.end_lineno,
+                             ''.join('    ' + line for line in chunk)))
+    for first, last, text in sorted(replacements, reverse=True):
+        lines[first:last] = [text]
     return ''.join(lines)

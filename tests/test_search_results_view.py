@@ -1,0 +1,120 @@
+"""Headless result-view contracts using the real query/filter implementation."""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace as NS
+from unittest.mock import Mock
+
+from cifereca.core.search import file_format
+from cifereca.gui.query_model import QueryState, result_row
+from cifereca.models import SearchResult
+
+
+OWNER = Path(__file__).resolve().parents[1] / "src/cifereca/gui/search_results.py"
+
+
+class Row:
+    def __init__(self, key, title, author, meta, source, thumbnail, **options):
+        self.key, self.title, self.source = key, title, source
+        self.meta, self.options = meta, options
+
+
+def _host():
+    methods = [n for n in ast.parse(OWNER.read_text()).body if isinstance(n, ast.FunctionDef)]
+    env = {"BookListItem": Row, "result_row": result_row, "file_format": file_format}
+    module = ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(
+        module="__future__", names=[ast.alias(name="annotations")], level=0), *methods], type_ignores=[]))
+    exec(compile(module, str(OWNER), "exec"), env)
+    host = NS(
+        _search_mode="local", _search_local_objects={}, _remote_search_results=[],
+        search_controls=NS(state=lambda: QueryState()),
+        search_page=NS(show_rows=Mock(), count_label=NS(set_label=Mock()),
+                       selection=NS(get_selected_item=lambda: None)),
+        search_global_button=NS(set_sensitive=Mock()),
+        service=NS(current_identity=NS(identity_id="alice"),
+                   local_placements_for_sources=Mock(return_value={}),
+                   provider_display_name=lambda p: p,
+                   content_type_for=lambda item: "ebook",
+                   can_direct_download=lambda item: False,
+                   last_search_warnings=[]),
+        _library_state_label=lambda item: "Local",
+        _attach_row_facets=Mock(), _search_selected=Mock(),
+        _open_placement=Mock(), download_direct_item=Mock(), toast=Mock(),
+    )
+    for method in methods:
+        setattr(host, method.name, env[method.name].__get__(host))
+    return host
+
+
+def _book(provider, record="same"):
+    return SearchResult(
+        id=record, record_id=record, docbase="CAT", medium="digital", title="Dumas",
+        author="Author", type=None, format="epub", publisher=None, published_at=None,
+        description=None, thumbnail_url=None, friendly_url=None, scenario="EBOOKS",
+        source_provider=provider, source_credential="credential",
+    )
+
+
+def test_local_filter_count_and_detail_reset_never_query_provider():
+    host = _host()
+    host.search_controls.state = lambda: QueryState(providers=("paris",))
+    host._populate_local_search([
+        {"key": "a", "title": "A", "provider_id": "paris"},
+        {"key": "b", "title": "B", "provider_id": "gallica"},
+    ])
+    rows = host.search_page.show_rows.call_args.args[0]
+    assert [r.key for r in rows] == ["a"]
+    host.service.local_placements_for_sources.assert_not_called()
+    host.search_page.count_label.set_label.assert_called_once_with("1 résultat · Connu")
+    host._search_selected.assert_called_once_with(None)
+    host.toast.assert_not_called()
+
+
+def test_remote_ids_remain_distinct_and_local_placement_callback_is_pinned():
+    host = _host()
+    books = [_book("paris"), _book("gallica")]
+    placement = {"placement_id": "owned-alice"}
+    host.service.local_placements_for_sources.return_value = {
+        ("paris", "credential", "same"): placement,
+    }
+    host._remote_search_results = books
+    host._search_local_objects = {
+        "local-owned": {"key": "local-owned", "title": "Dumas", "placement_id": "owned-alice"},
+    }
+    host._populate_search(books, announce=False)
+    rows = host.search_page.show_rows.call_args.args[0]
+    assert [r.key for r in rows] == ["paris:same", "gallica:same"]
+    assert len(host.search_objects) == 2
+    host.service.local_placements_for_sources.assert_called_once_with("alice")
+    assert rows[0].options["action_label"] == "Ouvrir"
+    host.service.current_identity = NS(identity_id="bob")
+    rows[0].options["action_callback"](None)
+    host._open_placement.assert_called_once_with(placement)
+    host.toast.assert_not_called()
+
+
+def test_progressive_warning_only_announced_once_and_real_selection_is_kept():
+    host = _host()
+    host.service.last_search_warnings = ["offline source"]
+    host.search_page.selection.get_selected_item = lambda: Row("x", "X", "", "", "", None)
+    host._populate_search([], announce=False)
+    host.toast.assert_not_called()
+    host._populate_search([], announce=True)
+    host.toast.assert_called_once_with("Résultats partiels · offline source", 6)
+    host._search_selected.assert_not_called()
+
+
+def test_facade_passes_row_and_announcement_arguments_unchanged():
+    main = OWNER.with_name("main_window.py")
+    window = next(n for n in ast.parse(main.read_text()).body
+                  if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    facade = next(n for n in window.body if isinstance(n, ast.FunctionDef) and n.name == "_populate_search")
+    adapter = Mock()
+    env = {"search_results": adapter}
+    module = ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(
+        module="__future__", names=[ast.alias(name="annotations")], level=0), facade], type_ignores=[]))
+    exec(compile(module, str(main), "exec"), env)
+    host, rows = object(), [object()]
+    env[facade.name](host, rows, announce=False)
+    adapter._populate_search.assert_called_once_with(host, rows, announce=False)
