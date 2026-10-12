@@ -310,7 +310,7 @@ def main():
             )
             assert report["audits"]["D07_json_copy_sha256_matches_visible"]
             screenshot("02b-copie-json-bouton-xtest")
-            later(lambda: export_json_button(view), 160)
+            later(lambda: select_and_copy(view), 160)
         except Exception as exc:
             fail(f"Copie JSON via bouton GTK : {type(exc).__name__}: {exc}")
 
@@ -402,25 +402,19 @@ def main():
         assert report["audits"]["D07_json_file_sha256_matches_visible"]
         report["json_file_size_bytes"] = len(raw)
         screenshot("02d-json-fichier-local-verifie")
-        later(lambda: select_and_copy(detail_controls()[1]), 160)
+        later(finish_structured_e2e, 160)
 
     def select_and_copy(view):
-        # The real native Save chooser temporarily owns window-manager focus.
-        # Restore the document focus with a physical XTEST pointer click
-        # (not an artificial has_focus override) before selecting text again.
-        assert detail().get_expanded() and view.get_mapped()
-        window[0].present()
-        device[0].click_widget(view)
-        later(lambda: select_and_copy_after_focus_return(view), 320)
-
-    def select_and_copy_after_focus_return(view):
+        # Keep the established GTK/XTEST Ctrl+C checks before invoking the
+        # native Save chooser, which may retain WM focus in a headless runner.
+        assert detail().get_expanded()
         buf = view.get_buffer()
         buf.select_range(buf.get_end_iter(), buf.get_start_iter())
         assert buf.get_has_selection()
         selected = text(view)
         assert SECRET not in selected
         assert view.grab_focus() is not False
-        until(lambda: view.has_focus(), lambda: send_ctrl_c(view, selected), seconds=7)
+        until(lambda: view.has_focus(), lambda: send_ctrl_c(view, selected))
 
     def send_ctrl_c(view, selected):
         assert view.has_focus(), "TextView doit recevoir les touches XTEST"
@@ -550,16 +544,23 @@ def main():
             assert len(broker.event_queries) == 1
             report["checks"]["D13_support_partial_selection_ctrl_c_xtest"] = True
             screenshot("05-support-ctrl-c-selection-partielle")
-            report["unmet_criteria"] = [
-                "D13: export du rapport support en fichier non exercé (détail JSON exporté)",
-                "D05: fermeture/sélection non exercée par ce scénario (recette rapport long)",
-            ]
-            report["status"] = "PASS"
-            save()
-            rc[0] = 0
-            app.quit()
+            later(lambda: export_json_button(detail_controls()[1]), 180)
         except Exception as exc:
             fail(f"Ctrl+C support partiel : {type(exc).__name__}: {exc}")
+
+    def finish_structured_e2e():
+        # Only complete once the original D07/D13 copy journey *and* the
+        # new real GIO JSON file export have all passed.
+        assert report["checks"]["D13_support_partial_selection_ctrl_c_xtest"]
+        assert report["checks"]["D07_json_file_export_exact_redacted_via_gtk"]
+        report["unmet_criteria"] = [
+            "D13: export du rapport support en fichier non exercé (détail JSON exporté)",
+            "D05: fermeture/sélection non exercée par ce scénario (recette rapport long)",
+        ]
+        report["status"] = "PASS"
+        save()
+        rc[0] = 0
+        app.quit()
 
     class Application(Gtk.Application):
         def __init__(self):
