@@ -69,5 +69,7 @@ def test_root_capture_is_installed_before_gtk_outer_scroll_window():
     assert "page_root.append(scroll)" in source
     assert "wheel.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)" in source
     assert "_install_report_wheel(\n            Gtk, Gdk, page_root" in source
-    assert "hover.contains_pointer()" in source
+    assert "event.get_position()" in source
+    assert "native.get_surface_transform()" in source
+    assert "report_scroll.compute_bounds(native)" in source
     assert "return page_root" in source
