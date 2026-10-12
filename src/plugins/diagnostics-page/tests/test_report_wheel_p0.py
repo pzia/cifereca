@@ -73,5 +73,9 @@ def test_root_capture_is_installed_before_gtk_outer_scroll_window():
     assert "tracking.connect(\"enter\", pointer_moved)" in source
     assert "tracking.connect(\"leave\", pointer_left)" in source
     assert "root.pick(*position, Gtk.PickFlags.DEFAULT)" in source
+    assert 'page_adjustment.connect("value-changed", keep_page_fixed)' in source
+    assert "GLib.timeout_add(350, release_later)" in source
+    assert "if not moved:" in source
+    assert "release_guard()" in source
     assert "picked.get_parent()" in source
     assert "return page_root" in source

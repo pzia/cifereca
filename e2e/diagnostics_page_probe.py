@@ -156,7 +156,6 @@ def main():
         raise SystemExit("GTK/X11/Xvfb requis")
     git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"],
                                       cwd=ROOT, text=True).strip()
-    os.environ["CIFERECA_E2E_WHEEL_DEBUG"] = "1"
     module = importlib.import_module("cifereca_diagnostics_page")
     broker, tasks, host = Broker(), Tasks(), Host()
     plugin = module.DiagnosticsPagePlugin().activate(Context(broker, tasks))
@@ -726,6 +725,15 @@ def main():
         report["wheel_outer_after"] = round(outer.get_value(), 2)
         assert outer_fixed, (
             "D05: molette XTEST fait aussi défiler la page externe",
+            outer_before, outer.get_value(),
+        )
+        # Detect delayed ancestor scrolling as well, after the guard expires.
+        later(lambda: verify_wheel_settled(view, outer_before), 530)
+
+    def verify_wheel_settled(view, outer_before):
+        outer = page[0].get_vadjustment()
+        assert abs(outer.get_value() - outer_before) <= 5, (
+            "D05: déplacement retardé de la page après la molette",
             outer_before, outer.get_value(),
         )
         report["checks"]["D05_xtest_wheel_keeps_outer_page_fixed"] = True
