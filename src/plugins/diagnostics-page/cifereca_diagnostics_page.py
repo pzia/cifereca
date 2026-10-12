@@ -353,14 +353,21 @@ def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
     Events outside the report or at its edge continue native propagation.
     """
     pointer = [None]
+    debug = __import__("os").environ.get("CIFERECA_E2E_WHEEL_DEBUG") == "1"
     tracking = Gtk.EventControllerMotion()
     tracking.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
     def pointer_moved(_controller, x, y):
         pointer[0] = (x, y)
+        if debug:
+            import sys
+            print("D05_MOTION", x, y, file=sys.stderr, flush=True)
 
     def pointer_left(_controller):
         pointer[0] = None
+        if debug:
+            import sys
+            print("D05_LEAVE", file=sys.stderr, flush=True)
 
     tracking.connect("enter", pointer_moved)
     tracking.connect("motion", pointer_moved)
@@ -373,15 +380,30 @@ def _install_report_wheel(Gtk, Gdk, root, report_scroll, report_expander):
     def over_report():
         position = pointer[0]
         if position is None:
+            if debug:
+                import sys
+                print("D05_HIT", "no_position", file=sys.stderr, flush=True)
             return False
         picked = root.pick(*position, Gtk.PickFlags.DEFAULT)
+        initial = type(picked).__name__ if picked else None
+        over = False
         while picked is not None and picked is not root:
             if picked is report_scroll:
-                return True
+                over = True
+                break
             picked = picked.get_parent()
-        return False
+        if debug:
+            import sys
+            print("D05_HIT", position, initial, over,
+                  "adj", report_scroll.get_vadjustment().get_value(),
+                  file=sys.stderr, flush=True)
+        return over
 
     def on_wheel(controller, dx, dy):
+        if debug:
+            import sys
+            print("D05_SCROLL", dx, dy, pointer[0],
+                  "expanded", report_expander.get_expanded(), file=sys.stderr, flush=True)
         if not report_expander.get_expanded() or not report_scroll.get_mapped():
             return False
         if not over_report():
