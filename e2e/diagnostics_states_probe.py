@@ -594,7 +594,19 @@ def main():
         assert ai_fixture[0].calls == 0
         report["checks"]["D14_changed_scope_invalidates_consent"] = True
         capture("10-d14-preview-invalidated-by-scope")
-        click_ai(ai_button("Prévisualiser pour l’IA"), d14_wait_repreview)
+        # A changed preview collapses its content and shifts scroll geometry.
+        # Keyboard traversal is the stable UX route for this SECOND preview;
+        # the initial preview and final approval still use physical XTEST mouse.
+        prep = ai_button("Prévisualiser pour l’IA")
+        assert prep.grab_focus() is not False
+        later(lambda: d14_keyboard_repreview(prep), 200)
+
+    def d14_keyboard_repreview(prep):
+        assert prep.has_focus(), "D14: le bouton Aperçu ne reçoit plus le focus"
+        device[0].key("space", True)
+        device[0].key("space", False)
+        report["checks"]["D14_repreview_keyboard_space_xtest"] = True
+        d14_wait_repreview()
 
     def d14_wait_repreview():
         until(lambda: ai_button("Autoriser et analyser").get_sensitive()
