@@ -17,6 +17,11 @@ EXPORTS = {
 }
 
 DELEGATES = {
+    'search_details': {
+        '_search_selected', '_search_detail_request_context',
+        '_search_detail_context_current', '_apply_search_detail',
+        '_search_detail_error', '_load_known_detail',
+    },
     'search_results': {
         '_sync_search_detail_after_results', '_populate_local_search',
         '_populate_search', '_render_search_results', '_update_search_count',

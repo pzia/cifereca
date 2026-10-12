@@ -4,6 +4,8 @@ These test the callback guards themselves, not an independent approximation.
 """
 from __future__ import annotations
 
+from tests.gui_source import gui_source_text
+
 import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -12,18 +14,18 @@ MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _source(name: str) -> str:
-    module = ast.parse(MAIN.read_text(encoding="utf-8"))
+    module = ast.parse(gui_source_text(MAIN))
     cls = next(x for x in module.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
     method = next(x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name == name)
     return ast.unparse(method)
 
 
 def _host():
-    module = ast.parse(MAIN.read_text(encoding="utf-8"))
+    module = ast.parse(gui_source_text(MAIN))
     cls = next(x for x in module.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
     names = {
         "_search_detail_request_context", "_search_detail_context_current",
-        "_apply_search_detail", "_search_detail_error", "_load_known_detail",
+        "_apply_search_detail", "_search_detail_error", "_load_known_detail", "_search_selected",
     }
     methods = [x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name in names]
     assert len(methods) == len(names)
@@ -31,7 +33,7 @@ def _host():
         body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
               *methods], type_ignores=[],
     ))
-    env = {"result_row": lambda item: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1)}
+    env = {"result_row": lambda item: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1, METADATA=3)}
     exec(compile(compiled, str(MAIN), "exec"), env)
 
     class Runner:
@@ -47,6 +49,7 @@ def _host():
         _apply_search_detail = env["_apply_search_detail"]
         _search_detail_error = env["_search_detail_error"]
         _load_known_detail = env["_load_known_detail"]
+        _search_selected = env["_search_selected"]
 
         def __init__(self):
             self.events = []
@@ -56,6 +59,8 @@ def _host():
             self._identity_context_generation = 2
             self._search_generation = 8
             self._last_search_query = "mot"
+            self._search_local_objects = {}
+            self.search_objects = {}
             self.service = NS(
                 current_identity=NS(identity_id="alice"),
                 holdings=lambda *args, **kwargs: NS(title="book"),
@@ -64,6 +69,7 @@ def _host():
             self.search_page = NS(detail=NS(
                 show_item_detail=lambda *_: self.events.append("render"),
                 show_search=lambda *_, **__: self.events.append("error-render"),
+                empty=lambda *_: self.events.append("empty"),
             ))
             self.runner = Runner()
 
@@ -75,6 +81,9 @@ def _host():
 
         def _request_cached_book_details(self, *_):
             self.events.append("cached")
+
+        def _cancel_cached_book_details(self):
+            self.events.append("cancel-cache")
 
         def toast(self, *_):
             self.events.append("toast")
@@ -155,3 +164,35 @@ def test_runner_callbacks_capture_generation_and_identity():
     assert "self._apply_search_detail(selected_id, item, detail, context=context)" in source
     assert "self._search_detail_error(selected_id, item, exc, context=context)" in source
     assert "self._search_detail_request_generation += 1" in _source("_activate_identity")
+
+
+def test_deselection_revokes_pending_detail_and_does_not_submit_a_new_task():
+    host = _host()
+    previous = host._search_detail_request_context()
+    host._search_selected(None)
+    assert host._selected_search_id is None
+    assert host._search_detail_request_generation == previous[0] + 1
+    assert host.events == ["cancel-cache", "empty"]
+    assert host.runner.tasks == []
+    host.events.clear()
+    host._apply_search_detail("same-id", NS(id="same-id"), object(), context=previous)
+    host._search_detail_error("same-id", NS(id="same-id"), RuntimeError("late"), context=previous)
+    assert host.events == []
+
+
+def test_selecting_another_provider_with_the_same_id_rejects_first_callback():
+    host = _host()
+    first = NS(id="same-id", source_provider="paris")
+    second = NS(id="same-id", source_provider="gallica")
+    host.search_objects = {"paris:same-id": first, "gallica:same-id": second}
+    host._search_selected(NS(key="paris:same-id"))
+    old = host.runner.tasks[-1]
+    host._search_selected(NS(key="gallica:same-id"))
+    current = host.runner.tasks[-1]
+    assert len(host.runner.tasks) == 2
+    host.events.clear()
+    old.done(old.work())
+    old.error(RuntimeError("old provider"))
+    assert host.events == []
+    current.done(current.work())
+    assert host.events == ["render", "facets", "actions", "cached"]
