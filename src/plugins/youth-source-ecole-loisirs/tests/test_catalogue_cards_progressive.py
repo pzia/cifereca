@@ -144,3 +144,30 @@ def test_browse_rejects_cursor_before_any_http():
         with pytest.raises(ValueError):
             source.browse(text_filter="loup", cursor=cursor)
     assert requests == []
+
+def test_browse_and_advanced_romans_routes_coexist_without_extra_get():
+    import httpx
+    from ecole_loisirs_youth import EcoleLoisirsYouthSource
+    seen = []
+
+    def handle(request):
+        seen.append(request)
+        if request.url.path == "/catalogue/romans":
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+                '<div class="product-item"><a href="/livre/roman-b">'
+                '<span class="card-title">Roman B</span></a>'
+                '<div class="card-infos">Age : 13 ans et +</div></div>'
+            ))
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+            '<div>13 ans et +</div><a href="/livre/roman-a">Roman A</a>'
+            '<div>roman</div><div>ISBN: 9782211345613</div>'
+        ))
+
+    source = EcoleLoisirsYouthSource(client=httpx.Client(transport=httpx.MockTransport(handle)))
+    page = source.browse(text_filter="roman")
+    advanced = source.search("roman", cursor="romans:2")
+    assert len(page["items"]) == len(advanced["items"]) == 1
+    assert seen[0].url.path == "/catalogue/romans"
+    assert seen[1].url.path == "/recherche-avancee/romans"
+    assert seen[1].url.params["page"] == "2"
+    assert len(seen) == 2

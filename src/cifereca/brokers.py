@@ -737,9 +737,13 @@ class DiagnosticsBrokerImpl:
         from . import __version__
         return self.service.diagnostics.text(__version__, {"plugins": len(getattr(getattr(self.service, "plugin_manager", None), "statuses", lambda: [])())})
 
-    def support_report(self, *, verbose: bool = False):
+    def support_report(
+        self, *, verbose: bool = False, include_checks: bool = True,
+    ):
         from .support_diagnostic import build_support_report
-        return build_support_report(self.service, verbose=verbose)
+        return build_support_report(
+            self.service, verbose=verbose, include_checks=include_checks,
+        )
 
     def export_support_text(self, *, verbose: bool = False) -> str:
         from .support_diagnostic import support_report_text

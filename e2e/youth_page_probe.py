@@ -85,11 +85,12 @@ def records():
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366,))
+    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
     parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
     provider.add_argument("--editions", action="store_true", help="Offline same-title editions and conflicting provenance on real GTK")
+    provider.add_argument("--filters-ux", action="store_true", help="UX #922: strict GTK audit of visible labels and tooltips")
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -264,6 +265,208 @@ def main() -> int:
         visit(page.view.master._page.detail)
         return found
 
+
+    def filter_help_widgets():
+        """Collect GTK widgets and *explicit* bound, mapped mnemonic labels."""
+        view = page.view
+        return {
+            "Profil": view.identity,
+            "Recherche": view.query,
+            "Âge": view.age,
+            "Type d’âge": view.age_kind,
+            "Source": view.source,
+            "Langue": view.language,
+            "Format": view.format,
+            "Type de livre": view.book_type,
+            "Thèmes": view.themes,
+            "Âges inférés": view.inferred,
+        }
+
+    def filter_help_snapshot():
+        controls = filter_help_widgets()
+        bound_labels = []
+        def visit(widget):
+            if isinstance(widget, Gtk.Label) and widget.get_mapped():
+                bound = widget.get_mnemonic_widget()
+                if bound is not None:
+                    bound_labels.append((bound, str(widget.get_text() or "")))
+            child = widget.get_first_child()
+            while child is not None:
+                visit(child)
+                child = child.get_next_sibling()
+        visit(page.view.widget)
+
+        rows = {}
+        for name, widget in controls.items():
+            labels = [label for target, label in bound_labels if target == widget]
+            own_label = ""
+            if isinstance(widget, Gtk.CheckButton):
+                own_label = str(widget.get_label() or "")
+                if own_label and widget.get_mapped():
+                    labels.append(own_label)
+            rows[name] = {
+                "visible": bool(widget.get_mapped()),
+                "permanent_labels": labels,
+                "tooltip": str(widget.get_tooltip_text() or ""),
+                "widget_type": type(widget).__name__,
+            }
+        return rows
+
+    def filter_help_start_ui():
+        """P1 #922: audit before and after real keyboard input, local-only."""
+        assert not args.milan and not args.editions and not args.library_search
+        assert page.view.selected_source_plugin() == "", "Aucune collecte distante implicite"
+        result["filter_help_before"] = filter_help_snapshot()
+        assert len(result["filter_help_before"]) == 10
+        capture("00-jeunesse-controles-1366")
+        result["filter_help_query_click"] = device.click_widget(page.view.query)
+        device.type_text("Forest")
+        later(250, filter_help_after_input)
+
+    def filter_help_after_input():
+        assert page.view.query.get_text() == "Forest", "Saisie XTEST non appliquée"
+        assert not requests, "Aucun HTTP ne doit être émis pour saisir un filtre local"
+        assert page.view.selected_source_plugin() == "", "La source ne change pas implicitement"
+        after = filter_help_snapshot()
+        result["filter_help_after_input"] = after
+        capture("01-jeunesse-controles-saisie-1366")
+        before = result["filter_help_before"]
+
+        missing_tooltips = [
+            name for name, row in after.items()
+            if len(row["tooltip"].strip()) < 18
+        ]
+        missing_labels = [
+            name for name, row in after.items()
+            if not row["permanent_labels"] or not row["visible"]
+        ]
+        lost_labels = [
+            name for name, row in after.items()
+            if row["permanent_labels"] != before[name]["permanent_labels"]
+        ]
+        # The help must not imply that selecting "Toutes les sources"
+        # triggers global HTTP. One deliberate collect per selected provider.
+        source_help = after["Source"]["tooltip"].casefold()
+        query_help = after["Recherche"]["tooltip"].casefold()
+        misleading_help = []
+        if not ("source" in source_help and "collect" in source_help):
+            misleading_help.append("Source : filtre du cache ≠ collecte globale")
+        if not ("local" in query_help or "cache" in query_help):
+            misleading_help.append("Recherche : premier filtrage local explicite")
+
+        result["filter_help_missing_tooltips"] = missing_tooltips
+        result["filter_help_missing_labels"] = missing_labels
+        result["filter_help_lost_labels_after_input"] = lost_labels
+        result["filter_help_misleading_text"] = misleading_help
+        result["filter_help_no_remote_requests"] = True
+        # Continue through real XTEST Tab/Shift+Tab before the #922
+        # acceptance assertion, so the red gate still publishes focus evidence.
+        result["filter_help_keyboard"] = {
+            "start": filter_help_focus_name(),
+            "back_from_search": [],
+            "forward_from_search": [],
+            "back_from_last_filter": [],
+        }
+        filter_help_tab_step("back_from_search", 0)
+
+    def filter_help_focus_name():
+        """Inspect actual GtkWindow focus, including a Gtk.Entry's inner GtkText."""
+        focused = window.get_focus()
+        if focused is None:
+            return "none"
+        for name, control in filter_help_widgets().items():
+            # GTK: gtk_widget_is_ancestor(widget, ancestor) expects the
+            # *focused descendant* first, not the parent control.
+            if control is focused or focused.is_ancestor(control):
+                return name
+        return "other:" + focused.__gtype__.name
+
+    def filter_help_tab_step(phase, index):
+        """Only XTEST key presses drive the keyboard probe (no synthetic focus)."""
+        budgets = {
+            "back_from_search": 8,
+            "forward_from_search": 45,
+            "back_from_last_filter": 45,
+        }
+        if index >= budgets[phase]:
+            if phase == "back_from_search":
+                # Anchor on the same entry after testing the preceding stops.
+                result["filter_help_keyboard"]["reanchor_search"] = device.click_widget(page.view.query)
+                later(90, lambda: filter_help_tab_step("forward_from_search", 0))
+            elif phase == "forward_from_search":
+                # Gtk.CheckButton is used only as a starting point; Shift+Tab
+                # navigation itself remains real keyboard input.
+                anchored = page.view.inferred.grab_focus()
+                assert anchored is not False, "Impossible de focaliser le filtre âges inférés"
+                later(90, lambda: filter_help_tab_step("back_from_last_filter", 0))
+            else:
+                filter_help_keyboard_finish()
+            return
+        backwards = phase != "forward_from_search"
+        if backwards:
+            device.key("Shift_L", True)
+        keys("Tab")
+        if backwards:
+            device.key("Shift_L", False)
+        later(35, lambda: filter_help_tab_record(phase, index))
+
+    def filter_help_tab_record(phase, index):
+        result["filter_help_keyboard"][phase].append(filter_help_focus_name())
+        filter_help_tab_step(phase, index + 1)
+
+    def filter_help_keyboard_finish():
+        keyboard = result["filter_help_keyboard"]
+        reached = set(
+            keyboard["back_from_search"] +
+            keyboard["forward_from_search"] +
+            keyboard["back_from_last_filter"] +
+            [keyboard["start"]]
+        )
+        keyboard["reached"] = sorted(reached.intersection(filter_help_widgets()))
+        keyboard["missing_controls"] = [
+            name for name in filter_help_widgets() if name not in reached
+        ]
+        # Gtk.FlowBoxChild must not create an extra anonymous Tab stop
+        # before each interactive control (#338 was fixed in QueryControls,
+        # but this Youth-specific FlowBox is a separate GTK surface).
+        forward = keyboard["forward_from_search"]
+        backward = keyboard["back_from_last_filter"]
+        forward_end = forward.index("Âges inférés")
+        backward_end = backward.index("Recherche")
+        keyboard["anonymous_forward_filter_stops"] = [
+            index + 1 for index, name in enumerate(forward[:forward_end + 1])
+            if name == "other:GtkFlowBoxChild"
+        ]
+        keyboard["anonymous_backward_filter_stops"] = [
+            index + 1 for index, name in enumerate(backward[:backward_end + 1])
+            if name == "other:GtkFlowBoxChild"
+        ]
+        keyboard["no_remote_requests"] = not requests
+        assert not requests, "Tab/Shift+Tab ne doivent jamais déclencher de collecte"
+        capture("02-jeunesse-navigation-clavier-1366")
+        assert not (
+            result["filter_help_missing_tooltips"] or
+            result["filter_help_missing_labels"] or
+            result["filter_help_lost_labels_after_input"] or
+            result["filter_help_misleading_text"] or
+            keyboard["missing_controls"] or
+            keyboard["anonymous_forward_filter_stops"] or
+            keyboard["anonymous_backward_filter_stops"]
+        ), (
+            "UX P1 #922 : contrôles nommés, aidés et navigables requis ; "
+            f"tooltips={result['filter_help_missing_tooltips']}, "
+            f"labels={result['filter_help_missing_labels']}, "
+            f"labels_perdus={result['filter_help_lost_labels_after_input']}, "
+            f"contexte={result['filter_help_misleading_text']}, "
+            f"clavier={keyboard['missing_controls']}, "
+            f"arrêts_anon_allée={keyboard['anonymous_forward_filter_stops']}, "
+            f"arrêts_anon_retour={keyboard['anonymous_backward_filter_stops']}"
+        )
+        result["status"] = "PASS"
+        write_report()
+        rc[0] = 0
+        app.quit()
+
     def start_ui():
         assert window.view_stack.get_visible_child_name() == "youth"
         assert page.view is not None, "Real ui.page.youth factory not called"
@@ -271,6 +474,9 @@ def main() -> int:
         assert window.get_width() <= args.width, "Youth window overflows Xvfb viewport"
         assert page.view.identity.get_model().get_n_items() == 2
         assert page.view.age.get_model().get_n_items() == 19, "Only 0..17 are selectable, not 18"
+        if args.filters_ux:
+            filter_help_start_ui()
+            return
         if args.library_search:
             library_search_start_ui()
             return
@@ -738,6 +944,155 @@ def main() -> int:
         result["milan_requests_after_recovery"] = list(requests)
         result["milan_recovery_feedback"] = status
         capture("06-milan-recovered-first-page")
+        # #907: existing Milan XTEST path now also proves the cache-only,
+        # per-identity source diagnostic projection in the real Youth GTK.
+        later(180, youth_diagnostics_milan)
+
+
+    def diagnostic_labels():
+        children = []
+        child = page.view.diagnostic_rows_box.get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Label):
+                children.append(child.get_text())
+            child = child.get_next_sibling()
+        return tuple(children)
+
+    def diagnostic_for(identity):
+        return {
+            row["source_id"]: row
+            for row in catalog.source_diagnostics(identity)
+        }
+
+    def youth_diagnostics_milan():
+        page.view.diagnostic_expander.set_expanded(True)
+        page.view.refresh_source_diagnostics()
+        camille = diagnostic_for("camille")
+        alex = diagnostic_for("alex")
+        assert camille["milan"]["collection_state"] == "items", camille["milan"]
+        assert camille["milan"]["cache_count"] == 4, camille["milan"]
+        assert camille["milan"]["request_count"] == 9, camille["milan"]
+        assert camille["milan"]["pipeline"].get("candidate_count", 0) > 0, camille["milan"]
+        assert camille["ecole-loisirs"]["collection_state"] == "not_tested"
+        assert alex["milan"]["collection_state"] == "not_tested"
+        assert alex["ecole-loisirs"]["collection_state"] == "not_tested"
+        rendered = " ".join(diagnostic_labels())
+        assert "Éditions Milan" in rendered and "collecte avec notices" in rendered, rendered
+        assert "L'École des loisirs" in rendered and "non testée" in rendered, rendered
+        assert len(requests) == 22, "Reading Diagnostics must not contact Milan"
+        result["youth_diagnostics_907"] = {
+            "milan_camille": {
+                "state": camille["milan"]["collection_state"],
+                "cached": camille["milan"]["cache_count"],
+                "http_requests_last_attempt": camille["milan"]["request_count"],
+                "candidates": camille["milan"]["pipeline"].get("candidate_count"),
+            },
+            "ecole_before_explicit_request": camille["ecole-loisirs"]["collection_state"],
+            "alex_before_explicit_request": alex["milan"]["collection_state"],
+        }
+        capture("07-diagnostics-milan-camille")
+        # The real retained École des loisirs source parses an offline HTTP
+        # fixture through its public source contract. No live site or user
+        # credentials. The fixture is synthetic, and its query is deliberately
+        # absent from all Diagnostics UI and JSON summaries.
+        import httpx
+        sys.path.insert(0, str(ROOT / "src/plugins/youth-source-ecole-loisirs"))
+        from ecole_loisirs_youth import EcoleLoisirsYouthSource
+        html = """
+        <html><body>
+          <div>3 à 6 ans</div>
+          <a href="/livre/histoire-petit-loup">L'histoire de Petit Loup</a>
+          <div>Sylvie Neeman</div><div>album</div>
+          <div>ISBN: 9782211348171</div>
+          <div>13 ans et +</div>
+          <a href="/livre/roman-ado">Roman ado</a>
+          <div>Alice Auteur</div><div>roman</div>
+          <div>ISBN: 9782211345613</div>
+        </body></html>
+        """
+        ecole_calls = []
+        ecole_outage = [False]
+
+        def response(request):
+            assert request.url.scheme == "https"
+            assert request.url.host == "www.ecoledesloisirs.fr"
+            assert request.url.path == "/recherche-avancee"
+            ecole_calls.append(request.url.path)
+            return httpx.Response(
+                503 if ecole_outage[0] else 200,
+                headers={"content-type": "text/html"},
+                text="Unavailable" if ecole_outage[0] else html,
+                request=request,
+            )
+
+        with httpx.Client(transport=httpx.MockTransport(response), trust_env=False) as client:
+            ecole = EcoleLoisirsYouthSource(client=client)
+            saved = catalog.collect_source("alex", ecole, "loup PRIVATE_QUERY_907", limit=5)
+            assert saved.accepted == 2 and saved.rejected == 0, saved
+            after_success = diagnostic_for("alex")
+            ecole_ok = after_success["ecole-loisirs"]
+            assert ecole_ok["collection_state"] == "items", ecole_ok
+            assert ecole_ok["request_count"] == 1, ecole_ok
+            assert ecole_ok["pipeline"].get("candidate_count") == 2, ecole_ok
+            assert ecole_ok["pipeline"].get("age_qualified_count") == 2, ecole_ok
+            assert ecole_ok["pipeline"].get("isbn_valid_count") == 2, ecole_ok
+            assert ecole_ok["cache_count"] == 2, ecole_ok
+            ecole_outage[0] = True
+            failed = catalog.collect_source("alex", ecole, "loup PRIVATE_QUERY_907", limit=5)
+            assert failed.accepted == 0 and failed.rejected == 1, failed
+        after_failure = diagnostic_for("alex")["ecole-loisirs"]
+        assert after_failure["collection_state"] == "http_error", after_failure
+        assert after_failure["http_status"] == 503, after_failure
+        assert after_failure["cache_count"] == 2, after_failure
+        assert after_failure["received_count"] is None, after_failure
+        assert len(ecole_calls) == 2, ecole_calls
+        camille = diagnostic_for("camille")
+        assert camille["ecole-loisirs"]["collection_state"] == "not_tested", camille
+        assert camille["milan"]["cache_count"] == 4 and camille["milan"]["collection_state"] == "items"
+        assert len(requests) == 22, "École mock must never affect the real Milan transport"
+        result["youth_diagnostics_907"]["ecole_alex"] = {
+            "success_http_requests": ecole_ok["request_count"],
+            "accepted": saved.accepted,
+            "candidates": ecole_ok["pipeline"].get("candidate_count"),
+            "qualified_ages": ecole_ok["pipeline"].get("age_qualified_count"),
+            "error_state": after_failure["collection_state"],
+            "http_error": after_failure["http_status"],
+            "retained_cache": after_failure["cache_count"],
+        }
+        page.view.source.set_selected(0)  # Both providers, cache-only.
+        page.view.identity.set_selected(1)  # Alex (École) instead of Camille (Milan).
+        later(240, youth_diagnostics_alex)
+
+    def youth_diagnostics_alex():
+        assert page.view.identity_id() == "alex", page.view.identity_id()
+        assert len(page.view.rows) == 2, page.view.rows
+        rendered = " ".join(diagnostic_labels())
+        assert "L'École des loisirs" in rendered and "erreur HTTP 503" in rendered, rendered
+        assert "conservé" in rendered and "cache : 2 notice(s)" in rendered, rendered
+        # The retained Milan provider is installed, but has NOT been tested
+        # for Alex. A ready source is not evidence of remote health.
+        assert "Éditions Milan" in rendered and "non testée" in rendered, rendered
+        assert "PRIVATE_QUERY_907" not in rendered, "Search query leaked to GTK Diagnostics"
+        assert len(requests) == 22
+        result["youth_diagnostics_907"]["alex_gtk"] = {
+            "rows": len(page.view.rows),
+            "http_error_visible": True,
+            "milan_not_tested": True,
+        }
+        capture("08-diagnostics-ecole-alex-http-error")
+        page.view.identity.set_selected(0)
+        later(240, youth_diagnostics_camille_restored)
+
+    def youth_diagnostics_camille_restored():
+        assert page.view.identity_id() == "camille"
+        assert len(page.view.rows) == 4, page.view.rows
+        rendered = " ".join(diagnostic_labels())
+        assert "Éditions Milan" in rendered and "collecte avec notices" in rendered, rendered
+        assert "L'École des loisirs" in rendered and "non testée" in rendered, rendered
+        assert "PRIVATE_QUERY_907" not in rendered
+        assert len(requests) == 22
+        result["youth_diagnostics_907"]["camille_restored"] = True
+        capture("09-diagnostics-camille-restored")
         result["status"] = "PASS"
         write_report()
         rc[0] = 0
@@ -1230,7 +1585,7 @@ def main() -> int:
         def do_activate(self):
             nonlocal window, device
             window = MainWindow(self, core.config, core.library, core.diagnostics)
-            window.set_default_size(args.width - 40, 780)
+            window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
             window.present()
             device = X11Input()
             later(400, lambda: (window.navigate("youth"), later(400, start_ui)))

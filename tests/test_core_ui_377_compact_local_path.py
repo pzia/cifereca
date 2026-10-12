@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -8,7 +9,7 @@ MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _function(name: str):
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
 
 
@@ -37,7 +38,7 @@ def test_non_path_detail_values_are_unchanged():
 
 
 def test_group_uses_compact_display_and_full_tooltip_values():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_group")
     source = ast.unparse(method)
@@ -48,7 +49,7 @@ def test_group_uses_compact_display_and_full_tooltip_values():
 
 
 def test_search_and_library_keep_using_same_fichier_local_label():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     for method_name in ("_search_selected", "_library_selected"):
         method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)

@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.constellations",
-    "version": "0.3.5",
+    "version": "0.3.7",
     "name": "Constellations",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "navigation.constellations",
       "type": "navigation.constellation",
-      "version": "0.3.5",
+      "version": "0.3.7",
       "entrypoint": "constellations:PLUGIN",
       "display_name": "Constellations",
       "description": "Navigation relationnelle explicable entre livres et promenades culturelles.",
@@ -33,11 +33,11 @@
     {
       "id": "ui.page.constellations",
       "type": "ui.page",
-      "version": "0.3.5",
+      "version": "0.3.7",
       "entrypoint": "constellations_page:PLUGIN",
       "display_name": "Constellations — navigation",
       "description": "Depuis un livre de Recherche/Bibliothèque : explorer ses voisins expliqués de proche en proche.",
-      "help_text": "Cliquez « Explorer les livres proches » dans la fiche d'un livre. Le centre affiche des voisins attestés, chaque voisin devient le nouveau centre, avec retour dans l'historique et vers la fiche d'origine. Sans livre initial, aucune sélection arbitraire ; aucune collecte automatique. Le parcours départ/arrivée et ses variantes sont reportés en P3 (#703).",
+      "help_text": "Cliquez « Explorer les livres proches » dans la fiche d'un livre. Le centre affiche des voisins attestés, chaque voisin devient le nouveau centre, avec retour dans l'historique et vers la fiche d'origine. Sans livre initial, aucune sélection arbitraire ; aucune collecte automatique. Le parcours départ/arrivée et ses variantes sont reportés en P3 (#703). Le broker metadata est lu progressivement avec une limite stricte de 301 entrées parcourues pour 300 livres retenus, même pour un itérateur non borné ; les bibliothèques tronquées sont signalées comme partielles. Les snapshots de la page sont retenus pour huit profils maximum en LRU. Une sélection issue de l'identité A n'est pas appliquée à l'identité B tant que le profil correct n'est pas actif. Piste sémantique facultative (désactivée par défaut), jamais au chargement : après clic, seuls les sujets attestés de deux notices sans lien certain sont soumis à llm/tasks. Résultat affiché comme hypothèse inférée hors graphe, provenance du modèle ; classement et relations attestées inchangés.",
       "enabled_by_default": false,
       "priority": -100,
       "instantiation": "singleton_public",
@@ -53,7 +53,20 @@
       "requires": [],
       "recommends": [],
       "requires_contracts": [],
-      "system_requires": []
+      "system_requires": [],
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {
+          "llm_semantic_hypotheses": {
+            "type": "boolean",
+            "default": false,
+            "title": "Pistes sémantiques IA facultatives",
+            "description": "Un bouton manuel compare seulement des sujets attestés de deux notices sans lien, via le service public LLM (potentiellement distant). L'hypothèse n'ajoute aucune arête au graphe."
+          }
+        }
+      }
     }
   ],
   "categories": [

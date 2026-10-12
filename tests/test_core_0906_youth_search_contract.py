@@ -1,5 +1,6 @@
 """Contract tests for the youth-to-known-catalogue MVP (#906), without GTK."""
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -11,7 +12,7 @@ CORE = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _class_method(path: Path, cls: str, method: str) -> ast.FunctionDef:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(gui_source_text(path))
     parent = next(node for node in ast.walk(tree)
                   if isinstance(node, ast.ClassDef) and node.name == cls)
     return next(node for node in parent.body

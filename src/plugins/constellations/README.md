@@ -161,3 +161,73 @@ Cette PR apporte l'implémentation Plugin d'un premier parcours minimal ;
 la spécification et la recette UX indépendante depuis Recherche ET
 Bibliothèque, focus/clavier et vérification visuelle 1366/1600 restent
 au rôle UX (#1042/#706). Tests plugins : `tests/test_book_first_p2.py`.
+
+
+## Flux de bibliothèque borné et sélection isolée — P2 #700 (0.3.6)
+
+La page historique exécutait `tuple(metadata.library_entries(...))` sur la
+**totalité** de la bibliothèque avant de n'utiliser que `rows[:300]`.
+Cette limite ne bornait ni les lectures, ni la mémoire, ni un itérateur
+hostile pouvant ne jamais finir.
+
+Le nouveau chargement applique **`islice(..., 301)` à l'itérateur
+source**, puis conserve au plus **300 entrées par profil**. Le 301e
+élément sert exclusivement à établir qu'une bibliothèque est plus
+grande que le plafond ; dans ce cas le statut indique clairement
+**« 300 premières notices locales seulement »**, sans prétendre avoir
+exploré l'ensemble du catalogue. La sélection explicite depuis une
+fiche livre est ajoutée au graphe indépendamment de la position de
+ce livre parmi les premières notices ; aucune navigation ne choisit
+arbitrairement le premier livre.
+
+La page ne retient au plus que **8 snapshots d'identités** en mémoire
+avec éviction LRU. Le cache graphes du moteur, indépendant, reste
+inchangé ; un `refresh=True` ou une notification d'identité invalide
+les snapshots. Les callbacks asynchrones continuent à vérifier
+génération et identité : une réponse tardive ne peut pas modifier
+le cache d'un nouveau profil. Un livre `pending` issu explicitement
+de l'identité A n'est pas injecté sous l'identité B ; il peut
+être appliqué lorsque A redevient l'identité active.
+
+Tests déterministes sans HTTP ni GTK dans
+`tests/test_bounded_identity_loader_p2.py` : générateur infini
+(301 éléments lus exactement), seuils 0/1/300, bibliothèque >300,
+réutilisation et rafraîchissement, 9 profils et éviction LRU,
+graine contextuelle A/B, annulation et callback tardif.
+Aucun changement d'algorithme de relation, des raisons, des 12 voisins
+affichés ou du contrat Core. **Recette GTK #706** distincte ;
+aucun nouveau workflow GitHub Actions.
+
+**Limite fonctionnelle assumée** : seules les 300 premières entrées
+proposées par le broker constituent les voisins du cache de la page.
+Ce n'est pas une recherche exhaustive du corpus de la bibliothèque.
+Une extension paginée explicite requerrait une évolution du contrat
+public metadata plutôt qu'un scan illimité.
+
+## Pistes sémantiques facultatives par IA — #783 (0.3.2)
+
+Configuration `llm_semantic_hypotheses=false` par défaut. Quand cette
+fonction est activée, le bouton « Piste sémantique (IA) » n'est utilisable
+que pour un centre et un **candidat sans arête déterministe attestée**,
+disposant chacun d'au moins un sujet explicite. Aucun calcul IA ne se lance
+au chargement, à la navigation ou en modifiant un curseur.
+
+Un clic peut adresser au service public `context.service("llm")` uniquement
+les sujets attestés des deux notices (six au plus par livre, 60 caractères
+par sujet). **Titres, auteurs, identités, chemins, accès et bibliothèque
+entière ne sont pas transmis.** Le service configuré peut être distant.
+
+Le texte de la réponse, demandé sous forme `Hypothèse : …`, apparaît
+dans une zone séparée **« Piste sémantique inférée — NON attestée, hors
+graphe »** avec les titres locaux (jamais transmis), la provenance
+fournisseur/modèle et l'état distant/local. Ce texte **ne devient jamais**
+une arête, une raison attestée, un score, un parcours ni une preuve
+d'accès ou d'identité. La désactivation de l'option suffit à supprimer
+la fonctionnalité de l'interface ; l'algorithme déterministe reste
+toujours disponible.
+
+Service absent, quota, refus, annulation ou changement de centre :
+aucune modification du graphe, abandon des réponses tardives.
+Une intégration future d'arêtes sémantiques navigables exigerait un
+contrat de typage, de persistance et de validation distinct. Le service
+réel dépend du Core #778. Tests offline : `tests/test_semantic_llm_p2.py`.

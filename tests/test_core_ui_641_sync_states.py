@@ -8,13 +8,12 @@ from cifereca.gui.sync_view import sync_identity_action_label, sync_source_prese
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN = ROOT / "src" / "cifereca" / "gui" / "main_window.py"
+MAIN = ROOT / "src" / "cifereca" / "gui" / "sync_controller.py"
 
 
 def _method(name: str) -> str:
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
+    method = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
     return ast.unparse(method)
 
 

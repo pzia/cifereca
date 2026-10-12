@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 from pathlib import Path
 
@@ -46,7 +47,7 @@ def test_attention_rows_have_user_summary_and_bounded_technical_details():
 
 
 def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
-    source = (ROOT / "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    source = gui_source_text(ROOT / "src/cifereca/gui/main_window.py")
     assert 'Gtk.DropDown.new_from_strings(["À examiner", "Tous"])' in source
     assert 'diag_scroll.set_visible(False)' in source
     assert 'label="Ouvrir Plugins"' in source
@@ -57,7 +58,7 @@ def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
 
 
 def test_fallback_system_page_uses_same_attention_projection_and_copy_action():
-    source = (ROOT / "src/cifereca/builtin_ui/system_page.py").read_text(encoding="utf-8")
+    source = gui_source_text(ROOT / "src/cifereca/builtin_ui/system_page.py")
     assert "diagnostic_plugin_rows" in source
     assert 'Gtk.DropDown.new_from_strings(["À examiner", "Tous"])' in source
     assert 'action_button("Copier"' in source
@@ -67,7 +68,7 @@ def test_fallback_system_page_uses_same_attention_projection_and_copy_action():
 
 
 def test_plugin_manager_can_focus_a_diagnostic_target_without_mutating_activation():
-    source = (ROOT / "src/cifereca/gui/plugin_manager_page.py").read_text(encoding="utf-8")
+    source = gui_source_text(ROOT / "src/cifereca/gui/plugin_manager_page.py")
     assert "def focus_plugin(self, plugin_id: str)" in source
     assert 'self._view_query = str(plugin_id or "").strip()' in source
     assert 'self._view_filter = "all"' in source

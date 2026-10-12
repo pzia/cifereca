@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.gui_source import gui_source_text
 
 import ast
 from pathlib import Path
@@ -12,14 +13,14 @@ MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _source(name: str, *, class_name: str = "MainWindow") -> str:
-    module = ast.parse(MAIN.read_text(encoding="utf-8"))
+    module = ast.parse(gui_source_text(MAIN))
     cls = next(n for n in module.body if isinstance(n, ast.ClassDef) and n.name == class_name)
     func = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
     return ast.unparse(func)
 
 
 def _host():
-    module = ast.parse(MAIN.read_text(encoding="utf-8"))
+    module = ast.parse(gui_source_text(MAIN))
     cls = next(n for n in module.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     names = {"_cancel_cached_book_details", "_request_cached_book_details",
              "_cached_book_cache_invalidated"}

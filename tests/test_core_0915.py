@@ -1,3 +1,4 @@
+from tests.gui_source import gui_source_text
 import ast,json,tempfile,unittest,zipfile
 from copy import deepcopy
 from pathlib import Path
@@ -72,7 +73,7 @@ class Core0915(unittest.TestCase):
         self.service._sessions={'c':NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='other',connected=True,capabilities=NS(search=True))}
         self.assertEqual(self.service.dashboard_state()[0]['sources'],[]);self.service._sessions={}
     def extract(self,name):
-        path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py';tree=ast.parse(path.read_text())
+        path=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py';tree=ast.parse(gui_source_text(path))
         fn=next(n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.ClassDef)) and n.name==name)
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         return compile(ast.fix_missing_locations(ast.Module(body=[future,fn],type_ignores=[])),str(path),'exec')

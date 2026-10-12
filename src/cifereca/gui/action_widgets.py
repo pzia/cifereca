@@ -1,23 +1,38 @@
 """Consistent buttons and adaptive action bars for built-in pages."""
+from __future__ import annotations
+
 from gi.repository import Adw, Gtk
 from .action_layout import action_budget, compact_actions, visible_action_count
 
 
-def action_button(label, icon_name=None, *, suggested=False, destructive=False, tooltip=None):
+def action_button(
+    label: str,
+    icon_name: str | None = None,
+    *,
+    suggested: bool = False,
+    destructive: bool = False,
+    tooltip: str | None = None,
+) -> Gtk.Button:
+    """Create a consistently labelled action button with an optional icon."""
     button = Gtk.Button()
     button._cifereca_action_label = label
     button._cifereca_action_icon = icon_name or 'view-more-symbolic'
     if icon_name:
         try:
             content = Adw.ButtonContent()
-            content.set_label(label); content.set_icon_name(icon_name)
+            content.set_label(label)
+            content.set_icon_name(icon_name)
             button.set_child(content)
         except (AttributeError, TypeError):
+            # Keep the action usable on older libadwaita runtimes where
+            # ButtonContent is not available. The label remains authoritative.
             button.set_label(label)
     else:
         button.set_label(label)
-    if suggested: button.add_css_class('suggested-action')
-    if destructive: button.add_css_class('destructive-action')
+    if suggested:
+        button.add_css_class("suggested-action")
+    if destructive:
+        button.add_css_class("destructive-action")
     button.set_tooltip_text(tooltip or label)
     return button
 
@@ -201,3 +216,16 @@ def mirror_sensitivity(first, second):
         if target.get_sensitive() != value: target.set_sensitive(value)
     first.connect('notify::sensitive', changed, second)
     second.connect('notify::sensitive', changed, first)
+
+
+def clear_box(box: Gtk.Box) -> None:
+    child = box.get_first_child()
+    while child is not None:
+        nxt = child.get_next_sibling()
+        box.remove(child)
+        child = nxt
+
+def add_css(widget: Gtk.Widget, *classes: str) -> Gtk.Widget:
+    for name in classes:
+        widget.add_css_class(name)
+    return widget
