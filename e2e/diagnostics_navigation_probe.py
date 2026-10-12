@@ -447,6 +447,149 @@ def main() -> int:
         assert w.service.current_identity.identity_id == "camille"
         assert w.identity_dropdown.get_model().get_n_items() == 2
         report["window_size"] = [w.get_width(), w.get_height()]
+        # Reuse both existing 1366/1600 MainWindow/XTEST baselines.
+        # No extra workflow/scenario, provider activation or HTTP request.
+        report["pointer_actions"].append(
+            device[0].click_widget(w.nav_rows["settings"])
+        )
+        await_route("settings", check_settings_shell)
+
+    SETTINGS_SECTIONS = (
+        "accounts", "library", "sync", "interface", "ai", "diagnostic",
+    )
+
+    def settings_rows(section, kind):
+        return [node for node in walk(section) if isinstance(node, kind)]
+
+    def check_settings_shell():
+        w = window[0]
+        stack = w._settings_tabs
+        assert stack.get_visible_child_name() == "accounts"
+        assert w._settings_main_lifetime.alive
+        assert all(stack.get_child_by_name(key) is not None
+                   for key in SETTINGS_SECTIONS)
+        report["checks"]["settings_six_real_gtk_sections"] = True
+        inspect_settings_section(0)
+
+    def inspect_settings_section(index):
+        w = window[0]
+        if index == len(SETTINGS_SECTIONS):
+            begin_settings_unsaved_edit()
+            return
+        key = SETTINGS_SECTIONS[index]
+        w._settings_tabs.set_visible_child_name(key)
+        later(130, lambda: assert_settings_section(index, key))
+
+    def assert_settings_section(index, key):
+        w = window[0]
+        assert w.view_stack.get_visible_child_name() == "settings"
+        assert w._settings_tabs.get_visible_child_name() == key
+        section = w._settings_tabs.get_visible_child()
+        assert section.get_mapped() and section.get_visible(), (
+            "Onglet Paramètres non rendu", key
+        )
+        # The outer scroller must fit at 1366 and 1600 px. The horizontal
+        # tab-switcher scroller is intentionally independent from this check.
+        viewport = w.view_stack.get_child_by_name("settings")
+        adjustment = viewport.get_hadjustment()
+        overflow = max(0.0, adjustment.get_upper() - adjustment.get_page_size())
+        assert adjustment.get_page_size() > 100, ("Viewport sans allocation", key)
+        assert overflow < 5, ("Débordement horizontal Paramètres", key, overflow)
+        checks = {
+            "accounts": lambda: (
+                len([row for row in settings_rows(section, Adw.EntryRow)
+                     if row.get_title() == "Nom affiché"]) == 2
+                and len([row for row in settings_rows(section, Adw.ActionRow)
+                         if row.get_title() ==
+                         "Parcours normal · Paris principal et ADEPT"]) == 2
+            ),
+            "library": lambda: any(
+                row.get_title() == "Répertoire global"
+                for row in settings_rows(section, Adw.EntryRow)
+            ),
+            "sync": lambda: any(
+                row.get_title() == "Synchroniser automatiquement les ebooks Kobo"
+                for row in settings_rows(section, Adw.ActionRow)
+            ),
+            "interface": lambda: any(
+                row.get_title() == "Actions expérimentales"
+                for row in settings_rows(section, Adw.ActionRow)
+            ),
+            "ai": lambda: any(
+                row.get_title() == "Modèle installé sur le serveur"
+                for row in settings_rows(section, Adw.EntryRow)
+            ),
+            "diagnostic": lambda: any(
+                row.get_title() == "Diagnostic système"
+                for row in settings_rows(section, Adw.PreferencesGroup)
+            ),
+        }
+        assert checks[key](), ("Widgets Paramètres absents", key)
+        report["checks"]["settings_" + key + "_rendered"] = True
+        capture("08-settings-" + key)
+        later(75, lambda: inspect_settings_section(index + 1))
+
+    def begin_settings_unsaved_edit():
+        w = window[0]
+        stack = w._settings_tabs
+        stack.set_visible_child_name("accounts")
+        later(130, settings_unsaved_edit)
+
+    def settings_unsaved_edit():
+        w = window[0]
+        section = w._settings_tabs.get_visible_child()
+        label_rows = [
+            row for row in settings_rows(section, Adw.EntryRow)
+            if row.get_title() == "Nom affiché"
+        ]
+        assert len(label_rows) == 2
+        original = label_rows[0].get_text()
+        expected_config = core.config.identities()[0]["label"]
+        assert original == expected_config
+        # No provider call and no save: dirty state must be a GTK-only draft.
+        label_rows[0].set_text(original + " [brouillon E2E]")
+        assert core.config.identities()[0]["label"] == expected_config
+        report["checks"]["settings_unsaved_identity_draft_not_persisted"] = True
+        assert label_rows[0].grab_focus()
+        device[0].key("Tab", True); device[0].key("Tab", False)
+        later(190, settings_dirty_and_keyboard)
+
+    def settings_dirty_and_keyboard():
+        w = window[0]
+        assert w.get_focus() is not None, "Focus clavier perdu sur Paramètres"
+        viewport = w.view_stack.get_child_by_name("settings")
+        saves = [
+            b for b in settings_rows(viewport, Gtk.Button)
+            if (b.get_tooltip_text() or "")
+            == "Enregistrer les modifications de configuration en attente"
+        ]
+        assert len(saves) == 2, ("Boutons Enregistrer desktop/footer", len(saves))
+        assert any(b.get_sensitive() for b in saves), "Brouillon non détecté"
+        assert core.config.identities()[0]["label"] == "Camille"
+        report["checks"]["settings_keyboard_and_dirty_actions"] = True
+        # Separate standalone Settings lifetime from the mapped main page.
+        main_lifetime = w._settings_main_lifetime
+        first = w._build_settings_page(standalone=True)
+        first_lifetime = w._settings_standalone_lifetime
+        assert isinstance(first, Gtk.Widget) and first_lifetime.alive
+        second = w._build_settings_page(standalone=True)
+        assert isinstance(second, Gtk.Widget)
+        assert not first_lifetime.alive and w._settings_standalone_lifetime.alive
+        assert w._settings_main_lifetime is main_lifetime and main_lifetime.alive
+        report["checks"]["settings_standalone_rebuild_revokes_old_callbacks"] = True
+        report["pointer_actions"].append(
+            device[0].click_widget(w.nav_rows["library"])
+        )
+        await_route("library", settings_returned_to_library)
+
+    def settings_returned_to_library():
+        w = window[0]
+        assert w.nav_list.get_selected_row() is w.nav_rows["library"]
+        assert w.service.current_identity.identity_id == "camille"
+        assert core.config.identities()[0]["label"] == "Camille"
+        assert broker.checks == 1, "Naviguer Paramètres a relancé Diagnostics"
+        report["checks"]["settings_return_keeps_identity_and_no_extra_diagnostics"] = True
+        capture("09-library-after-settings")
         assert w.identity_dropdown.grab_focus()
         device[0].key("Tab", True); device[0].key("Tab", False)
         later(180, focus_after_tab)
