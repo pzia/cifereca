@@ -60,6 +60,16 @@ SCENARIOS = {
         "runner": "gtk-llm-settings",
         "width": 1600,
     },
+    "maintenance-tools-1366": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #1358: vrai GTK/XTEST Outils, lock sync, preview lente, annulation et plan périmé 1366.",
+        "runner": "gtk-maintenance", "width": 1366,
+    },
+    "maintenance-tools-1600": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #1358: vérification de la confirmation et refus des suppressions GTK 1600.",
+        "runner": "gtk-maintenance", "width": 1600,
+    },
     "youth-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
@@ -327,6 +337,13 @@ def main() -> int:
                     *(["--slow-check"] if scenario.get("slow_check") else []),
                     *(["--window-baseline"] if scenario.get("window_baseline") else []),
                 ]
+            elif scenario.get("runner") == "gtk-maintenance":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    args.python, str(ROOT / "e2e/maintenance_tools_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
             elif scenario.get("runner") == "gtk-llm-settings":
                 width = scenario["width"]
                 command = [
@@ -390,7 +407,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
