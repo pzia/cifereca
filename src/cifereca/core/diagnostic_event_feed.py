@@ -217,6 +217,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         if not isinstance(snapshot, (list, tuple)):
             raise ValueError("snapshot must be a sequence")
         rows = snapshot[-500:]
+        incomplete = len(snapshot) > len(rows)
     except Exception:
         # Snapshot providers can fail with I/O/runtime exceptions as well as
         # malformed values. Keep the other public log source consultable and
@@ -227,13 +228,16 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
     duplicate_offsets: dict[str, int] = {}
     for row in rows:
         if not isinstance(row, dict):
+            incomplete = True
             continue
         stamp = row.get("timestamp")
         if not isinstance(stamp, str):
+            incomplete = True
             continue
         try:
             _stamp(stamp)
         except (ValueError, TypeError):
+            incomplete = True
             continue
         raw_category = row.get("category")
         raw_operation = row.get("operation")
@@ -277,8 +281,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         })
     state = {
         "source": "core_events",
-        "status": "available" if events else "empty",
-        "reason": "" if events else "no_recorded_events",
+        "status": "partial" if incomplete else ("available" if events else "empty"),
+        "reason": "snapshot_records_incomplete" if incomplete else (
+            "" if events else "no_recorded_events"
+        ),
     }
     if events:
         state["last_event"] = _latest_published_event(events)
