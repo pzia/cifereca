@@ -50,6 +50,11 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
         window._cached_book_unsubscribe()
     except Exception:
         pass
+    finally:
+        # Drop plugin/service references retained by stale callbacks.
+        window._cached_book_unsubscribe = lambda: None
+        window._cached_book_services = ()
+        window._cached_book_context = None
     try:
         window.runner.close()
     except Exception:
