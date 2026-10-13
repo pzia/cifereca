@@ -978,7 +978,10 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     # until a deliberate replacement/reconciliation contract exists.
     if current and current.get("local_path"):
         linked_path = Path(str(current["local_path"]))
-        if linked_path.is_file():
+        # A dangling link is still evidence of a prior Kobo placement.
+        # Do not dereference or silently re-download merely because it has
+        # moved outside the generated filename candidates.
+        if linked_path.is_symlink() or linked_path.is_file():
             self.storage.backup_put({
                 **base_record,
                 "status": "reconcile_required",
