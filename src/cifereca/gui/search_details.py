@@ -18,6 +18,8 @@ from .task_runner import TaskPriority
 
 
 def _search_selected(self, row: BookListItem | None) -> None:
+    if getattr(self, "_closed", False):
+        return
     # A result id alone is not enough: ids can be reused by another
     # provider, selection, query, or identity while holdings are in flight.
     self._search_detail_request_generation += 1
@@ -141,10 +143,14 @@ def _search_detail_error(
     self.search_page.detail.show_search(item, loading=False)
     self._add_local_book_actions(self.search_page.detail, result_row(item))
     self._request_cached_book_details("search", item.id, result_row(item))
-    self.toast(f"Disponibilités indisponibles : {exc}", 5)
+    # Provider exceptions can embed account IDs, private file paths or signed
+    # URLs. Do not echo their arbitrary text into a user-visible GTK toast.
+    self.toast("Disponibilités indisponibles. Réessayez ultérieurement.", 5)
 
 
 def _load_known_detail(self, item):
+    if getattr(self, "_closed", False):
+        return
     # Explicitly opening a known-catalogue detail supersedes a previous
     # holdings request, even if the selected list key stays unchanged.
     self._search_detail_request_generation += 1
