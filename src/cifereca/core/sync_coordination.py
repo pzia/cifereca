@@ -391,7 +391,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     elif kobo_decision["status"] == "started":
         try:
             kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-            if (kobo_summary or {}).get("status") in {
+            if (kobo_summary or {}).get("status") == "error":
+                kobo_decision["status"] = "error"
+            elif (kobo_summary or {}).get("status") in {
                 "partial", "attention_required", "aborted", "failed", "cancelled"
             } or int((kobo_summary or {}).get("errors", 0) or 0) > 0:
                 kobo_decision["status"] = "partial"
