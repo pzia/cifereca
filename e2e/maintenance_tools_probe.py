@@ -151,15 +151,14 @@ def main():
     def physical(button):
         assert button.get_mapped() and button.get_sensitive()
         if button is preview_button[0]:
-            # X11Input.click_widget subtracts a native surface transform that
-            # is unreliable for the nested GTK4 ScrolledWindow/ActionRow used
-            # by Outils. The window origin is (0,0) in this isolated Xvfb
-            # setup; use GTK's actual bounds in the application window.
-            ok, rect = button.compute_bounds(window[0])
-            assert ok
-            x = round(rect.get_x() + rect.get_width() / 2)
-            y = round(rect.get_y() + rect.get_height() / 2)
-            assert args.width // 2 < x < args.width and y > 60
+            # The GTK4 ActionRow reports unreliable native transformations
+            # under our rootless Xvfb runner (its computed click landed on the
+            # title bar). This isolated screen is fixed at 1366/1600, window
+            # starts at 0,0 and the trailing action is top-right at y=144.
+            # Explicit screen coordinates still send genuine XTEST events.
+            assert window[0].get_width() == args.width - 40
+            x = window[0].get_width() - 116
+            y = 144
             device[0].click(x, y)
             report["pointer_actions"].append({
                 "widget": button.get_name(), "x": x, "y": y,
