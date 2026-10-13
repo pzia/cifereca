@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient
@@ -9,6 +10,24 @@ from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOf
 
 
 _TRACE_LOG = logging.getLogger("cifereca")
+
+# Only protocol metadata with a known public vocabulary may reach diagnostics.
+# The public /status endpoint is still an untrusted HTTP response.
+_PUBLIC_VAULT_CAPABILITIES = frozenset({
+    "catalog_search", "library_search", "library", "acquisition",
+})
+_PUBLIC_ACQUISITION_ACCESS = frozenset({
+    "configured", "unknown", "available", "disabled", "unavailable",
+    "denied", "forbidden", "requires_scope",
+})
+
+
+def _vault_public_version(value: Any) -> str:
+    if type(value) is not str:
+        return ""
+    value = value.strip()
+    return value if re.fullmatch(r"v?[0-9]{1,3}(?:\.[0-9]{1,4}){1,4}", value) else ""
+
 
 DESCRIPTOR = ProviderDescriptor(
     id="kobo",
@@ -81,8 +100,8 @@ class KoboSession(ProviderSession):
         self.supports_acquisition_acsm = False
         self.supports_acquisition_display_profile = False
         status = self.client.status(authenticated=False)
-        self.api_version = str(status.get("api_version") or status.get("version") or "")
-        self.vault_release = str(status.get("release") or "").strip()
+        self.api_version = _vault_public_version(status.get("api_version") or status.get("version"))
+        self.vault_release = _vault_public_version(status.get("release"))
         try:
             parts = self.api_version.split(".")
             major = int(parts[0]) if parts else 0
@@ -94,15 +113,31 @@ class KoboSession(ProviderSession):
             raise ProviderError(f"Kobo-Vault : version API incompatible ({shown}, v2.3+ requise)")
         caps = status.get("capabilities")
         if isinstance(caps, list):
-            self.capability_names = {str(x) for x in caps}
+            self.capability_names = {
+                x for x in caps
+                if type(x) is str and x in _PUBLIC_VAULT_CAPABILITIES
+            }
         details = status.get("capability_details")
         if isinstance(details, list):
-            self.capability_details = {
-                str(row.get("id")): dict(row)
-                for row in details
-                if isinstance(row, dict) and row.get("id")
-            }
-        self.acquisition_access = str(status.get("acquisition_access") or "unknown")
+            for row in details:
+                if not isinstance(row, dict):
+                    continue
+                key = row.get("id")
+                if type(key) is not str or key not in _PUBLIC_VAULT_CAPABILITIES:
+                    continue
+                safe = {"id": key}
+                for flag in ("available", "enabled"):
+                    if type(row.get(flag)) is bool:
+                        safe[flag] = row[flag]
+                schema = _vault_public_version(row.get("schema_version"))
+                if schema:
+                    safe["schema_version"] = schema
+                self.capability_details[key] = safe
+        access = status.get("acquisition_access")
+        self.acquisition_access = (
+            access if type(access) is str and access in _PUBLIC_ACQUISITION_ACCESS
+            else "unknown"
+        )
 
         runtime = (
             self.runtime_capabilities.acquisition("kobo")
@@ -133,10 +168,10 @@ class KoboSession(ProviderSession):
         self._diagnostic(
             "KOBO", "vault connected", "ok",
             detail={
-                "credential_id": self.credential_id,
-                "api_version": self.api_version or "2",
+                "credential_configured": bool(self.credential_id),
+                "api_version": self.api_version or "inconnue",
                 "capabilities": sorted(self.capability_names),
-                "role": str(status.get("role") or "kobo-library-provider"),
+                "role": "kobo-library-provider",
                 "acquisition_access": self.acquisition_access,
                 "provider_contract": f"v{self.api_version or '2.3'}",
                 "vault_release": self.vault_release or None,
@@ -270,7 +305,9 @@ class KoboSession(ProviderSession):
     def diagnostic_state(self) -> dict[str, Any]:
         data = super().diagnostic_state()
         data.update({
-            "vault_url": self.client.base_url,
+            # Do not leak URL userinfo, private host/path or a signed query
+            # through public diagnostics or support exports.
+            "vault_url": "configured" if self.client.base_url else "missing",
             "vault_api_version": self.api_version,
             "vault_capabilities": sorted(self.capability_names),
             "acquisition_access": self.acquisition_access,
