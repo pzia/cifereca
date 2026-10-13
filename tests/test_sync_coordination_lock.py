@@ -2,6 +2,9 @@
 import pytest
 
 from cifereca import services
+from cifereca.core import sync_coordination
+from cifereca.locking import InterProcessLock
+from cifereca.models import Account
 from cifereca.services import LockBusyError
 from cifereca.providers import ProviderConfigurationError
 from tests.test_sync_state_contract import _service
@@ -69,5 +72,29 @@ def test_progress_exception_does_not_change_fast_sync_result(tmp_path, monkeypat
         assert len([e for e in events if e['event'] == 'identity_begin']) == 2
         assert service.storage.latest_sync_run('default')['status'] == 'success'
         assert service.storage.latest_sync_run('alex')['status'] == 'success'
+    finally:
+        service.close()
+
+
+def test_source_sync_refuses_destructive_maintenance_lock_then_recovers(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    shared = tmp_path / "local-acquisition.lock"
+    monkeypatch.setattr(sync_coordination, "acquisition_lock_file", lambda: shared)
+    account = Account(
+        display_name="Test", unique_id="account", provider_id="local",
+        credential_id="test", identity_id="default",
+    )
+    calls = []
+    monkeypatch.setattr(
+        service, "_synchronize_account_source_impl",
+        lambda *_args, **_kwargs: calls.append("sync") or {"ok": True},
+    )
+    try:
+        with InterProcessLock(shared):
+            with pytest.raises(ProviderConfigurationError, match="déjà en cours"):
+                service.synchronize_account_source(account)
+        assert calls == []
+        assert service.synchronize_account_source(account) == {"ok": True}
+        assert calls == ["sync"]
     finally:
         service.close()
