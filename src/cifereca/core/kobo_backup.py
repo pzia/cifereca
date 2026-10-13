@@ -593,7 +593,8 @@ def _publish_summary(self, summary, error_counts, error_examples, emit):
     elif summary.get("remaining"):
         status = "partial"
     elif any(summary.get(key, 0) for key in
-             ("pending", "attention_required", "reconcile_pending", "reconcile_conflicts")):
+             ("pending", "attention_required", "reconcile_pending",
+              "reconcile_conflicts", "reconcile_skipped")):
         status = "attention_required"
     elif not summary.get("sessions") or summary.get("manifests_fetched") != summary.get("sessions"):
         status = "partial"
