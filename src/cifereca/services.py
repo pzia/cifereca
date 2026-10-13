@@ -3547,6 +3547,9 @@ class LibraryService:
     def _kobo_backup_due(self) -> bool:
         return kobo_backup._kobo_backup_due(self)
 
+    def _kobo_backup_account_due(self, credential_id: str) -> bool:
+        return kobo_backup._kobo_backup_due(self, credential_id=credential_id)
+
     def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Compatibility entry point for the Kobo local synchronization.
 
@@ -3555,6 +3558,16 @@ class LibraryService:
         than Kobo so the 0.8.x loan synchronizer can share it.
         """
         return kobo_backup.sync_kobo_backup(self, progress, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
+
+    def sync_kobo_backup_account(
+        self, credential_id: str,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """One account under the same global acquisition lock as the full sync."""
+        return kobo_backup.sync_kobo_backup(
+            self, progress, credential_id=credential_id,
+            lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
+        )
 
     def kobo_unlinked_local_count(self, identity_id: str) -> int:
         """Conservative guard, never infer a Kobo link from a filename/title."""
@@ -3575,6 +3588,15 @@ class LibraryService:
         existing reconciliation safeguards still prevent duplicate redownloads.
         """
         return kobo_backup._sync_kobo_backup_locked(self, progress, logger=_TRACE_LOG)
+
+    def _sync_kobo_backup_account_locked(
+        self, credential_id: str,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """Internal scoped variant: caller owns the global acquisition lock."""
+        return kobo_backup._sync_kobo_backup_locked(
+            self, progress, logger=_TRACE_LOG, credential_id=credential_id,
+        )
 
     def _account_for_loan(self, loan: Loan) -> Account:
         """Resolve the exact borrower recorded on a loan.
