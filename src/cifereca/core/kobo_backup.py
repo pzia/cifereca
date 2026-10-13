@@ -249,6 +249,24 @@ def _kobo_manifest_rejection_count(session: Any) -> int:
     return raw if type(raw) is int and 0 <= raw <= 1_000_000 else 0
 
 
+_KOBO_CHECKPOINT_STATUSES = frozenset({
+    "complete", "partial", "failed", "aborted", "cancelled",
+    "attention_required", "running", "interrupted", "manifest_fetch",
+    "skipped_fresh",
+})
+
+
+def _kobo_safe_checkpoint_status(value: Any) -> str:
+    """Accept only internal checkpoint states, never free provider strings."""
+    return value if type(value) is str and value in _KOBO_CHECKPOINT_STATUSES else "unknown"
+
+
+def _kobo_checkpoint_number(value: Any, *, limit: int = 1_000_000) -> int:
+    """Fail closed on malformed local SQLite metadata rather than raising."""
+    return value if type(value) is int and 0 <= value <= limit else 0
+
+
+
 def kobo_backup_preview(
     self, credential_id: str, *,
     refresh_manifest: bool = False, verify_local_files: bool = False,
@@ -416,7 +434,9 @@ def kobo_backup_preview(
         "manifest_items": len(manifest),
         "known_item_count": len(seen),
         "provider_rejected_manifest_items": upstream_rejected,
-        "checkpoint_status": str((checkpoint or {}).get("status") or "unknown"),
+        "checkpoint_status": _kobo_safe_checkpoint_status(
+            (checkpoint or {}).get("status")
+        ),
         "unlinked_local_books": unlinked_local_books,
         "counts": counts,
         "blocking_items": sum(counts[key] for key in (
@@ -635,11 +655,15 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
         failure_streak = (
             raw_streak if type(raw_streak) is int and 0 <= raw_streak <= 6 else 0
         )
+        total = _kobo_checkpoint_number(row.get("total"))
         summaries.append({
-            "source_id": source_id, "status": str(row.get("status") or "unknown"),
-            "position": max(0, int(row.get("processed") or 0)),
-            "total": max(0, int(row.get("total") or 0)),
-            "updated_at": max(0, int(row.get("updated_at") or 0)),
+            "source_id": source_id,
+            "status": _kobo_safe_checkpoint_status(row.get("status")),
+            "position": min(_kobo_checkpoint_number(row.get("processed")), total),
+            "total": total,
+            "updated_at": _kobo_checkpoint_number(
+                row.get("updated_at"), limit=4_102_444_800,
+            ),
             # Public diagnostics: safe numeric cooldown, no raw credential.
             "failure_streak": failure_streak,
             **safe_counts,
