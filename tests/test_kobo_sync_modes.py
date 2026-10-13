@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
+import hashlib
 from types import SimpleNamespace
 
 import cifereca.services as services_module
@@ -135,5 +137,65 @@ def test_fast_sync_shows_throttled_incomplete_kobo_batch(tmp_path: Path, monkeyp
         assert result["kobo"]["status"] == "fresh_cache_partial"
         assert result["kobo"]["last_batch_status"] == "attention_required"
         assert result["kobo"]["skipped_fresh"] is True
+    finally:
+        service.close()
+
+
+def test_fast_opening_sync_runs_only_stale_kobo_account(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        second = replace(service.accounts[0], credential_id="vault-2", unique_id="other-account")
+        service.accounts.append(second)
+        service._sessions[("kobo", "vault-2")] = SimpleNamespace(
+            connected=True, provider_id="kobo", credential_id="vault-2",
+            capabilities=SimpleNamespace(backup=True),
+        )
+        service.storage.metadata_set("kobo_backup_source_checkpoints_v1", "{}")
+        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        monkeypatch.setattr(
+            service, "_kobo_backup_account_due",
+            lambda credential_id: credential_id == "vault-2",
+        )
+        calls = []
+
+        def scoped_sync(credential_id, progress=None):
+            calls.append(credential_id)
+            return {"status": "complete", "errors": 0, "unchanged": 1,
+                    "sources": [{"source_id": "second-source", "status": "complete"}]}
+
+        first_id = hashlib.sha256(b"kobo-v1:default:vault").hexdigest()[:24]
+        monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", scoped_sync)
+        monkeypatch.setattr(service, "kobo_backup_diagnostic", lambda: {
+            "sources": [{"source_id": first_id, "status": "attention_required"}],
+        })
+        result = service._opening_sync_locked(deep=False)
+        assert calls == ["vault-2"]
+        assert result["kobo"]["scope"] == "accounts"
+        assert result["kobo"]["synced_accounts"] == 1
+        assert result["kobo"]["cached_accounts"] == 1
+        assert result["kobo"]["status"] == "attention_required"
+        assert len(result["kobo"]["sources"]) == 2
+    finally:
+        service.close()
+
+
+def test_fast_opening_sync_preserves_partial_account_status_when_all_cached(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        service.storage.metadata_set("kobo_backup_source_checkpoints_v1", "{}")
+        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        monkeypatch.setattr(service, "_kobo_backup_account_due", lambda credential_id: False)
+        first_id = hashlib.sha256(b"kobo-v1:default:vault").hexdigest()[:24]
+        monkeypatch.setattr(service, "kobo_backup_diagnostic", lambda: {
+            "sources": [{"source_id": first_id, "status": "partial"}],
+        })
+        monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", lambda **kwargs: (
+            _ for _ in ()).throw(AssertionError("fresh cache must not transfer")))
+        result = service._opening_sync_locked(deep=False)
+        assert result["kobo"]["status"] == "fresh_cache_partial"
+        assert result["kobo"]["cached_accounts"] == 1
+        assert result["kobo"]["synced_accounts"] == 0
     finally:
         service.close()
