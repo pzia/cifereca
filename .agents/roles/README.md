@@ -12,3 +12,9 @@ Le guide canonique est [AGENTS.md](../../AGENTS.md).
 Un rôle actif par étape, avec un livrable vérifiable. En mode classique, le rôle reste celui choisi dans le fil ; en mode `focus`, l'orchestrateur réévalue et peut en changer à chaque étape. Aucun rôle ne franchit la frontière d'un autre pour éviter un handoff.
 
 Lire le profil concerné avant d'agir ; les issues GitHub portent l'état, la priorité et le prochain handoff. Les PR portent le code et ses validations, jamais un journal opérationnel poussé directement dans main.
+
+## Règle commune à tous les rôles
+
+Chaque étape vise **exclusivement le ticket retenu** et ses dépendances indispensables. Chercher une solution robuste (invariants, erreurs, cas limites et tests ciblés), sans refactoring opportuniste ni correction d'un défaut indépendant. Transmettre les sujets distincts à leur propriétaire, sans les embarquer dans la même PR.
+
+La réponse de fin d'étape est **courte et directement dans le chat** : lien issue/PR, résultat, CI/preuves utiles et éventuel blocage. **Aucun rapport détaillé en fichier joint n'est produit par défaut** ; en créer un seulement sur demande explicite ou si une preuve spécifique le rend nécessaire.
