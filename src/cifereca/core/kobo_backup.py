@@ -290,10 +290,15 @@ def kobo_backup_preview(
     indexed = _indexed_kobo_catalog_paths(self)
     source_digest = _kobo_checkpoint_key(identity_id, credential_id).rsplit(".", 1)[-1]
     checkpoint = _kobo_checkpoint_for(self, identity_id, credential_id)
+    unlinked_local_books = self.kobo_unlinked_local_count(identity_id)
+    unlinked_blocked = (
+        unlinked_local_books > 0
+        and not bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False))
+    )
     counts = {
         "already_local_linked": 0, "already_local_verified": 0,
         "needs_reconciliation": 0, "attention_required": 0,
-        "not_downloadable": 0, "candidate_unverified": 0,
+        "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
         "potentially_missing": 0, "invalid_manifest_items": 0,
     }
     examples: list[dict[str, str]] = []
@@ -371,6 +376,8 @@ def kobo_backup_preview(
                 reason = "not_downloadable"
             elif current and current.get("status") == "attention_required":
                 reason = "attention_required"
+            elif unlinked_blocked:
+                reason = "blocked_unlinked"
             elif not refresh_manifest:
                 reason = "candidate_unverified"
             else:
@@ -396,6 +403,7 @@ def kobo_backup_preview(
         "manifest_items": len(manifest),
         "known_item_count": len(seen),
         "checkpoint_status": str((checkpoint or {}).get("status") or "unknown"),
+        "unlinked_local_books": unlinked_local_books,
         "counts": counts,
         "examples": examples,
         "preview_only": True,
