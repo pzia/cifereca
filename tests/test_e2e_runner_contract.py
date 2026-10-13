@@ -22,8 +22,8 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     assert [name for name, _ in runner.select(None, "core")] == [
         "search-filter-p0", "book-detail-1366",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
-        "startup", "core-navigation",
         "llm-settings-1366", "llm-settings-1600",
+        "startup", "core-navigation",
     ]
 
 
