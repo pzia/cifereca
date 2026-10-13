@@ -406,6 +406,12 @@ def test_kobo_source_checkpoint_has_no_account_or_book_identifiers(tmp_path: Pat
         assert source["total"] == 3
         assert source["pending"] == 3
         checkpoint = json.loads(service.storage.metadata_get("kobo_backup_source_checkpoints_v1"))
+        diagnostic = service.kobo_backup_diagnostic()
+        assert len(diagnostic["sources"]) == 1
+        assert diagnostic["sources"][0]["source_id"] == source["source_id"]
+        assert diagnostic["sources"][0]["status"] == "attention_required"
+        assert "vault-1" not in json.dumps(diagnostic["sources"])
+        assert "Private Title" not in json.dumps(diagnostic["sources"])
         assert len(checkpoint) == 1
         assert checkpoint[source["source_id"]] == source
         encoded = json.dumps(checkpoint)
