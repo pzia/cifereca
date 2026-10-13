@@ -53,20 +53,51 @@ def _kobo_artifact_plausible(path: Path, fmt: str) -> bool:
 
 
 def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path) -> list[Path]:
-    fmt = "pdf" if str(record.get("format") or "").lower() == "pdf" else "epub"
-    ext = ".pdf" if fmt == "pdf" else ".epub"
+    """Find filename candidates without trusting reported format or opening files.
+
+    A manifest may switch EPUB/PDF between syncs. A candidate of either
+    format must stop automated acquisition rather than silently duplicate it.
+    """
     author = str(record.get("author") or "").strip()
     title = str(record.get("title") or record.get("item_id") or "Kobo").strip()
     stem = f"{author} - {title}" if author else title
     safe = self.acquisition._safe_filename(stem or str(record.get("item_id") or "kobo"))
-    base = target_dir / f"{safe}{ext}"
     suffix = re.sub(r"[^A-Za-z0-9]", "", str(record.get("item_id") or ""))[-8:] or "kobo"
-    suffixed = target_dir / f"{safe} [{suffix}]{ext}"
     paths: list[Path] = []
-    for path in (base, suffixed):
-        if path not in paths and self._kobo_artifact_plausible(path, fmt):
-            paths.append(path)
+    for ext in (".epub", ".pdf"):
+        for path in (target_dir / f"{safe}{ext}", target_dir / f"{safe} [{suffix}]{ext}"):
+            # Even an invalid file or dangling symlink occupies the destination:
+            # never overwrite it automatically as part of reconciliation.
+            if path not in paths and (path.is_file() or path.is_symlink()):
+                paths.append(path)
     return paths
+
+
+
+def _indexed_kobo_catalog_paths(self) -> dict[tuple[str, str], list[Path]]:
+    """Index only explicit local Kobo product-ID links within one identity.
+
+    Titles, ISBNs and filenames are not proof of a Kobo entitlement.
+    A matching local catalog entry is a reason to stop, never to
+    automatically adopt its artifact as a complete Kobo backup.
+    """
+    default_identity_id = self.identities[0].identity_id if self.identities else None
+    indexed: dict[tuple[str, str], list[Path]] = {}
+    for row in self.storage.catalog_entries():
+        if row.get("local_state") != "local" or row.get("provider_id") != "kobo":
+            continue
+        identity = str(row.get("identity_id") or default_identity_id or "")
+        item_id = str(row.get("item_id") or "").strip()
+        metadata = row.get("metadata")
+        path_text = metadata.get("path") if isinstance(metadata, dict) else None
+        if not identity or not item_id or not isinstance(path_text, str) or not path_text.strip():
+            continue
+        path = Path(path_text)
+        if path.is_file() or path.is_symlink():
+            bucket = indexed.setdefault((identity, item_id), [])
+            if path not in bucket:
+                bucket.append(path)
+    return indexed
 
 
 def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> Path:
@@ -321,6 +352,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
     # Refresh filesystem membership before deciding whether acquisition is safe.
     self.catalog_scan()
+    indexed_kobo_paths = _indexed_kobo_catalog_paths(self)
     sessions = [
         session for session in self._sessions.values()
         if session.connected and session.provider_id == "kobo" and session.capabilities.backup
@@ -460,7 +492,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 summary["skipped"] += 1
                 continue
             item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
-            if _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+            if _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
                 continue
 
             if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
@@ -510,14 +542,24 @@ def _recover_local_remnants(self, summary, target_dirs, emit):
             for legacy_candidate in self._kobo_record_candidate_paths(previous, legacy_target_dir):
                 if legacy_candidate not in candidates:
                     candidates.append(legacy_candidate)
+        # The persisted path is a stronger clue than a generated filename:
+        # users can rename/move an acquired file after an interrupted run.
+        stored_path = str(previous.get("local_path") or "").strip()
+        if stored_path:
+            linked = Path(stored_path)
+            if (linked.is_file() or linked.is_symlink()) and linked not in candidates:
+                candidates.append(linked)
         if len(candidates) == 1:
             artifact = candidates[0]
+            # Never dereference a symlink (including dangling links) when
+            # recovering an unverified local artifact.
+            ordinary_file = artifact.is_file() and not artifact.is_symlink()
             self.storage.backup_put({
                 **previous,
                 "status": "reconcile_required",
                 "local_path": str(artifact),
-                "size": artifact.stat().st_size,
-                "sha256": try_sha256_file(artifact),
+                "size": artifact.stat().st_size if ordinary_file else None,
+                "sha256": try_sha256_file(artifact) if ordinary_file else None,
                 "updated_at": int(time.time()),
                 "error": (
                     "Artefact local présent après une acquisition Adept non réconciliée ; "
@@ -548,18 +590,10 @@ def _recover_local_remnants(self, summary, target_dirs, emit):
                 "job_id": None,
             })
         elif previous_status in {"reconcile_required", "reconcile_conflict"}:
-            # The user may have manually moved/removed the suspect file(s).
-            # With no candidate left, allow a clean retry on the next pass.
-            self.storage.backup_put({
-                **previous,
-                "status": "pending_acquisition",
-                "local_path": None,
-                "size": None,
-                "sha256": None,
-                "updated_at": int(time.time()),
-                "error": "Artefact à réconcilier absent ; nouvelle tentative autorisée",
-                "job_id": None,
-            })
+            # A missing candidate is NOT proof that the book is absent:
+            # it may have been renamed or relocated outside scanned paths.
+            # Keep the quarantine until an explicit reconciliation clears it.
+            continue
 
     recovery_rows = self.storage.backup_list("kobo")
     summary["reconcile_pending"] = sum(
@@ -653,6 +687,15 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
         refreshed = {
             **current,
             **base_record,
+            # Do not rewrite the last acquired revision on a complete row
+            # before _skip_manifest_item has compared it with the manifest.
+            # Otherwise an older local file falsely appears current.
+            "revision_id": (
+                current.get("revision_id")
+                if current.get("status") in {"ok", "complete"}
+                and current.get("revision_id") != revision_id
+                else revision_id
+            ),
             "status": current.get("status") or "pending",
             "error": current.get("error"),
             "job_id": current.get("job_id"),
@@ -682,7 +725,7 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
-def _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger):
+def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
@@ -696,6 +739,10 @@ def _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available
 
     if current and current.get("status") in {"ok", "complete"} and current.get("revision_id") == revision_id:
         local = Path(str(current.get("local_path") or ""))
+        if local.is_symlink():
+            self.storage.backup_put({**current, "status": "reconcile_required", "error": "Lien symbolique local à réconcilier"})
+            summary["reconcile_skipped"] += 1
+            return True
         if local.is_file():
             try:
                 observed = self._observed_backup_artifact(local)
@@ -707,6 +754,56 @@ def _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available
             self.storage.backup_put({**current, **observed})
             summary["unchanged"] += 1
             return True
+
+    # A prior Kobo row may point to a nonstandard filename. Even when the
+    # remote revision changes, never discard that placement or redownload
+    # until a deliberate replacement/reconciliation contract exists.
+    if current and current.get("local_path"):
+        linked_path = Path(str(current["local_path"]))
+        if linked_path.is_file():
+            self.storage.backup_put({
+                **base_record,
+                "status": "reconcile_required",
+                "local_path": str(linked_path),
+                "error": "Artefact Kobo déjà lié : révision distante différente ou état incomplet ; rapprochement requis",
+            })
+            summary["reconcile_pending"] += 1
+            summary["reconcile_skipped"] += 1
+            emit("reconcile_required", current=index + 1, total=total,
+                 title=title, item_id=product_id)
+            return True
+
+    # A bypass of the global unlinked-books guard must never imply permission
+    # to overwrite or re-download a plausible, *unlinked* artifact for this item.
+    # Filename matches, including damaged or symlinked files, are ambiguous:
+    # quarantine for manual reconciliation rather than treating them as complete.
+    # This includes legacy flat-library placements from older versions.
+    candidates = self._kobo_record_candidate_paths(base_record, session_target_dir)
+    identity_id = str(base_record.get("identity_id") or "")
+    for indexed_path in indexed_kobo_paths.get((identity_id, product_id), ()):
+        if indexed_path not in candidates:
+            candidates.append(indexed_path)
+    legacy_dir = self.library_dir()
+    if legacy_dir.resolve() != session_target_dir.resolve():
+        for candidate in self._kobo_record_candidate_paths(base_record, legacy_dir):
+            if candidate not in candidates:
+                candidates.append(candidate)
+    if candidates:
+        conflict = len(candidates) > 1
+        self.storage.backup_put({
+            **base_record,
+            "status": "reconcile_conflict" if conflict else "reconcile_required",
+            "local_path": None if conflict else str(candidates[0]),
+            "error": "Fichier(s) locaux candidats : rapprochement manuel requis avant téléchargement",
+        })
+        summary["reconcile_pending"] += 1
+        if conflict:
+            summary["reconcile_conflicts"] += 1
+        summary["reconcile_skipped"] += 1
+        emit("reconcile_conflict" if conflict else "reconcile_required",
+             current=index + 1, total=total, item_id=product_id, title=title,
+             count=len(candidates))
+        return True
 
     # Vault 2.3.1 exposes archived items explicitly. Keep an already
     # acquired local file (handled above), otherwise persist a user

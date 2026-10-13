@@ -312,3 +312,422 @@ def test_catalog_scan_runs_before_unlinked_guard(tmp_path: Path, monkeypatch):
         assert summary["attention_required"] == 1
     finally:
         service.close()
+
+
+def test_existing_unlinked_kobo_filename_blocks_even_with_override(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    target = service._kobo_backup_target_dir("alice")
+    existing = target / "Author - Book One.epub"
+    _write_epub(existing, b"keep-existing")
+    initial = existing.read_bytes()
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service,
+        "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not redownload candidate")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert summary["reconcile_skipped"] == 1
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == existing
+        assert existing.read_bytes() == initial
+    finally:
+        service.close()
+
+
+def test_existing_two_candidate_paths_block_as_conflict(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    target = service._kobo_backup_target_dir("alice")
+    _write_epub(target / "Author - Book One.epub")
+    _write_epub(target / "Author - Book One [book1].epub")
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service,
+        "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not redownload candidates")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert summary["reconcile_conflicts"] == 1
+        assert row["status"] == "reconcile_conflict"
+        assert row["local_path"] is None
+    finally:
+        service.close()
+
+
+def test_changed_revision_preserves_linked_nonstandard_filename(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    artifact = tmp_path / "EBooks" / "alice" / "kobo" / "renamed-by-user.epub"
+    _write_epub(artifact, b"existing-linked-edition")
+    original = artifact.read_bytes()
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    service.storage.backup_put({
+        "provider_id": "kobo",
+        "credential_id": "vault-1",
+        "account_id": "account",
+        "identity_id": "alice",
+        "item_id": "book-1",
+        "revision_id": "old-revision",
+        "title": "Book One",
+        "author": "Author",
+        "format": "EPUB",
+        "status": "complete",
+        "local_path": str(artifact),
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("revision update must not redownload")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == artifact
+        assert artifact.read_bytes() == original
+    finally:
+        service.close()
+
+
+def test_invalid_existing_destination_is_not_overwritten(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    destination = service._kobo_backup_target_dir("alice") / "Author - Book One.epub"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(b"corrupted or partial artifact")
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not overwrite invalid artifact")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert destination.read_bytes() == b"corrupted or partial artifact"
+    finally:
+        service.close()
+
+
+def test_symlinked_existing_destination_is_not_followed(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    destination = service._kobo_backup_target_dir("alice") / "Author - Book One.epub"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    external = tmp_path / "external.epub"
+    external.write_bytes(b"external must remain intact")
+    destination.symlink_to(external)
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not follow destination symlink")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["attempted"] == 0
+        assert external.read_bytes() == b"external must remain intact"
+    finally:
+        service.close()
+
+
+def test_existing_pdf_blocks_epub_manifest_acquisition(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    existing = service._kobo_backup_target_dir("alice") / "Author - Book One.pdf"
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_bytes(b"%PDF-1.7\\nexisting")
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not duplicate PDF as EPUB")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == existing
+    finally:
+        service.close()
+
+
+def test_renamed_reconcile_artifact_survives_recovery_without_redownload(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    moved = tmp_path / "EBooks" / "alice" / "renamed" / "my-book.epub"
+    _write_epub(moved)
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1", "identity_id": "alice",
+        "item_id": "book-1", "revision_id": "rev-1",
+        "title": "Book One", "author": "Author", "format": "EPUB",
+        "status": "reconcile_required", "local_path": str(moved),
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("renamed artifact must not redownload")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == moved
+        assert moved.is_file()
+    finally:
+        service.close()
+
+
+def test_absent_conflict_candidate_does_not_implicitly_clear_quarantine(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1", "identity_id": "alice",
+        "item_id": "book-1", "revision_id": "rev-1",
+        "title": "Book One", "author": "Author", "format": "EPUB",
+        "status": "reconcile_conflict", "local_path": None,
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("quarantine must not be reset")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_conflict"
+    finally:
+        service.close()
+
+
+def test_dangling_symlink_after_interruption_is_quarantined_without_stat(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    target = service._kobo_backup_target_dir("alice") / "Author - Book One.epub"
+    target.symlink_to(tmp_path / "not-present.epub")
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1", "identity_id": "alice",
+        "item_id": "book-1", "revision_id": "rev-1",
+        "title": "Book One", "author": "Author", "format": "EPUB",
+        "status": "acquiring", "local_path": None,
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dangling symlink must not redownload")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == target
+        assert row["sha256"] is None
+        assert target.is_symlink()
+    finally:
+        service.close()
+
+
+def test_complete_symlink_is_quarantined_before_artifact_inspection(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    external = tmp_path / "external.epub"
+    _write_epub(external)
+    linked = service._kobo_backup_target_dir("alice") / "renamed.epub"
+    linked.symlink_to(external)
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1", "identity_id": "alice",
+        "item_id": "book-1", "revision_id": "rev-1",
+        "title": "Book One", "author": "Author", "format": "EPUB",
+        "status": "complete", "local_path": str(linked),
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_observed_backup_artifact",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not inspect symlink target")),
+    )
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not redownload")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert linked.is_symlink()
+    finally:
+        service.close()
+
+
+def test_explicit_catalog_kobo_id_blocks_renamed_unlinked_file(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    renamed = tmp_path / "EBooks" / "alice" / "imports" / "unrelated-filename.epub"
+    _write_epub(renamed)
+    service.storage.catalog_entry_put({
+        "catalog_entry_id": "local:alice:kobo-book-1",
+        "identity_id": "alice", "provider_id": "kobo", "item_id": "book-1",
+        "title": "Completely Different Name", "local_state": "local",
+        "media_format": "epub", "metadata": {"path": str(renamed)},
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("explicit Kobo product link must block")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == renamed
+    finally:
+        service.close()
+
+
+def test_catalog_kobo_link_of_other_identity_does_not_block(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    unrelated = tmp_path / "EBooks" / "bob" / "imports" / "book.epub"
+    _write_epub(unrelated)
+    service.storage.catalog_entry_put({
+        "catalog_entry_id": "local:bob:kobo-book-1",
+        "identity_id": "bob", "provider_id": "kobo", "item_id": "book-1",
+        "title": "Book One", "local_state": "local",
+        "media_format": "epub", "metadata": {"path": str(unrelated)},
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+
+    def acquire(_item, target_dir):
+        destination = Path(target_dir) / "new-acquisition.epub"
+        _write_epub(destination)
+        return SimpleNamespace(path=destination, account_id="account", metadata={"acquisition_mode": "http"})
+
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["attempted"] == 1
+        assert summary["downloaded"] == 1
+        assert unrelated.is_file()
+    finally:
+        service.close()
+
+
+def test_title_match_without_kobo_product_id_does_not_claim_same_book(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    unrelated = tmp_path / "EBooks" / "alice" / "local" / "named-differently.epub"
+    _write_epub(unrelated)
+    service.storage.catalog_entry_put({
+        "catalog_entry_id": "local:alice:title-only",
+        "identity_id": "alice", "provider_id": "local", "item_id": "unknown",
+        "title": "Book One", "local_state": "local",
+        "media_format": "epub", "metadata": {"path": str(unrelated)},
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+
+    def acquire(_item, target_dir):
+        destination = Path(target_dir) / "new-acquisition.epub"
+        _write_epub(destination)
+        return SimpleNamespace(path=destination, account_id="account", metadata={"acquisition_mode": "http"})
+
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["attempted"] == 1
+        assert summary["downloaded"] == 1
+    finally:
+        service.close()
+
+
+def test_direct_kobo_acquisition_rejects_existing_destination(tmp_path: Path, monkeypatch):
+    from cifereca.providers import ProviderConfigurationError
+
+    service = _service(tmp_path)
+    item = service._sessions[service._session_key("kobo", "vault-1")].normalize_item(_manifest_row())
+    existing = service._kobo_backup_target_dir("alice") / "Author - Book One.epub"
+    _write_epub(existing)
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("direct path must not redownload")),
+    )
+    try:
+        try:
+            service.acquire_direct_item(item)
+        except ProviderConfigurationError as exc:
+            assert "rapprochement" in str(exc)
+        else:
+            raise AssertionError("direct acquisition should refuse existing Kobo file")
+        assert existing.is_file()
+    finally:
+        service.close()
+
+
+def test_direct_kobo_acquisition_uses_shared_lock(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    item = service._sessions[service._session_key("kobo", "vault-1")].normalize_item(_manifest_row())
+    lock_events = []
+
+    class ProbeLock:
+        def __init__(self, path):
+            lock_events.append(("created", Path(path)))
+
+        def __enter__(self):
+            lock_events.append(("entered", None))
+            return self
+
+        def __exit__(self, *_args):
+            lock_events.append(("exited", None))
+
+    def acquire(_item, target):
+        assert lock_events[-1][0] == "entered"
+        artifact = Path(target) / "new.epub"
+        _write_epub(artifact)
+        return SimpleNamespace(path=artifact, account_id="account", metadata={})
+
+    monkeypatch.setattr("cifereca.services.InterProcessLock", ProbeLock)
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+    try:
+        service.acquire_direct_item(item)
+        assert [event for event, _ in lock_events] == ["created", "entered", "exited"]
+    finally:
+        service.close()
+
+
+def test_direct_kobo_download_rejects_renamed_catalog_product_link(tmp_path: Path, monkeypatch):
+    from cifereca.providers import ProviderConfigurationError
+
+    service = _service(tmp_path)
+    item = service._sessions[service._session_key("kobo", "vault-1")].normalize_item(_manifest_row())
+    renamed = tmp_path / "EBooks" / "alice" / "renamed" / "old-title.epub"
+    _write_epub(renamed)
+    service.storage.catalog_entry_put({
+        "catalog_entry_id": "kobo:alice:book-1",
+        "provider_id": "kobo", "identity_id": "alice",
+        "item_id": "book-1", "title": "Other title",
+        "local_state": "local", "metadata": {"path": str(renamed)},
+    })
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not download")),
+    )
+    try:
+        try:
+            service.acquire_direct_item(item)
+        except ProviderConfigurationError as exc:
+            assert "rapprochement" in str(exc)
+        else:
+            raise AssertionError("renamed Kobo-local catalog entry was ignored")
+        assert renamed.is_file()
+    finally:
+        service.close()
