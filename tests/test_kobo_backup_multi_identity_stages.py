@@ -141,7 +141,7 @@ def test_malformed_kobo_manifest_does_not_prune_historical_rows(tmp_path, monkey
         lambda *_a, **_kw: pytest.fail("existing Kobo file must not redownload"),
     )
     try:
-        result = service.sync_kobo_backup(credential_id="vault-1")
+        result = service.sync_kobo_backup_account("vault-1")
         assert result["errors"] == 0
         assert result["skipped"] == 1
         assert result["malformed_manifest_items"] == 1
