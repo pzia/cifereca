@@ -59,3 +59,4 @@ jobs:
             environnements/chatgpt-work/evidence/xvfb.log
             environnements/chatgpt-work/evidence/dbus.log
           if-no-files-found: warn
+          retention-days: 2
