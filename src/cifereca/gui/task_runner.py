@@ -46,7 +46,10 @@ class TaskRunner:
         # enqueue a worker after the window owner has been torn down.
         if getattr(self.window, "_closed", False):
             return
-        if control is not None:
+        # A navigation/rebuild may have detached the caller's widget even
+        # though the window is still open. Do not touch orphan GTK controls;
+        # the work itself remains valid and callbacks are handled separately.
+        if control is not None and control.get_root() is not None:
             control.set_sensitive(False)
         task_id = next(self._task_ids)
         with self._lock:
