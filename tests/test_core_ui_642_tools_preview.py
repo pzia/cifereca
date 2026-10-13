@@ -56,3 +56,10 @@ def test_plan_runs_in_task_runner_not_in_gtk_callback():
     assert "present_preview" in source
     assert "lambda: execute_maintenance_tool(" in source
     assert "if self._closed or _button.get_root() is None:" in source
+
+
+def test_maintenance_preview_and_execution_reject_identity_switch():
+    source = _method("_refresh_tools_page")
+    assert source.count("L’identité active a changé.") == 2
+    assert source.count("context.identity_id") >= 2
+    assert source.index("current_identity = self.service.current_identity") < source.index("dialog = Adw.MessageDialog.new")
