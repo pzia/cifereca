@@ -441,7 +441,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 summary["skipped"] += 1
                 continue
             item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
-            if _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+            if _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
                 continue
 
             if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
@@ -659,7 +659,7 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
-def _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger):
+def _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
@@ -684,6 +684,34 @@ def _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available
             self.storage.backup_put({**current, **observed})
             summary["unchanged"] += 1
             return True
+
+    # A bypass of the global unlinked-books guard must never imply permission
+    # to overwrite or re-download a plausible, *unlinked* artifact for this item.
+    # Filename matches are ambiguous: quarantine for manual reconciliation
+    # rather than assigning ownership or marking an uninspected file complete.
+    # This includes legacy flat-library placements from older versions.
+    candidates = self._kobo_record_candidate_paths(base_record, session_target_dir)
+    legacy_dir = self.library_dir()
+    if legacy_dir.resolve() != session_target_dir.resolve():
+        for candidate in self._kobo_record_candidate_paths(base_record, legacy_dir):
+            if candidate not in candidates:
+                candidates.append(candidate)
+    if candidates:
+        conflict = len(candidates) > 1
+        self.storage.backup_put({
+            **base_record,
+            "status": "reconcile_conflict" if conflict else "reconcile_required",
+            "local_path": None if conflict else str(candidates[0]),
+            "error": "Fichier(s) locaux candidats : rapprochement manuel requis avant téléchargement",
+        })
+        summary["reconcile_pending"] += 1
+        if conflict:
+            summary["reconcile_conflicts"] += 1
+        summary["reconcile_skipped"] += 1
+        emit("reconcile_conflict" if conflict else "reconcile_required",
+             current=index + 1, total=total, item_id=product_id, title=title,
+             count=len(candidates))
+        return True
 
     # Vault 2.3.1 exposes archived items explicitly. Keep an already
     # acquired local file (handled above), otherwise persist a user
