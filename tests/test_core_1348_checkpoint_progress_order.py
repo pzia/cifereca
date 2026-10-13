@@ -47,13 +47,8 @@ def test_item_outcomes_observe_committed_checkpoint_not_previous_item(tmp_path, 
         checkpoint = json.loads(service.storage.metadata_get(key))
         record = service.storage.backup_get("kobo", "vault-1", event["item_id"])
         observed.append((event["event"], checkpoint, record))
-        # Checkpoint and durable item row must describe the *same* item.
-        assert checkpoint["status"] == "running"
-        assert checkpoint["last_item_digest"] is not None
-        assert checkpoint["processed"] == len(observed)
-        assert record["status"] == (
-            "complete" if event["event"] == "downloaded" else "error"
-        )
+        # Assertions are outside the progress callback: Core deliberately
+        # swallows callback exceptions so UI feedback cannot abort a batch.
 
     try:
         summary = service.sync_kobo_backup_account("vault-1", progress=progress)
@@ -64,6 +59,12 @@ def test_item_outcomes_observe_committed_checkpoint_not_previous_item(tmp_path, 
         assert [(name, cp["processed"]) for name, cp, _ in observed] == [
             ("downloaded", 1), ("item_error", 2), ("downloaded", 3),
         ]
+        for name, checkpoint, record in observed:
+            assert checkpoint["status"] == "running"
+            assert checkpoint["last_item_digest"] is not None
+            assert record["status"] == (
+                "complete" if name == "downloaded" else "error"
+            )
         assert [cp["counts"]["downloaded"] for _, cp, _ in observed] == [1, 1, 2]
         assert [cp["counts"]["errors"] for _, cp, _ in observed] == [0, 1, 1]
         assert json.loads(service.storage.metadata_get(key))["status"] == "partial"
@@ -85,16 +86,18 @@ def test_attention_result_is_emitted_after_its_checkpoint(tmp_path, monkeypatch)
     def progress(event):
         if event["event"] == "attention_required":
             checkpoint = json.loads(service.storage.metadata_get(key))
-            observed.append((checkpoint["status"], checkpoint["processed"]))
-            assert checkpoint["counts"]["attention_required"] == 1
-            assert service.storage.backup_get(
-                "kobo", "vault-1", "archived",
-            )["status"] == "attention_required"
+            record = service.storage.backup_get("kobo", "vault-1", "archived")
+            observed.append((checkpoint, record))
 
     try:
         result = service.sync_kobo_backup_account("vault-1", progress=progress)
         assert result["status"] == "attention_required"
-        assert observed == [("running", 1)]
+        assert len(observed) == 1
+        checkpoint, record = observed[0]
+        assert checkpoint["status"] == "running"
+        assert checkpoint["processed"] == 1
+        assert checkpoint["counts"]["attention_required"] == 1
+        assert record["status"] == "attention_required"
     finally:
         service.close()
 
@@ -123,7 +126,7 @@ def test_checkpoint_write_failure_cannot_advertise_completed_item(tmp_path, monk
             service.sync_kobo_backup_account("vault-1", progress=announced.append)
         assert not any(e["event"] == "downloaded" for e in announced)
         assert service.storage.backup_get("kobo", "vault-1", "good")["status"] == "complete"
-        checkpoint = json.loads(real_set.__self__.metadata_get(key))
+        checkpoint = json.loads(service.storage.metadata_get(key))
         assert checkpoint["processed"] == 0
 
         # The item's durable row is still safe to reuse after recovery.
