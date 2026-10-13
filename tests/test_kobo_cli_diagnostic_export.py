@@ -160,3 +160,38 @@ def test_export_allowlist_rejects_untrusted_statuses_and_source_metadata():
     ):
         assert word not in published
     assert json.dumps(report, sort_keys=True) == raw_before
+
+
+def test_kobo_diagnostic_recovers_checkpoint_without_sessions_after_reopen(tmp_path):
+    """Offline CLI cannot require a live Kobo session to show stored progress."""
+    service = _service(tmp_path, manifest=[])
+    key = _kobo_checkpoint_key("default", "vault-1")
+    try:
+        service.storage.metadata_set(key, json.dumps({
+            "schema_version": 1, "status": "partial",
+            "total": 522, "processed": 320, "updated_at": 1_800_000_000,
+            "counts": {"attempted": 320, "errors": 314, "remaining": 202},
+            "failure_streak": 2,
+        }))
+    finally:
+        service.close()
+
+    reopened = _service(tmp_path, manifest=[])
+    try:
+        reopened._sessions.clear()
+        reopened.accounts.clear()
+        assert reopened.storage.provider_connections()
+        report = reopened.kobo_backup_diagnostic()
+        assert report["sources"][0]["status"] == "partial"
+        shared = safe_kobo_backup_report(report)
+        assert len(shared["sources"]) == 1
+        assert shared["sources"][0]["position"] == 320
+        assert shared["sources"][0]["total"] == 522
+        assert shared["sources"][0]["remaining"] == 202
+        assert shared["sources"][0]["failure_streak"] == 2
+        assert "vault-1" not in json.dumps(shared)
+        assert "default" not in json.dumps(shared)
+        # Checkpoint reads are passive and never reconstruct provider sessions.
+        assert reopened._sessions == {}
+    finally:
+        reopened.close()
