@@ -56,6 +56,9 @@ class KoboSession(ProviderSession):
         self.vault_release = ""
         self.acquisition_access = "unknown"
         self.last_library_rejections: list[dict[str, str]] = []
+        # Sanitized integrity signal for Core backup/preview. A personal
+        # manifest with discarded upstream rows must never authorize pruning.
+        self.backup_manifest_rejection_count = 0
         profile = str(self.options.get("display_profile") or config.get("kobo_backup.display_profile", "Android") or "Android").strip()
         self.display_profile = profile if profile in {"Android", "Desktop"} else "Android"
         self.supports_acquisition_display_profile = False
@@ -196,7 +199,15 @@ class KoboSession(ProviderSession):
         return rows
 
     def backup_manifest(self) -> list[dict[str, Any]]:
+        self.backup_manifest_rejection_count = 0
         items = self.client.library_manifest()
+        # Transfer only a bounded *count* across the public provider boundary:
+        # no upstream raw items, message strings, URLs or credentials.
+        rejected = getattr(self.client, "last_manifest_rejections", ())
+        if isinstance(rejected, (list, tuple)):
+            self.backup_manifest_rejection_count = min(
+                1_000_000, sum(isinstance(item, dict) for item in rejected),
+            )
         _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
         _sample_missing = next((sorted(x.keys()) for x in items if isinstance(x, dict) and not self.cover_url(x)), None)
         _TRACE_LOG.debug("TRACE kobo covers source=backup credential=%s items=%s with_cover=%s missing=%s sample_missing_keys=%s", self.credential_id, len(items), _cover_count, len(items)-_cover_count, _sample_missing)

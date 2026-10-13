@@ -652,6 +652,83 @@ def test_kobo_library_explicit_bibliographic_value_wins_and_no_cross_product_mer
         client.close()
 
 
+def test_manifest_missing_items_is_not_an_authoritative_empty_response():
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        assert request.url.path == "/api/v2/library/manifest"
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json={"next_cursor": None})
+        if calls == 2:
+            return httpx.Response(200, json={"items": None, "next_cursor": None})
+        return httpx.Response(200, json={
+            "items": [{"product_id": "owned", "title": "Owned"}],
+            "next_cursor": None,
+        })
+
+    client = KoboVaultClient(
+        "https://vault.example", "secret", transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert client.library_manifest() == []
+        assert client.last_manifest_rejections == [
+            {"type": "invalid_shape", "reason": "items_not_list"},
+        ]
+        assert client.library_manifest() == []
+        assert client.last_manifest_rejections[0]["reason"] == "items_not_list"
+        assert client.library_manifest()[0]["product_id"] == "owned"
+        assert client.last_manifest_rejections == []
+    finally:
+        client.close()
+
+
+def test_backup_manifest_reports_only_rejected_row_count_to_core():
+    class FakeVault:
+        base_url = "https://vault.example"
+        last_manifest_rejections = []
+
+        def __init__(self):
+            self.calls = 0
+
+        def library_manifest(self):
+            self.calls += 1
+            if self.calls == 1:
+                self.last_manifest_rejections = [
+                    {"type": "invalid_shape", "reason": "item_not_object",
+                     "private": "Bearer SECRET"},
+                ]
+            else:
+                self.last_manifest_rejections = []
+            return [{"product_id": "owned", "title": "Owned"}]
+
+        def close(self):
+            return None
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR, credential_id="vault-1", label="Kobo",
+        credentials={"api_token": "dummy"},
+        options={"base_url": "https://vault.example"},
+        config={}, storage={}, diagnostics=Diagnostics(),
+        runtime_capabilities=SimpleNamespace(acquisition=lambda _: None),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    session.catalog = KoboCatalogService(
+        session.client, credential_id=session.credential_id,
+        provider_id=session.provider_id,
+    )
+    try:
+        assert session.backup_manifest()[0]["product_id"] == "owned"
+        assert session.backup_manifest_rejection_count == 1
+        assert session.backup_manifest()[0]["product_id"] == "owned"
+        assert session.backup_manifest_rejection_count == 0
+        assert not hasattr(session, "backup_manifest_rejection_messages")
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize(
     "owned, downloadable, default_collection, expected_owned, expected_downloadable",
     [

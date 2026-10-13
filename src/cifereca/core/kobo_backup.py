@@ -242,6 +242,12 @@ def _kobo_preview_paths(self, identity_id: str) -> tuple[Path, Path]:
     return library_root, target_dir
 
 
+def _kobo_manifest_rejection_count(session: Any) -> int:
+    """Sanitized count of provider-discarded source rows; no plugin imports."""
+    raw = getattr(session, "backup_manifest_rejection_count", 0)
+    return raw if type(raw) is int and 0 <= raw <= 1_000_000 else 0
+
+
 def kobo_backup_preview(
     self, credential_id: str, *,
     refresh_manifest: bool = False, verify_local_files: bool = False,
@@ -277,7 +283,9 @@ def kobo_backup_preview(
         manifest = session.backup_manifest()
         if not isinstance(manifest, list):
             raise ProviderConfigurationError("Manifeste Kobo non conforme")
+        upstream_rejected = _kobo_manifest_rejection_count(session)
     else:
+        upstream_rejected = 0
         # A local projection is never an authoritative rights manifest.
         manifest = [
             {"product_id": row["item_id"], "revision_id": row.get("revision_id"),
@@ -299,7 +307,7 @@ def kobo_backup_preview(
         "already_local_linked": 0, "already_local_verified": 0,
         "needs_reconciliation": 0, "attention_required": 0,
         "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
-        "potentially_missing": 0, "invalid_manifest_items": 0,
+        "potentially_missing": 0, "invalid_manifest_items": upstream_rejected,
     }
     examples: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -406,6 +414,7 @@ def kobo_backup_preview(
         "manifest_refreshed": bool(refresh_manifest),
         "manifest_items": len(manifest),
         "known_item_count": len(seen),
+        "provider_rejected_manifest_items": upstream_rejected,
         "checkpoint_status": str((checkpoint or {}).get("status") or "unknown"),
         "unlinked_local_books": unlinked_local_books,
         "counts": counts,
@@ -515,6 +524,7 @@ def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
         "attention_required", "errors", "skipped", "remaining",
         "reconcile_pending", "reconcile_skipped", "items_blocked_by_scope",
         "malformed_manifest_items", "duplicate_manifest_items",
+        "provider_rejected_manifest_items",
     }
 
     def count(value: Any) -> int:
@@ -616,7 +626,8 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
                        "pending", "attention_required", "errors", "skipped",
                        "remaining", "reconcile_pending", "reconcile_skipped",
                        "items_blocked_by_scope", "malformed_manifest_items",
-                       "duplicate_manifest_items"}
+                       "duplicate_manifest_items",
+                       "provider_rejected_manifest_items"}
             and type(value) is int and 0 <= value <= 1000000
         }
         raw_streak = row.get("failure_streak")
@@ -800,7 +811,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "scope": "account" if credential_id is not None else "all",
         "sessions": len(sessions), "manifests_fetched": 0, "manifest_items": 0,
         "scanned": 0, "malformed_manifest_items": 0, "duplicate_manifest_items": 0,
-        "attempted": 0, "pending": 0,
+        "provider_rejected_manifest_items": 0, "attempted": 0, "pending": 0,
         "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "items_blocked_by_scope": 0, "attempts_saved": 0,
@@ -876,6 +887,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "attention_required", "errors", "remaining", "reconcile_pending",
         "reconcile_skipped", "items_blocked_by_scope", "blocked_non_retryable",
         "malformed_manifest_items", "duplicate_manifest_items",
+        "provider_rejected_manifest_items",
     )
     summary["sources"] = []
     for session in sessions:
@@ -930,6 +942,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
         session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
         target_dirs[session_identity.identity_id] = str(session_target_dir)
+        # Persist "manifest_fetch" before contacting the provider: if the
+        # process dies during a slow manifest request, the previous fresh
+        # "complete" checkpoint must not hide an interrupted synchronization.
+        # A resumed run always revalidates the complete manifest and files.
+        checkpoint("manifest_fetch")
         try:
             emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
             manifest = session.backup_manifest()
@@ -937,6 +954,13 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             checkpoint("running")
             summary["manifests_fetched"] += 1
             summary["manifest_items"] += len(manifest)
+            upstream_rejected = _kobo_manifest_rejection_count(session)
+            if upstream_rejected:
+                # A valid *subset* must never be considered an authoritative
+                # complete manifest: no removal of historical Kobo rights.
+                malformed = True
+                summary["provider_rejected_manifest_items"] += upstream_rejected
+                summary["malformed_manifest_items"] += upstream_rejected
             manifest_product_counts = Counter(
                 str(raw.get("product_id") or raw.get("id") or "").strip()
                 for raw in manifest if isinstance(raw, dict)
@@ -1249,7 +1273,7 @@ _KOBO_DIAGNOSTIC_METRICS = frozenset({
     "downloaded", "unchanged", "completed", "pending", "attention_required",
     "errors", "remaining", "skipped", "metadata_refreshed",
     "malformed_manifest_items", "duplicate_manifest_items",
-    "reconcile_pending", "reconcile_conflicts", "reconcile_skipped",
+    "provider_rejected_manifest_items", "reconcile_pending", "reconcile_conflicts", "reconcile_skipped",
     "items_blocked_by_scope", "blocked_non_retryable", "attempts_saved",
     "recovered_interrupted", "recovered_unparsed", "legacy_pruned",
     "legacy_local_preserved", "legacy_entitlements_inactivated",
