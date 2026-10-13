@@ -641,6 +641,19 @@ class DiagnosticsPagePlugin:
         )
         ai_support_report.set_active(False)
         outer.append(ai_support_report)
+        manual_log_path = None  # Only from explicit Gtk.FileChooserNative acceptance.
+        manual_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        manual_choose = Gtk.Button(label="Choisir un journal local…")
+        manual_clear = Gtk.Button(label="Retirer le journal")
+        manual_clear.set_sensitive(False)
+        manual_state = Gtk.Label(
+            label="Aucun journal sélectionné · aucune lecture automatique", xalign=0,
+        )
+        manual_state.set_wrap(True)
+        manual_row.append(manual_choose)
+        manual_row.append(manual_clear)
+        outer.append(manual_row)
+        outer.append(manual_state)
         ai_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         ai_prepare = Gtk.Button(label="Prévisualiser pour l’IA")
         ai_send = Gtk.Button(label="Autoriser et analyser")
@@ -1158,6 +1171,43 @@ class DiagnosticsPagePlugin:
             ai_report.get_buffer().set_text("")
             ai_status.set_text("Aperçu à actualiser avant toute nouvelle analyse")
 
+        def choose_manual_log(_button):
+            # A file portal grants access only to the explicitly chosen file.
+            # Never reveal its name or local path in preview, logs or exports.
+            chooser = Gtk.FileChooserNative.new(
+                "Choisir un journal (max. 64 Kio)", None,
+                Gtk.FileChooserAction.OPEN, "Choisir", "Annuler",
+            )
+            chooser.set_modal(True)
+
+            def selected(dialog, response):
+                nonlocal manual_log_path
+                try:
+                    if response != Gtk.ResponseType.ACCEPT:
+                        return
+                    choice = dialog.get_file()
+                    chosen = choice.get_path() if choice is not None else None
+                    invalidate_ai()
+                    manual_log_path = chosen if type(chosen) is str and chosen else None
+                    manual_clear.set_sensitive(manual_log_path is not None)
+                    manual_state.set_text(
+                        "Un journal sélectionné · lecture bornée à la prévisualisation"
+                        if manual_log_path else
+                        "Sélection non accessible localement · aucun journal chargé"
+                    )
+                finally:
+                    dialog.destroy()
+
+            chooser.connect("response", selected)
+            chooser.show()
+
+        def clear_manual_log(_button):
+            nonlocal manual_log_path
+            invalidate_ai()
+            manual_log_path = None
+            manual_clear.set_sensitive(False)
+            manual_state.set_text("Aucun journal sélectionné · aucune lecture automatique")
+
         def prepare_ai(_button):
             nonlocal ai_generation, ai_preview, ai_result, ai_json
             if self.llm is None:
@@ -1171,6 +1221,7 @@ class DiagnosticsPagePlugin:
                 selected_severity = SEVERITIES[int(severity_selector.get_selected())]
                 selected_snapshot = ai_snapshot.get_active()
                 selected_support_report = ai_support_report.get_active()
+                selected_manual_log = manual_log_path
             except (ValueError, TypeError, IndexError) as exc:
                 ai_status.set_text("Destination IA indisponible : " + type(exc).__name__)
                 return
@@ -1188,12 +1239,20 @@ class DiagnosticsPagePlugin:
 
             def worker(_control):
                 from diagnostics_explorer import explorer_since
+                from diagnostics_ai import read_user_selected_log
+                # Read only after the explicit selection AND preview click,
+                # on the background task. File contents are not kept in UI.
+                manual = (
+                    read_user_selected_log(selected_manual_log)
+                    if selected_manual_log is not None else None
+                )
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
                     module=selected_module, severity=selected_severity,
                     since=explorer_since(selected_period),
                     include_snapshot=selected_snapshot,
                     include_support_report=selected_support_report,
+                    manual_log=manual,
                 )
 
             try:
@@ -1253,13 +1312,15 @@ class DiagnosticsPagePlugin:
                 f"hôte {dest['host']} · {preview['count']} événements, "
                 f"{preview['structured_count']} diagnostics structurés, "
                 f"{preview['support_fields']} rubriques support · "
-                f"{preview['bytes']} octets UTF-8. "
+                f"{preview['bytes']} octets UTF-8 · "
+                f"{preview['manual_lines']} lignes de journal sélectionné (signaux seulement). "
                 f"Périmètre demandé : {scope['source']} · "
                 f"{scope['module'] or 'tous modules'} · "
                 f"{scope['severity'] or 'tous niveaux'} · "
                 f"depuis {scope['since'] or 'tout historique'} · "
                 f"diagnostics structurés : {'oui' if scope['include_snapshot'] else 'non'} · "
-                f"rapport support : {'oui' if scope['include_support_report'] else 'non'}. "
+                f"rapport support : {'oui' if scope['include_support_report'] else 'non'} · "
+                f"journal manuel : {'oui' if scope.get('user_log_selected') else 'non'}. "
                 + coverage_warning
                 + "Le modèle produit des hypothèses, jamais une preuve."
             )
@@ -1339,7 +1400,8 @@ class DiagnosticsPagePlugin:
                 + f"Destination annoncée : {result['provider']} / {result['model']}\n"
                 + f"Provenance : {result['evidence_count']} événements Core et "
                   f"{result['structured_count']} diagnostics structurés et "
-                  f"{result['support_fields']} rubriques support expurgées\n"
+                  f"{result['support_fields']} rubriques support expurgées et "
+                  f"{result['manual_lines']} lignes de journal sélectionné (signaux)\n"
                 + f"Limites : {result['limitations']}\n\n"
                 + "## Analyse du modèle (inférée)\n"
                 + result["text"]
@@ -1382,6 +1444,8 @@ class DiagnosticsPagePlugin:
                 display.get_clipboard().set(ai_json)
                 host.toast("Rapport IA JSON expurgé copié (inférences non vérifiées)")
 
+        manual_choose.connect("clicked", choose_manual_log)
+        manual_clear.connect("clicked", clear_manual_log)
         ai_prepare.connect("clicked", prepare_ai)
         ai_send.connect("clicked", send_ai)
         ai_cancel.connect("clicked", cancel_ai)
