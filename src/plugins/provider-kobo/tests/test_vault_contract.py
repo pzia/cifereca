@@ -650,3 +650,75 @@ def test_kobo_library_explicit_bibliographic_value_wins_and_no_cross_product_mer
         assert rows[1]["owned"] is False
     finally:
         client.close()
+
+
+@pytest.mark.parametrize(
+    "owned, downloadable, default_collection, expected_owned, expected_downloadable",
+    [
+        (True, True, "catalog", True, True),
+        (False, False, "library", False, False),
+        (None, None, "library", True, None),
+        (None, None, "catalog", False, None),
+        ("false", "false", "catalog", False, None),
+        ("true", "true", "catalog", False, None),
+        ("false", "true", "library", False, None),
+        ("true", 1, "library", False, None),
+        (1, 1, "catalog", False, None),
+        (0, 0, "library", False, None),
+        ({}, [], "library", False, None),
+    ],
+)
+def test_kobo_vault_nonboolean_flags_never_escalate_ownership_or_download(
+    owned, downloadable, default_collection, expected_owned, expected_downloadable,
+):
+    """Unexpected Vault JSON shapes fail closed instead of bool("false")."""
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="https://vault.example"), credential_id="vault",
+    )
+    raw = {
+        "product_id": "book-1", "title": "Purchased book?",
+        "owned": owned, "downloadable": downloadable,
+    }
+    result = catalog.normalize_item(raw, default_collection=default_collection)
+    assert result.owned is expected_owned
+    assert result.downloadable is expected_downloadable
+    if default_collection == "catalog" and owned not in (True,):
+        assert result.source_collection == "catalog"
+
+
+def test_kobo_personal_manifest_malformed_owned_flag_cannot_create_sqlite_right(
+    tmp_path,
+):
+    """A personal-library row with explicit 'false' must not grant ownership."""
+    from cifereca.core.kobo_manifest_rights import mirror_kobo_manifest_rights
+    from tests.test_core_1337_kobo_personal_manifest_rights import _service
+
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="https://vault.example"), credential_id="vault",
+    )
+    service = _service(tmp_path)
+    try:
+        bad = catalog.normalize_item({
+            "product_id": "not-purchased", "title": "Not purchased",
+            "owned": "false", "downloadable": "false",
+        }, default_collection="library")
+        assert bad.owned is False
+        assert bad.downloadable is None
+        assert mirror_kobo_manifest_rights(
+            service, [bad], identity_id="alice",
+            credential_id="vault", account_id="account-1",
+        ) == 0
+        assert service.storage.entitlements(provider_id="kobo") == []
+        assert service.library_entries(identity_id="alice") == []
+
+        valid = catalog.normalize_item({
+            "product_id": "purchased", "title": "Purchased",
+            "owned": True, "downloadable": True,
+        }, default_collection="library")
+        assert mirror_kobo_manifest_rights(
+            service, [valid], identity_id="alice",
+            credential_id="vault", account_id="account-1",
+        ) == 1
+        assert len(service.storage.entitlements(provider_id="kobo")) == 1
+    finally:
+        service.close()
