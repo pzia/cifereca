@@ -858,17 +858,23 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
     existing reconciliation safeguards still prevent duplicate redownloads.
     """
+    cancellation_latched = False
+
     def cancellation_requested() -> bool:
+        nonlocal cancellation_latched
+        if cancellation_latched:
+            return True
         if cancelled is None:
             return False
         try:
-            return bool(cancelled())
+            cancellation_latched = bool(cancelled())
         except Exception as exc:
             # A broken cancellation hook must not launch another acquisition.
             logger.warning(
                 "TRACE kobo cancellation hook failed kind=%s", type(exc).__name__,
             )
-            return True
+            cancellation_latched = True
+        return cancellation_latched
 
     def emit(event: str, **detail: Any) -> None:
         if progress is None:
@@ -879,9 +885,15 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             # Progress reporting must never break the backup itself.
             pass
 
-    # Refresh filesystem membership before deciding whether acquisition is safe.
-    self.catalog_scan()
-    indexed_kobo_paths = _indexed_kobo_catalog_paths(self)
+    # A cancelled explicit resume is not a scan request. Avoid the expensive
+    # local catalog/ADEPT probes entirely, and preserve existing artifacts.
+    # The normal per-account loop still commits a durable cancelled checkpoint.
+    cancelled_before_scan = cancellation_requested()
+    if not cancelled_before_scan:
+        self.catalog_scan()
+        indexed_kobo_paths = _indexed_kobo_catalog_paths(self)
+    else:
+        indexed_kobo_paths = {}
     sessions = [
         session for session in self._sessions.values()
         if session.connected and session.provider_id == "kobo" and session.capabilities.backup
@@ -896,15 +908,19 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         str(getattr(session, "api_version", "") or "2.x") for session in sessions
     })
     vault_contract = ",".join(vault_versions) if vault_versions else "2.x"
-    emit("adept_probe", message="Vérification de Kobo-Adept")
-    adept_state = self.kobo_adept_state(force=True)
-    emit(
-        "adept_ready",
-        compatible=bool(adept_state.get("compatible")),
-        operational=bool(adept_state.get("operational")),
-        software_version=adept_state.get("software_version"),
-        contract_version=adept_state.get("contract_version"),
-    )
+    if cancelled_before_scan:
+        adept_state = {}
+    else:
+        emit("adept_probe", message="Vérification de Kobo-Adept")
+        adept_state = self.kobo_adept_state(force=True)
+    if not cancelled_before_scan:
+        emit(
+            "adept_ready",
+            compatible=bool(adept_state.get("compatible")),
+            operational=bool(adept_state.get("operational")),
+            software_version=adept_state.get("software_version"),
+            contract_version=adept_state.get("contract_version"),
+        )
     adapter_available = bool(adept_state.get("available") and adept_state.get("compatible") and adept_state.get("operational"))
     summary: dict[str, Any] = {
         "scope": "account" if credential_id is not None else "all",
@@ -954,7 +970,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # one plausible artifact is quarantined for verification; several
     # plausible artifacts become an explicit conflict. This prevents the
     # historical ``Title [deadbeef].epub`` duplication loop.
-    _recover_local_remnants(self, summary, target_dirs, emit, credential_id=credential_id)
+    if not cancelled_before_scan:
+        _recover_local_remnants(self, summary, target_dirs, emit, credential_id=credential_id)
     error_counts: Counter[tuple[str, str, int | None, str]] = Counter()
     error_examples: list[dict[str, Any]] = []
 
@@ -1107,6 +1124,14 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 break
 
             item_committed = False
+            # "downloaded", "item_error" and reconciliation are durable item
+            # results, unlike the preliminary "scan" notification. Keep them
+            # private until the per-item SQLite checkpoint has been committed.
+            item_events: list[tuple[str, dict[str, Any]]] = []
+
+            def defer_item_event(event: str, **detail: Any) -> None:
+                item_events.append((event, detail))
+
             try:
                 if not isinstance(raw, dict):
                     malformed = True
@@ -1160,13 +1185,13 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 if _skip_manifest_item(
                     self, item, raw, session_target_dir, indexed_kobo_paths,
                     unlinked_local_count, adapter_available, adept_state,
-                    index, len(manifest), summary, emit, logger,
+                    index, len(manifest), summary, defer_item_event, logger,
                     retry_scope_blocked=retry_scope_blocked,
                 ):
                     item_committed = True
                     continue
 
-                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
+                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger):
                     abort_all = True
                     item_committed = True
                     break
@@ -1178,6 +1203,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     processed = index + 1
                     committed_item_id = str(raw.get("product_id") or raw.get("id") or "") if isinstance(raw, dict) else None
                 checkpoint("running" if item_committed else "interrupted")
+                # Checkpoint failure must propagate without announcing an
+                # item as complete, blocked or failed. Incomplete items keep
+                # an "interrupted" checkpoint but have no committed outcome.
+                if item_committed:
+                    for event, detail in item_events:
+                        emit(event, **detail)
         delta = source_delta()
         if summary["cancelled"]:
             source_status = "cancelled"
@@ -1197,6 +1228,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             "credential_id": session.credential_id,
             "status": source_status, "manifest_items": source_total, **delta,
         })
+        # The source terminal event follows the durable terminal checkpoint.
+        # Unlike a worker/task end, it reports the acquisition outcome for
+        # this credential even if another credential remains in the batch.
+        emit("source_done", credential_id=session.credential_id,
+             status=source_status, manifest_items=source_total, **delta)
         if not malformed and not abort_all and processed == source_total and source_status in {"complete", "attention_required"}:
             prunable_credentials.add(session.credential_id)
         if abort_all:

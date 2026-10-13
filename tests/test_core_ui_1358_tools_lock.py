@@ -175,3 +175,49 @@ def test_window_close_terminates_maintenance_control():
     state["closed"] = True
     with pytest.raises(guard.MaintenanceCancelledError):
         ctl.check_cancelled()
+
+
+def test_preview_cancellation_checked_before_plugin_plan(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    for destructive in (False, True):
+        tool = Tool()
+        control = guard.MaintenanceCancelControl()
+        control.cancel()
+        with pytest.raises(guard.MaintenanceCancelledError):
+            guard.preview_maintenance_tool(
+                tool, object(), destructive=destructive, control=control,
+            )
+        assert tool.plan_calls == 0
+
+
+def test_preview_cancel_during_scan_suppresses_result_even_without_sync(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    for destructive in (False, True):
+        tool = Tool()
+        control = guard.MaintenanceCancelControl()
+        planned = tool.plan
+
+        def cancel_mid_scan(context):
+            outcome = planned(context)
+            control.cancel()
+            return outcome
+
+        tool.plan = cancel_mid_scan
+        with pytest.raises(guard.MaintenanceCancelledError):
+            guard.preview_maintenance_tool(
+                tool, object(), destructive=destructive, control=control,
+            )
+        assert tool.plan_calls == 1
+
+
+def test_preview_non_cancelled_still_returns_original_plan(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    tool = Tool()
+    ctl = guard.MaintenanceCancelControl()
+    for destructive in (False, True):
+        plan = guard.preview_maintenance_tool(
+            tool, object(), destructive=destructive, control=ctl,
+        )
+        assert plan == tool.preview
+        if destructive:
+            assert plan is not tool.preview

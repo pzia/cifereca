@@ -442,3 +442,44 @@ def test_delegation_scope_denied_after_expired_url_is_not_retried(tmp_path: Path
         assert all(row["error_code"] == "missing_delegation_scope" for row in rows)
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("status,scope_code", [
+    (403, "missing_delegation_scope"),
+    (401, "unauthorized"),
+])
+def test_provider_permission_denial_cannot_override_nonretryable_ledger(
+    tmp_path: Path, monkeypatch, status, scope_code,
+):
+    """The plugin's retryable hint cannot restart a denied HTTP permission."""
+    import importlib.util
+
+    plugin_path = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
+    spec = importlib.util.spec_from_file_location(
+        "test_vault_nonretryable_permission", plugin_path,
+    )
+    assert spec is not None and spec.loader is not None
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+
+    service, _session = _service(tmp_path)
+    rejected = plugin.KoboVaultError(
+        "provider denied authorization", code=scope_code, status_code=status,
+    )
+    rejected.retryable = True  # hostile/inconsistent upstream retry hint
+
+    def deny(_request):
+        raise rejected
+
+    monkeypatch.setattr(service, "execute_acquisition_request", deny)
+    try:
+        with pytest.raises(plugin.KoboVaultError) as caught:
+            service.acquire_direct_item(_item())
+        assert caught.value.status_code == status
+        rows = service.storage.acquisitions(provider_id="kobo")
+        assert len(rows) == 1
+        assert rows[0]["status"] == "attention_required"
+        assert rows[0]["error_code"] == scope_code
+        assert rows[0]["attempt_count"] == 1
+    finally:
+        service.close()
