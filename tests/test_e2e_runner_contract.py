@@ -23,6 +23,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "search-filter-p0", "book-detail-1366",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
+        "maintenance-tools-1366", "maintenance-tools-1600",
         "startup", "core-navigation",
     ]
 
@@ -48,6 +49,28 @@ def test_1127_real_gtk_llm_consent_cancel_and_lifetime_1366_1600():
         "report['status'] = 'PASS'",
     ):
         assert evidence in probe
+
+
+def test_1358_maintenance_safety_uses_real_GTK_XTEST_without_destructive_IO():
+    runner = _module()
+    source = (ROOT / "e2e/maintenance_tools_probe.py").read_text(encoding="utf-8")
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"maintenance-tools-{width}"]
+        assert scenario["plugin"] == "core"
+        assert scenario["fixture"] == "startup"
+        assert scenario["runner"] == "gtk-maintenance"
+        assert scenario["width"] == width
+    for marker in (
+        'w.navigate("tools")',
+        'device[0].click_widget(button)',
+        "busy_sync_refuses_preview_before_scan_or_delete",
+        "real_multiline_confirmation_after_async_scan",
+        "physical_cancel_never_runs_destructive_tool",
+        "stale_plan_rejected_under_lock_without_delete",
+        "only_explicit_confirmed_safe_simulation_executes",
+        'report["status"] = "PASS"',
+    ):
+        assert marker in source
 
 
 def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
