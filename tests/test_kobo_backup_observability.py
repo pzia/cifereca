@@ -365,6 +365,10 @@ def test_existing_reconciliation_skip_does_not_claim_batch_completed(tmp_path: P
         manifest=[{"product_id": "book-1", "revision_id": "r1", "title": "Book",
                    "format": "EPUB", "downloadable": True}],
     )
+    # Use a real existing candidate: on a branch independent from #1349,
+    # the legacy recovery path clears a conflict only when no file remains.
+    candidate = service._kobo_backup_target_dir("default") / "Book.epub"
+    _write_epub(candidate)
     service.storage.backup_put({
         "provider_id": "kobo", "credential_id": "vault-1", "identity_id": "default",
         "item_id": "book-1", "revision_id": "r1", "title": "Book",
