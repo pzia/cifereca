@@ -3453,7 +3453,7 @@ class MainWindow(Adw.ApplicationWindow):
             if not page_lifetime.alive or getattr(self, "_closed", False):
                 return
             status, ready = kobo_backup_action_state(
-                persisted_enabled=bool(self.config.get("kobo_backup.enabled", False)),
+                persisted_enabled=(self.config.get("kobo_backup.enabled", False) is True),
                 draft_enabled=bool(backup_switch.get_active()),
                 dirty=settings_state.dirty("sync"),
             )
@@ -3466,7 +3466,7 @@ class MainWindow(Adw.ApplicationWindow):
             # Do not initiate download from an unsaved draft. A deliberate
             # physical click is the *only* new path to Kobo acquisition.
             _, ready = kobo_backup_action_state(
-                persisted_enabled=bool(self.config.get("kobo_backup.enabled", False)),
+                persisted_enabled=(self.config.get("kobo_backup.enabled", False) is True),
                 draft_enabled=bool(backup_switch.get_active()),
                 dirty=settings_state.dirty("sync"),
             )
