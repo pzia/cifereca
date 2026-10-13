@@ -3647,6 +3647,10 @@ class MainWindow(Adw.ApplicationWindow):
         details_toggle.connect("toggled", toggle_diagnostic_details)
 
         def open_diagnostic_plugin(_button, plugin_id: str) -> None:
+            # A button from an old Settings tree cannot navigate a rebuilt
+            # or closed window after asynchronous GTK signal delivery.
+            if not page_lifetime.alive or getattr(self, "_closed", False):
+                return
             self.navigate("plugins")
             page = getattr(self, "plugins_page", None)
             focus = getattr(page, "focus_plugin", None)
@@ -3958,7 +3962,15 @@ class MainWindow(Adw.ApplicationWindow):
                 self.show_error("Impossible d’enregistrer le niveau de diagnostic : " + str(exc))
         level_drop.connect("notify::selected", persist_diagnostics)
         diag_switch.connect("notify::active", persist_diagnostics)
-        clear.connect("clicked", lambda _b: (self.diagnostics.clear(), refresh_text()))
+        def clear_diagnostics(_button=None) -> None:
+            # Clearing diagnostics is a Core mutation. A detached Settings
+            # button must never perform it after the page was replaced.
+            if not page_lifetime.alive or getattr(self, "_closed", False):
+                return
+            self.diagnostics.clear()
+            refresh_text()
+
+        clear.connect("clicked", clear_diagnostics)
         refresh_text()
         if not standalone:
             self._diag_refresh = lambda: refresh_text() if page_lifetime.alive else None
