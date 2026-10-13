@@ -297,6 +297,7 @@ def _published_text(value, *, maximum=256):
         return None
     return cleaned
 
+
 def _published_date(value):
     raw = _published_text(value, maximum=10)
     if raw is None or not re.fullmatch(r"(?:1[89]|20)\d{2}(?:-\d{2}-\d{2})?", raw):
