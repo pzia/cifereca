@@ -85,3 +85,29 @@ def mirror_kobo_manifest_rights(
         used_ids[ident] = identity_id
         count += 1
     return count
+
+
+def kobo_personal_right_states(service: Any, identity_id: str) -> dict[tuple[str, str], str]:
+    """Read only attested Kobo rights for Search's current identity.
+
+    Public catalog owned flags are not entitlement evidence; keep archived
+    purchases distinct. An active right wins over an archived duplicate.
+    """
+    if not identity_id:
+        return {}
+    states: dict[tuple[str, str], str] = {}
+    for right in service.storage.entitlements(provider_id="kobo"):
+        if (
+            right.get("identity_id") != identity_id
+            or right.get("entitlement_type") != "owned"
+            or right.get("state") not in {"active", "archived"}
+        ):
+            continue
+        credential = str(right.get("credential_id") or "")
+        item_id = str(right.get("item_id") or "")
+        if not credential or not item_id:
+            continue
+        key = (credential, item_id)
+        if key not in states or right["state"] == "active":
+            states[key] = right["state"]
+    return states
