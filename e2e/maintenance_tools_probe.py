@@ -145,7 +145,7 @@ def main():
     def modal():
         return next((
             item for item in Gtk.Window.list_toplevels()
-            if isinstance(item, Adw.MessageDialog) and item.get_visible()
+            if isinstance(item, Adw.MessageDialog) and item.get_visible() and item.get_mapped()
         ), None)
 
     def physical(button):
@@ -177,6 +177,7 @@ def main():
             None,
         )
         assert response is not None, f"Missing modal response: {label}"
+        assert response.get_mapped(), f"Modal response not mapped: {label}"
         physical(response)
 
     def ready():
@@ -253,12 +254,12 @@ def main():
     def after_cancel():
         assert tool.run_calls == 0
         report["checks"]["physical_cancel_never_runs_destructive_tool"] = True
-        until(lambda: modal() is None, begin_stale)
+        until(lambda: modal() is None and preview_button[0].get_sensitive(), begin_stale)
 
     def begin_stale():
         tool.delay = 0.12
         physical(preview_button[0])
-        until(lambda: modal() is not None, stale_dialog)
+        until(lambda: modal() is not None and preview_button[0].get_sensitive(), stale_dialog)
 
     def stale_dialog():
         tool.version += 1
@@ -269,11 +270,11 @@ def main():
     def stale_refused():
         assert tool.run_calls == 0
         report["checks"]["stale_plan_rejected_under_lock_without_delete"] = True
-        until(lambda: modal() is None, begin_final)
+        until(lambda: modal() is None and preview_button[0].get_sensitive(), begin_final)
 
     def begin_final():
         physical(preview_button[0])
-        until(lambda: modal() is not None, final_dialog)
+        until(lambda: modal() is not None and preview_button[0].get_sensitive(), final_dialog)
 
     def final_dialog():
         assert tool.run_calls == 0
