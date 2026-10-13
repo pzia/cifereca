@@ -162,3 +162,62 @@ def test_expired_cancelled_checkpoint_stays_manual_only(tmp_path):
         assert row["status"] == "interrupted"
     finally:
         service.close()
+
+
+def test_pre_cancelled_resume_skips_catalog_adept_and_remnant_recovery(tmp_path, monkeypatch):
+    """A cancelled operation must not perform slow prerequisites or reacquire."""
+    from cifereca.core import kobo_backup
+
+    service, session = _service(tmp_path, _manifest())
+    calls = []
+    monkeypatch.setattr(service, "catalog_scan",
+                        lambda: calls.append("catalog") or (_ for _ in ()).throw(
+                            AssertionError("cancelled operation scanned library")))
+    monkeypatch.setattr(service, "kobo_adept_state",
+                        lambda **_kw: calls.append("adept") or (_ for _ in ()).throw(
+                            AssertionError("cancelled operation probed ADEPT")))
+    monkeypatch.setattr(session, "backup_manifest",
+                        lambda: (_ for _ in ()).throw(AssertionError("no manifest")))
+    monkeypatch.setattr(kobo_backup, "_recover_local_remnants",
+                        lambda *_a, **_kw: (_ for _ in ()).throw(
+                            AssertionError("cancelled operation reconciled artifacts")))
+    checks = []
+    def one_shot_cancel():
+        checks.append(True)
+        return len(checks) == 1
+
+    try:
+        result = service.sync_kobo_backup_account(
+            "vault-1", cancelled=one_shot_cancel,
+        )
+        assert result["status"] == "cancelled"
+        assert result["manifests_fetched"] == 0
+        assert result["attempted"] == 0
+        assert result["downloaded"] == 0
+        assert calls == [] and len(checks) == 1
+        checkpoint = json.loads(service.storage.metadata_get(
+            _kobo_checkpoint_key("default", "vault-1")
+        ))
+        assert checkpoint["status"] == "cancelled"
+        assert checkpoint["processed"] == 0
+    finally:
+        service.close()
+
+
+def test_cancel_hook_failure_blocks_initial_io(tmp_path, monkeypatch):
+    """A broken cancellation callback fails closed, before expensive work."""
+    service, session = _service(tmp_path, _manifest())
+    monkeypatch.setattr(service, "catalog_scan",
+                        lambda: (_ for _ in ()).throw(AssertionError("catalog scanned")))
+    monkeypatch.setattr(service, "kobo_adept_state",
+                        lambda **_kw: (_ for _ in ()).throw(AssertionError("ADEPT probe")))
+    monkeypatch.setattr(session, "backup_manifest",
+                        lambda: (_ for _ in ()).throw(AssertionError("manifest requested")))
+    try:
+        def broken():
+            raise RuntimeError("control detached")
+        report = service.sync_kobo_backup_account("vault-1", cancelled=broken)
+        assert report["status"] == "cancelled"
+        assert report["manifests_fetched"] == 0
+    finally:
+        service.close()
