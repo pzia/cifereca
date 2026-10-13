@@ -469,3 +469,41 @@ def test_kobo_checkpoint_records_aborted_source_before_exiting_batch(tmp_path: P
         assert checkpoint["counts"]["errors"] == 1
     finally:
         service.close()
+
+
+def test_malformed_manifest_does_not_advance_authoritative_success_timestamp(tmp_path: Path):
+    """#1348: fetched != authoritative when one manifest entry is invalid."""
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"title": "Missing product ID", "format": "EPUB"}],
+    )
+    try:
+        service.storage.metadata_set("kobo_backup_last_manifest_success_at", 12345)
+        report = service.sync_kobo_backup()
+        assert report["manifests_fetched"] == report["sessions"] == 1
+        assert report["status"] == "partial"
+        assert report["malformed_manifest_items"] > 0
+        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) == 12345
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
+
+
+def test_authoritative_manifest_can_succeed_with_acquisition_attention(tmp_path: Path):
+    """#1348: a fully read manifest is distinct from completed acquisition."""
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "waiting", "revision_id": "r1",
+                   "title": "Waiting", "format": "EPUB", "downloadable": True}],
+    )
+    service.kobo_adept_state = lambda **_kw: {
+        "available": False, "compatible": False, "operational": False,
+        "error": {"message": "Runtime absent"},
+    }
+    try:
+        report = service.sync_kobo_backup()
+        assert report["status"] == "attention_required"
+        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) > 0
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
