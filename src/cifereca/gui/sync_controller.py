@@ -218,20 +218,48 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
         self._render_kobo_loans()
         attention = int(summary.get("attention_required", 0) or 0)
         errors = int(summary.get("errors", 0) or 0)
+        pending = int(summary.get("pending", 0) or 0)
+        remaining = int(summary.get("remaining", 0) or 0)
+        state_labels = {
+            "complete": "terminée",
+            "partial": "partielle",
+            "attention_required": "action requise",
+            "aborted": "interrompue",
+            "failed": "en échec",
+            "cancelled": "annulée",
+        }
+        state = summary.get("status")
+        if type(state) is not str or state not in state_labels:
+            state = "unknown"
+        # A completed worker task is not proof that Kobo materialization
+        # completed. Fail closed if the status or its outstanding counters
+        # disagree, including a truncated manifest with no item errors.
+        outstanding = bool(
+            attention or errors or pending or remaining
+            or summary.get("reconcile_pending")
+            or summary.get("malformed_manifest_items")
+        )
+        if state == "complete" and outstanding:
+            state = "partial"
+        success = state == "complete"
+        state_text = state_labels.get(state, "état non confirmé")
+        remaining_text = f", {remaining} restant(s)" if remaining > 0 else ""
         if manual:
             self._activity_result(
-                f"Synchronisation Kobo : {summary.get('downloaded', 0)} téléchargé(s), "
-                f"{summary.get('pending', 0)} en attente, {summary.get('unchanged', 0)} à jour, "
-                f"{summary.get('skipped', 0)} ignoré(s), {attention} action(s), {errors} erreur(s)",
-                success=not bool(attention or errors),
-                persistent=bool(attention or errors),
+                f"Synchronisation Kobo ({state_text}) : {summary.get('downloaded', 0)} téléchargé(s), "
+                f"{pending} en attente, {summary.get('unchanged', 0)} à jour, "
+                f"{summary.get('skipped', 0)} ignoré(s), {attention} action(s), {errors} erreur(s)"
+                f"{remaining_text}",
+                success=success,
+                persistent=not success,
             )
-        elif summary.get("downloaded") or summary.get("pending") or attention or errors:
+        elif (not success or summary.get("downloaded") or pending or attention or errors):
             self._activity_result(
-                f"Synchronisation Kobo automatique : {summary.get('downloaded', 0)} téléchargé(s), "
-                f"{summary.get('pending', 0)} en attente, {attention} action(s), {errors} erreur(s)",
-                success=not bool(attention or errors),
-                persistent=bool(attention or errors),
+                f"Synchronisation Kobo automatique ({state_text}) : {summary.get('downloaded', 0)} téléchargé(s), "
+                f"{pending} en attente, {attention} action(s), {errors} erreur(s)"
+                f"{remaining_text}",
+                success=success,
+                persistent=not success,
             )
     def err(exc: BaseException) -> None:
         if getattr(self, "_closed", False):
