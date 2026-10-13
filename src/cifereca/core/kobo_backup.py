@@ -684,7 +684,14 @@ def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
         last = int(raw or 0)
     except (TypeError, ValueError):
         last = 0
-    return last <= 0 or (int(time.time()) - last) >= interval_minutes * 60
+    now = int(time.time())
+    # NTP corrections / restored backups may leave a last_attempt timestamp
+    # far in the future. Without this guard the automatic scheduler would
+    # falsely claim "fresh_cache" for hours or days after the clock returns
+    # to normal. Explicit cancellation was handled above and stays blocked.
+    if last > now + 5 * 60:
+        return True
+    return last <= 0 or (now - last) >= interval_minutes * 60
 
 
 def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, retry_scope_blocked: bool=False, cancelled: Callable[[], bool] | None=None, lock_factory, lock_path) -> dict[str, Any]:
