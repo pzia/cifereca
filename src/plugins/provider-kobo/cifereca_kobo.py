@@ -90,11 +90,10 @@ class KoboSession(ProviderSession):
             pass
 
     def connect(self) -> list[Account]:
-        # Explicit provider reconnection is the only permission-change event.
-        # Keep permission denials out of persistent storage and clear the
-        # per-session refusal after credentials may have changed.
-        self._cifereca_delegation_forbidden = False
-        self._cifereca_delegation_attempts_saved = 0
+        # Do not discard a denied delegated scope until the new connection
+        # has actually authenticated. A failed status/account request is not
+        # proof that permissions changed, and a live session can still hold
+        # the previous token after an unsuccessful reconnect.
         self.capability_names = set()
         self.capability_details = {}
         self.supports_acquisition_acsm = False
@@ -154,6 +153,10 @@ class KoboSession(ProviderSession):
             and bool(runtime_modes & {"kobo_delegated", "kobo_kdrm"})
         )
         account = self.client.account()
+        # Reauthorization only takes effect after a successful authenticated
+        # account request, not when connect() was merely invoked.
+        self._cifereca_delegation_forbidden = False
+        self._cifereca_delegation_attempts_saved = 0
         account_id = str(account.get("id") or account.get("account_id") or "kobo")
         display = str(account.get("display_name") or account.get("name") or account.get("email_hint") or "Compte Kobo")
         self.connected = True
