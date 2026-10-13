@@ -2511,6 +2511,8 @@ class MainWindow(Adw.ApplicationWindow):
         The lookup uses only the already loaded Library snapshot, with no
         filesystem scan or network operation on the GTK main thread.
         """
+        if getattr(self, "_closed", False):
+            return False
         from ..core.book_navigation import library_key_for_book
 
         identity = getattr(self.service, "current_identity", None)
@@ -2527,6 +2529,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _open_library_item(self, key: str) -> None:
         """Navigate to Library while retaining the book *and identity* context."""
+        if getattr(self, "_closed", False):
+            return
         current = getattr(getattr(self, "service", None), "current_identity", None)
         self._pending_library_selection_key = str(key)
         self._pending_library_selection_identity_id = str(
@@ -2539,6 +2543,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._select_pending_library_item()
 
     def _select_pending_library_item(self) -> bool:
+        if getattr(self, "_closed", False):
+            return False
         key = getattr(self, "_pending_library_selection_key", None)
         if not key:
             return False
