@@ -437,3 +437,24 @@ def test_symlinked_existing_destination_is_not_followed(tmp_path: Path, monkeypa
         assert external.read_bytes() == b"external must remain intact"
     finally:
         service.close()
+
+
+def test_existing_pdf_blocks_epub_manifest_acquisition(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    existing = service._kobo_backup_target_dir("alice") / "Author - Book One.pdf"
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_bytes(b"%PDF-1.7\\nexisting")
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not duplicate PDF as EPUB")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == existing
+    finally:
+        service.close()
