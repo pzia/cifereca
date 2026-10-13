@@ -117,3 +117,22 @@ def test_deep_sync_forces_kobo_backup_and_deep_catalog_scan(tmp_path: Path, monk
         assert int(service.storage.metadata_get("catalog_deep_last_at")) == 100_000
     finally:
         service.close()
+
+def test_fast_sync_shows_throttled_incomplete_kobo_batch(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        monkeypatch.setattr(services_module.time, "time", lambda: 100_000)
+        service.storage.metadata_set("kobo_backup_last_attempt_at", 100_000)
+        service.storage.metadata_set("kobo_backup_last_batch_status", "attention_required")
+        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_locked",
+            lambda progress=None: (_ for _ in ()).throw(AssertionError("pending cache should throttle")),
+        )
+        result = service._opening_sync_locked(deep=False)
+        assert result["kobo"]["status"] == "fresh_cache_partial"
+        assert result["kobo"]["last_batch_status"] == "attention_required"
+        assert result["kobo"]["skipped_fresh"] is True
+    finally:
+        service.close()
