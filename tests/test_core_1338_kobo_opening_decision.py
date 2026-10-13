@@ -46,6 +46,24 @@ def test_decision_distinguishes_reasons_without_provider_request(
         service.close()
 
 
+def test_last_kobo_success_is_projected_as_bounded_age_only(tmp_path, monkeypatch):
+    import time
+    service = _service(tmp_path)
+    try:
+        now = int(time.time())
+        monkeypatch.setattr(service, "sync_source_enabled", lambda _account: True)
+        service.storage.metadata_set("kobo_backup_last_success_at", now - 3720)
+        result = _kobo_opening_decision(service)
+        assert result["last_success_age_minutes"] in (62, 63)
+        assert "kobo_backup_last_success_at" not in json.dumps(result)
+        service.storage.metadata_set("kobo_backup_last_success_at", "private-path-value")
+        assert _kobo_opening_decision(service)["last_success_age_minutes"] is None
+        service.storage.metadata_set("kobo_backup_last_success_at", now + 600)
+        assert _kobo_opening_decision(service)["last_success_age_minutes"] is None
+    finally:
+        service.close()
+
+
 def test_opening_records_one_sanitized_summary_on_partial(tmp_path, monkeypatch):
     service = _service(tmp_path)
     try:
