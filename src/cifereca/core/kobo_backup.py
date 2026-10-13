@@ -339,7 +339,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     summary: dict[str, Any] = {
         "scope": "account" if credential_id is not None else "all",
         "sessions": len(sessions), "manifests_fetched": 0, "manifest_items": 0,
-        "scanned": 0, "attempted": 0, "pending": 0,
+        "scanned": 0, "malformed_manifest_items": 0,
+        "attempted": 0, "pending": 0,
         "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "vault_errors": 0, "integration_errors": 0, "adept_errors": 0,
@@ -405,7 +406,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     summary["sources"] = []
     source_counter_keys = ("scanned", "attempted", "downloaded", "unchanged",
                            "pending", "attention_required", "errors", "skipped",
-                           "remaining", "reconcile_skipped")
+                           "remaining", "reconcile_skipped", "malformed_manifest_items")
     for session in sessions:
         session_identity = self.identity_for_connection("kobo", session.credential_id)
         source_key = hashlib.sha256(
@@ -460,6 +461,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         for index, raw in enumerate(manifest):
             if not isinstance(raw, dict):
                 invalid_manifest_row = True
+                summary["malformed_manifest_items"] += 1
                 summary["skipped"] += 1
                 source_position = index + 1
                 save_source_checkpoint("running")
@@ -479,6 +481,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
             if not product_id:
                 invalid_manifest_row = True
+                summary["malformed_manifest_items"] += 1
                 summary["skipped"] += 1
                 source_position = index + 1
                 save_source_checkpoint("running")
@@ -507,7 +510,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             source_status = "aborted"
         elif deltas["errors"]:
             source_status = "partial" if deltas["downloaded"] or deltas["unchanged"] else "failed"
-        elif deltas["remaining"] or source_position < source_total:
+        elif deltas["remaining"] or invalid_manifest_row or source_position < source_total:
             source_status = "partial"
         elif any(deltas[key] for key in ("pending", "attention_required", "reconcile_skipped")):
             source_status = "attention_required"
@@ -669,7 +672,7 @@ def _publish_summary(self, summary, error_counts, error_examples, emit, *, scope
         status = "aborted"
     elif summary.get("errors"):
         status = "partial" if summary.get("completed") or summary.get("unchanged") else "failed"
-    elif summary.get("remaining"):
+    elif summary.get("remaining") or summary.get("malformed_manifest_items"):
         status = "partial"
     elif any(summary.get(key, 0) for key in
              ("pending", "attention_required", "reconcile_pending",
