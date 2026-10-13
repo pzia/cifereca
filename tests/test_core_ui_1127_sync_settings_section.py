@@ -136,4 +136,4 @@ def test_mainwindow_explicit_kobo_action_is_saved_and_lifetime_gated():
     assert "settings_state.dirty('sync')" in rendered
     assert 'if ready:' in rendered
     assert 'self.run_kobo_backup(manual=True, control=_button)' in rendered
-    assert 'kobo_run_now.connect("clicked", manual_kobo_backup)' in ast.unparse(builder)
+    assert "kobo_run_now.connect('clicked', manual_kobo_backup)" in ast.unparse(builder)
