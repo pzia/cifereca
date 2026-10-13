@@ -280,7 +280,9 @@ class KoboVaultClient:
                             "type": "invalid_shape",
                             "reason": "item_not_object",
                         })
-            elif items is not None:
+            else:
+                # Missing/null items on an otherwise successful page is not
+                # an authoritative empty collection: expose the corruption.
                 self.last_manifest_rejections.append({
                     "type": "invalid_shape",
                     "reason": "items_not_list",
