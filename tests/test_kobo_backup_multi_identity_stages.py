@@ -94,7 +94,7 @@ def test_explicit_account_sync_does_not_touch_other_credential_or_global_cache(t
     service.storage.metadata_set("kobo_backup_last_attempt_at", 101)
     service.storage.metadata_set("kobo_backup_last_batch_status", "partial")
     try:
-        summary = service.sync_kobo_backup(credential_id="vault-1")
+        summary = service.sync_kobo_backup_account("vault-1")
         assert summary["scope"] == "account"
         assert summary["sessions"] == 1
         assert summary["unchanged"] == 1
@@ -113,7 +113,7 @@ def test_explicit_account_sync_rejects_unknown_credential(tmp_path):
     service = _service(tmp_path, manifest=[])
     try:
         with pytest.raises(ProviderConfigurationError, match="Compte Kobo"):
-            service.sync_kobo_backup(credential_id="not-connected")
+            service.sync_kobo_backup_account("not-connected")
         assert service.storage.metadata_get("kobo_backup_last_success_at") is None
     finally:
         service.close()
