@@ -74,6 +74,11 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
+    # A Kobo source refresh only updates online metadata. It is deliberately
+    # NOT equivalent to the separate opt-in Kobo backup/acquisition operation.
+    kobo_notices_only = getattr(source, "provider_id", "") == "kobo"
+    if kobo_notices_only:
+        summary += "\nActualise uniquement les notices Kobo en ligne ; ne télécharge aucun ebook."
     if status in {"partial", "error", "failed"} and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
@@ -84,7 +89,8 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         connection_label=connection,
         sync_label=sync_label,
         summary=summary,
-        action_label=f"Synchroniser {label}",
+        action_label=("Mettre à jour les notices Kobo en ligne" if kobo_notices_only
+                      else f"Synchroniser {label}"),
         action_enabled=action_enabled,
         disabled_reason=disabled_reason,
     )
