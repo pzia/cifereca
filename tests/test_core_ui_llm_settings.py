@@ -139,14 +139,19 @@ def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
     assert "redémarrage nécessaire" in source
     assert 'ai_dirty=settings_state.dirty("ai")' in source
     assert "if ai_dirty:" in draft_source
-    assert "ai_endpoint.connect(\"notify::text\", endpoint_changed)" in source
-    assert 'ai_remote.set_active(False)' in source
-    assert 'Adw.MessageDialog.new(' in source
-    assert "submit_ai_probe(settings, confirmed=True)" in source
-    assert "probe_llm_connection(settings, remote_confirmed=confirmed)" in source
-    assert "self.runner.submit(" in source
-    assert "Aucune notice ou donnée personnelle ne sera envoyée" in source
-    assert "confirmation_version != ai_probe_version[0]" in source
+    ai_source = (
+        Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_ai_actions.py"
+    ).read_text(encoding="utf-8")
+    ast.parse(ai_source)
+    assert "bind_settings_ai_callbacks(" in source
+    assert "ai_endpoint.connect(\"notify::text\", endpoint_changed)" in ai_source
+    assert 'ai_remote.set_active(False)' in ai_source
+    assert 'Adw.MessageDialog.new(' in ai_source
+    assert "submit_ai_probe(settings, confirmed=True)" in ai_source
+    assert "probe_llm_connection(settings, remote_confirmed=confirmed)" in ai_source
+    assert "self.runner.submit(" in ai_source
+    assert "Aucune notice ou donnée personnelle ne sera envoyée" in ai_source
+    assert "confirmation_version != ai_probe_version[0]" in ai_source
     assert "ai_cfg.update(new_ai_settings)" in source
 
 def test_saved_llm_settings_take_effect_only_after_real_core_restart(tmp_path):
