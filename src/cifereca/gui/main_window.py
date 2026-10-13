@@ -55,6 +55,7 @@ from .settings_ai_section import build_ai_settings_section
 from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
+from .settings_tracking import bind_settings_actions
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .loan_view import (
@@ -3232,63 +3233,13 @@ class MainWindow(Adw.ApplicationWindow):
             self._settings_tabs = tabs
 
         settings_state = SettingsRevisionState(sections)
-        tracked_settings_widgets: set[int] = set()
-        settings_action_widgets: dict[str, Any] = {}
-
-        def current_settings_tab() -> str:
-            return str(tabs.get_visible_child_name() or "accounts")
-
-        def update_settings_actions(*_args) -> None:
-            if not page_lifetime.alive:
-                return
-            tab = current_settings_tab()
-            state = settings_action_state(
-                tab,
-                dirty=settings_state.dirty(tab),
-            )
-            save_widgets = tuple(settings_action_widgets.get("save", ()))
-            reconnect_widgets = tuple(settings_action_widgets.get("reconnect", ()))
-            for widget in save_widgets:
-                widget.set_visible(state.show_save)
-                widget.set_sensitive(state.save_sensitive)
-            for widget in reconnect_widgets:
-                widget.set_visible(state.show_reconnect)
-                widget.set_sensitive(state.reconnect_sensitive)
-            for widget in tuple(settings_action_widgets.get("containers", ())):
-                widget.set_visible(state.show_save or state.show_reconnect)
-
-        def mark_settings_dirty(tab: str) -> None:
-            if not page_lifetime.alive:
-                return
-            if not settings_state.mark_dirty(tab):
-                return
-            update_settings_actions()
-
-        def track_settings_tree(tab: str, widget: Gtk.Widget) -> None:
-            marker = id(widget)
-            if marker not in tracked_settings_widgets:
-                signal = None
-                if isinstance(widget, Adw.EntryRow):
-                    signal = "notify::text"
-                elif isinstance(widget, Gtk.Switch):
-                    signal = "notify::active"
-                elif isinstance(widget, Gtk.DropDown):
-                    signal = "notify::selected"
-                if signal is not None:
-                    widget.connect(signal, lambda *_args, tab_name=tab: mark_settings_dirty(tab_name))
-                    tracked_settings_widgets.add(marker)
-            try:
-                child = widget.get_first_child()
-            except AttributeError:
-                child = None
-            while child is not None:
-                track_settings_tree(tab, child)
-                child = child.get_next_sibling()
-
-        def track_all_settings_widgets() -> None:
-            for tab, section in sections.items():
-                if tab != "diagnostic":
-                    track_settings_tree(tab, section)
+        (
+            update_settings_actions, mark_settings_dirty,
+            track_all_settings_widgets, settings_action_widgets,
+        ) = bind_settings_actions(
+            tabs=tabs, sections=sections, settings_state=settings_state,
+            page_lifetime=page_lifetime, Gtk=Gtk, Adw=Adw,
+        )
 
         box = sections["accounts"]
 
