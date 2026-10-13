@@ -3562,16 +3562,16 @@ class LibraryService:
     def sync_kobo_backup_account(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
-        *, retry_scope_blocked: bool = False,
+        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """One Kobo account; permission-blocked books require explicit retry.
+        """One Kobo account: cooperative cancellation and scoped delegation retry.
 
-        retry_scope_blocked should be requested only after the operator has
-        reauthorized/reconnected the Kobo provider with updated privileges.
-        Local artifact reconciliation is always enforced.
+        retry_scope_blocked is for an explicit action after provider reauthorization.
+        Cancellation stops between items, never amid a file write. All local
+        artifact and duplicate reconciliation guards remain enforced.
         """
         return kobo_backup.sync_kobo_backup(
-            self, progress, credential_id=credential_id,
+            self, progress, credential_id=credential_id, cancelled=cancelled,
             retry_scope_blocked=retry_scope_blocked,
             lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
         )
@@ -3599,12 +3599,12 @@ class LibraryService:
     def _sync_kobo_backup_account_locked(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
-        *, retry_scope_blocked: bool = False,
+        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Internal scoped variant: caller owns the global acquisition lock."""
         return kobo_backup._sync_kobo_backup_locked(
             self, progress, logger=_TRACE_LOG, credential_id=credential_id,
-            retry_scope_blocked=retry_scope_blocked,
+            cancelled=cancelled, retry_scope_blocked=retry_scope_blocked,
         )
 
     def _account_for_loan(self, loan: Loan) -> Account:

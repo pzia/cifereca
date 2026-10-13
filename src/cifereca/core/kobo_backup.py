@@ -344,11 +344,12 @@ def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
         identity = self.identity_for_connection("kobo", credential_id).identity_id
         row = _kobo_checkpoint_for(self, identity, credential_id)
         if row is not None:
-            # A running checkpoint left behind after a crash is not a
-            # successful cache entry. The opening-sync owns the global
-            # acquisition lock, so it is safe to reconsider this credential
-            # immediately: interrupted files are revalidated/quarantined
-            # before any attempted acquisition.
+            # An explicit user cancellation is not a transient failure.
+            # The automatic scheduler must not restart it after the TTL:
+            # a new scoped manual sync is the explicit resume operation.
+            if str(row.get("status") or "") == "cancelled":
+                return False
+            # An incomplete checkpoint after a crash is never a successful cache.
             if str(row.get("status") or "") in {"running", "interrupted", "manifest_fetch"}:
                 return True
             raw = row.get("updated_at")
@@ -374,7 +375,7 @@ def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
     return last <= 0 or (int(time.time()) - last) >= interval_minutes * 60
 
 
-def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, retry_scope_blocked: bool=False, lock_factory, lock_path) -> dict[str, Any]:
+def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, retry_scope_blocked: bool=False, cancelled: Callable[[], bool] | None=None, lock_factory, lock_path) -> dict[str, Any]:
     """Compatibility entry point for the Kobo local synchronization.
 
     0.8.0 keeps the validated cross-process serialization for acquisition work. The
@@ -389,9 +390,13 @@ def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=Non
                     raise ProviderConfigurationError(
                         "Le réessai de délégation Kobo exige un compte explicite"
                     )
+                if cancelled is not None:
+                    raise ProviderConfigurationError(
+                        "Annulation Kobo : compte explicite requis"
+                    )
                 return self._sync_kobo_backup_locked(progress=progress)
             return self._sync_kobo_backup_account_locked(
-                credential_id, progress=progress,
+                credential_id, progress=progress, cancelled=cancelled,
                 retry_scope_blocked=retry_scope_blocked,
             )
     except LockBusyError as exc:
@@ -417,7 +422,7 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
     return len(paths)
 
 
-def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, retry_scope_blocked: bool = False) -> dict[str, Any]:
+def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False) -> dict[str, Any]:
     """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
     Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -431,6 +436,18 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
     existing reconciliation safeguards still prevent duplicate redownloads.
     """
+    def cancellation_requested() -> bool:
+        if cancelled is None:
+            return False
+        try:
+            return bool(cancelled())
+        except Exception as exc:
+            # A broken cancellation hook must not launch another acquisition.
+            logger.warning(
+                "TRACE kobo cancellation hook failed kind=%s", type(exc).__name__,
+            )
+            return True
+
     def emit(event: str, **detail: Any) -> None:
         if progress is None:
             return
@@ -480,6 +497,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "reconcile_pending": 0, "reconcile_conflicts": 0, "reconcile_skipped": 0,
         "legacy_pruned": 0, "legacy_local_preserved": 0, "legacy_entitlements_inactivated": 0,
         "aborted": False, "abort_reason": None,
+        "cancelled": False, "cancelled_sources": 0,
         "target_dir": str(target_dir),
         "target_dirs": target_dirs,
         "storage_schema_version": self.storage.schema_version(),
@@ -564,6 +582,21 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 total=source_total, processed=processed, status=status,
                 counts=source_delta(), item_id=committed_item_id,
             )
+
+        # Stop even before reading a new account's remote manifest.
+        if cancellation_requested():
+            summary["cancelled"] = True
+            summary["cancelled_sources"] += 1
+            checkpoint("cancelled")
+            summary["sources"].append({
+                "identity_id": session_identity.identity_id,
+                "credential_id": session.credential_id,
+                "status": "cancelled", "manifest_items": 0, **source_delta(),
+            })
+            emit("cancelled", current=0, total=0)
+            abort_all = True
+            break
+
         unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
         session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
         target_dirs[session_identity.identity_id] = str(session_target_dir)
@@ -599,6 +632,19 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             continue
 
         for index, raw in enumerate(manifest):
+            # Cooperative cancellation is checked strictly BETWEEN items:
+            # never abandon an in-flight content write or mark it complete
+            # without its durable backup row.
+            if cancellation_requested():
+                summary["cancelled"] = True
+                summary["cancelled_sources"] += 1
+                summary["remaining"] += len(manifest) - index
+                checkpoint("cancelled")
+                emit("cancelled", current=index, total=len(manifest),
+                     remaining=len(manifest) - index)
+                abort_all = True
+                break
+
             item_committed = False
             try:
                 if not isinstance(raw, dict):
@@ -654,7 +700,9 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     committed_item_id = str(raw.get("product_id") or raw.get("id") or "") if isinstance(raw, dict) else None
                 checkpoint("running" if item_committed else "interrupted")
         delta = source_delta()
-        if abort_all:
+        if summary["cancelled"]:
+            source_status = "cancelled"
+        elif abort_all:
             source_status = "aborted"
         elif delta["errors"]:
             source_status = "partial" if delta["downloaded"] or delta["unchanged"] else "failed"
@@ -843,7 +891,9 @@ def _publish_summary(self, summary, error_counts, error_examples, emit, *, scope
     summary["error_examples"] = error_examples
     # Backward-compatible concise text list for existing callers.
     summary["error_messages"] = [x["message"] for x in error_examples[:10]]
-    if summary.get("aborted"):
+    if summary.get("cancelled"):
+        state = "cancelled"
+    elif summary.get("aborted"):
         state = "aborted"
     elif summary.get("errors"):
         state = "partial" if summary.get("downloaded") or summary.get("unchanged") else "failed"
@@ -987,9 +1037,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     # until a deliberate replacement/reconciliation contract exists.
     if current and current.get("local_path"):
         linked_path = Path(str(current["local_path"]))
-        # A dangling link is still evidence of a prior Kobo placement.
-        # Do not dereference or silently re-download merely because it has
-        # moved outside the generated filename candidates.
+        # Preserve even dangling linked symlinks for reconciliation; never redownload.
         if linked_path.is_symlink() or linked_path.is_file():
             self.storage.backup_put({
                 **base_record,
@@ -1057,12 +1105,8 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         summary["skipped"] += 1
         return True
 
-    # A persisted delegated-permission denial is not a transient download
-    # failure. Avoid re-resolving its descriptor (or attempting delegated)
-    # on every automatic/repeated batch, including after application restart.
-    # A caller may explicitly retry after reconnecting with updated scopes.
-    # Existing local candidates and archive guards above always take
-    # precedence. An explicit retry still enforces unlinked-file safety below.
+    # Missing delegated scope persists across sessions and automatic sync attempts.
+    # Only an explicit account-targeted retry after reauthorization bypasses it.
     if (not retry_scope_blocked and current
             and str(current.get("status") or "") == "attention_required"
             and str(current.get("attention_code") or "") == "missing_delegation_scope"):

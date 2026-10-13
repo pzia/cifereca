@@ -357,7 +357,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             if isinstance(source, dict)
         ] + cached_sources
         states = {str(row.get("status") or "partial") for row in sources}
-        if counters["errors"] or {"aborted", "failed", "partial", "interrupted"} & states:
+        if counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
             batch_status = "partial"
         elif "attention_required" in states:
             batch_status = "attention_required"
@@ -377,14 +377,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             "sources": sources, "skipped_fresh": not bool(due),
         }
         kobo_decision["status"] = (
-            "partial" if batch_status in {"partial", "attention_required", "fresh_cache_partial"}
+            "partial" if batch_status in {"partial", "attention_required", "fresh_cache_partial", "cancelled"}
             else "fresh_cache" if batch_status == "fresh_cache" else "started"
         )
     elif kobo_decision["status"] == "started":
         try:
             kobo_summary = self._sync_kobo_backup_locked(progress=progress)
             if (kobo_summary or {}).get("status") in {
-                "partial", "attention_required", "aborted", "failed"
+                "partial", "attention_required", "aborted", "failed", "cancelled"
             } or int((kobo_summary or {}).get("errors", 0) or 0) > 0:
                 kobo_decision["status"] = "partial"
         except Exception:
