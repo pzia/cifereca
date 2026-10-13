@@ -186,3 +186,26 @@ def test_invalid_credential_and_disconnected_manifest_refresh_fail_closed(tmp_pa
             service.kobo_backup_preview("vault-1", refresh_manifest=True)
     finally:
         service.close()
+
+
+def test_remote_author_list_candidate_is_ambiguous_not_downloadable(tmp_path: Path, monkeypatch):
+    service, session = _service(tmp_path, [{
+        "product_id": "remote-1", "title": "The Novel",
+        "authors": ["Jane Doe"], "revision_id": "r1",
+        "format": "EPUB",
+    }])
+    target = service._kobo_backup_target_dir("default")
+    candidate = target / (
+        service.acquisition._safe_filename("Jane Doe - The Novel") + ".epub"
+    )
+    _write_epub(candidate)
+    _forbid_mutation_and_acquisition(service, session, monkeypatch)
+    try:
+        plan = service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        assert plan["counts"]["needs_reconciliation"] == 1
+        assert plan["counts"]["potentially_missing"] == 0
+        assert plan["acquisition_authorized"] is False
+        assert service.storage.backup_get("kobo", "vault-1", "remote-1") is None
+        assert candidate.is_file()
+    finally:
+        service.close()
