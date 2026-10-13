@@ -216,8 +216,9 @@ def test_missing_delegate_scope_is_item_error_and_does_not_abort_batch(tmp_path:
     try:
         summary = service.sync_kobo_backup()
 
-        assert summary["errors"] == 1
-        assert summary["integration_errors"] == 1
+        assert summary["errors"] == 0
+        assert summary["items_blocked_by_scope"] == 1
+        assert summary["attention_required"] == 1
         assert summary["aborted"] is False
         assert summary["downloaded"] == 1
         assert calls
@@ -225,7 +226,8 @@ def test_missing_delegate_scope_is_item_error_and_does_not_abort_batch(tmp_path:
 
         bad = service.storage.backup_get("kobo", "vault-1", "bad")
         good = service.storage.backup_get("kobo", "vault-1", "good")
-        assert bad and bad["status"] == "error"
+        assert bad and bad["status"] == "attention_required"
+        assert bad["attention_code"] == "missing_delegation_scope"
         assert "kobo.acquisition.delegate" in str(bad["error"])
         assert good and good["status"] == "complete"
     finally:
@@ -283,5 +285,71 @@ def test_missing_adept_runtime_keeps_item_pending_and_clears_legacy_job_id(tmp_p
         assert row["status"] == "pending_acquisition"
         assert row["job_id"] is None
         assert "Adept" in str(row["error"])
+    finally:
+        service.close()
+
+
+def test_real_plugin_error_only_probes_denied_delegate_once_per_session(tmp_path: Path, monkeypatch):
+    """Exercise the actual plugin exception, not the Core homonym."""
+    import importlib.util
+    import sys
+
+    source = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
+    spec = importlib.util.spec_from_file_location("test_real_cifereca_kobo_vault", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.KoboVaultError is not KoboVaultError
+
+    manifest = [
+        {"product_id": f"bad{i}", "revision_id": "r1", "title": f"Bad{i}", "format": "EPUB"}
+        for i in range(4)
+    ] + [{"product_id": "good", "revision_id": "r1", "title": "Good", "format": "EPUB"}]
+    service, session = _service(tmp_path, manifest)
+    monkeypatch.setattr(service, "kobo_adept_state", lambda **kwargs: _ready_adept_state())
+    delegated_calls = []
+    initial_resolver = session.resolve_acquisition
+
+    def resolver(product_id, *, revision_id=None, mode="descriptor", display_profile=None):
+        if product_id.startswith("bad"):
+            if mode == "delegated":
+                delegated_calls.append(product_id)
+                raise module.KoboVaultError("Kobo-Vault : forbidden", code="forbidden", status_code=403)
+            return {"acquisition": {"candidates": [{
+                "transport": "https", "method": "GET",
+                "url": "https://cdn.example/unusable", "format": "audio",
+                "drm_type": "KDRM",
+            }]}}
+        return initial_resolver(product_id, revision_id=revision_id, mode=mode, display_profile=display_profile)
+
+    monkeypatch.setattr(session, "resolve_acquisition", resolver)
+
+    def acquire(request):
+        path = Path(request["destination"])
+        _write_epub(path)
+        return {
+            "ok": True, "operation": "download",
+            "artifact": {"path": str(path), "format": "epub", "drm": "none",
+                         "size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+        }
+
+    monkeypatch.setattr(service, "execute_acquisition_request", acquire)
+    try:
+        first = service.sync_kobo_backup()
+        assert delegated_calls == ["bad0"]
+        assert first["items_blocked_by_scope"] == 4
+        assert first["attempts_saved"] >= 3
+        assert first["downloaded"] == 1
+        assert first["errors"] == 0
+        for i in range(4):
+            row = service.storage.backup_get("kobo", "vault-1", f"bad{i}")
+            assert row["status"] == "attention_required"
+            assert row["attention_code"] == "missing_delegation_scope"
+
+        # A second invocation on the same session must not probe forbidden
+        # delegation again; a reconnect is the explicit cache-reset event.
+        second = service.sync_kobo_backup()
+        assert delegated_calls == ["bad0"]
+        assert second["items_blocked_by_scope"] == 4
     finally:
         service.close()
