@@ -405,6 +405,11 @@ def kobo_backup_preview(
                 # that a new file should be downloaded with another name.
                 reason = "needs_reconciliation"
 
+        if not reason and not path_raw and current and current.get("status") in {"ok", "complete"}:
+            # An earlier completed acquisition without a recorded placement
+            # is inconsistent provenance, not proof that no file was written.
+            reason = "needs_reconciliation"
+
         if not reason:
             candidate_paths = _kobo_record_candidate_paths(self, record, target_dir)
             for explicit in indexed.get(identity_item_key, ()):
@@ -1679,6 +1684,23 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             self.storage.backup_put({**current, **observed})
             summary["unchanged"] += 1
             return True
+
+    # Legacy/partial records can claim a completed Kobo download without
+    # retaining its placement path. Missing provenance is not evidence of an
+    # absent artifact: quarantine instead of acquiring another copy.
+    if current and current.get("status") in {"ok", "complete"} and not str(
+        current.get("local_path") or ""
+    ).strip():
+        self.storage.backup_put({
+            **base_record,
+            "status": "reconcile_required",
+            "error": "Acquisition Kobo précédemment complète sans chemin local fiable ; rapprochement requis",
+        })
+        summary["reconcile_pending"] += 1
+        summary["reconcile_skipped"] += 1
+        emit("reconcile_required", current=index + 1, total=total,
+             item_id=product_id, title=title)
+        return True
 
     # A prior Kobo row may point to a nonstandard filename. Even when the
     # remote revision changes, never discard that placement or redownload
