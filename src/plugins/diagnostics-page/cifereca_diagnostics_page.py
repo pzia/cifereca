@@ -23,11 +23,22 @@ from diagnostics_support import (
 _DIAGNOSTIC_SECRET_KEY = re.compile(
     r"pass(?:word)?|cookie|token|secret|authorization|bearer|barcode|readerid|"
     r"credential[_-]?id|account[_-]?id|identity[_-]?id|profile[_-]?id|"
-    r"acsm|licen[sc]e|(?:api|access|private)[_-]?key|(^|_)path$|filename|payload|headers?", re.I
+    r"acsm|licen[sc]e|(?:api|access|private)[_-]?key|(^|_)path$|filename|payload|headers?|"
+    r"(?:book[_-]?(?:title|name)|(?:reader|display|person|account|source|library|owner)[_-]?(?:name|label|alias)|title|author|borrower)$", re.I
 )
 _DIAGNOSTIC_SECRET_VALUE = re.compile(
     r"(?i)\b(password|cookie|token|secret|authorization|barcode|readerid)"
     r"""\s*[:=]\s*(?:"[^"]*"|\'[^\']*\'|[^\s,;]+)"""
+)
+# A catalogue title, reader name or account alias can be private without
+# any recognizable token, path, e-mail or other secret marker. Suppress the
+# entire free-form value, not only its first word. Unquoted values consume the
+# rest of their line because names and titles may contain punctuation.
+_DIAGNOSTIC_PRIVATE_LABEL_VALUE = re.compile(
+    r"""(?i)(?<![\w-])("?(?:book[_-]?(?:title|name)|"""
+    r"""(?:reader|display|person|account|source|library|owner)[_-]?(?:name|label|alias)|"""
+    r"""title|author|borrower)"?[ \t]*[:=][ \t]*)"""
+    r"""(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\r\n]*)"""
 )
 # Authentication headers may contain schemes followed by several secret fields.
 # Mask the entire value, not merely the first whitespace-delimited token.
@@ -59,6 +70,7 @@ def _redacted_text(value: str, *, max_chars: int = _MAX_DETAIL_TEXT,
     text = _DIAGNOSTIC_AUTH_HEADER.sub(r"\1=<expurgé>", text)
     text = _DIAGNOSTIC_SECRET_VALUE.sub(r"\1=<expurgé>", text)
     text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <expurgé>", text)
+    text = _DIAGNOSTIC_PRIVATE_LABEL_VALUE.sub(r"\1<expurgé>", text)
     if len(text) <= max_chars:
         return text
     cut = max_chars
