@@ -3389,7 +3389,8 @@ class MainWindow(Adw.ApplicationWindow):
         capture_ai_settings = bind_settings_ai_callbacks(
             self, ai_ui=ai_ui, ai_cfg=ai_cfg, page_lifetime=page_lifetime,
             settings_state=settings_state,
-            update_settings_actions=update_settings_actions, Adw=Adw,
+            update_settings_actions=update_settings_actions,
+            Adw=Adw, TaskPriority=TaskPriority,
         )
 
         tabs.connect("notify::visible-child-name", update_settings_actions)
