@@ -1702,18 +1702,18 @@ class MainWindow(Adw.ApplicationWindow):
                     if meta.scope == "identity" and identity is not None:
                         scope += f" · {identity.label}"
                     sections = [
-                        "Résumé :\\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
-                        "Changements prévus :\\n" + (
-                            "\\n".join("• " + str(value) for value in plan.changes[:20])
+                        "Résumé :\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
+                        "Changements prévus :\n" + (
+                            "\n".join("• " + str(value) for value in plan.changes[:20])
                             if plan.changes else "• Aucun changement prévu"
                         ),
-                        "Avertissements :\\n" + (
-                            "\\n".join("• " + str(value) for value in plan.warnings[:10])
+                        "Avertissements :\n" + (
+                            "\n".join("• " + str(value) for value in plan.warnings[:10])
                             if plan.warnings else "• Aucun"
                         ),
-                        "Portée :\\n" + scope,
+                        "Portée :\n" + scope,
                     ]
-                    dialog = Adw.MessageDialog.new(self, meta.title, "\\n\\n".join(sections))
+                    dialog = Adw.MessageDialog.new(self, meta.title, "\n\n".join(sections))
                     dialog.add_response("cancel", "Annuler"); dialog.add_response("run", "Exécuter")
                     if destructive:
                         dialog.set_response_appearance("run", Adw.ResponseAppearance.DESTRUCTIVE)
