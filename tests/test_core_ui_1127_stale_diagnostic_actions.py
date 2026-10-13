@@ -18,7 +18,10 @@ def _source_and_callback(name, namespace):
     build = next(node for node in window.body
                  if isinstance(node, ast.FunctionDef)
                  and node.name == "_build_settings_page")
-    func = next(node for node in ast.walk(build)
+    owner = build
+    if name == "clear_diagnostics":
+        owner = ast.parse(MAIN.with_name("settings_diagnostic_actions.py").read_text(encoding="utf-8"))
+    func = next(node for node in ast.walk(owner)
                 if isinstance(node, ast.FunctionDef) and node.name == name)
     scope = dict(namespace)
     exec(compile(ast.fix_missing_locations(

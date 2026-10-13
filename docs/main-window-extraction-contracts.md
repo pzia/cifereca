@@ -430,3 +430,14 @@ TaskRunner delivers completions on the GTK thread. An obsolete identity or
 request cannot publish results, clear a newer pending request or show its error.
 Rendering, facets and pending book selection stay in their existing owners.
 Cover reinspection remains explicit and adds no acquisition or provider call.
+
+## Settings Diagnostics action ownership
+
+`settings_diagnostic_actions.build_settings_diagnostic_callbacks` owns copy,
+export, direct diagnostic preferences and clear callbacks. The window supplies
+the page lifetime, report refresh, widgets and Gtk/Gdk adapters, and retains
+all signal connections. Import and factory construction perform no collection,
+clipboard access, file write or preference mutation. Clipboard verification and
+native chooser responses keep the originating lifetime and report snapshot;
+disposal prevents stale feedback or writes. Settings save/migration, diagnostics
+projection and the independent AI consent flow remain in their existing owners.
