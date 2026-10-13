@@ -48,3 +48,43 @@ def test_kobo_resume_preview_cli_only_connects_when_manifest_refresh_requested(m
     assert previews[-1] == ("vault-1", True, True)
     assert connections == ["vault-1"]
     assert len(closed) == 2
+
+
+def test_manifest_refresh_cli_runs_with_real_library_service_facade(tmp_path, monkeypatch, capsys):
+    """Regression: the Core façade must expose the targeted provider connector.
+
+    The CLI calls ``service.connect_kobo_preview``; merely implementing a
+    standalone helper in provider_sessions is insufficient.
+    """
+    from cifereca.core import provider_sessions
+    from tests.test_kobo_backup_reconcile_prune import _service
+
+    service = _service(tmp_path, manifest=[])
+    target = service._sessions[service._session_key("kobo", "vault-1")]
+    selected = []
+
+    def connect_target(owner, credential_id):
+        assert owner is service
+        selected.append(credential_id)
+        return target
+
+    monkeypatch.setattr(provider_sessions, "connect_kobo_preview", connect_target)
+    monkeypatch.setattr(
+        service, "connect_configured",
+        lambda: (_ for _ in ()).throw(AssertionError("must not connect all providers")),
+    )
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kwargs: SimpleNamespace(library=service, close=lambda: None),
+    )
+    try:
+        assert cli.main([
+            "kobo-resume-preview", "--credential", "vault-1", "--refresh-manifest",
+        ]) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["manifest_refreshed"] is True
+        assert result["manifest_valid"] is True
+        assert result["acquisition_authorized"] is False
+        assert selected == ["vault-1"]
+    finally:
+        service.close()
