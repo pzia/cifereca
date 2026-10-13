@@ -858,17 +858,23 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
     existing reconciliation safeguards still prevent duplicate redownloads.
     """
+    cancellation_latched = False
+
     def cancellation_requested() -> bool:
+        nonlocal cancellation_latched
+        if cancellation_latched:
+            return True
         if cancelled is None:
             return False
         try:
-            return bool(cancelled())
+            cancellation_latched = bool(cancelled())
         except Exception as exc:
             # A broken cancellation hook must not launch another acquisition.
             logger.warning(
                 "TRACE kobo cancellation hook failed kind=%s", type(exc).__name__,
             )
-            return True
+            cancellation_latched = True
+        return cancellation_latched
 
     def emit(event: str, **detail: Any) -> None:
         if progress is None:
@@ -879,9 +885,15 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             # Progress reporting must never break the backup itself.
             pass
 
-    # Refresh filesystem membership before deciding whether acquisition is safe.
-    self.catalog_scan()
-    indexed_kobo_paths = _indexed_kobo_catalog_paths(self)
+    # A cancelled explicit resume is not a scan request. Avoid the expensive
+    # local catalog/ADEPT probes entirely, and preserve existing artifacts.
+    # The normal per-account loop still commits a durable cancelled checkpoint.
+    cancelled_before_scan = cancellation_requested()
+    if not cancelled_before_scan:
+        self.catalog_scan()
+        indexed_kobo_paths = _indexed_kobo_catalog_paths(self)
+    else:
+        indexed_kobo_paths = {}
     sessions = [
         session for session in self._sessions.values()
         if session.connected and session.provider_id == "kobo" and session.capabilities.backup
@@ -896,9 +908,13 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         str(getattr(session, "api_version", "") or "2.x") for session in sessions
     })
     vault_contract = ",".join(vault_versions) if vault_versions else "2.x"
-    emit("adept_probe", message="Vérification de Kobo-Adept")
-    adept_state = self.kobo_adept_state(force=True)
-    emit(
+    if cancelled_before_scan:
+        adept_state = {}
+    else:
+        emit("adept_probe", message="Vérification de Kobo-Adept")
+        adept_state = self.kobo_adept_state(force=True)
+    if not cancelled_before_scan:
+        emit(
         "adept_ready",
         compatible=bool(adept_state.get("compatible")),
         operational=bool(adept_state.get("operational")),
@@ -954,7 +970,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # one plausible artifact is quarantined for verification; several
     # plausible artifacts become an explicit conflict. This prevents the
     # historical ``Title [deadbeef].epub`` duplication loop.
-    _recover_local_remnants(self, summary, target_dirs, emit, credential_id=credential_id)
+    if not cancelled_before_scan:
+        _recover_local_remnants(self, summary, target_dirs, emit, credential_id=credential_id)
     error_counts: Counter[tuple[str, str, int | None, str]] = Counter()
     error_examples: list[dict[str, Any]] = []
 
