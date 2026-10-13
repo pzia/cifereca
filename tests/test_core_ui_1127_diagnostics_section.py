@@ -107,7 +107,7 @@ def test_builder_never_attaches_signals_or_accesses_diagnostic_backend():
     assert ui.details_toggle.label == "Afficher les détails techniques"
 
 
-def test_host_owns_expurgation_copy_export_navigation_and_refresh():
+def test_host_and_action_adapter_keep_expurgation_copy_export_navigation_and_refresh():
     source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py").read_text("utf-8")
     tree = ast.parse(source)
     window = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
@@ -117,7 +117,12 @@ def test_host_owns_expurgation_copy_export_navigation_and_refresh():
     assert "diagnostic_plugin_rows(data, attention_only=attention_only)" in rendered
     assert "self.diagnostics.text(" in rendered
     assert "self.navigate('plugins')" in rendered
-    assert "Gtk.FileChooserAction.SAVE" in rendered
-    assert "Gdk.ContentProvider.new_for_value(content)" in rendered
     assert "diag_scroll.set_visible(visible)" in rendered
-    assert "self.service.save_diagnostic_preferences(" in rendered
+    assert "build_settings_diagnostic_callbacks(" in rendered
+    assert "copy.connect('clicked', copy_text)" in rendered
+    assert "export.connect('clicked', export_text)" in rendered
+    actions = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_diagnostic_actions.py").read_text("utf-8")
+    action_source = ast.unparse(ast.parse(actions))
+    assert "Gtk.FileChooserAction.SAVE" in action_source
+    assert "Gdk.ContentProvider.new_for_value(content)" in action_source
+    assert "self.service.save_diagnostic_preferences(" in action_source

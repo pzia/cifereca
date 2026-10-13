@@ -17,12 +17,10 @@ MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _settings_callback(name):
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    window = next(node for node in tree.body
-                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    builder = next(node for node in window.body
+    tree = ast.parse(MAIN.with_name("settings_diagnostic_actions.py").read_text(encoding="utf-8"))
+    builder = next(node for node in tree.body
                    if isinstance(node, ast.FunctionDef) and
-                   node.name == "_build_settings_page")
+                   node.name == "build_settings_diagnostic_callbacks")
     owner_name = "copy_text" if name == "verified" else "export_text"
     owner = next(node for node in ast.walk(builder)
                  if isinstance(node, ast.FunctionDef) and node.name == owner_name)
@@ -116,7 +114,7 @@ def test_active_chooser_preserves_expurgated_file_export(tmp_path):
 
 
 def test_export_entrypoint_checks_page_lifetime_once():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    tree = ast.parse(MAIN.with_name("settings_diagnostic_actions.py").read_text(encoding="utf-8"))
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "export_text")
     source = ast.unparse(fn)

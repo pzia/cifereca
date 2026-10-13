@@ -124,7 +124,7 @@ class Core0911(unittest.TestCase):
         self.assertGreater(result['process']['artifact_bytes'],0)
 
     def test_gui_diagnostic_change_saves_without_global_save(self):
-        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
+        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/settings_diagnostic_actions.py'
         fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='persist_diagnostics')
         window=NS(service=self.service,show_error=Mock())
         refresh=Mock()

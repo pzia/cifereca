@@ -55,7 +55,9 @@ def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
     assert 'focus(plugin_id)' in source
     assert 'Copier dans le presse-papiers' in section
     assert 'Exporter le diagnostic' in section
-    assert 'Gtk.FileChooserAction.SAVE' in source
+    actions = gui_source_text(ROOT / "src/cifereca/gui/settings_diagnostic_actions.py")
+    assert 'build_settings_diagnostic_callbacks(' in source
+    assert 'Gtk.FileChooserAction.SAVE' in actions
 
 
 def test_fallback_system_page_uses_same_attention_projection_and_copy_action():
