@@ -344,6 +344,13 @@ def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
         identity = self.identity_for_connection("kobo", credential_id).identity_id
         row = _kobo_checkpoint_for(self, identity, credential_id)
         if row is not None:
+            # A running checkpoint left behind after a crash is not a
+            # successful cache entry. The opening-sync owns the global
+            # acquisition lock, so it is safe to reconsider this credential
+            # immediately: interrupted files are revalidated/quarantined
+            # before any attempted acquisition.
+            if str(row.get("status") or "") in {"running", "interrupted", "manifest_fetch"}:
+                return True
             raw = row.get("updated_at")
         else:
             # Preserve old cache semantics only before *any* active account
