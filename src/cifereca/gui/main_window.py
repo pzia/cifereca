@@ -2080,6 +2080,8 @@ class MainWindow(Adw.ApplicationWindow):
             )
 
     def _history_scroll_changed(self, adjustment: Gtk.Adjustment) -> None:
+        if getattr(self, "_closed", False):
+            return
         if self._history_loaded_count >= len(self._history_rows) or self._history_append_scheduled:
             return
         remaining = adjustment.get_upper() - (adjustment.get_value() + adjustment.get_page_size())
