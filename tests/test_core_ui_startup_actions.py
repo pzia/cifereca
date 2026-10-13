@@ -91,7 +91,7 @@ def test_startup_without_plugin_manager_still_connects_providers():
         and any(isinstance(op, ast.Is) for op in node.test.ops)
     )
     body = ast.unparse(ast.Module(body=no_manager.body, type_ignores=[]))
-    assert "GLib.idle_add(self.connect_configured_sources)" in body
+    assert "GLib.idle_add(lambda: self.connect_configured_sources())" in body
     assert "return False" in body
 
 
