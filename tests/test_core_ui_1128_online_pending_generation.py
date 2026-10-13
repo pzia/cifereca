@@ -131,4 +131,6 @@ def test_window_captures_generation_and_clears_only_matching_pending_token():
     assert "self._online_pending_generation = generation" in src
     assert "getattr(self, '_online_pending_token', None) is pending_token" in src
     assert "self._online_pending_generation = None" in src
-    assert "not getattr(self, '_closed', False)" in src
+    # The close guard now rejects entry into run_search before any GTK/runner
+    # activity; the pending-result generation guard is exercised above.
+    assert "if getattr(self, '_closed', False):" in src
