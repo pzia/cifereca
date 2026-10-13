@@ -1160,8 +1160,22 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 **previous,
                 "status": "reconcile_required",
                 "local_path": str(artifact),
-                "size": artifact.stat().st_size if ordinary_file else None,
-                "sha256": try_sha256_file(artifact) if ordinary_file else None,
+                # Do not erase the original acquisition baseline when a
+                # quarantined artifact is re-inspected on subsequent syncs.
+                # Only an interrupted/unparsed acquisition without an
+                # authoritative checksum may take a provisional observation.
+                "size": (
+                    previous.get("size")
+                    if previous_status in {"reconcile_required", "reconcile_conflict"}
+                    and previous.get("size") is not None
+                    else artifact.stat().st_size if ordinary_file else None
+                ),
+                "sha256": (
+                    previous.get("sha256")
+                    if previous_status in {"reconcile_required", "reconcile_conflict"}
+                    and previous.get("sha256")
+                    else try_sha256_file(artifact) if ordinary_file else None
+                ),
                 "updated_at": int(time.time()),
                 "error": (
                     "Artefact local présent après une acquisition Adept non réconciliée ; "
@@ -1475,6 +1489,31 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 self.storage.backup_put({**current, "status": "reconcile_required", "error": "Artefact local invalide"})
                 summary["reconcile_skipped"] += 1
                 return True
+            # The stored checksum describes the *acquired* revision, not
+            # merely any structurally valid EPUB/PDF now occupying that path.
+            # Never silently accept changed bytes or overwrite the baseline:
+            # doing so would make a corrupted/replaced book look "unchanged".
+            expected_hash = str(current.get("sha256") or "").strip().lower()
+            expected_size = current.get("size")
+            hash_changed = bool(expected_hash) and observed["sha256"] != expected_hash
+            size_changed = (
+                type(expected_size) is int and expected_size >= 0
+                and observed["size"] != expected_size
+            )
+            if hash_changed or size_changed:
+                self.storage.backup_put({
+                    **current,
+                    "status": "reconcile_required",
+                    "error": "Artefact Kobo local modifié depuis la sauvegarde ; vérification manuelle requise",
+                    "updated_at": int(time.time()),
+                })
+                summary["reconcile_pending"] += 1
+                summary["reconcile_skipped"] += 1
+                emit("reconcile_required", current=index + 1, total=total,
+                     title=title, item_id=product_id)
+                return True
+            # Historic complete rows may lack a checksum: accept only after
+            # format/DRM inspection, then persist the first verified baseline.
             self.storage.backup_put({**current, **observed})
             summary["unchanged"] += 1
             return True
