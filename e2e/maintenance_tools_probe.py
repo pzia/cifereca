@@ -51,7 +51,7 @@ class DummyTool:
     def describe(self):
         return SimpleNamespace(
             title="Nettoyage test sans suppression", description="Simulation locale",
-            supports_dry_run=True, scope="identity", danger_level="destructive",
+            supports_dry_run=True, cancellable=True, scope="identity", danger_level="destructive",
             icon_name="edit-delete-symbolic",
         )
 
