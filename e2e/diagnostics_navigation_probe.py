@@ -474,7 +474,7 @@ def main() -> int:
     def inspect_settings_section(index):
         w = window[0]
         if index == len(SETTINGS_SECTIONS):
-            begin_settings_unsaved_edit()
+            begin_settings_persisted_edit()
             return
         key = SETTINGS_SECTIONS[index]
         w._settings_tabs.set_visible_child_name(key)
@@ -528,6 +528,72 @@ def main() -> int:
         report["checks"]["settings_" + key + "_rendered"] = True
         capture("08-settings-" + key)
         later(75, lambda: inspect_settings_section(index + 1))
+
+    # P0 #1127: a physical GTK Save click must persist a harmless setting
+    # to the E2E runner's disposable XDG_CONFIG_HOME; no provider or network.
+    def begin_settings_persisted_edit():
+        w = window[0]
+        w._settings_tabs.set_visible_child_name("interface")
+        later(180, change_persisted_interface_switch)
+
+    def change_persisted_interface_switch():
+        w = window[0]
+        section = w._settings_tabs.get_visible_child()
+        row = next((node for node in settings_rows(section, Adw.ActionRow)
+                    if node.get_title() == "Actions expérimentales"), None)
+        assert row is not None and row.get_mapped()
+        switches = settings_rows(row, Gtk.Switch)
+        assert len(switches) == 1 and switches[0].get_mapped()
+        setting = switches[0]
+        old_value = bool(core.config.get("experimental_actions", False))
+        assert setting.get_active() == old_value
+        report["settings_original_experimental_actions"] = old_value
+        report["pointer_actions"].append(device[0].click_widget(setting))
+        later(140, lambda: save_persisted_interface_change(setting, old_value))
+
+    def save_persisted_interface_change(setting, old_value):
+        w = window[0]
+        assert setting.get_active() is (not old_value), "GTK Switch not toggled by XTEST"
+        assert bool(core.config.get("experimental_actions", False)) == old_value, (
+            "Unsaved GTK change leaked to live Core configuration"
+        )
+        viewport = w.view_stack.get_child_by_name("settings")
+        saves = [node for node in settings_rows(viewport, Gtk.Button)
+                 if node.get_tooltip_text() ==
+                 "Enregistrer les modifications de configuration en attente"]
+        assert len(saves) == 2, "Missing desktop/footer Save actions"
+        save = next((node for node in saves
+                     if node.get_mapped() and node.get_sensitive()), None)
+        assert save is not None, "Edited Interface tab cannot be saved"
+        checks_before = broker.checks
+        queries_before = len(broker.event_queries)
+        report["pointer_actions"].append(device[0].click_widget(save))
+        deadline = monotonic() + 12
+
+        def saved():
+            # Check the **durable JSON**, not merely the Gtk.Switch state.
+            try:
+                on_disk = json.loads(core.config.path.read_text(encoding="utf-8"))
+                persisted = on_disk.get("experimental_actions")
+            except (OSError, ValueError):
+                persisted = None
+            target = not old_value
+            ui_finished = all(not node.get_sensitive() for node in saves)
+            if persisted is target and ui_finished:
+                assert core.config.get("experimental_actions") is target
+                assert broker.checks == checks_before
+                assert len(broker.event_queries) == queries_before
+                report["checks"]["settings_real_gtk_save_persists_xdg_json"] = True
+                capture("08f-settings-saved-interface")
+                begin_settings_unsaved_edit()
+            elif monotonic() >= deadline:
+                raise AssertionError(
+                    "GTK Save did not commit an isolated Interface setting",
+                    persisted, target, ui_finished,
+                )
+            else:
+                later(100, saved)
+        later(150, saved)
 
     def begin_settings_unsaved_edit():
         w = window[0]
