@@ -687,18 +687,24 @@ def _kobo_checkpoint_for(self, identity_id: str, credential_id: str) -> dict[str
 def _kobo_source_summaries(self) -> list[dict[str, Any]]:
     """Expose only safe checkpoint counters for the local diagnostic."""
     summaries = []
-    seen = set()
-    sessions = [
-        session for session in self._sessions.values()
-        if session.provider_id == "kobo"
-    ]
-    for session in sessions:
-        identity = self.identity_for_connection("kobo", session.credential_id).identity_id
-        source_id = _kobo_checkpoint_key(identity, session.credential_id).rsplit(".", 1)[-1]
-        if source_id in seen:
-            continue
-        seen.add(source_id)
-        row = _kobo_checkpoint_for(self, identity, session.credential_id)
+    # kobo-sync-errors must work after a cold restart without loading or
+    # connecting provider plugins. Sessions are transient; the connection
+    # registry and checkpoint keys are durable in the local SQLite database.
+    scopes = {
+        (str(row.get("identity_id") or ""), str(row.get("credential_id") or ""))
+        for row in self.storage.provider_connections()
+        if row.get("provider_id") == "kobo"
+        and row.get("identity_id") and row.get("credential_id")
+    }
+    # Retain compatibility with tests/legacy in-memory sessions that have not
+    # yet been inserted in provider_connections.
+    for session in self._sessions.values():
+        if session.provider_id == "kobo":
+            identity = self.identity_for_connection("kobo", session.credential_id).identity_id
+            scopes.add((identity, session.credential_id))
+    for identity, credential_id in sorted(scopes):
+        source_id = _kobo_checkpoint_key(identity, credential_id).rsplit(".", 1)[-1]
+        row = _kobo_checkpoint_for(self, identity, credential_id)
         if row is None:
             continue
         counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
