@@ -936,7 +936,6 @@ class LibraryService:
             identity = self.identity_for_connection(session.provider_id, session.credential_id)
             try:
                 rows = session.library()
-                result[f"{session.provider_id}:{session.credential_id}"] = self._mirror_remote_results(rows, identity_id=identity.identity_id)
                 if session.provider_id == "kobo" and account is not None:
                     # Only a connected PERSONAL manifest may assert ownership.
                     # Catalog searches never enter this path; no download here.
@@ -946,6 +945,7 @@ class LibraryService:
                         credential_id=session.credential_id,
                         account_id=account.unique_id or None,
                     )
+                result[f"{session.provider_id}:{session.credential_id}"] = self._mirror_remote_results(rows, identity_id=identity.identity_id)
                 if session.provider_id == "numilog" and session.capabilities.direct_download:
                     for row in rows:
                         self._acquire_personal_library_item(session, row, identity.identity_id)
