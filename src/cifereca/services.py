@@ -2461,6 +2461,21 @@ class LibraryService:
                             {"item_id": item.record_id, "title": item.title,
                              "author": item.author, "format": item.format}, legacy_dir,
                         ) if p not in candidates)
+                    # Explicit provider/product links in the local catalogue
+                    # are evidence of a candidate even after arbitrary rename.
+                    # Keep strict identity isolation and never infer by title.
+                    for row in self.storage.catalog_entries():
+                        if (row.get("local_state") != "local"
+                                or row.get("provider_id") != "kobo"
+                                or str(row.get("identity_id") or "") != identity.identity_id
+                                or str(row.get("item_id") or "") != item.record_id):
+                            continue
+                        meta = row.get("metadata")
+                        path_text = meta.get("path") if isinstance(meta, dict) else None
+                        if isinstance(path_text, str) and path_text.strip():
+                            linked = Path(path_text)
+                            if (linked.is_file() or linked.is_symlink()) and linked not in candidates:
+                                candidates.append(linked)
                     existing = self.storage.backup_get("kobo", item.source_credential, item.record_id)
                     if existing and existing.get("local_path"):
                         local = Path(str(existing["local_path"]))
