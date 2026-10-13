@@ -80,3 +80,97 @@ def test_identity_overview_is_copied_and_library_refresh_never_searches_online()
     window.refresh_library.assert_called_once_with(False)
     window.refresh_recent.assert_called_once_with()
     window.run_search.assert_not_called()
+
+
+def test_closed_plugin_host_refuses_all_owner_mutations_and_live_service_reads():
+    window = NS(
+        _closed=True,
+        navigate=Mock(), open_book_detail=Mock(return_value=True),
+        search_books=Mock(return_value=True), choose_acsm=Mock(),
+        open_identity_library=Mock(), open_identity_view=Mock(),
+        run_opening_sync=Mock(), refresh_library=Mock(),
+        refresh_recent=Mock(), run_search=Mock(),
+        service=NS(dashboard_state=Mock()),
+        plugin_manager=NS(diagnostic=Mock()),
+        plugins_page=NS(focus_plugin=Mock()),
+    )
+    host = host_type()(window, UiActionContext(target="page", route="library"))
+    assert host.open_book_detail(BookRef("one")) is False
+    assert host.search_books("Loup") is False
+    host.navigate("search")
+    host.open_plugin_settings("provider-private")
+    host.open_identity_library("alice")
+    host.open_identity_view("alice", route="library")
+    host.refresh_context()
+    host.refresh_detail()
+    host.import_acsm()
+    host.synchronize()
+    assert host.identity_overview() == []
+    assert host.plugin_statuses() == []
+    for method in (
+        window.navigate, window.open_book_detail, window.search_books,
+        window.choose_acsm, window.open_identity_library,
+        window.open_identity_view, window.run_opening_sync,
+        window.refresh_library, window.refresh_recent, window.run_search,
+        window.service.dashboard_state, window.plugin_manager.diagnostic,
+        window.plugins_page.focus_plugin,
+    ):
+        method.assert_not_called()
+
+
+def test_closed_plugin_host_cannot_resubscribe_identity_overview():
+    window = NS(_closed=True)
+    host = host_type()(window)
+    callback = Mock()
+    cancel = host.subscribe_identity_overview(callback)
+    assert callable(cancel)
+    cancel()
+    assert not hasattr(window, "_overview_listeners")
+    callback.assert_not_called()
+
+
+def test_action_button_callback_is_revoked_when_owner_closes():
+    class Button:
+        def connect(self, _event, callback):
+            self.callback = callback
+    class Bar:
+        def __init__(self):
+            self.children = []
+        def append(self, item):
+            self.children.append(item)
+    window = NS(_closed=False)
+    host = host_type(
+        AdaptiveActionBar=Bar, action_button=lambda *args: Button(),
+    )(window)
+    fired = []
+    bar = host.build_action_bar([
+        NS(title="Rapport", icon_name="document-open",
+           callback=lambda caller: fired.append(caller)),
+    ])
+    bar.children[0].callback(bar.children[0])
+    assert fired == [host]
+    window._closed = True
+    bar.children[0].callback(bar.children[0])
+    assert fired == [host]
+
+
+def test_live_plugin_host_still_routes_navigation_and_sync():
+    actions = []
+    window = NS(
+        _closed=False,
+        navigate=lambda route: actions.append(("navigate", route)),
+        plugins_page=NS(focus_plugin=lambda p: actions.append(("focus", p))),
+        open_identity_view=lambda identity, **kwargs: actions.append(
+            ("identity-view", identity, kwargs)),
+        run_opening_sync=lambda control, *, deep: actions.append(
+            ("sync", control, deep)),
+    )
+    host = host_type()(window)
+    host.open_plugin_settings("reader")
+    host.open_identity_view("alice", route="library", providers=("local",))
+    host.synchronize(deep=False)
+    assert actions == [
+        ("navigate", "plugins"), ("focus", "reader"),
+        ("identity-view", "alice", {"route": "library", "providers": ("local",)}),
+        ("sync", None, False),
+    ]
