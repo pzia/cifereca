@@ -357,3 +357,24 @@ def test_aborted_kobo_batch_retains_manifest_success_but_not_acquisition_complet
         assert not service.storage.metadata_get("kobo_backup_last_success_at")
     finally:
         service.close()
+
+
+def test_existing_reconciliation_skip_does_not_claim_batch_completed(tmp_path: Path):
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "book-1", "revision_id": "r1", "title": "Book",
+                   "format": "EPUB", "downloadable": True}],
+    )
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1", "identity_id": "default",
+        "item_id": "book-1", "revision_id": "r1", "title": "Book",
+        "format": "EPUB", "status": "reconcile_conflict",
+    })
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["errors"] == 0
+        assert summary["reconcile_skipped"] == 1
+        assert summary["status"] == "attention_required"
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
