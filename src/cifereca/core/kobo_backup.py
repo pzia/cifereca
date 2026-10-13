@@ -1048,20 +1048,12 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         summary["skipped"] += 1
         return True
 
-    if unlinked_local_count and not bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False)):
-        message = f"Acquisition suspendue : {unlinked_local_count} livre(s) local(aux) sans liaison Kobo. Rapprochez les fichiers ou autorisez explicitement l’acquisition dans les paramètres."
-        self.storage.backup_put({**base_record, "status": "attention_required", "attention_code": "unlinked_local_books", "error": message})
-        summary["attention_required"] += 1
-        emit("attention_required", current=index + 1, total=total, title=title, item_id=product_id, code="unlinked_local_books", message=message)
-        logger.info("TRACE kobo acquisition decision=blocked reason=unlinked-local-books count=%s", unlinked_local_count)
-        return True
-
     # A persisted delegated-permission denial is not a transient download
     # failure. Avoid re-resolving its descriptor (or attempting delegated)
     # on every automatic/repeated batch, including after application restart.
     # A caller may explicitly retry after reconnecting with updated scopes.
-    # Existing local candidates and archived/unlinked guards above always
-    # take precedence, including when explicit retry is requested.
+    # Existing local candidates and archive guards above always take
+    # precedence. An explicit retry still enforces unlinked-file safety below.
     if (not retry_scope_blocked and current
             and str(current.get("status") or "") == "attention_required"
             and str(current.get("attention_code") or "") == "missing_delegation_scope"):
@@ -1073,6 +1065,14 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             item_id=product_id, title=title, code="missing_delegation_scope",
             message="Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)",
         )
+        return True
+
+    if unlinked_local_count and not bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False)):
+        message = f"Acquisition suspendue : {unlinked_local_count} livre(s) local(aux) sans liaison Kobo. Rapprochez les fichiers ou autorisez explicitement l’acquisition dans les paramètres."
+        self.storage.backup_put({**base_record, "status": "attention_required", "attention_code": "unlinked_local_books", "error": message})
+        summary["attention_required"] += 1
+        emit("attention_required", current=index + 1, total=total, title=title, item_id=product_id, code="unlinked_local_books", message=message)
+        logger.info("TRACE kobo acquisition decision=blocked reason=unlinked-local-books count=%s", unlinked_local_count)
         return True
 
     if not adapter_available:
