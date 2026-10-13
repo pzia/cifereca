@@ -11,6 +11,7 @@ from cifereca.locking import InterProcessLock
 @dataclass(frozen=True)
 class Plan:
     tool_id: str = "library.duplicates.cleanup"
+    summary: str = "Plan de nettoyage initial"
     facts: dict | None = None
     changes: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -124,3 +125,53 @@ def test_mutated_reused_plan_cannot_silently_change_confirmed_action(tmp_path, m
         guard.execute_maintenance_tool(tool, object(), preview, Control(), destructive=True)
     assert tool.run_calls == 0
 
+
+
+def test_plan_summary_change_refuses_destructive_execution(tmp_path, monkeypatch):
+    """A changed user-visible summary is a stale plan, even with same facts."""
+    from dataclasses import replace
+
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    tool = Tool()
+    reviewed = guard.preview_maintenance_tool(tool, object(), destructive=True)
+    tool.preview = replace(reviewed, summary="Des suppressions supplémentaires sont proposées")
+    with pytest.raises(guard.MaintenancePlanChangedError, match="Prévisualiser"):
+        guard.execute_maintenance_tool(tool, object(), reviewed, Control(), destructive=True)
+    assert tool.run_calls == 0
+
+
+def test_cancel_requested_before_destructive_run_keeps_library_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    tool = Tool()
+    reviewed = guard.preview_maintenance_tool(tool, object(), destructive=True)
+    ctl = guard.MaintenanceCancelControl()
+    ctl.cancel()
+    assert ctl.cancelled()
+    with pytest.raises(guard.MaintenanceCancelledError, match="annulée"):
+        guard.execute_maintenance_tool(tool, object(), reviewed, ctl, destructive=True)
+    assert tool.plan_calls == 1
+    assert tool.run_calls == 0
+
+
+def test_cancel_during_cancellable_plugin_stops_following_mutations(tmp_path, monkeypatch):
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    tool = Tool()
+    reviewed = guard.preview_maintenance_tool(tool, object(), destructive=True)
+    ctl = guard.MaintenanceCancelControl()
+    def partial_then_cancel(_plan, control):
+        control.check_cancelled()
+        ctl.cancel()
+        control.check_cancelled()
+        pytest.fail("no further mutation after cancellation")
+    tool.run = partial_then_cancel
+    with pytest.raises(guard.MaintenanceCancelledError):
+        guard.execute_maintenance_tool(tool, object(), reviewed, ctl, destructive=True)
+
+
+def test_window_close_terminates_maintenance_control():
+    state = {"closed": False}
+    ctl = guard.MaintenanceCancelControl(owner_closed=lambda: state["closed"])
+    assert not ctl.cancelled()
+    state["closed"] = True
+    with pytest.raises(guard.MaintenanceCancelledError):
+        ctl.check_cancelled()
