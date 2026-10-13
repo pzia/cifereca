@@ -26,7 +26,7 @@ def _vault_public_version(value: Any) -> str:
     if type(value) is not str:
         return ""
     value = value.strip()
-    return value if re.fullmatch(r"v?[0-9]{1,3}(?:\\.[0-9]{1,4}){1,4}", value) else ""
+    return value if re.fullmatch(r"v?[0-9]{1,3}(?:\.[0-9]{1,4}){1,4}", value) else ""
 
 
 DESCRIPTOR = ProviderDescriptor(
