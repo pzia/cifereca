@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import zipfile
 
@@ -301,5 +302,171 @@ def test_backup_emits_progress_events_through_successful_download(tmp_path: Path
         assert "acquiring" in names
         assert "downloaded" in names
         assert names[-1] == "done"
+    finally:
+        service.close()
+
+
+def test_pending_without_errors_is_not_persisted_as_completed_batch(tmp_path: Path):
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "missing", "revision_id": "r1", "title": "Missing",
+                   "format": "EPUB", "downloadable": True}],
+    )
+    service.kobo_adept_state = lambda **_kw: {
+        "available": False, "compatible": False, "operational": False,
+        "error": {"message": "Runtime absent"},
+    }
+    try:
+        result = service.sync_kobo_backup()
+        assert result["pending"] == 1
+        assert result["errors"] == 0
+        assert result["status"] == "attention_required"
+        assert int(service.storage.metadata_get("kobo_backup_last_attempt_at")) > 0
+        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) > 0
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+        assert service.storage.metadata_get("kobo_backup_last_batch_status") == "attention_required"
+        # Throttle a repeated startup, but never classify it as complete.
+        assert not service._kobo_backup_due()
+    finally:
+        service.close()
+
+
+def test_empty_successful_kobo_manifest_is_a_completed_batch(tmp_path: Path):
+    service, _session = _service(tmp_path, manifest=[])
+    try:
+        result = service.sync_kobo_backup()
+        assert result["sessions"] == 1
+        assert result["manifests_fetched"] == 1
+        assert result["status"] == "complete"
+        assert int(service.storage.metadata_get("kobo_backup_last_success_at")) > 0
+    finally:
+        service.close()
+
+
+def test_aborted_kobo_batch_retains_manifest_success_but_not_acquisition_completion(tmp_path: Path):
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "forbidden", "revision_id": "r1",
+                   "title": "Forbidden", "format": "EPUB"}],
+        unauthorized=True,
+    )
+    try:
+        result = service.sync_kobo_backup()
+        assert result["status"] == "aborted"
+        assert result["manifests_fetched"] == 1
+        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) > 0
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
+
+
+def test_existing_reconciliation_skip_does_not_claim_batch_completed(tmp_path: Path):
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "book-1", "revision_id": "r1", "title": "Book",
+                   "format": "EPUB", "downloadable": True}],
+    )
+    # Use a real existing candidate: on a branch independent from #1349,
+    # the legacy recovery path clears a conflict only when no file remains.
+    candidate = service._kobo_backup_target_dir("default") / "Book.epub"
+    _write_epub(candidate)
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1", "identity_id": "default",
+        "item_id": "book-1", "revision_id": "r1", "title": "Book",
+        "format": "EPUB", "status": "reconcile_conflict",
+    })
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["errors"] == 0
+        assert summary["reconcile_skipped"] == 1
+        assert summary["status"] == "attention_required"
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
+
+
+def test_kobo_checkpoint_records_source_progress_without_book_titles(tmp_path: Path):
+    from cifereca.core.kobo_backup import _kobo_checkpoint_key
+
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "private-product", "revision_id": "r1",
+                   "title": "Private Book Name", "format": "EPUB", "downloadable": True}],
+    )
+    service.kobo_adept_state = lambda **_kw: {
+        "available": False, "compatible": False, "operational": False,
+        "error": {"message": "Runtime absent"},
+    }
+    try:
+        report = service.sync_kobo_backup()
+        raw = service.storage.metadata_get(_kobo_checkpoint_key("default", "vault-1"))
+        checkpoint = json.loads(raw)
+        assert checkpoint["processed"] == 1
+        assert checkpoint["total"] == 1
+        assert checkpoint["status"] == "attention_required"
+        assert checkpoint["counts"]["pending"] == 1
+        assert report["sources"][0]["credential_id"] == "vault-1"
+        assert report["sources"][0]["status"] == "attention_required"
+        assert "Private Book Name" not in raw
+        assert "private-product" not in raw
+        assert len(checkpoint["last_item_digest"]) == 16
+    finally:
+        service.close()
+
+
+def test_kobo_checkpoint_stops_at_last_committed_item_on_unexpected_exception(tmp_path: Path, monkeypatch):
+    from cifereca.core import kobo_backup
+
+    service, _session = _service(
+        tmp_path,
+        manifest=[
+            {"product_id": "first", "revision_id": "r1", "title": "First",
+             "format": "EPUB", "downloadable": False},
+            {"product_id": "second", "revision_id": "r1", "title": "Second",
+             "format": "EPUB", "downloadable": True},
+        ],
+    )
+    original = kobo_backup._refresh_manifest_record
+
+    def interrupted(*args, **kwargs):
+        if args[4] == "second":
+            raise RuntimeError("simulated interruption")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(kobo_backup, "_refresh_manifest_record", interrupted)
+    try:
+        import pytest
+        with pytest.raises(RuntimeError, match="simulated interruption"):
+            service.sync_kobo_backup()
+        checkpoint = json.loads(
+            service.storage.metadata_get(kobo_backup._kobo_checkpoint_key("default", "vault-1"))
+        )
+        assert checkpoint["processed"] == 1
+        assert checkpoint["status"] == "interrupted"
+        assert checkpoint["counts"]["scanned"] == 2
+        assert "second" not in str(checkpoint)
+    finally:
+        service.close()
+
+
+def test_kobo_checkpoint_records_aborted_source_before_exiting_batch(tmp_path: Path):
+    from cifereca.core.kobo_backup import _kobo_checkpoint_key
+
+    service, _session = _service(
+        tmp_path, unauthorized=True,
+        manifest=[{"product_id": f"book-{index}", "revision_id": "r1",
+                   "title": f"Book {index}", "format": "EPUB"} for index in range(3)],
+    )
+    try:
+        report = service.sync_kobo_backup()
+        checkpoint = json.loads(
+            service.storage.metadata_get(_kobo_checkpoint_key("default", "vault-1"))
+        )
+        assert report["aborted"] is True
+        assert report["sources"][0]["status"] == "aborted"
+        assert checkpoint["status"] == "aborted"
+        assert checkpoint["processed"] == 1
+        assert checkpoint["total"] == 3
+        assert checkpoint["counts"]["errors"] == 1
     finally:
         service.close()
