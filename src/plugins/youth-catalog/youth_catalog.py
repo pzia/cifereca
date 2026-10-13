@@ -572,6 +572,25 @@ def _attested_public_notice_url(raw: object) -> str:
         return ""
 
 
+def _notice_evidence_isbn(value: object) -> str:
+    """Only a whole formatted ISBN can attest an edition-level match.
+
+    General ingestion normalizes messy publisher strings, but an attested
+    library lookup must not silently strip private text, URL parameters or
+    a second identifier around 13 valid ISBN digits.
+    """
+    if type(value) is not str or not 9 <= len(value) <= 40:
+        return ""
+    # Spaces/hyphens are normal book typography; other characters are not
+    # evidence of the identifier itself. ASCII only for canonical check.
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return ""
+    raw = value.strip(" ")
+    if not re.fullmatch(r"[0-9Xx][0-9Xx -]*[0-9Xx]", raw, re.ASCII):
+        return ""
+    return normalize_isbn(raw)
+
+
 def attest_library_notices(
     book: YouthBook,
     results: Iterable[object],
@@ -588,7 +607,7 @@ def attest_library_notices(
     if not isinstance(book, YouthBook):
         return ()
     identifiers = book.identifiers
-    isbn = normalize_isbn(identifiers.get("isbn")) if isinstance(identifiers, Mapping) else ""
+    isbn = _notice_evidence_isbn(identifiers.get("isbn")) if isinstance(identifiers, Mapping) else ""
     if not isbn or type(limit) is not int or not 1 <= limit <= 100:
         return ()
     notices: list[LibraryNoticeEvidence] = []
@@ -599,7 +618,7 @@ def attest_library_notices(
         metadata = _field(raw, "metadata", {})
         if not isinstance(metadata, Mapping):
             continue
-        candidate_isbn = normalize_isbn(metadata.get("isbn13") or metadata.get("isbn"))
+        candidate_isbn = _notice_evidence_isbn(metadata.get("isbn13") or metadata.get("isbn"))
         if candidate_isbn != isbn or metadata.get("direct_notice_attested") is not True:
             continue
         source = _field(raw, "source_provider")
