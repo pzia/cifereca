@@ -131,3 +131,38 @@ def test_bad_provider_metadata_is_not_treated_as_library_evidence():
         result(metadata={"isbn13": "invalid"}),
         NS(source_provider="library.one", record_id="x", friendly_url="https://catalogue.example.org/record/x", metadata=None),
     ]) == ()
+
+
+
+@pytest.mark.parametrize("untrusted", [
+    "ISBN: 9780306406157",
+    "isbn=9780306406157",
+    "9780306406157 token=PRIVATE",
+    "9780306406157 secret: A_PERSONAL_NAME",
+    "https://library.example.org/book/9780306406157",
+    "9780306406157;9782211348171",
+    "9780306406157 extra",
+    "9780306406157\n",
+    "\u202e9780306406157",
+    "978٠٣٠6406157",
+    "9780306406157\x00",
+])
+def test_edition_evidence_rejects_isbn_embedded_in_untrusted_provider_text(untrusted):
+    """Do not infer a verified edition by stripping non-ISBN payloads."""
+    assert attest_library_notices(book(), [result(isbn=untrusted)]) == ()
+
+
+@pytest.mark.parametrize("formatted", [
+    "978-0-306-40615-7",
+    "978 0 306 40615 7",
+    "0-306-40615-2",
+    "0 306 40615 2",
+])
+def test_edition_evidence_accepts_only_complete_typographically_formatted_isbn(formatted):
+    matches = attest_library_notices(book(), [result(isbn=formatted)])
+    assert len(matches) == 1 and matches[0].isbn13 == ISBN
+
+
+def test_edition_evidence_still_rejects_invalid_checksum_and_nonbook_ean():
+    for value in ("9780306406158", "3127020507597", "978-0-306-40615-8"):
+        assert attest_library_notices(book(), [result(isbn=value)]) == ()
