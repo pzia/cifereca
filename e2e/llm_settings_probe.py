@@ -228,6 +228,10 @@ def main():
         GLib.timeout_add(40, heartbeat)
         def reset_during_test():
             assert not controls['test'].get_sensitive(), 'No pending test to cancel'
+            assert window.get_focus() is controls['reset'], (
+                'Keyboard focus lost when the pending test disabled its button'
+            )
+            report['checks']['pending_test_preserves_keyboard_focus'] = True
             click(controls['reset'], lambda: wait_cancelled(component_ticks))
         click(controls['test'], reset_during_test)
 
