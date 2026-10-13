@@ -137,3 +137,41 @@ def test_mainwindow_explicit_kobo_action_is_saved_and_lifetime_gated():
     assert 'if ready:' in rendered
     assert 'self.run_kobo_backup(manual=True, control=_button)' in rendered
     assert "kobo_run_now.connect('clicked', manual_kobo_backup)" in ast.unparse(builder)
+
+
+def test_bad_saved_kobo_opt_in_never_looks_enabled_or_unlocks_manual_action():
+    """#1338: Core and Settings must agree on literal Boolean opt-in."""
+    for invalid in ("false", "true", 1, 0, None, [], {}):
+        controls, _, _ = _build({"kobo_backup.enabled": invalid})
+        assert controls.backup_switch.active is False
+        assert controls.run_backup_now.sensitive is False
+        assert "Désactivée" in controls.backup_status.subtitle
+        assert kobo_backup_action_state(
+            persisted_enabled=invalid,
+            draft_enabled=invalid,
+            dirty=False,
+        )[1] is False
+    enabled, _, _ = _build({"kobo_backup.enabled": True})
+    assert enabled.backup_switch.active is True
+    assert enabled.run_backup_now.sensitive is True
+
+
+def test_manual_kobo_callback_requires_exact_saved_boolean_opt_in():
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    window = next(c for c in tree.body
+                  if isinstance(c, ast.ClassDef) and c.name == "MainWindow")
+    builder = next(f for f in window.body
+                   if isinstance(f, ast.FunctionDef) and f.name == "_build_settings_page")
+    manual = next(f for f in builder.body
+                  if isinstance(f, ast.FunctionDef) and f.name == "manual_kobo_backup")
+    refresh = next(f for f in builder.body
+                   if isinstance(f, ast.FunctionDef) and f.name == "refresh_kobo_backup_status")
+    for fn in (manual, refresh):
+        source = ast.unparse(fn)
+        assert "self.config.get('kobo_backup.enabled', False) is True" in source
+        assert "bool(self.config.get(" not in source
