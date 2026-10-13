@@ -664,6 +664,15 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
         refreshed = {
             **current,
             **base_record,
+            # Do not rewrite the last acquired revision on a complete row
+            # before _skip_manifest_item has compared it with the manifest.
+            # Otherwise an older local file falsely appears current.
+            "revision_id": (
+                current.get("revision_id")
+                if current.get("status") in {"ok", "complete"}
+                and current.get("revision_id") != revision_id
+                else revision_id
+            ),
             "status": current.get("status") or "pending",
             "error": current.get("error"),
             "job_id": current.get("job_id"),
