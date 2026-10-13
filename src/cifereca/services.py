@@ -3493,6 +3493,9 @@ class LibraryService:
     def _kobo_backup_due(self) -> bool:
         return kobo_backup._kobo_backup_due(self)
 
+    def _kobo_backup_account_due(self, credential_id: str) -> bool:
+        return kobo_backup._kobo_backup_due(self, credential_id=credential_id)
+
     def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Compatibility entry point for the Kobo local synchronization.
 
@@ -3505,7 +3508,7 @@ class LibraryService:
     def sync_kobo_backup_account(
         self, credential_id: str, progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        """Synchronize one Kobo credential without altering the stable facade API."""
+        """Acquisition Kobo explicitement ciblée sans rupture du contrat historique."""
         return kobo_backup.sync_kobo_backup(
             self, progress, credential_id=credential_id,
             lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
@@ -3534,7 +3537,7 @@ class LibraryService:
     def _sync_kobo_backup_account_locked(
         self, credential_id: str, progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        """Internal account-scope variant; caller already holds the acquisition lock."""
+        """Account-scope variant. The calling opening-sync owns the lock."""
         return kobo_backup._sync_kobo_backup_locked(
             self, progress, logger=_TRACE_LOG, credential_id=credential_id,
         )
