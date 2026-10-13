@@ -2464,10 +2464,11 @@ class LibraryService:
                     # Explicit provider/product links in the local catalogue
                     # are evidence of a candidate even after arbitrary rename.
                     # Keep strict identity isolation and never infer by title.
+                    default_id = self.identities[0].identity_id if self.identities else None
                     for row in self.storage.catalog_entries():
                         if (row.get("local_state") != "local"
                                 or row.get("provider_id") != "kobo"
-                                or str(row.get("identity_id") or "") != identity.identity_id
+                                or str(row.get("identity_id") or default_id or "") != identity.identity_id
                                 or str(row.get("item_id") or "") != item.record_id):
                             continue
                         meta = row.get("metadata")
