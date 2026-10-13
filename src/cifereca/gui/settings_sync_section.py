@@ -13,9 +13,9 @@ from typing import Any
 
 def kobo_backup_action_state(*, persisted_enabled: bool, draft_enabled: bool, dirty: bool) -> tuple[str, bool]:
     """Truthful, side-effect-free status: automation runs on opening, not a timer."""
-    if dirty or draft_enabled != persisted_enabled:
+    if dirty or type(draft_enabled) is not bool or draft_enabled is not persisted_enabled:
         return ("Modifications à enregistrer : aucune acquisition lancée.", False)
-    if not persisted_enabled:
+    if persisted_enabled is not True:
         return ("Désactivée : activer puis enregistrer pour autoriser une sauvegarde.", False)
     return (
         "Activée : tentative à l’ouverture si intervalle écoulé. "
@@ -43,14 +43,14 @@ def build_kobo_sync_section(
     backup_group = Adw.PreferencesGroup(); backup_group.set_title("Acquisition automatique / activité Kobo"); section.append(backup_group)
     backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title("Synchroniser automatiquement les ebooks Kobo")
     backup_auto_row.set_subtitle("Paris résout l’acquisition via Kobo-Vault v2.3+ puis exécute localement via Kobo-Adept contract v8")
-    backup_switch = Gtk.Switch(); backup_switch.set_active(bool(config.get("kobo_backup.enabled", False))); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
+    backup_switch = Gtk.Switch(); backup_switch.set_active((config.get("kobo_backup.enabled", False) is True)); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
     # The source sync page only refreshes online metadata. Downloading books
     # is a separate, explicit operation with the persisted safety settings.
     manual_row = Adw.ActionRow()
     manual_row.set_title("Télécharger/sauvegarder mes livres Kobo")
     status, allowed = kobo_backup_action_state(
-        persisted_enabled=bool(config.get("kobo_backup.enabled", False)),
-        draft_enabled=bool(config.get("kobo_backup.enabled", False)), dirty=False,
+        persisted_enabled=(config.get("kobo_backup.enabled", False) is True),
+        draft_enabled=(config.get("kobo_backup.enabled", False) is True), dirty=False,
     )
     manual_row.set_subtitle(status)
     backup_status = manual_row
