@@ -7,7 +7,8 @@ used by opening sync/Kobo acquisition and revalidate its preview under lock.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from threading import Event
+from typing import Any, Callable
 
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
@@ -29,6 +30,33 @@ class MaintenanceBusyError(RuntimeError):
 
 class MaintenancePlanChangedError(RuntimeError):
     """The user-visible preview no longer matches the executable plan."""
+
+
+class MaintenanceCancelledError(RuntimeError):
+    """A user explicitly stopped a cancellable maintenance operation."""
+
+
+class MaintenanceCancelControl:
+    """Thread-safe cancellation bridge; no GTK widgets enter worker code."""
+
+    def __init__(self, *, owner_closed: Callable[[], bool] | None = None) -> None:
+        self._event = Event()
+        self._owner_closed = owner_closed
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    def cancelled(self) -> bool:
+        return self._event.is_set() or (
+            self._owner_closed is not None and self._owner_closed()
+        )
+
+    def check_cancelled(self) -> None:
+        if self.cancelled():
+            raise MaintenanceCancelledError("Opération de maintenance annulée")
+
+    def report(self, **_kwargs: Any) -> None:
+        return None
 
 
 def preview_maintenance_tool(tool: Any, context: Any, *, destructive: bool) -> Any:
@@ -58,6 +86,7 @@ def execute_maintenance_tool(tool: Any, context: Any, preview: Any, control: Any
             if (
                 updated.tool_id != preview.tool_id
                 or updated.facts != preview.facts
+                or updated.summary != preview.summary
                 or updated.changes != preview.changes
                 or updated.warnings != preview.warnings
             ):
