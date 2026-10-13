@@ -35,9 +35,20 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
                     if not isinstance(error_code, str) or not error_code.isidentifier():
                         error_code = "kobo_acquisition_failed"
                     retryable_hint = getattr(exc, "retryable", None)
+                    # A 401/403 or a denied delegated scope needs an explicit
+                    # permission change, not a blind retry of the same recipe.
+                    non_retryable_permission = (
+                        isinstance(exc, ProviderError)
+                        and (
+                            getattr(exc, "status_code", None) in {401, 403}
+                            or getattr(exc, "code", None) in {
+                                "missing_delegation_scope", "archived_book",
+                            }
+                        )
+                    )
                     retryable = (
                         retryable_hint if isinstance(retryable_hint, bool)
-                        else not isinstance(exc, ProviderConfigurationError)
+                        else not (isinstance(exc, ProviderConfigurationError) or non_retryable_permission)
                     )
                     service.acquisition_ledger.fail(
                         ledger_id,
@@ -684,15 +695,10 @@ def _execute_kobo_acquisition_impl(
         # recipe to source.type=kobo when possible; older contracts retain HTTP.
         if getattr(exc, "code", "") not in {"source_auth_expired", "not_authorized"}:
             raise
-        try:
-            refreshed = resolve("delegated", selected_profile, refresh=True)
-        except KoboVaultError as delegated_exc:
-            if delegated_exc.status_code == 403:
-                raise ProviderConfigurationError(
-                    "Kobo-Vault : source authentifiée mais délégation non autorisée ; "
-                    "scope kobo.acquisition.delegate requis"
-                ) from delegated_exc
-            raise
+        # resolve() normalizes plugin HTTP 403 into missing_delegation_scope
+        # and caches the capability refusal for this credential. Keep its
+        # structured classification instead of masking it as configuration.
+        refreshed = resolve("delegated", selected_profile, refresh=True)
         if acquisition_mode.startswith("acsm"):
             refreshed_acsm = service._kobo_acsm_candidate(refreshed)
             if refreshed_acsm is not None:
