@@ -453,9 +453,45 @@ def kobo_backup_preview(
     }
 
 
+
+def _safe_kobo_opening_decision(raw: Any) -> dict[str, Any] | None:
+    """Strictly filter the durable opening decision before UI/CLI export.
+
+    The database value may have been altered by an old installation or a
+    plugin. Do not forward arbitrary keys, messages, identifiers or URLs.
+    """
+    if not isinstance(raw, dict) or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
+        return None
+    allowed = {
+        "disabled", "no_session", "capability_unavailable", "source_disabled",
+        "fresh_cache", "started", "partial", "error",
+    }
+    status = raw.get("status")
+    result: dict[str, Any] = {
+        "schema_version": 1,
+        "status": status if type(status) is str and status in allowed else "unknown",
+        "persisted_enabled": raw.get("persisted_enabled") is True,
+    }
+    for key in ("connected_kobo", "eligible_kobo"):
+        value = raw.get(key)
+        if type(value) is int and 0 <= value <= 1_000_000:
+            result[key] = value
+    checked = raw.get("checked_at")
+    if type(checked) is int and 0 <= checked <= 4_102_444_800:
+        result["checked_at"] = checked
+    return result
+
+
 def kobo_backup_diagnostic(self) -> dict[str, Any]:
     """Summarise the persisted Kobo backup state without network access."""
     rows = self.storage.backup_list(provider_id="kobo")
+    try:
+        opening_raw = json.loads(
+            self.storage.metadata_get("kobo_backup_opening_decision_v1") or "null"
+        )
+    except (TypeError, ValueError):
+        opening_raw = None
+    opening_decision = _safe_kobo_opening_decision(opening_raw)
     statuses = Counter(str(row.get("status") or "unknown") for row in rows)
     errors = Counter(
         str(row.get("error") or "").strip()
@@ -506,6 +542,7 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
             and row.get("attention_code") == "missing_delegation_scope"
         ),
         "statuses": dict(statuses),
+        "opening_decision": opening_decision,
         "sources": _kobo_source_summaries(self),
         "error_summary": [
             {"message": message, "count": count}
@@ -606,6 +643,7 @@ def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
             + statuses.get("reconcile_conflict", 0)
         ),
         "attention_count": statuses.get("attention_required", 0),
+        "opening_decision": _safe_kobo_opening_decision(report.get("opening_decision")),
         "sources": sources,
     }
 
