@@ -111,7 +111,10 @@ def main():
     def fail(exc):
         if report["status"] != "RUNNING":
             return
-        report.update(\n            status="FAIL", error=f"{type(exc).__name__}: {exc}",\n            failure_stack=__import__("traceback").format_exc(limit=12),\n        )
+        report.update(
+            status="FAIL", error=f"{type(exc).__name__}: {exc}",
+            failure_stack=__import__("traceback").format_exc(limit=12),
+        )
         if lock[0] is not None:
             lock[0].release()
             lock[0] = None
