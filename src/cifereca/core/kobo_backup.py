@@ -73,6 +73,33 @@ def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path)
     return paths
 
 
+
+def _indexed_kobo_catalog_paths(self) -> dict[tuple[str, str], list[Path]]:
+    """Index only explicit local Kobo product-ID links within one identity.
+
+    Titles, ISBNs and filenames are not proof of a Kobo entitlement.
+    A matching local catalog entry is a reason to stop, never to
+    automatically adopt its artifact as a complete Kobo backup.
+    """
+    default_identity_id = self.identities[0].identity_id if self.identities else None
+    indexed: dict[tuple[str, str], list[Path]] = {}
+    for row in self.storage.catalog_entries():
+        if row.get("local_state") != "local" or row.get("provider_id") != "kobo":
+            continue
+        identity = str(row.get("identity_id") or default_identity_id or "")
+        item_id = str(row.get("item_id") or "").strip()
+        metadata = row.get("metadata")
+        path_text = metadata.get("path") if isinstance(metadata, dict) else None
+        if not identity or not item_id or not isinstance(path_text, str) or not path_text.strip():
+            continue
+        path = Path(path_text)
+        if path.is_file() or path.is_symlink():
+            bucket = indexed.setdefault((identity, item_id), [])
+            if path not in bucket:
+                bucket.append(path)
+    return indexed
+
+
 def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> Path:
     ext = ".pdf" if fmt.lower() == "pdf" else ".epub"
     author = (item.author or "").strip()
@@ -312,6 +339,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
     # Refresh filesystem membership before deciding whether acquisition is safe.
     self.catalog_scan()
+    indexed_kobo_paths = _indexed_kobo_catalog_paths(self)
     sessions = [
         session for session in self._sessions.values()
         if session.connected and session.provider_id == "kobo" and session.capabilities.backup
@@ -445,7 +473,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 summary["skipped"] += 1
                 continue
             item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
-            if _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+            if _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
                 continue
 
             if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
@@ -665,7 +693,7 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
-def _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger):
+def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
@@ -719,6 +747,10 @@ def _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_coun
     # quarantine for manual reconciliation rather than treating them as complete.
     # This includes legacy flat-library placements from older versions.
     candidates = self._kobo_record_candidate_paths(base_record, session_target_dir)
+    identity_id = str(base_record.get("identity_id") or "")
+    for indexed_path in indexed_kobo_paths.get((identity_id, product_id), ()):
+        if indexed_path not in candidates:
+            candidates.append(indexed_path)
     legacy_dir = self.library_dir()
     if legacy_dir.resolve() != session_target_dir.resolve():
         for candidate in self._kobo_record_candidate_paths(base_record, legacy_dir):
