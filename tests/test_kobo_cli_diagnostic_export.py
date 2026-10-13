@@ -83,6 +83,7 @@ def test_cli_redacts_persisted_private_book_and_provider_details(
         assert data["sources"][0]["status"] == "partial"
         assert data["sources"][0]["remaining"] == 1
         assert data["sources"][0]["failure_streak"] == 2
+        assert data["sources"][0]["updated_at"] == 123456789
         for private in (
             credential, title, item_id, path, error, "PRIVATE_BOOK",
             "RECONCILIATION_TITLE", "BLOCKED_TITLE", "SECRET_SIGNATURE",
@@ -124,6 +125,7 @@ def test_export_allowlist_rejects_untrusted_statuses_and_source_metadata():
                 "downloaded": 0,
                 "total": 2,
                 "processed": 1,
+                "updated_at": 1_800_000_000,
                 "local_path": "/home/PRIVATE_FOLDER",
             },
         ],
@@ -150,6 +152,7 @@ def test_export_allowlist_rejects_untrusted_statuses_and_source_metadata():
     }
     assert exported["sources"][1]["source_id"] == "0" * 24
     assert exported["sources"][1]["status"] == "failed"
+    assert exported["sources"][1]["updated_at"] == 1_800_000_000
     for word in (
         "PRIVATE_CREDENTIAL", "PRIVATE_STATUS", "PRIVATE_SECRET", "PRIVATE_TITLE",
         "PRIVATE_TOKEN", "PRIVATE_ERROR", "PRIVATE_ITEM", "PRIVATE_FOLDER",
