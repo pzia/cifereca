@@ -930,6 +930,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
         session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
         target_dirs[session_identity.identity_id] = str(session_target_dir)
+        # Persist "manifest_fetch" before contacting the provider: if the
+        # process dies during a slow manifest request, the previous fresh
+        # "complete" checkpoint must not hide an interrupted synchronization.
+        # A resumed run always revalidates the complete manifest and files.
+        checkpoint("manifest_fetch")
         try:
             emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
             manifest = session.backup_manifest()
