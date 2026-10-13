@@ -101,7 +101,9 @@ def test_progressive_warning_only_announced_once_and_real_selection_is_kept():
     host._populate_search([], announce=False)
     host.toast.assert_not_called()
     host._populate_search([], announce=True)
-    host.toast.assert_called_once_with("Résultats partiels · offline source", 6)
+    host.toast.assert_called_once_with(
+        "Résultats partiels · certaines sources sont indisponibles.", 6,
+    )
     host._search_selected.assert_not_called()
 
 
@@ -118,3 +120,34 @@ def test_facade_passes_row_and_announcement_arguments_unchanged():
     host, rows = object(), [object()]
     env[facade.name](host, rows, announce=False)
     adapter._populate_search.assert_called_once_with(host, rows, announce=False)
+
+
+def test_provider_warning_with_signed_url_and_account_identifier_is_never_displayed():
+    host = _host()
+    host.service.last_search_warnings = [
+        "Fournisseur: HTTP 403 https://example.test/private?token=SECRET-ABC "
+        "/home/personne/secrets/alice@example.test"
+    ]
+    host.search_page.selection.get_selected_item = lambda: Row(
+        "key", "Livre", "", "", "", None,
+    )
+    host._populate_search([], announce=True)
+    message, timeout = host.toast.call_args.args
+    assert timeout == 6
+    assert message == "Résultats partiels · certaines sources sont indisponibles."
+    for forbidden in ("SECRET-ABC", "alice@example.test", "example.test", "/home/"):
+        assert forbidden not in message
+    # The read-only service warnings remain available for the Core diagnostic
+    # pipeline, and no extra provider request occurs from the view.
+    assert host.service.last_search_warnings[0].startswith("Fournisseur: HTTP 403")
+    host.service.local_placements_for_sources.assert_called_once_with("alice")
+
+
+def test_partial_warning_does_not_toast_for_empty_or_progressive_batches():
+    host = _host()
+    host.service.last_search_warnings = []
+    host._populate_search([], announce=True)
+    host.toast.assert_not_called()
+    host.service.last_search_warnings = ["private exception"]
+    host._populate_search([], announce=False)
+    host.toast.assert_not_called()
