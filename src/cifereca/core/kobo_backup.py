@@ -344,6 +344,11 @@ def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
         identity = self.identity_for_connection("kobo", credential_id).identity_id
         row = _kobo_checkpoint_for(self, identity, credential_id)
         if row is not None:
+            # An explicit user cancellation is not a transient failure.
+            # The automatic scheduler must not restart it after the TTL:
+            # a new scoped manual sync is the explicit resume operation.
+            if str(row.get("status") or "") == "cancelled":
+                return False
             raw = row.get("updated_at")
         else:
             # Preserve old cache semantics only before *any* active account
