@@ -101,11 +101,21 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         reason = "started"
     else:
         reason = "fresh_cache"
+    # Age alone communicates freshness; avoid exposing a user-specific
+    # account identifier, timestamp string or private storage metadata.
+    raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
+    try:
+        last = int(raw_last)
+        age = int(time.time()) - last
+        last_success_age_minutes = age // 60 if 0 <= age <= 366 * 86400 else None
+    except (TypeError, ValueError, OverflowError):
+        last_success_age_minutes = None
     return {
         "status": reason, "persisted_enabled": enabled,
         "configured_kobo": len(kobo), "connected_kobo": len(connected),
         "eligible_kobo": len(eligible),
         "interval_minutes": self.kobo_backup_interval_minutes(),
+        "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
     }
 
