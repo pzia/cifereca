@@ -2035,11 +2035,11 @@ def test_selected_log_codes_are_allowlisted_and_not_extracted_from_urls(tmp_path
     path = tmp_path / "manual.log"
     path.write_text(
         "https://vault.invalid/private?status=failed&code=forbidden "
-        "title=status=partial alias=code=archived_book\\n"
+        "title=status=partial alias=code=archived_book\n"
         "2026-10-13 TRACE code=missing_delegation_scope "
-        "status=attention_required phase=vault\\n"
-        "2026-10-13 TRACE code=adept_error severity=error\\n"
-        "2026-10-13 TRACE code=Camille status=not_allowed\\n",
+        "status=attention_required phase=vault\n"
+        "2026-10-13 TRACE code=adept_error severity=error\n"
+        "2026-10-13 TRACE code=Camille status=not_allowed\n",
         encoding="utf-8",
     )
     sample = read_user_selected_log(str(path))
@@ -2072,9 +2072,9 @@ def test_selected_log_unknown_code_only_is_not_an_evidence(tmp_path):
     from diagnostics_ai import read_user_selected_log
     path = tmp_path / "manual.log"
     path.write_text(
-        "code=Camille\\n"
-        "https://example.invalid/book?code=network_error\\n"
-        "title=code=adept_error\\n",
+        "code=Camille\n"
+        "https://example.invalid/book?code=network_error\n"
+        "title=code=adept_error\n",
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="manual_log_no_public_signals"):
