@@ -234,3 +234,46 @@ def test_missing_previous_kobo_link_never_redownloads_or_erases_provenance(
             assert not missing.exists()
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("prior_status,revision", [
+    ("complete", "r1"), ("complete", "old-revision"),
+    ("ok", "r1"), ("ok", "old-revision"),
+])
+def test_complete_without_linked_path_never_redownloads(
+    tmp_path: Path, monkeypatch, prior_status, revision,
+):
+    """#1344: completed ledger state with lost placement requires reconciliation."""
+    service, _session = _service(tmp_path, [
+        {"product_id": "once-downloaded", "revision_id": "r1",
+         "title": "Already materialized", "format": "EPUB"},
+    ])
+    monkeypatch.setattr(service, "kobo_adept_state", lambda **_kw: _ready_adept_state())
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "identity_id": "default", "item_id": "once-downloaded",
+        "revision_id": revision, "status": prior_status,
+        "title": "Already materialized", "format": "EPUB",
+        "local_path": None,
+        "sha256": "a" * 64, "size": 1234,
+    })
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_kw: pytest.fail("completed provenance cannot silently redownload"),
+    )
+    try:
+        for _ in range(2):
+            result = service.sync_kobo_backup_account("vault-1")
+            assert result["attempted"] == result["downloaded"] == 0
+            assert result["reconcile_skipped"] == 1
+            assert result["status"] == "attention_required"
+            row = service.storage.backup_get(
+                "kobo", "vault-1", "once-downloaded",
+            )
+            assert row["status"] == "reconcile_required"
+            assert row["local_path"] is None
+            assert row["sha256"] == "a" * 64
+            assert row["size"] == 1234
+    finally:
+        service.close()
