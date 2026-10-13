@@ -101,3 +101,10 @@ def test_queued_history_chunk_does_not_touch_disposed_widgets():
     assert "self._history_append_scheduled = False" in source
     assert "getattr(self, '_closed', False)" in source
     assert source.index("getattr(self, '_closed', False)") < source.index("self.history_page.append_rows")
+
+
+def test_history_scroll_signal_ignores_disposed_window():
+    """#1132: late adjustment signals must not queue work on a dead window."""
+    source = _method_source("MainWindow", "_history_scroll_changed")
+    assert "getattr(self, '_closed', False)" in source
+    assert source.index("getattr(self, '_closed', False)") < source.index("adjustment.get_upper()")
