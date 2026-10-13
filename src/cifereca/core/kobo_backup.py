@@ -554,7 +554,13 @@ def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
                 item["source_id"] = source_id
             for key in source_metrics:
                 value = source.get(key)
-                if type(value) is int and 0 <= value <= 1_000_000:
+                # A Unix timestamp exceeds 1 million seconds, unlike normal
+                # item counters. Reject future/invalid dates independently.
+                limit = (
+                    4_102_444_800 if key == "updated_at" else
+                    6 if key == "failure_streak" else 1_000_000
+                )
+                if type(value) is int and 0 <= value <= limit:
                     item[key] = value
             sources.append(item)
 
