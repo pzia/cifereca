@@ -594,7 +594,9 @@ class MainWindow(Adw.ApplicationWindow):
                 persistent=bool(errors),
             )
             self._render_dashboard()
-            GLib.idle_add(lambda: (self.run_opening_sync(), False)[1])
+            # A close can happen after the connection callback but before GTK
+            # dispatches this idle source. Never start sync on a dead window.
+            GLib.idle_add(lambda: (not self._closed and self.run_opening_sync(), False)[1])
 
         def err(exc: BaseException) -> None:
             if getattr(self, "_closed", False):
