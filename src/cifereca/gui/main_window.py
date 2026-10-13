@@ -71,6 +71,7 @@ from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
+from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
@@ -1676,54 +1677,89 @@ class MainWindow(Adw.ApplicationWindow):
             def prepare(_button, service=tool, meta=info):
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
-                try: plan = service.plan(context)
-                except Exception as exc:
-                    self.show_error(str(exc), meta.title); return
-                scope_labels = {
-                    "global": "Application entière",
-                    "identity": "Identité active",
-                    "library": "Bibliothèque",
-                    "artifact": "Document ciblé",
-                    "storage.target": "Cible de stockage",
-                }
-                scope = scope_labels.get(str(meta.scope), str(meta.scope or "Non précisée"))
-                if meta.scope == "identity" and identity is not None:
-                    scope += f" · {identity.label}"
-                sections = [
-                    "Résumé :\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
-                    "Changements prévus :\n" + (
-                        "\n".join("• " + str(value) for value in plan.changes[:20])
-                        if plan.changes else "• Aucun changement prévu"
-                    ),
-                    "Avertissements :\n" + (
-                        "\n".join("• " + str(value) for value in plan.warnings[:10])
-                        if plan.warnings else "• Aucun"
-                    ),
-                    "Portée :\n" + scope,
-                ]
-                dialog = Adw.MessageDialog.new(self, meta.title, "\n\n".join(sections))
-                dialog.add_response("cancel", "Annuler"); dialog.add_response("run", "Exécuter")
-                if meta.danger_level == "destructive": dialog.set_response_appearance("run", Adw.ResponseAppearance.DESTRUCTIVE)
-                else: dialog.set_response_appearance("run", Adw.ResponseAppearance.SUGGESTED)
-                def response(_dialog, selected):
-                    if selected != "run": return
-                    class Control:
-                        def cancelled(self): return False
-                        def check_cancelled(self): return None
-                        def report(self, **_kwargs): return None
-                    self.runner.submit(
-                        meta.title,
-                        lambda: service.run(plan, Control()),
-                        lambda result: self._activity_result(
-                            result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
-                            success=bool(result.ok),
-                            persistent=not bool(result.ok),
+                destructive = meta.danger_level == "destructive"
+
+                def present_preview(plan):
+                    # The worker can finish after a navigation or shutdown.
+                    # GTK widgets and dialogs are only handled on this callback.
+                    if self._closed or _button.get_root() is None:
+                        return
+                    scope_labels = {
+                        "global": "Application entière",
+                        "identity": "Identité active",
+                        "library": "Bibliothèque",
+                        "artifact": "Document ciblé",
+                        "storage.target": "Cible de stockage",
+                    }
+                    scope = scope_labels.get(str(meta.scope), str(meta.scope or "Non précisée"))
+                    if meta.scope == "identity" and identity is not None:
+                        scope += f" · {identity.label}"
+                    sections = [
+                        "Résumé :\\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
+                        "Changements prévus :\\n" + (
+                            "\\n".join("• " + str(value) for value in plan.changes[:20])
+                            if plan.changes else "• Aucun changement prévu"
                         ),
-                        control=_button,
-                        priority=TaskPriority.MAINTENANCE,
-                        kind="maintenance-tool",
-                    )
-                dialog.connect("response", response); dialog.present()
+                        "Avertissements :\\n" + (
+                            "\\n".join("• " + str(value) for value in plan.warnings[:10])
+                            if plan.warnings else "• Aucun"
+                        ),
+                        "Portée :\\n" + scope,
+                    ]
+                    dialog = Adw.MessageDialog.new(self, meta.title, "\\n\\n".join(sections))
+                    dialog.add_response("cancel", "Annuler"); dialog.add_response("run", "Exécuter")
+                    if destructive:
+                        dialog.set_response_appearance("run", Adw.ResponseAppearance.DESTRUCTIVE)
+                    else:
+                        dialog.set_response_appearance("run", Adw.ResponseAppearance.SUGGESTED)
+
+                    def response(_dialog, selected):
+                        if selected != "run" or self._closed:
+                            return
+
+                        window = self
+
+                        class Control:
+                            def cancelled(self):
+                                return bool(window._closed)
+
+                            def check_cancelled(self):
+                                if self.cancelled():
+                                    raise RuntimeError("Opération annulée : fenêtre fermée")
+
+                            def report(self, **_kwargs):
+                                return None
+
+                        # The lock and plan revalidation both happen inside the
+                        # worker; GTK never waits for SQLite or filesystem I/O.
+                        self.runner.submit(
+                            meta.title,
+                            lambda: execute_maintenance_tool(
+                                service, context, plan, Control(), destructive=destructive,
+                            ),
+                            lambda result: self._activity_result(
+                                result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
+                                success=bool(result.ok),
+                                persistent=not bool(result.ok),
+                            ),
+                            lambda exc: self.show_error(str(exc), meta.title),
+                            control=_button,
+                            priority=TaskPriority.MAINTENANCE,
+                            kind="maintenance-tool",
+                        )
+                    dialog.connect("response", response); dialog.present()
+
+                # Planning can scan thousands of placements. Never call
+                # service.plan(context) on the main GTK event loop.
+                self.runner.submit(
+                    f"Analyse : {meta.title}",
+                    lambda: preview_maintenance_tool(service, context, destructive=destructive),
+                    present_preview,
+                    lambda exc: self.show_error(str(exc), meta.title),
+                    control=_button,
+                    priority=TaskPriority.MAINTENANCE,
+                    kind="maintenance-plan",
+                )
             run.connect("clicked", prepare)
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
