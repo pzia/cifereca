@@ -1107,6 +1107,14 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 break
 
             item_committed = False
+            # "downloaded", "item_error" and reconciliation are durable item
+            # results, unlike the preliminary "scan" notification. Keep them
+            # private until the per-item SQLite checkpoint has been committed.
+            item_events: list[tuple[str, dict[str, Any]]] = []
+
+            def defer_item_event(event: str, **detail: Any) -> None:
+                item_events.append((event, detail))
+
             try:
                 if not isinstance(raw, dict):
                     malformed = True
@@ -1160,13 +1168,13 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 if _skip_manifest_item(
                     self, item, raw, session_target_dir, indexed_kobo_paths,
                     unlinked_local_count, adapter_available, adept_state,
-                    index, len(manifest), summary, emit, logger,
+                    index, len(manifest), summary, defer_item_event, logger,
                     retry_scope_blocked=retry_scope_blocked,
                 ):
                     item_committed = True
                     continue
 
-                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
+                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger):
                     abort_all = True
                     item_committed = True
                     break
@@ -1178,6 +1186,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     processed = index + 1
                     committed_item_id = str(raw.get("product_id") or raw.get("id") or "") if isinstance(raw, dict) else None
                 checkpoint("running" if item_committed else "interrupted")
+                # Checkpoint failure must propagate without announcing an item
+                # as complete, blocked or failed. This includes the final
+                # committed item in a cancelled/aborted or partial batch.
+                for event, detail in item_events:
+                    emit(event, **detail)
         delta = source_delta()
         if summary["cancelled"]:
             source_status = "cancelled"
