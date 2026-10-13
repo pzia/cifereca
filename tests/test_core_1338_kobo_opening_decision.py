@@ -172,3 +172,41 @@ def test_kobo_persisted_decision_never_echoes_untrusted_metadata(tmp_path, inval
         service.close()
 
 
+
+@pytest.mark.parametrize("malformed_flag", ["false", "true", 1, 0, None])
+def test_kobo_autobackup_opt_in_must_be_literal_boolean(tmp_path, monkeypatch, malformed_flag):
+    """A malformed flag must never authorize background downloads."""
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        service.config.set("kobo_backup.enabled", malformed_flag)
+        assert service.kobo_backup_enabled() is False
+        monkeypatch.setattr(service, "_sync_kobo_backup_locked",
+                            lambda progress=None: pytest.fail("unconsented download"))
+        response = service._opening_sync_locked(deep=False)
+        assert response["kobo_decision"]["status"] == "disabled"
+        assert response["kobo_decision"]["persisted_enabled"] is False
+    finally:
+        service.close()
+
+
+def test_kobo_reported_batch_error_is_persisted_as_error(tmp_path, monkeypatch):
+    """Returning status=error must not masquerade as a successful start."""
+    from cifereca.core.kobo_backup import safe_kobo_backup_report
+
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        service.config.set("kobo_backup.enabled", True)
+        monkeypatch.setattr(service, "_kobo_backup_due", lambda: True)
+        monkeypatch.setattr(service, "_sync_kobo_backup_locked",
+                            lambda progress=None: {"status": "error", "errors": 0})
+        result = service._opening_sync_locked(deep=False)
+        assert result["kobo_decision"]["status"] == "error"
+        report = safe_kobo_backup_report(service.kobo_backup_diagnostic())
+        assert report["opening_decision"]["status"] == "error"
+        assert report["items"] == 0
+    finally:
+        service.close()
+
+
