@@ -6,6 +6,7 @@ used by opening sync/Kobo acquisition and revalidate its preview under lock.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from ..locking import InterProcessLock, LockBusyError
@@ -36,7 +37,10 @@ def preview_maintenance_tool(tool: Any, context: Any, *, destructive: bool) -> A
         return tool.plan(context)
     try:
         with InterProcessLock(acquisition_lock_file()):
-            return tool.plan(context)
+            # A plugin may reuse its previous MaintenancePlan or mutate nested
+            # ``facts`` in place. Preserve the exact preview the user saw;
+            # otherwise comparing the same mutated object would falsely pass.
+            return deepcopy(tool.plan(context))
     except LockBusyError as exc:
         raise MaintenanceBusyError(BUSY_MESSAGE) from exc
 
