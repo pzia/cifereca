@@ -52,7 +52,9 @@ def test_identity_scope_names_active_identity_when_available():
 def test_plan_runs_in_task_runner_not_in_gtk_callback():
     source = _method("_refresh_tools_page")
     assert "self.runner.submit(" in source
-    assert "lambda: preview_maintenance_tool(service, context, destructive=destructive)" in source
+    assert "lambda: preview_maintenance_tool(" in source
+    assert "control=planning_control" in source
+    assert "if not finish_preview() or planning_control.cancelled():" in source
     assert "present_preview" in source
     assert "lambda: execute_maintenance_tool(" in source
     assert "if self._closed or _button.get_root() is None:" in source
