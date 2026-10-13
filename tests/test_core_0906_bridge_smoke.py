@@ -73,6 +73,9 @@ def _setup(active="alice", selected="alice"):
         "search_books": _method(CORE_FILE, "MainWindow", "search_books", env),
     })
     host_type = type("Host", (), {
+        # This AST fixture must retain the host's real lifecycle guard:
+        # extracting search_books alone misses its instance dependency.
+        "_window_alive": _method(CORE_FILE, "_UiHost", "_window_alive", env),
         "search_books": _method(CORE_FILE, "_UiHost", "search_books", env),
     })
     youth_type = type("Youth", (), {
