@@ -105,3 +105,22 @@ def test_readonly_preview_and_run_work_even_during_sync(tmp_path, monkeypatch):
         plan = guard.preview_maintenance_tool(tool, object(), destructive=False)
         guard.execute_maintenance_tool(tool, object(), plan, Control(), destructive=False)
     assert tool.run_calls == 1
+
+def test_mutated_reused_plan_cannot_silently_change_confirmed_action(tmp_path, monkeypatch):
+    """A frozen dataclass may still contain a mutable facts mapping."""
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "shared.lock")
+    original = Plan(facts={"pairs": [["copy-1", "keep-1"]]})
+    tool = Tool(original)
+
+    preview = guard.preview_maintenance_tool(tool, object(), destructive=True)
+    assert preview is not original
+    assert preview.facts == original.facts
+
+    # The plugin reuses the same plan object and mutates a nested list after
+    # GTK displayed the preview. This must be caught before any deletion.
+    original.facts["pairs"][0][0] = "copy-2"
+    assert preview.facts["pairs"][0][0] == "copy-1"
+    with pytest.raises(guard.MaintenancePlanChangedError, match="Prévisualiser"):
+        guard.execute_maintenance_tool(tool, object(), preview, Control(), destructive=True)
+    assert tool.run_calls == 0
+
