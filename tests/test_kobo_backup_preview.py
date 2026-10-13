@@ -247,3 +247,20 @@ def test_offline_preview_never_confuses_same_product_id_across_identities(tmp_pa
         assert path.is_file()
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("malformed_opt_in", ["false", "true", 1, 0, None])
+def test_kobo_preview_matches_strict_unlinked_opt_in_guard(
+    tmp_path: Path, malformed_opt_in,
+):
+    service, _session = _service(tmp_path, [])
+    _backup(service, "purchase")
+    service.kobo_unlinked_local_count = lambda _id: 3
+    service.config.set("kobo_backup.allow_unlinked_acquisition", malformed_opt_in)
+    try:
+        preview = service.kobo_backup_preview("vault-1")
+        assert preview["counts"]["blocked_unlinked"] == 1
+        assert preview["counts"]["candidate_unverified"] == 0
+        assert preview["acquisition_authorized"] is False
+    finally:
+        service.close()
