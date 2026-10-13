@@ -3493,20 +3493,29 @@ class LibraryService:
     def _kobo_backup_due(self) -> bool:
         return kobo_backup._kobo_backup_due(self)
 
-    def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None, *, credential_id: str | None = None) -> dict[str, Any]:
+    def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Compatibility entry point for the Kobo local synchronization.
 
         0.8.0 keeps the validated cross-process serialization for acquisition work. The
         same global lock is intentionally named for local acquisition rather
         than Kobo so the 0.8.x loan synchronizer can share it.
         """
-        return kobo_backup.sync_kobo_backup(self, progress, credential_id=credential_id, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
+        return kobo_backup.sync_kobo_backup(self, progress, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
+
+    def sync_kobo_backup_account(
+        self, credential_id: str, progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """Synchronize one Kobo credential without altering the stable facade API."""
+        return kobo_backup.sync_kobo_backup(
+            self, progress, credential_id=credential_id,
+            lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
+        )
 
     def kobo_unlinked_local_count(self, identity_id: str) -> int:
         """Conservative guard, never infer a Kobo link from a filename/title."""
         return kobo_backup.kobo_unlinked_local_count(self, identity_id)
 
-    def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None = None, *, credential_id: str | None = None) -> dict[str, Any]:
+    def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
         Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -3520,7 +3529,15 @@ class LibraryService:
         states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
         existing reconciliation safeguards still prevent duplicate redownloads.
         """
-        return kobo_backup._sync_kobo_backup_locked(self, progress, logger=_TRACE_LOG, credential_id=credential_id)
+        return kobo_backup._sync_kobo_backup_locked(self, progress, logger=_TRACE_LOG)
+
+    def _sync_kobo_backup_account_locked(
+        self, credential_id: str, progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """Internal account-scope variant; caller already holds the acquisition lock."""
+        return kobo_backup._sync_kobo_backup_locked(
+            self, progress, logger=_TRACE_LOG, credential_id=credential_id,
+        )
 
     def _account_for_loan(self, loan: Loan) -> Account:
         """Resolve the exact borrower recorded on a loan.
