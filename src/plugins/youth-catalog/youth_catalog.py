@@ -583,7 +583,9 @@ def _notice_evidence_isbn(value: object) -> str:
         return ""
     # Spaces/hyphens are normal book typography; other characters are not
     # evidence of the identifier itself. ASCII only for canonical check.
-    raw = value.strip()
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return ""
+    raw = value.strip(" ")
     if not re.fullmatch(r"[0-9Xx][0-9Xx -]*[0-9Xx]", raw, re.ASCII):
         return ""
     return normalize_isbn(raw)
