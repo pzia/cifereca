@@ -150,7 +150,23 @@ def main():
 
     def physical(button):
         assert button.get_mapped() and button.get_sensitive()
-        report["pointer_actions"].append(device[0].click_widget(button))
+        if button is preview_button[0]:
+            # X11Input.click_widget subtracts a native surface transform that
+            # is unreliable for the nested GTK4 ScrolledWindow/ActionRow used
+            # by Outils. The window origin is (0,0) in this isolated Xvfb
+            # setup; use GTK's actual bounds in the application window.
+            ok, rect = button.compute_bounds(window[0])
+            assert ok
+            x = round(rect.get_x() + rect.get_width() / 2)
+            y = round(rect.get_y() + rect.get_height() / 2)
+            assert args.width // 2 < x < args.width and y > 60
+            device[0].click(x, y)
+            report["pointer_actions"].append({
+                "widget": button.get_name(), "x": x, "y": y,
+                "source": "XTEST pointer/button events (GTK window bounds)",
+            })
+        else:
+            report["pointer_actions"].append(device[0].click_widget(button))
 
     def respond(dialog, label):
         response = next(
