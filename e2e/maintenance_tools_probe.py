@@ -179,7 +179,11 @@ def main():
     def ready():
         w = window[0]
         assert "tools" in w.nav_rows
-        w.navigate("tools")
+        # The technical navigation section can be collapsed in GTK; selecting
+        # its hidden ListBox row does not necessarily switch the visible page.
+        # Visit the actual registered route before exercising its real button.
+        w._visit_route("tools")
+        assert w.view_stack.get_visible_child_name() == "tools", "Outils page not visible"
         w._refresh_tools_page()
         preview_button[0] = next((
             b for b in walk(w._tools_box)
@@ -188,6 +192,9 @@ def main():
         ), None)
         assert preview_button[0] is not None
         report["checks"]["real_tools_route_and_action"] = True
+        until(lambda: preview_button[0].get_mapped(), begin_busy)
+
+    def begin_busy():
         lock[0] = InterProcessLock(acquisition_lock_file())
         lock[0].acquire()
         physical(preview_button[0])
