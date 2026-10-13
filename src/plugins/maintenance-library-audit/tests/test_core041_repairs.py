@@ -1,3 +1,5 @@
+import pytest
+
 from cifereca.plugin_api import (
     ArtifactFormat, ArtifactPlacementRef, ArtifactRef, BookRef, LibraryMutationResult,
     LogicalBookArtifacts, MaintenanceContext,
@@ -154,3 +156,54 @@ def test_duplicate_cleanup_reports_unsuccessful_mutation_result():
     assert result.changed==0
     assert result.facts['failures']==1
     assert 'mutation refused' in result.warnings
+
+
+class UserCancelled(Exception):
+    """Test-only cancellation raised by the maintenance control."""
+
+
+class CancelControl(Control):
+    def __init__(self):
+        self.stopped = False
+
+    def cancelled(self):
+        return self.stopped
+
+    def check_cancelled(self):
+        if self.stopped:
+            raise UserCancelled("explicit cleanup cancellation")
+
+
+def test_duplicate_cleanup_does_not_swallow_cancellation_inside_mutation():
+    """#1358: a cancelled Core deletion is not an ordinary failed file."""
+    ctx = Context(duplicates=True)
+    tool = DuplicateCleanupTool().activate(ctx)
+    plan = tool.plan(MaintenanceContext(scope="library", identity_id="id1"))
+    control = CancelControl()
+
+    def interrupted(_plan, _control=None):
+        control.stopped = True
+        raise OSError("mutation interrupted by cancellation")
+
+    ctx.maintenance.run = interrupted
+    with pytest.raises(UserCancelled, match="explicit cleanup cancellation"):
+        tool.run(plan, control)
+    assert len(ctx.maintenance.requests) == 1
+    assert ctx.maintenance.requests[0].operation == "delete_duplicate"
+
+
+def test_duplicate_cleanup_checks_cancel_after_final_mutation():
+    """#1358: a final item cancelling mid-flight cannot report 'complete'."""
+    ctx = Context(duplicates=True)
+    tool = DuplicateCleanupTool().activate(ctx)
+    plan = tool.plan(MaintenanceContext(scope="library", identity_id="id1"))
+    control = CancelControl()
+
+    def cancel_while_finishing(_plan, _control=None):
+        control.stopped = True
+        return LibraryMutationResult(True, changed=1, summary="last mutation committed")
+
+    ctx.maintenance.run = cancel_while_finishing
+    with pytest.raises(UserCancelled, match="explicit cleanup cancellation"):
+        tool.run(plan, control)
+    assert len(ctx.maintenance.requests) == 1
