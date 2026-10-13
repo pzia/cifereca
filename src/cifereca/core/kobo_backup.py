@@ -241,7 +241,10 @@ def _kobo_backup_due(self) -> bool:
         interval_minutes = max(1, int(self.config.get("kobo_backup.interval_minutes", 60) or 60))
     except (TypeError, ValueError):
         interval_minutes = 60
-    raw = self.storage.metadata_get("kobo_backup_last_success_at")
+    # A partial batch is still a recent attempt; throttle repeated starts
+    # without misrepresenting it as an entirely materialized library.
+    raw = (self.storage.metadata_get("kobo_backup_last_attempt_at")
+           or self.storage.metadata_get("kobo_backup_last_success_at"))
     try:
         last = int(raw or 0)
     except (TypeError, ValueError):
@@ -330,7 +333,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     )
     adapter_available = bool(adept_state.get("available") and adept_state.get("compatible") and adept_state.get("operational"))
     summary: dict[str, Any] = {
-        "sessions": len(sessions), "manifest_items": 0, "scanned": 0, "attempted": 0, "pending": 0,
+        "sessions": len(sessions), "manifests_fetched": 0, "manifest_items": 0,
+        "scanned": 0, "attempted": 0, "pending": 0,
         "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "vault_errors": 0, "integration_errors": 0, "adept_errors": 0,
@@ -400,6 +404,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         try:
             emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
             manifest = session.backup_manifest()
+            summary["manifests_fetched"] += 1
             summary["manifest_items"] += len(manifest)
             authoritative_manifest_ids[session.credential_id] = {
                 str(raw.get("product_id") or raw.get("id") or "").strip()
@@ -581,13 +586,35 @@ def _publish_summary(self, summary, error_counts, error_examples, emit):
     summary["error_examples"] = error_examples
     # Backward-compatible concise text list for existing callers.
     summary["error_messages"] = [x["message"] for x in error_examples[:10]]
+    if summary.get("aborted"):
+        status = "aborted"
+    elif summary.get("errors"):
+        status = "partial" if summary.get("completed") or summary.get("unchanged") else "failed"
+    elif summary.get("remaining"):
+        status = "partial"
+    elif any(summary.get(key, 0) for key in
+             ("pending", "attention_required", "reconcile_pending", "reconcile_conflicts")):
+        status = "attention_required"
+    elif not summary.get("sessions") or summary.get("manifests_fetched") != summary.get("sessions"):
+        status = "partial"
+    else:
+        status = "complete"
+    summary["status"] = status
+    now = int(time.time())
+    if summary.get("sessions"):
+        self.storage.metadata_set("kobo_backup_last_attempt_at", now)
+        if summary["manifests_fetched"] == summary["sessions"]:
+            self.storage.metadata_set("kobo_backup_last_manifest_success_at", now)
+        if status == "complete":
+            # This legacy key must only mean the whole acquisition batch is
+            # complete; an attention-only run is never a completed download.
+            self.storage.metadata_set("kobo_backup_last_success_at", now)
+    self.storage.metadata_set("kobo_backup_last_batch_status", status)
     self.diagnostics.add(
-        "KOBO", "backup sync", "ok" if not summary["errors"] else "error",
+        "KOBO", "backup sync", "ok" if status == "complete" else "error" if status in {"aborted", "failed"} else "warning",
         detail={k: v for k, v in summary.items() if k != "error_messages"},
     )
     emit("done", **{k: v for k, v in summary.items() if k not in {"error_examples", "error_messages"}})
-    if not summary.get("errors") and not summary.get("aborted"):
-        self.storage.metadata_set("kobo_backup_last_success_at", int(time.time()))
     return summary
 
 
