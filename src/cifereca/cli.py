@@ -411,6 +411,9 @@ def main(argv: list[str] | None = None) -> int:
                     )
 
             result = _safe_kobo_sync_receipt(service.sync_kobo_backup(progress=progress))
+            # A partial/failed/cancelled batch must not return shell success:
+            # external schedulers would otherwise mark missing books as done.
+            exit_code = 0 if result["status"] == "complete" else 2
         elif a.cmd in {"kobo-sync-errors", "kobo-backup-errors"}:
             from .core.kobo_backup import safe_kobo_backup_report
 
