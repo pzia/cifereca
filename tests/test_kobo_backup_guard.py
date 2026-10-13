@@ -395,3 +395,45 @@ def test_changed_revision_preserves_linked_nonstandard_filename(tmp_path: Path, 
         assert artifact.read_bytes() == original
     finally:
         service.close()
+
+
+def test_invalid_existing_destination_is_not_overwritten(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    destination = service._kobo_backup_target_dir("alice") / "Author - Book One.epub"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(b"corrupted or partial artifact")
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not overwrite invalid artifact")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert destination.read_bytes() == b"corrupted or partial artifact"
+    finally:
+        service.close()
+
+
+def test_symlinked_existing_destination_is_not_followed(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    destination = service._kobo_backup_target_dir("alice") / "Author - Book One.epub"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    external = tmp_path / "external.epub"
+    external.write_bytes(b"external must remain intact")
+    destination.symlink_to(external)
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not follow destination symlink")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["attempted"] == 0
+        assert external.read_bytes() == b"external must remain intact"
+    finally:
+        service.close()
