@@ -2445,7 +2445,36 @@ class LibraryService:
             if item.downloadable is False:
                 raise ProviderConfigurationError("Kobo : ce titre n'est pas marqué téléchargeable")
             identity = self.identity_for_connection(item.source_provider, item.source_credential)
-            return self._execute_kobo_acquisition(item, self._kobo_backup_target_dir(identity.identity_id))
+            # Direct downloads must serialize with opening-sync and Kobo backup.
+            # Do not enter this path from sync_kobo_backup (it already holds
+            # the lock and calls _execute_kobo_acquisition directly).
+            try:
+                with InterProcessLock(acquisition_lock_file()):
+                    target = self._kobo_backup_target_dir(identity.identity_id)
+                    candidates = self._kobo_record_candidate_paths(
+                        {"item_id": item.record_id, "title": item.title,
+                         "author": item.author, "format": item.format}, target,
+                    )
+                    legacy_dir = self.library_dir()
+                    if legacy_dir.resolve() != target.resolve():
+                        candidates.extend(p for p in self._kobo_record_candidate_paths(
+                            {"item_id": item.record_id, "title": item.title,
+                             "author": item.author, "format": item.format}, legacy_dir,
+                        ) if p not in candidates)
+                    existing = self.storage.backup_get("kobo", item.source_credential, item.record_id)
+                    if existing and existing.get("local_path"):
+                        local = Path(str(existing["local_path"]))
+                        if local.is_file() or local.is_symlink():
+                            candidates.append(local)
+                    if candidates:
+                        raise ProviderConfigurationError(
+                            "Kobo : fichier local candidat déjà présent ; rapprochement requis avant téléchargement"
+                        )
+                    return self._execute_kobo_acquisition(item, target)
+            except LockBusyError as exc:
+                raise ProviderConfigurationError(
+                    "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
+                ) from exc
 
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
