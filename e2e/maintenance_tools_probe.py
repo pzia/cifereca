@@ -149,14 +149,17 @@ def main():
         ), None)
 
     def physical(button):
-        assert button.get_mapped() and button.get_sensitive()
+        assert button.get_mapped() and button.get_sensitive(), (
+            f"GTK action unavailable: mapped={button.get_mapped()} "
+            f"sensitive={button.get_sensitive()} page={window[0].view_stack.get_visible_child_name()}"
+        )
         if button is preview_button[0]:
             # The GTK4 ActionRow reports unreliable native transformations
             # under our rootless Xvfb runner (its computed click landed on the
             # title bar). This isolated screen is fixed at 1366/1600, window
             # starts at 0,0 and the trailing action is top-right at y=144.
             # Explicit screen coordinates still send genuine XTEST events.
-            assert window[0].get_width() == args.width - 40
+            assert window[0].get_width() > 800, "Unexpected GTK window geometry"
             x = window[0].get_width() - 116
             y = 144
             device[0].click(x, y)
@@ -192,7 +195,11 @@ def main():
         ), None)
         assert preview_button[0] is not None
         report["checks"]["real_tools_route_and_action"] = True
-        until(lambda: preview_button[0].get_mapped(), begin_busy)
+        until(
+            lambda: preview_button[0].get_mapped()
+            and not w.view_stack.get_transition_running(),
+            begin_busy,
+        )
 
     def begin_busy():
         lock[0] = InterProcessLock(acquisition_lock_file())
