@@ -1681,6 +1681,13 @@ class MainWindow(Adw.ApplicationWindow):
                     # GTK widgets and dialogs are only handled on this callback.
                     if self._closed or _button.get_root() is None:
                         return
+                    current_identity = self.service.current_identity
+                    if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                        self.show_error(
+                            "L’identité active a changé. Relancez la prévisualisation.",
+                            meta.title,
+                        )
+                        return
                     scope_labels = {
                         "global": "Application entière",
                         "identity": "Identité active",
@@ -1712,6 +1719,13 @@ class MainWindow(Adw.ApplicationWindow):
 
                     def response(_dialog, selected):
                         if selected != "run" or self._closed:
+                            return
+                        current_identity = self.service.current_identity
+                        if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                            self.show_error(
+                                "L’identité active a changé. Relancez la prévisualisation.",
+                                meta.title,
+                            )
                             return
 
                         window = self
