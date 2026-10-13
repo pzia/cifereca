@@ -702,3 +702,32 @@ def test_direct_kobo_acquisition_uses_shared_lock(tmp_path: Path, monkeypatch):
         assert [event for event, _ in lock_events] == ["created", "entered", "exited"]
     finally:
         service.close()
+
+
+def test_direct_kobo_download_rejects_renamed_catalog_product_link(tmp_path: Path, monkeypatch):
+    from cifereca.providers import ProviderConfigurationError
+
+    service = _service(tmp_path)
+    item = service._sessions[service._session_key("kobo", "vault-1")].normalize_item(_manifest_row())
+    renamed = tmp_path / "EBooks" / "alice" / "renamed" / "old-title.epub"
+    _write_epub(renamed)
+    service.storage.catalog_entry_put({
+        "catalog_entry_id": "kobo:alice:book-1",
+        "provider_id": "kobo", "identity_id": "alice",
+        "item_id": "book-1", "title": "Other title",
+        "local_state": "local", "metadata": {"path": str(renamed)},
+    })
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not download")),
+    )
+    try:
+        try:
+            service.acquire_direct_item(item)
+        except ProviderConfigurationError as exc:
+            assert "rapprochement" in str(exc)
+        else:
+            raise AssertionError("renamed Kobo-local catalog entry was ignored")
+        assert renamed.is_file()
+    finally:
+        service.close()
