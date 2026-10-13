@@ -429,7 +429,7 @@ def test_kobo_checkpoint_stops_at_last_committed_item_on_unexpected_exception(tm
     original = kobo_backup._refresh_manifest_record
 
     def interrupted(*args, **kwargs):
-        if args[3] == "second":
+        if args[4] == "second":
             raise RuntimeError("simulated interruption")
         return original(*args, **kwargs)
 
