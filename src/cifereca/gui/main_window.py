@@ -626,7 +626,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self.plugin_manager is None:
             # A local-only/no-plugin installation must still connect its
             # configured providers; plugin activation is optional.
-            GLib.idle_add(self.connect_configured_sources)
+            GLib.idle_add(lambda: self.connect_configured_sources())
             return False
         _TRACE_LOG.info("TRACE gui plugin-activation begin")
         started = time.perf_counter()
