@@ -108,12 +108,21 @@ def _refresh_sync_page(self) -> None:
 
 
 def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
+    # Connection completion schedules this via GLib.idle_add. The window
+    # might have closed after scheduling but before this callback runs.
+    if getattr(self, "_closed", False):
+        return
+
     def progress(event: dict[str, Any]) -> None:
+        if getattr(self, "_closed", False):
+            return
         kind = str(event.get("event") or "")
         if kind == "identity_begin":
             label = f"Synchronisation · {event.get('label') or event.get('identity_id')}…"
             GLib.idle_add(self._task_progress, label)
     def ok(summary: dict[str, Any]) -> None:
+        if getattr(self, "_closed", False):
+            return
         self._render_dashboard(); self._populate_loans(self.service.last_loans); self.refresh_library(False); self.refresh_recent()
         acquisitions = sum(int(x.get("new_acquisitions") or 0) for x in summary.get("identities", []))
         attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
@@ -125,6 +134,8 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
                 persistent=bool(attention or errors),
             )
     def err(exc: BaseException) -> None:
+        if getattr(self, "_closed", False):
+            return
         self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
         self._render_dashboard()
         if control is not None: self.show_error(str(exc), "Synchronisation impossible")
