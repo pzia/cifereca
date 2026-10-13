@@ -2090,6 +2090,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _append_history_chunk(self) -> bool:
         self._history_append_scheduled = False
+        # A queued GTK idle may outlive the window and its history widgets.
+        if getattr(self, "_closed", False):
+            return False
         if self._history_loaded_count >= len(self._history_rows):
             return False
         start = self._history_loaded_count
