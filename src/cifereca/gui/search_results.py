@@ -71,6 +71,13 @@ def _render_search_results(self) -> int:
         return shown
     identity = self.service.current_identity
     linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
+    # A public Kobo catalog 'owned' flag is not an authenticated entitlement.
+    # Read the Core's identity-scoped rights once per render, not per book.
+    kobo_rights = (
+        self.service.kobo_personal_right_states(identity.identity_id)
+        if identity and any(item.source_provider == "kobo" for item in self._remote_search_results)
+        else {}
+    )
     remote_keys = {(item.source_provider, item.source_credential, item.record_id) for item in self._remote_search_results}
     linked_placements = {linked[key]['placement_id'] for key in remote_keys if key in linked}
     ui_rows: list[BookListItem] = []
@@ -96,10 +103,13 @@ def _render_search_results(self) -> int:
         source = self.service.provider_display_name(item.source_provider)
         extras: list[str] = []
         if item.source_provider == "kobo":
-            if item.owned:
+            right_state = kobo_rights.get((item.source_credential, item.record_id))
+            if right_state == "active":
                 extras.append("Possédé sur Kobo")
                 if not self.service.can_direct_download(item):
                     extras.append("Kobo-Adept indisponible")
+            elif right_state == "archived":
+                extras.append("Archivé sur Kobo")
             elif item.price:
                 extras.append(f"{item.price} {item.currency or ''}".strip())
         meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
