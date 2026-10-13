@@ -184,8 +184,11 @@ def main():
         assert "tools" in w.nav_rows
         # The technical navigation section can be collapsed in GTK; selecting
         # its hidden ListBox row does not necessarily switch the visible page.
-        # Visit the actual registered route before exercising its real button.
-        w._visit_route("tools")
+        # Start via the public navigation API. If the technical group is
+        # collapsed, a hidden ListBox row may not emit a selection change.
+        w.navigate("tools")
+        if w.view_stack.get_visible_child_name() != "tools":
+            w._visit_route("tools")
         assert w.view_stack.get_visible_child_name() == "tools", "Outils page not visible"
         w._refresh_tools_page()
         preview_button[0] = next((
