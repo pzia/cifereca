@@ -218,6 +218,211 @@ def _kobo_backup_error_info(exc: Exception) -> dict[str, Any]:
     }
 
 
+def _kobo_preview_paths(self, identity_id: str) -> tuple[Path, Path]:
+    """Derive Kobo paths without creating a directory or touching metadata."""
+    configured_root = os.path.expandvars(os.path.expanduser(
+        str(self.config.get("library.directory", "~/EBooks") or "~/EBooks").strip()
+    ))
+    library_root = Path(configured_root)
+    if not library_root.is_absolute():
+        library_root = Path.home() / library_root
+
+    configured = os.path.expandvars(os.path.expanduser(
+        str(self.config.get("kobo_backup.directory", "") or "").strip()
+    ))
+    if configured:
+        backup_root = Path(configured)
+        if not backup_root.is_absolute():
+            backup_root = library_root / backup_root
+    else:
+        backup_root = library_root
+    identity = self.identity_by_id(identity_id)
+    directory_name = identity.directory_name if identity and identity.directory_name else identity_id
+    target_dir = backup_root / safe_library_component(directory_name, "default") / "kobo"
+    return library_root, target_dir
+
+
+def kobo_backup_preview(
+    self, credential_id: str, *,
+    refresh_manifest: bool = False, verify_local_files: bool = False,
+) -> dict[str, Any]:
+    """Read-only preflight for one Kobo source; never grants acquisition.
+
+    Without refresh_manifest the projection may omit recent purchases or
+    revocations. An explicit manifest refresh requests *rights only* from an
+    already connected provider, never content URLs or local materialization.
+
+    The returned list contains only opaque item digests and reason codes,
+    neither book titles, raw product IDs, credentials nor signed URLs. It is
+    advisory: a subsequent acquisition MUST revalidate manifest and files.
+    """
+    credential_id = str(credential_id or "").strip()
+    identity_id = self.storage.identity_for_connection("kobo", credential_id)
+    if not credential_id or not identity_id:
+        raise ProviderConfigurationError("Compte Kobo demandé non configuré")
+
+    session = next((
+        value for value in self._sessions.values()
+        if value.provider_id == "kobo" and value.credential_id == credential_id
+        and value.connected and getattr(value.capabilities, "backup", False)
+    ), None)
+    if refresh_manifest and session is None:
+        raise ProviderConfigurationError(
+            "Compte Kobo non connecté : impossible de rafraîchir les droits"
+        )
+
+    stored = self.storage.backup_list("kobo", credential_id)
+    previous = {str(row.get("item_id") or ""): row for row in stored}
+    if refresh_manifest:
+        manifest = session.backup_manifest()
+        if not isinstance(manifest, list):
+            raise ProviderConfigurationError("Manifeste Kobo non conforme")
+    else:
+        # A local projection is never an authoritative rights manifest.
+        manifest = [
+            {"product_id": row["item_id"], "revision_id": row.get("revision_id"),
+             "title": row.get("title"), "author": row.get("author"),
+             "format": row.get("format")}
+            for row in stored
+        ]
+
+    library_root, target_dir = _kobo_preview_paths(self, identity_id)
+    indexed = _indexed_kobo_catalog_paths(self)
+    source_digest = _kobo_checkpoint_key(identity_id, credential_id).rsplit(".", 1)[-1]
+    checkpoint = _kobo_checkpoint_for(self, identity_id, credential_id)
+    unlinked_local_books = self.kobo_unlinked_local_count(identity_id)
+    unlinked_blocked = (
+        unlinked_local_books > 0
+        and not bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False))
+    )
+    counts = {
+        "already_local_linked": 0, "already_local_verified": 0,
+        "needs_reconciliation": 0, "attention_required": 0,
+        "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
+        "potentially_missing": 0, "invalid_manifest_items": 0,
+    }
+    examples: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for raw in manifest:
+        if not isinstance(raw, dict):
+            counts["invalid_manifest_items"] += 1
+            continue
+        product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
+        if not product_id or product_id in seen:
+            counts["invalid_manifest_items"] += 1
+            continue
+        seen.add(product_id)
+        current = previous.get(product_id)
+        revision_id = str(raw.get("revision_id") or "").strip() or None
+        identity_item_key = (identity_id, product_id)
+        record = {
+            "item_id": product_id,
+            "title": raw.get("title") or (current or {}).get("title"),
+            "author": _manifest_author(raw) or (current or {}).get("author"),
+        }
+
+        reason = ""
+        path_raw = str((current or {}).get("local_path") or "").strip()
+        if path_raw:
+            linked = Path(path_raw)
+            if linked.is_symlink():
+                reason = "needs_reconciliation"
+            elif linked.is_file():
+                if (
+                    current and current.get("status") in {"ok", "complete"}
+                    and (not refresh_manifest or current.get("revision_id") == revision_id)
+                ):
+                    if verify_local_files:
+                        try:
+                            observed = _observed_backup_artifact(linked)
+                        except (ProviderConfigurationError, OSError):
+                            reason = "needs_reconciliation"
+                        else:
+                            expected_hash = str(current.get("sha256") or "")
+                            expected_size = current.get("size")
+                            if (expected_hash and observed["sha256"] == expected_hash
+                                    and (expected_size is None or observed["size"] == expected_size)):
+                                reason = "already_local_verified"
+                            else:
+                                reason = "needs_reconciliation"
+                    else:
+                        reason = "already_local_linked"
+                else:
+                    reason = "needs_reconciliation"
+            else:
+                # A previously linked but now missing placement is not proof
+                # that a new file should be downloaded with another name.
+                reason = "needs_reconciliation"
+
+        if not reason:
+            candidate_paths = _kobo_record_candidate_paths(self, record, target_dir)
+            for explicit in indexed.get(identity_item_key, ()):
+                if explicit not in candidate_paths:
+                    candidate_paths.append(explicit)
+            if library_root != target_dir:
+                for legacy in _kobo_record_candidate_paths(self, record, library_root):
+                    if legacy not in candidate_paths:
+                        candidate_paths.append(legacy)
+            if candidate_paths or (
+                current and current.get("status") in {"reconcile_required", "reconcile_conflict"}
+            ):
+                reason = "needs_reconciliation"
+
+        if not reason:
+            if bool(raw.get("archived")):
+                reason = "attention_required"
+            elif raw.get("downloadable") is False:
+                reason = "not_downloadable"
+            elif current and current.get("status") == "attention_required":
+                reason = (
+                    "blocked_scope"
+                    if current.get("attention_code") == "missing_delegation_scope"
+                    else "attention_required"
+                )
+            elif unlinked_blocked:
+                reason = "blocked_unlinked"
+            elif not refresh_manifest:
+                reason = "candidate_unverified"
+            else:
+                # No descriptor has been resolved and no file was downloaded:
+                # this is NOT a promise that the provider can deliver a file.
+                reason = "potentially_missing"
+
+        counts[reason] += 1
+        if len(examples) < 20 and reason not in {
+            "already_local_linked", "already_local_verified",
+        }:
+            item_digest = hashlib.sha256(
+                (credential_id + "\\x00" + product_id).encode("utf-8")
+            ).hexdigest()[:20]
+            examples.append({"item_ref": item_digest, "reason": reason})
+
+    # Explicitly discourage treating the output as an executable download
+    # plan. A complete fresh manifest is still only a rights snapshot.
+    return {
+        "scope": "account",
+        "source_id": source_digest,
+        "manifest_refreshed": bool(refresh_manifest),
+        "manifest_items": len(manifest),
+        "known_item_count": len(seen),
+        "checkpoint_status": str((checkpoint or {}).get("status") or "unknown"),
+        "unlinked_local_books": unlinked_local_books,
+        "counts": counts,
+        "blocking_items": sum(counts[key] for key in (
+            "needs_reconciliation", "attention_required",
+            "blocked_scope", "blocked_unlinked", "not_downloadable",
+            "invalid_manifest_items",
+        )),
+        "examples": examples,
+        "preview_only": True,
+        "acquisition_authorized": False,
+        "requires_manifest_validation": not refresh_manifest,
+        "manifest_valid": counts["invalid_manifest_items"] == 0,
+        "verification": "artifact_hash" if verify_local_files else "linked_path_only",
+    }
+
+
 def kobo_backup_diagnostic(self) -> dict[str, Any]:
     """Summarise the persisted Kobo backup state without network access."""
     rows = self.storage.backup_list(provider_id="kobo")

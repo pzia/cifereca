@@ -3544,6 +3544,20 @@ class LibraryService:
         """Summarise the persisted Kobo backup state without network access."""
         return kobo_backup.kobo_backup_diagnostic(self)
 
+    def kobo_backup_preview(
+        self, credential_id: str, *,
+        refresh_manifest: bool = False, verify_local_files: bool = False,
+    ) -> dict[str, Any]:
+        """Preview Kobo acquisition candidates, without writes or downloads.
+
+        Optional refresh reads the authorized provider's *manifest only*.
+        This result is advisory, not a permit to download or prune anything.
+        """
+        return kobo_backup.kobo_backup_preview(
+            self, credential_id, refresh_manifest=refresh_manifest,
+            verify_local_files=verify_local_files,
+        )
+
     def _kobo_backup_due(self) -> bool:
         return kobo_backup._kobo_backup_due(self)
 
