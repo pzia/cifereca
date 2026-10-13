@@ -1044,3 +1044,77 @@ def test_failed_reactivation_does_not_publish_previous_snapshot(tmp_path):
     # User may still recover by activating the same previously accepted cache.
     collection.activate(context(tmp_path))
     assert [x.source_id for x in collection.snapshot().children] == ["alpha"]
+
+
+@pytest.mark.parametrize("private", [
+    "Livre token=PRIVATE_CREDENTIAL",
+    "Livre cookie=PRIVATE_SESSION",
+    "Livre secret: PRIVATE_KEY",
+    "Livre refresh_token=PRIVATE_REFRESH",
+    "Livre Authorization=Bearer PRIVATE_HEADER",
+    "Livre Bearer PRIVATE_BEARER",
+    "Livre /home/private/borrower.epub",
+    "Livre C:\\Users\\Private\\loan.epub",
+    "Livre file:///home/private/loan.epub",
+    "Livre\u202ePRIVATE_BIDI",
+    "Livre\u2066PRIVATE_ISOLATE\u2069",
+    "Livre\u200ePRIVATE_MARK",
+    "Livre\u0091PRIVATE_C1",
+    "Livre\ud800",
+])
+def test_candidate_rejects_private_or_spoofed_mandatory_bibliography(private):
+    """Untrusted publisher data must not reach cache/index/GTK through titles."""
+    with pytest.raises(ContractUnavailable, match="invalid candidate title"):
+        candidate_results({"items": [{"id": "safe", "title": private}]},
+                          "cifericaopds.alpha")
+    with pytest.raises(ContractUnavailable, match="invalid candidate author"):
+        candidate_results({"items": [
+            {"id": "safe", "title": "Titre public", "author": private},
+        ]}, "cifericaopds.alpha")
+
+
+@pytest.mark.parametrize("private", [
+    "token=SECRET", "cookie=PRIVATE", "Bearer PRIVATE",
+    "secret:PRIVATE", "https://signed.example/?token=VALUE",
+    "Texte\u202eavec override", "Texte\u2066avec isolate\u2069",
+    "Valeur\ud800",
+])
+def test_candidate_discards_private_optional_metadata_without_losing_public_notice(private):
+    rows = candidate_results({"items": [{
+        "id": "book-1", "title": "Les secrets des jardins",
+        "author": "Anaïs Martin", "publisher": private,
+        "type": private, "format": private,
+        "isbn13": "9782211348171",
+    }]}, "cifericaopds.alpha")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.publisher is None and row.type is None and row.format is None
+    assert row.metadata == {"source_id": "alpha", "isbn": "9782211348171"}
+    assert row.title == "Les secrets des jardins"
+    assert row.author == "Anaïs Martin"
+
+
+def test_non_ascii_bookland_digits_never_become_canonical_isbn():
+    # Arabic-Indic "١" isdecimal()/isdigit() but not a canonical ISBN digit.
+    row = candidate_results({"items": [{
+        "id": "book-2", "title": "Lecture publique",
+        "isbn13": "978221134817١", "isbn": "9782211348171",
+    }]}, "cifericaopds.alpha")[0]
+    assert row.metadata["isbn"] == "9782211348171"
+    without_fallback = candidate_results({"items": [{
+        "id": "book-3", "title": "Lecture publique",
+        "isbn13": "978221134817١",
+    }]}, "cifericaopds.alpha")[0]
+    assert "isbn" not in without_fallback.metadata
+
+
+def test_legitimate_accented_bibliography_remains_available():
+    row = candidate_results({"items": [{
+        "id": "book-4", "title": "À la recherche du secret",
+        "author": "Anaïs Sautier et Łukasz Żak",
+        "publisher": "Éditions L'École des loisirs",
+        "type": "roman", "format": "papier",
+    }]}, "cifericaopds.alpha")[0]
+    assert row.title == "À la recherche du secret"
+    assert "Łukasz Żak" in row.author
+    assert row.publisher == "Éditions L'École des loisirs"
