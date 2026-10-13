@@ -323,11 +323,17 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
                        "items_blocked_by_scope", "malformed_manifest_items"}
             and type(value) is int and 0 <= value <= 1000000
         }
+        raw_streak = row.get("failure_streak")
+        failure_streak = (
+            raw_streak if type(raw_streak) is int and 0 <= raw_streak <= 6 else 0
+        )
         summaries.append({
             "source_id": source_id, "status": str(row.get("status") or "unknown"),
             "position": max(0, int(row.get("processed") or 0)),
             "total": max(0, int(row.get("total") or 0)),
             "updated_at": max(0, int(row.get("updated_at") or 0)),
+            # Public diagnostics: safe numeric cooldown, no raw credential.
+            "failure_streak": failure_streak,
             **safe_counts,
         })
     summaries.sort(key=lambda row: row["source_id"])
