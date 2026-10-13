@@ -401,6 +401,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
     abort_all = False
     authoritative_manifest_ids: dict[str, set[str]] = {}
+    prunable_credentials: set[str] = set()
     summary["sources"] = []
     source_counter_keys = ("scanned", "attempted", "downloaded", "unchanged",
                            "pending", "attention_required", "errors", "skipped",
@@ -413,6 +414,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         source_baseline = {key: int(summary.get(key) or 0) for key in source_counter_keys}
         source_position = 0
         source_total = 0
+        invalid_manifest_row = False
 
         def save_source_checkpoint(status: str) -> dict[str, Any]:
             row = {
@@ -457,6 +459,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
         for index, raw in enumerate(manifest):
             if not isinstance(raw, dict):
+                invalid_manifest_row = True
                 summary["skipped"] += 1
                 source_position = index + 1
                 save_source_checkpoint("running")
@@ -475,6 +478,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             )
             product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
             if not product_id:
+                invalid_manifest_row = True
                 summary["skipped"] += 1
                 source_position = index + 1
                 save_source_checkpoint("running")
@@ -510,6 +514,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         else:
             source_status = "complete"
         summary["sources"].append(save_source_checkpoint(source_status))
+        # A different credential's failure must not prevent pruning a
+        # successfully fetched, fully traversed authoritative manifest.
+        # Incomplete/malformed manifests never authorize deletion.
+        if (not invalid_manifest_row and not abort_all and source_position == source_total
+                and source_status in {"complete", "attention_required"}):
+            prunable_credentials.add(session.credential_id)
         if abort_all:
             break
 
@@ -518,7 +528,10 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # sync must never make a remote title disappear merely because its
     # manifest could not be observed.  Artifacts/placements/catalog rows are
     # deliberately preserved by Storage.backup_prune_missing().
-    _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit)
+    _prune_successful_manifest(
+        self, summary, authoritative_manifest_ids, emit,
+        prunable_credentials=prunable_credentials,
+    )
 
     return _publish_summary(self, summary, error_counts, error_examples, emit, scoped=credential_id is not None)
 
@@ -622,18 +635,21 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
 
 
 
-def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit):
-    if not summary.get("errors") and not summary.get("aborted"):
-        for credential_id, seen_ids in authoritative_manifest_ids.items():
-            pruned = self.storage.backup_prune_missing("kobo", credential_id, seen_ids)
-            summary["legacy_pruned"] += int(pruned.get("pruned") or 0)
-            summary["legacy_local_preserved"] += int(pruned.get("local_preserved") or 0)
-            summary["legacy_entitlements_inactivated"] += int(pruned.get("entitlements_inactivated") or 0)
-            if pruned.get("pruned"):
-                emit(
-                    "legacy_pruned", credential_id=credential_id,
-                    count=pruned.get("pruned"), local_preserved=pruned.get("local_preserved"),
-                )
+def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, *, prunable_credentials=None):
+    if prunable_credentials is None:
+        prunable_credentials = set(authoritative_manifest_ids) if not summary.get("errors") and not summary.get("aborted") else set()
+    for credential_id, seen_ids in authoritative_manifest_ids.items():
+        if credential_id not in prunable_credentials:
+            continue
+        pruned = self.storage.backup_prune_missing("kobo", credential_id, seen_ids)
+        summary["legacy_pruned"] += int(pruned.get("pruned") or 0)
+        summary["legacy_local_preserved"] += int(pruned.get("local_preserved") or 0)
+        summary["legacy_entitlements_inactivated"] += int(pruned.get("entitlements_inactivated") or 0)
+        if pruned.get("pruned"):
+            emit(
+                "legacy_pruned", credential_id=credential_id,
+                count=pruned.get("pruned"), local_preserved=pruned.get("local_preserved"),
+            )
 
 
 
