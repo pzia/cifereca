@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import zipfile
 
+import pytest
+
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import Account, SearchResult
@@ -729,5 +731,30 @@ def test_direct_kobo_download_rejects_renamed_catalog_product_link(tmp_path: Pat
         else:
             raise AssertionError("renamed Kobo-local catalog entry was ignored")
         assert renamed.is_file()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("malformed_opt_in", ["false", "true", 1, 0, None])
+def test_unlinked_kobo_override_requires_literal_true(tmp_path: Path, monkeypatch, malformed_opt_in):
+    """String or numeric config values must not silently disable duplicate guards."""
+    service = _service(tmp_path)
+    imported = tmp_path / "EBooks" / "alice" / "local" / "already-here.epub"
+    _write_epub(imported, b"original")
+    original = imported.read_bytes()
+    _add_local_catalog(service, imported, identity_id="alice", item_id="already-here")
+    service.config.set("kobo_backup.allow_unlinked_acquisition", malformed_opt_in)
+    monkeypatch.setattr(service, "catalog_scan", lambda *_a, **_kw: {"scanned": 1})
+    monkeypatch.setattr(service, "_execute_kobo_acquisition",
+                        lambda *_a, **_kw: pytest.fail("unconsented download"))
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["attempted"] == 0
+        assert summary["downloaded"] == 0
+        assert summary["attention_required"] == 1
+        assert service.storage.backup_get(
+            "kobo", "vault-1", "book-1",
+        )["attention_code"] == "unlinked_local_books"
+        assert imported.read_bytes() == original
     finally:
         service.close()
