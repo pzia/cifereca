@@ -257,15 +257,36 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
     }
 
 
-def _kobo_backup_due(self) -> bool:
+def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
+    """Throttle each Kobo account independently once checkpoints exist."""
     try:
         interval_minutes = max(1, int(self.config.get("kobo_backup.interval_minutes", 60) or 60))
     except (TypeError, ValueError):
         interval_minutes = 60
-    # A partial batch is still a recent attempt; throttle repeated starts
-    # without misrepresenting it as an entirely materialized library.
-    raw = (self.storage.metadata_get("kobo_backup_last_attempt_at")
-           or self.storage.metadata_get("kobo_backup_last_success_at"))
+    raw = None
+    if credential_id is not None:
+        try:
+            state = json.loads(
+                self.storage.metadata_get("kobo_backup_source_checkpoints_v1") or "{}"
+            )
+        except (ValueError, TypeError):
+            state = {}
+        if isinstance(state, dict) and state:
+            identity_id = self.identity_for_connection("kobo", credential_id).identity_id
+            source_key = hashlib.sha256(
+                f"kobo-v1:{identity_id}:{credential_id}".encode("utf-8")
+            ).hexdigest()[:24]
+            checkpoint = state.get(source_key)
+            if isinstance(checkpoint, dict) and checkpoint.get("schema") == 1:
+                raw = checkpoint.get("updated_at")
+            else:
+                # Newly added account: do not inherit another account's cache.
+                return True
+    if raw is None:
+        # Legacy state predates per-account checkpoints; keep its existing
+        # freshness decision until the first reconciled manifest creates them.
+        raw = (self.storage.metadata_get("kobo_backup_last_attempt_at")
+               or self.storage.metadata_get("kobo_backup_last_success_at"))
     try:
         last = int(raw or 0)
     except (TypeError, ValueError):
