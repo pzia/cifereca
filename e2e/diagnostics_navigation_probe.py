@@ -625,6 +625,39 @@ def main() -> int:
         assert w.view_stack.get_visible_child_name() == "library"
         report["checks"]["physical_identity_context_restored"] = True
         capture("07-first-identity-restored")
+        # P0 #1130: an orphaned history entry must not leak its old query
+        # into the currently selected identity or navigate away from Library.
+        # This uses the real GTK MainWindow/controls; no identity is deleted,
+        # no source is contacted, and the missing ID is entirely fictional.
+        from dataclasses import replace
+        assert w.service.identity_by_id("ux-removed-identity") is None
+        original_search = w.search_controls.state()
+        original_library = w.library_controls.state()
+        original_route = w.view_stack.get_visible_child_name()
+        checks_before = broker.checks
+        events_before = len(broker.event_queries)
+        # Reuse MainWindow's existing dataclass types instead of adding
+        # new direct module imports to the E2E dependency-selection graph.
+        orphaned_state = replace(
+            w._navigation_state("search"),
+            identity_id="ux-removed-identity",
+            query_state=replace(
+                original_search,
+                text="UX_STALE_IDENTITY_FILTER_MUST_NOT_APPEAR",
+                providers=("local",),
+            ),
+        )
+        w._restore_navigation_state(orphaned_state)
+        assert w.service.current_identity.identity_id == "camille"
+        assert w.view_stack.get_visible_child_name() == original_route == "library"
+        assert w.nav_list.get_selected_row() is w.nav_rows["library"]
+        assert w.search_controls.state() == original_search
+        assert w.library_controls.state() == original_library
+        assert not w._restoring_navigation
+        assert broker.checks == checks_before
+        assert len(broker.event_queries) == events_before
+        report["checks"]["P0_stale_identity_history_preserves_gtk_filters"] = True
+        capture("07b-stale-identity-history-rejected")
         w.close()
         assert w._closed
         from cifereca.task_queue import TaskPriority
