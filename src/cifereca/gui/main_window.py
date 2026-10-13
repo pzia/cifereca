@@ -3559,6 +3559,10 @@ class MainWindow(Adw.ApplicationWindow):
             def failed(_exc):
                 if version == ai_probe_version[0] and page_lifetime.alive:
                     ai_status.set_text("Test non concluant ; vérifier la configuration")
+            # TaskRunner makes the focused test button insensitive. Keep a
+            # live keyboard focus anchor without stealing unrelated focus.
+            if self.get_focus() is ai_test:
+                ai_reset.grab_focus()
             try:
                 self.runner.submit(
                     "Test connexion IA synthétique",
