@@ -1228,6 +1228,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             "credential_id": session.credential_id,
             "status": source_status, "manifest_items": source_total, **delta,
         })
+        # The source terminal event follows the durable terminal checkpoint.
+        # Unlike a worker/task end, it reports the acquisition outcome for
+        # this credential even if another credential remains in the batch.
+        emit("source_done", credential_id=session.credential_id,
+             status=source_status, manifest_items=source_total, **delta)
         if not malformed and not abort_all and processed == source_total and source_status in {"complete", "attention_required"}:
             prunable_credentials.add(session.credential_id)
         if abort_all:
