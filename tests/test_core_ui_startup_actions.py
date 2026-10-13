@@ -93,3 +93,11 @@ def test_startup_without_plugin_manager_still_connects_providers():
     body = ast.unparse(ast.Module(body=no_manager.body, type_ignores=[]))
     assert "GLib.idle_add(self.connect_configured_sources)" in body
     assert "return False" in body
+
+
+def test_queued_history_chunk_does_not_touch_disposed_widgets():
+    """#1132: a queued history idle must bail out after GTK disposal."""
+    source = _method_source("MainWindow", "_append_history_chunk")
+    assert "self._history_append_scheduled = False" in source
+    assert "getattr(self, '_closed', False)" in source
+    assert source.index("getattr(self, '_closed', False)") < source.index("self.history_page.append_rows")
