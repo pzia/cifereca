@@ -6,6 +6,7 @@ public Plugin API exposes neither credentials nor HTTP-specific machinery.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from ipaddress import ip_address
@@ -53,6 +54,35 @@ def _allowed_endpoint(endpoint: str, *, allow_remote: bool) -> tuple[bool, bool]
     if local:
         return True, False
     return (bool(allow_remote and parsed.scheme == "https"), True)
+
+
+def _strict_model_json(raw: bytes | str) -> Any:
+    """Parse model output without silently accepting ambiguous JSON facts.
+
+    The default json.loads accepts duplicate keys, NaN and Infinity. Those
+    values cannot be safely treated as structured facts by plugin callers.
+    """
+    def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        obj: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError("duplicate JSON key")
+            obj[key] = value
+        return obj
+
+    def finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("nonfinite JSON float")
+        return number
+
+    def finite_constant(_value: str) -> None:
+        raise ValueError("nonfinite JSON constant")
+
+    return json.loads(
+        raw, object_pairs_hook=no_duplicates,
+        parse_constant=finite_constant, parse_float=finite_float,
+    )
 
 
 class OptionalLLMService:
@@ -156,17 +186,24 @@ class OptionalLLMService:
                 if len(data) > _MAX_RESPONSE_BYTES:
                     result.append(failed("response_too_large"))
                     return
-                obj = json.loads(data)
-                content = obj["choices"][0]["message"]["content"]
-                if not isinstance(content, str) or len(content) > 16000:
+                # Validate both transport envelope and structured payload.
+                # An upstream response can be syntactically JSON yet contain
+                # conflicting duplicate keys or IEEE non-finite numbers.
+                try:
+                    obj = _strict_model_json(data)
+                    content = obj["choices"][0]["message"]["content"]
+                    if (type(content) is not str or len(content) > 16000
+                            or any(0xD800 <= ord(ch) <= 0xDFFF for ch in content)):
+                        raise ValueError("invalid model text")
+                    structured = {}
+                    if request.task == "structured":
+                        structured = _strict_model_json(content)
+                        if type(structured) is not dict:
+                            raise ValueError("structured JSON object required")
+                except (ValueError, TypeError, KeyError, IndexError,
+                        UnicodeError, RecursionError, OverflowError):
                     result.append(failed("invalid_response"))
                     return
-                structured = {}
-                if request.task == "structured":
-                    structured = json.loads(content)
-                    if not isinstance(structured, dict):
-                        result.append(failed("invalid_response"))
-                        return
                 result.append(LLMResult(
                     True, text=content, structured=structured,
                     provider=provider, model=model, generated=True, remote=remote,
