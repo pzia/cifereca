@@ -63,3 +63,19 @@ def test_maintenance_preview_and_execution_reject_identity_switch():
     assert source.count("L’identité active a changé.") == 2
     assert source.count("context.identity_id") >= 2
     assert source.index("current_identity = self.service.current_identity") < source.index("dialog = Adw.MessageDialog.new")
+
+
+def test_preview_dialog_uses_real_line_breaks():
+    """The GTK confirmation must render lines, not literal backslash-n text."""
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_refresh_tools_page")
+    preview = next(node for node in ast.walk(method) if isinstance(node, ast.FunctionDef) and node.name == "present_preview")
+    literals = {node.value for node in ast.walk(preview) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    for heading in ("Résumé :", "Changements prévus :", "Avertissements :", "Portée :"):
+        assert heading + "\\n" not in literals
+        assert heading + "\n" in literals
+    assert "\n" in literals  # per-item separator
+    assert "\n\n" in literals  # sections in Adw.MessageDialog
+    assert "\\n" not in literals
+    assert "\\n\\n" not in literals
