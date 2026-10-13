@@ -46,9 +46,13 @@ def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path)
                             }
                         )
                     )
+                    # Permission denials are terminal until explicit
+                    # reauthorization, even when an upstream provider
+                    # incorrectly marks the HTTP failure retryable.
                     retryable = (
-                        retryable_hint if isinstance(retryable_hint, bool)
-                        else not (isinstance(exc, ProviderConfigurationError) or non_retryable_permission)
+                        False if non_retryable_permission
+                        else retryable_hint if isinstance(retryable_hint, bool)
+                        else not isinstance(exc, ProviderConfigurationError)
                     )
                     service.acquisition_ledger.fail(
                         ledger_id,
