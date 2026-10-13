@@ -110,6 +110,11 @@ class ProviderRegistry:
                 old_entry is not None
                 and old_entry.status == entry.status == "ready"
                 and old_entry.source_revision == entry.source_revision
+                # A catalogue generation is part of a provider's search
+                # lifetime, not only the search-cache key. Collection
+                # adapters can bind this generation into their local
+                # session guard; reusing them would strand fresh searches.
+                and old_entry.catalog_generation == entry.catalog_generation
                 and old_entry.capabilities == entry.capabilities
                 and old_entry.kind == entry.kind
             )
