@@ -103,3 +103,78 @@ def test_open_filters_still_reset_enter_sequence_and_rerender():
     )
     _method("_search_controls_changed")(host)
     assert calls == ["reset", "render"]
+
+
+def _pending_local_search():
+    requests = []
+    rendered = []
+    values = [NS(text="Loup", field="title", scope="all",
+                 providers=(), types=(), languages=())]
+    host = NS(
+        _closed=False,
+        search_controls=NS(state=lambda: values[0]),
+        _reset_search_enter=lambda: None,
+        service=NS(current_identity=NS(identity_id="camille")),
+        _search_generation=1,
+        runner=NS(submit=lambda *args, **kwargs: requests.append(args)),
+        search_button=object(),
+        _populate_local_search=lambda rows: rendered.append(rows),
+    )
+    _method("run_search")(host)
+    assert len(requests) == 1
+    return values, requests[0][2], rendered
+
+
+def test_pending_local_result_is_discarded_when_query_edited_before_next_search():
+    for attr, changed in (
+        ("text", "Renard"),
+        ("field", "author"),
+        ("scope", "physical"),
+    ):
+        values, done, rendered = _pending_local_search()
+        before = values[0]
+        values[0] = NS(
+            text=changed if attr == "text" else before.text,
+            field=changed if attr == "field" else before.field,
+            scope=changed if attr == "scope" else before.scope,
+        )
+        done([{"title": "stale"}])
+        assert rendered == [], attr
+
+
+def test_local_facets_do_not_discard_a_result_with_the_same_base_query():
+    values, done, rendered = _pending_local_search()
+    values[0] = NS(
+        text="Loup", field="title", scope="all",
+        providers=("milan",), types=("book",), languages=("fr",),
+    )
+    done([{"title": "Loup"}])
+    assert rendered == [[{"title": "Loup"}]]
+
+
+def test_online_failure_of_edited_query_does_not_override_new_gtk_state():
+    errors = []
+    requests = []
+    values = [NS(text="Loup", field="title", scope="all", providers=(),
+                 types=(), languages=())]
+    host = NS(
+        _closed=False,
+        search_controls=NS(state=lambda: values[0]),
+        _reset_search_enter=lambda: None,
+        service=NS(current_identity=NS(identity_id="camille")),
+        _search_generation=2,
+        _last_search_query="Loup",
+        _remote_query_key=None,
+        _remote_search_results=[],
+        _search_local_objects={},
+        runner=NS(submit=lambda *args, **kwargs: requests.append(args)),
+        search_global_button=object(),
+        show_error=lambda *args: errors.append(args),
+    )
+    _method("run_search")(host, True)
+    assert requests
+    values[0] = NS(text="Renard", field="title", scope="all")
+    requests[0][3](RuntimeError("network error"))
+    assert errors == []
+    assert host._online_pending_key is None
+    assert host._online_pending_generation is None
