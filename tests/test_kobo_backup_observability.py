@@ -353,7 +353,9 @@ def test_aborted_kobo_batch_retains_manifest_success_but_not_acquisition_complet
         result = service.sync_kobo_backup()
         assert result["status"] == "aborted"
         assert result["manifests_fetched"] == 1
-        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) > 0
+        # A fetched manifest from an aborted source is not an authoritative
+        # successful source snapshot, even when the fetch itself succeeded.
+        assert not service.storage.metadata_get("kobo_backup_last_manifest_success_at")
         assert not service.storage.metadata_get("kobo_backup_last_success_at")
     finally:
         service.close()
