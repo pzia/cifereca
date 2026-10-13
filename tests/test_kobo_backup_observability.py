@@ -303,3 +303,57 @@ def test_backup_emits_progress_events_through_successful_download(tmp_path: Path
         assert names[-1] == "done"
     finally:
         service.close()
+
+
+def test_pending_without_errors_is_not_persisted_as_completed_batch(tmp_path: Path):
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "missing", "revision_id": "r1", "title": "Missing",
+                   "format": "EPUB", "downloadable": True}],
+    )
+    service.kobo_adept_state = lambda **_kw: {
+        "available": False, "compatible": False, "operational": False,
+        "error": {"message": "Runtime absent"},
+    }
+    try:
+        result = service.sync_kobo_backup()
+        assert result["pending"] == 1
+        assert result["errors"] == 0
+        assert result["status"] == "attention_required"
+        assert int(service.storage.metadata_get("kobo_backup_last_attempt_at")) > 0
+        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) > 0
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+        assert service.storage.metadata_get("kobo_backup_last_batch_status") == "attention_required"
+        # Throttle a repeated startup, but never classify it as complete.
+        assert not service._kobo_backup_due()
+    finally:
+        service.close()
+
+
+def test_empty_successful_kobo_manifest_is_a_completed_batch(tmp_path: Path):
+    service, _session = _service(tmp_path, manifest=[])
+    try:
+        result = service.sync_kobo_backup()
+        assert result["sessions"] == 1
+        assert result["manifests_fetched"] == 1
+        assert result["status"] == "complete"
+        assert int(service.storage.metadata_get("kobo_backup_last_success_at")) > 0
+    finally:
+        service.close()
+
+
+def test_aborted_kobo_batch_retains_manifest_success_but_not_acquisition_completion(tmp_path: Path):
+    service, _session = _service(
+        tmp_path,
+        manifest=[{"product_id": "forbidden", "revision_id": "r1",
+                   "title": "Forbidden", "format": "EPUB"}],
+        unauthorized=True,
+    )
+    try:
+        result = service.sync_kobo_backup()
+        assert result["status"] == "aborted"
+        assert result["manifests_fetched"] == 1
+        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) > 0
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
