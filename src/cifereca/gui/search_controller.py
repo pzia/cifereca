@@ -180,7 +180,13 @@ def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
             self._online_pending_generation = None
     def failed(exc):
         clear_pending()
-        if current(): self.show_error(str(exc), "Recherche en ligne impossible")
+        if current():
+            # The provider exception may contain a signed URL, a token or
+            # identity-specific details. UI errors must not echo raw input.
+            self.show_error(
+                "Les catalogues en ligne ne répondent pas. Réessayez ultérieurement.",
+                "Recherche en ligne impossible",
+            )
     def deliver_batch(batch):
         if not current(): return False
         if batch.results:
