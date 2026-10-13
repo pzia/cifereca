@@ -175,3 +175,42 @@ def test_large_manifest_resumes_after_117_without_redownloading(tmp_path, monkey
         assert json.loads(service.storage.metadata_get(key))["status"] == "complete"
     finally:
         service.close()
+
+
+def test_resume_after_mid_manifest_checkpoint_failure_reuses_prior_files(tmp_path, monkeypatch):
+    """#1348: after interruption at item 118/130, no completed EPUB is downloaded twice."""
+    names = [f"book-{index:03d}" for index in range(130)]
+    service, _session = _service(tmp_path, _manifest(*names))
+    monkeypatch.setattr(service, "kobo_adept_state", lambda **_kw: _ready_adept_state())
+    attempts = []
+    def acquire(item, target_dir):
+        attempts.append(item.record_id)
+        return _acquirer(item, target_dir)
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+    key = _kobo_checkpoint_key("default", "vault-1")
+    original_set = service.storage.metadata_set
+    failed_once = False
+    def interrupt_at_118(name, value):
+        nonlocal failed_once
+        if name == key and not failed_once:
+            checkpoint = json.loads(value)
+            if checkpoint["status"] == "running" and checkpoint["processed"] == 118:
+                failed_once = True
+                raise OSError("simulated interruption after durable item write")
+        return original_set(name, value)
+    monkeypatch.setattr(service.storage, "metadata_set", interrupt_at_118)
+    try:
+        with pytest.raises(OSError, match="simulated interruption"):
+            service.sync_kobo_backup_account("vault-1")
+        assert len(attempts) == 118
+        assert len(set(attempts)) == 118
+        assert json.loads(service.storage.metadata_get(key))["processed"] == 117
+        monkeypatch.setattr(service.storage, "metadata_set", original_set)
+        resumed = service.sync_kobo_backup_account("vault-1")
+        assert resumed["status"] == "complete"
+        assert resumed["attempted"] == 12
+        assert resumed["unchanged"] == 118
+        assert len(attempts) == len(set(attempts)) == 130
+        assert json.loads(service.storage.metadata_get(key))["status"] == "complete"
+    finally:
+        service.close()
