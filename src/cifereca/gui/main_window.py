@@ -1749,8 +1749,9 @@ class MainWindow(Adw.ApplicationWindow):
                             owner_closed=lambda: self._closed,
                         )
                         cancellation_state["control"] = worker_control
-                        cancel_button.set_visible(bool(meta.cancellable))
-                        cancel_button.set_sensitive(bool(meta.cancellable))
+                        can_cancel = getattr(meta, "cancellable", False) is True
+                        cancel_button.set_visible(can_cancel)
+                        cancel_button.set_sensitive(can_cancel)
 
                         def finish_maintenance() -> None:
                             if cancellation_state["control"] is worker_control:
