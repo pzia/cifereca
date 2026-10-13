@@ -557,6 +557,16 @@ def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
             # An incomplete checkpoint after a crash is never a successful cache.
             if str(row.get("status") or "") in {"running", "interrupted", "manifest_fetch"}:
                 return True
+            # Exponential, bounded cooldown for repeated source errors.
+            # Only the automatic scheduler observes this; an explicit account
+            # sync may retry immediately after recovery or reauthorization.
+            if str(row.get("status") or "") in {"failed", "partial", "aborted"}:
+                streak = row.get("failure_streak")
+                if type(streak) is int and streak > 1:
+                    multiplier = 1 << min(streak - 1, 5)
+                    interval_minutes = min(
+                        max(interval_minutes, 24 * 60), interval_minutes * multiplier,
+                    )
             raw = row.get("updated_at")
         else:
             # Preserve old cache semantics only before *any* active account
@@ -773,6 +783,13 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     for session in sessions:
         session_identity = self.identity_for_connection("kobo", session.credential_id)
         initial = {name: int(summary.get(name, 0)) for name in source_metrics}
+        previous_checkpoint = _kobo_checkpoint_for(
+            self, session_identity.identity_id, session.credential_id,
+        )
+        previous_streak = (previous_checkpoint or {}).get("failure_streak")
+        if type(previous_streak) is not int or previous_streak < 0:
+            previous_streak = 0
+        previous_streak = min(previous_streak, 6)
         source_total = 0
         processed = 0
         malformed = False
@@ -782,10 +799,20 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             return {name: int(summary.get(name, 0)) - initial[name] for name in source_metrics}
 
         def checkpoint(status: str) -> None:
+            counts = source_delta()
+            # In-progress writes must not erase the prior failure history.
+            # A completed or attention-only batch resets the error streak;
+            # an aborted/cancelled run never silently becomes 'complete'.
+            if status in {"failed", "partial", "aborted"} and counts["errors"]:
+                streak = min(6, previous_streak + 1)
+            elif status in {"running", "interrupted", "manifest_fetch"}:
+                streak = previous_streak
+            else:
+                streak = 0
             _store_kobo_checkpoint(
                 self, session_identity.identity_id, session.credential_id,
                 total=source_total, processed=processed, status=status,
-                counts=source_delta(), item_id=committed_item_id,
+                counts=counts, item_id=committed_item_id, failure_streak=streak,
             )
 
         # Stop even before reading a new account's remote manifest.
@@ -951,6 +978,7 @@ def _store_kobo_checkpoint(
     self, identity_id: str, credential_id: str, *,
     total: int, processed: int, status: str,
     counts: dict[str, int], item_id: str | None = None,
+    failure_streak: int = 0,
 ) -> None:
     """Record local progress; never use the index alone for skipping books."""
     item_digest = hashlib.sha256(item_id.encode("utf-8")).hexdigest()[:16] if item_id else None
@@ -960,6 +988,7 @@ def _store_kobo_checkpoint(
             "schema_version": 1, "total": total, "processed": processed,
             "status": status, "last_item_digest": item_digest,
             "counts": counts, "updated_at": int(time.time()),
+            "failure_streak": min(6, max(0, int(failure_streak))),
         }, ensure_ascii=False, sort_keys=True),
     )
 
