@@ -68,7 +68,7 @@ from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
-from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool
+from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
@@ -1670,7 +1670,21 @@ class MainWindow(Adw.ApplicationWindow):
             group = Adw.PreferencesGroup(); box.append(group)
             row = Adw.ActionRow(); row.set_title(info.title); row.set_subtitle(info.description or resolved.plugin_id)
             run = self.action_button("Prévisualiser…" if info.supports_dry_run else "Exécuter…", info.icon_name)
-            row.add_suffix(run); group.add(row)
+            row.add_suffix(run)
+            cancel = Gtk.Button(label="Annuler")
+            cancel.set_visible(False)
+            row.add_suffix(cancel)
+            group.add(row)
+            active_cancel = {"control": None}
+
+            def request_cancel(_cancel_button):
+                active = active_cancel["control"]
+                if active is not None:
+                    active.cancel()
+                    _cancel_button.set_sensitive(False)
+
+            cancel.connect("clicked", request_cancel)
+
             def prepare(_button, service=tool, meta=info):
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
@@ -1728,32 +1742,46 @@ class MainWindow(Adw.ApplicationWindow):
                             )
                             return
 
-                        window = self
+                        worker_control = MaintenanceCancelControl(
+                            owner_closed=lambda: self._closed,
+                        )
+                        active_cancel["control"] = worker_control
+                        cancel.set_visible(bool(meta.cancellable))
+                        cancel.set_sensitive(bool(meta.cancellable))
 
-                        class Control:
-                            def cancelled(self):
-                                return bool(window._closed)
+                        def finish_maintenance() -> None:
+                            if active_cancel["control"] is worker_control:
+                                active_cancel["control"] = None
+                            cancel.set_visible(False)
 
-                            def check_cancelled(self):
-                                if self.cancelled():
-                                    raise RuntimeError("Opération annulée : fenêtre fermée")
-
-                            def report(self, **_kwargs):
-                                return None
-
-                        # The lock and plan revalidation both happen inside the
-                        # worker; GTK never waits for SQLite or filesystem I/O.
-                        self.runner.submit(
-                            meta.title,
-                            lambda: execute_maintenance_tool(
-                                service, context, plan, Control(), destructive=destructive,
-                            ),
-                            lambda result: self._activity_result(
+                        def completed(result) -> None:
+                            finish_maintenance()
+                            self._activity_result(
                                 result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
                                 success=bool(result.ok),
                                 persistent=not bool(result.ok),
+                            )
+
+                        def failed(exc) -> None:
+                            finish_maintenance()
+                            if isinstance(exc, MaintenanceCancelledError):
+                                self.show_error(
+                                    "Traitement interrompu ; les modifications déjà effectuées ne sont pas annulées.",
+                                    meta.title,
+                                )
+                            else:
+                                self.show_error(str(exc), meta.title)
+
+                        # Plan revalidation and mutations hold the Core lock.
+                        # The separate cancellation button sets a thread-safe
+                        # event; each plugin check_cancelled() observes it.
+                        self.runner.submit(
+                            meta.title,
+                            lambda: execute_maintenance_tool(
+                                service, context, plan, worker_control, destructive=destructive,
                             ),
-                            lambda exc: self.show_error(str(exc), meta.title),
+                            completed,
+                            failed,
                             control=_button,
                             priority=TaskPriority.MAINTENANCE,
                             kind="maintenance-tool",
