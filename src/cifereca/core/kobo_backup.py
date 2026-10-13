@@ -7,6 +7,8 @@ from __future__ import annotations
 import time
 import os
 import re
+import hashlib
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Any, NamedTuple, Callable
@@ -396,14 +398,39 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
     abort_all = False
     authoritative_manifest_ids: dict[str, set[str]] = {}
+    source_counts = ("scanned", "attempted", "downloaded", "unchanged",
+                     "pending", "attention_required", "errors", "remaining",
+                     "reconcile_pending", "reconcile_skipped", "items_blocked_by_scope")
+    summary["sources"] = []
     for session in sessions:
         session_identity = self.identity_for_connection("kobo", session.credential_id)
+        source_before = {key: int(summary.get(key, 0)) for key in source_counts}
+        source_total = 0
+        source_processed = 0
+        manifest_ok = False
+        source_last_item = None
+
+        def counts_for_source() -> dict[str, int]:
+            return {
+                key: int(summary.get(key, 0)) - source_before[key]
+                for key in source_counts
+            }
+
+        def save_source_checkpoint(status: str) -> None:
+            _kobo_store_checkpoint(
+                self, session_identity.identity_id, session.credential_id,
+                total=source_total, processed=source_processed, status=status,
+                counts=counts_for_source(), item_id=source_last_item,
+            )
         unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
         session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
         target_dirs[session_identity.identity_id] = str(session_target_dir)
         try:
             emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
             manifest = session.backup_manifest()
+            manifest_ok = True
+            source_total = len(manifest)
+            save_source_checkpoint("running")
             summary["manifests_fetched"] += 1
             summary["manifest_items"] += len(manifest)
             authoritative_manifest_ids[session.credential_id] = {
@@ -419,39 +446,70 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 summary["aborted"] = True
                 summary["abort_reason"] = info
                 abort_all = True
+            save_source_checkpoint("aborted" if abort_all else "failed")
+            summary["sources"].append({
+                "identity_id": session_identity.identity_id,
+                "credential_id": session.credential_id, "status": "aborted" if abort_all else "failed",
+                "manifest_items": 0, **counts_for_source(),
+            })
+            if abort_all:
                 break
             continue
 
         for index, raw in enumerate(manifest):
-            if not isinstance(raw, dict):
-                continue
-            summary["scanned"] += 1
-            progress_title = str(raw.get("title") or raw.get("product_id") or raw.get("id") or "Kobo")
-            emit(
-                "scan",
-                current=index + 1,
-                total=len(manifest),
-                title=progress_title,
-                downloaded=summary["downloaded"],
-                errors=summary["errors"],
-                unchanged=summary["unchanged"],
-                skipped=summary["skipped"],
-            )
-            product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
-            if not product_id:
-                summary["skipped"] += 1
-                continue
-            content_type = str(raw.get("content_type") or "ebook").lower()
-            if content_type not in {"ebook", "book", "epub"}:
-                summary["skipped"] += 1
-                continue
-            item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
-            if _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
-                continue
+            try:
+                if not isinstance(raw, dict):
+                    continue
+                summary["scanned"] += 1
+                progress_title = str(raw.get("title") or raw.get("product_id") or raw.get("id") or "Kobo")
+                emit(
+                    "scan",
+                    current=index + 1,
+                    total=len(manifest),
+                    title=progress_title,
+                    downloaded=summary["downloaded"],
+                    errors=summary["errors"],
+                    unchanged=summary["unchanged"],
+                    skipped=summary["skipped"],
+                )
+                product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
+                if not product_id:
+                    summary["skipped"] += 1
+                    continue
+                content_type = str(raw.get("content_type") or "ebook").lower()
+                if content_type not in {"ebook", "book", "epub"}:
+                    summary["skipped"] += 1
+                    continue
+                item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
+                if _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+                    continue
 
-            if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
-                abort_all = True
-                break
+                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
+                    abort_all = True
+                    break
+            finally:
+                # A crash during the next book must not erase the position
+                # of the last processed item. Never use this as an unsafe
+                # resume offset; actual reuse depends on verified artifacts.
+                source_processed = index + 1
+                source_last_item = str(raw.get("product_id") or raw.get("id") or "") if isinstance(raw, dict) else None
+                save_source_checkpoint("running")
+        delta = counts_for_source()
+        if abort_all:
+            source_status = "aborted"
+        elif delta["errors"]:
+            source_status = "partial" if delta["downloaded"] or delta["unchanged"] else "failed"
+        elif any(delta[key] for key in ("pending", "attention_required", "reconcile_pending", "reconcile_skipped")):
+            source_status = "attention_required"
+        else:
+            source_status = "complete"
+        save_source_checkpoint(source_status)
+        summary["sources"].append({
+            "identity_id": session_identity.identity_id,
+            "credential_id": session.credential_id,
+            "status": source_status,
+            "manifest_items": source_total, **delta,
+        })
         if abort_all:
             break
 
@@ -463,6 +521,38 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit)
 
     return _publish_summary(self, summary, error_counts, error_examples, emit)
+
+
+def _kobo_checkpoint_key(identity_id: str, credential_id: str) -> str:
+    """Stable, non-plaintext per-source key (credentials are not serialized)."""
+    digest = hashlib.sha256(
+        (identity_id + "\\x00" + credential_id).encode("utf-8")
+    ).hexdigest()[:24]
+    return "kobo_backup_checkpoint." + digest
+
+
+def _kobo_store_checkpoint(
+    self, identity_id: str, credential_id: str, *,
+    total: int, processed: int, status: str,
+    counts: dict[str, int], item_id: str | None = None,
+) -> None:
+    """Durably record progress without storing private book names or URLs.
+
+    This is a diagnostic checkpoint, NOT authorization to skip manifest rows:
+    on resume, always re-check durable per-item records and local artifacts.
+    """
+    safe_item = hashlib.sha256(item_id.encode("utf-8")).hexdigest()[:16] if item_id else None
+    self.storage.metadata_set(
+        _kobo_checkpoint_key(identity_id, credential_id),
+        json.dumps({
+            "schema_version": 1,
+            "identity_id": identity_id, "credential_id": credential_id,
+            "total": total, "processed": processed, "status": status,
+            "last_item_digest": safe_item, "counts": counts,
+            "updated_at": int(time.time()),
+        }, ensure_ascii=False, sort_keys=True),
+    )
+
 
 def _recover_local_remnants(self, summary, target_dirs, emit):
     for previous in self.storage.backup_list("kobo"):
