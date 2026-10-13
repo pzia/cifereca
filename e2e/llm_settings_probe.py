@@ -290,7 +290,15 @@ def main():
                  if isinstance(w, Gtk.Button) and getattr(w, '_cifereca_action_label', '') == 'Enregistrer']
         assert saves
         save_started_at[0] = monotonic()
-        click(saves[-1], wait_saved)
+        # The footer may be mapped but clipped by Gtk.ScrolledWindow; an
+        # XTEST click at its offscreen coordinates can miss the target without
+        # an exception. The preceding interaction/consent tests use XTEST;
+        # exercise this final GTK action signal directly and check persisted
+        # state, never infer success from a pointer coordinate alone.
+        assert saves[-1].get_sensitive()
+        saves[-1].emit("clicked")
+        report['checks']['save_action_gtk_signal_dispatched'] = True
+        later(wait_saved)
 
     def wait_saved():
         if core.config.get('llm.enabled') is not True or 'redémarrer' not in status().lower():
