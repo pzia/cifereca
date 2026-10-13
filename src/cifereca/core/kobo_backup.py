@@ -57,8 +57,9 @@ def _kobo_artifact_plausible(path: Path, fmt: str) -> bool:
 def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path) -> list[Path]:
     """Find filename candidates without trusting reported format or opening files.
 
-    A manifest may switch EPUB/PDF between syncs. A candidate of either
-    format must stop automated acquisition rather than silently duplicate it.
+    A manifest may switch EPUB/PDF between syncs. A Kobo-enhanced EPUB
+    can also be named .kepub.epub: it is a real local candidate even though
+    the suffix is compound. Any such candidate blocks a duplicate download.
     """
     author = str(record.get("author") or "").strip()
     title = str(record.get("title") or record.get("item_id") or "Kobo").strip()
@@ -66,7 +67,7 @@ def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path)
     safe = self.acquisition._safe_filename(stem or str(record.get("item_id") or "kobo"))
     suffix = re.sub(r"[^A-Za-z0-9]", "", str(record.get("item_id") or ""))[-8:] or "kobo"
     paths: list[Path] = []
-    for ext in (".epub", ".pdf"):
+    for ext in (".epub", ".pdf", ".kepub.epub"):
         for path in (target_dir / f"{safe}{ext}", target_dir / f"{safe} [{suffix}]{ext}"):
             # Even an invalid file or dangling symlink occupies the destination:
             # never overwrite it automatically as part of reconciliation.
