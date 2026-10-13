@@ -926,6 +926,11 @@ class LibraryService:
         """Persist progressively discovered remote catalog metadata (0.8.3)."""
         return search_orchestration._mirror_remote_results(self, rows, identity_id=identity_id)
 
+    def kobo_personal_right_states(self, identity_id: str) -> dict[tuple[str, str], str]:
+        """Read only confirmed Kobo possession for the selected identity."""
+        from .core.kobo_manifest_rights import kobo_personal_right_states
+        return kobo_personal_right_states(self, identity_id)
+
     def mirror_personal_libraries(self) -> dict[str, int]:
         """Refresh enumerable personal libraries and acquire qualified Numilog EPUBs.
 
