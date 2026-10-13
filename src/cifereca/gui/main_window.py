@@ -761,6 +761,10 @@ class MainWindow(Adw.ApplicationWindow):
     _UiHost = _UiHost
 
     def _plugins_changed(self) -> None:
+        # Plugin-manager callbacks may outlive the MainWindow that registered
+        # them. Never reconstruct detached GTK shell widgets after teardown.
+        if getattr(self, "_closed", False):
+            return
         if self.plugin_manager is None:
             return
         try:
@@ -778,6 +782,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _subscribe_cached_book_details(self) -> None:
         """Refresh the selected book on cache invalidation, not the full list."""
+        if getattr(self, "_closed", False):
+            return
         self._cached_book_unsubscribe()
         try:
             services = tuple(self.plugin_manager.services("book.detail.enrichment"))
