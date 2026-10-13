@@ -114,6 +114,7 @@ def _bind(*, remote=False):
         settings_state=SimpleNamespace(reset=lambda _tab: None),
         update_settings_actions=lambda: None,
         Adw=SimpleNamespace(MessageDialog=Dialog),
+        TaskPriority=SimpleNamespace(USER_ACTION="user"),
     )
     return window, ui, lifetime, capture
 
