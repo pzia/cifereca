@@ -8,6 +8,7 @@ import time
 import os
 import re
 import hashlib
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Any, NamedTuple, Callable
@@ -223,9 +224,28 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
         for row in rows
         if str(row.get("status") or "") == "attention_required"
     ][:20]
+    # Expose aggregate checkpoint states without exposing raw Kobo
+    # credentials, titles, licenses or item IDs in this new diagnostic field.
+    try:
+        persisted = json.loads(
+            self.storage.metadata_get("kobo_backup_source_checkpoints_v1") or "{}"
+        )
+    except (ValueError, TypeError):
+        persisted = {}
+    permitted = ("source_id", "identity_id", "status", "position", "total",
+                 "updated_at", "scanned", "attempted", "downloaded", "unchanged",
+                 "pending", "attention_required", "errors", "skipped",
+                 "remaining", "reconcile_skipped", "malformed_manifest_items")
+    source_summaries = [
+        {key: row[key] for key in permitted if key in row}
+        for row in persisted.values()
+        if isinstance(row, dict) and row.get("schema") == 1
+    ] if isinstance(persisted, dict) else []
+    source_summaries.sort(key=lambda row: str(row.get("source_id") or ""))
     return {
         "items": len(rows),
         "statuses": dict(statuses),
+        "sources": source_summaries,
         "error_summary": [
             {"message": message, "count": count}
             for message, count in errors.most_common(10)
