@@ -20,7 +20,7 @@ from ..artifact_inspection import inspect_artifact
 from ..paths import acquisition_lock_file
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
-from ..plugin_api import UserFacingError
+from ..plugin_api import UserFacingError, ProviderError
 
 
 class _ManifestItem(NamedTuple):
@@ -136,14 +136,21 @@ def _kobo_backup_error_info(exc: Exception) -> dict[str, Any]:
     phase = "integration"
     fatal = False
 
-    if isinstance(exc, KoboVaultError):
+    if isinstance(exc, KoboVaultError) or (
+        isinstance(exc, ProviderError) and isinstance(getattr(exc, "status_code", None), int)
+    ):
         phase = "vault"
-        code = exc.code
-        status_code = exc.status_code
-        fatal = status_code in {401, 403} or str(code or "").lower() in {
-            "missing_token", "invalid_token", "invalid_bearer", "unauthorized",
-            "forbidden", "insufficient_scope", "invalid_api_token",
-        }
+        raw_code = str(getattr(exc, "code", "") or "")
+        code = raw_code if raw_code.isidentifier() else "provider_http_error"
+        status_code = getattr(exc, "status_code", None)
+        # The account is still authenticated for its manifest and descriptor:
+        # delegated-only 403 must not abort the entire account or other accounts.
+        fatal = code != "missing_delegation_scope" and (
+            status_code in {401, 403} or code in {
+                "missing_token", "invalid_token", "invalid_bearer", "unauthorized",
+                "forbidden", "insufficient_scope", "invalid_api_token",
+            }
+        )
     elif isinstance(exc, (KoboAdeptError, UserFacingError)):
         phase = "adept"
         code = str(getattr(exc, "code", "") or "adept_error")
@@ -224,6 +231,12 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
     ][:20]
     return {
         "items": len(rows),
+        # Aggregate permissions without exposing book metadata or bearer data.
+        "items_blocked_by_scope": sum(
+            1 for row in rows
+            if row.get("status") == "attention_required"
+            and row.get("attention_code") == "missing_delegation_scope"
+        ),
         "statuses": dict(statuses),
         "error_summary": [
             {"message": message, "count": count}
@@ -333,6 +346,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "sessions": len(sessions), "manifest_items": 0, "scanned": 0, "attempted": 0, "pending": 0,
         "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
+        "items_blocked_by_scope": 0, "attempts_saved": 0,
         "vault_errors": 0, "integration_errors": 0, "adept_errors": 0,
         "recovered_interrupted": 0, "recovered_unparsed": 0,
         "reconcile_pending": 0, "reconcile_conflicts": 0, "reconcile_skipped": 0,
@@ -359,6 +373,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "adept_available": adapter_available,
         "adept_software_version": adept_state.get("software_version"),
         "adept_error": adept_state.get("error"),
+    }
+
+    delegation_saved_before = {
+        id(session): int(getattr(session, "_cifereca_delegation_attempts_saved", 0))
+        for session in sessions
     }
 
     # Reconcile local remnants from interrupted / previously-unparseable
@@ -456,7 +475,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # manifest could not be observed.  Artifacts/placements/catalog rows are
     # deliberately preserved by Storage.backup_prune_missing().
     _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit)
-
+    summary["attempts_saved"] = sum(
+        max(0, int(getattr(session, "_cifereca_delegation_attempts_saved", 0))
+            - delegation_saved_before.get(id(session), 0))
+        for session in sessions
+    )
     return _publish_summary(self, summary, error_counts, error_examples, emit)
 
 def _recover_local_remnants(self, summary, target_dirs, emit):
@@ -798,6 +821,23 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
             )
             return False
         info = self._kobo_backup_error_info(exc)
+        if str(info.get("code") or "") == "missing_delegation_scope":
+            message = "Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)"
+            self.storage.backup_put({
+                **base_record,
+                "status": "attention_required",
+                "attention_code": "missing_delegation_scope",
+                "error": message,
+                "attempt_count": attempt_count,
+                "last_attempt_at": attempted_at,
+                "updated_at": int(time.time()),
+            })
+            summary["attention_required"] += 1
+            summary["items_blocked_by_scope"] += 1
+            emit("attention_required", current=index + 1, total=total,
+                 item_id=product_id, title=title,
+                 code="missing_delegation_scope", message=message)
+            return False
         if str(info.get("code") or "") == "archived_book":
             message = "Livre archivé sur Kobo ; restaurez-le dans votre bibliothèque Kobo avant de réessayer"
             self.storage.backup_put({
