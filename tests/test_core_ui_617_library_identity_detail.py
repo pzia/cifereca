@@ -10,6 +10,9 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 def _method(name: str) -> str:
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    if name == "refresh_library":
+        tree = ast.parse(MAIN.with_name("library_refresh.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
     return ast.unparse(method)

@@ -419,3 +419,14 @@ service are injected; directory migration/rollback remain service-owned. Typed
 error presentation stays in TaskRunner. The GTK editor retains validation and
 revision tracking until their separate extraction; success refresh and delayed
 reconnection keep their existing callbacks.
+
+## Library and Recent refresh ownership
+
+`library_refresh.py` owns the two snapshot task adapters, independently of GTK.
+`MainWindow.refresh_library` and `refresh_recent` retain their signatures and
+delegate with the caller's control and scan options. MainWindow still owns the
+active identity, pending flags and separate request generations; the existing
+TaskRunner delivers completions on the GTK thread. An obsolete identity or
+request cannot publish results, clear a newer pending request or show its error.
+Rendering, facets and pending book selection stay in their existing owners.
+Cover reinspection remains explicit and adds no acquisition or provider call.

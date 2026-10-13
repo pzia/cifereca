@@ -6,6 +6,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from cifereca.gui import library_refresh
+
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
@@ -21,7 +23,7 @@ def _harness():
     ]
     future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
     module = ast.fix_missing_locations(ast.Module(body=[future, *methods], type_ignores=[]))
-    ns = {"TaskPriority": NS(USER_ACTION="user", NORMAL="normal")}
+    ns = {"library_refresh": library_refresh}
     exec(compile(module, str(SOURCE), "exec"), ns)
     class Runner:
         def __init__(self):
