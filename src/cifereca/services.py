@@ -3544,8 +3544,25 @@ class LibraryService:
         """Summarise the persisted Kobo backup state without network access."""
         return kobo_backup.kobo_backup_diagnostic(self)
 
+    def kobo_backup_preview(
+        self, credential_id: str, *,
+        refresh_manifest: bool = False, verify_local_files: bool = False,
+    ) -> dict[str, Any]:
+        """Preview Kobo acquisition candidates, without writes or downloads.
+
+        Optional refresh reads the authorized provider's *manifest only*.
+        This result is advisory, not a permit to download or prune anything.
+        """
+        return kobo_backup.kobo_backup_preview(
+            self, credential_id, refresh_manifest=refresh_manifest,
+            verify_local_files=verify_local_files,
+        )
+
     def _kobo_backup_due(self) -> bool:
         return kobo_backup._kobo_backup_due(self)
+
+    def _kobo_backup_account_due(self, credential_id: str) -> bool:
+        return kobo_backup._kobo_backup_due(self, credential_id=credential_id)
 
     def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Compatibility entry point for the Kobo local synchronization.
@@ -3555,6 +3572,23 @@ class LibraryService:
         than Kobo so the 0.8.x loan synchronizer can share it.
         """
         return kobo_backup.sync_kobo_backup(self, progress, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
+
+    def sync_kobo_backup_account(
+        self, credential_id: str,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """One Kobo account: cooperative cancellation and scoped delegation retry.
+
+        retry_scope_blocked is for an explicit action after provider reauthorization.
+        Cancellation stops between items, never amid a file write. All local
+        artifact and duplicate reconciliation guards remain enforced.
+        """
+        return kobo_backup.sync_kobo_backup(
+            self, progress, credential_id=credential_id, cancelled=cancelled,
+            retry_scope_blocked=retry_scope_blocked,
+            lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
+        )
 
     def kobo_unlinked_local_count(self, identity_id: str) -> int:
         """Conservative guard, never infer a Kobo link from a filename/title."""
@@ -3575,6 +3609,17 @@ class LibraryService:
         existing reconciliation safeguards still prevent duplicate redownloads.
         """
         return kobo_backup._sync_kobo_backup_locked(self, progress, logger=_TRACE_LOG)
+
+    def _sync_kobo_backup_account_locked(
+        self, credential_id: str,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Internal scoped variant: caller owns the global acquisition lock."""
+        return kobo_backup._sync_kobo_backup_locked(
+            self, progress, logger=_TRACE_LOG, credential_id=credential_id,
+            cancelled=cancelled, retry_scope_blocked=retry_scope_blocked,
+        )
 
     def _account_for_loan(self, loan: Loan) -> Account:
         """Resolve the exact borrower recorded on a loan.

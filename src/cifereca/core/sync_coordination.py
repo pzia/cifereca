@@ -296,17 +296,119 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     # Record exactly one sanitized decision per opening, even when skipped.
     kobo_summary: dict[str, Any] | None = None
     kobo_decision = _kobo_opening_decision(self, deep=deep)
-    if kobo_decision["status"] == "started":
+    # Once a v1 per-account checkpoint exists, freshness is isolated per
+    # source. Do not create a competing checkpoint store.
+    eligible_kobo = [
+        session for session in self._sessions.values()
+        if session.connected and session.provider_id == "kobo"
+        and getattr(session.capabilities, "backup", False)
+        and any(account.provider_id == "kobo"
+                and account.credential_id == session.credential_id
+                and self.sync_source_enabled(account)
+                for account in self.accounts)
+    ]
+    from .kobo_backup import _kobo_checkpoint_for, _kobo_checkpoint_key
+    have_per_account_checkpoint = any(
+        _kobo_checkpoint_for(
+            self, self.identity_for_connection("kobo", session.credential_id).identity_id,
+            session.credential_id,
+        ) is not None
+        for session in eligible_kobo
+    )
+    if (not deep and have_per_account_checkpoint and
+            kobo_decision["status"] in {"started", "fresh_cache"}):
+        # Opening-sync already holds the global acquisition lock. Calling the
+        # internal scoped helper must NOT attempt to acquire it a second time.
+        due = [
+            session for session in eligible_kobo
+            if self._kobo_backup_account_due(session.credential_id)
+        ]
+        executed: list[dict[str, Any]] = []
+        for session in due:
+            try:
+                executed.append(
+                    self._sync_kobo_backup_account_locked(
+                        session.credential_id, progress=progress,
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "TRACE kobo account sync error kind=%s", type(exc).__name__,
+                )
+                executed.append({"status": "failed", "errors": 1, "sources": []})
+        metric_keys = (
+            "errors", "downloaded", "unchanged", "attempted", "pending",
+            "attention_required", "remaining", "manifest_items",
+        )
+        counters = {
+            key: sum(int(result.get(key) or 0) for result in executed)
+            for key in metric_keys
+        }
+        due_credentials = {session.credential_id for session in due}
+        cached_keys = set()
+        for session in eligible_kobo:
+            if session.credential_id not in due_credentials:
+                identity_id = self.identity_for_connection(
+                    "kobo", session.credential_id,
+                ).identity_id
+                cached_keys.add(
+                    _kobo_checkpoint_key(identity_id, session.credential_id).rsplit(".", 1)[-1]
+                )
+        cached_sources = [
+            row for row in self.kobo_backup_diagnostic().get("sources", ())
+            if row.get("source_id") in cached_keys
+        ]
+        sources = [
+            source for result in executed
+            for source in result.get("sources", ())
+            if isinstance(source, dict)
+        ] + cached_sources
+        states = {str(row.get("status") or "partial") for row in sources}
+        if counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
+            batch_status = "partial"
+        elif "attention_required" in states:
+            batch_status = "attention_required"
+        elif len(sources) < len(eligible_kobo):
+            batch_status = "partial"
+        else:
+            batch_status = "complete"
+        if not due:
+            batch_status = (
+                "fresh_cache" if batch_status == "complete"
+                else "fresh_cache_partial"
+            )
+        kobo_summary = {
+            **counters, "scope": "accounts", "status": batch_status,
+            "sessions": len(eligible_kobo), "synced_accounts": len(due),
+            "cached_accounts": len(eligible_kobo) - len(due),
+            "sources": sources, "skipped_fresh": not bool(due),
+        }
+        kobo_decision["status"] = (
+            "partial" if batch_status in {"partial", "attention_required", "fresh_cache_partial", "cancelled"}
+            else "fresh_cache" if batch_status == "fresh_cache" else "started"
+        )
+    elif kobo_decision["status"] == "started":
         try:
             kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-            if int((kobo_summary or {}).get("errors", 0) or 0) > 0:
+            if (kobo_summary or {}).get("status") in {
+                "partial", "attention_required", "aborted", "failed", "cancelled"
+            } or int((kobo_summary or {}).get("errors", 0) or 0) > 0:
                 kobo_decision["status"] = "partial"
         except Exception:
-            # Do not persist an exception's raw text in this decision event.
             kobo_summary = {"errors": 1, "status": "error"}
             kobo_decision["status"] = "error"
     elif kobo_decision["status"] == "fresh_cache":
-        kobo_summary = {"errors": 0, "status": "fresh_cache", "skipped_fresh": True}
+        previous_batch = str(
+            self.storage.metadata_get("kobo_backup_last_batch_status") or ""
+        )
+        kobo_summary = {
+            "errors": 0, "status": "fresh_cache", "skipped_fresh": True
+        }
+        if previous_batch and previous_batch != "complete":
+            kobo_summary.update(
+                status="fresh_cache_partial", last_batch_status=previous_batch
+            )
+            kobo_decision["status"] = "partial"
     for field in ("manifest_items", "owned", "archived", "downloadable",
                   "candidate_count", "attempted", "downloaded", "pending",
                   "attention_required", "reconcile_required", "errors"):

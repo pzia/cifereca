@@ -43,6 +43,19 @@ def main(argv: list[str] | None = None) -> int:
     kb.add_argument("--quiet", action="store_true", help="N’affiche pas la progression sur stderr")
     sub.add_parser("kobo-sync-errors", help="Diagnostic local de la synchronisation Kobo")
     sub.add_parser("kobo-backup-errors", help="Alias historique de kobo-sync-errors")
+    kobo_preview = sub.add_parser(
+        "kobo-resume-preview",
+        help="Aperçu en lecture seule des candidats Kobo (aucun téléchargement)",
+    )
+    kobo_preview.add_argument("--credential", required=True, help="Identifiant de connexion Kobo")
+    kobo_preview.add_argument(
+        "--refresh-manifest", action="store_true",
+        help="Lire seulement le manifeste distant (sans lien d'acquisition ni téléchargement)",
+    )
+    kobo_preview.add_argument(
+        "--verify-files", action="store_true",
+        help="Inspecter et hacher les fichiers liés (peut prendre du temps)",
+    )
     directory = sub.add_parser("identity-directory", help="Change le dossier d’une identité avec fusion et rescan")
     directory.add_argument("identity_id", nargs="?")
     directory.add_argument("directory_name", nargs="?")
@@ -248,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         local_adept_commands = {
-            "kobo-sync-errors", "kobo-backup-errors",
+            "kobo-sync-errors", "kobo-backup-errors", "kobo-resume-preview",
             "statistics", "catalog-scan", "catalog-list", "acquisition-ledger", "acquisition-reconcile",
         }
         if a.cmd not in local_adept_commands:
@@ -355,6 +368,16 @@ def main(argv: list[str] | None = None) -> int:
             result = service.sync_kobo_backup(progress=progress)
         elif a.cmd in {"kobo-sync-errors", "kobo-backup-errors"}:
             result = service.kobo_backup_diagnostic()
+        elif a.cmd == "kobo-resume-preview":
+            if a.refresh_manifest:
+                # Only explicit --refresh-manifest may contact the Kobo
+                # provider; the default preview uses persisted local state.
+                service.connect_kobo_preview(a.credential)
+            result = service.kobo_backup_preview(
+                a.credential,
+                refresh_manifest=a.refresh_manifest,
+                verify_local_files=a.verify_files,
+            )
         elif a.cmd == "statistics":
             result = [service.identity_statistics(i.identity_id) for i in service.identities if not a.identity or i.identity_id==a.identity]
         elif a.cmd == "catalog-scan":

@@ -22,8 +22,32 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     assert [name for name, _ in runner.select(None, "core")] == [
         "search-filter-p0", "book-detail-1366",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
+        "llm-settings-1366", "llm-settings-1600",
         "startup", "core-navigation",
     ]
+
+
+def test_1127_real_gtk_llm_consent_cancel_and_lifetime_1366_1600():
+    runner = _module()
+    probe = (ROOT / "e2e/llm_settings_probe.py").read_text(encoding="utf-8")
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"llm-settings-{width}"]
+        assert scenario["runner"] == "gtk-llm-settings"
+        assert scenario["fixture"] == "startup"
+        assert scenario["plugin"] == "core"
+        assert scenario["width"] == width
+    for evidence in (
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "device.click_widget(button)",
+        "remote_consent_cancelled",
+        "reset_drops_late_reply_ui_responsive",
+        "pending_test_preserves_keyboard_focus",
+        "key_value_not_rendered_or_persisted",
+        "saved_requires_restart_without_http",
+        "synthetic_only",
+        "report['status'] = 'PASS'",
+    ):
+        assert evidence in probe
 
 
 def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():

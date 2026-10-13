@@ -4,8 +4,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+LLM = ("llm-settings-1366", "llm-settings-1600")
 CORE = ("search-filter-p0", "book-detail-1366", "mainwindow-baseline-1366",
-        "mainwindow-baseline-1600", "startup", "core-navigation")
+        "mainwindow-baseline-1600", "startup", "core-navigation") + LLM
 DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
@@ -40,9 +41,14 @@ LOCAL_GUI = {
     # youth_page_probe imports QueryState from this module directly.
     "query_model.py": ("search-filter-p0", "book-detail-1366") + YOUTH,
     "search_intent.py": ("search-filter-p0",),
+    "settings_ai_actions.py": LLM,
+    "settings_ai_section.py": LLM,
+    "settings_lifetime.py": LLM,
+    "llm_settings.py": LLM,
 }
 PROBES = {
     "e2e/book_detail_probe.py": ("book-detail-1366",),
+    "e2e/llm_settings_probe.py": LLM,
     "e2e/search_filter_probe.py": ("search-filter-p0",),
     "e2e/diagnostics_page_probe.py": DIAG_SHARED,
     "e2e/diagnostics_states_probe.py": DIAG_STATES,

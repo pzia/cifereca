@@ -68,7 +68,7 @@ def test_window_lifecycle_disposes_on_close_rebuild_and_standalone():
 
 def test_stale_ai_callbacks_are_gated_but_explicit_approval_remains():
     path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    text = path.read_text("utf-8")
+    text = (path.parent / "settings_ai_actions.py").read_text("utf-8")
     assert "version == ai_probe_version[0] and page_lifetime.alive" in text
     assert "if not page_lifetime.alive:" in text
     assert "confirmation_version != ai_probe_version[0]" in text
