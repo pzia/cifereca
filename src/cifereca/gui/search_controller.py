@@ -140,11 +140,18 @@ def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
     generation = self._search_generation
     identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
     def current():
+        if getattr(self, "_closed", False):
+            return False
         identity = self.service.current_identity.identity_id if self.service.current_identity else None
+        live_state = self.search_controls.state()
+        # Editing the query text/field/scope invalidates in-flight results
+        # immediately, even before the next explicit search. Local facets
+        # (provider/type/language) can still re-filter already-loaded rows.
         return (
-            not getattr(self, "_closed", False)
-            and generation == self._search_generation
+            generation == self._search_generation
             and identity_id == identity
+            and (live_state.text, live_state.field, live_state.scope) ==
+                (state.text, state.field, state.scope)
         )
     if not force:
         self._last_search_query = state.text
