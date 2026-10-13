@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 from time import monotonic
+from threading import Event
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "environnements" / "openai-chat-debian"))
@@ -82,6 +83,9 @@ def main() -> int:
     baseline = None
     started = monotonic()
     search_requests = [0]
+    delayed_started, delayed_returned, delayed_release = Event(), Event(), Event()
+    before_stale_delivery = [None]
+    stale_deadline = [0.0]
     rc = [1]
     actions = [
         ("source", lambda: window.search_controls.provider),
@@ -243,7 +247,7 @@ def main() -> int:
 
     def next_filter(index: int):
         if index == len(actions):
-            finish()
+            begin_delayed_search()
             return
         name, widget_factory = actions[index]
         widget = widget_factory()
@@ -272,6 +276,65 @@ def main() -> int:
             raise AssertionError(f"{name}: popover non fermé via XTEST")
         capture_stage(f"{index+1:02d}-{name}-close")
         next_filter(index + 1)
+
+    def begin_delayed_search():
+        # Exercise the REAL search widget/controller and TaskRunner while the
+        # existing local service deliberately holds an older response.
+        assert snapshot()["query"] == "Camille"
+        def delayed_search(*args, **kwargs):
+            search_requests[0] += 1
+            delayed_started.set()
+            if not delayed_release.wait(4):
+                raise RuntimeError("local fixture search not released")
+            answer = original_search(*args, **kwargs)
+            # A bounded subset makes a stale UI commit visibly different
+            # from the 36 initial rows, even if the editor keeps old rows.
+            assert len(answer) >= 2, "Local fixture unexpectedly empty"
+            delayed_returned.set()
+            return answer[:1]
+        core.library.search_known_catalog = delayed_search
+        window.run_search(False)
+        stale_deadline[0] = monotonic() + 5
+        later(60, edit_while_search_pending)
+
+    def edit_while_search_pending():
+        if not delayed_started.is_set():
+            if monotonic() > stale_deadline[0]:
+                raise AssertionError("Delayed local query did not start")
+            later(75, edit_while_search_pending)
+            return
+        assert not window.search_button.get_sensitive(), "Search did not stay pending"
+        # A real GTK SearchEntry edit (signal + filtered view), *without*
+        # launching another query: old results may not repopulate this view.
+        window.search_controls.entry.set_text("Introuvable après édition")
+        before_stale_delivery[0] = snapshot()
+        assert before_stale_delivery[0]["query"] == "Introuvable après édition"
+        delayed_release.set()
+        later(90, check_delayed_search)
+
+    def check_delayed_search():
+        if not delayed_returned.is_set() or not window.search_button.get_sensitive():
+            if monotonic() > stale_deadline[0]:
+                raise AssertionError("Delayed local search did not complete")
+            later(80, check_delayed_search)
+            return
+        after = snapshot()
+        before = before_stale_delivery[0]
+        for key in ("query", "rows", "count", "selected", "route"):
+            assert after[key] == before[key], (
+                "Stale local result mutated GTK view after query edit", key,
+                before[key], after[key],
+            )
+        assert search_requests[0] == 2, "Unexpected third search after editing"
+        result["checks"]["stale_local_reply_ignored_after_query_edit"] = True
+        result["stale_local_reply"] = {
+            "pending_request_count": search_requests[0],
+            "ui_query": after["query"],
+            "rows_unchanged": True,
+        }
+        core.library.search_known_catalog = counted_search
+        capture_stage("06-stale-local-reply-ignored")
+        finish()
 
     def finish():
         result["status"] = "PASS"
