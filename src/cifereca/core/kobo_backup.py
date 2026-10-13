@@ -1203,11 +1203,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     processed = index + 1
                     committed_item_id = str(raw.get("product_id") or raw.get("id") or "") if isinstance(raw, dict) else None
                 checkpoint("running" if item_committed else "interrupted")
-                # Checkpoint failure must propagate without announcing an item
-                # as complete, blocked or failed. This includes the final
-                # committed item in a cancelled/aborted or partial batch.
-                for event, detail in item_events:
-                    emit(event, **detail)
+                # Checkpoint failure must propagate without announcing an
+                # item as complete, blocked or failed. Incomplete items keep
+                # an "interrupted" checkpoint but have no committed outcome.
+                if item_committed:
+                    for event, detail in item_events:
+                        emit(event, **detail)
         delta = source_delta()
         if summary["cancelled"]:
             source_status = "cancelled"
