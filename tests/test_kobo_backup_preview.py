@@ -153,7 +153,9 @@ def test_preview_never_creates_target_and_reflects_unlinked_safety_guard(tmp_pat
 def test_verify_files_rejects_invalid_linked_epub_without_changing_record(tmp_path: Path):
     service, _session = _service(tmp_path, [])
     target = service._kobo_backup_target_dir("default") / "bad.epub"
-    _write_epub(target)
+    # Corrupt payload with no ZIP/PDF signature: the normal loose-EPUB
+    # fixture is accepted by the non-strict inspector.
+    target.write_bytes(b"this is not an EPUB file")
     _backup(
         service, "bad", status="complete", local_path=target,
         sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
@@ -165,7 +167,7 @@ def test_verify_files_rejects_invalid_linked_epub_without_changing_record(tmp_pa
             "vault-1", verify_local_files=True,
         )
         assert result["verification"] == "artifact_hash"
-        # ZIP magic alone is insufficient: the fixture has no OPF package.
+        # Hash + size match the stored row, but content is not an EPUB.
         assert result["counts"]["needs_reconciliation"] == 1
         assert result["counts"]["already_local_verified"] == 0
         assert service.storage.backup_get("kobo", "vault-1", "bad") == before
