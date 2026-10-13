@@ -36,14 +36,16 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
     try:
         failed = service.sync_kobo_backup()
         assert failed['errors'] == 1 and failed['unchanged'] == 1
-        assert failed['legacy_pruned'] == 0 and failed['attempted'] == 0
+        # Credential vault-1 has a complete authoritative manifest despite
+        # vault-2 failing: only the successful credential may be pruned.
+        assert failed['legacy_pruned'] == 1 and failed['attempted'] == 0
         assert service.storage.metadata_get('kobo_backup_last_success_at') is None
-        for credential in ['vault-1', 'vault-2']:
-            assert service.storage.backup_get('kobo', credential, 'stale') is not None
+        assert service.storage.backup_get('kobo', 'vault-1', 'stale') is None
+        assert service.storage.backup_get('kobo', 'vault-2', 'stale') is not None
         second._manifest_error = None
         recovered = service.sync_kobo_backup()
         assert recovered['errors'] == 0 and recovered['unchanged'] == 2
-        assert recovered['attempted'] == 0 and recovered['legacy_pruned'] == 2
+        assert recovered['attempted'] == 0 and recovered['legacy_pruned'] == 1
         assert service.storage.metadata_get('kobo_backup_last_success_at') is not None
         repeated = service.sync_kobo_backup()
         assert repeated['errors'] == 0 and repeated['unchanged'] == 2
@@ -113,5 +115,37 @@ def test_explicit_account_sync_rejects_unknown_credential(tmp_path):
         with pytest.raises(ProviderConfigurationError, match="Compte Kobo"):
             service.sync_kobo_backup(credential_id="not-connected")
         assert service.storage.metadata_get("kobo_backup_last_success_at") is None
+    finally:
+        service.close()
+
+
+def test_malformed_kobo_manifest_does_not_prune_historical_rows(tmp_path, monkeypatch):
+    service = _service(
+        tmp_path, manifest=[_manifest_row(), {"title": "entry without product id"}],
+    )
+    path = service._kobo_backup_target_dir("default") / "already-here.epub"
+    _write_epub(path)
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "identity_id": "default", "item_id": "book-1",
+        "revision_id": "rev-1", "title": "Book One",
+        "format": "EPUB", "status": "complete", "local_path": str(path),
+    })
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "identity_id": "default", "item_id": "historical",
+        "title": "Historical", "status": "pending",
+    })
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_kw: pytest.fail("existing Kobo file must not redownload"),
+    )
+    try:
+        result = service.sync_kobo_backup(credential_id="vault-1")
+        assert result["errors"] == 0
+        assert result["skipped"] == 1
+        assert result["legacy_pruned"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "historical") is not None
+        assert path.exists()
     finally:
         service.close()
