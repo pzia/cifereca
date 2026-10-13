@@ -74,6 +74,52 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
         raise ProviderConfigurationError("Une synchronisation automatique est déjà en cours") from exc
 
 
+def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
+    """Passive, safe reason for a Kobo auto-backup decision.
+
+    No provider calls: inspect only persisted flag, cached session capabilities,
+    configured account switches, and the existing cache freshness marker.
+    Never expose identity, credential, account, product, title, URL or path.
+    """
+    enabled = bool(self.kobo_backup_enabled())
+    kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
+    connected = [s for s in kobo if s.connected]
+    capable = [s for s in connected if getattr(s.capabilities, "backup", False)]
+    eligible = [s for s in capable if any(
+        a.provider_id == "kobo" and a.credential_id == s.credential_id
+        and self.sync_source_enabled(a) for a in self.accounts
+    )]
+    if not enabled:
+        reason = "disabled"
+    elif not connected:
+        reason = "no_session"
+    elif not capable:
+        reason = "capability_unavailable"
+    elif not eligible:
+        reason = "source_disabled"
+    elif deep or self._kobo_backup_due():
+        reason = "started"
+    else:
+        reason = "fresh_cache"
+    # Age alone communicates freshness; avoid exposing a user-specific
+    # account identifier, timestamp string or private storage metadata.
+    raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
+    try:
+        last = int(raw_last)
+        age = int(time.time()) - last
+        last_success_age_minutes = age // 60 if 0 <= age <= 366 * 86400 else None
+    except (TypeError, ValueError, OverflowError):
+        last_success_age_minutes = None
+    return {
+        "status": reason, "persisted_enabled": enabled,
+        "configured_kobo": len(kobo), "connected_kobo": len(connected),
+        "eligible_kobo": len(eligible),
+        "interval_minutes": self.kobo_backup_interval_minutes(),
+        "last_success_age_minutes": last_success_age_minutes,
+        "deep": bool(deep),
+    }
+
+
 def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, deep: bool=False, logger) -> dict[str, Any]:
     from ..brokers import SynchronizationBrokerImpl
     source_status = SynchronizationBrokerImpl(self)
@@ -232,20 +278,37 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
 
     # Kobo owned sync is one global batch because the existing engine already
     # serializes and reconciles all connected Vault sessions.
+    # Record exactly one sanitized decision per opening, even when skipped.
     kobo_summary: dict[str, Any] | None = None
-    if self.kobo_backup_enabled() and any(
-        s.connected and s.provider_id == "kobo" and s.capabilities.backup
-        and any(a.provider_id == "kobo" and a.credential_id == s.credential_id and self.sync_source_enabled(a) for a in self.accounts)
-        for s in self._sessions.values()
-    ):
-        if deep or self._kobo_backup_due():
-            try:
-                kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-            except Exception as exc:
-                kobo_summary = {"errors": 1, "error": str(exc)}
-        else:
-            kobo_summary = {"errors": 0, "status": "fresh_cache", "skipped_fresh": True}
-            logger.info("TRACE kobo sync skipped reason=fresh-cache interval_minutes=%s", self.config.get("kobo_backup.interval_minutes", 60))
+    kobo_decision = _kobo_opening_decision(self, deep=deep)
+    if kobo_decision["status"] == "started":
+        try:
+            kobo_summary = self._sync_kobo_backup_locked(progress=progress)
+            if int((kobo_summary or {}).get("errors", 0) or 0) > 0:
+                kobo_decision["status"] = "partial"
+        except Exception:
+            # Do not persist an exception's raw text in this decision event.
+            kobo_summary = {"errors": 1, "status": "error"}
+            kobo_decision["status"] = "error"
+    elif kobo_decision["status"] == "fresh_cache":
+        kobo_summary = {"errors": 0, "status": "fresh_cache", "skipped_fresh": True}
+    for field in ("manifest_items", "owned", "archived", "downloadable",
+                  "candidate_count", "attempted", "downloaded", "pending",
+                  "attention_required", "reconcile_required", "errors"):
+        value = (kobo_summary or {}).get(field)
+        if type(value) is int and 0 <= value <= 1_000_000:
+            kobo_decision[field] = value
+    logger.info(
+        "TRACE kobo backup decision status=%s enabled=%s connected=%s eligible=%s interval=%s",
+        kobo_decision["status"], kobo_decision["persisted_enabled"],
+        kobo_decision["connected_kobo"], kobo_decision["eligible_kobo"],
+        kobo_decision["interval_minutes"],
+    )
+    self.diagnostics.add(
+        "KOBO", "automatic backup decision",
+        "warning" if kobo_decision["status"] in ("partial", "error") else "ok",
+        detail=kobo_decision, level="normal",
+    )
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
     self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
@@ -258,7 +321,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         sync_mode = "fast"
     return {
         "started_at": started, "finished_at": int(time.time()), "recovered_interrupted": recovered,
-        "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "catalog": catalog,
+        "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "kobo_decision": kobo_decision, "catalog": catalog,
         "sync_mode": sync_mode, "acsm_cleanup": acsm_cleanup,
     }
 
