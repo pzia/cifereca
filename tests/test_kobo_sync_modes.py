@@ -214,3 +214,45 @@ def test_opening_all_cached_partial_sources_remain_visible(tmp_path: Path, monke
         assert result["kobo"]["sources"][0]["status"] == "partial"
     finally:
         service.close()
+
+
+def test_opening_rechecks_recently_interrupted_kobo_checkpoint_without_global_retry(tmp_path: Path, monkeypatch):
+    """Recovery is scoped to the affected account, even with fresh global cache."""
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        now = int(time.time())
+        key = _kobo_checkpoint_key("default", "vault")
+        service.storage.metadata_set("kobo_backup_last_attempt_at", now)
+        service.storage.metadata_set("kobo_backup_last_success_at", now)
+        service.storage.metadata_set(
+            key, json.dumps({
+                "schema_version": 1, "status": "interrupted",
+                "total": 3, "processed": 1, "updated_at": now,
+                "counts": {"downloaded": 1},
+            }),
+        )
+        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        calls = []
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_locked",
+            lambda progress=None: (_ for _ in ()).throw(
+                AssertionError("no global acquisition on scoped recovery")
+            ),
+        )
+
+        def scoped(credential_id, progress=None):
+            calls.append(credential_id)
+            return {
+                "status": "complete", "errors": 0, "unchanged": 2,
+                "sources": [{"source_id": key.rsplit(".", 1)[-1],
+                             "status": "complete"}],
+            }
+        monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", scoped)
+        result = service._opening_sync_locked(deep=False)
+        assert calls == ["vault"]
+        assert result["kobo"]["scope"] == "accounts"
+        assert result["kobo"]["synced_accounts"] == 1
+        assert result["kobo"]["cached_accounts"] == 0
+    finally:
+        service.close()
