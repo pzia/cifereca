@@ -129,12 +129,18 @@ def test_host_keeps_revocation_confirmations_task_runner_and_async_commit():
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
                   and node.name == "_build_settings_page")
     rendered = ast.unparse(method)
+    ai_path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_ai_actions.py"
+    ai_tree = ast.parse(ai_path.read_text("utf-8"))
+    callbacks = ast.unparse(next(node for node in ai_tree.body
+                                 if isinstance(node, ast.FunctionDef)
+                                 and node.name == "bind_settings_ai_callbacks"))
     assert "build_ai_settings_section(" in rendered
-    assert "ai_endpoint.connect('notify::text', endpoint_changed)" in rendered
-    assert "ai_remote.set_active(False)" in rendered
-    assert "ai_probe_version[0]" in rendered
-    assert "Adw.MessageDialog.new(" in rendered
-    assert "submit_ai_probe(settings, confirmed=True)" in rendered
-    assert "probe_llm_connection(settings, remote_confirmed=confirmed)" in rendered
-    assert "self.runner.submit(" in rendered
+    assert "bind_settings_ai_callbacks(" in rendered
+    assert "ai_endpoint.connect('notify::text', endpoint_changed)" in callbacks
+    assert "ai_remote.set_active(False)" in callbacks
+    assert "ai_probe_version[0]" in callbacks
+    assert "Adw.MessageDialog.new(" in callbacks
+    assert "submit_ai_probe(settings, confirmed=True)" in callbacks
+    assert "probe_llm_connection(settings, remote_confirmed=confirmed)" in callbacks
+    assert "self.runner.submit(" in callbacks
     assert "settings_committer.submit(" in rendered
