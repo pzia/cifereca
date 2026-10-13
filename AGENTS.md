@@ -12,6 +12,14 @@ Le label GitHub P0/P1/P2 fait foi et doit être **unique par issue**. Le rôle, 
 
 Avant chaque étape, examiner issues, PR, branches et CI récentes ; éviter les travaux concurrents. Si le premier sujet est bloqué, documenter précisément le blocage et avancer sur un autre sujet de **même priorité**. Ne passer plus bas que si les travaux prioritaires sont réellement bloqués ou indépendants, en laissant cette situation visible.
 
+## Périmètre strict du ticket et restitution par défaut
+
+Cette règle s'applique à **tous les rôles** : backlog, core/coreui, plugins, ux/simulation, cicd/merger et focus.
+
+- **Résoudre uniquement le ticket visé**, avec une implémentation robuste : contrat attendu, cas limites directement pertinents, erreurs, concurrence, sécurité des données et tests de non-régression nécessaires. Aucun refactoring opportuniste, amélioration adjacente ou correctif d'un défaut indépendant.
+- Si une anomalie distincte apparaît, **ne pas la corriger dans la même PR** : signaler un blocage directement pertinent et transmettre au rôle propriétaire ; sinon la laisser hors périmètre. Une panne CI préexistante ne justifie pas d'étendre le correctif.
+- **Restitution concise dans le chat par défaut** : ticket/PR, résultat, validations, blocage et prochaine action, avec liens GitHub utiles. **Ne pas générer ni joindre de rapport détaillé sous forme de fichier** (Markdown, PDF, ZIP, etc.) sauf demande explicite ou preuve spécifique indispensable. Les artefacts CI demeurent accessibles sur GitHub.
+
 ## Rôles et propriétaires
 
 Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités dans une même modification ; transmettre les dépendances au bon propriétaire.
