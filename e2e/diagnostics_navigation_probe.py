@@ -769,6 +769,32 @@ def main() -> int:
         assert w.shell_header is shell_before
         assert w._closed
         report["checks"]["P0_closed_public_plugin_host_and_GTK_button_are_inert"] = True
+        # P0 #1129: exercise the actual MainWindow facade after GTK teardown,
+        # not only its public plugin host or isolated AST methods. A retained
+        # book link must neither queue selection nor change filters/route.
+        pending_before = (
+            getattr(w, "_pending_library_selection_key", None),
+            getattr(w, "_pending_library_selection_identity_id", None),
+            getattr(w, "_pending_library_selection_generation", None),
+        )
+        search_before = w.search_controls.state()
+        library_before = w.library_controls.state()
+        checks_before = broker.checks
+        events_before = len(broker.event_queries)
+        assert w.open_book_detail(None) is False
+        assert w._open_library_item("ux-removed-book:private") is None
+        assert w._select_pending_library_item() is False
+        assert (
+            getattr(w, "_pending_library_selection_key", None),
+            getattr(w, "_pending_library_selection_identity_id", None),
+            getattr(w, "_pending_library_selection_generation", None),
+        ) == pending_before
+        assert w.search_controls.state() == search_before
+        assert w.library_controls.state() == library_before
+        assert w.view_stack.get_visible_child_name() == "library"
+        assert broker.checks == checks_before
+        assert len(broker.event_queries) == events_before
+        report["checks"]["P0_closed_MainWindow_book_links_keep_gtk_context"] = True
         from cifereca.task_queue import TaskPriority
         try:
             w.runner.pool.submit(TaskPriority.NORMAL, lambda: None)
