@@ -564,10 +564,6 @@ class LibraryService:
     def disconnect_configured(self) -> None:
         return provider_sessions.disconnect_configured(self)
 
-    def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
-        """Explicitly connect just one Kobo provider for a remote rights preview."""
-        return provider_sessions.connect_kobo_preview(self, credential_id)
-
     def connect_configured(self) -> dict[str, Any]:
         """Connect all enabled provider identities from local preferences.
 
@@ -3580,10 +3576,17 @@ class LibraryService:
     def sync_kobo_backup_account(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
+        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """One account under the same global acquisition lock as the full sync."""
+        """One Kobo account: cooperative cancellation and scoped delegation retry.
+
+        retry_scope_blocked is for an explicit action after provider reauthorization.
+        Cancellation stops between items, never amid a file write. All local
+        artifact and duplicate reconciliation guards remain enforced.
+        """
         return kobo_backup.sync_kobo_backup(
-            self, progress, credential_id=credential_id,
+            self, progress, credential_id=credential_id, cancelled=cancelled,
+            retry_scope_blocked=retry_scope_blocked,
             lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
         )
 
@@ -3610,10 +3613,12 @@ class LibraryService:
     def _sync_kobo_backup_account_locked(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
+        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Internal scoped variant: caller owns the global acquisition lock."""
         return kobo_backup._sync_kobo_backup_locked(
             self, progress, logger=_TRACE_LOG, credential_id=credential_id,
+            cancelled=cancelled, retry_scope_blocked=retry_scope_blocked,
         )
 
     def _account_for_loan(self, loan: Loan) -> Account:

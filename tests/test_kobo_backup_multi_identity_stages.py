@@ -230,3 +230,33 @@ def test_checkpoint_diagnostic_excludes_raw_book_and_credential(tmp_path):
         assert "item_id" not in json.dumps(report["sources"])
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("checkpoint_state", ["running", "interrupted", "manifest_fetch"])
+def test_incomplete_checkpoint_is_due_even_when_recent(tmp_path, checkpoint_state):
+    """A crash must not delay safe recovery by a full cache TTL."""
+    service = _service(tmp_path, manifest=[])
+    try:
+        now = int(time.time())
+        key = _kobo_checkpoint_key("default", "vault-1")
+        service.storage.metadata_set("kobo_backup_last_attempt_at", now)
+        service.storage.metadata_set("kobo_backup_last_success_at", now)
+        service.storage.metadata_set(
+            key, json.dumps({
+                "schema_version": 1, "status": checkpoint_state,
+                "total": 100, "processed": 50, "updated_at": now,
+                "counts": {"downloaded": 10},
+            }),
+        )
+        assert service._kobo_backup_due() is False
+        assert service._kobo_backup_account_due("vault-1") is True
+        for state in ("complete", "attention_required", "partial", "failed", "aborted"):
+            service.storage.metadata_set(
+                key, json.dumps({
+                    "schema_version": 1, "status": state,
+                    "updated_at": now, "total": 100, "processed": 50,
+                }),
+            )
+            assert service._kobo_backup_account_due("vault-1") is False
+    finally:
+        service.close()
