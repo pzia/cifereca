@@ -312,3 +312,51 @@ def test_catalog_scan_runs_before_unlinked_guard(tmp_path: Path, monkeypatch):
         assert summary["attention_required"] == 1
     finally:
         service.close()
+
+
+def test_existing_unlinked_kobo_filename_blocks_even_with_override(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    target = service._kobo_backup_target_dir("alice")
+    existing = target / "Author - Book One.epub"
+    _write_epub(existing, b"keep-existing")
+    initial = existing.read_bytes()
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service,
+        "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not redownload candidate")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert summary["reconcile_skipped"] == 1
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == existing
+        assert existing.read_bytes() == initial
+    finally:
+        service.close()
+
+
+def test_existing_two_candidate_paths_block_as_conflict(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    target = service._kobo_backup_target_dir("alice")
+    _write_epub(target / "Author - Book One.epub")
+    _write_epub(target / "Author - Book One [book1].epub")
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service,
+        "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not redownload candidates")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert summary["reconcile_conflicts"] == 1
+        assert row["status"] == "reconcile_conflict"
+        assert row["local_path"] is None
+    finally:
+        service.close()
