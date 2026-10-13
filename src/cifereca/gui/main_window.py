@@ -574,6 +574,10 @@ class MainWindow(Adw.ApplicationWindow):
             self.dashboard_loading_status.set_visible(True)
 
         def ok(result: dict[str, Any]) -> None:
+            # A TaskRunner result may have been queued before close().
+            # Detached GTK widgets must never receive its completion.
+            if getattr(self, "_closed", False):
+                return
             _TRACE_LOG.info("TRACE gui connect-configured ok connected=%s errors=%s", len(result.get("connected", [])), len(result.get("errors", {}) or {}))
             if hasattr(self, "dashboard_loading_status"):
                 self.dashboard_loading_status.set_visible(False)
@@ -594,8 +598,11 @@ class MainWindow(Adw.ApplicationWindow):
             GLib.idle_add(lambda: (self.run_opening_sync(), False)[1])
 
         def err(exc: BaseException) -> None:
+            if getattr(self, "_closed", False):
+                return
             if hasattr(self, "startup_status"):
-                self.startup_status.set_label(str(exc))
+                # Provider errors can include credentials or signed URLs.
+                self.startup_status.set_label("Connexion aux sources indisponible.")
             if hasattr(self, "dashboard_loading_status"):
                 self.dashboard_loading_status.set_label("Connexion aux sources indisponible. La navigation locale reste disponible.")
                 self.dashboard_loading_status.set_visible(True)
