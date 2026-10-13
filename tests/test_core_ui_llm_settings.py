@@ -148,3 +148,37 @@ def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
     assert "Aucune notice ou donnée personnelle ne sera envoyée" in source
     assert "confirmation_version != ai_probe_version[0]" in source
     assert "ai_cfg.update(new_ai_settings)" in source
+
+def test_saved_llm_settings_take_effect_only_after_real_core_restart(tmp_path):
+    """The plugin service is resolved from the persisted configuration on open."""
+    from cifereca.core import CiferecaCore
+
+    cfg_path = tmp_path / "config.json"
+    db_path = tmp_path / "state.sqlite"
+    settings = normalize_llm_settings({**BASE, "api_key_env": ""})
+    options = dict(
+        config_path=cfg_path, database_path=db_path,
+        no_plugins=True, activate_plugins=False,
+    )
+
+    with CiferecaCore.open(**options) as initial:
+        assert initial.plugins.service("llm") is None
+        initial.config.set("llm", settings)
+        initial.config.save()
+        # Settings say "restart required" for a reason.
+        assert initial.plugins.service("llm") is None
+
+    with CiferecaCore.open(**options) as restarted:
+        llm = restarted.plugins.service("llm")
+        assert llm is not None
+        assert llm.available()
+        assert set(llm.capabilities()) == {"generate", "structured"}
+        assert restarted.config.get("llm.model") == "installed-model"
+
+        # Disabling also requires a restart: no hot-reload is claimed.
+        restarted.config.set("llm.enabled", False)
+        restarted.config.save()
+        assert restarted.plugins.service("llm") is llm
+
+    with CiferecaCore.open(**options) as disabled_again:
+        assert disabled_again.plugins.service("llm") is None
