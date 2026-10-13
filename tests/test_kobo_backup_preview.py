@@ -264,3 +264,21 @@ def test_kobo_preview_matches_strict_unlinked_opt_in_guard(
         assert preview["acquisition_authorized"] is False
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("status", ["complete", "ok"])
+def test_preview_quarantines_prior_complete_row_missing_any_link(
+    tmp_path: Path, monkeypatch, status,
+):
+    service, session = _service(tmp_path, [])
+    _backup(service, "already-acquired", status=status, local_path=None)
+    _forbid_mutation_and_acquisition(service, session, monkeypatch)
+    try:
+        result = service.kobo_backup_preview("vault-1")
+        assert result["counts"]["needs_reconciliation"] == 1
+        assert result["counts"]["candidate_unverified"] == 0
+        assert result["counts"]["potentially_missing"] == 0
+        assert result["blocking_items"] == 1
+        assert result["acquisition_authorized"] is False
+    finally:
+        service.close()
