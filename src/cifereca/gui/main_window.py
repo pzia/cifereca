@@ -1677,15 +1677,18 @@ class MainWindow(Adw.ApplicationWindow):
             group.add(row)
             active_cancel = {"control": None}
 
-            def request_cancel(_cancel_button):
-                active = active_cancel["control"]
+            def request_cancel(_cancel_button, cancellation_state=active_cancel):
+                active = cancellation_state["control"]
                 if active is not None:
                     active.cancel()
                     _cancel_button.set_sensitive(False)
 
             cancel.connect("clicked", request_cancel)
 
-            def prepare(_button, service=tool, meta=info):
+            def prepare(
+                _button, service=tool, meta=info,
+                cancel_button=cancel, cancellation_state=active_cancel,
+            ):
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
@@ -1745,14 +1748,14 @@ class MainWindow(Adw.ApplicationWindow):
                         worker_control = MaintenanceCancelControl(
                             owner_closed=lambda: self._closed,
                         )
-                        active_cancel["control"] = worker_control
-                        cancel.set_visible(bool(meta.cancellable))
-                        cancel.set_sensitive(bool(meta.cancellable))
+                        cancellation_state["control"] = worker_control
+                        cancel_button.set_visible(bool(meta.cancellable))
+                        cancel_button.set_sensitive(bool(meta.cancellable))
 
                         def finish_maintenance() -> None:
-                            if active_cancel["control"] is worker_control:
-                                active_cancel["control"] = None
-                            cancel.set_visible(False)
+                            if cancellation_state["control"] is worker_control:
+                                cancellation_state["control"] = None
+                            cancel_button.set_visible(False)
 
                         def completed(result) -> None:
                             finish_maintenance()
