@@ -5,7 +5,9 @@ from typing import Any, Sequence
 
 from recommendation_engine import (
     ProfileVector,
+    CatalogNoticeVariant,
     RankedCandidate,
+    _remember_notice,
     _candidate_features,
     _content_score_prevalidated,
     _jaccard,
@@ -126,6 +128,7 @@ def rank_candidates_prepared(
     rrf, query_hits = _rrf_scores(batches)
     merged: dict[str, tuple[Any, float, tuple[str, ...]]] = {}
     sources_by_key: defaultdict[str, list[str]] = defaultdict(list)
+    notices_by_key: defaultdict[str, dict[tuple[str, ...], CatalogNoticeVariant]] = defaultdict(dict)
     score_cache = score_cache if score_cache is not None else {}
 
     for batch in batches:
@@ -133,6 +136,7 @@ def rank_candidates_prepared(
             key = candidate_key(item)
             if exclude_owned and is_already_present(profile, item):
                 continue
+            _remember_notice(notices_by_key[key], item)
             source = _text(get_field(item, "source_provider", ""))
             if source and source not in sources_by_key[key]:
                 sources_by_key[key].append(source)
@@ -162,6 +166,7 @@ def rank_candidates_prepared(
                 reasons=tuple(reason_list[:3]),
                 sources=tuple(sources_by_key.get(key, ())),
                 query_hits=hits,
+                notices=tuple(notices_by_key[key].values()),
             )
         )
 

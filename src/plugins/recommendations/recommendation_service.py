@@ -8,7 +8,9 @@ import time
 from typing import Any, Callable
 
 from recommendation_engine import (
+    CatalogNoticeVariant,
     RankedCandidate,
+    _remember_notice,
     build_profile,
     build_queries,
     candidate_key,
@@ -169,7 +171,9 @@ def _cancelled(control: Any) -> bool:
 
 
 def _provisional_head(
-    provisional: dict[str, tuple[Any, float, tuple[str, ...], list[str]]],
+    provisional: dict[
+        str, tuple[Any, float, tuple[str, ...], list[str], dict[tuple[str, ...], CatalogNoticeVariant]]
+    ],
     limit: int,
 ) -> list[RankedCandidate]:
     """Return only the useful provisional head without sorting the full candidate set."""
@@ -181,8 +185,9 @@ def _provisional_head(
             reasons=reasons,
             sources=tuple(sources),
             query_hits=0,
+            notices=tuple(notices.values()),
         )
-        for item, score, reasons, sources in provisional.values()
+        for item, score, reasons, sources, notices in provisional.values()
         if score > 0.0
     )
     return heapq.nsmallest(
@@ -278,7 +283,9 @@ def compute_recommendations(
 
     # Provisional ranking is intentionally lightweight: content score once per
     # candidate, no RRF/MMR. Full ranking runs once after all catalog queries.
-    provisional: dict[str, tuple[Any, float, tuple[str, ...], list[str]]] = {}
+    provisional: dict[
+        str, tuple[Any, float, tuple[str, ...], list[str], dict[tuple[str, ...], CatalogNoticeVariant]]
+    ] = {}
     score_cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]] = {}
 
     def ingest_provisional(rows: list[Any]) -> None:
@@ -292,15 +299,18 @@ def compute_recommendations(
             source = str(get_field(item, "source_provider", "") or "")
             previous = provisional.get(key)
             if previous is None:
-                provisional[key] = (item, score, reasons, [source] if source else [])
+                notices: dict[tuple[str, ...], CatalogNoticeVariant] = {}
+                _remember_notice(notices, item)
+                provisional[key] = (item, score, reasons, [source] if source else [], notices)
                 continue
-            prev_item, prev_score, prev_reasons, sources = previous
+            prev_item, prev_score, prev_reasons, sources, notices = previous
+            _remember_notice(notices, item)
             if source and source not in sources:
                 sources.append(source)
             provisional[key] = (
-                (item, score, reasons, sources)
+                (item, score, reasons, sources, notices)
                 if score > prev_score
-                else (prev_item, prev_score, prev_reasons, sources)
+                else (prev_item, prev_score, prev_reasons, sources, notices)
             )
 
     def emit_partial(query_index: int, provider_done: int) -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import re
 import unicodedata
@@ -453,12 +453,69 @@ def build_queries(
 
 
 @dataclass(frozen=True)
+class CatalogNoticeVariant:
+    """One original catalogue row, not an authorization to act on it.
+
+    In particular, missing provider/credential/record coordinates must never
+    be reconstructed from a title, ISBN, friendly URL or merged source label.
+    """
+
+    item: Any = field(repr=False, compare=False)
+    source_provider: str
+    source_credential: str
+    record_id: str
+    docbase: str
+    source_collection: str
+    isbn: str
+
+    @property
+    def has_source_coordinates(self) -> bool:
+        """Presence only; identity binding and provider capabilities still need verification."""
+        return bool(self.source_provider and self.source_credential and self.record_id)
+
+
+def _remember_notice(
+    variants: dict[tuple[str, ...], CatalogNoticeVariant], item: Any
+) -> None:
+    """Keep distinct credential-bound catalogue records in first-seen order.
+
+    Unresolved rows are deliberately only coalesced by *object identity*, not
+    title/ISBN or provider name: absent credentials cannot prove equivalence.
+    """
+    identifiers = identifier_values(item)
+    isbn = next((raw[5:] for raw in sorted(identifiers) if raw.startswith("isbn:")), "")
+    notice = CatalogNoticeVariant(
+        item=item,
+        source_provider=_text(get_field(item, "source_provider", "")),
+        source_credential=_text(get_field(item, "source_credential", "")),
+        record_id=_text(get_field(item, "record_id", "")),
+        docbase=_text(get_field(item, "docbase", "")),
+        source_collection=_text(get_field(item, "source_collection", "")),
+        isbn=isbn,
+    )
+    if notice.has_source_coordinates:
+        key = (
+            "exact",
+            notice.source_provider,
+            notice.source_credential,
+            notice.record_id,
+            notice.docbase,
+            notice.source_collection,
+            notice.isbn,
+        )
+    else:
+        key = ("unresolved", str(id(item)))
+    variants.setdefault(key, notice)
+
+
+@dataclass(frozen=True)
 class RankedCandidate:
     item: Any
     score: int
     reasons: tuple[str, ...]
     sources: tuple[str, ...]
     query_hits: int = 0
+    notices: tuple[CatalogNoticeVariant, ...] = field(default=(), repr=False)
 
 
 def _rrf_scores(batches: Sequence[Sequence[Any]], k: int = 60) -> tuple[dict[str, float], dict[str, int]]:
@@ -535,12 +592,14 @@ def rank_candidates(
     rrf, query_hits = _rrf_scores(batches)
     merged: dict[str, tuple[Any, tuple[str, ...]]] = {}
     sources_by_key: defaultdict[str, list[str]] = defaultdict(list)
+    notices_by_key: defaultdict[str, dict[tuple[str, ...], CatalogNoticeVariant]] = defaultdict(dict)
 
     for batch in batches:
         for item in batch:
             key = candidate_key(item)
             if exclude_owned and is_already_present(profile, item):
                 continue
+            _remember_notice(notices_by_key[key], item)
             source = _text(get_field(item, "source_provider", ""))
             if source and source not in sources_by_key[key]:
                 sources_by_key[key].append(source)
@@ -571,6 +630,7 @@ def rank_candidates(
             reasons=tuple(reason_list[:3]),
             sources=tuple(sources_by_key.get(key, ())),
             query_hits=hits,
+            notices=tuple(notices_by_key[key].values()),
         ))
 
     ranked.sort(key=lambda row: (-row.score, normalize(get_field(row.item, "title", "")), normalize(get_field(row.item, "author", ""))))
