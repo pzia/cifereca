@@ -30,7 +30,7 @@ def _safe_kobo_resume_receipt(summary: dict[str, Any]) -> dict[str, Any]:
     state = str(summary.get("status") or "")
     result: dict[str, Any] = {
         "scope": "account", "status": state if state in states else "unknown",
-        "acquisition_started": True,
+        "resume_attempted": True,
     }
     for key in (
         "manifest_items", "scanned", "attempted", "downloaded", "unchanged",
