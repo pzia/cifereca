@@ -51,7 +51,7 @@ def test_manifest_hard_interruption_immediately_resumable_despite_fresh_old_succ
         assert seen == [("manifest_fetch", 0, 0)]
         assert _checkpoint(service)["status"] == "manifest_fetch"
         assert _checkpoint(service)["failure_streak"] == 0
-        assert service.storage.metadata_get("kobo_backup_last_success_at") == now
+        assert int(service.storage.metadata_get("kobo_backup_last_success_at")) == now
         assert service._kobo_backup_account_due("vault-1")
     finally:
         service.close()
