@@ -128,7 +128,9 @@ def kobo_backup_records(self) -> list[dict[str, Any]]:
 
 
 def kobo_backup_enabled(self) -> bool:
-    return bool(self.config.get("kobo_backup.enabled", False))
+    # Fail closed for a manually edited/migrated malformed config:
+    # bool("false") would otherwise trigger implicit local downloads.
+    return self.config.get("kobo_backup.enabled", False) is True
 
 
 def kobo_backup_interval_minutes(self) -> int:
