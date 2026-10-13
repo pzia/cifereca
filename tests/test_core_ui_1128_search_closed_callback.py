@@ -178,3 +178,54 @@ def test_online_failure_of_edited_query_does_not_override_new_gtk_state():
     assert errors == []
     assert host._online_pending_key is None
     assert host._online_pending_generation is None
+
+
+
+def _pending_online_failure():
+    requests = []
+    errors = []
+    state = NS(text="Loup", field="title", scope="all", providers=(),
+               types=(), languages=())
+    host = NS(
+        _closed=False,
+        search_controls=NS(state=lambda: state),
+        _reset_search_enter=lambda: None,
+        service=NS(current_identity=NS(identity_id="alice")),
+        _search_generation=3,
+        _last_search_query="Loup",
+        _remote_query_key=None,
+        _remote_search_results=[],
+        _search_local_objects={},
+        runner=NS(submit=lambda *args, **kwargs: requests.append(args)),
+        search_global_button=object(),
+        show_error=lambda *args: errors.append(args),
+    )
+    _method("run_search")(host, True)
+    assert len(requests) == 1
+    assert host._online_pending_key is not None
+    return host, requests[0][3], errors
+
+
+def test_online_provider_exception_never_exposes_private_url_or_token_in_dialog():
+    host, failed, errors = _pending_online_failure()
+    secret = ("403 https://provider.example/private?token=SECRET-ABC "
+              "/home/alice/private-card alice@example.test")
+    failed(RuntimeError(secret))
+    assert errors == [(
+        "Les catalogues en ligne ne répondent pas. Réessayez ultérieurement.",
+        "Recherche en ligne impossible",
+    )]
+    assert not any(value in repr(errors) for value in (
+        "SECRET-ABC", "alice@example.test", "/home/alice", "provider.example",
+    ))
+    assert host._online_pending_key is None
+    assert host._online_pending_generation is None
+
+
+def test_online_failure_after_close_clears_pending_without_showing_dialog():
+    host, failed, errors = _pending_online_failure()
+    host._closed = True
+    failed(RuntimeError("SECRET-ABC"))
+    assert errors == []
+    assert host._online_pending_key is None
+    assert host._online_pending_generation is None
