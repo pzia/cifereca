@@ -431,6 +431,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             manifest = session.backup_manifest()
             summary["manifests_fetched"] += 1
             summary["manifest_items"] += len(manifest)
+            source_total = len(manifest)
+            save_source_checkpoint("running")
             authoritative_manifest_ids[session.credential_id] = {
                 str(raw.get("product_id") or raw.get("id") or "").strip()
                 for raw in manifest if isinstance(raw, dict)
@@ -443,8 +445,10 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             if info["fatal"]:
                 summary["aborted"] = True
                 summary["abort_reason"] = info
+                summary["sources"].append(save_source_checkpoint("aborted"))
                 abort_all = True
                 break
+            summary["sources"].append(save_source_checkpoint("failed"))
             continue
 
         for index, raw in enumerate(manifest):
