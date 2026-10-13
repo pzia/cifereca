@@ -915,12 +915,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         adept_state = self.kobo_adept_state(force=True)
     if not cancelled_before_scan:
         emit(
-        "adept_ready",
-        compatible=bool(adept_state.get("compatible")),
-        operational=bool(adept_state.get("operational")),
-        software_version=adept_state.get("software_version"),
-        contract_version=adept_state.get("contract_version"),
-    )
+            "adept_ready",
+            compatible=bool(adept_state.get("compatible")),
+            operational=bool(adept_state.get("operational")),
+            software_version=adept_state.get("software_version"),
+            contract_version=adept_state.get("contract_version"),
+        )
     adapter_available = bool(adept_state.get("available") and adept_state.get("compatible") and adept_state.get("operational"))
     summary: dict[str, Any] = {
         "scope": "account" if credential_id is not None else "all",
