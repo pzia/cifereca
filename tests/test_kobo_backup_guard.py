@@ -360,3 +360,38 @@ def test_existing_two_candidate_paths_block_as_conflict(tmp_path: Path, monkeypa
         assert row["local_path"] is None
     finally:
         service.close()
+
+
+def test_changed_revision_preserves_linked_nonstandard_filename(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    artifact = tmp_path / "EBooks" / "alice" / "kobo" / "renamed-by-user.epub"
+    _write_epub(artifact, b"existing-linked-edition")
+    original = artifact.read_bytes()
+    service.config.set("kobo_backup.allow_unlinked_acquisition", True)
+    service.storage.backup_put({
+        "provider_id": "kobo",
+        "credential_id": "vault-1",
+        "account_id": "account",
+        "identity_id": "alice",
+        "item_id": "book-1",
+        "revision_id": "old-revision",
+        "title": "Book One",
+        "author": "Author",
+        "format": "EPUB",
+        "status": "complete",
+        "local_path": str(artifact),
+    })
+    monkeypatch.setattr(service, "catalog_scan", lambda *args, **kwargs: {"scanned": 1})
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("revision update must not redownload")),
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        row = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert summary["attempted"] == 0
+        assert row["status"] == "reconcile_required"
+        assert Path(row["local_path"]) == artifact
+        assert artifact.read_bytes() == original
+    finally:
+        service.close()
