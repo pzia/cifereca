@@ -2134,7 +2134,9 @@ class MainWindow(Adw.ApplicationWindow):
         if state == "local":
             return "Local"
         if state == "remote_owned":
-            return "Possédé en ligne"
+            return "Possédé sur Kobo · en ligne" if item.get("provider_id") == "kobo" else "Possédé en ligne"
+        if state == "remote_archived":
+            return "Kobo · archivé · en ligne"
         if state == "remote_loan_active":
             return "Emprunté"
         if state == "remote_loan_realized":

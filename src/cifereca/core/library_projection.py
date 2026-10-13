@@ -641,7 +641,13 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     for loan in self.last_loans:
         loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
 
-    for entitlement in self.storage.entitlements(state="active"):
+    for entitlement in self.storage.entitlements():
+        status = str(entitlement.get("state") or "")
+        if status != "active" and not (
+            status == "archived" and entitlement.get("provider_id") == "kobo"
+            and entitlement.get("entitlement_type") == "owned"
+        ):
+            continue
         entitlement_type = str(entitlement.get("entitlement_type") or "unknown")
         if entitlement_type not in {"owned", "loan", "license"}: continue
         entitlement_identity = str(entitlement.get("identity_id") or "").strip() or default_identity_id
@@ -691,7 +697,13 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         thumbnail = cover.url or None
         combined_meta = {**existing_meta, **meta}
         combined_meta["cover_resolution"] = cover.metadata()
-        remote_state = "remote_owned" if entitlement_type == "owned" else "remote_loan_active" if entitlement_type == "loan" else "remote_entitled"
+        remote_state = ("remote_archived" if status == "archived" else
+                        "remote_owned" if entitlement_type == "owned" else
+                        "remote_loan_active" if entitlement_type == "loan" else "remote_entitled")
+        # If one Kobo account still owns the edition, another archived account
+        # must not downgrade the shared visible row from active to archived.
+        if existing.get("state") == "remote_owned" and remote_state == "remote_archived":
+            remote_state = "remote_owned"
         possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
         if existing:
             add_unique(existing.setdefault("providers", []), provider_id)
