@@ -253,7 +253,7 @@ def _kobo_backup_due(self) -> bool:
     return last <= 0 or (int(time.time()) - last) >= interval_minutes * 60
 
 
-def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, lock_factory, lock_path) -> dict[str, Any]:
+def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, lock_factory, lock_path) -> dict[str, Any]:
     """Compatibility entry point for the Kobo local synchronization.
 
     0.8.0 keeps the validated cross-process serialization for acquisition work. The
@@ -263,7 +263,7 @@ def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=Non
     lock = lock_factory(lock_path())
     try:
         with lock:
-            return self._sync_kobo_backup_locked(progress=progress)
+            return self._sync_kobo_backup_locked(progress=progress, credential_id=credential_id)
     except LockBusyError as exc:
         raise ProviderConfigurationError(
             "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
@@ -287,7 +287,7 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
     return len(paths)
 
 
-def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger) -> dict[str, Any]:
+def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None=None) -> dict[str, Any]:
     """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
     Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -315,7 +315,10 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     sessions = [
         session for session in self._sessions.values()
         if session.connected and session.provider_id == "kobo" and session.capabilities.backup
+        and (credential_id is None or session.credential_id == credential_id)
     ]
+    if credential_id is not None and not sessions:
+        raise ProviderConfigurationError("Compte Kobo demandé indisponible ou non connecté")
     target_dir = self._kobo_backup_target_dir()
     target_dirs: dict[str, str] = {}
     preferred = str(self.config.get("kobo_backup.format", "epub") or "epub").lower()
@@ -334,6 +337,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     )
     adapter_available = bool(adept_state.get("available") and adept_state.get("compatible") and adept_state.get("operational"))
     summary: dict[str, Any] = {
+        "scope": "account" if credential_id is not None else "all",
         "sessions": len(sessions), "manifests_fetched": 0, "manifest_items": 0,
         "scanned": 0, "attempted": 0, "pending": 0,
         "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
@@ -371,7 +375,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # one plausible artifact is quarantined for verification; several
     # plausible artifacts become an explicit conflict. This prevents the
     # historical ``Title [deadbeef].epub`` duplication loop.
-    _recover_local_remnants(self, summary, target_dirs, emit)
+    _recover_local_remnants(self, summary, target_dirs, emit, credential_id=credential_id)
     error_counts: Counter[tuple[str, str, int | None, str]] = Counter()
     error_examples: list[dict[str, Any]] = []
 
@@ -516,10 +520,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # deliberately preserved by Storage.backup_prune_missing().
     _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit)
 
-    return _publish_summary(self, summary, error_counts, error_examples, emit)
+    return _publish_summary(self, summary, error_counts, error_examples, emit, scoped=credential_id is not None)
 
-def _recover_local_remnants(self, summary, target_dirs, emit):
+def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: str | None=None):
     for previous in self.storage.backup_list("kobo"):
+        if credential_id is not None and previous.get("credential_id") != credential_id:
+            continue
         previous_status = str(previous.get("status") or "")
         previous_error = str(previous.get("error") or "")
         recoverable = (
@@ -597,7 +603,10 @@ def _recover_local_remnants(self, summary, target_dirs, emit):
                 "job_id": None,
             })
 
-    recovery_rows = self.storage.backup_list("kobo")
+    recovery_rows = [
+        row for row in self.storage.backup_list("kobo")
+        if credential_id is None or row.get("credential_id") == credential_id
+    ]
     summary["reconcile_pending"] = sum(
         1 for row in recovery_rows
         if str(row.get("status") or "") in {"reconcile_required", "reconcile_conflict"}
@@ -629,7 +638,7 @@ def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit):
 
 
 
-def _publish_summary(self, summary, error_counts, error_examples, emit):
+def _publish_summary(self, summary, error_counts, error_examples, emit, *, scoped: bool=False):
     summary["error_summary"] = [
         {
             "phase": phase, "code": code, "status_code": status_code,
@@ -656,7 +665,9 @@ def _publish_summary(self, summary, error_counts, error_examples, emit):
         status = "complete"
     summary["status"] = status
     now = int(time.time())
-    if summary.get("sessions"):
+    if summary.get("sessions") and not scoped:
+        # A targeted account sync must not refresh the *global* freshness
+        # cache, since another Kobo account may still need acquisition.
         self.storage.metadata_set("kobo_backup_last_attempt_at", now)
         if summary["manifests_fetched"] == summary["sessions"]:
             self.storage.metadata_set("kobo_backup_last_manifest_success_at", now)
@@ -664,7 +675,8 @@ def _publish_summary(self, summary, error_counts, error_examples, emit):
             # This legacy key must only mean the whole acquisition batch is
             # complete; an attention-only run is never a completed download.
             self.storage.metadata_set("kobo_backup_last_success_at", now)
-    self.storage.metadata_set("kobo_backup_last_batch_status", status)
+    if not scoped:
+        self.storage.metadata_set("kobo_backup_last_batch_status", status)
     self.diagnostics.add(
         "KOBO", "backup sync", "ok" if status == "complete" else "error" if status in {"aborted", "failed"} else "warning",
         detail={k: v for k, v in summary.items() if k != "error_messages"},
