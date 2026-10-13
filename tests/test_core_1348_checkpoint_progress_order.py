@@ -163,7 +163,7 @@ def test_large_manifest_resumes_after_117_without_redownloading(tmp_path, monkey
         assert len(downloaded) == 117
         checkpoint = json.loads(service.storage.metadata_get(key))
         assert checkpoint["processed"] == 117
-        assert checkpoint["status"] == "running"
+        assert checkpoint["status"] == "interrupted"
 
         resumed = service.sync_kobo_backup_account("vault-1")
         assert resumed["status"] == "complete"
