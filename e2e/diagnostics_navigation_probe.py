@@ -577,6 +577,50 @@ def main() -> int:
         assert not first_lifetime.alive and w._settings_standalone_lifetime.alive
         assert w._settings_main_lifetime is main_lifetime and main_lifetime.alive
         report["checks"]["settings_standalone_rebuild_revokes_old_callbacks"] = True
+        # P0 #1127: the two unmounted pages above test reconstruction,
+        # but only a real mapped Adw.Window exercises the close-request
+        # signal and releases its callback lifetime.
+        second_lifetime = w._settings_standalone_lifetime
+        w._open_prelogin_diagnostics()
+        standalone = w._standalone_settings_window
+        assert isinstance(standalone, Adw.Window)
+        assert second_lifetime is not w._settings_standalone_lifetime
+        assert not second_lifetime.alive
+        actual_lifetime = w._settings_standalone_lifetime
+        assert actual_lifetime.alive
+        later(240, lambda: settings_standalone_mapped(
+            standalone, actual_lifetime, main_lifetime
+        ))
+
+    def settings_standalone_mapped(standalone, lifetime, main_lifetime):
+        w = window[0]
+        assert standalone.get_mapped(), "Fenêtre autonome Paramètres non affichée"
+        assert w._standalone_settings_window is standalone
+        assert w._settings_standalone_lifetime is lifetime and lifetime.alive
+        assert w._settings_main_lifetime is main_lifetime and main_lifetime.alive
+        assert w.view_stack.get_visible_child_name() == "settings"
+        assert core.config.identities()[0]["label"] == "Camille"
+        report["checks"]["settings_standalone_real_gtk_window_mapped"] = True
+        capture("08g-settings-standalone-window")
+        closers = [
+            node for node in walk(standalone)
+            if isinstance(node, Gtk.Button) and node.get_tooltip_text() == "Fermer"
+        ]
+        assert closers, "Bouton de fermeture GTK autonome introuvable"
+        report["pointer_actions"].append(device[0].click_widget(closers[0]))
+        later(220, lambda: settings_standalone_closed(lifetime, main_lifetime))
+
+    def settings_standalone_closed(lifetime, main_lifetime):
+        w = window[0]
+        assert not lifetime.alive, "Callbacks Paramètres toujours actifs après fermeture"
+        assert w._standalone_settings_window is None
+        assert w._settings_standalone_lifetime is None
+        assert w._settings_main_lifetime is main_lifetime and main_lifetime.alive
+        assert w.view_stack.get_visible_child_name() == "settings"
+        assert core.config.identities()[0]["label"] == "Camille"
+        assert broker.checks == 1
+        report["checks"]["settings_standalone_real_close_revokes_callbacks"] = True
+        capture("08h-settings-after-standalone-close")
         report["pointer_actions"].append(
             device[0].click_widget(w.nav_rows["library"])
         )
