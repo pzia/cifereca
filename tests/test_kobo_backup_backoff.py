@@ -74,6 +74,10 @@ def test_manual_recovery_ignores_active_backoff_window(tmp_path):
         assert service.sync_kobo_backup_account("vault-1")["status"] == "failed"
         assert _checkpoint(service)[1]["failure_streak"] == 2
         assert not service._kobo_backup_account_due("vault-1")
+        public_sources = service.kobo_backup_diagnostic()["sources"]
+        assert len(public_sources) == 1
+        assert public_sources[0]["failure_streak"] == 2
+        assert "vault-1" not in json.dumps(public_sources)
         session = service._sessions[service._session_key("kobo", "vault-1")]
         session._manifest_error = None
         assert service.sync_kobo_backup_account("vault-1")["status"] == "complete"
