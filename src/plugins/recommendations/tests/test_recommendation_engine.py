@@ -39,11 +39,70 @@ def test_rrf_rewards_candidate_found_by_multiple_profile_signals():
 
 def test_dedup_keeps_multiple_sources():
     books = [{"title": "Seed", "author": "A. Auteur", "metadata": {"subjects": ["science"]}}]
-    one = {"title": "Candidate", "author": "A. Auteur", "isbn": "9781234567890", "source_provider": "p1"}
-    two = {"title": "Candidate", "author": "A. Auteur", "isbn": "9781234567890", "source_provider": "p2"}
+    one = {"title": "Candidate", "author": "A. Auteur", "isbn": "9780306406157", "source_provider": "p1"}
+    two = {"title": "Candidate", "author": "A. Auteur", "isbn": "9780306406157", "source_provider": "p2"}
     ranked = rank_candidates(books, [[one], [two]])
     assert len(ranked) == 1
     assert set(ranked[0].sources) == {"p1", "p2"}
+
+
+def test_notice_variants_keep_credentials_and_records_without_inventing_provenance():
+    from recommendation_engine_fast import rank_candidates_prepared
+
+    books = [{"title": "Seed", "author": "Alice", "metadata": {"subjects": ["histoire"]}}]
+    base = {
+        "title": "Candidate",
+        "author": "Alice",
+        "isbn": "9780306406157",
+        "metadata": {"subjects": ["histoire"]},
+        "source_provider": "provider",
+        "docbase": "BOOKS",
+        "source_collection": "digital",
+    }
+    account_a = {**base, "source_credential": "account-a", "record_id": "record-1"}
+    account_b = {**base, "source_credential": "account-b", "record_id": "record-1"}
+    other_record = {**base, "source_credential": "account-a", "record_id": "record-2"}
+    unresolved = {**base, "record_id": "record-3"}
+    batches = [[account_a, account_b], [dict(account_a), other_record, unresolved]]
+
+    for ranked in (
+        rank_candidates(books, batches, exploration=0),
+        rank_candidates_prepared(build_profile(books), batches, exploration=0),
+    ):
+        assert len(ranked) == 1
+        candidate = ranked[0]
+        assert candidate.sources == ("provider",)
+        assert len(candidate.notices) == 4  # repeated same account + record is folded
+        assert candidate.notices[0].item is account_a
+        assert [
+            (n.source_credential, n.record_id, n.isbn)
+            for n in candidate.notices
+        ] == [
+            ("account-a", "record-1", "9780306406157"),
+            ("account-b", "record-1", "9780306406157"),
+            ("account-a", "record-2", "9780306406157"),
+            ("", "record-3", "9780306406157"),
+        ]
+        assert [n.has_source_coordinates for n in candidate.notices] == [
+            True, True, True, False
+        ]
+
+
+def test_different_attested_isbns_stay_separate_editions():
+    books = [{"title": "Seed", "author": "Alice", "metadata": {"subjects": ["histoire"]}}]
+    editions = [
+        {
+            "title": "Candidate", "author": "Alice", "isbn": isbn,
+            "source_provider": "p", "source_credential": "account",
+            "record_id": str(index), "metadata": {"subjects": ["histoire"]},
+        }
+        for index, isbn in enumerate(("9780306406157", "9780140328721"), 1)
+    ]
+    ranked = rank_candidates(books, [editions], exploration=0)
+    assert len(ranked) == 2
+    assert {row.notices[0].isbn for row in ranked} == {
+        "9780306406157", "9780140328721"
+    }
 
 
 def test_queries_start_with_repeated_author():

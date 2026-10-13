@@ -96,6 +96,40 @@ def test_progressive_provider_rows_are_fairly_interleaved_before_limit():
     assert any(title.startswith("B") for title in titles)
 
 
+def test_progressive_and_final_rankings_keep_all_credential_bound_notices():
+    class MultiAccountCatalog(Catalog):
+        def search_progressive(self, query, *, on_batch, **kwargs):
+            common = {
+                "title": "Candidate", "author": "Alice",
+                "isbn": "9780306406157",
+                "metadata": {"subjects": ["histoire"]},
+                "source_provider": "opds", "record_id": "record-1",
+            }
+            for credential in ("account-a", "account-b"):
+                on_batch(SimpleNamespace(
+                    provider_id="opds",
+                    results=({**common, "source_credential": credential},),
+                    warnings=(), error_message="", cached=True,
+                ))
+            return SimpleNamespace(warnings=(), cancelled=False)
+
+    events = []
+    result = compute_recommendations(
+        Metadata(), MultiAccountCatalog(), "id-1",
+        max_queries=1, exploration=0, partial=events.append,
+    )
+
+    assert len(events) == 2
+    assert [n.source_credential for n in events[0].ranked[0].notices] == ["account-a"]
+    assert {n.source_credential for n in events[1].ranked[0].notices} == {
+        "account-a", "account-b"
+    }
+    assert len(result.ranked) == 1
+    assert {n.source_credential for n in result.ranked[0].notices} == {
+        "account-a", "account-b"
+    }
+
+
 def test_performance_trace_is_sanitized_and_has_phase_timings(caplog):
     with caplog.at_level(logging.INFO, logger="cifereca.plugin.recommendations"):
         result = compute_recommendations(Metadata(), Catalog(), "id-1", max_queries=2)

@@ -178,6 +178,7 @@ def test_provisional_head_matches_full_sort_without_returning_the_tail():
             float((i * 37) % 101),
             ("test",),
             ["p"],
+            {},  # source-bound notice variants (empty for this performance fixture)
         )
         for i in range(250)
     }
@@ -190,7 +191,7 @@ def test_provisional_head_matches_full_sort_without_returning_the_tail():
                 sources=tuple(sources),
                 query_hits=0,
             )
-            for item, score, reasons, sources in provisional.values()
+            for item, score, reasons, sources, notices in provisional.values()
             if score > 0.0
         ),
         key=lambda row: (
