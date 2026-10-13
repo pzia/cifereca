@@ -111,3 +111,64 @@ def test_opening_disabled_still_reports_decision_without_backup(tmp_path, monkey
                     if row["operation"] == "automatic backup decision"]) == 1
     finally:
         service.close()
+
+def test_disabled_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeypatch):
+    """A second offline process still explains items=0, not 'no error'."""
+    from cifereca.core.kobo_backup import safe_kobo_backup_report
+
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        service.config.set("kobo_backup.enabled", False)
+        result = service._opening_sync_locked(deep=False)
+        assert result["kobo_decision"]["status"] == "disabled"
+        assert service.storage.backup_list(provider_id="kobo") == []
+        raw = service.storage.metadata_get("kobo_backup_opening_decision_v1")
+        assert json.loads(raw)["status"] == "disabled"
+        assert "vault" not in raw.lower()
+    finally:
+        service.close()
+
+    other = _service(tmp_path)
+    try:
+        persisted = other.kobo_backup_diagnostic()
+        assert persisted["items"] == 0
+        assert persisted["opening_decision"]["status"] == "disabled"
+        assert persisted["opening_decision"]["persisted_enabled"] is False
+        shared = safe_kobo_backup_report(persisted)
+        assert shared["items"] == 0
+        assert shared["opening_decision"]["status"] == "disabled"
+        assert "vault" not in json.dumps(shared).lower()
+    finally:
+        other.close()
+
+
+@pytest.mark.parametrize("invalid", [
+    "{invalid-json",
+    json.dumps({"schema_version": 1, "status": "secret-account-name",
+                "persisted_enabled": "true", "connected_kobo": "5",
+                "eligible_kobo": -1, "checked_at": True,
+                "token": "Bearer SECRET", "signed_url": "https://secret.example/"}),
+])
+def test_kobo_persisted_decision_never_echoes_untrusted_metadata(tmp_path, invalid):
+    from cifereca.core.kobo_backup import safe_kobo_backup_report
+
+    service = _service(tmp_path)
+    try:
+        service.storage.metadata_set("kobo_backup_opening_decision_v1", invalid)
+        report = safe_kobo_backup_report(service.kobo_backup_diagnostic())
+        output = json.dumps(report)
+        assert "SECRET" not in output
+        assert "secret.example" not in output
+        assert "secret-account-name" not in output
+        assert "Bearer" not in output
+        if invalid.startswith("{invalid"):
+            assert report["opening_decision"] is None
+        else:
+            assert report["opening_decision"] == {
+                "schema_version": 1, "status": "unknown", "persisted_enabled": False,
+            }
+    finally:
+        service.close()
+
+
