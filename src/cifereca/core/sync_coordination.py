@@ -33,7 +33,9 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         loans = self._loans_for_account(account, force=True)
         result["loans"] = len(loans)
     if session.capabilities.personal_library:
-        rows = session.library()
+        # A provider can implement a one-shot iterable: both the entitlement
+        # mirror and remote catalog must see the exact same authenticated rows.
+        rows = list(session.library())
         if account.provider_id == "kobo":
             # Persist attested personal rights, but never start Kobo acquisition.
             from .kobo_manifest_rights import mirror_kobo_manifest_rights
