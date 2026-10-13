@@ -255,3 +255,76 @@ def test_resume_after_closing_and_reopening_sqlite_service(tmp_path, monkeypatch
         assert len(set(downloaded)) == 9
     finally:
         second.close()
+
+
+def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkeypatch):
+    """#1348: 9/522/5 independent manifests, with interruption at item 117."""
+    from tests.test_kobo_backup_fault_isolation import BackupSession
+
+    service, first_session = _service(
+        tmp_path, _manifest(*(f"a-{i:04d}" for i in range(9))))
+    second_session = None
+    third_session = None
+    try:
+        for credential, count, prefix in (
+            ("vault-2", 522, "b"), ("vault-3", 5, "c")
+        ):
+            service.storage.provider_connection_put({
+                "identity_id": "default", "provider_id": "kobo",
+                "credential_id": credential, "label": "Kobo",
+            })
+            session = BackupSession(
+                descriptor=first_session.descriptor,
+                credential_id=credential, label="Kobo", credentials={},
+                options={}, manifest=_manifest(
+                    *(f"{prefix}-{i:04d}" for i in range(count))),
+            )
+            session.connect()
+            service._sessions[service._session_key("kobo", credential)] = session
+            if credential == "vault-2":
+                second_session = session
+            else:
+                third_session = session
+
+        monkeypatch.setattr(service, "kobo_adept_state",
+                            lambda **_kw: _ready_adept_state())
+        downloads = []
+        stopped = [False]
+
+        def acquire(item, target_dir):
+            if item.record_id.startswith("b-"):
+                completed_b = sum(name.startswith("b-") for name in downloads)
+                if completed_b == 117 and not stopped[0]:
+                    stopped[0] = True
+                    raise KeyboardInterrupt("second account interrupted")
+            downloads.append(item.record_id)
+            return _acquirer(item, target_dir)
+
+        monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+        first = service.sync_kobo_backup_account("vault-1")
+        assert first["downloaded"] == 9
+        with pytest.raises(KeyboardInterrupt, match="second account"):
+            service.sync_kobo_backup_account("vault-2")
+        second_checkpoint = json.loads(service.storage.metadata_get(
+            _kobo_checkpoint_key("default", "vault-2")))
+        assert second_checkpoint["processed"] == 117
+        assert second_checkpoint["total"] == 522
+        assert second_checkpoint["status"] == "interrupted"
+        third = service.sync_kobo_backup_account("vault-3")
+        assert third["downloaded"] == 5
+
+        resumed = service.sync_kobo_backup_account("vault-2")
+        assert resumed["status"] == "complete"
+        assert resumed["downloaded"] == 405
+        assert resumed["unchanged"] == 117
+        assert resumed["attempted"] == 405
+        assert len(downloads) == 536
+        assert len(set(downloads)) == 536
+        for credential, expected in (("vault-1", 9), ("vault-2", 522),
+                                     ("vault-3", 5)):
+            checkpoint = json.loads(service.storage.metadata_get(
+                _kobo_checkpoint_key("default", credential)))
+            assert checkpoint["status"] == "complete"
+            assert checkpoint["total"] == expected
+    finally:
+        service.close()
