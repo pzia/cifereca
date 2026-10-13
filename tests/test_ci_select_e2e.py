@@ -15,7 +15,15 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 18)
+        self.assertEqual(len(mod.ALL), 20)
+
+    def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
+        for path in ("src/cifereca/gui/settings_ai_actions.py",
+                     "src/cifereca/gui/settings_ai_section.py",
+                     "src/cifereca/gui/settings_lifetime.py",
+                     "e2e/llm_settings_probe.py"):
+            self.assertEqual(mod.select([path]), mod.LLM, path)
+        self.assertTrue(set(mod.LLM).issubset(set(mod.MAINWINDOW)))
 
     def test_volume_only(self):
         self.assertEqual(mod.select(["e2e/diagnostics_volume_probe.py"]),
@@ -70,7 +78,7 @@ class SelectionTests(unittest.TestCase):
     def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
         self.assertEqual(set(selected), set(mod.MAINWINDOW))
-        self.assertEqual(len(selected), 13)
+        self.assertEqual(len(selected), 15)
         for name in mod.CORE + mod.YOUTH + (
             "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"
         ):
@@ -93,6 +101,7 @@ class SelectionTests(unittest.TestCase):
         entrypoints = {
             "gtk-probe": "search_filter_probe.py",
             "gtk-detail": "book_detail_probe.py",
+            "gtk-llm-settings": "llm_settings_probe.py",
             "gtk-diagnostics": "diagnostics_page_probe.py",
             "gtk-diagnostics-states": "diagnostics_states_probe.py",
             "gtk-diagnostics-structured": "diagnostics_structured_probe.py",
