@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 import zipfile
 
@@ -430,5 +431,38 @@ def test_kobo_source_checkpoint_marks_fatal_batch_aborted(tmp_path: Path):
         assert source["total"] == 2
         assert source["errors"] == 1
         assert source["remaining"] == 1
+    finally:
+        service.close()
+
+
+def test_kobo_checkpoint_tracks_two_accounts_independently(tmp_path: Path):
+    service, original = _service(tmp_path, manifest=[])
+    other_identity = replace(service.identities[0], identity_id="second", label="Second",
+                             directory_name="second")
+    service.identities.append(other_identity)
+    service.storage.identity_put(other_identity)
+    service.storage.provider_connection_put({
+        "identity_id": "second", "provider_id": "kobo",
+        "credential_id": "test-vault-2", "label": "Second",
+    })
+    denied = BackupSession(
+        descriptor=original.descriptor, credential_id="test-vault-2",
+        label="Second", credentials={}, options={},
+        manifest=[{"product_id": "denied", "revision_id": "r1", "format": "EPUB"}],
+        unauthorized=True,
+    )
+    denied.connect()
+    service._sessions[service._session_key("kobo", "test-vault-2")] = denied
+    try:
+        summary = service.sync_kobo_backup()
+        assert summary["aborted"] is True
+        assert len(summary["sources"]) == 2
+        assert [x["status"] for x in summary["sources"]] == ["complete", "aborted"]
+        assert {x["identity_id"] for x in summary["sources"]} == {"default", "second"}
+        assert summary["sources"][0]["total"] == 0
+        assert summary["sources"][1]["position"] == 1
+        persisted = json.loads(service.storage.metadata_get("kobo_backup_source_checkpoints_v1"))
+        assert len(persisted) == 2
+        assert "test-vault-2" not in json.dumps(persisted)
     finally:
         service.close()
