@@ -77,3 +77,19 @@ def test_opening_sync_idle_callback_checks_window_liveness_at_dispatch():
         # stand-in, exactly as GLib would invoke it after window disposal.
         fn = eval(callback_code, {"self": Window()})
         assert fn() is False
+
+
+def test_startup_without_plugin_manager_still_connects_providers():
+    """#1132: absence of optional plugins must not strand provider startup."""
+    tree = ast.parse(_method_source("MainWindow", "activate_startup_plugins"))
+    no_manager = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Attribute)
+        and node.test.left.attr == "plugin_manager"
+        and any(isinstance(op, ast.Is) for op in node.test.ops)
+    )
+    body = ast.unparse(ast.Module(body=no_manager.body, type_ignores=[]))
+    assert "GLib.idle_add(self.connect_configured_sources)" in body
+    assert "return False" in body
