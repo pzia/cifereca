@@ -2030,6 +2030,57 @@ def test_selected_log_fails_closed_on_invalid_file(tmp_path, payload, expected):
         read_user_selected_log(str(chosen))
 
 
+def test_selected_log_codes_are_allowlisted_and_not_extracted_from_urls(tmp_path):
+    from diagnostics_ai import read_user_selected_log
+    path = tmp_path / "manual.log"
+    path.write_text(
+        "https://vault.invalid/private?status=failed&code=forbidden "
+        "title=status=partial alias=code=archived_book\\n"
+        "2026-10-13 TRACE code=missing_delegation_scope "
+        "status=attention_required phase=vault\\n"
+        "2026-10-13 TRACE code=adept_error severity=error\\n"
+        "2026-10-13 TRACE code=Camille status=not_allowed\\n",
+        encoding="utf-8",
+    )
+    sample = read_user_selected_log(str(path))
+    assert sample == {
+        "rows": [
+            {"line": 2, "signals": {
+                "code": "missing_delegation_scope",
+                "status": "attention_required", "phase": "vault",
+            }},
+            {"line": 3, "signals": {
+                "code": "adept_error", "severity": "error",
+            }},
+        ], "recognized": 2, "truncated": False,
+    }
+    model = FakeLLM(remote=True)
+    preview = prepare_analysis(model, FakeBroker([]), manual_log=sample)
+    assert model.calls == 0
+    assert "missing_delegation_scope" in preview["prompt"]
+    assert "adept_error" in preview["prompt"]
+    for secret in ("vault.invalid", "Camille", "private?", "title=", "alias="):
+        assert secret not in preview["prompt"]
+    response = analyze_with_consent(
+        model, preview, approval_id=preview["approval_id"],
+    )
+    assert response["ok"] and model.calls == 1
+    assert "missing_delegation_scope" in model.sent[0].prompt
+
+
+def test_selected_log_unknown_code_only_is_not_an_evidence(tmp_path):
+    from diagnostics_ai import read_user_selected_log
+    path = tmp_path / "manual.log"
+    path.write_text(
+        "code=Camille\\n"
+        "https://example.invalid/book?code=network_error\\n"
+        "title=code=adept_error\\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="manual_log_no_public_signals"):
+        read_user_selected_log(str(path))
+
+
 def test_selected_log_never_follows_symlink(tmp_path):
     from diagnostics_ai import read_user_selected_log
     original = tmp_path / "private.log"
