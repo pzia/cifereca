@@ -1,5 +1,8 @@
 """Cached artifacts stay scoped and partial manifests never authorize pruning."""
 from dataclasses import replace
+import hashlib
+import json
+import time
 
 import pytest
 
@@ -141,7 +144,7 @@ def test_malformed_kobo_manifest_does_not_prune_historical_rows(tmp_path, monkey
         lambda *_a, **_kw: pytest.fail("existing Kobo file must not redownload"),
     )
     try:
-        result = service.sync_kobo_backup(credential_id="vault-1")
+        result = service.sync_kobo_backup_account("vault-1")
         assert result["errors"] == 0
         assert result["skipped"] == 1
         assert result["malformed_manifest_items"] == 1
@@ -151,5 +154,34 @@ def test_malformed_kobo_manifest_does_not_prune_historical_rows(tmp_path, monkey
         assert service.storage.metadata_get("kobo_backup_last_success_at") is None
         assert service.storage.backup_get("kobo", "vault-1", "historical") is not None
         assert path.exists()
+    finally:
+        service.close()
+
+
+def test_kobo_account_due_distinguishes_fresh_stale_and_new_credentials(tmp_path):
+    service = _service(tmp_path, manifest=[])
+    try:
+        identity_id = service.identity_for_connection("kobo", "vault-1").identity_id
+        source_key = hashlib.sha256(
+            f"kobo-v1:{identity_id}:vault-1".encode("utf-8")
+        ).hexdigest()[:24]
+        now = int(time.time())
+        service.storage.metadata_set("kobo_backup_last_success_at", now)
+        service.storage.metadata_set(
+            "kobo_backup_source_checkpoints_v1",
+            json.dumps({source_key: {
+                "schema": 1, "source_id": source_key,
+                "status": "attention_required", "updated_at": now - 7200,
+            }}),
+        )
+        assert service._kobo_backup_account_due("vault-1") is True
+        service.storage.metadata_set(
+            "kobo_backup_source_checkpoints_v1",
+            json.dumps({source_key: {
+                "schema": 1, "source_id": source_key,
+                "status": "attention_required", "updated_at": now,
+            }}),
+        )
+        assert service._kobo_backup_account_due("vault-1") is False
     finally:
         service.close()
