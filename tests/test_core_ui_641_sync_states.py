@@ -71,3 +71,25 @@ def test_sync_page_uses_named_actions_and_disabled_reasons():
     assert "presentation.action_label" in source
     assert "presentation.disabled_reason" in source
     assert "all_now.set_sensitive(actionable)" in source
+
+
+def test_kobo_sync_action_describes_online_notices_not_downloads():
+    source = _source(provider_id="kobo", label="Compte Kobo lié")
+    presentation = sync_source_presentation(source)
+    assert presentation.action_enabled is True
+    assert presentation.action_label == "Mettre à jour les notices Kobo en ligne"
+    assert "ne télécharge aucun ebook" in presentation.summary
+    assert "Connexion : Connectée" in presentation.summary
+
+    offline = sync_source_presentation(_source(
+        provider_id="kobo", connected=False,
+    ))
+    assert offline.action_label == "Mettre à jour les notices Kobo en ligne"
+    assert offline.action_enabled is False
+    assert "Reconnectez ce compte" in offline.disabled_reason
+
+
+def test_non_kobo_sync_actions_stay_unchanged():
+    paris = sync_source_presentation(_source(provider_id="paris"))
+    assert paris.action_label == "Synchroniser Paris · Camille"
+    assert "ne télécharge aucun ebook" not in paris.summary

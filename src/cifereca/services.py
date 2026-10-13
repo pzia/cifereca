@@ -936,6 +936,15 @@ class LibraryService:
             identity = self.identity_for_connection(session.provider_id, session.credential_id)
             try:
                 rows = session.library()
+                if session.provider_id == "kobo" and account is not None:
+                    # Only a connected PERSONAL manifest may assert ownership.
+                    # Catalog searches never enter this path; no download here.
+                    from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
+                    mirror_kobo_manifest_rights(
+                        self, rows, identity_id=identity.identity_id,
+                        credential_id=session.credential_id,
+                        account_id=account.unique_id or None,
+                    )
                 result[f"{session.provider_id}:{session.credential_id}"] = self._mirror_remote_results(rows, identity_id=identity.identity_id)
                 if session.provider_id == "numilog" and session.capabilities.direct_download:
                     for row in rows:
@@ -2445,7 +2454,52 @@ class LibraryService:
             if item.downloadable is False:
                 raise ProviderConfigurationError("Kobo : ce titre n'est pas marqué téléchargeable")
             identity = self.identity_for_connection(item.source_provider, item.source_credential)
-            return self._execute_kobo_acquisition(item, self._kobo_backup_target_dir(identity.identity_id))
+            # Direct downloads must serialize with opening-sync and Kobo backup.
+            # Do not enter this path from sync_kobo_backup (it already holds
+            # the lock and calls _execute_kobo_acquisition directly).
+            try:
+                with InterProcessLock(acquisition_lock_file()):
+                    target = self._kobo_backup_target_dir(identity.identity_id)
+                    candidates = self._kobo_record_candidate_paths(
+                        {"item_id": item.record_id, "title": item.title,
+                         "author": item.author, "format": item.format}, target,
+                    )
+                    legacy_dir = self.library_dir()
+                    if legacy_dir.resolve() != target.resolve():
+                        candidates.extend(p for p in self._kobo_record_candidate_paths(
+                            {"item_id": item.record_id, "title": item.title,
+                             "author": item.author, "format": item.format}, legacy_dir,
+                        ) if p not in candidates)
+                    # Explicit provider/product links in the local catalogue
+                    # are evidence of a candidate even after arbitrary rename.
+                    # Keep strict identity isolation and never infer by title.
+                    default_id = self.identities[0].identity_id if self.identities else None
+                    for row in self.storage.catalog_entries():
+                        if (row.get("local_state") != "local"
+                                or row.get("provider_id") != "kobo"
+                                or str(row.get("identity_id") or default_id or "") != identity.identity_id
+                                or str(row.get("item_id") or "") != item.record_id):
+                            continue
+                        meta = row.get("metadata")
+                        path_text = meta.get("path") if isinstance(meta, dict) else None
+                        if isinstance(path_text, str) and path_text.strip():
+                            linked = Path(path_text)
+                            if (linked.is_file() or linked.is_symlink()) and linked not in candidates:
+                                candidates.append(linked)
+                    existing = self.storage.backup_get("kobo", item.source_credential, item.record_id)
+                    if existing and existing.get("local_path"):
+                        local = Path(str(existing["local_path"]))
+                        if local.is_file() or local.is_symlink():
+                            candidates.append(local)
+                    if candidates:
+                        raise ProviderConfigurationError(
+                            "Kobo : fichier local candidat déjà présent ; rapprochement requis avant téléchargement"
+                        )
+                    return self._execute_kobo_acquisition(item, target)
+            except LockBusyError as exc:
+                raise ProviderConfigurationError(
+                    "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
+                ) from exc
 
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (

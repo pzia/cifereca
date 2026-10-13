@@ -266,15 +266,20 @@ def test_revision_replaces_adapter_and_retires_old_session(tmp_path):
         old_session = next(s for s in svc._sessions.values()
                            if s.provider_id == "cifericaopds.alpha")
         assert old_session.connected
+        # Incrementing only the catalogue generation also invalidates the
+        # adapter: CifericaOPDS binds its generation in the session guard.
         coll.value = snapshot(child("alpha", generation=2), generation=2)
-        svc.refresh_virtual_collections()
-        assert svc.registry.get("cifericaopds.alpha") is old_plugin
-        assert old_session.connected
+        svc.refresh_virtual_collections(connect_changed=True)
+        catalog_plugin = svc.registry.get("cifericaopds.alpha")
+        catalog_session = svc._sessions["cifericaopds.alpha::__public__"]
+        assert catalog_plugin is not old_plugin
+        assert catalog_session is not old_session and catalog_session.connected
+        assert not old_session.connected
         coll.value = snapshot(child("alpha", revision="r2", generation=3), generation=3)
         svc.refresh_virtual_collections()
-        assert svc.registry.get("cifericaopds.alpha") is not old_plugin
-        assert not old_session.connected
-        assert all(s is not old_session for s in svc._sessions.values())
+        assert svc.registry.get("cifericaopds.alpha") is not catalog_plugin
+        assert not catalog_session.connected
+        assert all(s is not catalog_session for s in svc._sessions.values())
         svc.connect_configured()
         assert any(s.provider_id == "cifericaopds.alpha" and s.connected
                    for s in svc._sessions.values())
@@ -389,10 +394,20 @@ def test_search_cache_is_versioned_by_virtual_catalog_generation(tmp_path):
         svc.search("catalog", force=False)
         assert len(queries) == count
         coll.value = snapshot(child("alpha", generation=2), generation=2)
-        svc.refresh_virtual_collections()
-        assert svc._sessions["cifericaopds.alpha::__public__"] is session
+        svc.refresh_virtual_collections(connect_changed=True)
+        refreshed = svc._sessions["cifericaopds.alpha::__public__"]
+        assert refreshed is not session and refreshed.connected
+        assert not session.connected
+        next_queries = []
+        refreshed_search = refreshed.search
+        refreshed.search = lambda *args, **kw: (
+            next_queries.append(args), refreshed_search(*args, **kw)
+        )[1]
         svc.search("catalog", force=False)
-        assert len(queries) > count
+        assert len(next_queries) > 0  # previous generation's cached hits invalid
+        count = len(next_queries)
+        svc.search("catalog", force=False)
+        assert len(next_queries) == count
     finally:
         svc.close()
 
@@ -708,3 +723,38 @@ def test_saved_inventory_contains_only_validated_snapshot_fields(tmp_path):
             repo.load(PARENT)
     finally:
         storage.close()
+
+
+
+def test_catalog_generation_change_only_reconnects_affected_virtual_source(tmp_path):
+    """Core must refresh a generation-bound adapter without touching siblings."""
+    cfg = Config(tmp_path / "config.json")
+    svc = LibraryService(cfg, Storage(tmp_path / "cache.sqlite3"), Diagnostics())
+    coll = Collection(snapshot(child("alpha"), child("beta")))
+    try:
+        svc.attach_plugin_manager(FakeManager(coll))
+        svc.connect_configured()
+        alpha_plugin = svc.registry.get("cifericaopds.alpha")
+        beta_plugin = svc.registry.get("cifericaopds.beta")
+        alpha_session = svc._sessions["cifericaopds.alpha::__public__"]
+        beta_session = svc._sessions["cifericaopds.beta::__public__"]
+        coll.value = snapshot(
+            child("alpha", revision="r1", generation=2),
+            child("beta", revision="r1", generation=1),
+            generation=2,
+        )
+        svc.refresh_virtual_collections(connect_changed=True)
+        assert svc.registry.get("cifericaopds.alpha") is not alpha_plugin
+        assert svc.registry.get("cifericaopds.beta") is beta_plugin
+        assert not alpha_session.connected
+        replacement = svc._sessions["cifericaopds.alpha::__public__"]
+        assert replacement.connected and replacement is not alpha_session
+        assert svc._sessions["cifericaopds.beta::__public__"] is beta_session
+        assert beta_session.connected
+
+        # Same snapshot is a no-op; prevent unnecessary connection churn.
+        svc.refresh_virtual_collections(connect_changed=True)
+        assert svc._sessions["cifericaopds.alpha::__public__"] is replacement
+        assert svc._sessions["cifericaopds.beta::__public__"] is beta_session
+    finally:
+        svc.close()

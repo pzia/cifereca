@@ -11,7 +11,7 @@ from ..acquisition_engine import AcquisitionOffer, AcquisitionPlanner, Artifact
 from ..models import SearchResult
 from ..identities import AdeptProfileResolutionError
 from ..providers import ProviderConfigurationError
-from ..plugin_api import UserFacingError
+from ..plugin_api import UserFacingError, ProviderError
 from .errors import KoboAdeptError
 from .acquisition import KoboOfferAdapter
 from .vault import KoboVaultError
@@ -120,6 +120,17 @@ def _execute_kobo_acquisition_impl(
     resolved_cache: dict[tuple[str, str | None], dict[str, Any]] = {}
 
     def resolve(mode: str, profile: str | None, *, refresh: bool = False) -> dict[str, Any]:
+        # This session belongs to one Kobo credential. A denied delegated
+        # capability cannot become available for the next item in this run.
+        # The provider clears the marker on an explicit reconnection.
+        if mode == "delegated" and getattr(session, "_cifereca_delegation_forbidden", False):
+            session._cifereca_delegation_attempts_saved = (
+                getattr(session, "_cifereca_delegation_attempts_saved", 0) + 1
+            )
+            raise KoboVaultError(
+                "Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)",
+                code="missing_delegation_scope", status_code=403,
+            )
         cache_key = (mode, profile)
         if not refresh and cache_key in resolved_cache:
             _TRACE_LOG.debug(
@@ -145,6 +156,25 @@ def _execute_kobo_acquisition_impl(
                 identity.identity_id, item.source_credential, item.record_id, mode, profile, type(exc).__name__,
                 getattr(exc, "status_code", None), getattr(exc, "code", None), time.perf_counter() - started, exc,
             )
+            # Core and the external provider use distinct KoboVaultError
+            # classes. Normalize at the boundary without importing plugin
+            # implementation types or exposing upstream response bodies.
+            status = getattr(exc, "status_code", None)
+            if isinstance(exc, ProviderError) and isinstance(status, int):
+                if mode == "delegated" and status == 403:
+                    session._cifereca_delegation_forbidden = True
+                    raise KoboVaultError(
+                        "Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)",
+                        code="missing_delegation_scope", status_code=403,
+                    ) from exc
+                if not isinstance(exc, KoboVaultError):
+                    safe_code = str(getattr(exc, "code", "") or "").strip()
+                    if not safe_code.isidentifier():
+                        safe_code = "provider_http_error"
+                    raise KoboVaultError(
+                        f"Kobo-Vault : erreur HTTP {status}",
+                        code=safe_code, status_code=status,
+                    ) from exc
             raise
         acquisition = value.get("acquisition") if isinstance(value, dict) else None
         candidates = acquisition.get("candidates") if isinstance(acquisition, dict) else None
@@ -544,10 +574,10 @@ def _execute_kobo_acquisition_impl(
             break
 
     if request is None or destination is None or candidate is None or payload is None:
-        if delegation_forbidden and descriptor_error is not None:
-            raise ProviderConfigurationError(
-                "Kobo-Vault : aucun candidat descriptor exploitable et le mode delegated "
-                "nécessite le scope kobo.acquisition.delegate"
+        if delegation_forbidden:
+            raise KoboVaultError(
+                "Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)",
+                code="missing_delegation_scope", status_code=403,
             ) from delegated_error
         if delegated_error is not None and descriptor_error is None:
             raise delegated_error

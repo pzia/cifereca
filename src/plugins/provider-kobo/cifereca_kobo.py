@@ -68,6 +68,11 @@ class KoboSession(ProviderSession):
             pass
 
     def connect(self) -> list[Account]:
+        # Explicit provider reconnection is the only permission-change event.
+        # Keep permission denials out of persistent storage and clear the
+        # per-session refusal after credentials may have changed.
+        self._cifereca_delegation_forbidden = False
+        self._cifereca_delegation_attempts_saved = 0
         self.capability_names = set()
         self.capability_details = {}
         self.supports_acquisition_acsm = False

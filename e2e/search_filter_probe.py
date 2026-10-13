@@ -307,6 +307,15 @@ def main() -> int:
         # A real GTK SearchEntry edit (signal + filtered view), *without*
         # launching another query: old results may not repopulate this view.
         window.search_controls.entry.set_text("Introuvable après édition")
+        # The editor itself schedules a local filter projection through GTK.
+        # Comparing the old, not-yet-filtered rows against the eventual view
+        # mistakes that legitimate deferred projection for a stale reply.
+        # Keep the deliberately delayed provider reply HELD until the edit
+        # has settled, then assert that it cannot overwrite this baseline.
+        later(180, capture_edited_view_before_stale_delivery)
+
+    def capture_edited_view_before_stale_delivery():
+        assert delayed_started.is_set() and not delayed_returned.is_set()
         before_stale_delivery[0] = snapshot()
         assert before_stale_delivery[0]["query"] == "Introuvable après édition"
         delayed_release.set()
