@@ -378,9 +378,11 @@ def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=Non
     try:
         with lock:
             if credential_id is None:
-                return self._sync_kobo_backup_locked(
-                    progress=progress, retry_scope_blocked=retry_scope_blocked,
-                )
+                if retry_scope_blocked:
+                    raise ProviderConfigurationError(
+                        "Le réessai de délégation Kobo exige un compte explicite"
+                    )
+                return self._sync_kobo_backup_locked(progress=progress)
             return self._sync_kobo_backup_account_locked(
                 credential_id, progress=progress,
                 retry_scope_blocked=retry_scope_blocked,
