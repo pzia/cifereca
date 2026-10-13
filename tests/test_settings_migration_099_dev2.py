@@ -27,7 +27,8 @@ class SaveSettings(unittest.TestCase):
         ns={'__name__':'cifereca.gui.main_window','__package__':'cifereca.gui','self':self.window,'re':re,'shlex':shlex,'page_lifetime':NS(alive=True),'identity_editors':[editor],'account_editors':[],'descriptors':{},'public_ids':set(),'provider_download_editors':{},'levels':['normal'],'vault_profiles':['Android'],'TaskPriority':NS(USER_ACTION=0),'refresh_text':Mock(),'save':object(),'reconnect':object(),
             'settings_state':SettingsRevisionState(['accounts','library','sync','interface','ai','diagnostic']),
             'build_settings_draft':build_settings_draft,'SettingsValidationError':SettingsValidationError,
-            'track_all_settings_widgets':Mock(),'update_settings_actions':Mock()}
+            'track_all_settings_widgets':Mock(),'update_settings_actions':Mock(),
+            'refresh_kobo_backup_status':Mock()}
         for name in ['global_cmd_row','global_post_row','global_dir_row','global_ebook_row','global_audio_row','backup_dir_row']:ns[name]=Value()
         ns.update(diag_switch=Value(active=True),level_drop=Value(),exp_switch=Value(),backup_switch=Value(),unlinked_switch=Value(),backup_interval_row=Value('60'),vault_profile_drop=Value(),library_dir_row=Value(self.config.get('library.directory')))
         ns['settings_committer']=SettingsCommitController(self.service.save_configuration, self.runner.submit, self.window.show_error)
