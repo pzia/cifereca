@@ -7,6 +7,7 @@ from __future__ import annotations
 import time
 import os
 import re
+import hashlib
 from collections import Counter
 from pathlib import Path
 from typing import Any, NamedTuple, Callable
@@ -396,8 +397,32 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
     abort_all = False
     authoritative_manifest_ids: dict[str, set[str]] = {}
+    summary["sources"] = []
+    source_counter_keys = ("scanned", "attempted", "downloaded", "unchanged",
+                           "pending", "attention_required", "errors", "skipped",
+                           "remaining", "reconcile_skipped")
     for session in sessions:
         session_identity = self.identity_for_connection("kobo", session.credential_id)
+        source_key = hashlib.sha256(
+            f"kobo-v1:{session_identity.identity_id}:{session.credential_id}".encode("utf-8")
+        ).hexdigest()[:24]
+        source_baseline = {key: int(summary.get(key) or 0) for key in source_counter_keys}
+        source_position = 0
+        source_total = 0
+
+        def save_source_checkpoint(status: str) -> dict[str, Any]:
+            row = {
+                "schema": 1, "source_id": source_key,
+                "identity_id": session_identity.identity_id,
+                "status": status, "position": source_position,
+                "total": source_total, "updated_at": int(time.time()),
+                **{key: max(0, int(summary.get(key) or 0) - source_baseline[key])
+                   for key in source_counter_keys},
+            }
+            self.storage.metadata_json_put_item("kobo_backup_source_checkpoints_v1", source_key, row)
+            return row
+
+        save_source_checkpoint("manifest_fetch")
         unlinked_local_count = self.kobo_unlinked_local_count(session_identity.identity_id)
         session_target_dir = self._kobo_backup_target_dir(session_identity.identity_id)
         target_dirs[session_identity.identity_id] = str(session_target_dir)
