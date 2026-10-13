@@ -48,10 +48,15 @@ def test_failed_manifest_has_terminal_checkpoint_without_false_success(tmp_path,
     try:
         result = service.sync_kobo_backup_account("vault-1", progress=events.append)
         assert result["status"] in {"failed", "aborted"}
-        assert not any(event["event"] == "source_done" for event in events)
+        terminal = [event for event in events if event["event"] == "source_done"]
+        assert len(terminal) == 1
         checkpoint = json.loads(service.storage.metadata_get(
             _kobo_checkpoint_key("default", "vault-1"),
         ))
         assert checkpoint["status"] in {"failed", "aborted"}
+        assert terminal[0]["status"] == checkpoint["status"]
+        assert terminal[0]["manifest_items"] == checkpoint["total"] == 0
+        assert terminal[0]["errors"] == checkpoint["counts"]["errors"] == 1
+        assert terminal[0]["remaining"] == checkpoint["counts"]["remaining"] == 0
     finally:
         service.close()
