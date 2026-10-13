@@ -273,6 +273,7 @@ def test_complete_without_linked_path_never_redownloads(
             )
             assert row["status"] == "reconcile_required"
             assert row["local_path"] is None
+            assert row["revision_id"] == revision
             assert row["sha256"] == "a" * 64
             assert row["size"] == 1234
     finally:
