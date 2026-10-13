@@ -35,6 +35,10 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
     try:
         failed = service.sync_kobo_backup()
         assert failed['errors'] == 1 and failed['unchanged'] == 1
+        assert failed['status'] == 'partial'
+        assert [(row['credential_id'], row['status']) for row in failed['sources']] == [
+            ('vault-1', 'complete'), ('vault-2', 'failed'),
+        ]
         assert failed['legacy_pruned'] == 0 and failed['attempted'] == 0
         assert service.storage.metadata_get('kobo_backup_last_success_at') is None
         for credential in ['vault-1', 'vault-2']:
@@ -42,6 +46,8 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
         second._manifest_error = None
         recovered = service.sync_kobo_backup()
         assert recovered['errors'] == 0 and recovered['unchanged'] == 2
+        assert recovered['status'] == 'complete'
+        assert {row['status'] for row in recovered['sources']} == {'complete'}
         assert recovered['attempted'] == 0 and recovered['legacy_pruned'] == 2
         assert service.storage.metadata_get('kobo_backup_last_success_at') is not None
         repeated = service.sync_kobo_backup()
