@@ -660,6 +660,27 @@ def main() -> int:
         capture("07b-stale-identity-history-rejected")
         w.close()
         assert w._closed
+        # P0 #1130/#1132: late plugin notifications are a no-op on an
+        # actual closed GTK MainWindow, even if its manager is unavailable.
+        # This is a synthetic post-close callback, not a provider operation.
+        class ClosedPluginManager:
+            def __getattr__(self, name):
+                raise AssertionError(
+                    "plugin manager accessed after GTK closure: " + name
+                )
+        manager_before = w.plugin_manager
+        shell_before = w.shell_header
+        plugin_widgets_before = dict(w._plugin_page_widgets)
+        w.plugin_manager = ClosedPluginManager()
+        try:
+            w._plugins_changed()
+            w._subscribe_cached_book_details()
+        finally:
+            w.plugin_manager = manager_before
+        assert w.shell_header is shell_before
+        assert w._plugin_page_widgets == plugin_widgets_before
+        assert w._closed
+        report["checks"]["P0_closed_plugin_callbacks_do_not_rebuild_gtk_shell"] = True
         from cifereca.task_queue import TaskPriority
         try:
             w.runner.pool.submit(TaskPriority.NORMAL, lambda: None)
