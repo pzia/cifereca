@@ -209,3 +209,39 @@ def test_remote_author_list_candidate_is_ambiguous_not_downloadable(tmp_path: Pa
         assert candidate.is_file()
     finally:
         service.close()
+
+
+def test_offline_preview_never_confuses_same_product_id_across_identities(tmp_path: Path):
+    from dataclasses import replace
+
+    service, _session = _service(tmp_path, [])
+    other_identity = replace(
+        service.identities[0],
+        identity_id="another", label="Another", directory_name="another",
+    )
+    service.identities.append(other_identity)
+    service.storage.identity_put(other_identity)
+    service.storage.provider_connection_put({
+        "identity_id": "another", "provider_id": "kobo",
+        "credential_id": "vault-2", "label": "Other",
+    })
+    path = service._kobo_backup_target_dir("another") / "remote.epub"
+    _write_epub(path)
+    _backup(service, "shared-book", status="pending")
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-2",
+        "identity_id": "another", "item_id": "shared-book",
+        "revision_id": "r1", "title": "Shared", "format": "EPUB",
+        "status": "complete", "local_path": str(path),
+    })
+    try:
+        first = service.kobo_backup_preview("vault-1")
+        second = service.kobo_backup_preview("vault-2")
+        assert first["source_id"] != second["source_id"]
+        assert first["counts"]["candidate_unverified"] == 1
+        assert first["counts"]["already_local_linked"] == 0
+        assert second["counts"]["already_local_linked"] == 1
+        assert second["counts"]["candidate_unverified"] == 0
+        assert path.is_file()
+    finally:
+        service.close()
