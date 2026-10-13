@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from cifereca.plugin_api import ProviderError, redact_text
+from cifereca.plugin_api import ProviderError
 
 
 
@@ -70,22 +70,30 @@ class KoboVaultClient:
         return f"{self.base_url}{self.API_PREFIX}{path}"
 
     @staticmethod
-    def _error_parts(response: httpx.Response) -> tuple[str | None, str]:
+    def _error_code(response: httpx.Response) -> str | None:
+        """Accept only enumerated provider error codes, never response prose.
+
+        The Vault's message (including a supposed error code) can contain
+        URLs, account names, signed query values or bearer tokens. These
+        strings must not enter exception messages, logs or sync diagnostics.
+        """
         try:
             payload = response.json()
-        except Exception:
-            payload = None
-        if isinstance(payload, dict):
-            error = payload.get("error")
-            if isinstance(error, dict):
-                code = str(error.get("code") or "").strip() or None
-                text = str(error.get("message") or error.get("code") or "").strip()
-                if text:
-                    return code, text
-            text = str(payload.get("message") or "").strip()
-            if text:
-                return None, text
-        return None, f"HTTP {response.status_code}"
+        except (ValueError, UnicodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            return None
+        code = error.get("code")
+        if not isinstance(code, str):
+            return None
+        allowed = {
+            "archived_book", "insufficient_scope", "forbidden",
+            "invalid_token", "invalid_api_token", "unauthorized",
+        }
+        return code if code in allowed else None
 
     def _json(self, method: str, path: str, *, authenticated: bool = True, **kwargs: Any) -> dict[str, Any]:
         headers = dict(kwargs.pop("headers", {}) or {})
@@ -98,24 +106,32 @@ class KoboVaultClient:
         except httpx.HTTPError as exc:
             raise KoboVaultError("Kobo-Vault : erreur de transport", code="network_error") from exc
         if response.is_error:
-            code, text = self._error_parts(response)
-            if response.status_code == 401:
-                text = text if text and text != "HTTP 401" else "token API refusé"
-            elif response.status_code == 403:
-                text = text if text and text != "HTTP 403" else "scope insuffisant"
-            elif response.status_code == 409 and code == "archived_book":
-                text = (
-                    text if text and text != "HTTP 409"
-                    else "livre archivé : restaurez-le dans votre bibliothèque Kobo avant de réessayer"
-                )
-            elif response.status_code == 429:
-                retry = response.headers.get("retry-after")
-                if retry:
-                    text = f"{text} (réessayer dans {retry}s)"
+            status = response.status_code
+            # A fixed, minimal vocabulary replaces untrusted provider
+            # messages and headers. The delegated 403 is further scoped at
+            # the Core boundary because a 403 on /account is not a delegated
+            # permission failure.
+            provider_code = self._error_code(response)
+            if status == 401:
+                code, message = "invalid_token", "token API refusé"
+            elif status == 403:
+                code = "insufficient_scope" if provider_code == "insufficient_scope" else "forbidden"
+                message = "accès refusé : autorisations Kobo-Vault insuffisantes"
+            elif status == 409 and provider_code == "archived_book":
+                code = "archived_book"
+                message = "livre archivé : restaurez-le dans votre bibliothèque Kobo avant de réessayer"
+            elif status == 409:
+                code, message = "conflict", "conflit de ressource (HTTP 409)"
+            elif status == 429:
+                code, message = "rate_limited", "limite de requêtes Kobo-Vault atteinte (HTTP 429)"
+            elif status >= 500:
+                code, message = "server_error", f"serveur Kobo-Vault indisponible (HTTP {status})"
+            else:
+                code, message = "http_error", f"requête Kobo-Vault refusée (HTTP {status})"
             raise KoboVaultError(
-                f"Kobo-Vault : {redact_text(text)}",
+                f"Kobo-Vault : {message}",
                 code=code,
-                status_code=response.status_code,
+                status_code=status,
             )
         try:
             payload = response.json()
