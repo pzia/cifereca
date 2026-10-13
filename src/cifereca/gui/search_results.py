@@ -39,9 +39,11 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
     self._sync_search_detail_after_results()
     if not announce:
         return
-    warnings = list(getattr(self.service, "last_search_warnings", []) or [])
-    if warnings:
-        self.toast(f"Résultats partiels · {warnings[0]}", 6)
+    # Providers may include arbitrary exception strings (signed URLs, tokens,
+    # account IDs or local paths) in search warnings. Never echo their text
+    # into GTK. The presence of a partial failure is sufficient for UX.
+    if getattr(self.service, "last_search_warnings", None):
+        self.toast("Résultats partiels · certaines sources sont indisponibles.", 6)
 
 
 def _render_search_results(self) -> int:
