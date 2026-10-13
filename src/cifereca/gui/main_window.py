@@ -1692,10 +1692,34 @@ class MainWindow(Adw.ApplicationWindow):
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
+                # Planning is itself cancellable from GTK. The plugin plan()
+                # signature has no control, so cancellation discards its result;
+                # it must never reopen a stale confirmation after a slow scan.
+                previous_control = cancellation_state["control"]
+                if previous_control is not None:
+                    previous_control.cancel()
+                planning_control = MaintenanceCancelControl(
+                    owner_closed=lambda: self._closed,
+                )
+                cancellation_state["control"] = planning_control
+                can_cancel_preview = getattr(meta, "cancellable", False) is True
+                cancel_button.set_visible(can_cancel_preview)
+                cancel_button.set_sensitive(can_cancel_preview)
+
+                def finish_preview():
+                    if cancellation_state["control"] is not planning_control:
+                        return False
+                    cancellation_state["control"] = None
+                    if not self._closed:
+                        cancel_button.set_visible(False)
+                    return True
 
                 def present_preview(plan):
-                    # The worker can finish after a navigation or shutdown.
-                    # GTK widgets and dialogs are only handled on this callback.
+                    # The worker can finish after cancellation, navigation,
+                    # identity changes or shutdown. Only the current plan may
+                    # create a GTK dialog and all widget access stays on GTK.
+                    if not finish_preview() or planning_control.cancelled():
+                        return
                     if self._closed or _button.get_root() is None:
                         return
                     current_identity = self.service.current_identity
@@ -1796,9 +1820,16 @@ class MainWindow(Adw.ApplicationWindow):
                 # service.plan(context) on the main GTK event loop.
                 self.runner.submit(
                     f"Analyse : {meta.title}",
-                    lambda: preview_maintenance_tool(service, context, destructive=destructive),
+                    lambda: preview_maintenance_tool(
+                        service, context, destructive=destructive, control=planning_control,
+                    ),
                     present_preview,
-                    lambda exc: self.show_error(str(exc), meta.title),
+                    lambda exc: (
+                        self.show_error(str(exc), meta.title)
+                        if finish_preview() and not planning_control.cancelled()
+                        and not self._closed and _button.get_root() is not None
+                        else None
+                    ),
                     control=_button,
                     priority=TaskPriority.MAINTENANCE,
                     kind="maintenance-plan",
