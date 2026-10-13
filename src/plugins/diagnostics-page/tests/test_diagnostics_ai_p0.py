@@ -85,6 +85,59 @@ def test_preview_contains_only_redacted_public_fields_and_never_sends():
         assert forbidden not in preview["prompt"]
 
 
+@pytest.mark.parametrize("private_field", (
+    'title="Liseuse de Camille et Luc"',
+    "book_title=Les lectures privées de Camille; status=partial",
+    "author=Camille Dupont",
+    "reader_name='Camille Dupont'",
+    "account_alias=Lectures de Camille",
+    'display_name="Compte de Camille"',
+    'source_label="Bibliothèque familiale de Camille"',
+    'borrower="Camille Dupont"',
+))
+def test_remote_diagnostics_never_sends_unmarked_personal_labels(private_field):
+    """Free-form names and book titles are not detectable by token regexes."""
+    from cifereca_diagnostics_page import redacted_detail
+
+    model = FakeLLM(remote=True)
+    before = "TRACE sync status=partial " + private_field
+    preview = prepare_analysis(model, FakeBroker([event(before)]))
+    assert model.calls == 0
+    assert "TRACE sync status=partial" in preview["prompt"]
+    assert "Camille" not in preview["prompt"]
+    assert "Luc" not in preview["prompt"]
+    assert "Les lectures privées" not in preview["prompt"]
+    assert "<expurgé>" in preview["prompt"]
+    assert "Camille" not in json.dumps(redacted_detail({"title": "Liseuse de Camille"}))
+    result = analyze_with_consent(
+        model, preview, approval_id=preview["approval_id"],
+    )
+    assert result["ok"] and model.calls == 1
+    assert "Camille" not in model.sent[0].prompt
+
+
+def test_unquoted_private_title_masks_full_multitoken_line_and_export():
+    from cifereca_diagnostics_page import (
+        redacted_ai_response, redacted_detail,
+    )
+    private = "title=Les longues aventures de Camille; son compte familial"
+    safe = redacted_ai_response("Constat: " + private)
+    assert "Camille" not in safe
+    assert "compte familial" not in safe
+    assert "title=<expurgé>" in safe
+    assert redacted_detail(safe, max_text=4000) == safe
+    keys = redacted_detail({
+        "title": "La famille de Camille",
+        "author": "Camille Dupont",
+        "account_alias": "Lectures de Camille",
+        "status": "partial",
+    })
+    assert keys["title"] == "<expurgé>"
+    assert keys["author"] == "<expurgé>"
+    assert keys["account_alias"] == "<expurgé>"
+    assert keys["status"] == "partial"
+
+
 def test_approval_is_exact_single_destination_and_model_call_is_bounded():
     model = FakeLLM()
     review = prepare_analysis(model, FakeBroker([event()]))
