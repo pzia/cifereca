@@ -590,8 +590,15 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 changed += int(getattr(result, "changed", 0) or 0)
                 warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
             except Exception as exc:
+                # A mutation broker can signal cancellation from inside its
+                # own operation. Never downgrade that to a per-file warning:
+                # the user explicitly asked the destructive batch to stop.
+                control.check_cancelled()
                 failures += 1
                 warnings.append(f"{duplicate_id}: {type(exc).__name__}: {exc}")
+        # Cancellation during the final mutation must not be reported as
+        # successful completion merely because no next item exists to check.
+        control.check_cancelled()
         control.report(current=len(pairs), total=len(pairs) or 1, message="Nettoyage terminé")
         return MaintenanceResult(
             ok=failures == 0,
