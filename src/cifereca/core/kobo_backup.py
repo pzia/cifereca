@@ -407,7 +407,6 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         source_before = {key: int(summary.get(key, 0)) for key in source_counts}
         source_total = 0
         source_processed = 0
-        manifest_ok = False
         source_last_item = None
 
         def counts_for_source() -> dict[str, int]:
@@ -428,7 +427,6 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         try:
             emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
             manifest = session.backup_manifest()
-            manifest_ok = True
             source_total = len(manifest)
             save_source_checkpoint("running")
             summary["manifests_fetched"] += 1
@@ -457,8 +455,10 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             continue
 
         for index, raw in enumerate(manifest):
+            item_committed = False
             try:
                 if not isinstance(raw, dict):
+                    item_committed = True
                     continue
                 summary["scanned"] += 1
                 progress_title = str(raw.get("title") or raw.get("product_id") or raw.get("id") or "Kobo")
@@ -475,25 +475,31 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
                 if not product_id:
                     summary["skipped"] += 1
+                    item_committed = True
                     continue
                 content_type = str(raw.get("content_type") or "ebook").lower()
                 if content_type not in {"ebook", "book", "epub"}:
                     summary["skipped"] += 1
+                    item_committed = True
                     continue
                 item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
                 if _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+                    item_committed = True
                     continue
 
                 if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
                     abort_all = True
+                    item_committed = True
                     break
+                item_committed = True
             finally:
                 # A crash during the next book must not erase the position
                 # of the last processed item. Never use this as an unsafe
                 # resume offset; actual reuse depends on verified artifacts.
-                source_processed = index + 1
-                source_last_item = str(raw.get("product_id") or raw.get("id") or "") if isinstance(raw, dict) else None
-                save_source_checkpoint("running")
+                if item_committed:
+                    source_processed = index + 1
+                    source_last_item = str(raw.get("product_id") or raw.get("id") or "") if isinstance(raw, dict) else None
+                save_source_checkpoint("running" if item_committed else "interrupted")
         delta = counts_for_source()
         if abort_all:
             source_status = "aborted"
