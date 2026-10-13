@@ -244,8 +244,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             except Exception as exc:
                 kobo_summary = {"errors": 1, "error": str(exc)}
         else:
+            previous_batch = str(self.storage.metadata_get("kobo_backup_last_batch_status") or "")
             kobo_summary = {"errors": 0, "status": "fresh_cache", "skipped_fresh": True}
-            logger.info("TRACE kobo sync skipped reason=fresh-cache interval_minutes=%s", self.config.get("kobo_backup.interval_minutes", 60))
+            if previous_batch and previous_batch != "complete":
+                kobo_summary.update(status="fresh_cache_partial", last_batch_status=previous_batch)
+            logger.info(
+                "TRACE kobo sync skipped reason=fresh-cache previous_batch=%s interval_minutes=%s",
+                previous_batch or "unknown", self.config.get("kobo_backup.interval_minutes", 60),
+            )
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
     self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
