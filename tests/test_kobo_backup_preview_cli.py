@@ -22,7 +22,10 @@ def test_kobo_resume_preview_cli_only_connects_when_manifest_refresh_requested(m
         }
 
     service = SimpleNamespace(
-        connect_configured=lambda: connections.append(True),
+        connect_configured=lambda: (_ for _ in ()).throw(
+            AssertionError("global connect_configured must never be used for Kobo preview")
+        ),
+        connect_kobo_preview=lambda credential_id: connections.append(credential_id),
         kobo_backup_preview=preview,
     )
     core = SimpleNamespace(library=service, close=lambda: closed.append(True))
@@ -43,5 +46,5 @@ def test_kobo_resume_preview_cli_only_connects_when_manifest_refresh_requested(m
     assert refreshed["manifest_refreshed"] is True
     assert refreshed["verification"] == "artifact_hash"
     assert previews[-1] == ("vault-1", True, True)
-    assert connections == [True]
+    assert connections == ["vault-1"]
     assert len(closed) == 2

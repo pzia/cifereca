@@ -416,6 +416,64 @@ def disconnect_configured(self) -> None:
     self.last_bookings = []
 
 
+
+def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
+    """Connect only the requested Kobo credential for an opt-in manifest preview.
+
+    Unlike connect_configured(), this never touches other providers, account
+    refreshes, or SQLite connection/backup records. Offline preview does not
+    call this helper at all. The opened session is owned by LibraryService.
+    """
+    credential_id = str(credential_id or "").strip()
+    if not credential_id or not self.storage.identity_for_connection("kobo", credential_id):
+        raise ProviderConfigurationError("Compte Kobo demandé non configuré")
+    row = next(
+        (
+            row for row in self.config.provider_accounts(enabled_only=True)
+            if str(row.get("provider") or "").strip().lower() == "kobo"
+            and str(row.get("id") or "").strip() == credential_id
+        ),
+        None,
+    )
+    if row is None:
+        raise ProviderConfigurationError("Compte Kobo désactivé ou non configuré")
+    plugin = self.registry.maybe_get("kobo")
+    if plugin is None or plugin.descriptor.state != "ready":
+        raise ProviderConfigurationError("Provider Kobo indisponible")
+    key = self._session_key("kobo", credential_id)
+    existing = self._sessions.get(key)
+    if existing is not None and existing.connected:
+        if existing.provider_id != "kobo" or existing.credential_id != credential_id:
+            raise ProviderConfigurationError("Session Kobo différente du compte demandé")
+        return existing
+    session = plugin.create_session(
+        credential_id=credential_id,
+        label=str(row.get("label") or plugin.descriptor.display_name),
+        credentials=dict(row.get("credentials") or {}),
+        options=dict(row.get("options") or {}),
+        config=self.config, storage=self.storage, diagnostics=self.diagnostics,
+    )
+    try:
+        session.connect()
+        if (not session.connected or session.provider_id != "kobo"
+                or session.credential_id != credential_id
+                or not getattr(session.capabilities, "backup", False)):
+            raise ProviderConfigurationError("Session Kobo sans capacité de sauvegarde")
+    except Exception:
+        try:
+            session.close()
+        except Exception:
+            pass
+        raise
+    if existing is not None:
+        try:
+            existing.close()
+        except Exception:
+            pass
+    self._sessions[key] = session
+    return session
+
+
 def connect_configured(self, *, logger) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
 

@@ -372,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
             if a.refresh_manifest:
                 # Only explicit --refresh-manifest may contact the Kobo
                 # provider; the default preview uses persisted local state.
-                service.connect_configured()
+                service.connect_kobo_preview(a.credential)
             result = service.kobo_backup_preview(
                 a.credential,
                 refresh_manifest=a.refresh_manifest,
