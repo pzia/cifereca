@@ -453,6 +453,9 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
         for index, raw in enumerate(manifest):
             if not isinstance(raw, dict):
+                summary["skipped"] += 1
+                source_position = index + 1
+                save_source_checkpoint("running")
                 continue
             summary["scanned"] += 1
             progress_title = str(raw.get("title") or raw.get("product_id") or raw.get("id") or "Kobo")
@@ -469,18 +472,40 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
             if not product_id:
                 summary["skipped"] += 1
+                source_position = index + 1
+                save_source_checkpoint("running")
                 continue
             content_type = str(raw.get("content_type") or "ebook").lower()
             if content_type not in {"ebook", "book", "epub"}:
                 summary["skipped"] += 1
+                source_position = index + 1
+                save_source_checkpoint("running")
                 continue
             item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
             if _skip_manifest_item(self, item, raw, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+                source_position = index + 1
+                save_source_checkpoint("running")
                 continue
 
-            if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
+            stop = _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger)
+            source_position = index + 1
+            save_source_checkpoint("running")
+            if stop:
                 abort_all = True
                 break
+        deltas = {key: max(0, int(summary.get(key) or 0) - source_baseline[key])
+                  for key in source_counter_keys}
+        if abort_all:
+            source_status = "aborted"
+        elif deltas["errors"]:
+            source_status = "partial" if deltas["downloaded"] or deltas["unchanged"] else "failed"
+        elif deltas["remaining"] or source_position < source_total:
+            source_status = "partial"
+        elif any(deltas[key] for key in ("pending", "attention_required", "reconcile_skipped")):
+            source_status = "attention_required"
+        else:
+            source_status = "complete"
+        summary["sources"].append(save_source_checkpoint(source_status))
         if abort_all:
             break
 
