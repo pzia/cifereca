@@ -283,7 +283,9 @@ def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=Non
     lock = lock_factory(lock_path())
     try:
         with lock:
-            return self._sync_kobo_backup_locked(progress=progress, credential_id=credential_id)
+            if credential_id is None:
+                return self._sync_kobo_backup_locked(progress=progress)
+            return self._sync_kobo_backup_account_locked(credential_id, progress=progress)
     except LockBusyError as exc:
         raise ProviderConfigurationError(
             "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
