@@ -95,6 +95,10 @@ def test_closed_plugin_host_refuses_all_owner_mutations_and_live_service_reads()
         plugins_page=NS(focus_plugin=Mock()),
     )
     host = host_type()(window, UiActionContext(target="page", route="library"))
+    # Plugin error notifications must not reach a detached GTK toast widget.
+    window.toast = Mock()
+    host.toast("private provider failure")
+    window.toast.assert_not_called()
     assert host.open_book_detail(BookRef("one")) is False
     assert host.search_books("Loup") is False
     host.navigate("search")
