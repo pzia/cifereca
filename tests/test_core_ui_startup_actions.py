@@ -51,3 +51,29 @@ def test_mainwindow_startup_facade_still_delegates_without_import_cycle():
     source = STARTUP_PAGE.read_text(encoding="utf-8")
     assert "from .main_window import" not in source
     assert "from .startup_page import build_startup_page" in MAIN_WINDOW.read_text()
+
+
+def test_opening_sync_idle_callback_checks_window_liveness_at_dispatch():
+    """#1132: closing between provider success and idle dispatch must suppress sync."""
+    source = _method_source("MainWindow", "connect_configured_sources")
+    tree = ast.parse(source)
+    callbacks = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "idle_add"
+    ]
+    assert callbacks, "provider startup must schedule opening sync via GTK idle"
+    for callback in callbacks:
+        assert callback.args, "idle callback is missing"
+        idle = callback.args[0]
+        assert isinstance(idle, ast.Lambda)
+        callback_code = compile(ast.Expression(idle), "<gtk-idle>", "eval")
+        class Window:
+            _closed = True
+            def run_opening_sync(self):
+                raise AssertionError("sync invoked after window close")
+        # The callback closes over 'self' at runtime; evaluate with a closed
+        # stand-in, exactly as GLib would invoke it after window disposal.
+        fn = eval(callback_code, {"self": Window()})
+        assert fn() is False
