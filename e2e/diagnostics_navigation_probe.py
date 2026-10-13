@@ -702,6 +702,22 @@ def main() -> int:
         assert len(broker.event_queries) == events_before
         report["checks"]["P0_stale_identity_history_preserves_gtk_filters"] = True
         capture("07b-stale-identity-history-rejected")
+        # P0 #1130: retain one *real GTK* plugin action/button before closing
+        # the owner, as a plugin could retain an action from an older route.
+        late_action_calls = []
+        class RetainedPluginAction:
+            title = "Action fictive tardive"
+            icon_name = "document-open-symbolic"
+            def callback(self, host):
+                late_action_calls.append(host)
+        public_host = w._UiHost(w)
+        action_bar = public_host.build_action_bar([RetainedPluginAction()])
+        action_buttons = [
+            node for node in walk(action_bar) if isinstance(node, Gtk.Button)
+        ]
+        assert len(action_buttons) == 1
+        retained_action_button = action_buttons[0]
+        public_host.action_context()  # Real library context, before teardown.
         w.close()
         assert w._closed
         # P0 #1130/#1132: late plugin notifications are a no-op on an
@@ -725,6 +741,32 @@ def main() -> int:
         assert w._plugin_page_widgets == plugin_widgets_before
         assert w._closed
         report["checks"]["P0_closed_plugin_callbacks_do_not_rebuild_gtk_shell"] = True
+        # The retained GTK signal must not invoke a plugin callback, even
+        # though the button and the public UiHost adapter remain referenced.
+        retained_action_button.emit("clicked")
+        assert late_action_calls == []
+        assert public_host.search_books("Loup") is False
+        assert public_host.open_book_detail(None) is False
+        assert public_host.identity_overview() == []
+        assert public_host.plugin_statuses() == []
+        assert not hasattr(w, "_overview_listeners") or not w._overview_listeners
+        cancel = public_host.subscribe_identity_overview(
+            lambda: late_action_calls.append("observer")
+        )
+        cancel()
+        public_host.navigate("search")
+        public_host.open_plugin_settings("fake-closed-plugin")
+        public_host.open_identity_library("camille")
+        public_host.open_identity_view("camille", route="library")
+        public_host.import_acsm()
+        public_host.synchronize()
+        public_host.refresh_context()
+        public_host.toast("Late plugin error must be discarded")
+        assert late_action_calls == []
+        assert w.view_stack.get_visible_child_name() == "library"
+        assert w.shell_header is shell_before
+        assert w._closed
+        report["checks"]["P0_closed_public_plugin_host_and_GTK_button_are_inert"] = True
         from cifereca.task_queue import TaskPriority
         try:
             w.runner.pool.submit(TaskPriority.NORMAL, lambda: None)
