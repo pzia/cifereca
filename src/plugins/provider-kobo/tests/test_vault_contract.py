@@ -17,6 +17,109 @@ class Diagnostics:
         return None
 
 
+def test_untrusted_vault_status_never_exposes_free_text_or_private_endpoint():
+    class Capture:
+        def __init__(self):
+            self.details = []
+
+        def add(self, *_args, **kwargs):
+            self.details.append(kwargs.get("detail"))
+
+    class FakeVault:
+        base_url = "https://person:PRIVATE_VALUE@vault.example/private?token=PRIVATE_VALUE"
+
+        def status(self, *, authenticated=False):
+            assert not authenticated
+            return {
+                "api_version": "2.3",
+                "release": "2.3.3 PRIVATE_VALUE",
+                "role": "person=PRIVATE_VALUE",
+                "acquisition_access": "PRIVATE_VALUE",
+                "capabilities": ["acquisition", "catalog_search", "PRIVATE_VALUE", 123],
+                "capability_details": [
+                    {"id": "acquisition", "available": True,
+                     "description": "person=PRIVATE_VALUE", "count": 9},
+                    {"id": "PRIVATE_VALUE", "enabled": True},
+                ],
+            }
+
+        def account(self):
+            return {"id": "fixture-account", "display_name": "Synthetic Kobo"}
+
+        def close(self):
+            return None
+
+    capture = Capture()
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="credential-fixture",
+        label="Kobo",
+        credentials={"api_token": "fixture"},
+        options={"base_url": "https://vault.example"},
+        config={}, storage={}, diagnostics=capture,
+        runtime_capabilities=SimpleNamespace(
+            acquisition=lambda _provider: RuntimeAcquisitionCapabilities(
+                provider_id="kobo", available=True, compatible=True,
+                operational=True, modes=("kobo_delegated",),
+            ),
+        ),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    try:
+        session.connect()
+        diagnostics = session.diagnostic_state()
+        assert session.supports_acquisition_display_profile is True
+        assert session.capability_names == {"acquisition", "catalog_search"}
+        assert session.capability_details == {
+            "acquisition": {"id": "acquisition", "available": True},
+        }
+        assert diagnostics["vault_url"] == "configured"
+        assert diagnostics["acquisition_access"] == "unknown"
+        assert diagnostics["vault_release"] is None
+        assert capture.details
+        assert capture.details[0]["credential_configured"] is True
+        assert "credential_id" not in capture.details[0]
+        assert capture.details[0]["role"] == "kobo-library-provider"
+        assert capture.details[0]["capabilities"] == ["acquisition", "catalog_search"]
+        serialized = json.dumps(
+            [diagnostics, *capture.details], ensure_ascii=False,
+        )
+        assert "PRIVATE_VALUE" not in serialized
+        assert "person:" not in serialized
+        assert "private?token=" not in serialized
+    finally:
+        session.close()
+
+
+def test_malformed_vault_api_version_is_not_reflected_in_exception():
+    class FakeVault:
+        def status(self, *, authenticated=False):
+            return {
+                "api_version": "2.2?token=PRIVATE_VALUE",
+                "capabilities": [],
+            }
+
+        def close(self):
+            return None
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR, credential_id="fixture",
+        label="Kobo", credentials={"api_token": "fixture"},
+        options={"base_url": "https://vault.example"},
+        config={}, storage={}, diagnostics=Diagnostics(),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    try:
+        with pytest.raises(ProviderError, match="version API incompatible") as err:
+            session.connect()
+        assert "PRIVATE_VALUE" not in str(err.value)
+        assert "inconnue" in str(err.value)
+    finally:
+        session.close()
+
+
 def test_vault_public_status_and_authenticated_library_contract():
     paths: list[str] = []
 
