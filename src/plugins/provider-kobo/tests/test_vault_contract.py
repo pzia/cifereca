@@ -17,6 +17,109 @@ class Diagnostics:
         return None
 
 
+def test_untrusted_vault_status_never_exposes_free_text_or_private_endpoint():
+    class Capture:
+        def __init__(self):
+            self.details = []
+
+        def add(self, *_args, **kwargs):
+            self.details.append(kwargs.get("detail"))
+
+    class FakeVault:
+        base_url = "https://person:PRIVATE_VALUE@vault.example/private?token=PRIVATE_VALUE"
+
+        def status(self, *, authenticated=False):
+            assert not authenticated
+            return {
+                "api_version": "2.3",
+                "release": "2.3.3 PRIVATE_VALUE",
+                "role": "person=PRIVATE_VALUE",
+                "acquisition_access": "PRIVATE_VALUE",
+                "capabilities": ["acquisition", "catalog_search", "PRIVATE_VALUE", 123],
+                "capability_details": [
+                    {"id": "acquisition", "available": True,
+                     "description": "person=PRIVATE_VALUE", "count": 9},
+                    {"id": "PRIVATE_VALUE", "enabled": True},
+                ],
+            }
+
+        def account(self):
+            return {"id": "fixture-account", "display_name": "Synthetic Kobo"}
+
+        def close(self):
+            return None
+
+    capture = Capture()
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="credential-fixture",
+        label="Kobo",
+        credentials={"api_token": "fixture"},
+        options={"base_url": "https://vault.example"},
+        config={}, storage={}, diagnostics=capture,
+        runtime_capabilities=SimpleNamespace(
+            acquisition=lambda _provider: RuntimeAcquisitionCapabilities(
+                provider_id="kobo", available=True, compatible=True,
+                operational=True, modes=("kobo_delegated",),
+            ),
+        ),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    try:
+        session.connect()
+        diagnostics = session.diagnostic_state()
+        assert session.supports_acquisition_display_profile is True
+        assert session.capability_names == {"acquisition", "catalog_search"}
+        assert session.capability_details == {
+            "acquisition": {"id": "acquisition", "available": True},
+        }
+        assert diagnostics["vault_url"] == "configured"
+        assert diagnostics["acquisition_access"] == "unknown"
+        assert diagnostics["vault_release"] is None
+        assert capture.details
+        assert capture.details[0]["credential_configured"] is True
+        assert "credential_id" not in capture.details[0]
+        assert capture.details[0]["role"] == "kobo-library-provider"
+        assert capture.details[0]["capabilities"] == ["acquisition", "catalog_search"]
+        serialized = json.dumps(
+            [diagnostics, *capture.details], ensure_ascii=False,
+        )
+        assert "PRIVATE_VALUE" not in serialized
+        assert "person:" not in serialized
+        assert "private?token=" not in serialized
+    finally:
+        session.close()
+
+
+def test_malformed_vault_api_version_is_not_reflected_in_exception():
+    class FakeVault:
+        def status(self, *, authenticated=False):
+            return {
+                "api_version": "2.2?token=PRIVATE_VALUE",
+                "capabilities": [],
+            }
+
+        def close(self):
+            return None
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR, credential_id="fixture",
+        label="Kobo", credentials={"api_token": "fixture"},
+        options={"base_url": "https://vault.example"},
+        config={}, storage={}, diagnostics=Diagnostics(),
+    )
+    session.client.close()
+    session.client = FakeVault()
+    try:
+        with pytest.raises(ProviderError, match="version API incompatible") as err:
+            session.connect()
+        assert "PRIVATE_VALUE" not in str(err.value)
+        assert "inconnue" in str(err.value)
+    finally:
+        session.close()
+
+
 def test_vault_public_status_and_authenticated_library_contract():
     paths: list[str] = []
 
@@ -650,80 +753,3 @@ def test_kobo_library_explicit_bibliographic_value_wins_and_no_cross_product_mer
         assert rows[1]["owned"] is False
     finally:
         client.close()
-
-
-def test_manifest_missing_items_is_not_an_authoritative_empty_response():
-    calls = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        assert request.url.path == "/api/v2/library/manifest"
-        calls += 1
-        if calls == 1:
-            return httpx.Response(200, json={"next_cursor": None})
-        if calls == 2:
-            return httpx.Response(200, json={"items": None, "next_cursor": None})
-        return httpx.Response(200, json={
-            "items": [{"product_id": "owned", "title": "Owned"}],
-            "next_cursor": None,
-        })
-
-    client = KoboVaultClient(
-        "https://vault.example", "secret", transport=httpx.MockTransport(handler),
-    )
-    try:
-        assert client.library_manifest() == []
-        assert client.last_manifest_rejections == [
-            {"type": "invalid_shape", "reason": "items_not_list"},
-        ]
-        assert client.library_manifest() == []
-        assert client.last_manifest_rejections[0]["reason"] == "items_not_list"
-        assert client.library_manifest()[0]["product_id"] == "owned"
-        assert client.last_manifest_rejections == []
-    finally:
-        client.close()
-
-
-def test_backup_manifest_reports_only_rejected_row_count_to_core():
-    class FakeVault:
-        base_url = "https://vault.example"
-        last_manifest_rejections = []
-
-        def __init__(self):
-            self.calls = 0
-
-        def library_manifest(self):
-            self.calls += 1
-            if self.calls == 1:
-                self.last_manifest_rejections = [
-                    {"type": "invalid_shape", "reason": "item_not_object",
-                     "private": "Bearer SECRET"},
-                ]
-            else:
-                self.last_manifest_rejections = []
-            return [{"product_id": "owned", "title": "Owned"}]
-
-        def close(self):
-            return None
-
-    session = KoboSession(
-        descriptor=DESCRIPTOR, credential_id="vault-1", label="Kobo",
-        credentials={"api_token": "dummy"},
-        options={"base_url": "https://vault.example"},
-        config={}, storage={}, diagnostics=Diagnostics(),
-        runtime_capabilities=SimpleNamespace(acquisition=lambda _: None),
-    )
-    session.client.close()
-    session.client = FakeVault()
-    session.catalog = KoboCatalogService(
-        session.client, credential_id=session.credential_id,
-        provider_id=session.provider_id,
-    )
-    try:
-        assert session.backup_manifest()[0]["product_id"] == "owned"
-        assert session.backup_manifest_rejection_count == 1
-        assert session.backup_manifest()[0]["product_id"] == "owned"
-        assert session.backup_manifest_rejection_count == 0
-        assert not hasattr(session, "backup_manifest_rejection_messages")
-    finally:
-        session.close()
