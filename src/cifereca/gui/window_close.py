@@ -10,8 +10,16 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     window._closed = True
     for name in ("_settings_main_lifetime", "_settings_standalone_lifetime"):
         lifetime = getattr(window, name, None)
-        if lifetime is not None:
+        if lifetime is None:
+            continue
+        try:
             lifetime.dispose()
+        except Exception:
+            # A broken plugin callback during one page's teardown must not
+            # prevent releasing the other lifetime, subscriptions, worker
+            # pool or the backing service. The window is already closed.
+            pass
+        finally:
             setattr(window, name, None)
     window._diag_refresh = None
     try:
