@@ -5,6 +5,8 @@ from io import BytesIO
 from threading import Event
 from time import monotonic
 
+import pytest
+
 from cifereca.config import Config
 from cifereca.core.llm_service import OptionalLLMService, optional_llm_service
 from cifereca.plugin_api import LLMRequest, LLMResult, LLMService
@@ -106,7 +108,7 @@ def test_bad_json_and_failed_backend_have_safe_error_without_secret():
     result = OptionalLLMService(_config(), opener=http).generate(
         LLMRequest("Classe", task="structured"),
     )
-    assert not result.ok and result.reason == "backend_unavailable"
+    assert not result.ok and result.reason == "invalid_response"
 
 
 def test_size_limits_are_checked_before_any_http_request():
@@ -243,3 +245,72 @@ def test_llm_http_failures_return_only_safe_status_reasons():
         assert response.ok is False
         assert response.reason == expected
 
+
+
+
+@pytest.mark.parametrize("content", [
+    '{"state":"ready","state":"unavailable"}',
+    '{"score":NaN}', '{"score":Infinity}', '{"score":-Infinity}',
+    '{"scores":[{"confidence":1e999}]}',
+    '{"result":{"allowed":true,"allowed":false}}',
+    '[]', '"not a JSON object"', 'null',
+])
+def test_structured_llm_rejects_ambiguous_or_nonfinite_json_without_exposing_content(content):
+    """Typed provider facts cannot be based on duplicate keys or non-JSON floats."""
+    response = json.dumps({"choices": [{"message": {"content": content}}]})
+    http = FakeHTTP(response)
+    llm = OptionalLLMService(_config(), opener=http)
+    result = llm.generate(LLMRequest("classer", task="structured"))
+    assert result.ok is False
+    assert result.reason == "invalid_response"
+    assert result.structured == {}
+    assert result.generated is False
+    assert content not in repr(result)
+    assert len(http.calls) == 1
+
+
+@pytest.mark.parametrize("response", [
+    '{"choices":[{"message":{"content":"ok"}},{"message":{"content":"ignored"}}],"choices":[]}',
+    '{"choices":[{"message":{"content":"ok","content":"secret"}}]}',
+    '{"choices":[{"message":{"content":"ok"}}],"usage":{"rate":NaN}}',
+    '{"choices":[{"message":{"content":"ok"}}],"usage":{"rate":1e999}}',
+    '{"choices":[]}',
+    '{"choices":[{"message":{"content":42}}]}',
+    'null', '[]', '{not json}',
+])
+def test_llm_rejects_invalid_http_json_envelope_without_prompt_or_response_leak(response):
+    http = FakeHTTP(response)
+    result = OptionalLLMService(_config(), opener=http).generate(
+        LLMRequest("Private loan from Alice"),
+    )
+    assert result.reason == "invalid_response" and not result.ok
+    assert result.text == "" and result.structured == {}
+    assert "Private loan" not in repr(result)
+    assert response not in repr(result)
+
+
+def test_llm_rejects_unpaired_surrogate_in_model_text():
+    http = FakeHTTP(json.dumps({
+        "choices": [{"message": {"content": "private invalid " + chr(0xD800)}}],
+    }))
+    for task in ("generate", "structured"):
+        result = OptionalLLMService(_config(), opener=http).generate(
+            LLMRequest("sensitive", task=task),
+        )
+        assert result.reason == "invalid_response" and not result.ok
+        assert result.text == ""
+    assert len(http.calls) == 2
+
+
+def test_structured_llm_valid_nested_unicode_json_survives_unchanged():
+    nested = {"categories": [{"theme": "forêt", "confidence": 0.75}],
+              "generated": True, "empty": None}
+    content = json.dumps(nested, ensure_ascii=False)
+    http = FakeHTTP(json.dumps({"choices": [{"message": {"content": content}}]}))
+    result = OptionalLLMService(_config(), opener=http).generate(
+        LLMRequest("classifier", task="structured"),
+    )
+    assert result.ok and result.generated
+    assert result.structured == nested
+    assert result.text == content
+    assert result.provider == "openai-compatible" and not result.remote
