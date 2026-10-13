@@ -525,7 +525,8 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
             if key in {"scanned", "attempted", "downloaded", "unchanged",
                        "pending", "attention_required", "errors", "skipped",
                        "remaining", "reconcile_pending", "reconcile_skipped",
-                       "items_blocked_by_scope", "malformed_manifest_items"}
+                       "items_blocked_by_scope", "malformed_manifest_items",
+                       "duplicate_manifest_items"}
             and type(value) is int and 0 <= value <= 1000000
         }
         raw_streak = row.get("failure_streak")
@@ -708,7 +709,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     summary: dict[str, Any] = {
         "scope": "account" if credential_id is not None else "all",
         "sessions": len(sessions), "manifests_fetched": 0, "manifest_items": 0,
-        "scanned": 0, "malformed_manifest_items": 0, "attempted": 0, "pending": 0,
+        "scanned": 0, "malformed_manifest_items": 0, "duplicate_manifest_items": 0,
+        "attempted": 0, "pending": 0,
         "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "items_blocked_by_scope": 0, "attempts_saved": 0,
@@ -783,7 +785,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "scanned", "attempted", "downloaded", "unchanged", "pending",
         "attention_required", "errors", "remaining", "reconcile_pending",
         "reconcile_skipped", "items_blocked_by_scope", "blocked_non_retryable",
-        "malformed_manifest_items",
+        "malformed_manifest_items", "duplicate_manifest_items",
     )
     summary["sources"] = []
     for session in sessions:
@@ -845,11 +847,19 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             checkpoint("running")
             summary["manifests_fetched"] += 1
             summary["manifest_items"] += len(manifest)
-            authoritative_manifest_ids[session.credential_id] = {
+            manifest_product_counts = Counter(
                 str(raw.get("product_id") or raw.get("id") or "").strip()
                 for raw in manifest if isinstance(raw, dict)
                 if str(raw.get("product_id") or raw.get("id") or "").strip()
+            )
+            # A repeated product ID may be two conflicting revisions. Identify
+            # every conflicting row BEFORE any acquisition, never download the
+            # first variant only to overwrite it with the second.
+            ambiguous_product_ids = {
+                product_id for product_id, count in manifest_product_counts.items()
+                if count > 1
             }
+            authoritative_manifest_ids[session.credential_id] = set(manifest_product_counts)
             emit("manifest", credential_id=session.credential_id, total=len(manifest))
         except Exception as exc:
             summary["errors"] += 1
@@ -907,6 +917,16 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 if not product_id:
                     malformed = True
                     summary["malformed_manifest_items"] += 1
+                    summary["skipped"] += 1
+                    item_committed = True
+                    continue
+                if product_id in ambiguous_product_ids:
+                    # Do not trust either version of a duplicated product:
+                    # keep existing entitlements/artifacts and quarantine the
+                    # batch from authoritative prune until Vault is repaired.
+                    malformed = True
+                    summary["malformed_manifest_items"] += 1
+                    summary["duplicate_manifest_items"] += 1
                     summary["skipped"] += 1
                     item_committed = True
                     continue
