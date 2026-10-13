@@ -138,3 +138,40 @@ def test_checkpoint_write_failure_cannot_advertise_completed_item(tmp_path, monk
         assert calls == ["good"]
     finally:
         service.close()
+
+
+def test_large_manifest_resumes_after_117_without_redownloading(tmp_path, monkeypatch):
+    """#1348: a persisted partial batch resumes only the missing 405 items."""
+    names = [f"book-{n:04d}" for n in range(522)]
+    service, _session = _service(tmp_path, _manifest(*names))
+    monkeypatch.setattr(service, "kobo_adept_state", lambda **_kw: _ready_adept_state())
+    downloaded = []
+    interrupted = [False]
+
+    def acquire(item, target_dir):
+        if len(downloaded) == 117 and not interrupted[0]:
+            interrupted[0] = True
+            raise KeyboardInterrupt("simulated process interruption")
+        downloaded.append(item.record_id)
+        return _acquirer(item, target_dir)
+
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+    key = _kobo_checkpoint_key("default", "vault-1")
+    try:
+        with pytest.raises(KeyboardInterrupt, match="interruption"):
+            service.sync_kobo_backup_account("vault-1")
+        assert len(downloaded) == 117
+        checkpoint = json.loads(service.storage.metadata_get(key))
+        assert checkpoint["processed"] == 117
+        assert checkpoint["status"] == "running"
+
+        resumed = service.sync_kobo_backup_account("vault-1")
+        assert resumed["status"] == "complete"
+        assert resumed["downloaded"] == 405
+        assert resumed["unchanged"] == 117
+        assert resumed["attempted"] == 405
+        assert len(downloaded) == 522
+        assert len(set(downloaded)) == 522
+        assert json.loads(service.storage.metadata_get(key))["status"] == "complete"
+    finally:
+        service.close()
