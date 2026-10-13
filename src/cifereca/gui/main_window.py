@@ -3553,6 +3553,12 @@ class MainWindow(Adw.ApplicationWindow):
             def failed(_exc):
                 if version == ai_probe_version[0] and page_lifetime.alive:
                     ai_status.set_text("Test non concluant ; vérifier la configuration")
+            # TaskRunner temporarily disables the active test control.
+            # Park keyboard focus on a live cancel/reset action first; GTK
+            # otherwise drops it as the focused control becomes insensitive.
+            # Do not steal focus when the user is on another widget.
+            if self.get_focus() is ai_test:
+                ai_reset.grab_focus()
             try:
                 self.runner.submit(
                     "Test connexion IA synthétique",
