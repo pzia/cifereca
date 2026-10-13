@@ -95,3 +95,75 @@ def test_connect_callback_on_closed_window_does_not_touch_status_or_submit():
     host = NS(_closed=True)
     assert connect(host) is False
     assert queued == []
+
+
+def _pending_connection():
+    connect, posted = _method("connect_configured_sources")
+    calls = []
+    queued = []
+    host = NS(
+        _closed=False,
+        startup_status=NS(set_label=lambda text: calls.append(("startup", text))),
+        dashboard_loading_status=NS(
+            set_label=lambda text: calls.append(("dashboard-label", text)),
+            set_visible=lambda value: calls.append(("dashboard-visible", value)),
+        ),
+        runner=NS(submit=lambda *args, **kwargs: queued.append((args, kwargs))),
+        service=NS(last_loans=["loan"], connect_configured=lambda: None),
+        _populate_accounts=lambda: calls.append(("accounts",)),
+        _populate_loans=lambda rows: calls.append(("loans", rows)),
+        _activity_result=lambda *args, **kwargs: calls.append(("activity",)),
+        _render_dashboard=lambda: calls.append(("render",)),
+        run_opening_sync=lambda: calls.append(("opening-sync",)),
+    )
+    assert connect(host) is False
+    assert len(queued) == 1
+    return host, calls, queued[0][0], posted
+
+
+def test_queued_provider_success_does_not_mutate_closed_gtk_window():
+    host, calls, submitted, posted = _pending_connection()
+    calls.clear()
+    host._closed = True
+    submitted[2]({"connected": ["local"], "errors": {}})
+    assert calls == []
+    assert posted == []
+
+
+def test_queued_provider_error_does_not_touch_closed_widgets():
+    host, calls, submitted, posted = _pending_connection()
+    calls.clear()
+    host._closed = True
+    submitted[3](RuntimeError("https://private.example/?token=SECRET"))
+    assert calls == []
+    assert posted == []
+
+
+def test_live_provider_failure_is_functional_and_never_exposes_exception():
+    host, calls, submitted, posted = _pending_connection()
+    calls.clear()
+    submitted[3](RuntimeError(
+        "https://private.example/?token=SECRET /home/alice/private-card"
+    ))
+    assert calls == [
+        ("startup", "Connexion aux sources indisponible."),
+        ("dashboard-label",
+         "Connexion aux sources indisponible. La navigation locale reste disponible."),
+        ("dashboard-visible", True),
+    ]
+    assert "SECRET" not in str(calls)
+    assert "private.example" not in str(calls)
+    assert posted == []
+
+
+def test_live_provider_success_preserves_dashboard_and_single_deferred_sync():
+    host, calls, submitted, posted = _pending_connection()
+    calls.clear()
+    submitted[2]({"connected": ["provider"], "errors": {}})
+    assert [row[0] for row in calls] == [
+        "dashboard-visible", "accounts", "loans", "activity", "render",
+    ]
+    assert len(posted) == 1
+    assert "opening-sync" not in [row[0] for row in calls]
+    posted[0]()
+    assert calls[-1] == ("opening-sync",)
