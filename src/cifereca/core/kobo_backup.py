@@ -338,7 +338,7 @@ def kobo_backup_preview(
     unlinked_local_books = self.kobo_unlinked_local_count(identity_id)
     unlinked_blocked = (
         unlinked_local_books > 0
-        and not bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False))
+        and not self.config.get("kobo_backup.allow_unlinked_acquisition", False) is True
     )
     counts = {
         "already_local_linked": 0, "already_local_verified": 0,
@@ -1738,7 +1738,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         )
         return True
 
-    if unlinked_local_count and not bool(self.config.get("kobo_backup.allow_unlinked_acquisition", False)):
+    if unlinked_local_count and not self.config.get("kobo_backup.allow_unlinked_acquisition", False) is True:
         message = f"Acquisition suspendue : {unlinked_local_count} livre(s) local(aux) sans liaison Kobo. Rapprochez les fichiers ou autorisez explicitement l’acquisition dans les paramètres."
         self.storage.backup_put({**base_record, "status": "attention_required", "attention_code": "unlinked_local_books", "error": message})
         summary["attention_required"] += 1
