@@ -214,3 +214,44 @@ def test_resume_after_mid_manifest_checkpoint_failure_reuses_prior_files(tmp_pat
         assert json.loads(service.storage.metadata_get(key))["status"] == "complete"
     finally:
         service.close()
+
+def test_resume_after_closing_and_reopening_sqlite_service(tmp_path, monkeypatch):
+    """#1348: persisted items survive a fresh Core instance, not only a retry."""
+    names = [f"book-{n:04d}" for n in range(9)]
+    downloaded = []
+    interrupted = [False]
+
+    def acquire(item, target_dir):
+        if len(downloaded) == 4 and not interrupted[0]:
+            interrupted[0] = True
+            raise KeyboardInterrupt("restart simulation")
+        downloaded.append(item.record_id)
+        return _acquirer(item, target_dir)
+
+    first, _ = _service(tmp_path, _manifest(*names))
+    monkeypatch.setattr(first, "kobo_adept_state", lambda **_kw: _ready_adept_state())
+    monkeypatch.setattr(first, "_execute_kobo_acquisition", acquire)
+    try:
+        with pytest.raises(KeyboardInterrupt, match="restart simulation"):
+            first.sync_kobo_backup_account("vault-1")
+        assert len(downloaded) == 4
+        checkpoint = json.loads(first.storage.metadata_get(
+            _kobo_checkpoint_key("default", "vault-1")))
+        assert checkpoint["processed"] == 4
+        assert checkpoint["status"] == "interrupted"
+    finally:
+        first.close()
+
+    second, _ = _service(tmp_path, _manifest(*names))
+    monkeypatch.setattr(second, "kobo_adept_state", lambda **_kw: _ready_adept_state())
+    monkeypatch.setattr(second, "_execute_kobo_acquisition", acquire)
+    try:
+        result = second.sync_kobo_backup_account("vault-1")
+        assert result["status"] == "complete"
+        assert result["downloaded"] == 5
+        assert result["unchanged"] == 4
+        assert result["attempted"] == 5
+        assert len(downloaded) == 9
+        assert len(set(downloaded)) == 9
+    finally:
+        second.close()
