@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import zipfile
 
@@ -380,5 +381,54 @@ def test_existing_reconciliation_skip_does_not_claim_batch_completed(tmp_path: P
         assert summary["reconcile_skipped"] == 1
         assert summary["status"] == "attention_required"
         assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
+
+
+def test_kobo_source_checkpoint_has_no_account_or_book_identifiers(tmp_path: Path):
+    manifest = [
+        {"product_id": f"private-item-{n}", "title": f"Private Title {n}",
+         "revision_id": "r1", "format": "EPUB", "downloadable": True}
+        for n in range(3)
+    ]
+    service, _session = _service(tmp_path, manifest=manifest)
+    service.kobo_adept_state = lambda **_kw: {
+        "available": False, "compatible": False, "operational": False,
+        "error": {"message": "Runtime absent"},
+    }
+    try:
+        summary = service.sync_kobo_backup()
+        assert len(summary["sources"]) == 1
+        source = summary["sources"][0]
+        assert source["status"] == "attention_required"
+        assert source["position"] == 3
+        assert source["total"] == 3
+        assert source["pending"] == 3
+        checkpoint = json.loads(service.storage.metadata_get("kobo_backup_source_checkpoints_v1"))
+        assert len(checkpoint) == 1
+        assert checkpoint[source["source_id"]] == source
+        encoded = json.dumps(checkpoint)
+        assert "private-item" not in encoded
+        assert "Private Title" not in encoded
+        assert "vault-1" not in encoded
+    finally:
+        service.close()
+
+
+def test_kobo_source_checkpoint_marks_fatal_batch_aborted(tmp_path: Path):
+    service, _session = _service(
+        tmp_path, unauthorized=True, manifest=[
+            {"product_id": "first", "revision_id": "r1", "format": "EPUB"},
+            {"product_id": "second", "revision_id": "r1", "format": "EPUB"},
+        ],
+    )
+    try:
+        summary = service.sync_kobo_backup()
+        source = summary["sources"][0]
+        assert source["status"] == "aborted"
+        assert source["position"] == 1
+        assert source["total"] == 2
+        assert source["errors"] == 1
+        assert source["remaining"] == 1
     finally:
         service.close()
