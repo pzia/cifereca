@@ -943,7 +943,10 @@ class LibraryService:
                 continue
             identity = self.identity_for_connection(session.provider_id, session.credential_id)
             try:
-                rows = session.library()
+                # The personal-library result is consumed by both rights
+                # projection and catalog mirroring. Snapshot one-shot provider
+                # iterators once; never lose purchased books on the second pass.
+                rows = list(session.library())
                 if session.provider_id == "kobo" and account is not None:
                     # Only a connected PERSONAL manifest may assert ownership.
                     # Catalog searches never enter this path; no download here.
