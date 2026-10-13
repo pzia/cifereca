@@ -564,6 +564,14 @@ class LibraryService:
     def disconnect_configured(self) -> None:
         return provider_sessions.disconnect_configured(self)
 
+    def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
+        """Connect only one configured Kobo session for explicit manifest preview.
+
+        Never connect Paris/other accounts or start any acquisition. Offline
+        previews deliberately do not call this method.
+        """
+        return provider_sessions.connect_kobo_preview(self, credential_id)
+
     def connect_configured(self) -> dict[str, Any]:
         """Connect all enabled provider identities from local preferences.
 
