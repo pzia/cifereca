@@ -156,6 +156,8 @@ def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
     The historical interval setting remains readable for rollback compatibility,
     but Paris no longer installs a recurring in-process timer.
     """
+    if getattr(self, "_closed", False):
+        return
     if self._kobo_backup_timer_id is not None:
         try:
             GLib.source_remove(self._kobo_backup_timer_id)
@@ -163,15 +165,20 @@ def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
             pass
         self._kobo_backup_timer_id = None
     if run_now and self.service.kobo_backup_enabled():
-        GLib.idle_add(lambda: (self.run_kobo_backup(False), False)[1])
+        GLib.idle_add(lambda: (
+            self.run_kobo_backup(False) if not getattr(self, "_closed", False) else None,
+            False,
+        )[1])
 
 
 def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
+    if getattr(self, "_closed", False):
+        return
     original_label = control.get_label() if isinstance(control, Gtk.Button) else None
     progress_state = {"last": 0}
 
     def progress(event: dict[str, Any]) -> None:
-        if not isinstance(control, Gtk.Button):
+        if getattr(self, "_closed", False) or not isinstance(control, Gtk.Button):
             return
         kind = str(event.get("event") or "")
         current = int(event.get("current") or 0)
@@ -187,16 +194,26 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
             label = f"Synchronisation Kobo · {current}/{total}"
         else:
             return
-        GLib.idle_add(lambda: (control.set_label(label), False)[1])
+        def update_label() -> bool:
+            # Progress from a Core worker can already be enqueued when the
+            # owning window (and this button) gets destroyed.
+            if not getattr(self, "_closed", False):
+                control.set_label(label)
+            return False
+        GLib.idle_add(update_label)
 
     def work() -> dict[str, Any]:
         return self.service.sync_kobo_backup(progress=progress)
 
     def restore_label() -> None:
+        if getattr(self, "_closed", False):
+            return
         if isinstance(control, Gtk.Button) and original_label is not None:
             control.set_label(original_label)
 
     def ok(summary: dict[str, Any]) -> None:
+        if getattr(self, "_closed", False):
+            return
         restore_label()
         self._render_kobo_loans()
         attention = int(summary.get("attention_required", 0) or 0)
@@ -217,6 +234,8 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
                 persistent=bool(attention or errors),
             )
     def err(exc: BaseException) -> None:
+        if getattr(self, "_closed", False):
+            return
         restore_label()
         if manual:
             self.show_error(str(exc), "Synchronisation Kobo impossible")
