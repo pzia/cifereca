@@ -1,6 +1,6 @@
 """Opt-in, evidence-limited diagnostic analysis through the existing public LLM.
 
-The only input is the already-redacted public diagnostics.events() feed.
+Inputs are Core's public redacted diagnostics and optional bounded lexical signals\nfrom ONE explicitly selected user log, never its free text.
 Build a preview first; refuse any model call without a matching, one-use
 approval token and a stable, disclosed destination.
 """
@@ -41,7 +41,7 @@ _USER_LOG_SIGNALS = {
     }),
     "severity": frozenset({"debug", "info", "warning", "error", "critical"}),
 }
-_USER_LOG_TOKEN = re.compile(r"(?<![\\w])(?P<key>status|phase|severity)=(?P<value>[a-z_]{2,32})(?![\\w])")
+_USER_LOG_TOKEN = re.compile(r"(?<!\w)(?P<key>status|phase|severity)=(?P<value>[a-z_]{2,32})(?!\w)")
 
 
 def read_user_selected_log(path: str) -> dict[str, Any]:
