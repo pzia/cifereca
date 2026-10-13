@@ -231,6 +231,12 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
     ][:20]
     return {
         "items": len(rows),
+        # Aggregate permissions without exposing book metadata or bearer data.
+        "items_blocked_by_scope": sum(
+            1 for row in rows
+            if row.get("status") == "attention_required"
+            and row.get("attention_code") == "missing_delegation_scope"
+        ),
         "statuses": dict(statuses),
         "error_summary": [
             {"message": message, "count": count}
