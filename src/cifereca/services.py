@@ -3562,10 +3562,17 @@ class LibraryService:
     def sync_kobo_backup_account(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
+        *, retry_scope_blocked: bool = False,
     ) -> dict[str, Any]:
-        """One account under the same global acquisition lock as the full sync."""
+        """One Kobo account; permission-blocked books require explicit retry.
+
+        retry_scope_blocked should be requested only after the operator has
+        reauthorized/reconnected the Kobo provider with updated privileges.
+        Local artifact reconciliation is always enforced.
+        """
         return kobo_backup.sync_kobo_backup(
             self, progress, credential_id=credential_id,
+            retry_scope_blocked=retry_scope_blocked,
             lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
         )
 
@@ -3573,7 +3580,10 @@ class LibraryService:
         """Conservative guard, never infer a Kobo link from a filename/title."""
         return kobo_backup.kobo_unlinked_local_count(self, identity_id)
 
-    def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+    def _sync_kobo_backup_locked(
+        self, progress: Callable[[dict[str, Any]], None] | None = None,
+        *, retry_scope_blocked: bool = False,
+    ) -> dict[str, Any]:
         """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
         Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -3587,15 +3597,20 @@ class LibraryService:
         states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
         existing reconciliation safeguards still prevent duplicate redownloads.
         """
-        return kobo_backup._sync_kobo_backup_locked(self, progress, logger=_TRACE_LOG)
+        return kobo_backup._sync_kobo_backup_locked(
+            self, progress, logger=_TRACE_LOG,
+            retry_scope_blocked=retry_scope_blocked,
+        )
 
     def _sync_kobo_backup_account_locked(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
+        *, retry_scope_blocked: bool = False,
     ) -> dict[str, Any]:
         """Internal scoped variant: caller owns the global acquisition lock."""
         return kobo_backup._sync_kobo_backup_locked(
             self, progress, logger=_TRACE_LOG, credential_id=credential_id,
+            retry_scope_blocked=retry_scope_blocked,
         )
 
     def _account_for_loan(self, loan: Loan) -> Account:
