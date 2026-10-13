@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from cifereca.gui.settings_sync_section import build_kobo_sync_section
+from cifereca.gui.settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
 
 
 class Widget:
@@ -13,6 +13,7 @@ class Widget:
         self.text = None
         self.active = None
         self.selected = None
+        self.sensitive = None
         self.suffixes = []
         self.children = []
         self.label = label
@@ -21,6 +22,7 @@ class Widget:
     def set_subtitle(self, value): self.subtitle = value
     def set_text(self, value): self.text = value
     def set_active(self, value): self.active = value
+    def set_sensitive(self, value): self.sensitive = value
     def set_selected(self, value): self.selected = value
     def set_valign(self, _value): pass
     def add_suffix(self, value): self.suffixes.append(value)
@@ -39,7 +41,7 @@ class DropDown(Widget):
 def _build(settings=None):
     values = settings or {}
     config = SimpleNamespace(get=lambda key, default=None: values.get(key, default))
-    gtk = SimpleNamespace(Switch=Widget, DropDown=DropDown,
+    gtk = SimpleNamespace(Switch=Widget, Button=Widget, DropDown=DropDown,
                           Align=SimpleNamespace(CENTER="center"))
     adw = SimpleNamespace(PreferencesGroup=Widget, ActionRow=Widget, EntryRow=Widget)
     section, download_group = Widget(), Widget()
@@ -55,9 +57,10 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert len(section.children) == 1
     group = section.children[0]
     assert group.title == "Acquisition automatique / activité Kobo"
-    assert len(group.children) == 5
+    assert len(group.children) == 6
     assert [row.title for row in group.children] == [
         "Synchroniser automatiquement les ebooks Kobo",
+        "Télécharger/sauvegarder mes livres Kobo",
         "Autoriser les acquisitions Kobo malgré des livres locaux sans liaison",
         "Sous-répertoire/override Kobo (vide = bibliothèque locale)",
         "Intervalle automatique (minutes, minimum 15)",
@@ -66,6 +69,9 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert len(downloads.children) == 1
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
+    assert controls.run_backup_now.label == "Lancer maintenant"
+    assert controls.run_backup_now.sensitive is False
+    assert "Désactivée" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is False
     assert controls.library_dir_row.text == "~/EBooks"
     assert controls.backup_interval_row.text == "60"
@@ -85,6 +91,8 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     }
     controls, _, _ = _build(values)
     assert controls.backup_switch.active is True
+    assert controls.run_backup_now.sensitive is True
+    assert "à l’ouverture" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is True
     assert controls.backup_dir_row.text == "Kobo"
     assert controls.backup_interval_row.text == "90"
@@ -102,3 +110,30 @@ def test_build_does_not_persist_change_connect_signals_or_call_network():
     assert requests == []
     assert values == {"kobo_backup.enabled": False}
     assert controls.backup_switch.active is False
+
+
+def test_manual_kobo_backup_requires_saved_enabled_state():
+    assert kobo_backup_action_state(persisted_enabled=False, draft_enabled=True, dirty=True)[1] is False
+    assert kobo_backup_action_state(persisted_enabled=False, draft_enabled=False, dirty=False)[1] is False
+    assert kobo_backup_action_state(persisted_enabled=True, draft_enabled=False, dirty=True)[1] is False
+    message, allowed = kobo_backup_action_state(persisted_enabled=True, draft_enabled=True, dirty=False)
+    assert allowed is True
+    assert "à l’ouverture" in message
+
+
+def test_mainwindow_explicit_kobo_action_is_saved_and_lifetime_gated():
+    import ast
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    window = next(c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "MainWindow")
+    builder = next(f for f in window.body if isinstance(f, ast.FunctionDef) and f.name == "_build_settings_page")
+    manual = next(f for f in builder.body if isinstance(f, ast.FunctionDef) and f.name == "manual_kobo_backup")
+    rendered = ast.unparse(manual)
+    assert 'page_lifetime.alive' in rendered
+    assert "kobo_backup.enabled" in rendered
+    assert "settings_state.dirty('sync')" in rendered
+    assert 'if ready:' in rendered
+    assert 'self.run_kobo_backup(manual=True, control=_button)' in rendered
+    assert "kobo_run_now.connect('clicked', manual_kobo_backup)" in ast.unparse(builder)
