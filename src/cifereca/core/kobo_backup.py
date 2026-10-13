@@ -1046,11 +1046,16 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             summary["cancelled"] = True
             summary["cancelled_sources"] += 1
             checkpoint("cancelled")
+            delta = source_delta()
             summary["sources"].append({
                 "identity_id": session_identity.identity_id,
                 "credential_id": session.credential_id,
-                "status": "cancelled", "manifest_items": 0, **source_delta(),
+                "status": "cancelled", "manifest_items": 0, **delta,
             })
+            # Preflight cancellation must have the same durable source
+            # terminal notification as cancellation between manifest items.
+            emit("source_done", credential_id=session.credential_id,
+                 status="cancelled", manifest_items=0, **delta)
             emit("cancelled", current=0, total=0)
             abort_all = True
             break
