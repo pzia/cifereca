@@ -40,15 +40,30 @@ _USER_LOG_SIGNALS = {
         "vault", "transport", "catalog",
     }),
     "severity": frozenset({"debug", "info", "warning", "error", "critical"}),
+    # Codes known from the public acquisition contract; upstream free text
+    # and unknown code strings must never be copied into the LLM prompt.
+    "code": frozenset({
+        "missing_delegation_scope", "insufficient_scope", "forbidden",
+        "invalid_token", "invalid_api_token", "unauthorized",
+        "archived_book", "rate_limited", "network_error",
+        "network_timeout", "source_unavailable", "adept_error",
+        "adept_return_not_confirmed", "invalid_response",
+        "provider_http_error", "http_error", "server_error",
+        "conflict", "not_found", "retryable_error",
+    }),
 }
-_USER_LOG_TOKEN = re.compile(r"(?<!\w)(?P<key>status|phase|severity)=(?P<value>[a-z_]{2,32})(?!\w)")
+# A query parameter, local path or title=... is not a standalone field.
+# Only the start of a line or whitespace can introduce an approved signal.
+_USER_LOG_TOKEN = re.compile(
+    r"(?<!\S)(?P<key>status|phase|severity|code)=(?P<value>[a-z_]{2,40})(?!\w)"
+)
 
 
 def read_user_selected_log(path: str) -> dict[str, Any]:
     """Read ONE explicitly selected regular file, once, with strict limits.
 
     The path is local only; no filename, raw line or token enters the returned
-    value. We expose only literal protocol signals with their physical line
+    value. We expose only allowlisted protocol signals with their physical line
     number, not verified event IDs or causal facts.
     """
     if type(path) is not str or not path or "\x00" in path:
