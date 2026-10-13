@@ -221,6 +221,9 @@ def main():
     def after_cancel():
         assert tool.run_calls == 0
         report["checks"]["physical_cancel_never_runs_destructive_tool"] = True
+        until(lambda: modal() is None, begin_stale)
+
+    def begin_stale():
         tool.delay = 0.12
         physical(preview_button[0])
         until(lambda: modal() is not None, stale_dialog)
@@ -234,6 +237,9 @@ def main():
     def stale_refused():
         assert tool.run_calls == 0
         report["checks"]["stale_plan_rejected_under_lock_without_delete"] = True
+        until(lambda: modal() is None, begin_final)
+
+    def begin_final():
         physical(preview_button[0])
         until(lambda: modal() is not None, final_dialog)
 

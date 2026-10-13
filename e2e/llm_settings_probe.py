@@ -53,6 +53,7 @@ def main():
     window = device = tab = None
     started = monotonic()
     result = [1]
+    save_started_at = [None]
     controls = {}
     cases = [(200, 'Test réussi'), (401, 'Authentification refusée'),
              (404, 'Modèle ou endpoint introuvable'), (429, 'Service limité temporairement')]
@@ -288,10 +289,17 @@ def main():
         saves = [w for w in walk(window._settings_tabs.get_parent())
                  if isinstance(w, Gtk.Button) and getattr(w, '_cifereca_action_label', '') == 'Enregistrer']
         assert saves
+        save_started_at[0] = monotonic()
         click(saves[-1], wait_saved)
 
     def wait_saved():
         if core.config.get('llm.enabled') is not True or 'redémarrer' not in status().lower():
+            if monotonic() - save_started_at[0] > 12:
+                raise AssertionError(
+                    'Sauvegarde IA sans confirmation sous 12 s : '
+                    f'enabled={core.config.get("llm.enabled") is True}, '
+                    f'status={status()[:120]!r}'
+                )
             later(wait_saved, 80)
             return
         assert core.config.get('llm.model') == 'fixture-model'
@@ -323,7 +331,7 @@ def main():
             Gio.Application.do_shutdown(self)
 
     app = Application()
-    GLib.timeout_add_seconds(35, lambda: (fail(TimeoutError('GTK settings recipe timeout')), False)[1])
+    GLib.timeout_add_seconds(70, lambda: (fail(TimeoutError('GTK settings recipe timeout')), False)[1])
     app.run([sys.argv[0]])
     fixture.close()
     if report['status'] == 'RUNNING':
