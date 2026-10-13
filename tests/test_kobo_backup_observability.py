@@ -509,3 +509,24 @@ def test_authoritative_manifest_can_succeed_with_acquisition_attention(tmp_path:
         assert not service.storage.metadata_get("kobo_backup_last_success_at")
     finally:
         service.close()
+
+
+def test_duplicate_manifest_does_not_advance_authoritative_success_timestamp(tmp_path: Path):
+    """#1348: duplicate product IDs cannot certify a complete snapshot."""
+    service, _session = _service(
+        tmp_path,
+        manifest=[
+            {"product_id": "same", "revision_id": "r1", "title": "First", "format": "EPUB"},
+            {"product_id": "same", "revision_id": "r2", "title": "Second", "format": "EPUB"},
+        ],
+    )
+    try:
+        service.storage.metadata_set("kobo_backup_last_manifest_success_at", 12345)
+        report = service.sync_kobo_backup()
+        assert report["manifests_fetched"] == report["sessions"] == 1
+        assert report["duplicate_manifest_items"] == 2
+        assert report["status"] == "partial"
+        assert int(service.storage.metadata_get("kobo_backup_last_manifest_success_at")) == 12345
+        assert not service.storage.metadata_get("kobo_backup_last_success_at")
+    finally:
+        service.close()
