@@ -191,3 +191,64 @@ def test_explicit_kobo_account_sync_materializes_right_without_download(tmp_path
         assert service.library_entries(identity_id="alice")[0]["local"] is False
     finally:
         service.close()
+
+
+def test_opening_mirror_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeypatch):
+    """A generator of attested owned books must feed rights AND catalog once."""
+    service = _service(tmp_path)
+    credential = "vault-alice"
+    service.storage.provider_connection_put({
+        "identity_id": "alice", "provider_id": "kobo",
+        "credential_id": credential, "label": "Owned Kobo",
+    })
+    account = Account(
+        provider_id="kobo", credential_id=credential,
+        identity_id="alice", unique_id="acc-personal",
+    )
+    service.accounts = [account]
+    rows = iter([_row(credential=credential)])
+    calls = []
+    service._sessions = {service._session_key("kobo", credential): SimpleNamespace(
+        provider_id="kobo", credential_id=credential, connected=True,
+        capabilities=SimpleNamespace(personal_library=True, direct_download=False),
+        library=lambda: (calls.append("library") or rows),
+    )}
+    monkeypatch.setattr(service, "sync_source_enabled", lambda _account: True)
+    try:
+        summary = service.mirror_personal_libraries()
+        assert summary[f"kobo:{credential}"] == 1
+        assert calls == ["library"]
+        rights = service.storage.entitlements(provider_id="kobo", state="active")
+        assert len(rights) == 1
+        assert service.storage.catalog_entries()[0]["local_state"] == "remote_owned"
+        library = service.library_entries(identity_id="alice")
+        assert len(library) == 1 and library[0]["state"] == "remote_owned"
+        assert not library[0]["local"] and library[0]["local_path"] is None
+    finally:
+        service.close()
+
+
+def test_explicit_sync_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeypatch):
+    """Explicit source sync has the same double-consumption boundary."""
+    service = _service(tmp_path)
+    account = Account(
+        provider_id="kobo", credential_id="vault-alice",
+        identity_id="alice", unique_id="acc-personal",
+    )
+    calls = []
+    one_shot = iter([_row()])
+    session = SimpleNamespace(
+        connected=True, provider_id="kobo", credential_id="vault-alice",
+        capabilities=SimpleNamespace(personal_library=True, loans=False,
+                                     direct_download=False),
+        library=lambda: (calls.append("library") or one_shot),
+    )
+    monkeypatch.setattr(service, "_session_for_account", lambda _account: session)
+    try:
+        result = service._synchronize_account_source_impl(account)
+        assert result["owned_rights"] == 1
+        assert result["library"] == 1
+        assert calls == ["library"]
+        assert service.storage.catalog_entries()[0]["local_state"] == "remote_owned"
+    finally:
+        service.close()
