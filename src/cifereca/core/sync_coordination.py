@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import time
 import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any, Callable
 from ..diagnostics import redact
@@ -421,6 +422,22 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         kobo_decision["connected_kobo"], kobo_decision["eligible_kobo"],
         kobo_decision["interval_minutes"],
     )
+    # The no-item case has no backup rows or checkpoint. Persist only a
+    # minimal, enumerated decision so kobo-sync-errors can explain *why* on a
+    # fresh CLI process, without relying on volatile Diagnostics history.
+    try:
+        self.storage.metadata_set("kobo_backup_opening_decision_v1", json.dumps({
+            "schema_version": 1,
+            "status": kobo_decision["status"],
+            "persisted_enabled": kobo_decision["persisted_enabled"] is True,
+            "connected_kobo": kobo_decision["connected_kobo"],
+            "eligible_kobo": kobo_decision["eligible_kobo"],
+            "checked_at": int(time.time()),
+        }, sort_keys=True))
+    except Exception as exc:
+        # A diagnostic breadcrumb must never prevent loans/sources syncing.
+        logger.warning("TRACE kobo backup decision persistence error kind=%s",
+                       type(exc).__name__)
     self.diagnostics.add(
         "KOBO", "automatic backup decision",
         "warning" if kobo_decision["status"] in ("partial", "error") else "ok",
