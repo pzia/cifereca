@@ -53,19 +53,23 @@ def _kobo_artifact_plausible(path: Path, fmt: str) -> bool:
 
 
 def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path) -> list[Path]:
-    fmt = "pdf" if str(record.get("format") or "").lower() == "pdf" else "epub"
-    ext = ".pdf" if fmt == "pdf" else ".epub"
+    """Find filename candidates without trusting reported format or opening files.
+
+    A manifest may switch EPUB/PDF between syncs. A candidate of either
+    format must stop automated acquisition rather than silently duplicate it.
+    """
     author = str(record.get("author") or "").strip()
     title = str(record.get("title") or record.get("item_id") or "Kobo").strip()
     stem = f"{author} - {title}" if author else title
     safe = self.acquisition._safe_filename(stem or str(record.get("item_id") or "kobo"))
-    base = target_dir / f"{safe}{ext}"
     suffix = re.sub(r"[^A-Za-z0-9]", "", str(record.get("item_id") or ""))[-8:] or "kobo"
-    suffixed = target_dir / f"{safe} [{suffix}]{ext}"
     paths: list[Path] = []
-    for path in (base, suffixed):
-        if path not in paths and (path.is_file() or path.is_symlink()):
-            paths.append(path)
+    for ext in (".epub", ".pdf"):
+        for path in (target_dir / f"{safe}{ext}", target_dir / f"{safe} [{suffix}]{ext}"):
+            # Even an invalid file or dangling symlink occupies the destination:
+            # never overwrite it automatically as part of reconciliation.
+            if path not in paths and (path.is_file() or path.is_symlink()):
+                paths.append(path)
     return paths
 
 
