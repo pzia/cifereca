@@ -3562,10 +3562,15 @@ class LibraryService:
     def sync_kobo_backup_account(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
+        *, cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """One account under the same global acquisition lock as the full sync."""
+        """Synchronize one Kobo account, with optional between-book cancel.
+
+        A true cancellation signal stops the next item, never an in-flight
+        artifact. A later explicit call revalidates all local placements.
+        """
         return kobo_backup.sync_kobo_backup(
-            self, progress, credential_id=credential_id,
+            self, progress, credential_id=credential_id, cancelled=cancelled,
             lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
         )
 
@@ -3592,10 +3597,12 @@ class LibraryService:
     def _sync_kobo_backup_account_locked(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
+        *, cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Internal scoped variant: caller owns the global acquisition lock."""
         return kobo_backup._sync_kobo_backup_locked(
             self, progress, logger=_TRACE_LOG, credential_id=credential_id,
+            cancelled=cancelled,
         )
 
     def _account_for_loan(self, loan: Loan) -> Account:
