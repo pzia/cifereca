@@ -267,6 +267,22 @@ def _kobo_checkpoint_number(value: Any, *, limit: int = 1_000_000) -> int:
 
 
 
+def _kobo_manifest_flags_invalid(raw: dict[str, Any]) -> bool:
+    """Reject explicit ambiguous permission flags in an owned-book manifest.
+
+    Only boolean JSON flags are admissible. A personal-library manifest may
+    omit ownership/downloadability (Vault legacy contract); an explicitly
+    false ownership claim or malformed flag can NEVER authorize acquisition.
+    """
+    if raw.get("owned") is False:
+        return True
+    for key in ("owned", "downloadable", "archived"):
+        value = raw.get(key)
+        if value is not None and type(value) is not bool:
+            return True
+    return False
+
+
 def kobo_backup_preview(
     self, credential_id: str, *,
     refresh_manifest: bool = False, verify_local_files: bool = False,
@@ -340,6 +356,11 @@ def kobo_backup_preview(
             counts["invalid_manifest_items"] += 1
             continue
         seen.add(product_id)
+        if refresh_manifest and _kobo_manifest_flags_invalid(raw):
+            # A preview must not suggest "potentially missing" when the
+            # source explicitly denies ownership or has invalid rights flags.
+            counts["invalid_manifest_items"] += 1
+            continue
         current = previous.get(product_id)
         revision_id = str(raw.get("revision_id") or "").strip() or None
         identity_item_key = (identity_id, product_id)
@@ -1073,6 +1094,14 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     malformed = True
                     summary["malformed_manifest_items"] += 1
                     summary["duplicate_manifest_items"] += 1
+                    summary["skipped"] += 1
+                    item_committed = True
+                    continue
+                if _kobo_manifest_flags_invalid(raw):
+                    # Fail closed before even touching an existing backup row.
+                    # An ambiguous rights manifest is never prune authority.
+                    malformed = True
+                    summary["malformed_manifest_items"] += 1
                     summary["skipped"] += 1
                     item_committed = True
                     continue
