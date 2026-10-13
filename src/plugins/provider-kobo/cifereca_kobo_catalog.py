@@ -83,7 +83,19 @@ class KoboCatalogService:
         content_type = str(item.get("content_type") or "ebook").lower()
         owned = item.get("owned")
         downloadable = item.get("downloadable")
-        collection = str(item.get("collection") or ("library" if owned else default_collection)).lower()
+        # Vault flags must be JSON booleans. Truthiness silently turns
+        # "false"/"0" into True, fabricating a right or a downloadable
+        # artifact and potentially triggering an unauthorized acquisition.
+        # Absent ownership can still be inferred from an authenticated
+        # personal-library collection; malformed explicit values cannot.
+        collection = str(
+            item.get("collection") or ("library" if owned is True else default_collection)
+        ).lower()
+        owned_flag = (
+            owned if type(owned) is bool else
+            collection == "library" if owned is None else False
+        )
+        downloadable_flag = downloadable if type(downloadable) is bool else None
         price, currency = self._price(item)
         cover = self.cover_url(item)
         metadata = {k: v for k, v in item.items() if k not in {"description"}}
@@ -111,8 +123,8 @@ class KoboCatalogService:
             thumbnail_url=cover, friendly_url=str(item.get("product_url") or "").strip() or None,
             scenario="KOBO", source_provider=self.provider_id, source_credential=self.credential_id,
             download_url=None, content_type=content_type, source_collection=collection,
-            owned=bool(owned) if owned is not None else (collection == "library"),
-            downloadable=bool(downloadable) if downloadable is not None else None,
+            owned=owned_flag,
+            downloadable=downloadable_flag,
             price=price, currency=currency,
             revision_id=str(item.get("revision_id") or "").strip() or None,
             metadata=metadata,
