@@ -1140,6 +1140,91 @@ def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, 
                  count=pruned.get("pruned"), local_preserved=pruned.get("local_preserved"))
 
 
+_KOBO_DIAGNOSTIC_METRICS = frozenset({
+    "sessions", "manifests_fetched", "manifest_items", "scanned", "attempted",
+    "downloaded", "unchanged", "completed", "pending", "attention_required",
+    "errors", "remaining", "skipped", "metadata_refreshed",
+    "malformed_manifest_items", "duplicate_manifest_items",
+    "reconcile_pending", "reconcile_conflicts", "reconcile_skipped",
+    "items_blocked_by_scope", "blocked_non_retryable", "attempts_saved",
+    "recovered_interrupted", "recovered_unparsed", "legacy_pruned",
+    "legacy_local_preserved", "legacy_entitlements_inactivated",
+    "vault_errors", "adept_errors", "integration_errors", "cancelled_sources",
+})
+_KOBO_DIAGNOSTIC_STATUSES = frozenset({
+    "complete", "partial", "failed", "aborted", "cancelled",
+    "attention_required", "skipped_fresh",
+})
+
+
+def _safe_kobo_backup_diagnostic_detail(summary: dict[str, Any]) -> dict[str, Any]:
+    """Export only stable, non-identifying batch metrics.
+
+    Diagnostics.text() may be shared externally. Its generic redactor cannot
+    distinguish a Kobo book title, local path, identity ID or raw credential.
+    Preserve the full summary *only* for the in-process caller/progress API.
+    """
+    def metric_fields(record: dict[str, Any]) -> dict[str, int]:
+        return {
+            key: value for key, value in record.items()
+            if key in _KOBO_DIAGNOSTIC_METRICS
+            and type(value) is int and 0 <= value <= 1_000_000
+        }
+
+    def safe_state(raw: Any) -> str:
+        value = str(raw or "")
+        return value if value in _KOBO_DIAGNOSTIC_STATUSES else "unknown"
+
+    def safe_error(raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        # Even error identifiers are untrusted plugin strings. Do not export
+        # arbitrary messages, exception text, URLs or credential fragments.
+        def code(value: Any) -> str:
+            value = str(value or "")
+            return value if re.fullmatch(r"[a-z][a-z0-9_]{0,49}", value) else "other"
+
+        record: dict[str, Any] = {
+            "phase": code(raw.get("phase")),
+            "code": code(raw.get("code")),
+        }
+        status = raw.get("status_code")
+        if type(status) is int and 100 <= status <= 599:
+            record["status_code"] = status
+        count = raw.get("count")
+        if type(count) is int and 0 <= count <= 1_000_000:
+            record["count"] = count
+        return record
+
+    result: dict[str, Any] = {
+        "scope": "account" if summary.get("scope") == "account" else "all",
+        "status": safe_state(summary.get("status")),
+        "aborted": summary.get("aborted") is True,
+        "cancelled": summary.get("cancelled") is True,
+        **metric_fields(summary),
+    }
+    source_summaries = []
+    if isinstance(summary.get("sources"), list):
+        for index, source in enumerate(summary["sources"][:25], start=1):
+            if not isinstance(source, dict):
+                continue
+            source_summaries.append({
+                "source_index": index,
+                "status": safe_state(source.get("status")),
+                **metric_fields(source),
+            })
+    result["sources"] = source_summaries
+    errors = summary.get("error_summary")
+    result["error_summary"] = [
+        parsed for raw in (errors[:10] if isinstance(errors, list) else [])
+        if (parsed := safe_error(raw)) is not None
+    ]
+    abort = safe_error(summary.get("abort_reason"))
+    if abort is not None:
+        result["abort_reason"] = abort
+    return result
+
+
 def _publish_summary(self, summary, error_counts, error_examples, emit, *, scoped: bool = False):
     summary["error_summary"] = [
         {
@@ -1179,7 +1264,7 @@ def _publish_summary(self, summary, error_counts, error_examples, emit, *, scope
     self.diagnostics.add(
         "KOBO", "backup sync",
         "ok" if state == "complete" else "error" if state in {"aborted", "failed"} else "warning",
-        detail={k: v for k, v in summary.items() if k != "error_messages"},
+        detail=_safe_kobo_backup_diagnostic_detail(summary),
     )
     emit("done", **{k: v for k, v in summary.items() if k not in {"error_examples", "error_messages"}})
     return summary
