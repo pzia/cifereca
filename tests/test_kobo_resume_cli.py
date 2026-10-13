@@ -71,7 +71,7 @@ def test_resume_connects_only_target_and_sanitizes_output(
     assert parsed["status"] == status
     assert parsed["downloaded"] == 1
     assert parsed["attempted"] == 1
-    assert parsed["acquisition_started"] is True
+    assert parsed["resume_attempted"] is True
     for sensitive in (
         credential, "SECRET_BOOK", "TOKEN_SECRET", "/private/folder",
         "credential_id", "target_dir", "error_messages", "sources",
