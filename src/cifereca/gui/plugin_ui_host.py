@@ -22,6 +22,9 @@ class _UiHost:
     def _window_alive(self) -> bool:
         return not getattr(self.window, "_closed", False)
     def toast(self, message: str, timeout: int = 3) -> None:
+        # Toasts may be emitted by a plugin callback after MainWindow closes.
+        if not self._window_alive():
+            return
         self.window.toast(message, timeout)
     def action_context(self):
         if self._action_context is None:
