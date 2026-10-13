@@ -338,6 +338,7 @@ def test_real_plugin_error_only_probes_denied_delegate_once_per_session(tmp_path
         first = service.sync_kobo_backup()
         assert delegated_calls == ["bad0"]
         assert first["items_blocked_by_scope"] == 4
+        assert service.kobo_backup_diagnostic()["items_blocked_by_scope"] == 4
         assert first["attempts_saved"] >= 3
         assert first["downloaded"] == 1
         assert first["errors"] == 0
