@@ -58,9 +58,16 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
 
 def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
     try:
-        result = self._synchronize_account_source_impl(account, deep=deep, control=control)
+        # Source synchronization is also a library writer. Serialize it
+        # with maintenance destruction and opening/Kobo acquisition across
+        # processes; never wait for the lock on a caller/UI thread.
+        with InterProcessLock(acquisition_lock_file()):
+            result = self._synchronize_account_source_impl(account, deep=deep, control=control)
         self._record_action(account.identity_id, "synchronization", "success", provider_id=account.provider_id, facts={"deep": bool(deep)})
         return result
+    except LockBusyError as exc:
+        self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "operation_busy"})
+        raise ProviderConfigurationError("Synchronisation ou maintenance de la bibliothèque déjà en cours") from exc
     except Exception as exc:
         self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": type(exc).__name__})
         raise
