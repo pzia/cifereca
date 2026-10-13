@@ -914,3 +914,60 @@ def test_kobo_personal_manifest_malformed_owned_flag_cannot_create_sqlite_right(
         assert len(service.storage.entitlements(provider_id="kobo")) == 1
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("failed_stage", ["status", "account"])
+def test_failed_reconnect_preserves_delegation_denial_until_authenticated_success(failed_stage):
+    """#1350: a failed reconnect must not trigger another forbidden delegated GET."""
+    class FakeVault:
+        def __init__(self):
+            self.failed_stage = None
+
+        def status(self, *, authenticated=False):
+            assert authenticated is False
+            if self.failed_stage == "status":
+                raise ProviderError("synthetic status unavailable")
+            return {
+                "api_version": "2.3",
+                "capabilities": ["acquisition"],
+                "acquisition_access": "configured",
+            }
+
+        def account(self):
+            if self.failed_stage == "account":
+                raise ProviderError("synthetic authentication unavailable")
+            return {"id": "same-account", "display_name": "Kobo"}
+
+        def close(self):
+            pass
+
+    session = KoboSession(
+        descriptor=DESCRIPTOR,
+        credential_id="scoped-vault", label="Kobo",
+        credentials={"api_token": "fixture"},
+        options={"base_url": "https://vault.example"},
+        config={}, storage={}, diagnostics=Diagnostics(),
+    )
+    session.client.close()
+    vault = FakeVault()
+    session.client = vault
+    try:
+        session.connect()
+        session._cifereca_delegation_forbidden = True
+        session._cifereca_delegation_attempts_saved = 17
+
+        vault.failed_stage = failed_stage
+        with pytest.raises(ProviderError):
+            session.connect()
+        # Failure is not an authorization update, including when session
+        # remains connected from its previous successful account handshake.
+        assert session._cifereca_delegation_forbidden is True
+        assert session._cifereca_delegation_attempts_saved == 17
+
+        vault.failed_stage = None
+        session.connect()
+        assert session.connected is True
+        assert session._cifereca_delegation_forbidden is False
+        assert session._cifereca_delegation_attempts_saved == 0
+    finally:
+        session.close()
