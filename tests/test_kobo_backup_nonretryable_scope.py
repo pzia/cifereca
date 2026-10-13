@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cifereca.kobo.vault import KoboVaultError
 from tests.test_kobo_backup_fault_isolation import (
     _ready_adept_state,
@@ -186,5 +188,49 @@ def test_explicit_scope_retry_refuses_dangling_linked_symlink(tmp_path: Path, mo
         assert row["status"] == "reconcile_required"
         assert row["local_path"] == str(linked)
         assert linked.is_symlink()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("prior_status,old_revision", [
+    ("complete", "r1"),
+    ("complete", "r0"),
+    ("acquiring", "r1"),
+    ("attention_required", "r1"),
+])
+def test_missing_previous_kobo_link_never_redownloads_or_erases_provenance(
+    tmp_path: Path, monkeypatch, prior_status, old_revision,
+):
+    """A missing recorded file is not evidence of an unacquired book."""
+    service, _session = _service(tmp_path, [
+        {"product_id": "linked-1", "revision_id": "r1", "title": "Linked",
+         "format": "EPUB"},
+    ])
+    monkeypatch.setattr(service, "kobo_adept_state", lambda **_kw: _ready_adept_state())
+    missing = tmp_path / "external" / "previous-copy.epub"
+    assert not missing.exists()
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "identity_id": "default", "item_id": "linked-1",
+        "revision_id": old_revision, "title": "Linked", "format": "EPUB",
+        "status": prior_status, "local_path": str(missing),
+    })
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_kw: pytest.fail("previously linked item must not redownload"),
+    )
+    try:
+        for _ in range(2):
+            summary = service.sync_kobo_backup_account(
+                "vault-1", retry_scope_blocked=True,
+            )
+            assert summary["attempted"] == 0
+            assert summary["downloaded"] == 0
+            assert summary["reconcile_skipped"] == 1
+            assert summary["status"] == "attention_required"
+            row = service.storage.backup_get("kobo", "vault-1", "linked-1")
+            assert row["status"] == "reconcile_required"
+            assert row["local_path"] == str(missing)
+            assert not missing.exists()
     finally:
         service.close()
