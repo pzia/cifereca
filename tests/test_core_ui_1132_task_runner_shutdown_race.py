@@ -111,3 +111,25 @@ def test_rejection_without_custom_error_callback_uses_safe_generic_message():
         callback(*args)
     assert events[-1] == ("error", "Traitement indisponible")
     assert runner._count == 0
+
+
+def test_detached_control_is_never_touched_at_submit_or_rejection():
+    """#1132: late plugin action may hold a button removed by navigation."""
+    submit, pending = _submit()
+    runner, window, events = _runner()
+    class DetachedButton(Button):
+        def get_root(self):
+            return None
+        def set_sensitive(self, _value):
+            raise AssertionError("detached GTK control accessed")
+
+    control = DetachedButton()
+    failures = []
+    submit(runner, "Ancienne page", lambda: None, err=failures.append, control=control)
+    assert runner._count == 0
+    assert len(pending) == 2
+    for callback, args in pending:
+        callback(*args)
+    assert [event[0] for event in events] == ["started", "finished"]
+    assert len(failures) == 1
+    assert str(failures[0]) == "Traitement indisponible"
