@@ -86,14 +86,17 @@ class KoboCatalogService:
         # Vault flags must be JSON booleans. Truthiness silently turns
         # "false"/"0" into True, fabricating a right or a downloadable
         # artifact and potentially triggering an unauthorized acquisition.
-        # Absent ownership can still be inferred from an authenticated
-        # personal-library collection; malformed explicit values cannot.
+        # An authenticated personal manifest attests owned books even when
+        # an archived item's own collection is "archived" rather than "library".
+        # Public catalog normalization still must not infer any ownership.
+        # Explicit false/malformed owned flags always override this inference.
         collection = str(
             item.get("collection") or ("library" if owned is True else default_collection)
         ).lower()
         owned_flag = (
             owned if type(owned) is bool else
-            collection == "library" if owned is None else False
+            (default_collection == "library" or collection == "library")
+            if owned is None else False
         )
         downloadable_flag = downloadable if type(downloadable) is bool else None
         price, currency = self._price(item)
