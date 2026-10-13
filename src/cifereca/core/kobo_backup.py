@@ -685,6 +685,24 @@ def _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_coun
             summary["unchanged"] += 1
             return True
 
+    # A prior Kobo row may point to a nonstandard filename. Even when the
+    # remote revision changes, never discard that placement or redownload
+    # until a deliberate replacement/reconciliation contract exists.
+    if current and current.get("local_path"):
+        linked_path = Path(str(current["local_path"]))
+        if linked_path.is_file():
+            self.storage.backup_put({
+                **base_record,
+                "status": "reconcile_required",
+                "local_path": str(linked_path),
+                "error": "Artefact Kobo déjà lié : révision distante différente ou état incomplet ; rapprochement requis",
+            })
+            summary["reconcile_pending"] += 1
+            summary["reconcile_skipped"] += 1
+            emit("reconcile_required", current=index + 1, total=total,
+                 title=title, item_id=product_id)
+            return True
+
     # A bypass of the global unlinked-books guard must never imply permission
     # to overwrite or re-download a plausible, *unlinked* artifact for this item.
     # Filename matches are ambiguous: quarantine for manual reconciliation
