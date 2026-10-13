@@ -12,11 +12,14 @@ class Config:
         if self.fail: raise OSError("fixture")
 
 
-def _fixture(*, save_fails=False, runner_fails=False):
+def _fixture(*, save_fails=False, runner_fails=False, lifetime_fails=()):
     events = []
     class Lifetime:
         def __init__(self, key): self.key = key
-        def dispose(self): events.append("dispose:" + self.key)
+        def dispose(self):
+            events.append("dispose:" + self.key)
+            if self.key in lifetime_fails:
+                raise RuntimeError("fixture dispose error")
     def closer(key, fail=False):
         def close():
             events.append(key)
@@ -71,3 +74,20 @@ def test_no_background_tasks_or_network_actions_during_close():
     host, events = _fixture()
     close_window_resources(host, source_remove=lambda _source: None)
     assert "service" in events and events.count("runner") == 1
+
+
+def test_broken_settings_page_dispose_does_not_skip_remaining_teardown():
+    for broken in (("main",), ("standalone",), ("main", "standalone")):
+        host, events = _fixture(lifetime_fails=broken)
+        timers = []
+        assert close_window_resources(host, source_remove=timers.append) is False
+        assert host._closed
+        assert host._settings_main_lifetime is None
+        assert host._settings_standalone_lifetime is None
+        assert events.count("dispose:main") == 1
+        assert events.count("dispose:standalone") == 1
+        assert events.count("unsubscribe") == 1
+        assert events[-4:] == ["runner", "history", "covers", "service"]
+        assert timers == [7]
+        assert close_window_resources(host, source_remove=timers.append) is False
+        assert events.count("service") == 1 and timers == [7]
