@@ -261,23 +261,41 @@ def candidate_inventory(data, previous, *, show_synthetic=False):
 
 
 
+# Untrusted catalogue values can flow into the global search index,
+# offline cache and GTK. Suppress invisible Unicode direction overrides and
+# unredacted key/value credentials *before* any normalization.
+_PRIVATE_PUBLISHED_VALUE = re.compile(
+    r"(?:https?://|file://|ftp://|www\\.|@|/home/|/Users/|"
+    r"[A-Za-z]:\\\\Users\\\\|"
+    r"\\b(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|"
+    r"passphrase|authorization|cookie|secret|session[_-]?id|token|bearer)"
+    r"\\s*[:=]|\\bbearer\\s+[^\\s,;]+)",
+    re.I,
+)
+
+
 def _published_text(value, *, maximum=256):
-    """Allow only bounded scalar publisher facts, never URLs or credentials."""
-    if not isinstance(value, str):
+    """Allow bounded public bibliography, not control codes or credentials."""
+    if type(value) is not str or len(value) > maximum * 2:
         return None
-    # Check the raw value *before* whitespace normalization. Otherwise a CR,
-    # newline or tab in upstream text can be silently converted into content.
-    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+    # Check *before* whitespace normalization, which could hide a CR/tab.
+    # Bidi overrides/isolates, invisible direction marks, invalid surrogates
+    # and C1 controls may visually spoof bibliographic fields and exports.
+    if any(
+        ord(ch) < 32 or 0x7F <= ord(ch) <= 0x9F
+        or ord(ch) == 0x061C or ord(ch) in (0x200E, 0x200F)
+        or 0x202A <= ord(ch) <= 0x202E
+        or 0x2066 <= ord(ch) <= 0x2069
+        or 0xD800 <= ord(ch) <= 0xDFFF
+        for ch in value
+    ):
         return None
     cleaned = " ".join(value.split())
     if not cleaned or len(cleaned) > maximum:
         return None
-    if any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
-        return None
-    if re.search(r"(?:https?://|www\.|@|(?:access[_-]?token|api[_-]?key|password|bearer)\s*[:=])", cleaned, re.I):
+    if _PRIVATE_PUBLISHED_VALUE.search(cleaned):
         return None
     return cleaned
-
 
 def _published_date(value):
     raw = _published_text(value, maximum=10)
@@ -295,7 +313,7 @@ def _published_isbn(value):
     if not isinstance(value, str):
         return None
     raw = re.sub(r"[-\s]", "", value)
-    if len(raw) != 13 or not raw.isdigit() or not raw.startswith(("978", "979")):
+    if len(raw) != 13 or not raw.isascii() or not raw.isdecimal() or not raw.startswith(("978", "979")):
         return None
     checksum = sum(int(number) * (1 if index % 2 == 0 else 3)
                    for index, number in enumerate(raw))
