@@ -1555,8 +1555,9 @@ def _publish_summary(self, summary, error_counts, error_examples, emit, *, scope
         authoritative_sources = (
             len(summary.get("sources", ())) == summary["sessions"]
             and all(
-                source.get("status") in {"complete", "attention_required"}
-                and not source.get("malformed_manifest_items", 0)
+                # Acquisition may fail or be cancelled after a complete
+                # manifest read; that does not invalidate the manifest.
+                not source.get("malformed_manifest_items", 0)
                 and not source.get("duplicate_manifest_items", 0)
                 for source in summary["sources"]
             )
