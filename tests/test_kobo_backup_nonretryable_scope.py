@@ -52,6 +52,9 @@ def test_scope_denial_does_not_retry_blocked_items_after_new_batch_or_restart(tm
             for record in ("blocked-1", "blocked-2")
         }
         calls.clear()
+        # A separate orphaned local file must not overwrite the durable
+        # missing-scope decision or accidentally re-enable auto-retries.
+        service.kobo_unlinked_local_count = lambda _identity: 2
         second = service.sync_kobo_backup()
         assert second["attempted"] == 0
         assert second["blocked_non_retryable"] == 2
