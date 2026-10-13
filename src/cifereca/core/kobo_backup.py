@@ -64,7 +64,7 @@ def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path)
     suffixed = target_dir / f"{safe} [{suffix}]{ext}"
     paths: list[Path] = []
     for path in (base, suffixed):
-        if path not in paths and self._kobo_artifact_plausible(path, fmt):
+        if path not in paths and (path.is_file() or path.is_symlink()):
             paths.append(path)
     return paths
 
@@ -705,7 +705,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_coun
 
     # A bypass of the global unlinked-books guard must never imply permission
     # to overwrite or re-download a plausible, *unlinked* artifact for this item.
-    # Filename matches are ambiguous: quarantine for manual reconciliation
+    # Filename matches, including damaged or symlinked files, are ambiguous:\n    # quarantine for manual reconciliation
     # rather than assigning ownership or marking an uninspected file complete.
     # This includes legacy flat-library placements from older versions.
     candidates = self._kobo_record_candidate_paths(base_record, session_target_dir)
