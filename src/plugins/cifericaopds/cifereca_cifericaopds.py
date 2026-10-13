@@ -265,11 +265,11 @@ def candidate_inventory(data, previous, *, show_synthetic=False):
 # offline cache and GTK. Suppress invisible Unicode direction overrides and
 # unredacted key/value credentials *before* any normalization.
 _PRIVATE_PUBLISHED_VALUE = re.compile(
-    r"(?:https?://|file://|ftp://|www\\.|@|/home/|/Users/|"
-    r"[A-Za-z]:\\\\Users\\\\|"
-    r"\\b(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|"
+    r"(?:https?://|file://|ftp://|www\.|@|/home/|/Users/|"
+    r"[A-Za-z]:\\Users\\|"
+    r"\b(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|"
     r"passphrase|authorization|cookie|secret|session[_-]?id|token|bearer)"
-    r"\\s*[:=]|\\bbearer\\s+[^\\s,;]+)",
+    r"\s*[:=]|\bbearer\s+[^\s,;]+)",
     re.I,
 )
 
