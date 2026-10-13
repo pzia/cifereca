@@ -319,7 +319,7 @@ def kobo_backup_preview(
         record = {
             "item_id": product_id,
             "title": raw.get("title") or (current or {}).get("title"),
-            "author": raw.get("author") or (current or {}).get("author"),
+            "author": _manifest_author(raw) or (current or {}).get("author"),
         }
 
         reason = ""
