@@ -419,7 +419,12 @@ def main(argv: list[str] | None = None) -> int:
 
             result = service.sync_kobo_backup(progress=progress)
         elif a.cmd in {"kobo-sync-errors", "kobo-backup-errors"}:
-            result = service.kobo_backup_diagnostic()
+            from .core.kobo_backup import safe_kobo_backup_report
+
+            # Never emit raw provider errors, book titles, product IDs,
+            # local file paths or credential identifiers into a JSON report
+            # users may copy into an issue or support ticket.
+            result = safe_kobo_backup_report(service.kobo_backup_diagnostic())
         elif a.cmd == "kobo-resume-preview":
             if a.refresh_manifest:
                 # Only explicit --refresh-manifest may contact the Kobo
