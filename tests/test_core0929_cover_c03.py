@@ -17,6 +17,9 @@ def _module_source(path: Path) -> str:
 
 def _method_source(path: Path, class_name: str, method_name: str) -> str:
     tree = ast.parse(path.read_text())
+    if path == MAIN and method_name == "refresh_library":
+        tree = ast.parse(MAIN.with_name("library_refresh.py").read_text())
+        return ast.unparse(next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == method_name))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
     return ast.unparse(method)

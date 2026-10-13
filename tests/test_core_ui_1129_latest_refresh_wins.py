@@ -93,13 +93,11 @@ def test_generations_are_separate_for_library_and_recent():
 
 
 def test_both_callbacks_guard_before_clearing_pending_or_writing():
-    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/library_refresh.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    window = next(node for node in tree.body
-                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     for name, generation in (("refresh_library", "_library_refresh_generation"),
                              ("refresh_recent", "_recent_refresh_generation")):
-        method = next(node for node in window.body
+        method = next(node for node in tree.body
                       if isinstance(node, ast.FunctionDef) and node.name == name)
         body = ast.unparse(method)
         assert f"request_generation != self.{generation}" in body
