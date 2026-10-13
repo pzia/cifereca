@@ -374,7 +374,7 @@ def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
     return last <= 0 or (int(time.time()) - last) >= interval_minutes * 60
 
 
-def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, lock_factory, lock_path) -> dict[str, Any]:
+def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, retry_scope_blocked: bool=False, lock_factory, lock_path) -> dict[str, Any]:
     """Compatibility entry point for the Kobo local synchronization.
 
     0.8.0 keeps the validated cross-process serialization for acquisition work. The
@@ -385,8 +385,13 @@ def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=Non
     try:
         with lock:
             if credential_id is None:
-                return self._sync_kobo_backup_locked(progress=progress)
-            return self._sync_kobo_backup_account_locked(credential_id, progress=progress)
+                return self._sync_kobo_backup_locked(
+                    progress=progress, retry_scope_blocked=retry_scope_blocked,
+                )
+            return self._sync_kobo_backup_account_locked(
+                credential_id, progress=progress,
+                retry_scope_blocked=retry_scope_blocked,
+            )
     except LockBusyError as exc:
         raise ProviderConfigurationError(
             "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
@@ -410,7 +415,7 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
     return len(paths)
 
 
-def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None) -> dict[str, Any]:
+def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, retry_scope_blocked: bool = False) -> dict[str, Any]:
     """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
     Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -467,6 +472,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         "completed": 0, "downloaded": 0, "unchanged": 0, "metadata_refreshed": 0,
         "skipped": 0, "attention_required": 0, "errors": 0, "remaining": 0,
         "items_blocked_by_scope": 0, "attempts_saved": 0,
+        "blocked_non_retryable": 0,
         "vault_errors": 0, "integration_errors": 0, "adept_errors": 0,
         "recovered_interrupted": 0, "recovered_unparsed": 0,
         "reconcile_pending": 0, "reconcile_conflicts": 0, "reconcile_skipped": 0,
@@ -535,7 +541,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     source_metrics = (
         "scanned", "attempted", "downloaded", "unchanged", "pending",
         "attention_required", "errors", "remaining", "reconcile_pending",
-        "reconcile_skipped", "items_blocked_by_scope", "malformed_manifest_items",
+        "reconcile_skipped", "items_blocked_by_scope", "blocked_non_retryable",
+        "malformed_manifest_items",
     )
     summary["sources"] = []
     for session in sessions:
@@ -623,7 +630,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     item_committed = True
                     continue
                 item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
-                if _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+                if _skip_manifest_item(
+                    self, item, raw, session_target_dir, indexed_kobo_paths,
+                    unlinked_local_count, adapter_available, adept_state,
+                    index, len(manifest), summary, emit, logger,
+                    retry_scope_blocked=retry_scope_blocked,
+                ):
                     item_committed = True
                     continue
 
@@ -938,7 +950,7 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
-def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger):
+def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, total, summary, emit, logger, *, retry_scope_blocked: bool = False):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
@@ -1046,6 +1058,25 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         summary["attention_required"] += 1
         emit("attention_required", current=index + 1, total=total, title=title, item_id=product_id, code="unlinked_local_books", message=message)
         logger.info("TRACE kobo acquisition decision=blocked reason=unlinked-local-books count=%s", unlinked_local_count)
+        return True
+
+    # A persisted delegated-permission denial is not a transient download
+    # failure. Avoid re-resolving its descriptor (or attempting delegated)
+    # on every automatic/repeated batch, including after application restart.
+    # A caller may explicitly retry after reconnecting with updated scopes.
+    # Existing local candidates and archived/unlinked guards above always
+    # take precedence, including when explicit retry is requested.
+    if (not retry_scope_blocked and current
+            and str(current.get("status") or "") == "attention_required"
+            and str(current.get("attention_code") or "") == "missing_delegation_scope"):
+        summary["attention_required"] += 1
+        summary["items_blocked_by_scope"] += 1
+        summary["blocked_non_retryable"] += 1
+        emit(
+            "attention_required", current=index + 1, total=total,
+            item_id=product_id, title=title, code="missing_delegation_scope",
+            message="Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)",
+        )
         return True
 
     if not adapter_available:
