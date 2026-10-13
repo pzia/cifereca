@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 
 def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
+    # A delayed request can be emitted after MainWindow's runner/service close.
+    if getattr(self, "_closed", False):
+        return
     if self._library_refresh_pending and control is None:
         return
     self._library_refresh_pending = True
@@ -55,6 +58,8 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
 
 
 def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
+    if getattr(self, "_closed", False):
+        return
     if self._recent_refresh_pending and control is None:
         return
     self._recent_refresh_pending = True

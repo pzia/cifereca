@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 import pytest
@@ -76,3 +77,19 @@ assert 'gi' not in sys.modules
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0, result.stderr
+
+@pytest.mark.parametrize("kind", ["library", "recent"])
+@pytest.mark.parametrize("with_control", [False, True])
+def test_closed_owner_refuses_refresh_before_service_or_runner_access(kind, with_control):
+    # No runner, service, GTK widget tree, or pending attributes: invoking
+    # the actual adapter must leave the detached owner entirely untouched.
+    host = NS(_closed=True)
+    control = object() if with_control else None
+    if kind == "library":
+        result = library_refresh.refresh_library(
+            host, scan=True, control=control, refresh_covers=True,
+        )
+    else:
+        result = library_refresh.refresh_recent(host, control=control)
+    assert result is None
+    assert vars(host) == {"_closed": True}
