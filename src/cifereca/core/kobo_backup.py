@@ -298,7 +298,7 @@ def kobo_backup_preview(
     counts = {
         "already_local_linked": 0, "already_local_verified": 0,
         "needs_reconciliation": 0, "attention_required": 0,
-        "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
+        "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
         "potentially_missing": 0, "invalid_manifest_items": 0,
     }
     examples: list[dict[str, str]] = []
@@ -375,7 +375,11 @@ def kobo_backup_preview(
             elif raw.get("downloadable") is False:
                 reason = "not_downloadable"
             elif current and current.get("status") == "attention_required":
-                reason = "attention_required"
+                reason = (
+                    "blocked_scope"
+                    if current.get("attention_code") == "missing_delegation_scope"
+                    else "attention_required"
+                )
             elif unlinked_blocked:
                 reason = "blocked_unlinked"
             elif not refresh_manifest:
@@ -405,6 +409,11 @@ def kobo_backup_preview(
         "checkpoint_status": str((checkpoint or {}).get("status") or "unknown"),
         "unlinked_local_books": unlinked_local_books,
         "counts": counts,
+        "blocking_items": sum(counts[key] for key in (
+            "needs_reconciliation", "attention_required",
+            "blocked_scope", "blocked_unlinked", "not_downloadable",
+            "invalid_manifest_items",
+        )),
         "examples": examples,
         "preview_only": True,
         "acquisition_authorized": False,
