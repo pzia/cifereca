@@ -491,14 +491,24 @@ def _recover_local_remnants(self, summary, target_dirs, emit):
             for legacy_candidate in self._kobo_record_candidate_paths(previous, legacy_target_dir):
                 if legacy_candidate not in candidates:
                     candidates.append(legacy_candidate)
+        # The persisted path is a stronger clue than a generated filename:
+        # users can rename/move an acquired file after an interrupted run.
+        stored_path = str(previous.get("local_path") or "").strip()
+        if stored_path:
+            linked = Path(stored_path)
+            if (linked.is_file() or linked.is_symlink()) and linked not in candidates:
+                candidates.append(linked)
         if len(candidates) == 1:
             artifact = candidates[0]
+            # Never dereference a symlink (including dangling links) when
+            # recovering an unverified local artifact.
+            ordinary_file = artifact.is_file() and not artifact.is_symlink()
             self.storage.backup_put({
                 **previous,
                 "status": "reconcile_required",
                 "local_path": str(artifact),
-                "size": artifact.stat().st_size,
-                "sha256": try_sha256_file(artifact),
+                "size": artifact.stat().st_size if ordinary_file else None,
+                "sha256": try_sha256_file(artifact) if ordinary_file else None,
                 "updated_at": int(time.time()),
                 "error": (
                     "Artefact local présent après une acquisition Adept non réconciliée ; "
@@ -529,18 +539,10 @@ def _recover_local_remnants(self, summary, target_dirs, emit):
                 "job_id": None,
             })
         elif previous_status in {"reconcile_required", "reconcile_conflict"}:
-            # The user may have manually moved/removed the suspect file(s).
-            # With no candidate left, allow a clean retry on the next pass.
-            self.storage.backup_put({
-                **previous,
-                "status": "pending_acquisition",
-                "local_path": None,
-                "size": None,
-                "sha256": None,
-                "updated_at": int(time.time()),
-                "error": "Artefact à réconcilier absent ; nouvelle tentative autorisée",
-                "job_id": None,
-            })
+            # A missing candidate is NOT proof that the book is absent:
+            # it may have been renamed or relocated outside scanned paths.
+            # Keep the quarantine until an explicit reconciliation clears it.
+            continue
 
     recovery_rows = self.storage.backup_list("kobo")
     summary["reconcile_pending"] = sum(
@@ -677,6 +679,10 @@ def _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_coun
 
     if current and current.get("status") in {"ok", "complete"} and current.get("revision_id") == revision_id:
         local = Path(str(current.get("local_path") or ""))
+        if local.is_symlink():
+            self.storage.backup_put({**current, "status": "reconcile_required", "error": "Lien symbolique local à réconcilier"})
+            summary["reconcile_skipped"] += 1
+            return True
         if local.is_file():
             try:
                 observed = self._observed_backup_artifact(local)
@@ -709,8 +715,8 @@ def _skip_manifest_item(self, item, raw, session_target_dir, unlinked_local_coun
 
     # A bypass of the global unlinked-books guard must never imply permission
     # to overwrite or re-download a plausible, *unlinked* artifact for this item.
-    # Filename matches, including damaged or symlinked files, are ambiguous:\n    # quarantine for manual reconciliation
-    # rather than assigning ownership or marking an uninspected file complete.
+    # Filename matches, including damaged or symlinked files, are ambiguous:
+    # quarantine for manual reconciliation rather than treating them as complete.
     # This includes legacy flat-library placements from older versions.
     candidates = self._kobo_record_candidate_paths(base_record, session_target_dir)
     legacy_dir = self.library_dir()
