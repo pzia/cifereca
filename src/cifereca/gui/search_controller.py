@@ -22,11 +22,15 @@ def _reset_search_enter(self):
 
 
 def _search_controls_changed(self):
+    if getattr(self, "_closed", False):
+        return
     self._reset_search_enter()
     self._render_search_results()
 
 
 def _search_enter(self):
+    if getattr(self, "_closed", False):
+        return
     from .search_intent import SearchEnterSequence
     from .search_pending import pending_online_search_matches
     if not hasattr(self, "_search_enter_sequence"):
@@ -89,6 +93,10 @@ def search_books(
     This API is public through UiSearchNavigationHost. No credentials,
     selected identity or old filters are copied into a new search.
     """
+    # A plugin callback may arrive after its UI host/window has been closed.
+    # Reject before touching stale GTK controls or triggering navigation.
+    if getattr(self, "_closed", False):
+        return False
     from .query_model import FIELDS, QueryState
 
     if not isinstance(query, str) or not 2 <= len(query.strip()) <= 512:
@@ -112,6 +120,8 @@ def search_books(
 
 
 def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
+    if getattr(self, "_closed", False):
+        return
     from .search_pending import pending_online_search_matches
     if not keyboard:
         self._reset_search_enter()
