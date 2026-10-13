@@ -65,6 +65,7 @@ def test_cancel_between_books_persists_checkpoint_and_restart_resumes_only_missi
         assert checkpoint["processed"] == 1
         assert checkpoint["total"] == 3
         assert checkpoint["counts"]["remaining"] == 2
+        assert service._kobo_backup_account_due("vault-1") is False
         assert service.storage.backup_get("kobo", "vault-1", "historical") is not None
         saved_path = Path(service.storage.backup_get("kobo", "vault-1", "item-1")["local_path"])
         saved_bytes = saved_path.read_bytes()
@@ -79,6 +80,7 @@ def test_cancel_between_books_persists_checkpoint_and_restart_resumes_only_missi
     try:
         resumed = restarted.sync_kobo_backup_account("vault-1")
         assert resumed["status"] == "complete"
+        assert restarted._kobo_backup_account_due("vault-1") is False
         assert resumed["unchanged"] == 1
         assert resumed["downloaded"] == 2
         assert resumed["attempted"] == 2
@@ -132,5 +134,31 @@ def test_cancellation_hook_exception_fails_closed_before_provider(tmp_path, monk
         assert report["status"] == "cancelled"
         assert report["attempted"] == 0
         assert report["manifests_fetched"] == 0
+    finally:
+        service.close()
+
+
+def test_expired_cancelled_checkpoint_stays_manual_only(tmp_path):
+    import time
+
+    service, _session = _service(tmp_path, _manifest())
+    try:
+        now = int(time.time())
+        service.storage.metadata_set(
+            _kobo_checkpoint_key("default", "vault-1"),
+            json.dumps({"schema_version": 1, "status": "cancelled",
+                        "processed": 1, "total": 3, "updated_at": now - 86400}),
+        )
+        assert service._kobo_backup_account_due("vault-1") is False
+        # A crash must behave differently from a deliberate cancellation.
+        service.storage.metadata_set(
+            _kobo_checkpoint_key("default", "vault-1"),
+            json.dumps({"schema_version": 1, "status": "interrupted",
+                        "processed": 1, "total": 3, "updated_at": now}),
+        )
+        # #1365 supplies the interruption policy; the assertion here
+        # prevents treating this diagnostic state as a user cancellation.
+        row = service.kobo_backup_diagnostic()["sources"][0]
+        assert row["status"] == "interrupted"
     finally:
         service.close()
