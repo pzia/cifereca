@@ -1643,19 +1643,25 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     # until a deliberate replacement/reconciliation contract exists.
     if current and current.get("local_path"):
         linked_path = Path(str(current["local_path"]))
-        # Preserve even dangling linked symlinks for reconciliation; never redownload.
-        if linked_path.is_symlink() or linked_path.is_file():
-            self.storage.backup_put({
-                **base_record,
-                "status": "reconcile_required",
-                "local_path": str(linked_path),
-                "error": "Artefact Kobo déjà lié : révision distante différente ou état incomplet ; rapprochement requis",
-            })
-            summary["reconcile_pending"] += 1
-            summary["reconcile_skipped"] += 1
-            emit("reconcile_required", current=index + 1, total=total,
-                 title=title, item_id=product_id)
-            return True
+        # A persisted path proves a prior placement was recorded, even if it
+        # was moved or deleted after a crash. Never silently fetch a second copy.
+        # Preserve dangling symlinks and absent files for manual reconciliation.
+        linked_present = linked_path.is_symlink() or linked_path.is_file()
+        self.storage.backup_put({
+            **base_record,
+            "status": "reconcile_required",
+            "local_path": str(linked_path),
+            "error": (
+                "Artefact Kobo déjà lié : révision distante différente ou état incomplet ; rapprochement requis"
+                if linked_present else
+                "Artefact Kobo précédemment lié introuvable ; vérifiez son déplacement avant tout téléchargement"
+            ),
+        })
+        summary["reconcile_pending"] += 1
+        summary["reconcile_skipped"] += 1
+        emit("reconcile_required", current=index + 1, total=total,
+             title=title, item_id=product_id)
+        return True
 
     # A bypass of the global unlinked-books guard must never imply permission
     # to overwrite or re-download a plausible, *unlinked* artifact for this item.
