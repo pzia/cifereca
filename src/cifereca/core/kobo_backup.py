@@ -1098,13 +1098,19 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 summary["aborted"] = True
                 summary["abort_reason"] = info
                 abort_all = True
-            checkpoint("aborted" if abort_all else "failed")
+            terminal_status = "aborted" if abort_all else "failed"
+            checkpoint(terminal_status)
+            delta = source_delta()
             summary["sources"].append({
                 "identity_id": session_identity.identity_id,
                 "credential_id": session.credential_id,
-                "status": "aborted" if abort_all else "failed",
-                "manifest_items": 0, **source_delta(),
+                "status": terminal_status,
+                "manifest_items": 0, **delta,
             })
+            # Manifest failure is terminal for this source too. Publish only
+            # after the durable checkpoint, exactly like item-loop endings.
+            emit("source_done", credential_id=session.credential_id,
+                 status=terminal_status, manifest_items=0, **delta)
             if abort_all:
                 break
             continue
