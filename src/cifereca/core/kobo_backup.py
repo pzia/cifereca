@@ -489,6 +489,90 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
 
 
 
+
+def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Create a shareable *persisted* Kobo report without personal data.
+
+    The internal kobo_backup_diagnostic is deliberately rich for the local UI
+    and reconciliation tools. Never print that raw dictionary from CLI:
+    provider messages can include signed URLs, filenames and bearer values,
+    and the backup rows contain private titles, paths and product IDs.
+    """
+    known_item_statuses = {
+        "ok", "complete", "error", "pending", "pending_acquisition",
+        "acquiring", "attention_required", "reconcile_required",
+        "reconcile_conflict", "archived_book", "unlinked_local_books",
+        "missing", "remote_owned", "unknown",
+    }
+    known_source_statuses = {
+        "complete", "partial", "failed", "aborted", "cancelled",
+        "attention_required", "running", "interrupted", "manifest_fetch",
+        "skipped_fresh",
+    }
+    source_metrics = {
+        "position", "total", "updated_at", "failure_streak", "scanned",
+        "attempted", "downloaded", "unchanged", "pending",
+        "attention_required", "errors", "skipped", "remaining",
+        "reconcile_pending", "reconcile_skipped", "items_blocked_by_scope",
+        "malformed_manifest_items", "duplicate_manifest_items",
+    }
+
+    def count(value: Any) -> int:
+        # Boolean is a subclass of int: reject it, as well as untrusted
+        # provider strings, floats, negatives and oversized numbers.
+        return value if type(value) is int and 0 <= value <= 1_000_000 else 0
+
+    statuses: dict[str, int] = {}
+    raw_statuses = report.get("statuses")
+    if isinstance(raw_statuses, dict):
+        for raw_status, raw_count in raw_statuses.items():
+            value = count(raw_count)
+            status = (
+                raw_status if type(raw_status) is str and raw_status in known_item_statuses
+                else "other"
+            )
+            statuses[status] = min(1_000_000, statuses.get(status, 0) + value)
+
+    sources: list[dict[str, Any]] = []
+    raw_sources = report.get("sources")
+    if isinstance(raw_sources, list):
+        for source in raw_sources[:25]:
+            if not isinstance(source, dict):
+                continue
+            state = source.get("status")
+            item: dict[str, Any] = {
+                "source_index": len(sources) + 1,
+                "status": (
+                    state if type(state) is str and state in known_source_statuses
+                    else "unknown"
+                ),
+            }
+            source_id = source.get("source_id")
+            # The checkpoint key contains a 24-character SHA-256 digest, not
+            # a raw Kobo credential, identity, product ID or account name.
+            if isinstance(source_id, str) and re.fullmatch(r"[0-9a-f]{24}", source_id):
+                item["source_id"] = source_id
+            for key in source_metrics:
+                value = source.get(key)
+                if type(value) is int and 0 <= value <= 1_000_000:
+                    item[key] = value
+            sources.append(item)
+
+    return {
+        "redacted": True,
+        "items": count(report.get("items")),
+        "items_blocked_by_scope": count(report.get("items_blocked_by_scope")),
+        "statuses": statuses,
+        "error_count": statuses.get("error", 0),
+        "reconcile_count": (
+            statuses.get("reconcile_required", 0)
+            + statuses.get("reconcile_conflict", 0)
+        ),
+        "attention_count": statuses.get("attention_required", 0),
+        "sources": sources,
+    }
+
+
 def _kobo_checkpoint_for(self, identity_id: str, credential_id: str) -> dict[str, Any] | None:
     """One established v1 checkpoint contract, no second checkpoint store."""
     try:
