@@ -59,18 +59,27 @@ class MaintenanceCancelControl:
         return None
 
 
-def preview_maintenance_tool(tool: Any, context: Any, *, destructive: bool) -> Any:
-    """Compute a plan off the GTK thread; refuse competing destructive scans."""
+def preview_maintenance_tool(
+    tool: Any, context: Any, *, destructive: bool,
+    control: Any = None,
+) -> Any:
+    """Compute off GTK; never publish a plan cancelled before/after scanning."""
+    if control is not None:
+        control.check_cancelled()
     if not destructive:
-        return tool.plan(context)
-    try:
-        with InterProcessLock(acquisition_lock_file()):
-            # A plugin may reuse its previous MaintenancePlan or mutate nested
-            # ``facts`` in place. Preserve the exact preview the user saw;
-            # otherwise comparing the same mutated object would falsely pass.
-            return deepcopy(tool.plan(context))
-    except LockBusyError as exc:
-        raise MaintenanceBusyError(BUSY_MESSAGE) from exc
+        result = tool.plan(context)
+    else:
+        try:
+            with InterProcessLock(acquisition_lock_file()):
+                if control is not None:
+                    control.check_cancelled()
+                # Preserve the exact nested preview confirmed by the user.
+                result = deepcopy(tool.plan(context))
+        except LockBusyError as exc:
+            raise MaintenanceBusyError(BUSY_MESSAGE) from exc
+    if control is not None:
+        control.check_cancelled()
+    return result
 
 
 def execute_maintenance_tool(tool: Any, context: Any, preview: Any, control: Any, *, destructive: bool) -> Any:
