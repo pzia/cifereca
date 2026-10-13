@@ -150,3 +150,38 @@ def test_explicit_retry_never_bypasses_existing_local_artifact_guard(tmp_path: P
         assert row["status"] == "reconcile_required"
     finally:
         service.close()
+
+
+def test_explicit_scope_retry_refuses_dangling_linked_symlink(tmp_path: Path, monkeypatch):
+    service, _session = _service(tmp_path, [
+        {"product_id": "blocked-1", "revision_id": "r2", "title": "Blocked",
+         "format": "EPUB"},
+    ])
+    monkeypatch.setattr(service, "kobo_adept_state", lambda **_kw: _ready_adept_state())
+    # The unusual path is not generated from the Kobo title or product ID.
+    linked = tmp_path / "external" / "old-name.epub"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(tmp_path / "missing" / "original.epub")
+    service.storage.backup_put({
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "identity_id": "default", "item_id": "blocked-1",
+        "revision_id": "r1", "title": "Old Title", "format": "EPUB",
+        "status": "attention_required", "attention_code": "missing_delegation_scope",
+        "local_path": str(linked),
+    })
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("dangling linked Kobo artifact must not be redownloaded")
+        ),
+    )
+    try:
+        result = service.sync_kobo_backup_account("vault-1", retry_scope_blocked=True)
+        assert result["attempted"] == 0
+        assert result["reconcile_skipped"] >= 1
+        row = service.storage.backup_get("kobo", "vault-1", "blocked-1")
+        assert row["status"] == "reconcile_required"
+        assert row["local_path"] == str(linked)
+        assert linked.is_symlink()
+    finally:
+        service.close()
