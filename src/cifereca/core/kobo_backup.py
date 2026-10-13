@@ -1704,6 +1704,9 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     ).strip():
         self.storage.backup_put({
             **base_record,
+            # Keep the acquired revision baseline, even if the remote edition
+            # has changed since the previously completed acquisition.
+            "revision_id": current.get("revision_id"),
             "status": "reconcile_required",
             "error": "Acquisition Kobo précédemment complète sans chemin local fiable ; rapprochement requis",
         })
