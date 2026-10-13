@@ -149,6 +149,7 @@ def test_public_search_never_asserts_personal_ownership(tmp_path):
         catalogue = _row(credential="public")
         service._mirror_remote_results([catalogue], identity_id="alice")
         assert service.storage.entitlements(provider_id="kobo") == []
+        assert service.storage.catalog_entries()[0]["local_state"] == "remote_catalog"
         assert service.library_entries(identity_id="alice") == []
         assert mirror_kobo_manifest_rights(
             service, [catalogue], identity_id="alice",
@@ -185,6 +186,7 @@ def test_explicit_kobo_account_sync_materializes_right_without_download(tmp_path
         result = service._synchronize_account_source_impl(account)
         assert result["owned_rights"] == 1
         assert calls == ["library"]
+        assert service.storage.catalog_entries()[0]["local_state"] == "remote_owned"
         assert len(service.library_entries(identity_id="alice")) == 1
         assert service.library_entries(identity_id="alice")[0]["local"] is False
     finally:
