@@ -145,3 +145,16 @@ def test_window_close_clears_timer_handle_even_when_removal_fails():
     assert window._closed is True
     assert window._kobo_backup_timer_id is None
     assert module.close_window_resources(window, source_remove=fail_remove) is False
+
+
+def test_book_cache_subscription_does_not_schedule_after_close():
+    """#1132: callbacks racing unsubscribe cannot queue GTK work."""
+    source = _method_source("MainWindow", "_subscribe_cached_book_details")
+    assert "None if self._closed else GLib.idle_add(self._cached_book_cache_invalidated)" in source
+
+
+def test_window_close_drops_cached_book_subscription_references():
+    source = (ROOT / "src/cifereca/gui/window_close.py").read_text()
+    assert "window._cached_book_unsubscribe = lambda: None" in source
+    assert "window._cached_book_services = ()" in source
+    assert "window._cached_book_context = None" in source
