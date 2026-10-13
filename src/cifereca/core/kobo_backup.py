@@ -524,6 +524,7 @@ def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
         "attention_required", "errors", "skipped", "remaining",
         "reconcile_pending", "reconcile_skipped", "items_blocked_by_scope",
         "malformed_manifest_items", "duplicate_manifest_items",
+        "provider_rejected_manifest_items",
     }
 
     def count(value: Any) -> int:
