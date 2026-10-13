@@ -115,6 +115,11 @@ def test_cancellation_before_manifest_fetch_does_not_access_provider(tmp_path, m
             _kobo_checkpoint_key("default", "vault-1")
         ))
         assert state["processed"] == 0 and state["status"] == "cancelled"
+        terminal = [event for event in events if event["event"] == "source_done"]
+        assert len(terminal) == 1
+        assert terminal[0]["status"] == state["status"] == "cancelled"
+        assert terminal[0]["manifest_items"] == state["total"] == 0
+        assert terminal[0]["remaining"] == state["counts"]["remaining"] == 0
         assert events[-1]["status"] == "cancelled"
     finally:
         service.close()
