@@ -585,7 +585,7 @@ def main() -> int:
                 assert len(broker.event_queries) == queries_before
                 report["checks"]["settings_real_gtk_save_persists_xdg_json"] = True
                 capture("08f-settings-saved-interface")
-                begin_settings_unsaved_edit()
+                begin_settings_reconnect_proof()
             elif monotonic() >= deadline:
                 raise AssertionError(
                     "GTK Save did not commit an isolated Interface setting",
@@ -594,6 +594,71 @@ def main() -> int:
             else:
                 later(100, saved)
         later(150, saved)
+
+    # P0 #1127: real GTK Reconnect is an explicit Save-then-Reconnect,
+    # even without pending edits. Intercept only the final provider invocation
+    # so this offline recipe cannot contact any configured source.
+    def begin_settings_reconnect_proof():
+        w = window[0]
+        w._settings_tabs.set_visible_child_name("accounts")
+        later(180, click_settings_reconnect)
+
+    def click_settings_reconnect():
+        w = window[0]
+        assert w._settings_tabs.get_visible_child_name() == "accounts"
+        viewport = w.view_stack.get_child_by_name("settings")
+        saves = [node for node in settings_rows(viewport, Gtk.Button)
+                 if node.get_tooltip_text() ==
+                 "Enregistrer les modifications de configuration en attente"]
+        assert len(saves) == 2 and all(not node.get_sensitive() for node in saves), (
+            "Reconnect baseline must not have any pending Settings edits"
+        )
+        reconnects = [node for node in settings_rows(viewport, Gtk.Button)
+                      if node.get_tooltip_text() ==
+                      "Enregistrer les modifications en attente puis reconnecter les sources"]
+        assert len(reconnects) == 2, "Missing desktop/footer Reconnect"
+        button = next((node for node in reconnects
+                       if node.get_mapped() and node.get_sensitive()), None)
+        assert button is not None, "Reconnect must be offered from Accounts"
+        initial_config = core.config.path.read_bytes()
+        expected_identities = core.config.identities()
+        checks_before = broker.checks
+        events_before = len(broker.event_queries)
+        reconnect_calls = []
+        original_reconnect = w.reconnect_sources
+
+        def offline_reconnect():
+            # Invoked only after the save worker has completed and its callback
+            # has applied the result. No provider, token, or HTTP call occurs.
+            reconnect_calls.append((
+                core.config.path.read_bytes(), core.config.identities(),
+            ))
+
+        w.reconnect_sources = offline_reconnect
+        report["pointer_actions"].append(device[0].click_widget(button))
+        deadline = monotonic() + 12
+
+        def check_reconnect():
+            if reconnect_calls:
+                w.reconnect_sources = original_reconnect
+                assert len(reconnect_calls) == 1, "Duplicate Reconnect requests"
+                assert reconnect_calls[0][0] == initial_config, (
+                    "Unchanged Settings persisted differently before Reconnect"
+                )
+                assert reconnect_calls[0][1] == expected_identities
+                assert broker.checks == checks_before
+                assert len(broker.event_queries) == events_before
+                report["checks"]["settings_real_gtk_reconnect_after_save_offline"] = True
+                capture("08i-settings-reconnect-offline")
+                begin_settings_unsaved_edit()
+            elif monotonic() >= deadline:
+                w.reconnect_sources = original_reconnect
+                raise AssertionError(
+                    "GTK Reconnect did not follow successful Settings commit"
+                )
+            else:
+                later(100, check_reconnect)
+        later(140, check_reconnect)
 
     def begin_settings_unsaved_edit():
         w = window[0]
