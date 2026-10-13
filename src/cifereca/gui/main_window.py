@@ -805,7 +805,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Plugin callbacks may run on any thread; GTK must only be touched in
         # an idle callback. These subscriptions are replaced on plugin changes.
         self._cached_book_unsubscribe = subscribe_cached_book_detail_changes(
-            services, lambda: GLib.idle_add(self._cached_book_cache_invalidated),
+            services, lambda: None if self._closed else GLib.idle_add(self._cached_book_cache_invalidated),
         )
         self._cached_book_cache_invalidated()
 
