@@ -1592,12 +1592,14 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
         refreshed = {
             **current,
             **base_record,
-            # Do not rewrite the last acquired revision on a complete row
-            # before _skip_manifest_item has compared it with the manifest.
-            # Otherwise an older local file falsely appears current.
+            # Do not rewrite the acquired revision until reconciliation has
+            # completed. A second sync must not relabel quarantined local
+            # provenance with the newer remote revision.
             "revision_id": (
                 current.get("revision_id")
-                if current.get("status") in {"ok", "complete"}
+                if current.get("status") in {
+                    "ok", "complete", "reconcile_required", "reconcile_conflict",
+                }
                 and current.get("revision_id") != revision_id
                 else revision_id
             ),
