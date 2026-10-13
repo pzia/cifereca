@@ -1549,7 +1549,20 @@ def _publish_summary(self, summary, error_counts, error_examples, emit, *, scope
     now = int(time.time())
     if summary.get("sessions") and not scoped:
         self.storage.metadata_set("kobo_backup_last_attempt_at", now)
-        if summary["manifests_fetched"] == summary["sessions"]:
+        # Fetching every manifest does not make the snapshot authoritative:
+        # malformed, duplicated or interrupted source pages must not advance
+        # the global manifest-success timestamp used by offline diagnostics.
+        authoritative_sources = (
+            len(summary.get("sources", ())) == summary["sessions"]
+            and all(
+                source.get("status") in {"complete", "attention_required"}
+                and not source.get("malformed_manifest_items", 0)
+                and not source.get("duplicate_manifest_items", 0)
+                for source in summary["sources"]
+            )
+        )
+        if (summary["manifests_fetched"] == summary["sessions"]
+                and authoritative_sources):
             self.storage.metadata_set("kobo_backup_last_manifest_success_at", now)
         if state == "complete":
             self.storage.metadata_set("kobo_backup_last_success_at", now)
