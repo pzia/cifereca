@@ -1160,13 +1160,20 @@ def _safe_kobo_backup_diagnostic_detail(summary: dict[str, Any]) -> dict[str, An
             return None
         # Even error identifiers are untrusted plugin strings. Do not export
         # arbitrary messages, exception text, URLs or credential fragments.
-        def code(value: Any) -> str:
-            value = str(value or "")
-            return value if re.fullmatch(r"[a-z][a-z0-9_]{0,49}", value) else "other"
-
+        known_codes = {
+            "unauthorized", "missing_token", "invalid_token", "invalid_bearer",
+            "forbidden", "insufficient_scope", "invalid_api_token",
+            "provider_http_error", "missing_delegation_scope",
+            "no_compatible_http_candidate", "no_downloadable_artifact",
+            "missing_pinned_delivery_capability", "adept_error",
+            "result_unparseable_artifact_present", "archived_book",
+            "network_error", "timeout", "rate_limited", "other",
+        }
+        raw_phase = str(raw.get("phase") or "")
+        raw_code = str(raw.get("code") or "")
         record: dict[str, Any] = {
-            "phase": code(raw.get("phase")),
-            "code": code(raw.get("code")),
+            "phase": raw_phase if raw_phase in {"vault", "adept", "integration"} else "other",
+            "code": raw_code if raw_code in known_codes else "other",
         }
         status = raw.get("status_code")
         if type(status) is int and 100 <= status <= 599:
