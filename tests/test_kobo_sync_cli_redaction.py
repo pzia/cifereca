@@ -73,7 +73,7 @@ def test_kobo_sync_cli_never_exports_provider_or_book_metadata(
         library=service, close=lambda: actions.append("close"),
     ))
     args = [command] + (["--quiet"] if quiet else [])
-    assert cli.main(args) == 0
+    assert cli.main(args) == 2
     captured = capsys.readouterr()
     result = json.loads(captured.out)
     assert result["redacted"] is True
@@ -120,3 +120,37 @@ def test_kobo_sync_progress_rejects_malformed_counters(monkeypatch, capsys):
     for secret in ("PRIVATE_COUNTER", "PRIVATE_URL", "PRIVATE_TOKEN", "PRIVATE_BOOK"):
         assert secret not in output.out + output.err
     assert "téléchargés=0" in output.err
+
+
+@pytest.mark.parametrize("state, expected_exit", [
+    ("complete", 0),
+    ("partial", 2),
+    ("failed", 2),
+    ("aborted", 2),
+    ("cancelled", 2),
+    ("attention_required", 2),
+    ("unknown-provider-state", 2),
+])
+def test_kobo_sync_status_is_not_silent_shell_success(
+    monkeypatch, capsys, state, expected_exit,
+):
+    service = SimpleNamespace(
+        connect_configured=lambda: None,
+        sync_kobo_backup=lambda *, progress: {
+            "status": state, "sessions": 1, "manifests_fetched": 1,
+            "remaining": 3, "errors": 0,
+        },
+    )
+    monkeypatch.setattr(cli.CiferecaCore, "open", lambda **_kwargs: SimpleNamespace(
+        library=service, close=lambda: None,
+    ))
+    assert cli.main(["kobo-sync", "--quiet"]) == expected_exit
+    result = json.loads(capsys.readouterr().out)
+    assert result["redacted"] is True
+    assert result["status"] == (
+        state if state in {
+            "complete", "partial", "failed", "aborted",
+            "cancelled", "attention_required",
+        } else "unknown"
+    )
+    assert result["remaining"] == 3
