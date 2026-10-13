@@ -292,14 +292,28 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     if kobo_decision["status"] == "started":
         try:
             kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-            if int((kobo_summary or {}).get("errors", 0) or 0) > 0:
+            # A successful function return is not necessarily a complete
+            # materialization: pending/reconcile/scope attention stays partial.
+            if (kobo_summary or {}).get("status") in {
+                "partial", "attention_required", "aborted", "failed"
+            } or int((kobo_summary or {}).get("errors", 0) or 0) > 0:
                 kobo_decision["status"] = "partial"
         except Exception:
             # Do not persist an exception's raw text in this decision event.
             kobo_summary = {"errors": 1, "status": "error"}
             kobo_decision["status"] = "error"
     elif kobo_decision["status"] == "fresh_cache":
+        previous_batch = str(self.storage.metadata_get("kobo_backup_last_batch_status") or "")
         kobo_summary = {"errors": 0, "status": "fresh_cache", "skipped_fresh": True}
+        if previous_batch and previous_batch != "complete":
+            kobo_summary.update(
+                status="fresh_cache_partial", last_batch_status=previous_batch
+            )
+            kobo_decision["status"] = "partial"
+        logger.info(
+            "TRACE kobo sync skipped reason=fresh-cache previous_batch=%s",
+            previous_batch or "unknown",
+        )
     for field in ("manifest_items", "owned", "archived", "downloadable",
                   "candidate_count", "attempted", "downloaded", "pending",
                   "attention_required", "reconcile_required", "errors"):
