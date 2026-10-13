@@ -718,6 +718,7 @@ def main() -> int:
         assert len(action_buttons) == 1
         retained_action_button = action_buttons[0]
         public_host.action_context()  # Real library context, before teardown.
+        listeners_before = tuple(getattr(w, "_overview_listeners", ()))
         w.close()
         assert w._closed
         # P0 #1130/#1132: late plugin notifications are a no-op on an
@@ -749,11 +750,12 @@ def main() -> int:
         assert public_host.open_book_detail(None) is False
         assert public_host.identity_overview() == []
         assert public_host.plugin_statuses() == []
-        assert not hasattr(w, "_overview_listeners") or not w._overview_listeners
+        assert tuple(getattr(w, "_overview_listeners", ())) == listeners_before
         cancel = public_host.subscribe_identity_overview(
             lambda: late_action_calls.append("observer")
         )
         cancel()
+        assert tuple(getattr(w, "_overview_listeners", ())) == listeners_before
         public_host.navigate("search")
         public_host.open_plugin_settings("fake-closed-plugin")
         public_host.open_identity_library("camille")
