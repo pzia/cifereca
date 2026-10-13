@@ -682,7 +682,7 @@ def test_kobo_vault_nonboolean_flags_never_escalate_ownership_or_download(
     result = catalog.normalize_item(raw, default_collection=default_collection)
     assert result.owned is expected_owned
     assert result.downloadable is expected_downloadable
-    if default_collection == "catalog" and owned not in (True,):
+    if default_collection == "catalog" and owned is not True:
         assert result.source_collection == "catalog"
 
 
@@ -690,13 +690,25 @@ def test_kobo_personal_manifest_malformed_owned_flag_cannot_create_sqlite_right(
     tmp_path,
 ):
     """A personal-library row with explicit 'false' must not grant ownership."""
+    from cifereca.config import Config
     from cifereca.core.kobo_manifest_rights import mirror_kobo_manifest_rights
-    from tests.test_core_1337_kobo_personal_manifest_rights import _service
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
 
     catalog = KoboCatalogService(
         SimpleNamespace(base_url="https://vault.example"), credential_id="vault",
     )
-    service = _service(tmp_path)
+    config = Config(tmp_path / "config.json")
+    config.set("library.directory", str(tmp_path / "EBooks"))
+    config.set("identities", [
+        {"id": "alice", "label": "Alice", "directory_name": "alice"},
+    ])
+    config.set("providers.accounts", [])
+    config.save()
+    service = LibraryService(
+        config, Storage(tmp_path / "library.sqlite3"), Diagnostics(),
+    )
     try:
         bad = catalog.normalize_item({
             "product_id": "not-purchased", "title": "Not purchased",
