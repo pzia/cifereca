@@ -10,12 +10,11 @@ from .llm_settings import (
     LLMSettingsError, normalize_llm_settings, destination_summary,
     env_key_is_set, probe_llm_connection,
 )
-from .task_runner import TaskPriority
 
 
 def bind_settings_ai_callbacks(
     self, *, ai_ui, ai_cfg, page_lifetime, settings_state,
-    update_settings_actions, Adw,
+    update_settings_actions, Adw, TaskPriority,
 ):
     ai_enabled = ai_ui.enabled
     ai_endpoint = ai_ui.endpoint
