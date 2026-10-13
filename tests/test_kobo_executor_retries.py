@@ -385,3 +385,60 @@ def test_kobo_preflight_failure_does_not_create_false_ledger_entry(tmp_path: Pat
         assert service.storage.acquisitions(provider_id="kobo") == []
     finally:
         service.close()
+
+def test_delegation_scope_denied_after_expired_url_is_not_retried(tmp_path: Path, monkeypatch):
+    """A real plugin 403 on URL refresh stays a scoped, nonretryable error."""
+    import importlib.util
+    from dataclasses import replace
+
+    from cifereca.kobo.vault import KoboVaultError as CoreKoboVaultError
+
+    plugin_path = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
+    spec = importlib.util.spec_from_file_location("test_real_vault_refresh_scope", plugin_path)
+    assert spec is not None and spec.loader is not None
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+    assert plugin.KoboVaultError is not CoreKoboVaultError
+
+    service, session = _service(tmp_path)
+    original_resolver = session.resolve_acquisition
+    delegated_requests: list[str] = []
+    runtime_requests: list[dict] = []
+
+    def resolve(product_id, *, revision_id=None, mode="descriptor", display_profile=None):
+        if mode == "delegated":
+            delegated_requests.append(product_id)
+            raise plugin.KoboVaultError(
+                "Kobo-Vault : forbidden", code="forbidden", status_code=403,
+            )
+        return original_resolver(
+            product_id, revision_id=revision_id, mode=mode,
+            display_profile=display_profile,
+        )
+
+    def expired(request):
+        runtime_requests.append(request)
+        raise KoboAdeptError("expired", code="source_auth_expired", exit_code=4)
+
+    monkeypatch.setattr(session, "resolve_acquisition", resolve)
+    monkeypatch.setattr(service, "execute_acquisition_request", expired)
+    try:
+        first = _item()
+        second = replace(first, id="kobo:vault-1:book-2", record_id="book-2")
+        for item in (first, second):
+            with pytest.raises(CoreKoboVaultError) as caught:
+                service.acquire_direct_item(item)
+            assert caught.value.status_code == 403
+            assert caught.value.code == "missing_delegation_scope"
+
+        # The first item probes the missing permission. Subsequent items
+        # still inspect descriptors but send no other forbidden delegated GET.
+        assert delegated_requests == ["book-1"]
+        assert getattr(session, "_cifereca_delegation_attempts_saved", 0) >= 1
+        assert len(runtime_requests) == 2
+        rows = service.storage.acquisitions(provider_id="kobo")
+        assert len(rows) == 2
+        assert all(row["status"] == "attention_required" for row in rows)
+        assert all(row["error_code"] == "missing_delegation_scope" for row in rows)
+    finally:
+        service.close()
