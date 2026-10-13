@@ -270,10 +270,10 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
             ("vault-2", 522, "b"), ("vault-3", 5, "c")
         ):
             identity_id = credential
-            service.config.set("identities", service.config.get("identities") + [{
-                "id": identity_id, "label": identity_id,
-                "directory_name": identity_id, "preferences": {},
-            }])
+            from cifereca.identities import Identity
+            identity = Identity(identity_id, identity_id, directory_name=identity_id)
+            service.storage.identity_put(identity)
+            service.identities.append(identity)
             service.storage.provider_connection_put({
                 "identity_id": identity_id, "provider_id": "kobo",
                 "credential_id": credential, "label": "Kobo",
