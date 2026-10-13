@@ -15,13 +15,89 @@ from secrets import token_urlsafe
 from threading import Lock
 from time import monotonic
 import json
+import os
 import re
+import stat
 from typing import Any
 
 from cifereca.plugin_api import LLMRequest
 from diagnostics_explorer import public_source_evidence
 
 _MAX_PROMPT = 3000
+_MAX_USER_LOG_BYTES = 65536
+_MAX_USER_LOG_LINES = 24
+# Deliberately no free text, file name, timestamps or user-controlled IDs:
+# regex redaction alone cannot recognize arbitrary names and book titles.
+_USER_LOG_SIGNALS = {
+    "status": frozenset({
+        "ok", "success", "failed", "error", "warning", "partial",
+        "pending", "running", "completed", "cancelled", "skipped",
+        "timeout", "unavailable", "attention_required",
+    }),
+    "phase": frozenset({
+        "connect", "sync", "fetch", "download", "parse", "import",
+        "return", "verify", "search", "acquisition", "integration",
+        "vault", "transport", "catalog",
+    }),
+    "severity": frozenset({"debug", "info", "warning", "error", "critical"}),
+}
+_USER_LOG_TOKEN = re.compile(r"(?<![\\w])(?P<key>status|phase|severity)=(?P<value>[a-z_]{2,32})(?![\\w])")
+
+
+def read_user_selected_log(path: str) -> dict[str, Any]:
+    """Read ONE explicitly selected regular file, once, with strict limits.
+
+    The path is local only; no filename, raw line or token enters the returned
+    value. We expose only literal protocol signals with their physical line
+    number, not verified event IDs or causal facts.
+    """
+    if type(path) is not str or not path or "\x00" in path:
+        raise ValueError("manual_log_selection_invalid")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+        try:
+            meta = os.fstat(fd)
+            if not stat.S_ISREG(meta.st_mode) or meta.st_size > _MAX_USER_LOG_BYTES:
+                raise ValueError("manual_log_not_bounded_regular_file")
+            with os.fdopen(fd, "rb") as stream:
+                fd = -1
+                content = stream.read(_MAX_USER_LOG_BYTES + 1)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except OSError as exc:
+        raise ValueError("manual_log_unavailable") from None
+    if len(content) > _MAX_USER_LOG_BYTES:
+        raise ValueError("manual_log_exceeds_64kb")
+    try:
+        lines = content.decode("utf-8", "strict").splitlines()
+    except UnicodeError:
+        raise ValueError("manual_log_invalid_utf8") from None
+    rows: list[dict[str, Any]] = []
+    recognized = 0
+    for number, line in enumerate(lines, start=1):
+        # Oversized hostile lines are not candidates for token extraction.
+        if len(line) > 1024:
+            continue
+        signals: dict[str, str] = {}
+        for match in _USER_LOG_TOKEN.finditer(line):
+            key, value = match.group("key"), match.group("value")
+            if value in _USER_LOG_SIGNALS[key]:
+                signals[key] = value
+        if not signals:
+            continue
+        recognized += 1
+        if len(rows) < _MAX_USER_LOG_LINES:
+            rows.append({"line": number, "signals": signals})
+    if not rows:
+        raise ValueError("manual_log_no_public_signals")
+    return {
+        "rows": rows, "recognized": recognized,
+        "truncated": recognized > len(rows),
+    }
+
 _MAX_EVENTS = 24
 _MAX_STRUCTURED = 4
 _MAX_SUPPORT_FIELDS = 8
@@ -277,7 +353,7 @@ def _public_event_row(item: Mapping[str, Any]) -> dict[str, str]:
 _PROVENANCE_FIELDS = (
     "count", "structured_count", "support_fields", "total_available",
     "sample_truncated", "source_states", "chars", "bytes",
-    "generated", "limitations",
+    "generated", "limitations", "manual_lines",
 )
 
 
@@ -420,6 +496,7 @@ def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
     include_snapshot: bool = False, include_support_report: bool = False,
+    manual_log: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read only 24 public events once, bound preview to exact destination."""
     from cifereca_diagnostics_page import redacted_detail, format_diagnostic_detail
@@ -441,12 +518,47 @@ def prepare_analysis(
         raise ValueError("unsupported_structured_scope")
     if type(include_support_report) is not bool:
         raise ValueError("unsupported_support_scope")
+    if manual_log is not None:
+        if type(manual_log) is not dict or set(manual_log) != {
+            "rows", "recognized", "truncated",
+        }:
+            raise ValueError("manual_log_invalid")
+        manual_rows = manual_log["rows"]
+        if (
+            type(manual_rows) is not list
+            or not 1 <= len(manual_rows) <= _MAX_USER_LOG_LINES
+            or type(manual_log["recognized"]) is not int
+            or manual_log["recognized"] < len(manual_rows)
+            or type(manual_log["truncated"]) is not bool
+            or manual_log["truncated"] != (manual_log["recognized"] > len(manual_rows))
+        ):
+            raise ValueError("manual_log_invalid")
+        safe_manual_rows = []
+        for row in manual_rows:
+            if type(row) is not dict or set(row) != {"line", "signals"}:
+                raise ValueError("manual_log_invalid")
+            signals = row["signals"]
+            if (
+                type(row["line"]) is not int or row["line"] < 1
+                or type(signals) is not dict or not signals
+                or any(
+                    key not in _USER_LOG_SIGNALS or type(value) is not str
+                    or value not in _USER_LOG_SIGNALS[key]
+                    for key, value in signals.items()
+                )
+            ):
+                raise ValueError("manual_log_invalid")
+            safe_manual_rows.append({"line": row["line"], "signals": dict(signals)})
+    else:
+        safe_manual_rows = []
     module = module.strip()
     scope = {
         "source": source, "module": module, "severity": severity,
         "since": since, "include_snapshot": include_snapshot,
         "include_support_report": include_support_report,
     }
+    if manual_log is not None:
+        scope["user_log_selected"] = True
     feed = diagnostics_broker.events(
         source=source, module=module, severity=severity,
         since=since, until=None, limit=_MAX_EVENTS, offset=0,
@@ -513,12 +625,15 @@ def prepare_analysis(
 
     def evidence_body(
         event_rows: list, structured_rows: list, support_sections: dict,
+        manual_rows: list | None = None,
     ) -> str:
         evidence = {"events": event_rows}
         if include_snapshot:
             evidence["structured_diagnostics"] = structured_rows
         if include_support_report:
             evidence["support_report_sections"] = support_sections
+        if manual_rows:
+            evidence["user_selected_log_signals_unverified"] = manual_rows
         return format_diagnostic_detail(evidence, "json")
 
     # Filtered events are the primary evidence: optional structured context
@@ -623,11 +738,24 @@ def prepare_analysis(
         if len(safe_report) > 32:
             truncated = True
 
-    if not filtered and not structured and not support_sections:
+    selected_manual = []
+    for row in safe_manual_rows:
+        candidate = selected_manual + [row]
+        if _prompt_bytes(header + evidence_body(
+            filtered, structured, support_sections, candidate,
+        )) > _MAX_PROMPT:
+            truncated = True
+            break
+        selected_manual = candidate
+    if safe_manual_rows and len(selected_manual) < len(safe_manual_rows):
+        truncated = True
+    if manual_log is not None and manual_log["truncated"]:
+        truncated = True
+    if not filtered and not structured and not support_sections and not selected_manual:
         raise ValueError("no_diagnostic_events")
     if len(filtered) < min(len(events), _MAX_EVENTS):
         truncated = True
-    prompt = header + evidence_body(filtered, structured, support_sections)
+    prompt = header + evidence_body(filtered, structured, support_sections, selected_manual)
     prompt_size = _prompt_bytes(prompt)
     if prompt_size > _MAX_PROMPT:
         raise ValueError("prompt_too_large")
@@ -653,6 +781,7 @@ def prepare_analysis(
         coverage += "Sources incomplètes ou indisponibles : " + ", ".join(source_gaps) + " ; "
     provenance = {
         "count": len(filtered), "structured_count": len(structured),
+        "manual_lines": len(selected_manual),
         "support_fields": len(support_sections), "total_available": known_total,
         "sample_truncated": truncated, "source_states": states,
         "chars": len(prompt), "bytes": prompt_size, "generated": False,
@@ -661,6 +790,11 @@ def prepare_analysis(
             "8 rubriques du rapport support public ; "
             + ("échantillon partiel, " if truncated else "")
             + coverage
+            + (
+                f"{len(selected_manual)} lignes de journal sélectionné "
+                "projetées en signaux lexicaux, sans contenu ni date attestée ; "
+                if manual_log is not None else ""
+            )
             + "aucune corrélation causale prouvée."
         ),
     }
@@ -694,10 +828,13 @@ def analyze_with_consent(
         not isinstance(gate, _OneUseApproval)
         or not isinstance(refs, tuple)
         or not isinstance(scope, dict)
-        or set(scope) != {
-            "source", "module", "severity", "since",
-            "include_snapshot", "include_support_report",
-        }
+        or set(scope) not in (
+            {"source", "module", "severity", "since",
+             "include_snapshot", "include_support_report"},
+            {"source", "module", "severity", "since",
+             "include_snapshot", "include_support_report", "user_log_selected"},
+        )
+        or ("user_log_selected" in scope and scope["user_log_selected"] is not True)
         or type(scope.get("include_snapshot")) is not bool
         or type(scope.get("include_support_report")) is not bool
     ):
@@ -750,6 +887,7 @@ def analyze_with_consent(
         "evidence_count": preview["count"],
         "structured_count": preview["structured_count"],
         "support_fields": preview["support_fields"],
+        "manual_lines": preview["manual_lines"],
         "total_available": preview["total_available"],
         "sample_truncated": preview["sample_truncated"],
         "source_states": preview["source_states"],
@@ -792,6 +930,7 @@ def export_analysis_json(analysis: Mapping[str, Any]) -> str:
             "sample_count": analysis.get("evidence_count"),
             "structured_count": analysis.get("structured_count"),
             "support_fields": analysis.get("support_fields"),
+            "manual_lines": analysis.get("manual_lines"),
             "total_available": analysis.get("total_available"),
             "sample_truncated": analysis.get("sample_truncated"),
             "source_states": analysis.get("source_states"),
