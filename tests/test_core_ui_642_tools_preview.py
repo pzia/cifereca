@@ -33,10 +33,13 @@ def test_preview_dialog_names_summary_changes_warnings_and_scope():
 def test_preview_does_not_execute_until_explicit_run_response():
     source = _method("_refresh_tools_page")
     assert "dialog.add_response('run', 'Exécuter')" in source
-    assert "if selected != 'run':" in source
-    assert "service.run(plan, Control())" in source
-    assert source.index("service.plan(context)") < source.index("dialog = Adw.MessageDialog.new")
-    assert source.index("if selected != 'run':") < source.index("service.run(plan, Control())")
+    assert "if selected != 'run' or self._closed:" in source
+    assert "execute_maintenance_tool" in source
+    assert "preview_maintenance_tool" in source
+    assert source.index("def present_preview(plan):") < source.index("dialog = Adw.MessageDialog.new")
+    assert "service.plan(context)" not in source
+    assert "kind='maintenance-plan'" in source
+    assert source.index("def response(_dialog, selected):") < source.index("execute_maintenance_tool")
     assert source.index("dialog.connect('response', response)") < source.index("dialog.present()")
 
 
@@ -44,3 +47,12 @@ def test_identity_scope_names_active_identity_when_available():
     source = _method("_refresh_tools_page")
     assert "'identity': 'Identité active'" in source
     assert "scope += f' · {identity.label}'" in source
+
+
+def test_plan_runs_in_task_runner_not_in_gtk_callback():
+    source = _method("_refresh_tools_page")
+    assert "self.runner.submit(" in source
+    assert "lambda: preview_maintenance_tool(service, context, destructive=destructive)" in source
+    assert "present_preview" in source
+    assert "lambda: execute_maintenance_tool(" in source
+    assert "if self._closed or _button.get_root() is None:" in source
