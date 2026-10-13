@@ -2,6 +2,9 @@
 from dataclasses import replace
 
 import pytest
+import json
+
+from cifereca.core.kobo_backup import _kobo_checkpoint_key
 
 from cifereca.kobo.vault import KoboVaultError
 from tests.test_kobo_backup_reconcile_prune import _service, _manifest_row, _write_epub, BackupSession
@@ -36,6 +39,19 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
         failed = service.sync_kobo_backup()
         assert failed['errors'] == 1 and failed['unchanged'] == 1
         assert failed['legacy_pruned'] == 0 and failed['attempted'] == 0
+        by_credential = {row["credential_id"]: row for row in failed["sources"]}
+        assert by_credential["vault-1"]["status"] == "complete"
+        assert by_credential["vault-1"]["unchanged"] == 1
+        assert by_credential["vault-2"]["status"] == "failed"
+        assert by_credential["vault-2"]["errors"] == 1
+        checkpoint_first = json.loads(service.storage.metadata_get(
+            _kobo_checkpoint_key("default", "vault-1")
+        ))
+        checkpoint_second = json.loads(service.storage.metadata_get(
+            _kobo_checkpoint_key("alex", "vault-2")
+        ))
+        assert checkpoint_first["status"] == "complete" and checkpoint_first["processed"] == 1
+        assert checkpoint_second["status"] == "failed" and checkpoint_second["processed"] == 0
         assert service.storage.metadata_get('kobo_backup_last_success_at') is None
         for credential in ['vault-1', 'vault-2']:
             assert service.storage.backup_get('kobo', credential, 'stale') is not None
@@ -43,6 +59,12 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
         recovered = service.sync_kobo_backup()
         assert recovered['errors'] == 0 and recovered['unchanged'] == 2
         assert recovered['attempted'] == 0 and recovered['legacy_pruned'] == 2
+        assert {row["credential_id"]: row["status"] for row in recovered["sources"]} == {
+            "vault-1": "complete", "vault-2": "complete"
+        }
+        assert json.loads(service.storage.metadata_get(
+            _kobo_checkpoint_key("alex", "vault-2")
+        ))["processed"] == 1
         assert service.storage.metadata_get('kobo_backup_last_success_at') is not None
         repeated = service.sync_kobo_backup()
         assert repeated['errors'] == 0 and repeated['unchanged'] == 2
