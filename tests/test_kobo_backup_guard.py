@@ -648,3 +648,57 @@ def test_title_match_without_kobo_product_id_does_not_claim_same_book(tmp_path: 
         assert summary["downloaded"] == 1
     finally:
         service.close()
+
+
+def test_direct_kobo_acquisition_rejects_existing_destination(tmp_path: Path, monkeypatch):
+    from cifereca.providers import ProviderConfigurationError
+
+    service = _service(tmp_path)
+    item = service._sessions[service._session_key("kobo", "vault-1")].normalize_item(_manifest_row())
+    existing = service._kobo_backup_target_dir("alice") / "Author - Book One.epub"
+    _write_epub(existing)
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("direct path must not redownload")),
+    )
+    try:
+        try:
+            service.acquire_direct_item(item)
+        except ProviderConfigurationError as exc:
+            assert "rapprochement" in str(exc)
+        else:
+            raise AssertionError("direct acquisition should refuse existing Kobo file")
+        assert existing.is_file()
+    finally:
+        service.close()
+
+
+def test_direct_kobo_acquisition_uses_shared_lock(tmp_path: Path, monkeypatch):
+    service = _service(tmp_path)
+    item = service._sessions[service._session_key("kobo", "vault-1")].normalize_item(_manifest_row())
+    lock_events = []
+
+    class ProbeLock:
+        def __init__(self, path):
+            lock_events.append(("created", Path(path)))
+
+        def __enter__(self):
+            lock_events.append(("entered", None))
+            return self
+
+        def __exit__(self, *_args):
+            lock_events.append(("exited", None))
+
+    def acquire(_item, target):
+        assert lock_events[-1][0] == "entered"
+        artifact = Path(target) / "new.epub"
+        _write_epub(artifact)
+        return SimpleNamespace(path=artifact, account_id="account", metadata={})
+
+    monkeypatch.setattr("cifereca.services.InterProcessLock", ProbeLock)
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+    try:
+        service.acquire_direct_item(item)
+        assert [event for event, _ in lock_events] == ["created", "entered", "exited"]
+    finally:
+        service.close()
