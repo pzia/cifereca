@@ -533,8 +533,9 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     continue
                 item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
                 if _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, unlinked_local_count, adapter_available, adept_state, index, len(manifest), summary, emit, logger):
+                    item_committed = True
                     continue
-    
+
                 if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, emit, record_error, logger):
                     abort_all = True
                     item_committed = True
