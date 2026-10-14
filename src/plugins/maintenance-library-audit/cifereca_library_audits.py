@@ -239,7 +239,7 @@ class NamingAuditTool(_ReadOnlyTool):
         mismatch = 0
         unavailable = 0
         samples: list[str] = []
-        for row in entries:
+        for notice_index, row in enumerate(entries, start=1):
             title = str(row.get("title") or "").strip()
             current = str(row.get("filename") or row.get("file_name") or "").strip()
             if not current:
@@ -260,7 +260,10 @@ class NamingAuditTool(_ReadOnlyTool):
             if PurePath(current).name != PurePath(str(expected)).name:
                 mismatch += 1
                 if len(samples) < 12:
-                    samples.append(f"{PurePath(current).name} → {PurePath(str(expected)).name}")
+                    # Names suggested by the policy can contain private
+                    # titles, authors, paths or arbitrary provider metadata.
+                    # Surface the finding, never the raw filenames.
+                    samples.append(f"Nom non conforme : notice n°{notice_index}")
         summary = f"{mismatch} nom(s) différent(s) de la politique Core sur {checked} fichier(s) vérifiable(s)."
         warnings = list(samples)
         if unavailable:
