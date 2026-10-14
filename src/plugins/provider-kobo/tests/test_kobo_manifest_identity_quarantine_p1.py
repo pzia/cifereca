@@ -36,7 +36,7 @@ def test_manifest_quarantines_conflicting_ids_before_core_sees_them():
                     {"id": "good-2", "title": "PRIVATE_TITLE_TWO"},
                     {"id": "other", "product_id": "conflicting", "title": "PRIVATE_SECRET"},
                     {"product_id": 0, "id": "masked", "title": "PRIVATE_MASK"},
-                    {"product_id": "bad\\nPRIVATE_TOKEN"},
+                    {"product_id": "bad\nPRIVATE_TOKEN"},
                     7,
                 ], "next_cursor": "next",
             })
