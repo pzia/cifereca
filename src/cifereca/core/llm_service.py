@@ -38,11 +38,21 @@ def _allowed_endpoint(endpoint: str, *, allow_remote: bool) -> tuple[bool, bool]
         parsed = urlsplit(endpoint)
         host = (parsed.hostname or "").lower()
         _ = parsed.port
-    except ValueError:
+    except (ValueError, UnicodeError):
         return False, False
+    # Direct Core callers do not necessarily use the GTK normalization path.
+    # Forbid invisible controls, bidi spoofing and invalid surrogates before
+    # urllib can parse/encode an untrusted endpoint or disclose a destination.
     if (parsed.scheme not in {"http", "https"} or not host
             or parsed.username or parsed.password or parsed.query or parsed.fragment
-            or any(ord(c) < 32 for c in endpoint)):
+            or any(
+                ord(c) < 32 or ord(c) == 127 or 0x80 <= ord(c) <= 0x9F
+                or ord(c) == 0x061C or ord(c) in (0x200E, 0x200F)
+                or 0x202A <= ord(c) <= 0x202E
+                or 0x2066 <= ord(c) <= 0x2069
+                or 0xD800 <= ord(c) <= 0xDFFF
+                for c in endpoint
+            )):
         return False, False
     if host == "localhost":
         local = True
