@@ -103,3 +103,48 @@ def test_cancellation_before_any_delete_has_no_mutation():
         tool.run(plan, control)
     assert broker.requests == []
     assert control.events == []
+
+
+def test_core_warning_text_is_never_exposed_through_destructive_result():
+    class WarningBroker(Broker):
+        def run(self, request, control):
+            return LibraryMutationResult(
+                False, changed=1, summary="PRIVATE_RESULT_TITLE",
+                warnings=(
+                    "Bearer PRIVATE_ACCESS_TOKEN",
+                    "/home/PRIVATE_USER/books/secret.epub",
+                ),
+            )
+
+    broker = WarningBroker()
+    tool, plan, control, _ = _case((("PRIVATE_DUPLICATE", "PRIVATE_KEEP"),), broker)
+    result = tool.run(plan, control)
+    assert not result.ok and result.changed == 1
+    assert result.facts == {"planned": 1, "failures": 1}
+    assert result.warnings == (
+        "Doublon 1/1 : 2 avertissement(s) du service",
+    )
+    assert [(event.get("current"), event.get("total"))
+            for event in control.events] == [(0, 1), (1, 1)]
+    assert "échec" in control.events[-1]["message"]
+    for secret in ("PRIVATE", "Bearer", "secret.epub", "/home/"):
+        assert secret not in str(result.warnings)
+        assert secret not in result.summary
+        assert all(secret not in event["message"] for event in control.events)
+
+
+def test_nonsequence_mutation_warning_is_summarized_not_iterated():
+    class WarningBroker(Broker):
+        def run(self, request, control):
+            return type("Result", (), {
+                "ok": True, "changed": 0,
+                "warnings": "Bearer PRIVATE_TOKEN",
+            })()
+
+    broker = WarningBroker()
+    tool, plan, control, _ = _case((("duplicate", "keeper"),), broker)
+    result = tool.run(plan, control)
+    assert result.ok and result.changed == 0
+    assert result.warnings == (
+        "Doublon 1/1 : 1 avertissement(s) du service",
+    )
