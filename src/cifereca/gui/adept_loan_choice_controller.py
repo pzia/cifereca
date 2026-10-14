@@ -90,14 +90,17 @@ def present_adept_loan_choices(window, acquisition_id, loan, result, *, Gtk, Adw
             )
 
     dropdown.connect("notify::selected", selected)
+    submitted = False
 
     def response(_dialog, choice):
-        if choice != "attach" or not context_current():
+        nonlocal submitted
+        if submitted or choice != "attach" or not context_current():
             return
         index = _selected_index(dropdown, len(options))
         if index is None:
             return
         option = options[index]
+        submitted = True
 
         def ok(_result):
             if not context_current():
