@@ -658,11 +658,57 @@ class NamingRepairTool(_ReadOnlyTool):
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
         from cifereca.plugin_api import LibraryMutationRequest
 
+        # Cached or caller-supplied plans can be stale or malformed. Mutation
+        # identifiers must be plain opaque strings; never call str() on
+        # arbitrary inputs before a Core filesystem operation.
+        raw_ids = plan.facts.get("placement_ids", ())
+        invalid_plan = type(raw_ids) not in (tuple, list)
+        if not invalid_plan and len(raw_ids) > 100_000:
+            invalid_plan = True
+        ids: list[str] = []
+        seen_ids: set[str] = set()
+        if not invalid_plan:
+            for value in raw_ids:
+                if (
+                    type(value) is not str or not 0 < len(value) <= 1024
+                    or value.strip() != value
+                    or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+                    or value in seen_ids
+                ):
+                    invalid_plan = True
+                    break
+                seen_ids.add(value)
+                ids.append(value)
+
+        raw_failures = plan.facts.get("policy_failures", 0)
+        if raw_failures is None:
+            preview_failures = 0
+        elif type(raw_failures) is int and 0 <= raw_failures <= 1_000_000:
+            preview_failures = raw_failures
+        elif (
+            type(raw_failures) is str and 1 <= len(raw_failures) <= 7
+            and raw_failures.isascii() and raw_failures.isdecimal()
+            and int(raw_failures) <= 1_000_000
+        ):
+            preview_failures = int(raw_failures)
+        else:
+            invalid_plan = True
+            preview_failures = 0
+
+        if invalid_plan:
+            control.check_cancelled()
+            control.report(message="Renormalisation impossible : plan invalide")
+            control.check_cancelled()
+            return MaintenanceResult(
+                ok=False, changed=0,
+                summary="Aucun placement renormalisé : plan invalide.",
+                warnings=("Plan de renormalisation invalide : aucune mutation.",),
+                facts={"planned": 0, "failures": 1, "invalid_plan": 1},
+            )
+
         broker = self._broker("library.maintenance")
-        ids = tuple(str(x) for x in plan.facts.get("placement_ids", ()) if str(x))
         changed = 0
         failures = 0
-        preview_failures = int(plan.facts.get("policy_failures") or 0)
         total = len(ids)
         warnings: list[str] = list(plan.warnings)
         control.check_cancelled()
