@@ -131,13 +131,15 @@ def _candidate_languages(item: Any) -> tuple[str, ...]:
         metadata.get("languages") if isinstance(metadata, Mapping) else None,
     ):
         if isinstance(raw, (list, tuple, set)):
-            values.extend(raw)
-        elif raw not in {None, ""}:
+            # Catalogue metadata is untrusted: nested maps, numbers and
+            # foreign objects are not language tags. Never stringify them.
+            values.extend(item for item in raw if isinstance(item, str))
+        elif isinstance(raw, str) and raw.strip():
             values.append(raw)
 
     normalized = []
     for raw in values:
-        canonical = normalize_language_tag(str(raw))
+        canonical = normalize_language_tag(raw)
         if canonical and canonical not in normalized:
             normalized.append(canonical)
     return tuple(normalized)
@@ -909,8 +911,11 @@ class UxRecommendationsView:
                 result = done_handle.result()
             except Cancelled:
                 return
-            except Exception as exc:
-                self.GLib.idle_add(self._complete, generation, None, str(exc))
+            except Exception:
+                # Provider and storage exceptions can include account IDs,
+                # signed URLs and access tokens. The public UI only needs to
+                # know that the calculation failed, never the raw exception.
+                self.GLib.idle_add(self._complete, generation, None, "calculation_failed")
             else:
                 self.GLib.idle_add(self._complete, generation, result, None)
 
@@ -1430,7 +1435,9 @@ class UxRecommendationsView:
         self._spinner.stop()
         if error or result is None:
             self._ranked = []
-            message = "Calcul impossible" + (f" : {error}" if error else "")
+            # An error may originate in an untrusted provider or backend.
+            # Never reflect raw provider messages into the GTK status/toast.
+            message = "Calcul impossible. Réessayez ou vérifiez les catalogues connectés."
             self._summary.set_label(message)
             try:
                 self.host.toast(message)
