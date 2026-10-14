@@ -6,14 +6,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_WINDOW = ROOT / "src/cifereca/gui/main_window.py"
 APP = ROOT / "src/cifereca/app.py"
-STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
 
 def _class_method(path: Path, class_name: str, method_name: str) -> ast.FunctionDef:
-    if method_name in {"connect_configured_sources", "activate_startup_plugins"}:
-        path = STARTUP_OWNER
-        tree = ast.parse(path.read_text())
-        return next(n for n in tree.body
-                    if isinstance(n, ast.FunctionDef) and n.name == method_name)
     tree = ast.parse(path.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
@@ -66,9 +60,16 @@ def test_gui_defers_plugin_activation_until_after_present():
     assert present < schedule
 
 def test_fallback_pages_remain_available_before_plugin_activation():
-    source = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_rebuild_plugin_pages"))
+    # Validate the actual extracted page owner and its stable MainWindow facade.
+    owner = ROOT / "src/cifereca/gui/shell_page_controller.py"
+    tree = ast.parse(owner.read_text(encoding="utf-8"))
+    method = next(n for n in tree.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "rebuild_plugin_pages")
+    source = ast.unparse(method)
     assert "if not contributed:" in source
     assert "contributed = list(fallback)" in source
+    facade = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_rebuild_plugin_pages"))
+    assert "shell_page_controller.rebuild_plugin_pages(" in facade
 
 def test_titlebar_falls_back_before_plugin_categories_are_ready():
     source = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_create_shell_header"))
@@ -78,11 +79,11 @@ def test_titlebar_falls_back_before_plugin_categories_are_ready():
 
 def test_provider_connection_survives_plugin_ui_refresh_failure():
     source = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "activate_startup_plugins"))
-    activate = source.index("window.plugin_manager.activate()")
-    attach = source.index("window.service.attach_plugin_manager(window.plugin_manager)")
-    refresh = source.index("window._plugins_changed()")
+    activate = source.index("self.plugin_manager.activate()")
+    attach = source.index("self.service.attach_plugin_manager(self.plugin_manager)")
+    refresh = source.index("self._plugins_changed()")
     finalizer = source.index("finally:")
     # The no-plugin fallback schedules a connection earlier in source order.
     # Check the normal plugin-activation path, whose schedule follows finally.
-    connect = source.rindex("idle_add(window._connect_sources_if_open)")
+    connect = source.rindex("GLib.idle_add(self._connect_sources_if_open)")
     assert activate < attach < refresh < finalizer < connect
