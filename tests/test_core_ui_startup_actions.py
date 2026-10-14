@@ -8,9 +8,16 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN_WINDOW = ROOT / "src/cifereca/gui/main_window.py"
 STARTUP_PAGE = ROOT / "src/cifereca/gui/startup_page.py"
 STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
+PLUGIN_RELOAD_OWNER = ROOT / "src/cifereca/gui/plugin_reload_controller.py"
 
 
 def _method_source(class_name: str, method_name: str) -> str:
+    if method_name == "_subscribe_cached_book_details":
+        tree = ast.parse(PLUGIN_RELOAD_OWNER.read_text(encoding="utf-8"))
+        method = next(n for n in tree.body
+                      if isinstance(n, ast.FunctionDef)
+                      and n.name == "subscribe_cached_book_details")
+        return ast.unparse(method)
     if method_name in {"connect_configured_sources", "activate_startup_plugins"}:
         tree = ast.parse(STARTUP_OWNER.read_text())
         method = next(n for n in tree.body
@@ -155,7 +162,7 @@ def test_window_close_clears_timer_handle_even_when_removal_fails():
 def test_book_cache_subscription_does_not_schedule_after_close():
     """#1132: callbacks racing unsubscribe cannot queue GTK work."""
     source = _method_source("MainWindow", "_subscribe_cached_book_details")
-    assert "None if self._closed else GLib.idle_add(self._cached_book_cache_invalidated)" in source
+    assert "None if window._closed else idle_add(window._cached_book_cache_invalidated)" in source
 
 
 def test_window_close_drops_cached_book_subscription_references():
