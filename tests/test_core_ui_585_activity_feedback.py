@@ -66,7 +66,7 @@ def test_task_feedback_names_running_success_and_error_states():
     finished = _method(MAIN, "MainWindow", "_task_finished")
     pending = _method(MAIN, "MainWindow", "_show_pending_activity_error")
     assert "En cours · " in started
-    assert "En cours · " in progress
+    assert "live_task_progress_label" in progress
     assert "Terminé · " in finished
     assert "latest_unacknowledged_error" in pending
 
@@ -309,6 +309,9 @@ def test_stale_progress_cannot_replace_live_task_banner():
 
     method = _method(MAIN, "MainWindow", "_task_progress")
     namespace = {}
+    from cifereca.gui.task_progress_presentation import live_task_progress_label
+
+    namespace["live_task_progress_label"] = live_task_progress_label
     exec(method, namespace)
     labels = []
     window = types.SimpleNamespace(
