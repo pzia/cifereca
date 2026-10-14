@@ -60,6 +60,20 @@ class Container:
     def set_subtitle(self, subtitle):
         self.subtitle = subtitle
 
+    # Inert GTK methods used by the scrollable preview's label and viewport.
+    def set_wrap(self, value): self.wrap = value
+    def set_wrap_mode(self, value): self.wrap_mode = value
+    def set_xalign(self, value): self.xalign = value
+    def set_yalign(self, value): self.yalign = value
+    def set_selectable(self, value): self.selectable = value
+    def set_max_width_chars(self, value): self.max_width_chars = value
+    def set_focusable(self, value): self.focusable = value
+    def set_policy(self, horizontal, vertical): self.policy = (horizontal, vertical)
+    def set_min_content_height(self, value): self.min_height = value
+    def set_max_content_height(self, value): self.max_height = value
+    def set_propagate_natural_height(self, value): self.propagate_height = value
+    def set_child(self, child): self.children = [child]
+
 
 class Dialog:
     shown = []
@@ -79,6 +93,9 @@ class Dialog:
 
     def set_response_appearance(self, *_args):
         pass
+
+    def set_extra_child(self, child):
+        self.extra_child = child
 
     def connect(self, key, callback):
         self.handlers[key] = callback
@@ -124,7 +141,10 @@ def _method():
     ], type_ignores=[]))
     namespace = {
         "clear_box": lambda box: box.children.clear(),
-        "Gtk": NS(Button=Button, Label=lambda **_kw: Container()),
+        "Gtk": NS(Button=Button, Label=lambda **_kw: Container(),
+                  ScrolledWindow=Container,
+                  PolicyType=NS(NEVER=0, AUTOMATIC=1)),
+        "Pango": NS(WrapMode=NS(WORD_CHAR=1)),
         "Adw": NS(
             PreferencesGroup=Container, ActionRow=Container,
             MessageDialog=Dialog,
