@@ -6,6 +6,7 @@ from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient
 from cifereca_kobo_catalog import KoboCatalogService
+from cifereca_kobo_policy import classify_personal_manifest
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 
@@ -78,6 +79,9 @@ class KoboSession(ProviderSession):
         # Sanitized integrity signal for Core backup/preview. A personal
         # manifest with discarded upstream rows must never authorize pruning.
         self.backup_manifest_rejection_count = 0
+        self.backup_manifest_policy = classify_personal_manifest(
+            (), account_id=None,
+        )
         profile = str(self.options.get("display_profile") or config.get("kobo_backup.display_profile", "Android") or "Android").strip()
         self.display_profile = profile if profile in {"Android", "Desktop"} else "Android"
         self.supports_acquisition_display_profile = False
@@ -98,6 +102,7 @@ class KoboSession(ProviderSession):
         self.capability_details = {}
         self.supports_acquisition_acsm = False
         self.supports_acquisition_display_profile = False
+        self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
         status = self.client.status(authenticated=False)
         self.api_version = _vault_public_version(status.get("api_version") or status.get("version"))
         self.vault_release = _vault_public_version(status.get("release"))
@@ -187,6 +192,7 @@ class KoboSession(ProviderSession):
     def close(self) -> None:
         self.client.close()
         self.connected = False
+        self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
 
     def cover_url(self, item: dict[str, Any]) -> str | None:
         return self.catalog.cover_url(item)
@@ -237,7 +243,9 @@ class KoboSession(ProviderSession):
         return rows
 
     def backup_manifest(self) -> list[dict[str, Any]]:
+        # No diagnostic may outlive the previous manifest if fetching raises.
         self.backup_manifest_rejection_count = 0
+        self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
         items = self.client.library_manifest()
         # Transfer only a bounded *count* across the public provider boundary:
         # no upstream raw items, message strings, URLs or credentials.
@@ -246,6 +254,23 @@ class KoboSession(ProviderSession):
             self.backup_manifest_rejection_count = min(
                 1_000_000, sum(isinstance(item, dict) for item in rejected),
             )
+        # Provider-only projection: no local file checks or entitlement
+        # authorization, no further Vault request. Core can consume the
+        # bounded summary after it has independently resolved the identity.
+        account_id = (
+            self._accounts[0].unique_id
+            if self.connected and len(self._accounts) == 1
+            else None
+        )
+        self.backup_manifest_policy = classify_personal_manifest(
+            items,
+            account_id=account_id,
+            rejection_count=self.backup_manifest_rejection_count,
+            acquisition_access=self.acquisition_access,
+            delegation_forbidden=(
+                getattr(self, "_cifereca_delegation_forbidden", False) is True
+            ),
+        )
         _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
         _sample_missing = next((sorted(x.keys()) for x in items if isinstance(x, dict) and not self.cover_url(x)), None)
         _TRACE_LOG.debug("TRACE kobo covers source=backup credential=%s items=%s with_cover=%s missing=%s sample_missing_keys=%s", self.credential_id, len(items), _cover_count, len(items)-_cover_count, _sample_missing)
@@ -319,6 +344,16 @@ class KoboSession(ProviderSession):
             "vault_release": self.vault_release or None,
             "display_profile": self.display_profile if self.supports_acquisition_display_profile else None,
             "acsm_export": self.supports_acquisition_acsm,
+            "manifest_materialization_policy": {
+                "schema": self.backup_manifest_policy["schema"],
+                "status": self.backup_manifest_policy["status"],
+                "counts": dict(self.backup_manifest_policy["counts"]),
+                "classified_items": self.backup_manifest_policy["classified_items"],
+                "manifest_rejections": self.backup_manifest_policy["manifest_rejections"],
+                "truncated": self.backup_manifest_policy["truncated"],
+                "manifest_authoritative": self.backup_manifest_policy["manifest_authoritative"],
+                "acquisition_authorized": False,
+            },
             "catalog_search_rejections": [
                 dict(row)
                 for row in getattr(self.catalog, "last_search_rejections", ())
