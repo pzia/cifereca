@@ -274,6 +274,7 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
             {"id": "reader-2", "label": "Reader 2", "directory_name": "reader-2"},
             {"id": "reader-3", "label": "Reader 3", "directory_name": "reader-3"},
         ])
+        service._sync_identity_configuration()
         for credential, identity, count, prefix in (
             ("vault-2", "reader-2", 522, "b"),
             ("vault-3", "reader-3", 5, "c"),
