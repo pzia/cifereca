@@ -75,6 +75,7 @@ from .maintenance_tools import preview_maintenance_tool, execute_maintenance_too
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
+from .activity_hide_policy import can_reduce_activity
 from .plugin_manager_page import PluginManagerPage
 from .query_controls import QueryControls, MultiSelect
 from .action_widgets import AdaptiveActionBar
@@ -388,13 +389,13 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _hide_activity_feedback(self) -> bool:
         self._activity_hide_source = None
-        if getattr(self, "_closed", False):
+        if getattr(self, "_closed", False) or self._active_tasks:
             return False
-        if self._active_tasks:
-            return False
-        if self._show_pending_activity_error():
-            return False
-        if not hasattr(self, "busy_revealer"):
+        pending_error = self._show_pending_activity_error()
+        if not can_reduce_activity(
+            closed=False, active_count=0, pending_error=pending_error,
+            has_view=hasattr(self, "busy_revealer"),
+        ):
             return False
         self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
         self.activity_status_icon.set_visible(False)
