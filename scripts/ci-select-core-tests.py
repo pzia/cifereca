@@ -25,6 +25,7 @@ FULL_CORE_FILES = {
 }
 UI_TEST_GLOBS = (
     "tests/test_core_ui_*.py",
+    "tests/test_coreui_*.py",  # #1128: headless Search regression suites
     "tests/test_ui_*.py",
     "tests/test_gui_*.py",
     "tests/test_*_ui.py",
