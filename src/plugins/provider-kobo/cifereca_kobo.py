@@ -6,7 +6,7 @@ from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient
 from cifereca_kobo_catalog import KoboCatalogService
-from cifereca_kobo_policy import classify_personal_manifest, _strict_product_id
+from cifereca_kobo_policy import classify_personal_manifest, _strict_account_scope, _strict_product_id
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 
@@ -292,6 +292,7 @@ class KoboSession(ProviderSession):
             not self.connected or len(self._accounts) != 1
             or self._accounts[0].provider_id != self.provider_id
             or self._accounts[0].credential_id != self.credential_id
+            or not _strict_account_scope(self._accounts[0].unique_id)
         ):
             self.last_library_rejections.append({
                 "type": "invalid_scope", "reason": "unbound_account",
