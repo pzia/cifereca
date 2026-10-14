@@ -213,6 +213,18 @@ class KoboSession(ProviderSession):
             raise ProviderError(
                 "Kobo-Vault : identité du compte absente ou ambiguë"
             )
+        # A token switch or a stale upstream cache must not silently rebind
+        # an existing provider session to a different account. Core owns the
+        # persisted identity/credential mapping; a new account needs a new
+        # explicit connection rather than inheriting its ledger and 403 state.
+        if self._accounts and (
+            len(self._accounts) != 1
+            or self._accounts[0].unique_id != account_id
+        ):
+            raise ProviderError(
+                "Kobo-Vault : identité du compte différente ; "
+                "reconfiguration explicite requise"
+            )
         display = _vault_account_label(account)
         # Reauthorization only takes effect after a *validated* authenticated
         # account identity, not when connect() was merely invoked. A malformed
