@@ -128,7 +128,8 @@ def _window_method():
 
 def test_real_window_callback_navigates_only_to_unique_current_identity_book():
     module, _ = _window_method()
-    ns = {"__package__": "cifereca.gui"}
+    from cifereca.gui import library_navigation
+    ns = {"__package__": "cifereca.gui", "library_navigation": library_navigation}
     exec(compile(module, str(MAIN), "exec"), ns)
     opened = []
     window = NS(
