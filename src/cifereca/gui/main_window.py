@@ -38,7 +38,8 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, local_book_action_controller
+from . import shell_layout_controller
+from . import book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -54,6 +55,7 @@ from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
 from .settings_tracking import bind_settings_actions
 from .settings_diagnostic_actions import build_settings_diagnostic_callbacks
+from . import settings_diagnostics_refresh_controller
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
@@ -61,6 +63,7 @@ from .startup_lifecycle import once_while_open
 from . import startup_coordinator
 from . import feedback_timers
 from . import activity_result_controller
+from . import activity_feedback_view_controller
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -73,7 +76,8 @@ from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
-from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError
+from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError, BUSY_MESSAGE, CHANGED_MESSAGE
+from .maintenance_line_widgets import build_maintenance_line
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
@@ -342,64 +346,20 @@ class MainWindow(Adw.ApplicationWindow):
         return feedback_timers.cancel_activity_hide(self, source_remove=GLib.source_remove)
 
     def _refresh_activity_history(self) -> None:
-        if getattr(self, "_closed", False):
-            return
-        if not hasattr(self, "activity_history_box"):
-            return
-        clear_box(self.activity_history_box)
-        rows = activity_history_rows(self.activity_feedback.rows())
-        for display_text, is_error in rows:
-            label = Gtk.Label(label=display_text, xalign=0)
-            label.set_wrap(True)
-            label.add_css_class("caption")
-            if is_error:
-                label.add_css_class("warning")
-            self.activity_history_box.append(label)
-        self.activity_history_button.set_visible(bool(rows))
+        return activity_feedback_view_controller.refresh_activity_history(
+            self, Gtk=Gtk, clear_box=clear_box, activity_history_rows=activity_history_rows,
+        )
 
     def _show_pending_activity_error(self) -> bool:
-        if getattr(self, "_closed", False):
-            return False
-        entry = self.activity_feedback.latest_unacknowledged_error()
-        if entry is None or not hasattr(self, "busy_revealer"):
-            return False
-        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
-        self.activity_status_icon.set_visible(True)
-        self.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
-        self.activity_status_icon.add_css_class("activity-error")
-        self.activity_status_icon.remove_css_class("activity-success")
-        self.busy_label.set_visible(True)
-        self.busy_label.set_label(entry.display_text)
-        self.activity_dismiss.set_visible(True)
-        self.busy_revealer.set_reveal_child(True)
-        return True
+        return activity_feedback_view_controller.show_pending_activity_error(self)
 
     def _hide_activity_feedback(self) -> bool:
-        self._activity_hide_source = None
-        if getattr(self, "_closed", False) or self._active_tasks:
-            return False
-        pending_error = self._show_pending_activity_error()
-        if not can_reduce_activity(
-            closed=False, active_count=0, pending_error=pending_error,
-            has_view=hasattr(self, "busy_revealer"),
-        ):
-            return False
-        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
-        self.activity_status_icon.set_visible(False)
-        self.activity_dismiss.set_visible(False)
-        rows = self.activity_feedback.rows()
-        self.busy_label.set_visible(False)
-        self.activity_history_button.set_visible(bool(rows))
-        self.busy_revealer.set_reveal_child(bool(rows))
-        return False
+        return activity_feedback_view_controller.hide_activity_feedback(
+            self, can_reduce_activity=can_reduce_activity,
+        )
 
     def _dismiss_activity_feedback(self) -> None:
-        if getattr(self, "_closed", False):
-            return
-        self._cancel_activity_hide()
-        self.activity_feedback.acknowledge_errors()
-        self._refresh_activity_history()
-        self._hide_activity_feedback()
+        return activity_feedback_view_controller.dismiss_activity_feedback(self)
 
     def _schedule_activity_reduce(self, delay: int = 4) -> None:
         if getattr(self, "_closed", False):
@@ -449,6 +409,7 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _on_close_request(self, *_args) -> bool:
+        self._dispose_maintenance_lines()
         return close_window_resources(self, source_remove=GLib.source_remove)
 
     # ---------- provider startup ----------
@@ -654,14 +615,9 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_nav_row(self, route: str, label: str, icon_name: str) -> None:
-        if route in self.nav_rows:
-            return
-        row = Gtk.ListBoxRow(); row.set_name(route)
-        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        line.set_margin_top(7); line.set_margin_bottom(7); line.set_margin_start(8); line.set_margin_end(8)
-        icon = Gtk.Image.new_from_icon_name(icon_name); icon.set_pixel_size(18); line.append(icon)
-        text = Gtk.Label(label=label, xalign=0); text.set_hexpand(True); line.append(text)
-        row.set_child(line); self.nav_list.append(row); self.nav_rows[route] = row
+        return shell_layout_controller.add_nav_row(
+            self, route, label, icon_name, Gtk=Gtk,
+        )
 
     def _build_standard_page(self, route):
         builders = {"dashboard": self._build_dashboard_page, "loans": self._build_loans_page,
@@ -835,23 +791,7 @@ class MainWindow(Adw.ApplicationWindow):
         return header
 
     def _ensure_pages_menu_rightmost(self):
-        controls = getattr(self, "_header_controls", None)
-        menu = getattr(self, "pages_menu_button", None)
-        if controls is None or menu is None:
-            return
-        children = getattr(controls, "children", None)
-        if isinstance(children, list):
-            if menu in children:
-                children.remove(menu)
-            children.append(menu)
-            return
-        get_last = getattr(controls, "get_last_child", None)
-        if callable(get_last) and get_last() is menu:
-            return
-        get_parent = getattr(menu, "get_parent", None)
-        if callable(get_parent) and get_parent() is controls:
-            controls.remove(menu)
-        controls.append(menu)
+        return shell_layout_controller.ensure_pages_menu_rightmost(self)
 
     def _refresh_header_actions(self, route):
         return header_action_controller.refresh_header_actions(
@@ -867,6 +807,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _show_route(self, route: str) -> None:
         if route not in self._pages: return
+        if route != "tools":
+            self._dispose_maintenance_lines()
         self.view_stack.set_visible_child_name(route)
         page = self._pages.get(route)
         self.header_subtitle.set_label(page.title if page else "")
@@ -1008,6 +950,9 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self.service.select_identity(identity.identity_id)
         self._identity_context_generation += 1
+        self._dispose_maintenance_lines()
+        if self.view_stack.get_visible_child_name() == "tools":
+            self._refresh_tools_page()
         self._account_context_generation += 1
         self._cached_book_request_generation += 1
         self._cached_book_context = None
@@ -1306,9 +1251,19 @@ class MainWindow(Adw.ApplicationWindow):
         refresh.connect("clicked", lambda _b: self._refresh_tools_page())
         scroll.set_child(outer); return scroll
 
+    def _dispose_maintenance_lines(self) -> None:
+        # Navigation, identity changes and teardown invalidate cache callbacks
+        # even while their row is still attached to the window's widget tree.
+        for old_feedback, old_state in getattr(self, "_maintenance_line_rows", ()):
+            old_feedback.dispose()
+            if old_state["control"] is not None:
+                old_state["control"].cancel()
+        self._maintenance_line_rows = []
+
     def _refresh_tools_page(self) -> None:
         box = getattr(self, "_tools_box", None)
         if box is None: return
+        self._dispose_maintenance_lines()
         clear_box(box)
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
@@ -1327,23 +1282,79 @@ class MainWindow(Adw.ApplicationWindow):
             cancel.set_visible(False)
             row.add_suffix(cancel)
             group.add(row)
-            active_cancel = {"control": None}
+            active_cancel = {"control": None, "ticket": None}
+            line_feedback = None
+            line_scope = {"active": False, "identity": None, "generation": None}
+            if getattr(info, "id", None) == "core.cache.cleanup":
+                def line_alive(button=run, scope=line_scope):
+                    if self._closed or button.get_root() is None:
+                        return False
+                    if not scope["active"]:
+                        return True
+                    current = self.service.current_identity
+                    return (
+                        (current.identity_id if current else None) == scope["identity"]
+                        and getattr(self, "_identity_context_generation", None) == scope["generation"]
+                    )
+                status_widget, line_feedback = build_maintenance_line(
+                    Gtk=Gtk, idle_add=GLib.idle_add, alive=line_alive,
+                )
+                row.add_suffix(status_widget)
+                self._maintenance_line_rows.append((line_feedback, active_cancel))
 
-            def request_cancel(_cancel_button, cancellation_state=active_cancel):
+            def request_cancel(_cancel_button, cancellation_state=active_cancel,
+                               feedback=line_feedback):
                 active = cancellation_state["control"]
                 if active is not None:
                     active.cancel()
                     _cancel_button.set_sensitive(False)
+                    if feedback is not None and cancellation_state["ticket"] is not None:
+                        feedback.finish(cancellation_state["ticket"], "cancelled")
 
             cancel.connect("clicked", request_cancel)
 
             def prepare(
                 _button, service=tool, meta=info,
                 cancel_button=cancel, cancellation_state=active_cancel,
+                feedback=line_feedback, progress_scope=line_scope,
             ):
+                if self._closed or _button.get_root() is None:
+                    return
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
+                context_generation = getattr(self, "_identity_context_generation", None)
+                progress_scope.update(
+                    active=True, identity=context.identity_id, generation=context_generation,
+                )
+                ticket = feedback.begin() if feedback is not None else None
+                if feedback is not None and not feedback.valid(ticket):
+                    return
+                cancellation_state["ticket"] = ticket
+
+                def maintenance_worker(callback, failure_message, worker_cancel_control=None):
+                    # TaskRunner records errors in global activity before the
+                    # row callback. Sanitize at the worker boundary as well.
+                    try:
+                        result = callback()
+                        if feedback is not None and worker_cancel_control is not None:
+                            worker_cancel_control.check_cancelled()
+                        return result
+                    except MaintenanceBusyError:
+                        if feedback is None:
+                            raise
+                        raise MaintenanceBusyError(BUSY_MESSAGE) from None
+                    except MaintenancePlanChangedError:
+                        if feedback is None:
+                            raise
+                        raise MaintenancePlanChangedError(CHANGED_MESSAGE) from None
+                    except MaintenanceCancelledError:
+                        raise
+                    except Exception:
+                        if feedback is None:
+                            raise
+                        raise RuntimeError(failure_message) from None
+
                 # Planning is itself cancellable from GTK. The plugin plan()
                 # signature has no control, so cancellation discards its result;
                 # it must never reopen a stale confirmation after a slow scan.
@@ -1374,13 +1385,22 @@ class MainWindow(Adw.ApplicationWindow):
                         return
                     if self._closed or _button.get_root() is None:
                         return
+                    if feedback is not None and (
+                        not feedback.valid(ticket)
+                        or getattr(self, "_identity_context_generation", None) != context_generation
+                    ):
+                        return
                     current_identity = self.service.current_identity
                     if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                        if feedback is not None:
+                            feedback.finish(ticket, "cancelled")
                         self.show_error(
                             "L’identité active a changé. Relancez la prévisualisation.",
                             meta.title,
                         )
                         return
+                    if feedback is not None:
+                        feedback.confirmation(ticket)
                     scope_labels = {
                         "global": "Application entière",
                         "identity": "Identité active",
@@ -1431,31 +1451,67 @@ class MainWindow(Adw.ApplicationWindow):
                         dialog.set_response_appearance("run", Adw.ResponseAppearance.SUGGESTED)
 
                     def response(_dialog, selected):
+                        if cancellation_state["ticket"] != ticket:
+                            return
                         if selected != "run" or self._closed:
+                            if feedback is not None:
+                                feedback.finish(ticket, "cancelled")
+                            return
+                        if feedback is not None and (
+                            not feedback.valid(ticket) or feedback.state.phase != "confirmation"
+                            or getattr(self, "_identity_context_generation", None) != context_generation
+                            or _button.get_root() is None
+                        ):
                             return
                         current_identity = self.service.current_identity
                         if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                            if feedback is not None:
+                                feedback.finish(ticket, "cancelled")
                             self.show_error(
                                 "L’identité active a changé. Relancez la prévisualisation.",
                                 meta.title,
                             )
                             return
+                        if feedback is not None:
+                            feedback.running(ticket)
 
                         worker_control = MaintenanceCancelControl(
                             owner_closed=lambda: self._closed,
+                            on_progress=(
+                                (lambda current, total, message:
+                                 feedback.report(ticket, current=current, total=total, message=message))
+                                if feedback is not None else None
+                            ),
                         )
                         cancellation_state["control"] = worker_control
                         can_cancel = getattr(meta, "cancellable", False) is True
                         cancel_button.set_visible(can_cancel)
                         cancel_button.set_sensitive(can_cancel)
 
-                        def finish_maintenance() -> None:
-                            if cancellation_state["control"] is worker_control:
-                                cancellation_state["control"] = None
+                        def finish_maintenance() -> bool:
+                            if cancellation_state["control"] is not worker_control:
+                                return False
+                            cancellation_state["control"] = None
+                            if self._closed or _button.get_root() is None:
+                                return False
                             cancel_button.set_visible(False)
+                            current_identity = self.service.current_identity
+                            if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                                return False
+                            if getattr(self, "_identity_context_generation", None) != context_generation:
+                                return False
+                            return feedback is None or feedback.valid(ticket)
 
                         def completed(result) -> None:
-                            finish_maintenance()
+                            # Cancellation may arrive after the worker returns
+                            # but before its queued GTK completion callback.
+                            if feedback is not None and worker_control.cancelled():
+                                failed(MaintenanceCancelledError("Opération de maintenance annulée"))
+                                return
+                            if not finish_maintenance():
+                                return
+                            if feedback is not None:
+                                feedback.finish(ticket, "success" if result.ok else "error")
                             self._activity_result(
                                 result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
                                 success=bool(result.ok),
@@ -1463,22 +1519,33 @@ class MainWindow(Adw.ApplicationWindow):
                             )
 
                         def failed(exc) -> None:
-                            finish_maintenance()
+                            if not finish_maintenance():
+                                return
+                            if feedback is not None:
+                                feedback.finish(ticket, "cancelled" if isinstance(exc, MaintenanceCancelledError) else "error")
                             if isinstance(exc, MaintenanceCancelledError):
                                 self.show_error(
                                     "Traitement interrompu ; les modifications déjà effectuées ne sont pas annulées.",
                                     meta.title,
                                 )
                             else:
-                                self.show_error(str(exc), meta.title)
+                                self.show_error(
+                                    BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
+                                    else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
+                                    else ("Nettoyage des caches impossible." if feedback is not None else str(exc)),
+                                    meta.title,
+                                )
 
                         # Plan revalidation and mutations hold the Core lock.
                         # The separate cancellation button sets a thread-safe
                         # event; each plugin check_cancelled() observes it.
                         self.runner.submit(
                             meta.title,
-                            lambda: execute_maintenance_tool(
-                                service, context, plan, worker_control, destructive=destructive,
+                            lambda: maintenance_worker(
+                                lambda: execute_maintenance_tool(
+                                    service, context, plan, worker_control, destructive=destructive,
+                                ),
+                                "Nettoyage des caches impossible.", worker_control,
                             ),
                             completed,
                             failed,
@@ -1488,20 +1555,34 @@ class MainWindow(Adw.ApplicationWindow):
                         )
                     dialog.connect("response", response); dialog.present()
 
+                def preview_failed(exc):
+                    if not finish_preview() or planning_control.cancelled():
+                        if feedback is not None and planning_control.cancelled():
+                            feedback.finish(ticket, "cancelled")
+                        return
+                    if self._closed or _button.get_root() is None:
+                        return
+                    if feedback is not None:
+                        feedback.finish(ticket, "error")
+                    self.show_error(
+                        BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
+                        else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
+                        else ("Analyse des caches impossible." if feedback is not None else str(exc)),
+                        meta.title,
+                    )
+
                 # Planning can scan thousands of placements. Never call
                 # service.plan(context) on the main GTK event loop.
                 self.runner.submit(
                     f"Analyse : {meta.title}",
-                    lambda: preview_maintenance_tool(
-                        service, context, destructive=destructive, control=planning_control,
+                    lambda: maintenance_worker(
+                        lambda: preview_maintenance_tool(
+                            service, context, destructive=destructive, control=planning_control,
+                        ),
+                        "Analyse des caches impossible.", planning_control,
                     ),
                     present_preview,
-                    lambda exc: (
-                        self.show_error(str(exc), meta.title)
-                        if finish_preview() and not planning_control.cancelled()
-                        and not self._closed and _button.get_root() is not None
-                        else None
-                    ),
+                    preview_failed,
                     control=_button,
                     priority=TaskPriority.MAINTENANCE,
                     kind="maintenance-plan",
@@ -1852,59 +1933,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- Bibliothèque fédérée ----------
     def _build_library_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Bibliothèque", "", "Bibliothèque vide", "Fichiers locaux, livres possédés et empruntés.")
-        self.library_filter = "all"
-        controls = self._query_controls(lambda: self._render_library(), lambda: self._render_library(), library=True)
-        self.library_controls = controls; self.library_filter_entry = controls.entry
-        page.toolbar.append(controls)
-        search = Gtk.Button(label="Recherche"); search.connect("clicked", self._library_search_online); controls.primary.append(search)
-        actions = page.header_actions
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        refresh.set_tooltip_text("Rescanner la bibliothèque")
-        refresh.connect("clicked", lambda _b: self.refresh_library(True, refresh))
-        actions.append(refresh)
-
-        folder = Gtk.Button.new_from_icon_name("folder-open-symbolic")
-        folder.set_tooltip_text("Ouvrir le dossier de la bibliothèque")
-        folder.connect("clicked", lambda _b: self.open_library_folder())
-        actions.append(folder)
-
-        advanced = Gtk.MenuButton(label="Opérations…")
-        advanced.set_tooltip_text("Opérations avancées et maintenance de la bibliothèque")
-        advanced_popover = Gtk.Popover()
-        advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        advanced_box.set_margin_top(8); advanced_box.set_margin_bottom(8)
-        advanced_box.set_margin_start(8); advanced_box.set_margin_end(8)
-
-        covers = Gtk.Button(label="Réinspecter les couvertures")
-        covers.set_tooltip_text("Réinspecter toutes les couvertures EPUB locales, sans téléchargement")
-        covers.connect("clicked", lambda _b: self.refresh_library(True, covers, refresh_covers=True))
-        advanced_box.append(covers)
-
-        acsm = Gtk.Button(label="Importer un ACSM…")
-        acsm.set_tooltip_text("Importer manuellement un fichier ACSM dans la bibliothèque")
-        acsm.connect("clicked", lambda _b: self.choose_acsm())
-        advanced_box.append(acsm)
-
-        # Library maintenance must never launch a global Kobo acquisition.
-        # The Synchronisation page exposes the source/identity-scoped actions.
-        acquire = Gtk.Button(label="Gérer la synchronisation Kobo…")
-        acquire.set_tooltip_text(
-            "Ouvrir Synchronisation pour actualiser les notices et droits Kobo ; "
-            "aucun téléchargement ne démarre depuis Bibliothèque."
+        return library_page_controller.build_library_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
         )
-        acquire.connect("clicked", lambda _b: self.navigate("sync"))
-        advanced_box.append(acquire)
-
-        advanced_popover.set_child(advanced_box)
-        advanced.set_popover(advanced_popover)
-        actions.append(advanced)
-        page.connect_selected(self._library_selected)
-        self._library_objects = {}
-        return page
 
     @staticmethod
-
     def _kobo_backup_status_label(status: str) -> str:
         return {
             "ok": "À jour",
@@ -2081,26 +2114,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_plugin_book_actions(detail, item)
 
     def _book_action_context(self, item) -> UiActionContext:
-        metadata = dict(item.get("metadata") or {}) if isinstance(item, dict) else {}
-        book = book_ref_from_row(item)
-        artifact = None
-        path_value = item.get("local_path") or metadata.get("path")
-        artifact_id = str(item.get("artifact_id") or "")
-        if path_value and artifact_id:
-            path = Path(str(path_value))
-            size = 0
-            try: size = path.stat().st_size
-            except OSError: pass
-            sha = ""
-            try:
-                row = next((r for r in self.service.storage.artifacts() if str(r.get("artifact_id") or "") == artifact_id), None)
-                if row: sha = str(row.get("sha256") or "")
-            except Exception: pass
-            fmt = str(item.get("media_format") or path.suffix.lstrip(".") or "")
-            artifact = ArtifactRef(artifact_id=artifact_id, book_id=book.book_id or None,
-                format=ArtifactFormat("application/epub+zip" if fmt.lower() == "epub" else "application/octet-stream", fmt),
-                size_bytes=size, sha256=sha, filename=path.name)
-        return UiActionContext(target="book.detail", route=self.view_stack.get_visible_child_name() or "", book=book, artifact=artifact, metadata=metadata)
+        return book_action_context_controller.book_action_context(
+            self, item, Path=Path, ArtifactRef=ArtifactRef,
+            ArtifactFormat=ArtifactFormat, UiActionContext=UiActionContext,
+            book_ref_from_row=book_ref_from_row,
+        )
 
     def _add_plugin_book_actions(self, detail, item) -> None:
         pages = getattr(self, "_pages", {}).values()
@@ -2176,18 +2194,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- Récupérations récentes ----------
     def _build_recent_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(
-            self, "Récupérations récentes",
-            "Dernières matérialisations locales de l’identité courante",
-            "Aucune récupération récente",
-            "Les acquisitions locales apparaîtront ici.",
+        return library_page_controller.build_recent_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
         )
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        refresh.set_tooltip_text("Actualiser les récupérations récentes")
-        refresh.connect("clicked", lambda _b: self.refresh_recent(refresh)); page.header_actions.append(refresh)
-        page.connect_selected(self._recent_selected)
-        self._recent_objects: dict[str, dict[str, Any]] = {}
-        return page
 
     def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
         return library_refresh.refresh_recent(self, control)
@@ -2259,23 +2268,10 @@ class MainWindow(Adw.ApplicationWindow):
         return (metadata.get('epub_metadata') or {}).get('description') or metadata.get('description')
 
     def _add_book_notice(self, detail, item, *, include_description=True):
-        metadata=item.get('metadata') or {}
-        if include_description:
-            detail._show_description(self._book_description(item))
-        essential_labels={'Source','Provenance','Format','Langue','Langues','Disponibilité'}
-        rows=[row for row in notice_rows(metadata) if row[0] not in essential_labels]
-        if rows:detail.add_group('Notice EPUB' if metadata.get('epub_metadata') else 'Notice',rows)
-        catalogue=metadata.get('catalogue_metadata') or {}
-        if catalogue:
-            catalogue_rows=[row for row in notice_rows(catalogue) if row[0] not in essential_labels]
-            if catalogue_rows:detail.add_group('Catalogue',catalogue_rows)
-        if metadata.get('epub_metadata_schema'):
-            cover=metadata.get('epub_cover') or {}
-            labels={'extracted':'Extraite du fichier','no_usable_image':'Aucune image exploitable','metadata_unreadable':'Métadonnées illisibles'}
-            status=metadata.get('epub_cover_status') or 'not_inspected'
-            facts=[('Couverture',labels.get(status,'À réinspecter'))]
-            if cover.get('method'):facts.append(('Détection',{'declared':'Déclaration EPUB','declared_page':'Page de couverture déclarée','guide':'Guide de couverture','first_spine':'Image unique de la première page (déduction)'}.get(cover['method'],cover['method'])))
-            detail.add_group('Image du livre',facts)
+        return book_notice_controller.add_book_notice(
+            self, detail, item, notice_rows=notice_rows,
+            include_description=include_description,
+        )
 
     def _recent_selected(self, row: BookListItem | None) -> None:
         return recent_detail_controller.recent_selected(
@@ -2797,48 +2793,18 @@ class MainWindow(Adw.ApplicationWindow):
                 focus(plugin_id)
 
         def refresh_text() -> None:
-            if not page_lifetime.alive:
+            if not page_lifetime.alive or getattr(self, "_closed", False):
                 return
             from ..system_status import system_status
-            data = system_status(self.plugin_manager)
-            attention = int(data.get("attention") or 0)
-            diag_summary.set_label(
-                f"{data.get('ready', 0)} prêt(s) · {attention} à examiner. "
-                + ("Les anomalies sont affichées en premier." if attention else "Aucune anomalie bloquante détectée.")
+            return settings_diagnostics_refresh_controller.refresh_settings_diagnostics(
+                self, page_lifetime=page_lifetime,
+                diag_summary=diag_summary, diag_filter=diag_filter,
+                diag_issues_box=diag_issues_box, diag_text=diag_text,
+                open_diagnostic_plugin=open_diagnostic_plugin,
+                Gtk=Gtk, Adw=Adw, clear_box=clear_box,
+                diagnostic_plugin_rows=diagnostic_plugin_rows,
+                system_status=system_status, version=__version__,
             )
-            clear_box(diag_issues_box)
-            attention_only = int(diag_filter.get_selected()) == 0
-            rows = diagnostic_plugin_rows(data, attention_only=attention_only)
-            if not rows:
-                empty = Gtk.Label(label="Aucune anomalie à examiner.", xalign=0)
-                empty.add_css_class("success"); diag_issues_box.append(empty)
-            for plugin in rows:
-                item = Adw.ExpanderRow()
-                item.set_title(f"{plugin['display_name']} · {plugin['state_label']}")
-                item.set_subtitle(plugin["summary"])
-                if plugin["attention"]:
-                    item.add_css_class("warning")
-                action = Adw.ActionRow(); action.set_title("Action")
-                action.set_subtitle("Ouvrir le gestionnaire sur ce plugin")
-                open_button = Gtk.Button(label="Ouvrir Plugins")
-                open_button.set_valign(Gtk.Align.CENTER)
-                open_button.connect("clicked", lambda b, pid=plugin["plugin_id"]: open_diagnostic_plugin(b, pid))
-                action.add_suffix(open_button); item.add_row(action)
-                detail = Adw.ActionRow(); detail.set_title("Détails techniques")
-                detail.set_subtitle(plugin["technical"] or "Aucun détail technique")
-                detail.set_subtitle_lines(0); item.add_row(detail)
-                diag_issues_box.append(item)
-
-            content = self.diagnostics.text(__version__, {
-                "transport": "httpx local direct",
-                "base_url": (self.config.paris_base_url() if hasattr(self.config, "paris_base_url") else self.config.get("base_url")),
-                "ui": "GTK4/libadwaita",
-                "cover_pipeline": self.covers.stats(),
-                "history_cover_search": self.history_cover_resolver.stats(),
-                "ui_performance": self.ui_perf.snapshot(),
-                "providers": self.service.provider_diagnostic_state(),
-            })
-            diag_text.get_buffer().set_text(content)
 
         settings_committer = SettingsCommitController(
             self.service.save_configuration, self.runner.submit, self.runner.present_error,

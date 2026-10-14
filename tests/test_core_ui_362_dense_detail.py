@@ -14,6 +14,10 @@ def _tree():
 
 
 def _method(class_name: str, method_name: str) -> ast.FunctionDef:
+    if class_name == "MainWindow" and method_name == "_add_book_notice":
+        owner = ast.parse(MAIN.with_name("book_notice_controller.py").read_text(encoding="utf-8"))
+        return next(n for n in owner.body
+                    if isinstance(n, ast.FunctionDef) and n.name == "add_book_notice")
     if class_name == "MainWindow" and method_name == "_add_facets":
         owner = ast.parse(MAIN.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
         return next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "add_facets")
@@ -91,10 +95,16 @@ def test_remote_owned_is_not_mislabeled_as_generic_available():
 
 def test_notice_prioritizes_summary_and_filters_essential_duplicates():
     source = ast.unparse(_method("MainWindow", "_add_book_notice"))
-    assert source.index("_show_description") < source.index("notice_rows")
+    assert source.index("_show_description") < source.index("project_book_notice_groups")
+    owner = ast.parse(MAIN.with_name("book_notice_controller.py").read_text(encoding="utf-8"))
+    projection = ast.unparse(next(n for n in owner.body
+                                  if isinstance(n, ast.FunctionDef)
+                                  and n.name == "project_book_notice_groups"))
+    constants = ast.unparse(owner)
     for label in ("Source", "Provenance", "Format", "Langue", "Langues", "Disponibilité"):
-        assert repr(label) in source
-    assert source.index("'Image du livre'") > source.index("'Catalogue'")
+        assert repr(label) in constants
+    assert "row[0] not in ESSENTIAL_NOTICE_LABELS" in projection
+    assert projection.index("'Image du livre'") > projection.index("'Catalogue'")
 
 
 def test_multivalue_facets_render_individual_filter_buttons_not_display_concatenations():

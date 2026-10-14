@@ -24,6 +24,10 @@ class _BadRecommendation:
 
 
 def _method(name: str) -> str:
+    if name == "_book_action_context":
+        owner = ast.parse(MAIN.with_name("book_action_context_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef)
+                                and n.name == "book_action_context"))
     if name == "_library_selected":
         tree = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef)
