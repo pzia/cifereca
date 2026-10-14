@@ -19,11 +19,12 @@ class Catalog:
         self.hits = hits
         self.calls = []
 
-    def search(self, query, *, field, limit, page):
-        self.calls.append((query, field, limit, page))
+    def search(self, query, *, field, limit, page, scope="all"):
+        self.calls.append((query, field, limit, page, scope))
         return [
             self.normalizer.normalize_item(row, default_collection=source)
             for source, row in self.hits
+            if scope == "all" or source == "catalog"
         ]
 
 
@@ -55,7 +56,7 @@ def test_search_filters_foreign_and_invalid_account_but_keeps_public_and_legacy(
         ]
         assert result[0].owned is False
         assert result[1].owned is True and result[2].owned is True
-        assert catalog.calls == [("book", "all", 50, 0)]
+        assert catalog.calls == [("book", "all", 50, 0, "all")]
         assert vault.manifest_calls == 0 and vault.acquisition_calls == 0
     finally:
         session.close()
@@ -64,10 +65,11 @@ def test_search_filters_foreign_and_invalid_account_but_keeps_public_and_legacy(
 def test_search_does_not_resurrect_personal_results_after_disconnect_or_rebind():
     vault = FakeVault([])
     session = session_with_vault(vault)
-    session.catalog = Catalog(session, _hits())
+    session.catalog = catalog = Catalog(session, _hits())
     try:
         session.connected = False
         assert [item.record_id for item in session.search("x")] == ["public"]
+        assert catalog.calls[-1][-1] == "catalog"
 
         session.connected = True
         session._accounts = [Account(
@@ -75,6 +77,7 @@ def test_search_does_not_resurrect_personal_results_after_disconnect_or_rebind()
             provider_id="kobo", credential_id="different-credential",
         )]
         assert [item.record_id for item in session.search("x")] == ["public"]
+        assert catalog.calls[-1][-1] == "catalog"
 
         session._accounts = [Account(
             unique_id="alice", display_name="Private",
@@ -83,6 +86,7 @@ def test_search_does_not_resurrect_personal_results_after_disconnect_or_rebind()
         assert [item.record_id for item in session.search("x")] == [
             "public", "own", "legacy-own",
         ]
+        assert catalog.calls[-1][-1] == "all"
         assert vault.manifest_calls == 0 and vault.acquisition_calls == 0
     finally:
         session.close()
@@ -107,7 +111,7 @@ def test_search_invalid_account_identity_never_attests_legacy_personal_hits():
             assert [item.record_id for item in result] == ["public"]
             assert result[0].owned is False
 
-        assert len(catalog.calls) == 7
+        assert catalog.calls == [("book", "all", 50, 0, "catalog")] * 7
         assert vault.manifest_calls == 0 and vault.acquisition_calls == 0
     finally:
         session.close()
