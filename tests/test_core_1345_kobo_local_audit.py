@@ -253,3 +253,23 @@ def test_audit_rejects_symlinked_root_ancestor_before_reading_other_identity(tmp
     assert _read_hash_within(
         str(trusted / "shortcut" / "private-book.epub"), (trusted,),
     ) is None
+
+
+def test_more_than_eight_catalogue_placements_marks_report_truncated(tmp_path):
+    service, _session = _service(tmp_path, [])
+    try:
+        _backup(service, "many-placements")
+        for index in range(10):
+            service.storage.catalog_entry_put({
+                "catalog_entry_id": f"local-placement-{index}",
+                "title": "PRIVATE TITLE", "provider_id": "kobo",
+                "identity_id": "default", "item_id": "many-placements",
+                "local_state": "local",
+                "metadata": {"path": str(tmp_path / f"private-{index}.epub")},
+            })
+        report = kobo_local_reconciliation_audit(service)
+        assert report["truncated"] is True
+        assert report["counts"]["linked_files_verified"] == 0
+        assert "PRIVATE TITLE" not in json.dumps(report)
+    finally:
+        service.close()
