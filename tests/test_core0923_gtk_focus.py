@@ -8,13 +8,15 @@ from types import SimpleNamespace
 SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
+CONTROLLER = SOURCE.with_name("route_display_controller.py")
+
+
 def _show_route():
-    tree = ast.parse(SOURCE.read_text())
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_show_route")
-    namespace = {}
-    exec(compile(ast.Module(body=[method], type_ignores=[]), str(SOURCE), "exec"), namespace)
-    return namespace["_show_route"]
+    # Test the real owning function with an injected GTK witness, not a
+    # detached AST copy of the MainWindow facade.
+    from cifereca.gui.route_display_controller import show_route
+
+    return lambda host, route: show_route(host, route, Gtk=Gtk)
 
 
 class _Window:
@@ -77,10 +79,9 @@ def test_route_rooted_in_window_requests_forward_focus():
 
 
 def test_focus_guard_is_local_and_does_not_suppress_gtk_warnings():
-    source = SOURCE.read_text()
-    start = source.index("def _show_route")
-    end = source.index("\n    def ", start + 1)
-    method_source = source[start:end]
+    source = CONTROLLER.read_text(encoding="utf-8")
+    method_source = ast.unparse(next(node for node in ast.parse(source).body
+                                     if isinstance(node, ast.FunctionDef) and node.name == "show_route"))
 
     assert "isinstance(widget.get_root(), Gtk.Window)" in method_source
     assert "child_focus(Gtk.DirectionType.TAB_FORWARD)" in method_source
