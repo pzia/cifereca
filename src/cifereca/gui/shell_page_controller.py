@@ -67,3 +67,18 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
             controls.set_state(state)
     if window._pages:
         window.navigate(previous if previous in window._pages else next(iter(window._pages)))
+
+
+def build_standard_page(window, route, *, Gtk, PluginManagerPage):
+    builders = {"dashboard": window._build_dashboard_page, "loans": window._build_loans_page,
+                "search": window._build_search_page, "history": window._build_history_page,
+                "bookings": window._build_bookings_page, "library": window._build_library_page,
+                "recent": window._build_recent_page, "sync": window._build_sync_page,
+                "tools": window._build_tools_page, "settings": window._build_settings_page,
+                "plugins": lambda: PluginManagerPage(window, window.plugin_manager, window._plugins_changed)
+                if window.plugin_manager else Gtk.Label(label="Gestionnaire indisponible")}
+    widget = builders[route]()
+    attr = {"loans": "loan", "bookings": "booking"}.get(route, route)
+    setattr(window, attr + "_page", widget)
+    if route == "library": window.kobo_page = widget
+    return widget
