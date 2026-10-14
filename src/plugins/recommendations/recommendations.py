@@ -72,8 +72,11 @@ def _external_book_url(value: Any) -> str | None:
         return None
     host = parsed.hostname.lower().rstrip(".")
     if (
-        not host or "." not in host
-        or host == "localhost" or host.endswith((".local", ".localhost", ".internal"))
+        not host or "." not in host or "%" in host
+        or host == "localhost"
+        or host.endswith((
+            ".local", ".localhost", ".internal", ".lan", ".home.arpa",
+        ))
         or any(ord(ch) < 33 or ord(ch) == 127 for ch in host)
     ):
         return None
