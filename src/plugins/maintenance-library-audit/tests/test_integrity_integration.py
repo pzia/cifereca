@@ -155,6 +155,12 @@ def test_integrity_audit_through_public_brokers_is_read_only():
         assert result.facts["issues"]["sha256_mismatch"] == 1
         assert result.facts["issues"]["missing"] == 1
         assert control.events[-1]["message"] == "Audit d’intégrité terminé"
+        # Result warnings are also displayed/exportable diagnostics: use
+        # positions and issue codes, never private filenames or titles.
+        assert all(name not in "\\n".join(result.warnings)
+                   for name in ("good.epub", "broken.epub", "broken.pdf", "missing.epub"))
+        assert any("Fichier 2/4 : container_invalid" in w for w in result.warnings)
+        assert any("Fichier 4/4 : missing" in w for w in result.warnings)
 
         # The read fakes expose no mutation method: any attempted write fails immediately.
         assert not any(
