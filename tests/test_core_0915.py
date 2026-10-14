@@ -160,14 +160,16 @@ class Core0915(unittest.TestCase):
         with self.storage._connect() as db:db.execute("UPDATE placements SET identity_id='other' WHERE path LIKE ?",(str(self.root/'target')+'/%',))
         self.service.catalog_scan();self.assertEqual(self.storage.placements()[0]['identity_id'],'other')
     def test_chooser_cancel_keeps_entry_and_destroys_dialog(self):
-        chooser=Mock();entry=Mock();window=NS(show_error=Mock());ns={'__package__':'cifereca.gui','Path':Path,'Gtk':NS(FileChooserNative=NS(new=Mock(return_value=chooser)),FileChooserAction=NS(SELECT_FOLDER=1),ResponseType=NS(ACCEPT=1)),'Gio':NS(File=NS(new_for_path=lambda path:path))}
-        exec(self.extract('_choose_identity_directory'),ns);ns['_choose_identity_directory'](window,entry,self.root)
+        chooser=Mock();entry=Mock();window=NS(show_error=Mock());ns={'Gtk':NS(FileChooserNative=NS(new=Mock(return_value=chooser)),FileChooserAction=NS(SELECT_FOLDER=1),ResponseType=NS(ACCEPT=1)),'Gio':NS(File=NS(new_for_path=lambda path:path))}
+        from cifereca.gui.settings_chooser_controller import choose_identity_directory
+        choose_identity_directory(window,entry,self.root,Gtk=ns['Gtk'],Gio=ns['Gio'])
         callback=chooser.connect.call_args.args[1];callback(chooser,0)
         entry.set_text.assert_not_called();chooser.destroy.assert_called_once();self.assertIsNone(window._identity_directory_chooser)
     def test_chooser_accept_sets_existing_folder_name_without_moving_files(self):
         self.book('target');chooser=Mock();chooser.get_file.return_value.get_path.return_value=str(self.root/'target')
-        entry=Mock();window=NS(show_error=Mock());ns={'__package__':'cifereca.gui','Path':Path,'Gtk':NS(FileChooserNative=NS(new=Mock(return_value=chooser)),FileChooserAction=NS(SELECT_FOLDER=1),ResponseType=NS(ACCEPT=1)),'Gio':NS(File=NS(new_for_path=lambda path:path))}
-        exec(self.extract('_choose_identity_directory'),ns);ns['_choose_identity_directory'](window,entry,self.root)
+        entry=Mock();window=NS(show_error=Mock());ns={'Gtk':NS(FileChooserNative=NS(new=Mock(return_value=chooser)),FileChooserAction=NS(SELECT_FOLDER=1),ResponseType=NS(ACCEPT=1)),'Gio':NS(File=NS(new_for_path=lambda path:path))}
+        from cifereca.gui.settings_chooser_controller import choose_identity_directory
+        choose_identity_directory(window,entry,self.root,Gtk=ns['Gtk'],Gio=ns['Gio'])
         chooser.connect.call_args.args[1](chooser,1);entry.set_text.assert_called_once_with('target');window.show_error.assert_not_called()
         self.assertTrue((self.root/'target/paris/book.epub').exists());self.assertEqual(self.config.identities()[0]['directory_name'],'old')
     def test_overview_change_subscribers_called_without_fallback_widget(self):
