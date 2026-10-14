@@ -85,6 +85,24 @@ def _strict_model_json(raw: bytes | str) -> Any:
     )
 
 
+def _safe_model_name(value: object) -> str:
+    """Match the GTK settings safety boundary for direct/config-file callers.
+
+    Do not silently truncate an overlong identifier: doing so would disclose
+    one model in the approval preview but request a different one upstream.
+    """
+    if type(value) is not str or len(value) > 128 or any(
+        ord(ch) < 32 or ord(ch) == 127 or 0x80 <= ord(ch) <= 0x9F
+        or ord(ch) == 0x061C or ord(ch) in (0x200E, 0x200F)
+        or 0x202A <= ord(ch) <= 0x202E
+        or 0x2066 <= ord(ch) <= 0x2069
+        or 0xD800 <= ord(ch) <= 0xDFFF
+        for ch in value
+    ):
+        return ""
+    return value.strip()
+
+
 class OptionalLLMService:
     """One bounded generate()/structured-JSON transport, no implicit retries."""
 
@@ -95,12 +113,18 @@ class OptionalLLMService:
     def _settings(self) -> tuple[bool, bool, str, str, str, float, int, int]:
         cfg = self._config
         enabled = cfg.get("enabled") is True
-        provider = str(cfg.get("provider") or "openai-compatible")
-        model = str(cfg.get("model") or "").strip()[:128]
+        provided = cfg.get("provider", "openai-compatible")
+        # Never reflect arbitrary unsupported provider labels from a manually
+        # edited config into diagnostics, consent UI or failure envelopes.
+        provider = "openai-compatible" if provided == "openai-compatible" else "unsupported"
+        model = _safe_model_name(cfg.get("model") or "")
         endpoint = str(cfg.get("endpoint") or "").strip()
         permit, remote = _allowed_endpoint(endpoint, allow_remote=cfg.get("allow_remote") is True)
         try:
-            timeout = min(15.0, max(0.2, float(cfg.get("timeout_seconds", 5))))
+            raw_timeout = float(cfg.get("timeout_seconds", 5))
+            if not math.isfinite(raw_timeout):
+                raise ValueError("non-finite timeout")
+            timeout = min(15.0, max(0.2, raw_timeout))
             max_input = min(16000, max(1, int(cfg.get("max_input_chars", 4000))))
             max_tokens = min(1024, max(1, int(cfg.get("max_output_tokens", 256))))
         except (TypeError, ValueError, OverflowError):
