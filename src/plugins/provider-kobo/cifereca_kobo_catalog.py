@@ -132,10 +132,14 @@ class KoboCatalogService:
             raw_language = metadata["language"]
             if type(raw_language) is not str:
                 metadata.pop("language")
+            elif not raw_language.strip():
+                metadata["language"] = None
             else:
                 try:
                     canonical = normalize_language_tag(raw_language)
-                    metadata["language"] = canonical if type(canonical) is str else None
+                    metadata["language"] = (
+                        canonical if type(canonical) is str and canonical.strip() else None
+                    )
                 except Exception:
                     # An upstream invalid tag or failing normalizer must not
                     # abort all other catalogue hits or export its exception.
@@ -147,13 +151,16 @@ class KoboCatalogService:
             else:
                 accepted_languages: list[str] = []
                 for raw in raw_languages:
-                    if type(raw) is not str:
+                    if type(raw) is not str or not raw.strip():
                         continue
                     try:
                         canonical = normalize_language_tag(raw)
                     except Exception:
                         continue
-                    if type(canonical) is str and canonical not in accepted_languages:
+                    if (
+                        type(canonical) is str and canonical.strip()
+                        and canonical not in accepted_languages
+                    ):
                         accepted_languages.append(canonical)
                 metadata["languages"] = accepted_languages
         if cover and collection == "catalog":
