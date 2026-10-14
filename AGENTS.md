@@ -38,6 +38,33 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 
 Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **simulation** = ux (périmètre simulateurs et recettes). Le rôle core donne priorité au non-UI à **priorité égale**, et cicd aux gates CI avant les merges à **priorité égale**. Ces préférences ne dépassent jamais P0/P1/P2/P3.
 
+## Coordination anti-concurrence : un propriétaire par résolution (#889)
+
+**Le rôle se détermine par le comportement à corriger et la responsabilité sur le fichier, pas par qui a découvert l'anomalie.** Une issue peut avoir plusieurs intervenants successifs, mais **un seul pilote actif de la même résolution** ; y compris quand plusieurs agents portent le même rôle. Les frontières restent applicables aux priorités P0–P3 ; une urgence P0 ne dispense pas de consulter les travaux déjà engagés.
+
+| Périmètre partagé | Propriétaire de la modification | Contribution sans prendre le même correctif |
+| --- | --- | --- |
+| `src/cifereca/**` ; API publique, contrats Core et widgets CoreUI | `core/coreui` | `plugins` décrit le besoin de contrat ; `ux` apporte la reproduction |
+| `src/plugins/**`, UI et protocole d'un plugin, manifestes/compatibilité du package | `plugins` | `core` fournit séparément une primitive publique si nécessaire |
+| `tests/**` | Propriétaire de **l'invariant** : `core` (Core), `plugins` (contrat plugin), `cicd` (runner/découverte/chaînage), `ux` (recette exploratoire seulement) | Ne pas reprendre en double les mêmes assertions |
+| `e2e/**` | Assertions d'acceptation : `core` / `plugins` ; parcours **exploratoires** et captures : `ux` ; **harnais** (`e2e/run.py`, bootstrap de scénario, intégration/sélection et gates) : `cicd` | Échanger le scénario avec `cicd` si sa promotion en gate impose de changer le harnais |
+| `simulation/**`, datasets/faux services et profils fonctionnels de recette | `ux/simulation` | `plugins` écrit ses fixtures de contrat sous son package ; `cicd` ne réécrit pas le simulateur pour débloquer un runner |
+| `environnements/**`, runners, bootstrap Xvfb/GTK/D-Bus | `cicd` pour l'infrastructure reproductible ; `ux` pour **recettes/captures exploratoires sans changer le bootstrap partagé** | Handoff à `cicd` si la recette exige une modification du runtime |
+| `.github/workflows/**`, scripts et sélecteurs CI, assemblage/publication de releases | `cicd` | `core` possède les contrats de mise à jour, `plugins` les manifestes ; release uniquement sur ordre explicite |
+| Issues GitHub, priorisation, déduplication, arbitrage des rôles | `backlog` | `ux` ne crée ses nouveaux tickets exploratoires **qu'après validation utilisateur** ; CI/CD ferme les tickets livrés après merge |
+
+**Vérification avant de commencer une résolution :** consulter l'issue canonique et ses `blocking/blocked-by`, les PR ouvertes **et leurs fichiers modifiés** (pas seulement les titres), branches/HEAD récents et CI ; rechercher une PR du **même ticket** ou modifiant les **mêmes fonctions/fichiers**. Un chevauchement de chemin est un **risque à coordonner**, pas une preuve automatique de conflit. Si deux agents visent le même correctif, conserver un seul pilote ; l'autre transmet preuves et dépendances ou prend une tranche réellement indépendante. Noter rôle pilote, état (`ready/doing/blocked/review`), PR/HEAD et prochain handoff dans les objets GitHub existants, sans verrou durable, commentaire-journal ni branche partagée permanente. Reprendre un travail inactif seulement après contrôle de son état et des autres PR.
+
+**PR croisées** : une PR atomique par propriétaire et responsabilité ; si une étape exige une API Core avant adaptation Plugin, créer **des tranches et PR liées**, pas deux implémentations concurrentes du contrat. Avant de modifier un fichier partagé par une autre PR, coordonner l'ordre de livraison. `cicd/merger` tente la résolution **Git mécanique** (rebase ciblé si justifié), sous permissions, `--force-with-lease` si autorisé et tests/checks sur le nouveau SHA ; s'il faut choisir un comportement métier ou architectural, le pilote Core/Plugins tranche. Ne pas pousser concurremment sur une branche que `cicd` réconcilie. La clôture appartient à `cicd` après merge et vérifications ; aucune recette utilisateur IHM implicite.
+
+**Exemples de handoff concrets :**
+
+1. **Plugin → API Core** : le provider Kobo a besoin d'un contrat de synchronisation générique ([#1346](https://github.com/pzia/cifereca/issues/1346)) : `plugins` définit les besoins, `core` réalise la primitive dans sa PR, puis `plugins` branche le provider sur l'API publique. Un seul propriétaire par PR.
+2. **UX → CI/CD** : une exploration Jeunesse identifie un scénario manquant ; `ux` propose les tickets selon la validation #1449, conserve sa recette exploratoire, puis passe à `cicd` la modification nécessaire du runner ou de la sélection, avec scénario/assertions fournis par `core` ou `plugins` si l'objectif est l'acceptation.
+3. **Deux PR sur un fichier** : [#1044](https://github.com/pzia/cifereca/pull/1044) et [#1008](https://github.com/pzia/cifereca/pull/1008) touchent toutes deux `youth_page.py` et le manifeste Jeunesse : vérifier les hunks et HEAD, ordonner les merges et confier la réconciliation Git à `cicd` ; ne pas lancer une troisième correction redondante ou conclure à un conflit uniquement sur les chemins.
+
+**Suivi léger par `backlog`** : lors d'un audit, relever à date **PR ouvertes**, **paires de PR avec chemins communs**, **conflits Git attestés**, **merges refusés vérifiés** et **rebases jugés inutiles** ; comparer à un audit ultérieur. Une PR documentaire seule ne prouve pas une baisse des conflits. Référence : [#889](https://github.com/pzia/cifereca/issues/889).
+
 ## Méta-rôle focus : une étape à la fois
 
 Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal : **focus ne prend jamais le rôle `ux` (ni son alias `simulation`)**. Il transmet les recettes visuelles et simulations UX au propriétaire UX indépendant, même pour un P0, puis avance sur un autre travail autorisé.

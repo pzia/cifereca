@@ -101,6 +101,8 @@ self-test `app.py` du harnais ne prouve pas les fonctionnalités Cifereca.
 - Aucun changement Core, plugin, CI/CD ou merge.
 - Ne pas corriger un défaut découvert pendant une session UX.
 - Ne pas transformer un test exploratoire UX en gate CI sans issue/handoff vers `cicd`.
+- Ne pas modifier le **harnais central E2E** (`e2e/run.py`, sélecteurs, hooks CI), les workflows ou le bootstrap Xvfb partagé pour débloquer une recette : transmettre le besoin à `cicd`. Une PR UX ajoute ses parcours exploratoires et captures ; les assertions fonctionnelles d'acceptation relèvent de `core` ou `plugins`.
+- Vérifier les PR/chemins déjà actifs avant de toucher un scénario, un dataset ou une fixture partagée, même lorsqu'un autre agent UX intervient. `ux` possède `simulation/**` fonctionnel ; `cicd` possède l'infrastructure `environnements/**` ; la création d'une issue UX nouvelle conserve la validation utilisateur par liste numérotée. Voir [matrice commune](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889).
 
 La sortie normale du rôle `ux` est d'abord une **courte liste numérotée de propositions** à valider. Les issues documentées et leurs preuves ne sont créées **qu'après approbation explicite**. Une campagne sans proposition utile ne crée aucune issue.
 

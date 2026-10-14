@@ -14,6 +14,8 @@ Le rôle `plugins` ne modifie pas le Core pour satisfaire un besoin plugin. Si u
 
 Le code plugin dépend uniquement de l'API publique Core.
 
+Avant de commencer, comparer **les fichiers des PR ouvertes** touchant le même plugin ou la même issue. Un seul pilote du correctif, même si deux agents ont le rôle `plugins` ; séparer les lots indépendants. Si un contrat partagé est nécessaire, transmettre d'abord à `core`, sans redéfinir l'API dans le plugin. Exemple de recouvrement attesté de chemins : [PR #1044](https://github.com/pzia/cifereca/pull/1044) / [#1008](https://github.com/pzia/cifereca/pull/1008) dans Jeunesse. Le manifeste et les contraintes de compatibilité du **package plugin** restent à `plugins`, mais le pipeline de release est à `cicd`. Les fixtures de contrats sont dans les tests du plugin ; la simulation fonctionnelle partagée relève de `ux`. Voir [matrice](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889).
+
 ## Livraison et vérification avant handoff
 
 - Le rôle `plugins` écrit et maintient les tests du plugin modifié (contrat, erreurs, fixtures et intégration) et les **assertions GTK/E2E ciblées du parcours plugin** quand elles sont nécessaires aux critères d'acceptation.

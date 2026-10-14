@@ -15,6 +15,8 @@ Traiter le Core applicatif et le Core UI, dans cet ordre de priorité.
 ## Frontière stricte
 Le rôle `core` ne modifie pas les plugins fonctionnels pour terminer une évolution Core. Si une adaptation plugin est nécessaire, créer ou enrichir une issue `plugins`.
 
+Avant une extraction CoreUI ou un contrat transversal, consulter les PR ouvertes **et leurs chemins/fonctions modifiés** (notamment `main_window.py` et `e2e/**`) ; ne pas développer en parallèle la **même résolution**, même au sein du rôle Core. Si une évolution exige une adaptation plugin, livrer la primitive Core dans sa propre PR et transmettre l'API au pilote Plugins. Les modifications du runner/sélecteur E2E relèvent de `cicd`, pas de l'auteur Core. Voir [la matrice des propriétaires](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889).
+
 ## Livraison et vérification avant handoff
 
 - Le rôle `core` (dont l'alias `coreui`) possède les tests unitaires et d'intégration des comportements modifiés, ainsi que les **assertions GTK/E2E ciblées** lorsque le parcours CoreUI constitue le critère d'acceptation ou présente un risque fonctionnel.
