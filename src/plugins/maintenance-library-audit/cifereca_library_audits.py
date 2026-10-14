@@ -551,6 +551,7 @@ class NamingRepairTool(_ReadOnlyTool):
         ids = tuple(str(x) for x in plan.facts.get("placement_ids", ()) if str(x))
         changed = 0
         failures = 0
+        preview_failures = int(plan.facts.get("policy_failures") or 0)
         total = len(ids)
         warnings: list[str] = list(plan.warnings)
         control.check_cancelled()
@@ -587,16 +588,30 @@ class NamingRepairTool(_ReadOnlyTool):
         # A cancellation during the last mutation must not emit completion.
         control.check_cancelled()
         if total:
-            status = "Renormalisation terminée" if not failures else f"Renormalisation : {failures} échec(s)"
+            status = (
+                "Renormalisation terminée"
+                if not failures and not preview_failures
+                else (
+                    f"Renormalisation : {failures} échec(s), "
+                    f"{preview_failures} proposition(s) indisponible(s)"
+                )
+            )
             control.report(current=total, total=total, message=status)
         else:
-            control.report(message="Renormalisation terminée : aucun placement")
+            message = (
+                f"Renormalisation : {preview_failures} placement(s) sans proposition"
+                if preview_failures else "Renormalisation terminée : aucun placement"
+            )
+            control.report(message=message)
+        facts = {"planned": len(ids), "failures": failures}
+        if preview_failures:
+            facts["policy_failures"] = preview_failures
         return MaintenanceResult(
-            ok=failures == 0,
+            ok=failures == 0 and preview_failures == 0,
             changed=changed,
             summary=f"{changed} placement(s) renormalisé(s).",
             warnings=tuple(warnings),
-            facts={"planned": len(ids), "failures": failures},
+            facts=facts,
         )
 
 
