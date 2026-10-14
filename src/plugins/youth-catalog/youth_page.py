@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 import ipaddress
 import re
 from time import perf_counter
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from cifereca.plugin_api import (
     BookRef,
@@ -76,27 +76,59 @@ def public_url(value: object) -> str:
     if (hostname in {"localhost", "local", "internal"}
             or hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa"))):
         return ""
+    # A DNS name must not conceal a loopback alias (127.1, 0177.0.0.1),
+    # nor a Unicode alternate dot. Use only ordinary DNS labels/punycode.
+    if (not hostname.isascii() or len(hostname) > 253
+            or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part)
+                       for part in hostname.split("."))):
+        return ""
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
-        pass
+        if "." not in hostname or hostname.rsplit(".", 1)[-1].isdigit():
+            return ""
     else:
         if not address.is_global:
             return ""
-    parameters = parse_qsl(parts.query, keep_blank_values=True)
-    if len(parameters) > 32:
-        return ""
-    for key, val in parameters:
-        field = re.sub(r"[^a-z0-9]", "", key.casefold())
-        if any(word in field for word in (
-                "token", "secret", "password", "session", "auth",
-                "signature", "apikey", "accesskey", "credential",
-                "jwt", "csrf", "signed", "policy", "expires",
-        )) or field.startswith(("xamz", "xgoog")):
+
+    # Decode only for *rejecting* unsafe links, never to rewrite an URL or
+    # infer acquisition rights. Double-encoded control bytes or path segments
+    # must not become a public detail/cover link downstream.
+    forbidden_segments = {
+        "download", "downloads", "acquire", "acquisition",
+        "license", "licence", "licenses", "licences", "drm",
+        "token", "tokens", "oauth", "authorize", "authorization",
+    }
+    decoded_path, decoded_query = parts.path, parts.query
+    for _ in range(4):
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in decoded_path + decoded_query):
             return ""
-        if "@" in val or re.search(r"\bbearer\s", val, re.I):
+        path_parts = (part.casefold() for part in decoded_path.split("/") if part)
+        if any(
+            part in forbidden_segments
+            or part.endswith((".acsm", ".lcpl", ".epub", ".kepub"))
+            for part in path_parts
+        ):
             return ""
-    return value
+        parameters = parse_qsl(decoded_query, keep_blank_values=True)
+        if len(parameters) > 32:
+            return ""
+        for key, val in parameters:
+            field = re.sub(r"[^a-z0-9]", "", key.casefold())
+            if any(word in field for word in (
+                    "token", "secret", "password", "session", "auth",
+                    "signature", "apikey", "accesskey", "credential",
+                    "jwt", "csrf", "signed", "policy", "expires",
+            )) or field in {"sig", "key"} or field.startswith(("xamz", "xgoog")):
+                return ""
+            if "@" in val or re.search(r"\bbearer\s", val, re.I):
+                return ""
+        path_next, query_next = unquote(decoded_path), unquote(decoded_query)
+        if (path_next, query_next) == (decoded_path, decoded_query):
+            return value
+        decoded_path, decoded_query = path_next, query_next
+    # Uninspected nesting of percent-encodings is not a public attestation.
+    return ""
 
 
 def age_text(age_range: object) -> str:
