@@ -464,6 +464,7 @@ class NamingRepairTool(_ReadOnlyTool):
         placement_ids: list[str] = []
         changes: list[str] = []
         skipped = 0
+        policy_failures = 0
         read_failures: list[str] = []
         seen: set[str] = set()
 
@@ -489,13 +490,25 @@ class NamingRepairTool(_ReadOnlyTool):
                     skipped += 1
                     continue
                 extension = PurePath(current).suffix.lstrip(".") or "epub"
-                expected = str(naming.preview(
-                    title=title,
-                    author=author,
-                    series=series,
-                    index=index,
-                    extension=extension,
-                ))
+                try:
+                    proposed = naming.preview(
+                        title=title,
+                        author=author,
+                        series=series,
+                        index=index,
+                        extension=extension,
+                    )
+                except Exception:
+                    # A malformed item or a failed Core policy must not abort
+                    # unrelated placements, nor leak the private exception
+                    # message or class name into the Outils preview.
+                    policy_failures += 1
+                    continue
+                if proposed is None or not str(proposed).strip():
+                    # No valid proposal means no authorized rename target.
+                    policy_failures += 1
+                    continue
+                expected = str(proposed)
                 if PurePath(current).name == PurePath(expected).name:
                     continue
                 placement_ids.append(placement.placement_id)
@@ -510,6 +523,10 @@ class NamingRepairTool(_ReadOnlyTool):
         warnings: list[str] = []
         if skipped:
             warnings.append(f"{skipped} entrée(s) non vérifiable(s) ignorée(s).")
+        if policy_failures:
+            warnings.append(
+                f"{policy_failures} placement(s) sans proposition valide de la politique Core."
+            )
         if read_failures:
             warnings.append(
                 f"{len(read_failures)} artefact(s) non inspecté(s) : broker library.read en erreur."
@@ -522,6 +539,7 @@ class NamingRepairTool(_ReadOnlyTool):
             facts={
                 "placement_ids": tuple(placement_ids),
                 "skipped": skipped,
+                "policy_failures": policy_failures,
                 "read_failures": len(read_failures),
             },
         )
