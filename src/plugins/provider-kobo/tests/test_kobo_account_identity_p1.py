@@ -140,3 +140,41 @@ def test_reconnect_cannot_replace_existing_account_with_unknown_fallback():
         assert provider._cifereca_delegation_attempts_saved == 4
     finally:
         provider.close()
+
+
+def test_existing_credential_cannot_be_rebound_to_a_different_authenticated_account():
+    provider, fake = session({"id": "reader-alice"})
+    try:
+        assert provider.connect()[0].unique_id == "reader-alice"
+        provider._cifereca_delegation_forbidden = True
+        provider._cifereca_delegation_attempts_saved = 9
+        fake.account_data = {
+            "id": "reader-bob",
+            "display_name": "PRIVATE_OTHER_READER",
+        }
+        with pytest.raises(ProviderError) as exc:
+            provider.connect()
+        assert "reconfiguration explicite" in str(exc.value)
+        assert "reader-alice" not in str(exc.value)
+        assert "reader-bob" not in str(exc.value)
+        assert provider.accounts[0].unique_id == "reader-alice"
+        assert provider._cifereca_delegation_forbidden is True
+        assert provider._cifereca_delegation_attempts_saved == 9
+        assert fake.calls == ["status", "account", "status", "account"]
+    finally:
+        provider.close()
+
+
+def test_reconnect_same_account_after_scope_reauthorization_is_allowed():
+    provider, fake = session({"id": "reader-alice", "display_name": "My Kobo"})
+    try:
+        provider.connect()
+        provider._cifereca_delegation_forbidden = True
+        provider._cifereca_delegation_attempts_saved = 4
+        fake.account_data = {"account_id": "reader-alice", "name": "My Kobo"}
+        assert provider.connect()[0].unique_id == "reader-alice"
+        assert provider._cifereca_delegation_forbidden is False
+        assert provider._cifereca_delegation_attempts_saved == 0
+        assert len(provider.accounts) == 1
+    finally:
+        provider.close()
