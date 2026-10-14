@@ -121,9 +121,9 @@ def test_task_callbacks_ignore_late_start_and_repeated_finish():
     started = _method(MAIN, "MainWindow", "_task_started")
     finished = _method(MAIN, "MainWindow", "_task_finished")
     assert "self._finished_task_ids.discard" not in started
-    assert "if int(task_id) in self._finished_task_ids:" in started
-    assert "if task_id in self._finished_task_ids:" in finished
-    assert finished.index("if task_id in self._finished_task_ids:") < finished.index("self.activity_feedback.finished(")
+    assert "register_task_start(" in started
+    assert "register_task_finish(" in finished
+    assert finished.index("register_task_finish(") < finished.index("self.activity_feedback.finished(")
 
 
 def test_taskrunner_delivery_stops_when_success_callback_closes_window():
@@ -218,7 +218,9 @@ def test_finished_callback_keeps_running_state_with_stale_remaining_count():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
-    namespace = {}
+    from cifereca.gui.task_state import register_task_finish
+
+    namespace = {"register_task_finish": register_task_finish}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
 
     class Widget:
@@ -253,7 +255,9 @@ def test_finished_callback_counts_two_live_tasks_when_runner_reports_one():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
-    namespace = {}
+    from cifereca.gui.task_state import register_task_finish
+
+    namespace = {"register_task_finish": register_task_finish}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
 
     class Widget:
@@ -287,7 +291,9 @@ def test_duplicate_task_start_does_not_duplicate_activity_feedback():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_started")
-    namespace = {}
+    from cifereca.gui.task_state import register_task_start
+
+    namespace = {"register_task_start": register_task_start}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<start>", "exec"), namespace)
 
     calls = []

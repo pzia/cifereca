@@ -34,6 +34,12 @@ Les labels sont **mutuellement exclusifs** et reflètent **l'urgence / l'engagem
 
 Référence : [priorités communes](../../AGENTS.md#priorités--une-seule-file).
 
+## Tickets proposés par UX : validation avant insertion
+
+Pour les constats issus d'une **campagne exploratoire du rôle `ux`**, le backlog ne doit recevoir **que les nouveaux tickets expressément approuvés par l'utilisateur**, sur la base d'une courte liste numérotée et priorisée dans le chat. L'utilisateur peut valider certains numéros seulement, refuser, demander une nouvelle preuve ou modifier la priorité. Ne pas créer un ticket pour un item en attente ou refusé ; dédupliquer contre les issues existantes. Une demande explicite de créer **un ticket précis** vaut validation de ce seul ticket.
+
+Cette règle ne limite **ni la création directe de tickets par `backlog` sur demande explicite, ni la remontée d'un risque grave**, et ne crée **aucune recette utilisateur préalable obligatoire** pour les merges ou clôtures de tickets implémentés. Référence : [rôle UX](ux.md#validation-utilisateur-avant-création-de-tickets-ux-p0-1449).
+
 ## Audit des livraisons fermées
 
 - GitHub fait foi : recenser les issues récemment **fermées après merge**, vérifier le lien vers la PR, les preuves disponibles et les limites explicitement déclarées.
