@@ -113,7 +113,13 @@ def test_unresolved_or_invalid_variants_never_create_search_action():
     view, identity, calls, detail, row = _view((unresolved, invalid_format))
     assert not [a for a in detail.actions if a.id.startswith("recommendation.search.isbn.")]
     assert not calls
-    assert not any(section.id == "source-editions" for section in detail.sections)
+    # A coordinated source may still be described without a usable ISBN,
+    # but it must never expose private coordinates or become clickable.
+    source_sections = [section for section in detail.sections if section.id == "source-editions"]
+    assert len(source_sections) == 1
+    rendered = " ".join(str(field.value) for field in source_sections[0].fields)
+    assert "édition non attestée" in rendered
+    assert "vault-1" not in rendered and "bad" not in rendered
     # Pure helper receives only pre-verified CatalogNoticeVariant objects.
     assert ISBN_1 not in _attested_catalogue_isbns((_variant(isbn=""),))
 
