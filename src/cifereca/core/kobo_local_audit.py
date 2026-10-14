@@ -125,9 +125,23 @@ def kobo_local_reconciliation_audit(
     # Scoped output has only ephemeral ordinal labels, NEVER credential/identity.
     selected.sort(key=lambda row: (row["identity_id"], row["credential_id"]))
     valid_owner = {row["credential_id"]: row["identity_id"] for row in selected}
-    records = service.storage.backup_list("kobo")
-    catalog = service.storage.catalog_entries()
-    entitlements = service.storage.entitlements(provider_id="kobo", state="active")
+    selected_identities = {row["identity_id"] for row in selected}
+    # Scope the local evidence before budget accounting: a --credential audit
+    # must neither enumerate nor expose other identities' report totals.
+    records = [
+        row for row in service.storage.backup_list("kobo")
+        if row.get("credential_id") in valid_owner
+    ]
+    catalog = [
+        row for row in service.storage.catalog_entries()
+        if row.get("provider_id") == "kobo"
+        and row.get("identity_id") in selected_identities
+    ]
+    entitlements = [
+        row for row in service.storage.entitlements(
+            provider_id="kobo", state="active",
+        ) if row.get("credential_id") in valid_owner
+    ]
     scopes = []
     for index, row in enumerate(selected, start=1):
         identity = row["identity_id"]
@@ -145,7 +159,6 @@ def kobo_local_reconciliation_audit(
 
     by_catalog: dict[tuple[str, str], list[object]] = defaultdict(list)
     unlinked_catalog = 0
-    selected_identities = {identity for _, _, identity, _ in scopes}
     for row in catalog[:_MAX_RECORDS]:
         if row.get("provider_id") != "kobo" or row.get("local_state") != "local":
             continue
