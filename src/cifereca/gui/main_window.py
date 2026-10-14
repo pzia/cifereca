@@ -54,6 +54,7 @@ from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
 from .settings_tracking import bind_settings_actions
 from .settings_diagnostic_actions import build_settings_diagnostic_callbacks
+from .task_state import register_task_start, register_task_finish
 from .task_progress_presentation import live_task_progress_label
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
@@ -466,12 +467,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _task_started(self, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
         if getattr(self, '_closed', False):return False
-        if int(task_id) in self._finished_task_ids:
-            return False
-        if int(task_id) in self._active_tasks:
+        if not register_task_start(
+            self._active_tasks, self._finished_task_ids,
+            task_id, priority, label, kind,
+        ):
             return False
         self._cancel_activity_hide()
-        self._active_tasks[int(task_id)] = (int(priority), str(label), str(kind))
         self.activity_feedback.started(int(task_id), str(label), str(kind))
         self._refresh_activity_history()
         if hasattr(self, "busy_revealer"):
@@ -504,14 +505,11 @@ class MainWindow(Adw.ApplicationWindow):
         # TaskRunner may deliver completion before the queued "started" UI
         # callback. Record it once and ignore any repeated completion, so a
         # late callback cannot resurrect a finished task or duplicate a toast.
-        if task_id in self._finished_task_ids:
+        accepted, kind = register_task_finish(
+            self._active_tasks, self._finished_task_ids, task_id,
+        )
+        if not accepted:
             return False
-        current = self._active_tasks.get(task_id)
-        kind = current[2] if current is not None else "task"
-        self._finished_task_ids.add(task_id)
-        if len(self._finished_task_ids) > 100:
-            self._finished_task_ids = set(sorted(self._finished_task_ids)[-50:])
-        self._active_tasks.pop(task_id, None)
         self._last_finished_task_id = int(task_id)
         functional = self._functional_error_message(error or "") if not success else ""
         self.activity_feedback.finished(
