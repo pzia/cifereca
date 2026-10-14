@@ -389,7 +389,7 @@ def test_published_evidence_rejects_untrusted_types_and_unknown_source():
     script = script_module()
     assert script.public_report({
         "source": "../bad", "result": "PASS", "reason": "PRIVATE"
-    }) == {"result": "PASS"}
+    }) == {"result": "BLOCKED", "error_code": "invalid_evidence"}
     safe = script.public_report({
         "source": "ecole-loisirs", "result": {"text": "PRIVATE"},
         "requests_count": True, "accepted": -1, "qualified_notice_count": 10**15,
@@ -421,3 +421,17 @@ def test_main_exception_never_serializes_private_message(monkeypatch, capsys):
     assert safe["error_code"] == "execution_failed"
     for secret in ("PRIVATE", "/home/alice", "Cookie=", "SECRET_TOKEN"):
         assert secret not in published
+
+
+def test_pass_requires_nonzero_request_and_qualified_notice_counts():
+    script = script_module()
+    for report in (
+        {"source": "milan", "result": "PASS", "requests_count": 0,
+         "qualified_notice_count": 2},
+        {"source": "milan", "result": "PASS", "requests_count": 1,
+         "qualified_notice_count": 0},
+        {"source": "milan", "result": "PASS", "qualified_notice_count": 2},
+    ):
+        safe = script.public_report(report)
+        assert safe["result"] == "BLOCKED"
+        assert safe["error_code"] == "invalid_evidence"
