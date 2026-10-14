@@ -63,9 +63,14 @@ def test_late_loan_refresh_for_old_identity_is_ignored():
 
 
 def test_identity_activation_ignores_late_results_from_previous_identity():
-    source = _method_source(MAIN, "MainWindow", "_activate_identity")
-
-    assert "if not self.service.current_identity or self.service.current_identity.identity_id != identity.identity_id:" in source
+    source = _method_source(
+        MAIN.with_name("identity_activation_controller.py"),
+        None, "activate_identity",
+    )
+    assert "identity_activation_controller.activate_identity" in _method_source(
+        MAIN, "MainWindow", "_activate_identity",
+    )
+    assert "if not window.service.current_identity or window.service.current_identity.identity_id != identity.identity_id:" in source
     assert "return" in source
 
 

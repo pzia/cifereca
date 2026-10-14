@@ -164,7 +164,8 @@ def test_runner_callbacks_capture_generation_and_identity():
     assert "context = self._search_detail_request_context()" in source
     assert "self._apply_search_detail(selected_id, item, detail, context=context)" in source
     assert "self._search_detail_error(selected_id, item, exc, context=context)" in source
-    assert "self._search_detail_request_generation += 1" in _source("_activate_identity")
+    controller = MAIN.with_name("identity_activation_controller.py").read_text(encoding="utf-8")
+    assert "window._search_detail_request_generation += 1" in controller
 
 
 def test_deselection_revokes_pending_detail_and_does_not_submit_a_new_task():

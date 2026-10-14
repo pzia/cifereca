@@ -32,6 +32,10 @@ def _method(path: Path, class_name: str, name: str) -> str:
         path = SHELL_OWNER
         class_name = None
         name = "build_main_shell"
+    if name == "_activate_identity":
+        path = MAIN.with_name("identity_activation_controller.py")
+        class_name = None
+        name = "activate_identity"
     if name == "_activity_result":
         path = RESULT_OWNER
         class_name = None
@@ -151,7 +155,8 @@ def test_common_task_success_callbacks_use_activity_bar():
         "choose_acsm",
     ):
         source = _method(MAIN, "MainWindow", name)
-        assert ("window._activity_result(" if name == "connect_configured_sources" else "self._activity_result(") in source
+        expected = "window._activity_result(" if name in {"connect_configured_sources", "_activate_identity"} else "self._activity_result("
+        assert expected in source
 
 
 def test_task_callbacks_ignore_late_start_and_repeated_finish():

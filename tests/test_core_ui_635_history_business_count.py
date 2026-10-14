@@ -17,8 +17,12 @@ def _method(class_name: str, method_name: str) -> str:
 
 
 def test_history_uses_business_total_count_mode():
-    source = _method("MainWindow", "_build_history_page")
+    owner = ast.parse(MAIN.with_name("secondary_page_controller.py").read_text(encoding="utf-8"))
+    source = ast.unparse(next(n for n in owner.body
+                              if isinstance(n, ast.FunctionDef) and n.name == "build_history_page"))
     assert "page.set_total_only_count(True)" in source
+    facade = _method("MainWindow", "_build_history_page")
+    assert "secondary_page_controller.build_history_page" in facade
 
 
 def test_total_only_mode_never_exposes_materialized_batch_size():

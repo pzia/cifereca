@@ -96,10 +96,12 @@ def test_new_request_after_identity_switch_can_select_bob_book():
 
 
 def test_identity_activation_clears_pending_request_before_new_library_render():
-    source = ast.unparse(_main_method("_activate_identity"))
-    key_reset = source.index("self._pending_library_selection_key = None")
-    generation_advance = source.index("self._identity_context_generation += 1")
-    render_new_identity = source.index("self._render_library([])")
+    owner = ast.parse(MAIN.with_name("identity_activation_controller.py").read_text(encoding="utf-8"))
+    source = ast.unparse(next(n for n in owner.body
+                              if isinstance(n, ast.FunctionDef) and n.name == "activate_identity"))
+    key_reset = source.index("window._pending_library_selection_key = None")
+    generation_advance = source.index("window._identity_context_generation += 1")
+    render_new_identity = source.index("window._render_library([])")
     assert generation_advance < key_reset < render_new_identity
-    assert "self._pending_library_selection_identity_id = None" in source
-    assert "self._pending_library_selection_generation = None" in source
+    assert "window._pending_library_selection_identity_id = None" in source
+    assert "window._pending_library_selection_generation = None" in source
