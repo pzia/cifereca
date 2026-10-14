@@ -129,9 +129,9 @@ def test_materialize_to_identity_reuses_existing_local_artifact_without_acquisit
 
 def test_open_action_rechecks_path_at_click_and_reports_launch_error():
     source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    tree = ast.parse(source.read_text())
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_add_local_book_actions")
+    tree = ast.parse(source.with_name("local_book_action_controller.py").read_text())
+    method = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "add_local_book_actions")
     text = ast.unparse(method)
 
     assert "local_book_path(placement_id, identity_id=identity_id).as_uri()" in text
