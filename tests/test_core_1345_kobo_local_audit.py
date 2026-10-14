@@ -228,3 +228,28 @@ def test_missing_path_referenced_twice_is_checked_only_once(tmp_path, monkeypatc
         assert report["counts"]["missing_or_unlinked"] == 0
     finally:
         service.close()
+
+
+def test_audit_rejects_symlinked_root_ancestor_before_reading_other_identity(tmp_path):
+    """O_NOFOLLOW on the final directory alone does not protect parent parts."""
+    directory = tmp_path / "library"
+    bob = directory / "bob"
+    target = bob / "kobo"
+    target.mkdir(parents=True)
+    file = target / "private-book.epub"
+    _write_epub(file)
+    alice = directory / "alice"
+    alice.symlink_to(bob, target_is_directory=True)
+    # The linked source resolves to Bob's file, but the declared path claims
+    # Alice. Never use the symlink to observe Bob's SHA.
+    wrong_path = alice / "kobo" / "private-book.epub"
+    assert _read_hash_within(str(wrong_path), (alice / "kobo", alice)) is None
+    # Sanity: the same file is valid only with Bob's actual non-symlink root.
+    assert _read_hash_within(str(file), (target,)) is not None
+    # A symlink below a genuine root must be refused as well.
+    trusted = directory / "trusted"
+    trusted.mkdir()
+    (trusted / "shortcut").symlink_to(target, target_is_directory=True)
+    assert _read_hash_within(
+        str(trusted / "shortcut" / "private-book.epub"), (trusted,),
+    ) is None
