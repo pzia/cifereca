@@ -6,7 +6,7 @@ from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient
 from cifereca_kobo_catalog import KoboCatalogService
-from cifereca_kobo_policy import classify_personal_manifest, _strict_product_id
+from cifereca_kobo_policy import classify_personal_manifest, _strict_account_scope, _strict_product_id
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 
@@ -313,12 +313,42 @@ class KoboSession(ProviderSession):
         return accepted
 
     def library(self) -> list[SearchResult]:
+        # The rights/inventory view must be tied to a verified connection,
+        # independently of the acquisition-specific backup_manifest() path.
+        # A stale account from a failed reconnect is not valid authority.
+        self.last_library_rejections = []
+        if (
+            not self.connected or len(self._accounts) != 1
+            or self._accounts[0].provider_id != self.provider_id
+            or self._accounts[0].credential_id != self.credential_id
+            or not _strict_account_scope(self._accounts[0].unique_id)
+        ):
+            self.last_library_rejections.append({
+                "type": "invalid_scope", "reason": "unbound_account",
+            })
+            return []
+        account_id = self._accounts[0].unique_id
         items = self.client.library_manifest()
-        self.last_library_rejections = [
+        self.last_library_rejections.extend(
             dict(row)
             for row in getattr(self.client, "last_manifest_rejections", ())
             if isinstance(row, dict)
-        ]
+        )
+
+        def foreign_account(raw: Any) -> bool:
+            return (
+                isinstance(raw, dict) and "account_id" in raw
+                and (type(raw["account_id"]) is not str
+                     or raw["account_id"] != account_id)
+            )
+
+        # A foreign row with the same product as a local row makes both
+        # ambiguous, even if they arrived on different Vault pages. Never
+        # leak account labels or product IDs through public diagnostics.
+        foreign_products = {
+            product for raw in items if foreign_account(raw)
+            if (product := _strict_product_id(raw)) is not None
+        }
         _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
         # Never emit a credential/account, product, URL, or arbitrary Vault JSON
         # key in a trace: the list of keys itself may contain private data.
@@ -334,17 +364,24 @@ class KoboSession(ProviderSession):
                     "reason": "item_not_object",
                 })
                 continue
+            product = _strict_product_id(raw)
+            if product is None:
+                self.last_library_rejections.append({
+                    "type": "ProviderError", "reason": "missing_product_id",
+                })
+                continue
+            if foreign_account(raw) or product in foreign_products:
+                self.last_library_rejections.append({
+                    "type": "invalid_scope",
+                    "reason": ("different_account" if foreign_account(raw)
+                               else "ambiguous_account_binding"),
+                })
+                continue
             try:
                 rows.append(self.normalize_item(raw, default_collection="library"))
             except ProviderError:
-                reason = (
-                    "missing_product_id"
-                    if not str(raw.get("product_id") or raw.get("id") or "").strip()
-                    else "normalization_error"
-                )
                 self.last_library_rejections.append({
-                    "type": "ProviderError",
-                    "reason": reason,
+                    "type": "ProviderError", "reason": "normalization_error",
                 })
         return rows
 
