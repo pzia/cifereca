@@ -285,6 +285,9 @@ class KoboSession(ProviderSession):
             if self.connected and len(self._accounts) == 1
             and self._accounts[0].provider_id == self.provider_id
             and self._accounts[0].credential_id == self.credential_id
+            # A connected session with an invalid account key cannot attest
+            # legacy library hits that omit an explicit account_id.
+            and _strict_account_scope(self._accounts[0].unique_id)
             else None
         )
         accepted: list[SearchResult] = []
