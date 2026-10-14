@@ -115,12 +115,18 @@ def test_shell_filters_configured_actions_before_render():
 def test_page_menu_is_reasserted_rightmost_after_build_refresh_and_reconstruction():
     create = _method_source("_create_shell_header")
     refresh = _method_source("_refresh_header_actions")
-    changed = _method_source("_plugins_changed")
+    # Plugin-change implementation moved; verify its real GTK-independent owner.
+    controller = MAIN.parent / "plugin_reload_controller.py"
+    module = ast.parse(controller.read_text(encoding="utf-8"))
+    changed = ast.unparse(next(node for node in module.body
+                               if isinstance(node, ast.FunctionDef)
+                               and node.name == "plugins_changed"))
+    assert "plugin_reload_controller.plugins_changed(self)" in _method_source("_plugins_changed")
 
     assert "self._header_controls = controls" in create
     assert "self._ensure_pages_menu_rightmost()" in create
     assert "window._ensure_pages_menu_rightmost()" in refresh
-    assert "self._ensure_pages_menu_rightmost()" in changed
+    assert "window._ensure_pages_menu_rightmost()" in changed
 
 
 def test_rightmost_helper_moves_menu_to_last_position_for_headless_box():
