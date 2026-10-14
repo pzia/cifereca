@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import adept_loan_choice_controller
 from . import shell_shortcut_controller
 from . import statistics_presentation_controller
 from . import dashboard_page_controller
@@ -1865,38 +1866,9 @@ class MainWindow(Adw.ApplicationWindow):
             priority=TaskPriority.USER_ACTION, kind="adept-inventory")
 
     def _present_adept_loan_choices(self, acquisition_id, loan, result):
-        options = result["options"]
-        if not options:
-            self.toast("Aucun prêt ADEPT dans les profils liés" if result["complete"] else "Inventaire incomplet : aucun prêt disponible", 6)
-            return
-        dialog = Adw.MessageDialog.new(self, "Rattacher un prêt ADEPT", "Choisissez le prêt correspondant au fichier local. Le titre aide au choix ; il ne constitue pas une preuve automatique. Aucun livre ne sera téléchargé ni restitué.")
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        title = Gtk.Label(label=loan.title, xalign=0); title.set_wrap(True); box.append(title)
-        if not result["complete"]:
-            warning = Gtk.Label(label="Inventaire partiel : seuls les profils lus avec succès sont proposés.", xalign=0); warning.set_wrap(True); box.append(warning)
-        labels = [f"{o['title']} · {o['profile_name']} · {o['state']} · {o['loan_id']}" for o in options]
-        dropdown = Gtk.DropDown.new_from_strings(labels); dropdown.set_enable_search(True)
-        dropdown.set_selected(Gtk.INVALID_LIST_POSITION); dropdown.set_tooltip_text("Titre · profil · état · identifiant ADEPT")
-        box.append(dropdown)
-        detail = Gtk.Label(label="Sélectionnez un prêt pour voir sa validité et son chemin connu.", xalign=0); detail.set_wrap(True); box.append(detail)
-        dialog.set_extra_child(box); dialog.add_response("cancel", "Annuler"); dialog.add_response("attach", "Confirmer le rattachement")
-        dialog.set_response_enabled("attach", False); dialog.set_close_response("cancel")
-        def selected(_dropdown, _pspec):
-            index = dropdown.get_selected(); valid = index < len(options)
-            dialog.set_response_enabled("attach", valid)
-            if valid:
-                option = options[index]; detail.set_label(f"Validité : {option.get('validity') or 'Inconnue'}\nChemin ADEPT : {option.get('local_book') or 'Non fourni'}")
-        dropdown.connect("notify::selected", selected)
-        def response(_dialog, choice):
-            index = dropdown.get_selected()
-            if choice != "attach" or index >= len(options): return
-            option = options[index]
-            def ok(_result):
-                self.loan_page.detail.show_loan(loan); self.refresh_library(False)
-                self._activity_result("Prêt ADEPT rattaché · fichier conservé")
-            self.runner.submit("Rattachement du prêt ADEPT…", lambda: self.service.attach_adept_loan(acquisition_id, option["profile_id"], option["loan_id"]), ok,
-                lambda exc: self.show_error(str(exc), "Rattachement impossible"), priority=TaskPriority.USER_ACTION, kind="adept-binding")
-        dialog.connect("response", response); dialog.present()
+        return adept_loan_choice_controller.present_adept_loan_choices(
+            self, acquisition_id, loan, result, Gtk=Gtk, Adw=Adw,
+        )
 
     def reconcile_adept_from_detail(self, acquisition_id, loan, control):
         def ok(result):
