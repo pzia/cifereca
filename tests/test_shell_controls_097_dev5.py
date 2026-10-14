@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
 from cifereca.gui.shell_model import menu_sections, validate_action_selection
-from cifereca.gui import header_action_controller, shell_layout_controller
+from cifereca.gui import header_action_controller, shell_layout_controller, plugin_action_dispatch_controller
 from cifereca.gui.shortcuts import SHORTCUTS, adjacent_route, shortcuts_text
 from cifereca.plugin_api import UiPageContribution, UiActionContribution
 
@@ -51,7 +51,7 @@ class ShellControls(unittest.TestCase):
         gtk=NS(Button=Widget,HeaderBar=Widget,Label=Widget,Box=Widget,DropDown=Widget,MenuButton=Widget,PopoverMenu=Widget,SignalListItemFactory=Widget,Orientation=NS(VERTICAL=0,HORIZONTAL=1))
         ns={'Gtk':gtk,'Adw':gtk,'Gio':NS(Menu=Menu,SimpleAction=Action,SimpleActionGroup=ActionGroup),
             'menu_sections':menu_sections,'validate_action_selection':validate_action_selection,'visible_actions':lambda *args:[],'clear_box':lambda box:box.children.clear(),'header_action_controller':header_action_controller,
-            'shell_layout_controller':shell_layout_controller}
+            'shell_layout_controller':shell_layout_controller, 'plugin_action_dispatch_controller':plugin_action_dispatch_controller}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(source),'exec'),ns)
         cls.methods=ns
     def call(self,name,host,*args):return self.methods[name](host,*args)
