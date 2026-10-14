@@ -113,7 +113,7 @@ class OptionalLLMService:
     def _settings(self) -> tuple[bool, bool, str, str, str, float, int, int]:
         cfg = self._config
         enabled = cfg.get("enabled") is True
-        provided = cfg.get("provider", "openai-compatible")
+        provided = cfg.get("provider") or "openai-compatible"
         # Never reflect arbitrary unsupported provider labels from a manually
         # edited config into diagnostics, consent UI or failure envelopes.
         provider = "openai-compatible" if provided == "openai-compatible" else "unsupported"
