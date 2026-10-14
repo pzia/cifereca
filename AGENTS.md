@@ -5,10 +5,10 @@ Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontière
 ## Priorités : une seule file
 
 - **P0 — stabilité** : sécurité, régressions bloquantes, intégrité des données, installation, CI et release fiable.
-- **P1 — prochain plugin à terminer** : un seul plugin cible, avec ses dépendances et sa recette indispensables.
+- **P1 — réalisation prioritaire** : suites Core/CoreUI, Plugins, UX et CI/CD non bloquantes, selon le classement GitHub et les dépendances indispensables.
 - **P2 — reste** : autres plugins, ergonomie non bloquante, recherche et idées.
 
-Le label GitHub P0/P1/P2 fait foi et doit être **unique par issue**. Le rôle, l'ancienneté et les anciennes sous-priorités de plugin ne changent pas le rang. La cible P1 est fixée par le backlog, pas par opportunité. Voir [#839](https://github.com/pzia/cifereca/issues/839) pour les critères courants de stabilité.
+Le label GitHub P0/P1/P2 fait foi et doit être **unique par issue**. Le rôle, l'ancienneté et les anciennes sous-priorités de plugin ne changent pas le rang. Pour les travaux Plugins P1, la cible reste fixée par le backlog, pas par opportunité ; les autres rôles traitent leurs propres P1 sans être artificiellement bloqués par ce choix. Voir [#839](https://github.com/pzia/cifereca/issues/839) pour les critères courants de stabilité.
 
 Avant chaque étape, examiner issues, PR, branches et CI récentes ; éviter les travaux concurrents. Si le premier sujet est bloqué, documenter précisément le blocage et avancer sur un autre sujet de **même priorité**. Ne passer plus bas que si les travaux prioritaires sont réellement bloqués ou indépendants, en laissant cette situation visible.
 
@@ -30,7 +30,7 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 | **core** | Core métier, stockage, services, API publique, framework de plugins ; également CoreUI (GTK/libadwaita). Pas de logique métier spécifique à un plugin. |
 | **plugins** | Fonctionnalités sous src/plugins/, manifestes et tests de chaque plugin. Consommer uniquement cifereca.plugin_api ; demander une évolution Core si nécessaire. |
 | **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires, preuves GTK et tickets UX ; ne corrige pas le produit. |
-| **cicd** | Workflows, packaging, tests transverses, vérification des artefacts, résolution des blocages CI et **merge** des PR prêtes. |
+| **cicd** | Workflows, packaging, intégration des E2E ciblés, contrôles, **merge** des PR prêtes et vérification de la clôture des issues. |
 | **focus** | **Méta-rôle** : choisit les étapes selon P0 → P1 → P2 ; adopte `backlog`, `core`, `plugins` ou `cicd`. Le rôle `ux` reste indépendant et **exclu de focus**. |
 
 Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **simulation** = ux (périmètre simulateurs et recettes). Le rôle core donne priorité au non-UI à **priorité égale**, et cicd aux gates CI avant les merges à **priorité égale**. Ces préférences ne dépassent jamais P0/P1/P2.
@@ -46,6 +46,19 @@ Quand le rôle demandé est focus, ou quand une demande porte sur un enchaîneme
 5. **Réévaluer** les priorités après l'étape ; continuer avec le même rôle ou en adopter un autre. « Next » demande l'étape suivante, **jamais** une release.
 
 Un blocage doit produire un handoff exploitable, pas un faux succès. Focus coordonne ; seul **cicd** réalise un merge, après validation, et une release exige toujours une **commande explicite** (tag, packaging, publication et vérification des artefacts).
+
+## Livraison asynchrone, preuves et clôture
+
+**Politique canonique : [docs/AGENT-DELIVERY-POLICY.md](docs/AGENT-DELIVERY-POLICY.md).**
+Elle s'applique à tous les rôles et aux fils ChatGPT qui avancent en parallèle.
+
+- **Pas de validation IHM humaine obligatoire par défaut** : l'absence d'une recette utilisateur n'empêche ni une PR vérifiée d'être fusionnée, ni un ticket livré d'être fermé.
+- **Preuve proportionnée au risque** : tests unitaires et intégration ciblés en premier ; E2E GTK/XTEST ciblé pour les parcours visuels ou sensibles. `cicd` possède l'orchestration/gates E2E existants ; Core et Plugins écrivent les assertions de leurs comportements ; UX conserve des recettes exploratoires indépendantes.
+- **Clôture après livraison** : `cicd` vérifie le SHA, les contrôles obligatoires et les critères du ticket, merge puis confirme la fermeture, avec liens vers les preuves. Aucun check réellement rouge ou requis inconnu n'est réputé réussi.
+- **Vérification terrain différée** : `backlog` identifie les livraisons à contrôler en priorité ; `ux` peut explorer un parcours précis. Une observation manuelle non effectuée reste **non vérifiée**, pas « en échec » ni « blocante » par défaut.
+- **Défaut ultérieur** : réouvrir le même ticket si le contrat livré est défaillant, créer une nouvelle issue pour un problème distinct ; documenter le fait observable.
+- **Coordination des fils** : consulter issue, PR, branches, HEAD SHA et CI avant toute prise de travail ; garder un seul rôle pilote et un handoff GitHub exploitable, sans réservation tacite ni commentaires de simple progression.
+- **Exception de sécurité** : ne pas repousser après merge une preuve indispensable pour opérations destructives, secrets, intégrité ou installation. Si vraiment impossible, signaler un blocage réel et solliciter une décision explicite ; jamais inventer un PASS.
 
 ## Synchronisation : issues plutôt que journal sur main
 

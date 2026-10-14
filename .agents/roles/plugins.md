@@ -13,3 +13,13 @@ Traiter tous les plugins fonctionnels, qu'il s'agisse d'un plugin unique ou de s
 Le rôle `plugins` ne modifie pas le Core pour satisfaire un besoin plugin. Si une primitive/API Core manque, il crée ou enrichit une issue `core` et poursuit uniquement la partie plugin réalisable.
 
 Le code plugin dépend uniquement de l'API publique Core.
+
+## Livraison et vérification avant handoff
+
+- Le rôle `plugins` écrit et maintient les tests du plugin modifié (contrat, erreurs, fixtures et intégration) et les **assertions GTK/E2E ciblées du parcours plugin** quand elles sont nécessaires aux critères d'acceptation.
+- Utiliser l'API publique Core, les simulateurs, les scénarios `e2e/` existants et l'orchestration `cicd` ; pas de workflow E2E supplémentaire ni de dépendance à des comptes externes réels sans autorisation.
+- Remettre à `cicd` une PR bornée, son HEAD SHA, les tests réellement passés, limites (en particulier si une source amont n'a été que simulée) et action de merge/clôture.
+- **Ne pas exiger de vérification manuelle utilisateur** pour fermer un ticket dont les critères sont prouvés. Un contrôle fournisseur/terrain utile mais non indispensable peut être différé sans faux PASS.
+- Les limites de droits, provenance, sécurité, données et opérations destructives demandent des preuves réelles à leur niveau de risque ; jamais d'affirmation d'accès fournisseur réel sur un simple mock.
+
+Référence : [politique de livraison asynchrone](../../docs/AGENT-DELIVERY-POLICY.md).

@@ -91,3 +91,12 @@ self-test `app.py` du harnais ne prouve pas les fonctionnalités Cifereca.
 - Ne pas transformer un test exploratoire UX en gate CI sans issue/handoff vers `cicd`.
 
 La sortie normale du rôle `ux` est une ou plusieurs issues documentées, idéalement accompagnées de screenshots et d'un scénario E2E reproductible.
+
+## UX indépendant du cycle de fusion standard
+
+- `ux` est lancé **indépendamment et de façon ciblée** sur un parcours, notamment sur proposition d'un audit `backlog` de tickets récemment fermés. Il explore, mesure, documente les preuves et signale les défauts dans les issues ; il ne valide pas à la place de l'utilisateur un comportement non observé.
+- Les E2E exploratoires, captures, tests de lecteur d'écran et observations matérielles complètent les preuves d'acceptation **automatisées et sélectionnées par `cicd`**. Une campagne exploratoire non encore lancée **ne bloque pas par défaut** la fusion ni la clôture.
+- Une régression du contrat d'un ticket fermé justifie sa réouverture avec reproduction ; un défaut nouveau donne une issue distincte. L'absence d'essai utilisateur, elle, ne justifie pas la réouverture.
+- Si un scénario UX doit devenir une exigence CI, transmettre au rôle `cicd` les assertions, fixtures et critères nécessaires ; l'UX ne change pas lui-même les gates.
+
+Référence : [politique de livraison asynchrone](../../docs/AGENT-DELIVERY-POLICY.md).

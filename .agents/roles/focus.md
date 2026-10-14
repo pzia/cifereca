@@ -28,3 +28,10 @@ Privilégier l'édition d'un ticket existant à la création de doublons ; comme
 - Le rôle `cicd` conserve l'exclusivité des merges et ne publie une release que sur **ordre explicite**.
 - Une CI verte ne signifie pas automatiquement une recette UX ou une release valide.
 - Pas de promotion opportuniste d'un plugin, ni d'effacement des blocages P0 pour accélérer P1.
+
+## Sortie des tickets sans attente manuelle
+
+- Le méta-rôle `focus` réutilise la [politique de livraison](../../docs/AGENT-DELIVERY-POLICY.md) : quand Core/Plugins ont apporté les preuves suffisantes, transmettre la PR à `cicd` pour fusion et clôture, **pas au propriétaire utilisateur pour une recette GTK implicite**.
+- Après clôture, ne pas rouvrir pour « UX non testé par l'utilisateur » ; transmettre les contrôles terrain utiles à l'audit `backlog` ou à un `ux` indépendant. Une vraie défaillance sera traitée par issue rouverte ou nouvelle issue selon le périmètre.
+- Lors de l'analyse `Next`, vérifier **également les PR prêtes à merger et les issues encore ouvertes malgré un merge**, afin de résorber le stock de livraison plutôt que multiplier des implémentations non intégrées.
+- Respecter toujours les contrôles CI requis et les exceptions documentées ; ne pas assimiler un travail technique achevé à un merge réalisé.

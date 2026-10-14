@@ -43,3 +43,14 @@ Si un défaut révélé par CI appartient au Core, aux plugins ou à l'UX, ouvri
 ## Exceptions de CI
 
 La dérogation liée au quota GitHub Actions de l'issue #310 est **expirée : ticket fermé**. Un test réellement échoué interdit le merge. Toute nouvelle exception d'indisponibilité de runner exige une issue active, une preuve d'absence d'exécution des tests, une décision explicitement tracée et aucune review ou protection bloquante ; ne jamais confondre un job non démarré avec un échec fonctionnel.
+
+## E2E ciblés, fusion et clôture en réalisation asynchrone
+
+- `cicd/merger` est propriétaire de **l'intégration des E2E d'acceptation dans la CI** : runners, fixtures d'exécution, `E2E Smoke`, `scripts/ci-select-e2e.py`, sélection de scénarios, checks stables et artefacts. Les propriétaires Core/Plugins fournissent les tests de leurs comportements ; UX garde les campagnes exploratoires autonomes.
+- Pour chaque PR, déterminer le **minimum de preuves suffisant selon le risque** : unitaires/intégration en socle ; E2E GTK/XTEST réel et ciblé quand le changement est interactif/visuel ou touche une garde IHM sensible. Inspecter les scénarios sélectionnés et leurs verdicts, pas seulement le succès du bootstrap.
+- Si le sélecteur ignore une dépendance réelle, ouvrir/transmettre le correctif CI ciblé ; ne pas inventer un PASS. Ne pas créer de workflow par scénario. Les checks **requis** doivent avoir un verdict valide sur le SHA pertinent : un workflow ignoré par `paths`, un runner indisponible ou un check pending n'est pas vert. Appliquer les exceptions CI documentées seulement lorsqu'elles sont effectivement admissibles.
+- Dès qu'une PR est prête (périmètre conforme, contrôles requis satisfaits, protections et reviews compatibles), **merger sans attendre la validation IHM manuelle de l'utilisateur**. Une campagne UX exploratoire non demandée comme preuve indispensable est hors du chemin critique.
+- Après merge, **vérifier la fermeture effective de l'issue canonique** ; si GitHub ne l'a pas fermée automatiquement, la clore seulement si les critères sont couverts et indiquer le lien PR/merge SHA, les tests et les limites restantes. Ne pas fermer en cas de vrai blocage non résolu.
+- Une régression découverte après livraison est suivie par réouverture étayée ou issue distincte ; le rôle `backlog` organise les vérifications terrain prioritaires. Ne jamais déclencher une release sans ordre explicite.
+
+Référence : [politique de livraison asynchrone](../../docs/AGENT-DELIVERY-POLICY.md).
