@@ -1,6 +1,8 @@
 """Public row projection and presentation adapter over the engine from PR #738."""
 from dataclasses import dataclass, asdict, is_dataclass, replace
 from collections.abc import Mapping
+from ipaddress import ip_address
+import re
 from urllib.parse import urlsplit
 from cifereca.plugin_api import BookRef, book_ref_from_row
 from constellations import ConstellationGraph, normalize_book
@@ -17,11 +19,52 @@ def reason_text(reason):
 
 
 def public_url(value):
+    """Only non-sensitive, externally reachable bibliographic notice URLs.
+
+    A catalogue recommendation is not proof of download rights. Never offer
+    a credentialed, signed, local or otherwise private URL as a document link.
+    """
+    if type(value) is not str or not value or len(value) > 2048:
+        return ''
+    if any(ord(char) < 33 or ord(char) == 127 for char in value):
+        return ''
+    if any(char in value for char in '<>\\'):
+        return ''
     try:
-        url = str(value or '').strip(); parts = urlsplit(url)
-        return url if parts.scheme in ('http','https') and parts.hostname and not parts.username and not parts.password else ''
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port
     except ValueError:
         return ''
+    if (
+        parsed.scheme not in {'http', 'https'} or not host
+        or parsed.username is not None or parsed.password is not None
+        or parsed.query or parsed.fragment or '%' in host
+    ):
+        # A query can contain a signed license, token, or private search
+        # context; only plain public notice links cross this UI boundary.
+        return ''
+    if port not in (None, 443 if parsed.scheme == 'https' else 80):
+        return ''
+    hostname = host.rstrip('.').casefold()
+    if (
+        '.' not in hostname
+        or hostname in {'localhost', 'local', 'internal'}
+        or hostname.endswith(('.localhost', '.local', '.internal', '.lan', '.home.arpa'))
+    ):
+        return ''
+    if re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I):
+        # Encoded C0/DEL control characters must not be forwarded to the
+        # public browser or used to disguise a signed/private target.
+        return ''
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            return ''
+    return value
 
 
 @dataclass
@@ -47,8 +90,35 @@ def node_from_row(item, *, origin='catalogue'):
         row['provider_id'] = item.identifiers.get('provider', '')
         row['item_id'] = item.identifiers.get('source_item_id', '')
     metadata = dict(row.get('metadata') or {})
-    if row.get('local_path'):
-        metadata['owned'] = True
+    if origin == 'bibliothèque':
+        # Only a row fetched through the identity-scoped local metadata broker
+        # may establish that a concrete local file belongs to this profile.
+        if row.get('local_path'):
+            metadata['owned'] = True
+    else:
+        # A remote catalogue hit or a contextual selected BookRef is only
+        # bibliographic evidence. Flags and paths in those untrusted rows
+        # cannot assert possession by the current account.
+        ownership_keys = ('owned', 'possessed', 'local_path')
+        for container in (row, metadata):
+            for key in ownership_keys:
+                container.pop(key, None)
+            for key in ('availability', 'availability_state', 'access'):
+                if str(container.get(key) or '').strip().casefold() in {
+                    'owned', 'possessed', 'local',
+                }:
+                    container.pop(key, None)
+        raw_search = metadata.get('search_result')
+        if isinstance(raw_search, Mapping):
+            search = dict(raw_search)
+            for key in ownership_keys:
+                search.pop(key, None)
+            for key in ('availability', 'availability_state', 'access'):
+                if str(search.get(key) or '').strip().casefold() in {
+                    'owned', 'possessed', 'local',
+                }:
+                    search.pop(key, None)
+            metadata['search_result'] = search
     row['metadata'] = metadata
     ref = book_ref_from_row(row)
     if isinstance(item, BookRef):
@@ -60,7 +130,18 @@ def node_from_row(item, *, origin='catalogue'):
     if not row.get('book_id') and not ref.identifiers.get('source_item_id') and not ref.identifiers.get('isbn'):
         row['book_id'] = origin + ':row:' + str(id(item))
     model = normalize_book(row)
-    url = public_url(row.get('friendly_url') or metadata.get('friendly_url') or (metadata.get('search_result') or {}).get('friendly_url'))
+    search_result = metadata.get('search_result')
+    search_meta = search_result if isinstance(search_result, Mapping) else {}
+    # An unsafe first candidate must not mask an independently safe public
+    # notice supplied by another source. No download/acquisition links here.
+    url = next((
+        safe for candidate in (
+            row.get('friendly_url'),
+            metadata.get('friendly_url'),
+            search_meta.get('friendly_url'),
+        )
+        if (safe := public_url(candidate))
+    ), '')
     return Card(model.key, ref, row, model.sources or (origin,), (ACCESS[model.availability],), url)
 
 
