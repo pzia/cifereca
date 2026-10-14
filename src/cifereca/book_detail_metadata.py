@@ -167,6 +167,49 @@ def _identifier_items(raw: object):
             yield "OCLC déclaré", value, "all"
 
 
+# Age ranges are public bibliographic assertions only when their kind and
+# numeric bounds are exact. Never promote free provider labels or inferred
+# ranges as publisher-attested ages; keep each assertion separate.
+_AGE_KINDS = {
+    "publisher": "Âge éditeur",
+    "reading": "Âge de lecture",
+    "interest": "Âge d’intérêt",
+    "inferred": "Âge inféré (non attesté)",
+}
+
+
+def _youth_age_items(raw: object):
+    if not isinstance(raw, (tuple, list)):
+        return
+    for index, record in enumerate(raw):
+        if index >= _MAX_COLLECTION_ENTRIES:
+            yield "Âge", "Liste longue : tranches supplémentaires non affichées", "copy"
+            break
+        if not isinstance(record, Mapping):
+            continue
+        kind = record.get("age_kind")
+        if type(kind) is not str or kind not in _AGE_KINDS:
+            continue
+        low, high = record.get("age_min"), record.get("age_max")
+        if low is not None and (type(low) is not int or not 0 <= low < 18):
+            continue
+        if high is not None and (type(high) is not int or not 0 <= high <= 18):
+            continue
+        if (low is None and high is None) or (
+            low is not None and high is not None and low > high
+        ):
+            continue
+        if low is None:
+            age = f"Jusqu’à {high} ans"
+        elif high is None:
+            age = f"À partir de {low} ans"
+        elif low == high:
+            age = f"{low} ans"
+        else:
+            age = f"De {low} à {high} ans"
+        yield _AGE_KINDS[kind], age, "copy"
+
+
 def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
     """Return explicit bibliographic facts only; no network, HTML or raw dict."""
     if not isinstance(metadata, Mapping):
@@ -190,6 +233,7 @@ def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
         )
         for label, value, kind in chain(
             known, _identifier_items(data.get("identifiers")),
+            _youth_age_items(data.get("youth_age_ranges")),
         ):
             actual_label = prefix + label
             if kind == "isbn":
