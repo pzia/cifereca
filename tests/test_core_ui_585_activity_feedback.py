@@ -209,3 +209,95 @@ def test_rejected_task_skips_error_callback_when_feedback_closes_window():
     )
     assert namespace["rejected"]() is False
     assert events == ["finished"]
+
+
+def test_finished_callback_keeps_running_state_with_stale_remaining_count():
+    """#1132: GTK feedback must reflect live tasks, not queued runner counts."""
+    import types
+
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
+
+    class Widget:
+        def __init__(self): self.label = None
+        def set_visible(self, value): pass
+        def set_label(self, value): self.label = value
+        def start(self): pass
+
+    calls = []
+    window = types.SimpleNamespace(
+        _closed=False, _finished_task_ids=set(),
+        _active_tasks={1: (0, "première", "task"), 2: (1, "seconde", "task")},
+        _last_finished_task_id=None,
+        _functional_error_message=lambda value: value,
+        activity_feedback=types.SimpleNamespace(finished=lambda *args, **kwargs: calls.append(args[0])),
+        _refresh_activity_history=lambda: None,
+        busy_revealer=Widget(), busy_label=Widget(),
+        activity_dismiss=Widget(), busy_spinner=Widget(),
+    )
+    finished = namespace["_task_finished"]
+    assert finished(window, 1, 0, "première", True, None) is False
+    assert window.busy_label.label == "En cours · seconde"
+    assert set(window._active_tasks) == {2}
+    assert finished(window, 1, 0, "première", True, None) is False
+    assert calls == [1]
+
+
+def test_finished_callback_counts_two_live_tasks_when_runner_reports_one():
+    """#1132: multiple still-running tasks must be counted from GTK state."""
+    import types
+
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
+
+    class Widget:
+        def __init__(self): self.label = None
+        def set_visible(self, value): pass
+        def set_label(self, value): self.label = value
+        def start(self): pass
+
+    window = types.SimpleNamespace(
+        _closed=False, _finished_task_ids=set(),
+        _active_tasks={
+            1: (0, "terminée", "task"),
+            2: (1, "en cours", "task"),
+            3: (2, "en attente", "task"),
+        },
+        _last_finished_task_id=None,
+        _functional_error_message=lambda value: value,
+        activity_feedback=types.SimpleNamespace(finished=lambda *args, **kwargs: None),
+        _refresh_activity_history=lambda: None,
+        busy_revealer=Widget(), busy_label=Widget(),
+        activity_dismiss=Widget(), busy_spinner=Widget(),
+    )
+    assert namespace["_task_finished"](window, 1, 1, "terminée", True, None) is False
+    assert window.busy_label.label == "En cours · 2 opérations · en cours"
+
+
+def test_duplicate_task_start_does_not_duplicate_activity_feedback():
+    """#1132: a repeated GTK start delivery is idempotent."""
+    import types
+
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_started")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<start>", "exec"), namespace)
+
+    calls = []
+    window = types.SimpleNamespace(
+        _closed=False, _finished_task_ids=set(),
+        _active_tasks={7: (1, "existante", "task")},
+        _cancel_activity_hide=lambda: calls.append("cancel"),
+        activity_feedback=types.SimpleNamespace(started=lambda *args: calls.append("started")),
+        _refresh_activity_history=lambda: calls.append("refresh"),
+    )
+    assert namespace["_task_started"](window, 7, 1, "existante", 1, "task") is False
+    assert calls == []
+    assert window._active_tasks == {7: (1, "existante", "task")}

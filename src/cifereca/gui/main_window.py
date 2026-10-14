@@ -467,6 +467,8 @@ class MainWindow(Adw.ApplicationWindow):
         if getattr(self, '_closed', False):return False
         if int(task_id) in self._finished_task_ids:
             return False
+        if int(task_id) in self._active_tasks:
+            return False
         self._cancel_activity_hide()
         self._active_tasks[int(task_id)] = (int(priority), str(label), str(kind))
         self.activity_feedback.started(int(task_id), str(label), str(kind))
@@ -521,9 +523,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._refresh_activity_history()
         if not hasattr(self, "busy_revealer"):
             return False
-        if remaining and self._active_tasks:
+        if self._active_tasks:
             _priority, next_label, _kind = sorted(self._active_tasks.values(), key=lambda row: row[0])[0]
-            prefix = f"{remaining} opérations · " if remaining > 1 else ""
+            active_count = len(self._active_tasks)
+            prefix = f"{active_count} opérations · " if active_count > 1 else ""
             self.busy_label.set_visible(True)
             self.busy_label.set_label("En cours · " + prefix + next_label)
             self.activity_dismiss.set_visible(False)
