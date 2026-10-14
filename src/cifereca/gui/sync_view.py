@@ -91,7 +91,7 @@ def sync_local_preflight_presentation(result: object) -> str:
         f"à rapprocher : {counts['needs_reconciliation']} · "
         f"candidats incertains : {counts['candidate_unverified']} · "
         f"potentiellement manquants : {counts['potentially_missing']} · "
-        f"actions requises : {blockers}.\\n"
+        f"actions requises : {blockers}.\n"
         f"{evidence}. Manifeste distant non actualisé ; "
         "aucun téléchargement autorisé depuis cet aperçu."
     )
