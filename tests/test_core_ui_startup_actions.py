@@ -162,7 +162,9 @@ def test_window_close_clears_timer_handle_even_when_removal_fails():
 def test_book_cache_subscription_does_not_schedule_after_close():
     """#1132: callbacks racing unsubscribe cannot queue GTK work."""
     source = _method_source("MainWindow", "_subscribe_cached_book_details")
-    assert "None if window._closed else idle_add(window._cached_book_cache_invalidated)" in source
+    assert "not getattr(window, '_closed', False)" in source
+    assert "if not is_current():" in source
+    assert "idle_add(deliver)" in source
 
 
 def test_window_close_drops_cached_book_subscription_references():
