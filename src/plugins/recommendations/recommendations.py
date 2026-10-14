@@ -131,13 +131,15 @@ def _candidate_languages(item: Any) -> tuple[str, ...]:
         metadata.get("languages") if isinstance(metadata, Mapping) else None,
     ):
         if isinstance(raw, (list, tuple, set)):
-            values.extend(raw)
-        elif raw not in {None, ""}:
+            # Catalogue metadata is untrusted: nested maps, numbers and
+            # foreign objects are not language tags. Never stringify them.
+            values.extend(item for item in raw if isinstance(item, str))
+        elif isinstance(raw, str) and raw.strip():
             values.append(raw)
 
     normalized = []
     for raw in values:
-        canonical = normalize_language_tag(str(raw))
+        canonical = normalize_language_tag(raw)
         if canonical and canonical not in normalized:
             normalized.append(canonical)
     return tuple(normalized)
