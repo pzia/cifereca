@@ -134,7 +134,8 @@ class KoboCatalogService:
                 metadata.pop("language")
             else:
                 try:
-                    metadata["language"] = normalize_language_tag(raw_language)
+                    canonical = normalize_language_tag(raw_language)
+                    metadata["language"] = canonical if type(canonical) is str else None
                 except Exception:
                     # An upstream invalid tag or failing normalizer must not
                     # abort all other catalogue hits or export its exception.
