@@ -10,9 +10,16 @@ import pytest
 from cifereca.plugin_api import BookRef, CachedBookDetail, CachedBookDetailContribution
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+PLUGIN_RELOAD = MAIN.parent / "plugin_reload_controller.py"
 
 
 def _source(name: str, *, class_name: str = "MainWindow") -> str:
+    if name in {"_plugins_changed", "_subscribe_cached_book_details"}:
+        module = ast.parse(PLUGIN_RELOAD.read_text(encoding="utf-8"))
+        real_name = name[1:]
+        method = next(n for n in module.body
+                      if isinstance(n, ast.FunctionDef) and n.name == real_name)
+        return ast.unparse(method)
     module = ast.parse(gui_source_text(MAIN))
     cls = next(n for n in module.body if isinstance(n, ast.ClassDef) and n.name == class_name)
     func = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
@@ -145,8 +152,8 @@ def test_new_selection_cancels_pending_and_identity_switch_invalidates_context()
 
 def test_subscription_and_shutdown_do_not_leak_plugin_callbacks():
     assert "subscribe_cached_book_detail_changes(" in _source("_subscribe_cached_book_details")
-    assert "GLib.idle_add(self._cached_book_cache_invalidated)" in _source("_subscribe_cached_book_details")
-    assert "self._subscribe_cached_book_details()" in _source("_plugins_changed")
+    assert "idle_add(window._cached_book_cache_invalidated)" in _source("_subscribe_cached_book_details")
+    assert "window._subscribe_cached_book_details()" in _source("_plugins_changed")
     assert "close_window_resources(self, source_remove=GLib.source_remove)" in _source("_on_close_request")
     assert "window._cached_book_unsubscribe()" in (MAIN.parent / "window_close.py").read_text(encoding="utf-8")
 
