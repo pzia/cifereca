@@ -14,6 +14,10 @@ PLUGIN_RELOAD = MAIN.parent / "plugin_reload_controller.py"
 
 
 def _source(name: str, *, class_name: str = "MainWindow") -> str:
+    if class_name == "MainWindow" and name == "_library_selected":
+        owner = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef)
+                                and n.name == "library_selected"))
     if name in {"_plugins_changed", "_subscribe_cached_book_details"}:
         module = ast.parse(PLUGIN_RELOAD.read_text(encoding="utf-8"))
         real_name = name[1:]
@@ -145,7 +149,7 @@ def test_selection_and_remote_holdings_both_request_cached_detail():
 
 def test_new_selection_cancels_pending_and_identity_switch_invalidates_context():
     assert "self._cancel_cached_book_details()" in _source("_search_selected")
-    assert "self._cancel_cached_book_details()" in _source("_library_selected")
+    assert "window._cancel_cached_book_details()" in _source("_library_selected")
     assert "self._cached_book_request_generation += 1" in _source("_activate_identity")
     assert "self._cached_book_context = None" in _source("_activate_identity")
 
