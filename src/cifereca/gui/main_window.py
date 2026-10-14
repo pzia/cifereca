@@ -58,6 +58,7 @@ from .task_state import register_task_start, register_task_finish
 from .task_progress_presentation import live_task_progress_label
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
+from .startup_lifecycle import once_while_open
 from .timer_lifecycle import cancel_source
 from .loan_view import (
     LOAN_FILTER_LABELS,
@@ -597,12 +598,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._render_dashboard()
             # A close can happen after the connection callback but before GTK
             # dispatches this idle source. Never start sync on a dead window.
-            def start_sync_if_open() -> bool:
-                if not self._closed:
-                    self.run_opening_sync()
-                return False
-
-            GLib.idle_add(start_sync_if_open)
+            GLib.idle_add(once_while_open(self, self.run_opening_sync))
 
         def err(exc: BaseException) -> None:
             if getattr(self, "_closed", False):
@@ -626,9 +622,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _connect_sources_if_open(self) -> bool:
         """One-shot GTK callback; never connect after window teardown."""
-        if not self._closed:
-            self.connect_configured_sources()
-        return False
+        return once_while_open(self, self.connect_configured_sources)()
 
     def activate_startup_plugins(self) -> bool:
         # Activation is posted to GTK after the window is presented. That
