@@ -96,7 +96,7 @@ def test_controller_imports_without_gtk_and_preserves_four_window_facades():
     methods = {node.name: node for node in cls.body
                if isinstance(node, ast.FunctionDef)}
     for facade, controller, args in (
-        ("_populate_history", "populate_history", ("rows",)),
+        ("_populate_history", "populate_history", ("rows", "preserve_all")),
         ("_history_scroll_changed", "history_scroll_changed", ("adjustment",)),
         ("_append_history_chunk", "append_history_chunk", ()),
         ("_populate_bookings", "populate_bookings", ("rows",)),
