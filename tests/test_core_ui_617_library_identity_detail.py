@@ -9,6 +9,10 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name == "_activate_identity":
+        owner = ast.parse(MAIN.with_name("identity_activation_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in owner.body
+                                if isinstance(node, ast.FunctionDef) and node.name == "activate_identity"))
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     if name == "_library_selected":
         tree = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
@@ -45,8 +49,8 @@ def test_rendered_library_resets_stale_detail_when_no_selection_restored():
 
 def test_identity_change_clears_old_library_before_async_refresh():
     source = _method("_activate_identity")
-    assert "self._render_library([])" in source
-    assert "self.library_page.detail.empty" in source
+    assert "window._render_library([])" in source
+    assert "window.library_page.detail.empty" in source
     assert "Nouvelle identité" in source
     assert "Chargement de la bibliothèque…" in source
 
