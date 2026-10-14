@@ -91,8 +91,12 @@ def test_startup_without_plugin_manager_still_connects_providers():
         and any(isinstance(op, ast.Is) for op in node.test.ops)
     )
     body = ast.unparse(ast.Module(body=no_manager.body, type_ignores=[]))
-    assert "GLib.idle_add(lambda: self.connect_configured_sources())" in body
+    assert "GLib.idle_add(self._connect_sources_if_open)" in body
     assert "return False" in body
+    guarded = _method_source("MainWindow", "_connect_sources_if_open")
+    assert "if not self._closed:" in guarded
+    assert "self.connect_configured_sources()" in guarded
+    assert "return False" in guarded
 
 
 def test_queued_history_chunk_does_not_touch_disposed_widgets():
