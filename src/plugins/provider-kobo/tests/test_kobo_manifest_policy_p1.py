@@ -292,3 +292,91 @@ def test_manifest_with_an_explicit_foreign_account_never_becomes_a_candidate():
         assert "reader-other" not in json.dumps(report)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("ambiguous_row", [
+    {"product_id": "real-edition", "id": "other-edition"},
+    {"product_id": 0, "id": "real-edition"},
+    {"product_id": False, "id": "real-edition"},
+    {"product_id": [], "id": "real-edition"},
+    {"product_id": {}, "id": "real-edition"},
+    {"product_id": "edition-a", "id": False},
+    {"id": True},
+    {"id": "edition-1\nBearer PRIVATE_TOKEN"},
+    {"id": "edition-1\rPRIVATE_TOKEN"},
+    {"product_id": "edition-1\u202ePRIVATE_BIDI"},
+    {"product_id": "edition-1\u2066PRIVATE_ISOLATE"},
+    {"product_id": " edition-1"},
+    {"product_id": "edition-1 "},
+    {"product_id": "edition 1"},
+    {"product_id": "e" * 257},
+])
+def test_conflicting_or_untrusted_product_identity_is_not_a_candidate(ambiguous_row):
+    result = classify_personal_manifest(
+        [{**ambiguous_row, "owned": True, "downloadable": True}],
+        account_id="alice",
+    )
+    assert result["counts"]["missing_product_id"] == 1
+    assert result["counts"]["candidate_unverified"] == 0
+    assert result["classified_items"] == 1
+    assert result["status"] == "incomplete"
+    assert result["manifest_authoritative"] is False
+    assert result["acquisition_authorized"] is False
+    for private in ("PRIVATE", "Bearer", "edition", "alice"):
+        assert private not in json.dumps(result)
+
+
+@pytest.mark.parametrize("row", [
+    {"product_id": "edition-1", "id": "edition-1"},
+    {"product_id": "edition-1"},
+    {"id": "edition-1"},
+    {"product_id": "", "id": "edition-1"},
+    {"product_id": None, "id": "edition-1"},
+    {"product_id": "édition-1", "id": "édition-1"},
+])
+def test_legitimate_single_or_matching_legacy_product_ids_are_retained(row):
+    result = classify_personal_manifest([row], account_id="alice")
+    assert result["counts"]["candidate_unverified"] == 1
+    assert result["counts"]["missing_product_id"] == 0
+    assert result["manifest_authoritative"] is True
+    assert result["acquisition_authorized"] is False
+
+
+def test_duplicates_are_detected_across_legacy_id_and_product_id_shapes():
+    result = classify_personal_manifest([
+        {"id": "one-edition"},
+        {"id": "one-edition", "product_id": "one-edition"},
+        {"product_id": "another-edition", "id": "OTHER-PRIVATE-EDITION"},
+    ], account_id="alice")
+    assert result["counts"]["duplicate_product_id"] == 2
+    assert result["counts"]["missing_product_id"] == 1
+    assert result["counts"]["candidate_unverified"] == 0
+    assert result["manifest_authoritative"] is False
+    assert result["acquisition_authorized"] is False
+    for private in ("one-edition", "another-edition", "OTHER-PRIVATE-EDITION"):
+        assert private not in json.dumps(result)
+
+
+@pytest.mark.parametrize("invalid_account", [
+    "", " ", "alice bob", "alice\nPRIVATE", "alice\u202ePRIVATE",
+    "alice\u2066PRIVATE", "a" * 257, True, 123, [], {},
+])
+def test_direct_manifest_policy_requires_an_attested_account_scope(invalid_account):
+    result = classify_personal_manifest(
+        [{"product_id": "edition-1", "account_id": invalid_account}],
+        account_id=invalid_account,
+    )
+    assert result["status"] == "invalid_scope"
+    assert result["classified_items"] == 0
+    assert result["manifest_authoritative"] is False
+    assert result["acquisition_authorized"] is False
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_valid_account_scope_still_supports_uuid_and_provider_namespaces():
+    result = classify_personal_manifest([
+        {"product_id": "édition-1", "account_id": "urn:uuid:abc-def"},
+    ], account_id="urn:uuid:abc-def")
+    assert result["counts"]["candidate_unverified"] == 1
+    assert result["manifest_authoritative"] is True
+    assert result["acquisition_authorized"] is False
