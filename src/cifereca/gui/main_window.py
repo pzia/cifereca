@@ -594,7 +594,9 @@ class MainWindow(Adw.ApplicationWindow):
                 persistent=bool(errors),
             )
             self._render_dashboard()
-            GLib.idle_add(lambda: (self.run_opening_sync(), False)[1])
+            # A close can happen after the connection callback but before GTK
+            # dispatches this idle source. Never start sync on a dead window.
+            GLib.idle_add(lambda: (not self._closed and self.run_opening_sync(), False)[1])
 
         def err(exc: BaseException) -> None:
             if getattr(self, "_closed", False):
@@ -622,6 +624,9 @@ class MainWindow(Adw.ApplicationWindow):
         if getattr(self, "_closed", False):
             return False
         if self.plugin_manager is None:
+            # A local-only/no-plugin installation must still connect its
+            # configured providers; plugin activation is optional.
+            GLib.idle_add(lambda: self.connect_configured_sources())
             return False
         _TRACE_LOG.info("TRACE gui plugin-activation begin")
         started = time.perf_counter()
@@ -800,7 +805,7 @@ class MainWindow(Adw.ApplicationWindow):
         # Plugin callbacks may run on any thread; GTK must only be touched in
         # an idle callback. These subscriptions are replaced on plugin changes.
         self._cached_book_unsubscribe = subscribe_cached_book_detail_changes(
-            services, lambda: GLib.idle_add(self._cached_book_cache_invalidated),
+            services, lambda: None if self._closed else GLib.idle_add(self._cached_book_cache_invalidated),
         )
         self._cached_book_cache_invalidated()
 
@@ -2075,6 +2080,8 @@ class MainWindow(Adw.ApplicationWindow):
             )
 
     def _history_scroll_changed(self, adjustment: Gtk.Adjustment) -> None:
+        if getattr(self, "_closed", False):
+            return
         if self._history_loaded_count >= len(self._history_rows) or self._history_append_scheduled:
             return
         remaining = adjustment.get_upper() - (adjustment.get_value() + adjustment.get_page_size())
@@ -2085,6 +2092,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _append_history_chunk(self) -> bool:
         self._history_append_scheduled = False
+        # A queued GTK idle may outlive the window and its history widgets.
+        if getattr(self, "_closed", False):
+            return False
         if self._history_loaded_count >= len(self._history_rows):
             return False
         start = self._history_loaded_count
