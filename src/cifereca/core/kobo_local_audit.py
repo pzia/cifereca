@@ -225,12 +225,13 @@ def kobo_local_reconciliation_audit(
             attempted_paths: set[str] = set()
             stored = rec.get("local_path")
             proposals = [stored] if stored else []
-            proposals.extend(by_catalog.get((identity, product), ())[:8])
+            catalogue_paths = by_catalog.get((identity, product), ())
+            if len(catalogue_paths) > 8:
+                limited = True
+            proposals.extend(catalogue_paths[:8])
             # Known catalogue links are suggestions, not authorization.
             if not stored:
                 counts["missing_or_unlinked"] += 1
-            if len(proposals) > 9:
-                limited = True
             for idx, proposed in enumerate(proposals[:9]):
                 if not proposed or type(proposed) is not str:
                     continue
