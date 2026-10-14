@@ -241,7 +241,6 @@ def kobo_local_reconciliation_audit(
                     counts["unverified_placements"] += 1
                     continue
                 observed[proposed] = result
-                verified_products.add(product)
                 counts["linked_files_verified"] += 1
                 if idx > 0 or not stored:
                     counts["unproven_catalogue_links"] += 1
@@ -250,9 +249,19 @@ def kobo_local_reconciliation_audit(
                 if idx == 0 and stored:
                     expected_sha = rec.get("sha256")
                     expected_size = rec.get("size")
-                    if (
+                    hash_attested = (
+                        type(expected_sha) is str
+                        and len(expected_sha) == 64
+                        and expected_sha.lower() == sha
+                    )
+                    size_attested = (
+                        type(expected_size) is int and expected_size == size
+                    )
+                    if hash_attested and size_attested:
+                        verified_products.add(product)
+                    elif (
                         type(expected_sha) is str and len(expected_sha) == 64
-                        and (expected_sha.lower() != sha)
+                        and expected_sha.lower() != sha
                     ) or (
                         type(expected_size) is int and expected_size != size
                     ):
