@@ -10,7 +10,7 @@ import pytest
 
 from cifereca import cli
 from cifereca.core.kobo_local_audit import (
-    _read_hash_within, kobo_local_reconciliation_audit,
+    _read_hash_within, _unindexed_identity_files, kobo_local_reconciliation_audit,
 )
 from tests.test_kobo_backup_fault_isolation import _service, _write_epub
 
@@ -271,5 +271,106 @@ def test_more_than_eight_catalogue_placements_marks_report_truncated(tmp_path):
         assert report["truncated"] is True
         assert report["counts"]["linked_files_verified"] == 0
         assert "PRIVATE TITLE" not in json.dumps(report)
+    finally:
+        service.close()
+
+
+def test_unindexed_candidates_are_only_local_file_names_and_never_orphan_proof(
+    tmp_path, monkeypatch,
+):
+    service, session = _service(tmp_path, [])
+    root = service._kobo_backup_target_dir("default")
+    root.mkdir(parents=True, exist_ok=True)
+    known = root / "PRIVATE-known.epub"
+    unindexed = root / "PRIVATE-unindexed.epub"
+    shared = root / "PRIVATE-another-provider.epub"
+    flat = root.parent / "PRIVATE-flat.pdf"
+    external = tmp_path / "PRIVATE-outside.pdf"
+    for path in (known, unindexed, shared, flat, external):
+        _write_epub(path)
+    (root / "PRIVATE-link.epub").symlink_to(external)
+    _backup(service, "PRIVATE-known", known)
+    service.storage.catalog_entry_put({
+        "title": "PRIVATE-other-provider", "provider_id": "gutenberg",
+        "identity_id": "default", "item_id": "PRIVATE-other",
+        "metadata": {"path": str(shared)}, "local_state": "local",
+    })
+    _no_mutation(service, monkeypatch)
+    monkeypatch.setattr(session, "backup_manifest", lambda: pytest.fail("no network"))
+    try:
+        report = kobo_local_reconciliation_audit(service)
+        assert report["counts"]["unindexed_regular_file_candidates"] == 2
+        assert report["counts"]["identity_flat_file_candidates"] == 1
+        assert report["counts"]["linked_files_verified"] == 1
+        assert report["mutations_authorized"] is False
+        assert report["downloads_authorized"] is False
+        assert any(c["category"] == "unindexed_identity_file_candidate"
+                   and c["decision"] == "manual_review_only"
+                   for c in report["cases"])
+        serialized = json.dumps(report)
+        for private in ("PRIVATE", str(tmp_path), "vault-1", "default"):
+            assert private not in serialized
+        assert all(path.exists() for path in (known, unindexed, shared, flat, external))
+    finally:
+        service.close()
+
+
+def test_unindexed_directory_scan_refuses_symlinked_ancestors_and_never_reads_bytes(
+    tmp_path, monkeypatch,
+):
+    import builtins
+    original_open = builtins.open
+    original_os_open = __import__("os").open
+
+    real_root = tmp_path / "SECRET_REAL" / "kobo"
+    real_root.mkdir(parents=True)
+    _write_epub(real_root / "PRIVATE.epub")
+    linked_root = tmp_path / "SECRET_LINK"
+    linked_root.symlink_to(real_root.parent, target_is_directory=True)
+    # Do not scan another identity via a symlink ancestor.
+    assert _unindexed_identity_files(
+        linked_root / "kobo", set(), 256
+    ) == (0, 0, True)
+    # The no-content scan must never use the usual file-open API.
+    def only_directory_opens(path, flags, *args, **kwargs):
+        assert flags & getattr(__import__("os"), "O_DIRECTORY")
+        return original_os_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", lambda *_a, **_kw:
+                        pytest.fail("candidate scan must never read file bytes"))
+    monkeypatch.setattr(__import__("os"), "open", only_directory_opens)
+    try:
+        count, inspected, incomplete = _unindexed_identity_files(real_root, set(), 256)
+        assert (count, inspected, incomplete) == (1, 1, False)
+    finally:
+        monkeypatch.setattr(builtins, "open", original_open)
+
+
+def test_unindexed_candidates_scope_and_global_budget(tmp_path):
+    service, _session = _service(tmp_path, [])
+    try:
+        service.config.set("identities", [
+            {"id": "default", "label": "Default", "directory_name": "default"},
+            {"id": "reader-2", "label": "Reader 2", "directory_name": "reader-2"},
+        ])
+        service._sync_identity_configuration()
+        service.storage.provider_connection_put({
+            "identity_id": "reader-2", "provider_id": "kobo",
+            "credential_id": "vault-2", "label": "Second Kobo",
+        })
+        first = service._kobo_backup_target_dir("default") / "PRIVATE-A.epub"
+        second = service._kobo_backup_target_dir("reader-2") / "PRIVATE-B.epub"
+        _write_epub(first)
+        _write_epub(second)
+        single = kobo_local_reconciliation_audit(service, credential_id="vault-1")
+        assert single["counts"]["unindexed_regular_file_candidates"] == 1
+        both = kobo_local_reconciliation_audit(service)
+        assert both["counts"]["unindexed_regular_file_candidates"] == 2
+        assert [a["counts"]["unindexed_regular_file_candidates"]
+                for a in both["accounts"]] == [1, 1]
+        assert "reader-2" not in json.dumps(both)
+        # Directly exercise the bound without creating 257 files.
+        assert _unindexed_identity_files(first.parent, set(), 0) == (0, 0, True)
+        assert _unindexed_identity_files(first.parent, set(), 1) == (1, 1, False)
     finally:
         service.close()
