@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import plugin_action_dispatch_controller
 from . import shell_identity_selector_controller
 from . import shell_layout_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
@@ -785,9 +786,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _invoke_ui_action(self, action, host):
-        self.shell_menu.popdown()
-        try: action.callback(host)
-        except Exception as exc: self.show_error(str(exc), "Action impossible")
+        return plugin_action_dispatch_controller.invoke_ui_action(self, action, host)
 
     def _show_route(self, route: str) -> None:
         return route_display_controller.show_route(self, route, Gtk=Gtk)
