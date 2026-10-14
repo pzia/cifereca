@@ -65,6 +65,7 @@ from . import startup_coordinator
 from . import feedback_timers
 from . import activity_result_controller
 from . import activity_feedback_view_controller
+from . import feedback_dialog_controller
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -320,27 +321,14 @@ class MainWindow(Adw.ApplicationWindow):
     def show_error(self, message: str, title: str = "Une erreur est survenue") -> None:
         if getattr(self, "_closed", False):
             return
-        display_message = self._functional_error_message(message)
-        self.toast(display_message, 6)
-        dialog = Adw.MessageDialog.new(self, title, display_message)
-        dialog.add_response("ok", "Fermer")
-        dialog.set_default_response("ok")
-        dialog.set_close_response("ok")
-        dialog.present()
+        return feedback_dialog_controller.show_error(self, message, title, Adw=Adw)
 
     def show_attention(self, message: str, *, code: str = "attention_required") -> None:
         """Present a remediable condition without framing it as a crash."""
         if getattr(self, "_closed", False):
             return
-        dialog = Adw.MessageDialog.new(self, "Action requise", message)
-        dialog.add_response("close", "Fermer")
-        dialog.set_default_response("close")
-        dialog.set_close_response("close")
-        dialog.set_body_use_markup(False)
-        dialog.present()
-        self.diagnostics.add(
-            "UX", "attention required", "warning",
-            detail={"code": code, "message": message}, level="detailed",
+        return feedback_dialog_controller.show_attention(
+            self, message, code=code, Adw=Adw,
         )
 
     def _cancel_activity_hide(self) -> None:
