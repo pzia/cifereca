@@ -42,6 +42,7 @@ from . import adept_loan_choice_controller
 from . import sync_issues_dialog_controller
 from . import shell_shortcut_controller
 from . import identity_activation_controller
+from . import identity_view_controller
 from . import secondary_page_controller
 from . import statistics_presentation_controller
 from . import dashboard_page_controller
@@ -613,21 +614,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.navigate("library")
 
     def open_identity_view(self, identity_id: str, *, route: str, providers=()) -> None:
-        from .query_model import QueryState
-        if route not in {"search", "library"}:
-            raise ValueError("Vue filtrée inconnue")
-        if isinstance(providers, str) or any(not isinstance(p, str) or not p for p in providers):
-            raise ValueError("Sources invalides")
-        allowed = {d.id for d in self.service.provider_descriptors()} | {"local"}
-        selected = tuple(dict.fromkeys(providers))
-        if not set(selected) <= allowed:
-            raise ValueError("Source inconnue")
-        self._activate_identity(identity_id)
-        controls = self.search_controls if route == "search" else self.library_controls
-        controls.set_state(QueryState(scope="digital", providers=selected))
-        self.navigate(route)
-        if route == "search": self.run_search(False)
-        else: self._render_library()
+        return identity_view_controller.open_identity_view(
+            self, identity_id, route=route, providers=providers,
+        )
 
     def _activate_identity(self, identity_id: str) -> None:
         return identity_activation_controller.activate_identity(self, identity_id)
