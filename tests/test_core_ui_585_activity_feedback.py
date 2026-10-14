@@ -218,7 +218,9 @@ def test_finished_callback_keeps_running_state_with_stale_remaining_count():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
-    namespace = {}
+    from cifereca.gui.task_state import register_task_finish
+
+    namespace = {"register_task_finish": register_task_finish}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
 
     class Widget:
@@ -253,7 +255,9 @@ def test_finished_callback_counts_two_live_tasks_when_runner_reports_one():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
-    namespace = {}
+    from cifereca.gui.task_state import register_task_finish
+
+    namespace = {"register_task_finish": register_task_finish}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
 
     class Widget:
