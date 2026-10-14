@@ -588,7 +588,9 @@ def test_catalog_collect_source_http_failure_preserves_last_good_cache():
     assert state["collection_state"] == "http_error"
     assert state["collection_stage"] == "search"
     assert state["http_status"] == 503
-    assert state["error_type"] == "SimulatedHttpFailure"
+    # Provider-defined class names are untrusted: only the public error
+    # category and attested HTTP status can be exported to diagnostics.
+    assert state["error_type"] == "SourceError"
     assert state["last_success_at_utc"] == old["last_success_at_utc"]
     assert state["cache_count"] == 1 and state["fresh_until"]
     assert [x.title for x in plugin.search_cached("alice")] == ["Remote"]
