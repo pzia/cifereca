@@ -82,10 +82,16 @@ def test_fallback_pages_remain_available_before_plugin_activation():
     assert "shell_page_controller.rebuild_plugin_pages(" in facade
 
 def test_titlebar_falls_back_before_plugin_categories_are_ready():
-    source = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_create_shell_header"))
-    assert "self.plugin_manager.select('ui.titlebar')" in source
+    owner = MAIN_WINDOW.with_name("shell_header_controller.py")
+    tree = ast.parse(owner.read_text(encoding="utf-8"))
+    source = ast.unparse(next(node for node in tree.body
+                              if isinstance(node, ast.FunctionDef)
+                              and node.name == "create_shell_header"))
+    facade = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_create_shell_header"))
+    assert "shell_header_controller.create_shell_header(" in facade
+    assert "window.plugin_manager.select('ui.titlebar')" in source
     assert "except Exception:" in source
-    assert "self._titlebar_service = None" in source
+    assert "window._titlebar_service = None" in source
 
 def test_provider_connection_survives_plugin_ui_refresh_failure():
     source = ast.unparse(_startup_owner_method("activate_startup_plugins"))
