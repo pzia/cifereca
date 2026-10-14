@@ -89,7 +89,9 @@ def test_query_controls_source_exposes_provider_capability_hint():
     root = Path(__file__).resolve().parents[1]
     controls = (root / 'src/cifereca/gui/query_controls.py').read_text(encoding='utf-8')
     window = (root / 'src/cifereca/gui/main_window.py').read_text(encoding='utf-8')
+    factory = (root / 'src/cifereca/gui/query_widget_factory_controller.py').read_text(encoding='utf-8')
+    assert 'query_widget_factory_controller.build_query_controls' in window
 
     assert 'def set_provider_search_capabilities' in controls
     assert 'provider_search_summary' in controls
-    assert 'setter(self.service.provider_search_capabilities())' in window
+    assert 'setter(window.service.provider_search_capabilities())' in factory
