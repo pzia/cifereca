@@ -242,3 +242,33 @@ def test_routing_uses_selected_artifact_target_and_identity_without_guesswork():
     args[2]("complete")
     assert events[-3:] == [("activity", "Livre envoyé"),
                             ("library", False), ("recent",)]
+
+
+def test_closed_window_is_inert_and_pending_actions_cannot_run_after_close():
+    window, item, detail, actions, events, submitted, launched, deps = _environment()
+    window._closed = True
+    add_local_book_actions(window, detail, item, **deps)
+    assert events == []
+    assert actions == []
+
+    window._closed = False
+    add_local_book_actions(window, detail, item, **deps)
+    assert len(actions) == 2
+    window._closed = True
+    before = list(events)
+    actions[0].click()
+    actions[1].click()
+    assert events == before
+    assert launched == []
+    assert submitted == []
+
+
+def test_closed_window_suppresses_deferred_artifact_routing():
+    routing = NS(targets=lambda request: [NS(target=NS(label="Cloud", target_id="c"))])
+    manager = NS(broker=lambda name: routing if name == "artifact.routing" else None)
+    window, item, detail, actions, _, submitted, _, deps = _environment(manager=manager)
+    add_local_book_actions(window, detail, item, **deps)
+    route_button = actions[-1].popover.child.children[0]
+    window._closed = True
+    route_button.click()
+    assert submitted == []
