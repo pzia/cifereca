@@ -287,6 +287,11 @@ class SynchronizationBrokerImpl:
         identity = str(getattr(account, "identity_id", "") or "")
         if not credential or not identity:
             return rejected("invalid_source")
+        try:
+            if self.service.storage.identity_for_connection("kobo", credential) != identity:
+                return rejected("invalid_source")
+        except (AttributeError, KeyError, ValueError, TypeError):
+            return rejected("invalid_source")
         # A session's presence and its declared backup capability are
         # checked; no automatic connect/reconnect is ever attempted here.
         session = getattr(self.service, "_sessions", {}).get(
@@ -303,7 +308,12 @@ class SynchronizationBrokerImpl:
             # Provider/local errors can include bearer URLs and private
             # paths. Never reflect the exception into UI/diagnostic output.
             return rejected("preview_unavailable")
-        if not isinstance(raw, dict) or raw.get("acquisition_authorized") is not False:
+        if (
+            not isinstance(raw, dict)
+            or raw.get("acquisition_authorized") is not False
+            or raw.get("manifest_refreshed") is not False
+            or raw.get("requires_manifest_validation") is not True
+        ):
             return rejected("preview_unavailable")
         allowed = (
             "already_local_linked", "already_local_verified",
