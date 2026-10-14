@@ -221,6 +221,10 @@ class KoboSession(ProviderSession):
             len(self._accounts) != 1
             or self._accounts[0].unique_id != account_id
         ):
+            # Unlike an unavailable status endpoint, a confirmed account
+            # SWITCH invalidates the previous session binding. Never leave
+            # this object usable as the old account with the new token.
+            self.connected = False
             raise ProviderError(
                 "Kobo-Vault : identité du compte différente ; "
                 "reconfiguration explicite requise"
