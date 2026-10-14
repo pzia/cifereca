@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2328,27 +2328,11 @@ class MainWindow(Adw.ApplicationWindow):
     def _select_pending_library_item(self) -> bool:
         return library_navigation.select_pending_library_item(self)
     def _render_library(self, entries: list[dict[str, Any]] | None = None) -> None:
-        if not hasattr(self, "library_page"):
-            return
-        _perf_started = time.perf_counter()
-        identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
-        if entries is None:
-            entries = list(self._library_entries_cache)
-        self._library_entries_cache = list(entries)
-        rows, self._library_objects = project_library_rows(
-            self.library_controls.state().filter(entries),
-            row_factory=BookListItem,
-            provider_display_name=self.service.provider_display_name,
-            availability_label=self._library_availability_label,
-            backup_status_label=self._kobo_backup_status_label,
-            format_date=fr_date,
+        return library_render_controller.render_library(
+            self, entries, perf_counter=time.perf_counter,
+            project_library_rows=project_library_rows,
+            BookListItem=BookListItem, fr_date=fr_date,
         )
-        self._attach_row_facets(rows, self._library_objects, self.library_controls)
-        self.library_page.show_rows(rows, total_count=len(entries))
-        restored_pending = self._select_pending_library_item()
-        if not restored_pending and self.library_page.selection.get_selected_item() is None:
-            self._library_selected(None)
-        self.ui_perf.record("render_library", (time.perf_counter() - _perf_started) * 1000.0)
 
     # ---------- Récupérations récentes ----------
     def _build_recent_page(self) -> MasterDetailPage:
@@ -2373,18 +2357,10 @@ class MainWindow(Adw.ApplicationWindow):
         self._render_recent(items)
 
     def _render_recent(self, items: list[dict[str, Any]] | None = None) -> None:
-        if not hasattr(self, "recent_page"):
-            return
-        _perf_started = time.perf_counter()
-        if items is None:
-            items = list(self._recent_entries_cache)
-        self._recent_entries_cache = list(items)
-        rows, self._recent_objects = project_recent_rows(
-            items, row_factory=BookListItem,
+        return library_render_controller.render_recent(
+            self, items, perf_counter=time.perf_counter,
+            project_recent_rows=project_recent_rows, BookListItem=BookListItem,
         )
-        self._attach_row_facets(rows, self._recent_objects, self.search_controls)
-        self.recent_page.show_rows(rows)
-        self.ui_perf.record("render_recent", (time.perf_counter() - _perf_started) * 1000.0)
 
     def _add_local_book_actions(self, detail, item):
         placement_id=str(item.get('placement_id') or '')
