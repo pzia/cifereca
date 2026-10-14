@@ -14,6 +14,9 @@ def _tree():
 
 
 def _method(class_name: str, method_name: str) -> ast.FunctionDef:
+    if class_name == "MainWindow" and method_name == "_add_facets":
+        owner = ast.parse(MAIN.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
+        return next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "add_facets")
     tree = _tree()
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
@@ -93,7 +96,7 @@ def test_notice_prioritizes_summary_and_filters_essential_duplicates():
 
 def test_multivalue_facets_render_individual_filter_buttons_not_display_concatenations():
     source = ast.unparse(_method("MainWindow", "_add_facets"))
-    assert "self._facet_value_group(choices, field, controls)" in source
+    assert "window._facet_value_group(choices, field, controls)" in source
     assert "len(choices) == 1" not in source
     assert "if not choices and field in subtitle_fallback_fields" in source
     assert "widget.set_subtitle('')" in source
