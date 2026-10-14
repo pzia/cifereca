@@ -91,9 +91,9 @@ def test_present_local_or_storage_possession_is_authoritative():
 
 
 def test_send_actions_consume_fresh_library_read_projection():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_add_local_book_actions")
+    tree = ast.parse(MAIN.with_name("local_book_action_controller.py").read_text(encoding="utf-8"))
+    method = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "add_local_book_actions")
     source = ast.unparse(method)
     assert "manager.broker('library.read')" in source
     assert "library_read.book(source_item_id)" in source
