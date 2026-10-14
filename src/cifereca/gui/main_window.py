@@ -54,6 +54,7 @@ from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
 from .settings_tracking import bind_settings_actions
 from .settings_diagnostic_actions import build_settings_diagnostic_callbacks
+from . import settings_diagnostics_refresh_controller
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
@@ -2920,48 +2921,18 @@ class MainWindow(Adw.ApplicationWindow):
                 focus(plugin_id)
 
         def refresh_text() -> None:
-            if not page_lifetime.alive:
+            if not page_lifetime.alive or getattr(self, "_closed", False):
                 return
             from ..system_status import system_status
-            data = system_status(self.plugin_manager)
-            attention = int(data.get("attention") or 0)
-            diag_summary.set_label(
-                f"{data.get('ready', 0)} prêt(s) · {attention} à examiner. "
-                + ("Les anomalies sont affichées en premier." if attention else "Aucune anomalie bloquante détectée.")
+            return settings_diagnostics_refresh_controller.refresh_settings_diagnostics(
+                self, page_lifetime=page_lifetime,
+                diag_summary=diag_summary, diag_filter=diag_filter,
+                diag_issues_box=diag_issues_box, diag_text=diag_text,
+                open_diagnostic_plugin=open_diagnostic_plugin,
+                Gtk=Gtk, Adw=Adw, clear_box=clear_box,
+                diagnostic_plugin_rows=diagnostic_plugin_rows,
+                system_status=system_status, version=__version__,
             )
-            clear_box(diag_issues_box)
-            attention_only = int(diag_filter.get_selected()) == 0
-            rows = diagnostic_plugin_rows(data, attention_only=attention_only)
-            if not rows:
-                empty = Gtk.Label(label="Aucune anomalie à examiner.", xalign=0)
-                empty.add_css_class("success"); diag_issues_box.append(empty)
-            for plugin in rows:
-                item = Adw.ExpanderRow()
-                item.set_title(f"{plugin['display_name']} · {plugin['state_label']}")
-                item.set_subtitle(plugin["summary"])
-                if plugin["attention"]:
-                    item.add_css_class("warning")
-                action = Adw.ActionRow(); action.set_title("Action")
-                action.set_subtitle("Ouvrir le gestionnaire sur ce plugin")
-                open_button = Gtk.Button(label="Ouvrir Plugins")
-                open_button.set_valign(Gtk.Align.CENTER)
-                open_button.connect("clicked", lambda b, pid=plugin["plugin_id"]: open_diagnostic_plugin(b, pid))
-                action.add_suffix(open_button); item.add_row(action)
-                detail = Adw.ActionRow(); detail.set_title("Détails techniques")
-                detail.set_subtitle(plugin["technical"] or "Aucun détail technique")
-                detail.set_subtitle_lines(0); item.add_row(detail)
-                diag_issues_box.append(item)
-
-            content = self.diagnostics.text(__version__, {
-                "transport": "httpx local direct",
-                "base_url": (self.config.paris_base_url() if hasattr(self.config, "paris_base_url") else self.config.get("base_url")),
-                "ui": "GTK4/libadwaita",
-                "cover_pipeline": self.covers.stats(),
-                "history_cover_search": self.history_cover_resolver.stats(),
-                "ui_performance": self.ui_perf.snapshot(),
-                "providers": self.service.provider_diagnostic_state(),
-            })
-            diag_text.get_buffer().set_text(content)
 
         settings_committer = SettingsCommitController(
             self.service.save_configuration, self.runner.submit, self.runner.present_error,
