@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 from cifereca.gui.startup_lifecycle import once_while_open
+from cifereca.gui import startup_coordinator
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -29,6 +30,7 @@ def _method(name):
         "time": time,
         "TaskPriority": NS(PROVIDER_SYNC=30),
         "once_while_open": once_while_open,
+        "startup_coordinator": startup_coordinator,
     }
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[future, method], type_ignores=[],
