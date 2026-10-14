@@ -52,6 +52,12 @@ def test_search_and_library_keep_using_same_fichier_local_label():
     tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     for method_name in ("_search_selected", "_library_selected"):
-        method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+        if method_name == "_library_selected":
+            owner = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
+            method = next(node for node in owner.body if isinstance(node, ast.FunctionDef)
+                          and node.name == "library_selected")
+        else:
+            method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
+                          and node.name == method_name)
         source = ast.unparse(method)
         assert "'Fichier local'" in source
