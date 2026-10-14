@@ -35,7 +35,10 @@ from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
 from . import adept_loan_choice_controller
+from . import sync_issues_dialog_controller
 from . import shell_shortcut_controller
+from . import identity_activation_controller
+from . import secondary_page_controller
 from . import statistics_presentation_controller
 from . import dashboard_page_controller
 from . import dashboard_render_controller
@@ -620,83 +623,7 @@ class MainWindow(Adw.ApplicationWindow):
         else: self._render_library()
 
     def _activate_identity(self, identity_id: str) -> None:
-        identity = self.service.identity_by_id(identity_id)
-        if identity is None:
-            raise ValueError("Identité inconnue")
-        current = self.service.current_identity
-        current_identity_id = current.identity_id if current is not None else None
-        if not identity_change_required(current_identity_id, identity.identity_id):
-            _TRACE_LOG.debug("Identity selection notification ignored: already current identity=%s", identity.identity_id)
-            return
-        self.service.select_identity(identity.identity_id)
-        self._identity_context_generation += 1
-        self._dispose_maintenance_lines()
-        if self.view_stack.get_visible_child_name() == "tools":
-            self._refresh_tools_page()
-        self._account_context_generation += 1
-        self._cached_book_request_generation += 1
-        self._cached_book_context = None
-        # Pending Library navigation belongs to the previous identity context.
-        # Cancel it before rendering the new identity's (initially empty) list.
-        self._pending_library_selection_key = None
-        self._pending_library_selection_identity_id = None
-        self._pending_library_selection_generation = None
-        identity_generation = self._identity_context_generation
-        self._populate_accounts()
-        self._render_dashboard()
-        self._search_generation = getattr(self, "_search_generation", 0) + 1
-        self._search_detail_request_generation += 1
-        self._search_local_objects = {}; self.search_objects = {}; self._remote_search_results = []
-        self._search_mode = "local"; self._remote_query_key = None; self._selected_search_id = None
-        if hasattr(self, "search_page"):
-            self.search_page.clear_rows()
-            self.search_page.detail.empty("Nouvelle identité", "Lancez une recherche dans le connu.")
-        # Do not rebuild the identity dropdown from its own notify::selected callback:
-        # GTK may deliver the resulting notification asynchronously after the guard
-        # is released, causing an unbounded refresh/task loop.
-        self._populate_account_dropdown(identity.identity_id)
-        self.service.last_history = []
-        self.service.last_bookings = []
-        self.history_objects = {}
-        self.booking_objects = {}
-        self._history_all_rows = []
-        self._history_rows = []
-        self._history_loaded_count = 0
-        self._history_append_scheduled = False
-        if hasattr(self, "history_page"):
-            self.history_page.clear_rows()
-        if hasattr(self, "booking_page"):
-            self.booking_page.clear_rows()
-        self._library_entries_cache = []
-        self._recent_entries_cache = []
-        self._recent_objects = {}
-        if hasattr(self, "recent_page"):
-            self.recent_page.clear_rows()
-            self.recent_page.detail.empty("Nouvelle identité", "Chargement des récupérations…")
-        if hasattr(self, "library_page"):
-            self._render_library([])
-            self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
-        def identity_loaded(rows: list[Loan]) -> None:
-            if not self.service.current_identity or self.service.current_identity.identity_id != identity.identity_id:
-                return
-            if not self._identity_request_current(identity.identity_id, identity_generation):
-                return
-            self._populate_loans(rows)
-            self.refresh_library(False)
-            self.refresh_recent()
-            route = self.view_stack.get_visible_child_name() if hasattr(self, "view_stack") else None
-            if route == "history":
-                self.refresh_history(False)
-            elif route == "bookings":
-                self.refresh_bookings(False)
-            self._activity_result(f"Identité chargée : {identity.label}")
-        self.runner.submit(
-            f"Chargement de {identity.label}…",
-            lambda: self.service.refresh_identity_loans(force=False, identity_id=identity.identity_id),
-            identity_loaded,
-            priority=TaskPriority.USER_ACTION,
-            kind="identity",
-        )
+        return identity_activation_controller.activate_identity(self, identity_id)
 
     def _account_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
         return shell_account_selection_controller.account_changed(self, dropdown, _pspec)
@@ -764,16 +691,7 @@ class MainWindow(Adw.ApplicationWindow):
                            lambda exc: self.show_error(str(exc), "Profils ADE"), control=control)
 
     def _show_sync_issues(self, card):
-        from .sync_issues import sync_issues_text
-        dialog = Adw.MessageDialog.new(self, "Synchronisation · " + str(card.get("label") or ""), sync_issues_text(card.get("sync") or {}))
-        dialog.add_response("settings", "Paramètres des identités")
-        dialog.add_response("close", "Fermer")
-        def response(_dialog, selected):
-            if selected == "settings":
-                self.navigate("settings")
-                self._settings_tabs.set_visible_child_name("accounts")
-        dialog.connect("response", response)
-        dialog.present()
+        return sync_issues_dialog_controller.show_sync_issues(self, card, Adw=Adw)
 
     def _build_sync_page(self):
         return sync_controller._build_sync_page(self)
@@ -1288,16 +1206,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- history ----------
     def _build_history_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Historique", "Documents précédemment empruntés", "Historique non chargé", "Ouvrez cet écran ou actualisez pour récupérer l'historique.")
-        page.set_total_only_count(True)
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser l'historique")
-        refresh.connect("clicked", lambda _b: self.refresh_history(True, refresh)); page.header_actions.append(refresh)
-        from cifereca.language import language_label
-        self.history_languages = MultiSelect('Langues', [(code, language_label(code)) for code in ('fr','en','de','es','it','pt','nl')], self._rerender_history)
-        page.toolbar.append(self.history_languages)
-        page.connect_selected(self._history_selected)
-        page.scroll.get_vadjustment().connect("value-changed", self._history_scroll_changed)
-        return page
+        return secondary_page_controller.build_history_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage, MultiSelect=MultiSelect,
+        )
 
     def _identity_request_current(self, identity_id: str | None, generation: int) -> bool:
         current = self.service.current_identity
@@ -1424,11 +1335,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- bookings ----------
     def _build_bookings_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Réservations", "Réservations physiques et numériques", "Aucune réservation", "Vos réservations apparaîtront ici.")
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser les réservations")
-        refresh.connect("clicked", lambda _b: self.refresh_bookings(True, refresh)); page.header_actions.append(refresh)
-        page.connect_selected(self._booking_selected)
-        return page
+        return secondary_page_controller.build_bookings_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
+        )
 
     def refresh_bookings(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
         current = self.service.current_identity
