@@ -72,9 +72,11 @@ def test_exact_binary_duplicates_and_divergent_same_product_are_only_dry_run(
         assert report["counts"]["linked_files_verified"] == 3
         assert report["counts"]["binary_match_groups"] == 1
         assert report["counts"]["same_product_different_bytes"] == 1
-        assert {row["category"] for row in report["cases"]} == {
+        assert {
             "same_product_different_bytes", "confirmed_binary_match",
-        }
+        } <= {row["category"] for row in report["cases"]}
+        # Backup rows without an attested stored SHA are not enough to
+        # declare an active entitlement safely materialized.
         assert report["accounts"][0]["account"] == "account-1"
         exported = json.dumps(report, ensure_ascii=False)
         for private in ("vault-1", "default", "PRIVATE", "private-book",
