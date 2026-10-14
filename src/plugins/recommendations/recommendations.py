@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from ipaddress import ip_address
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
@@ -59,7 +60,26 @@ def _external_book_url(value: Any) -> str | None:
         return None
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return None
-    if parsed.username or parsed.password:
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        # A signed acquisition URL, referral token or fragment is not an
+        # attested public book notice. Never reflect it in an external action.
+        return None
+    host = parsed.hostname.lower().rstrip(".")
+    if (
+        not host or "." not in host
+        or host == "localhost" or host.endswith((".local", ".localhost", ".internal"))
+        or any(ord(ch) < 33 or ord(ch) == 127 for ch in host)
+    ):
+        return None
+    try:
+        address = ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        return None
+    if "%" in parsed.path and re.search(r"%(?:0[0-9a-f]|1[0-9a-f]|7f)", parsed.path, re.I):
+        # Do not let encoded control characters round-trip through the browser
+        # or into a book-action link handed off to a helper.
         return None
     return url
 
