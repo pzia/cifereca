@@ -316,17 +316,27 @@ class View:
         return False
 
     def seed(self, book, *, identity_id=''):
-        if book is None:
+        if book is None or self.disposed:
             return
-        self.origin_book = book
-        self.origin_identity = identity_id or self.identity_id()
         if identity_id and identity_id != self.identity_id():
             selected = next((i for i, row in enumerate(self.identities)
                              if str(row.get('identity_id') or '') == identity_id), None)
-            if selected is not None:
-                self.plugin.pending = book
-                self.identity.set_selected(selected)
+            # A book selected under account A must never enter the graph of
+            # account B simply because A is absent from this dropdown. Keep
+            # the pending seed scoped to A until that profile is available.
+            self.plugin.pending = book
+            self.plugin.pending_identity = identity_id
+            if selected is None:
+                self.status.set_label(
+                    'Profil du livre absent de cette liste ; le voisinage actuel est conservé.'
+                )
                 return
+            self.origin_book = book
+            self.origin_identity = identity_id
+            self.identity.set_selected(selected)
+            return
+        self.origin_book = book
+        self.origin_identity = identity_id or self.identity_id()
         if not self.nodes:
             self.plugin.pending = book
             self.load()
