@@ -6,6 +6,35 @@ identity/generation state remains window-scoped; no filter is reset here.
 from __future__ import annotations
 
 
+def open_book_detail(window, book, *, identity_id: str | None = None) -> bool:
+    """Resolve a public BookRef against this identity's loaded snapshot only.
+
+    Recheck the owner after the lookup. An identity or generation change during
+    resolution must not dispatch a stale book key into another account.
+    """
+    if getattr(window, "_closed", False):
+        return False
+    from ..core.book_navigation import library_key_for_book
+
+    identity = getattr(window.service, "current_identity", None)
+    active_id = str(getattr(identity, "identity_id", "") or "")
+    if not active_id or (identity_id is not None and identity_id != active_id):
+        return False
+    generation = getattr(window, "_identity_context_generation", None)
+    key = library_key_for_book(
+        book, getattr(window, "_library_entries_cache", ()), identity_id=active_id,
+    )
+    if not key or getattr(window, "_closed", False):
+        return False
+    current = getattr(window.service, "current_identity", None)
+    if str(getattr(current, "identity_id", "") or "") != active_id:
+        return False
+    if getattr(window, "_identity_context_generation", None) != generation:
+        return False
+    window._open_library_item(key)
+    return not getattr(window, "_closed", False)
+
+
 def open_library_item(window, key: str) -> None:
     """Navigate to Library while retaining the book *and identity* context."""
     if getattr(window, "_closed", False):
