@@ -122,22 +122,18 @@ class Core0913(unittest.TestCase):
         self.service.kobo_profiles=Mock(side_effect=RuntimeError('runtime unavailable'))
         with self.assertRaises(RuntimeError): self.service.adept_profile_choices()
     def test_chooser_requires_click_and_stages_stable_reference(self):
-        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_choose_adept_profile')
+        from cifereca.gui.settings_chooser_controller import choose_adept_profile
         dialog=Mock(); window=NS(service=NS(adept_profile_choices=Mock()),runner=Mock(),show_error=Mock())
-        ns={'Adw':NS(MessageDialog=NS(new=Mock(return_value=dialog)))}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(source),'exec'),ns)
-        entry=Mock(); button=Mock(); ns['_choose_adept_profile'](window,entry,button)
+        adw=NS(MessageDialog=NS(new=Mock(return_value=dialog)))
+        entry=Mock(); button=Mock(); choose_adept_profile(window,entry,button,Adw=adw)
         done=window.runner.submit.call_args.args[2]; done([{'reference':'stable','name':'hb'}]); entry.set_text.assert_not_called()
         callback=dialog.connect.call_args.args[1]; callback(dialog,'cancel'); entry.set_text.assert_not_called()
         callback(dialog,'profile-0'); entry.set_text.assert_called_once_with('stable')
         window.service.adept_profile_choices.assert_not_called()
     def test_empty_chooser_reports_action_without_selection(self):
-        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_choose_adept_profile')
+        from cifereca.gui.settings_chooser_controller import choose_adept_profile
         window=NS(service=NS(adept_profile_choices=Mock()),runner=Mock(),show_error=Mock())
-        ns={};exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(source),'exec'),ns)
-        entry=Mock();ns['_choose_adept_profile'](window,entry,Mock());window.runner.submit.call_args.args[2]([])
+        entry=Mock();choose_adept_profile(window,entry,Mock(),Adw=None);window.runner.submit.call_args.args[2]([])
         window.show_error.assert_called_once();entry.set_text.assert_not_called()
 
     def test_token_expiration_precedes_cache_ttl(self):
