@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from ..identity_selection import identity_change_required
-from .task_runner import TaskPriority
+from ..task_queue import TaskPriority
 
 _TRACE_LOG = logging.getLogger("cifereca")
 
