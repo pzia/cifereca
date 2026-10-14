@@ -199,7 +199,6 @@ class CoverAuditTool(_ReadOnlyTool):
                         or parsed.username is not None
                         or parsed.password is not None
                         or parsed.port == 0
-                        or not parsed.path and not parsed.query
                     )
                     # Accessing .port validates non-numeric/out-of-range ports.
                     _ = parsed.port
