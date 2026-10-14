@@ -53,9 +53,12 @@ def test_library_list_does_not_add_empty_redundant_state():
     ))
     assert "state = availability_label(item)" in source
     assert "meta_parts = [state] if state else []" in source
-    facade = ast.unparse(_method("_render_library"))
+    owner = MAIN.parent / "library_render_controller.py"
+    module = ast.parse(owner.read_text(encoding="utf-8"))
+    facade = ast.unparse(next(node for node in module.body
+                              if isinstance(node, ast.FunctionDef) and node.name == "render_library"))
     assert "project_library_rows(" in facade
-    assert "availability_label=self._library_availability_label" in facade
+    assert "availability_label=window._library_availability_label" in facade
 
 
 def test_library_detail_omits_redundant_availability_row_and_badge():
