@@ -14,6 +14,10 @@ RECENT_ROWS = ROOT / "src/cifereca/gui/recent_rows.py"
 
 
 def _method(path: Path, class_name: str, method_name: str) -> str:
+    if path == MAIN and method_name == "_recent_selected":
+        module = ast.parse(MAIN.with_name("recent_detail_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in module.body
+                               if isinstance(node, ast.FunctionDef) and node.name == "recent_selected"))
     if path == MAIN and method_name == "_render_recent":
         module = ast.parse(MAIN.with_name("library_render_controller.py").read_text())
         return ast.unparse(next(node for node in module.body
