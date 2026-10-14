@@ -73,6 +73,7 @@ from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
 from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError
+from .maintenance_line_widgets import build_maintenance_line
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
@@ -1356,6 +1357,13 @@ class MainWindow(Adw.ApplicationWindow):
     def _refresh_tools_page(self) -> None:
         box = getattr(self, "_tools_box", None)
         if box is None: return
+        # A refresh detaches rows; invalidate their progress and cancel any
+        # outstanding cache-maintenance control before rebuilding widgets.
+        for old_feedback, old_state in getattr(self, "_maintenance_line_rows", ()):
+            old_feedback.dispose()
+            if old_state["control"] is not None:
+                old_state["control"].cancel()
+        self._maintenance_line_rows = []
         clear_box(box)
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
@@ -1374,23 +1382,51 @@ class MainWindow(Adw.ApplicationWindow):
             cancel.set_visible(False)
             row.add_suffix(cancel)
             group.add(row)
-            active_cancel = {"control": None}
+            active_cancel = {"control": None, "ticket": None}
+            line_feedback = None
+            line_scope = {"active": False, "identity": None, "generation": None}
+            if getattr(info, "id", None) == "core.cache.cleanup":
+                def line_alive(button=run, scope=line_scope):
+                    if self._closed or button.get_root() is None:
+                        return False
+                    if not scope["active"]:
+                        return True
+                    current = self.service.current_identity
+                    return (
+                        (current.identity_id if current else None) == scope["identity"]
+                        and getattr(self, "_identity_context_generation", None) == scope["generation"]
+                    )
+                status_widget, line_feedback = build_maintenance_line(
+                    Gtk=Gtk, idle_add=GLib.idle_add, alive=line_alive,
+                )
+                row.add_suffix(status_widget)
+                self._maintenance_line_rows.append((line_feedback, active_cancel))
 
-            def request_cancel(_cancel_button, cancellation_state=active_cancel):
+            def request_cancel(_cancel_button, cancellation_state=active_cancel,
+                               feedback=line_feedback):
                 active = cancellation_state["control"]
                 if active is not None:
                     active.cancel()
                     _cancel_button.set_sensitive(False)
+                    if feedback is not None and cancellation_state["ticket"] is not None:
+                        feedback.finish(cancellation_state["ticket"], "cancelled")
 
             cancel.connect("clicked", request_cancel)
 
             def prepare(
                 _button, service=tool, meta=info,
                 cancel_button=cancel, cancellation_state=active_cancel,
+                feedback=line_feedback, progress_scope=line_scope,
             ):
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
+                context_generation = getattr(self, "_identity_context_generation", None)
+                progress_scope.update(
+                    active=True, identity=context.identity_id, generation=context_generation,
+                )
+                ticket = feedback.begin() if feedback is not None else None
+                cancellation_state["ticket"] = ticket
                 # Planning is itself cancellable from GTK. The plugin plan()
                 # signature has no control, so cancellation discards its result;
                 # it must never reopen a stale confirmation after a slow scan.
@@ -1421,13 +1457,19 @@ class MainWindow(Adw.ApplicationWindow):
                         return
                     if self._closed or _button.get_root() is None:
                         return
+                    if feedback is not None and not feedback.valid(ticket):
+                        return
                     current_identity = self.service.current_identity
                     if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                        if feedback is not None:
+                            feedback.finish(ticket, "cancelled")
                         self.show_error(
                             "L’identité active a changé. Relancez la prévisualisation.",
                             meta.title,
                         )
                         return
+                    if feedback is not None:
+                        feedback.confirmation(ticket)
                     scope_labels = {
                         "global": "Application entière",
                         "identity": "Identité active",
@@ -1478,31 +1520,58 @@ class MainWindow(Adw.ApplicationWindow):
                         dialog.set_response_appearance("run", Adw.ResponseAppearance.SUGGESTED)
 
                     def response(_dialog, selected):
+                        if cancellation_state["ticket"] != ticket:
+                            return
                         if selected != "run" or self._closed:
+                            if feedback is not None:
+                                feedback.finish(ticket, "cancelled")
+                            return
+                        if feedback is not None and feedback.state.phase != "confirmation":
                             return
                         current_identity = self.service.current_identity
                         if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                            if feedback is not None:
+                                feedback.finish(ticket, "cancelled")
                             self.show_error(
                                 "L’identité active a changé. Relancez la prévisualisation.",
                                 meta.title,
                             )
                             return
+                        if feedback is not None:
+                            feedback.running(ticket)
 
                         worker_control = MaintenanceCancelControl(
                             owner_closed=lambda: self._closed,
+                            on_progress=(
+                                (lambda current, total, message:
+                                 feedback.report(ticket, current=current, total=total, message=message))
+                                if feedback is not None else None
+                            ),
                         )
                         cancellation_state["control"] = worker_control
                         can_cancel = getattr(meta, "cancellable", False) is True
                         cancel_button.set_visible(can_cancel)
                         cancel_button.set_sensitive(can_cancel)
 
-                        def finish_maintenance() -> None:
-                            if cancellation_state["control"] is worker_control:
-                                cancellation_state["control"] = None
+                        def finish_maintenance() -> bool:
+                            if cancellation_state["control"] is not worker_control:
+                                return False
+                            cancellation_state["control"] = None
+                            if self._closed or _button.get_root() is None:
+                                return False
                             cancel_button.set_visible(False)
+                            current_identity = self.service.current_identity
+                            if (current_identity.identity_id if current_identity else None) != context.identity_id:
+                                return False
+                            if getattr(self, "_identity_context_generation", None) != context_generation:
+                                return False
+                            return feedback is None or feedback.valid(ticket)
 
                         def completed(result) -> None:
-                            finish_maintenance()
+                            if not finish_maintenance():
+                                return
+                            if feedback is not None:
+                                feedback.finish(ticket, "success" if result.ok else "error")
                             self._activity_result(
                                 result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
                                 success=bool(result.ok),
@@ -1510,14 +1579,20 @@ class MainWindow(Adw.ApplicationWindow):
                             )
 
                         def failed(exc) -> None:
-                            finish_maintenance()
+                            if not finish_maintenance():
+                                return
+                            if feedback is not None:
+                                feedback.finish(ticket, "cancelled" if isinstance(exc, MaintenanceCancelledError) else "error")
                             if isinstance(exc, MaintenanceCancelledError):
                                 self.show_error(
                                     "Traitement interrompu ; les modifications déjà effectuées ne sont pas annulées.",
                                     meta.title,
                                 )
                             else:
-                                self.show_error(str(exc), meta.title)
+                                self.show_error(
+                                    "Nettoyage des caches impossible." if feedback is not None else str(exc),
+                                    meta.title,
+                                )
 
                         # Plan revalidation and mutations hold the Core lock.
                         # The separate cancellation button sets a thread-safe
@@ -1535,6 +1610,20 @@ class MainWindow(Adw.ApplicationWindow):
                         )
                     dialog.connect("response", response); dialog.present()
 
+                def preview_failed(exc):
+                    if not finish_preview() or planning_control.cancelled():
+                        if feedback is not None and planning_control.cancelled():
+                            feedback.finish(ticket, "cancelled")
+                        return
+                    if self._closed or _button.get_root() is None:
+                        return
+                    if feedback is not None:
+                        feedback.finish(ticket, "error")
+                    self.show_error(
+                        "Analyse des caches impossible." if feedback is not None else str(exc),
+                        meta.title,
+                    )
+
                 # Planning can scan thousands of placements. Never call
                 # service.plan(context) on the main GTK event loop.
                 self.runner.submit(
@@ -1543,12 +1632,7 @@ class MainWindow(Adw.ApplicationWindow):
                         service, context, destructive=destructive, control=planning_control,
                     ),
                     present_preview,
-                    lambda exc: (
-                        self.show_error(str(exc), meta.title)
-                        if finish_preview() and not planning_control.cancelled()
-                        and not self._closed and _button.get_root() is not None
-                        else None
-                    ),
+                    preview_failed,
                     control=_button,
                     priority=TaskPriority.MAINTENANCE,
                     kind="maintenance-plan",
