@@ -341,6 +341,10 @@ class KoboVaultClient:
     def library_manifest(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         self.last_manifest_rejections = []
+        # Rejected conflicting aliases can precede/follow an apparently valid
+        # row on another page. Remember both *individually valid* candidates
+        # until pagination completes, then quarantine all their occurrences.
+        tainted_products: set[str] = set()
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(100):
@@ -355,6 +359,10 @@ class KoboVaultClient:
                         # here as well as in advisory policy counters: Core's
                         # legacy reader does not yet consume that policy.
                         if _strict_product_id(raw) is None:
+                            for alias in ("product_id", "id"):
+                                candidate = _strict_product_id({alias: raw.get(alias)})
+                                if candidate is not None:
+                                    tainted_products.add(candidate)
                             self.last_manifest_rejections.append({
                                 "type": "invalid_shape",
                                 "reason": "unverifiable_product_id",
@@ -398,7 +406,20 @@ class KoboVaultClient:
             seen.add(cursor)
         else:
             raise KoboVaultError("Kobo-Vault : manifest trop volumineux ou pagination invalide", code="invalid_pagination")
-        return rows
+        if not tainted_products:
+            return rows
+        safe_rows: list[dict[str, Any]] = []
+        for row in rows:
+            if _strict_product_id(row) in tainted_products:
+                # Only a constant reason reaches public diagnostics. Never
+                # include an edition key, raw row or signed download URL.
+                self.last_manifest_rejections.append({
+                    "type": "invalid_shape",
+                    "reason": "tainted_product_id",
+                })
+            else:
+                safe_rows.append(row)
+        return safe_rows
 
     def library_item(self, product_id: str) -> dict[str, Any]:
         payload = self._json("GET", f"/library/{quote(str(product_id), safe='')}")
