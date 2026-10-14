@@ -41,9 +41,14 @@ class MaintenanceLineProgress:
         with self._lock:
             return self._state
 
-    def _publish(self, state: MaintenanceLineState) -> None:
+    def _publish(
+        self, state: MaintenanceLineState, *, ticket: int | None = None,
+        phases: tuple[str, ...] = (),
+    ) -> None:
         with self._lock:
-            if self._disposed:
+            if (self._disposed or
+                (ticket is not None and ticket != self._generation) or
+                (phases and self._state.phase not in phases)):
                 return
             self._state = state
             if self._scheduled:
@@ -73,7 +78,7 @@ class MaintenanceLineProgress:
                 return self._generation
             self._generation += 1
             ticket = self._generation
-        self._publish(MaintenanceLineState("analysis", "Analyse…"))
+        self._publish(MaintenanceLineState("analysis", "Analyse…"), ticket=ticket)
         return ticket
 
     def _current(self, ticket: int, *, phases: tuple[str, ...] = ()) -> bool:
@@ -85,19 +90,21 @@ class MaintenanceLineProgress:
             )
 
     def confirmation(self, ticket: int) -> None:
-        if self._current(ticket, phases=("analysis",)):
-            self._publish(MaintenanceLineState("confirmation", "Confirmation attendue"))
+        self._publish(
+            MaintenanceLineState("confirmation", "Confirmation attendue"),
+            ticket=ticket, phases=("analysis",),
+        )
 
     def running(self, ticket: int) -> None:
-        if self._current(ticket, phases=("confirmation",)):
-            self._publish(MaintenanceLineState("running", "Purge en cours…"))
+        self._publish(
+            MaintenanceLineState("running", "Purge en cours…"),
+            ticket=ticket, phases=("confirmation",),
+        )
 
     def report(
         self, ticket: int, *, current: int | None = None,
         total: int | None = None, message: str = "",
     ) -> None:
-        if not self._current(ticket, phases=("running",)):
-            return
         valid = (
             type(current) is int and type(total) is int
             and total > 0 and 0 <= current <= total
@@ -111,19 +118,17 @@ class MaintenanceLineProgress:
         else:
             label = "Purge en cours…"
             fraction = None
-        self._publish(MaintenanceLineState("running", label, fraction))
+        self._publish(MaintenanceLineState("running", label, fraction), ticket=ticket, phases=("running",))
 
     def finish(self, ticket: int, status: str) -> None:
         if status not in ("success", "error", "cancelled"):
             raise ValueError("invalid terminal maintenance status")
-        if not self._current(ticket, phases=("analysis", "confirmation", "running")):
-            return
         state = {
             "success": MaintenanceLineState("success", "Terminé · 100 %", 1.0),
             "error": MaintenanceLineState("error", "Échec"),
             "cancelled": MaintenanceLineState("cancelled", "Annulé"),
         }[status]
-        self._publish(state)
+        self._publish(state, ticket=ticket, phases=("analysis", "confirmation", "running"))
 
     def dispose(self) -> None:
         with self._lock:
