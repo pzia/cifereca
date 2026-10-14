@@ -574,10 +574,14 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         pairs = tuple((str(a), str(b)) for a, b in plan.facts.get("pairs", ()) if str(a) and str(b))
         changed = 0
         failures = 0
+        total = len(pairs)
         warnings: list[str] = list(plan.warnings)
+        control.check_cancelled()
+        if not total:
+            control.report(message="Aucun doublon physique à nettoyer")
         for index, (duplicate_id, keep_id) in enumerate(pairs, start=1):
             control.check_cancelled()
-            control.report(current=index - 1, total=len(pairs), message=f"Doublon {index}/{len(pairs)}")
+            control.report(current=index - 1, total=total, message=f"Doublon {index}/{total}")
             try:
                 mutation = broker.plan(LibraryMutationRequest(
                     "delete_duplicate",
@@ -590,16 +594,18 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 changed += int(getattr(result, "changed", 0) or 0)
                 warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
             except Exception as exc:
-                # A mutation broker can signal cancellation from inside its
-                # own operation. Never downgrade that to a per-file warning:
-                # the user explicitly asked the destructive batch to stop.
+                # A cancelled destructive mutation must stop the batch. Never
+                # expose placement IDs or the exception's private path.
                 control.check_cancelled()
                 failures += 1
-                warnings.append(f"{duplicate_id}: {type(exc).__name__}: {exc}")
-        # Cancellation during the final mutation must not be reported as
-        # successful completion merely because no next item exists to check.
+                warnings.append(f"Doublon {index}/{total} : {type(exc).__name__}")
+        # Cancellation during the final mutation must not report completion.
         control.check_cancelled()
-        control.report(current=len(pairs), total=len(pairs) or 1, message="Nettoyage terminé")
+        if total:
+            status = "Nettoyage terminé" if not failures else f"Nettoyage : {failures} échec(s)"
+            control.report(current=total, total=total, message=status)
+        else:
+            control.report(message="Nettoyage terminé : aucun doublon")
         return MaintenanceResult(
             ok=failures == 0,
             changed=changed,
