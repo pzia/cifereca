@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import settings_chooser_controller
 from . import query_widget_factory_controller
 from . import history_language_projection
 from . import known_languages_controller
@@ -655,46 +656,14 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _choose_identity_directory(self, entry, root: Path) -> None:
-        from ..identities.directory_selection import directory_choice
-        chooser = Gtk.FileChooserNative.new("Choisir un dossier d’identité", self,
-                     Gtk.FileChooserAction.SELECT_FOLDER, "Choisir", "Annuler")
-        chooser.set_current_folder(Gio.File.new_for_path(str(root.expanduser())))
-        self._identity_directory_chooser = chooser
-        def response(dialog, selected):
-            try:
-                if selected == Gtk.ResponseType.ACCEPT:
-                    file = dialog.get_file()
-                    if file is None or not file.get_path():
-                        raise ValueError("Choisissez un dossier local.")
-                    entry.set_text(directory_choice(file.get_path(), root))
-            except Exception as exc:
-                self.show_error(str(exc), "Choix du répertoire impossible")
-            finally:
-                dialog.destroy()
-                if getattr(self, "_identity_directory_chooser", None) is dialog:
-                    self._identity_directory_chooser = None
-        chooser.connect("response", response); chooser.show()
+        return settings_chooser_controller.choose_identity_directory(
+            self, entry, root, Gtk=Gtk, Gio=Gio,
+        )
 
     def _choose_adept_profile(self, entry, control) -> None:
-        def done(choices):
-            if not choices:
-                self.show_error("Autorisez un profil Adobe capable de récupérer les ACSM dans Kobo-Adept, puis réessayez.", "Aucun profil ADE prêt")
-                return
-            dialog = Adw.MessageDialog.new(self, "Choisir le profil ADE", "Choisissez le profil Adobe correspondant aux prêts de cette identité. Enregistrez ensuite les paramètres, puis relancez la synchronisation.")
-            references = {}
-            for index, choice in enumerate(choices):
-                response = "profile-" + str(index)
-                references[response] = choice["reference"]
-                dialog.add_response(response, choice["name"] + " · " + choice["reference"])
-            dialog.add_response("cancel", "Annuler")
-            dialog.set_close_response("cancel")
-            def selected(_dialog, response):
-                if response in references:
-                    entry.set_text(references[response])
-            dialog.connect("response", selected)
-            dialog.present()
-        self.runner.submit("Profils ADE…", self.service.adept_profile_choices, done,
-                           lambda exc: self.show_error(str(exc), "Profils ADE"), control=control)
+        return settings_chooser_controller.choose_adept_profile(
+            self, entry, control, Adw=Adw,
+        )
 
     def _show_sync_issues(self, card):
         return sync_issues_dialog_controller.show_sync_issues(self, card, Adw=Adw)
