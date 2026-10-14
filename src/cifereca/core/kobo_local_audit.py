@@ -40,7 +40,10 @@ def _read_hash_within(path_text: object, roots: tuple[Path, ...]) -> tuple[str, 
         candidates = []
         for root in roots:
             parent = Path(os.path.abspath(root))
-            relative = absolute.relative_to(parent)
+            try:
+                relative = absolute.relative_to(parent)
+            except ValueError:
+                continue
             if relative.parts and all(part not in {".", "..", ""} for part in relative.parts):
                 candidates.append((len(parent.parts), parent, relative.parts))
         if not candidates:
