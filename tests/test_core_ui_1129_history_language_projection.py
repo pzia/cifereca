@@ -62,8 +62,11 @@ def _window_for_history(rows, entries, selected=("fr",), page_size=2):
             name="annotations")], level=0),
         method,
     ], type_ignores=[]))
-    from cifereca.gui import history_language_projection
-    namespace = {"history_language_projection": history_language_projection}
+    from cifereca.gui import history_language_projection, secondary_results_controller
+    namespace = {
+        "history_language_projection": history_language_projection,
+        "secondary_results_controller": secondary_results_controller,
+    }
     exec(compile(module, str(MAIN), "exec"), namespace)
     populate = namespace["_populate_history"]
     return host, events, reads, lambda values, **kwargs: populate(host, values, **kwargs)
@@ -91,8 +94,13 @@ def test_owner_is_headless_and_mainwindow_public_language_lookup_signature_uncha
     populate = next(n for n in cls.body
                     if isinstance(n, ast.FunctionDef) and n.name == "_populate_history")
     source = ast.unparse(populate)
-    assert "history_language_projection.history_rows_with_languages" in source
-    assert "self.history_page.show_rows(" in source
+    assert "secondary_results_controller.populate_history" in source
+    controller = ast.parse(
+        (ROOT / "secondary_results_controller.py").read_text(encoding="utf-8")
+    )
+    controller_source = ast.unparse(controller)
+    assert "history_language_projection.history_rows_with_languages" in controller_source
+    assert "window.history_page.show_rows(" in controller_source
 
 
 def test_metadata_language_aliases_and_country_variants_are_preserved():
