@@ -141,6 +141,6 @@ def test_host_keeps_revocation_confirmations_task_runner_and_async_commit():
     assert "ai_probe_version[0]" in callbacks
     assert "Adw.MessageDialog.new(" in callbacks
     assert "submit_ai_probe(settings, confirmed=True)" in callbacks
-    assert "probe_llm_connection(settings, remote_confirmed=confirmed)" in callbacks
+    assert "probe_llm_connection_result(" in callbacks
     assert "self.runner.submit(" in callbacks
     assert "settings_committer.submit(" in rendered
