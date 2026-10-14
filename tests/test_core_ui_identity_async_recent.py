@@ -124,12 +124,10 @@ def test_library_stale_result_or_error_reschedules_active_identity(callback):
 
 
 def test_identity_change_clears_recent_list_and_selected_detail_immediately():
-    source = SOURCE.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    cls = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
-    method = next(x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name == "_activate_identity")
+    tree = ast.parse(SOURCE.with_name("identity_activation_controller.py").read_text(encoding="utf-8"))
+    method = next(x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == "activate_identity")
     body = ast.unparse(method)
-    assert "self._recent_entries_cache = []" in body
-    assert "self._recent_objects = {}" in body
-    assert "self.recent_page.clear_rows()" in body
+    assert "window._recent_entries_cache = []" in body
+    assert "window._recent_objects = {}" in body
+    assert "window.recent_page.clear_rows()" in body
     assert 'self.recent_page.detail.empty(' in body
