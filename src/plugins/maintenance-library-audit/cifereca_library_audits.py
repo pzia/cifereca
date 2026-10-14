@@ -55,6 +55,14 @@ def _language_values(row: Mapping[str, Any]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
+# Bounds apply to ZIP central-directory *declared* sizes before any member
+# is decompressed. Normal EPUBs are much smaller; extremely large collections
+# should be inspected by a dedicated, resource-budgeted tool.
+_MAX_EPUB_MEMBERS = 8192
+_MAX_EPUB_MEMBER_BYTES = 512 * 1024 * 1024
+_MAX_EPUB_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+
+
 def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected_size: int = 0, expected_sha256: str = "") -> tuple[str, ...]:
     target = Path(path)
     # A dangling link is a symlink, not a missing book. In particular, do
@@ -98,19 +106,47 @@ def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected
                 if fmt in {"epub", "kepub"} or target.name.casefold().endswith((".epub", ".kepub.epub")):
                     stream.seek(0)
                     with zipfile.ZipFile(stream) as archive:
-                        if archive.testzip() is not None:
-                            issues.append("zip_crc")
-                        try:
-                            if archive.read("mimetype") != b"application/epub+zip":
-                                issues.append("epub_mimetype")
-                            archive.getinfo("META-INF/container.xml")
-                        except KeyError:
-                            issues.append("epub_structure")
+                        members = archive.infolist()
+                        total_size = 0
+                        exceeds_budget = len(members) > _MAX_EPUB_MEMBERS
+                        for member in members:
+                            size = member.file_size
+                            if size < 0 or size > _MAX_EPUB_MEMBER_BYTES:
+                                exceeds_budget = True
+                                break
+                            total_size += size
+                            if total_size > _MAX_EPUB_UNCOMPRESSED_BYTES:
+                                exceeds_budget = True
+                                break
+                        if exceeds_budget:
+                            # ZIP bombs may be tiny on disk but enormous once
+                            # unpacked. Never run testzip() or read() on them.
+                            issues.append("archive_limit")
+                        else:
+                            if archive.testzip() is not None:
+                                issues.append("zip_crc")
+                            try:
+                                mimetype = archive.getinfo("mimetype")
+                                # Reading a malformed, giant mimetype entry
+                                # would allocate its decompressed size at once.
+                                if (
+                                    mimetype.file_size != len(b"application/epub+zip")
+                                    or archive.read("mimetype") != b"application/epub+zip"
+                                ):
+                                    issues.append("epub_mimetype")
+                                archive.getinfo("META-INF/container.xml")
+                            except KeyError:
+                                issues.append("epub_structure")
                 elif fmt == "pdf" or target.suffix.casefold() == ".pdf":
                     stream.seek(0)
                     if stream.read(5) != b"%PDF-":
                         issues.append("pdf_header")
-            except (OSError, zipfile.BadZipFile):
+            except (
+                OSError, zipfile.BadZipFile, zipfile.LargeZipFile,
+                RuntimeError, EOFError, NotImplementedError, ValueError,
+            ):
+                # A malformed/unsupported ZIP cannot take down the full
+                # library audit or expose its archive member names.
                 issues.append("container_invalid")
         except OSError:
             issues.append("unreadable")
