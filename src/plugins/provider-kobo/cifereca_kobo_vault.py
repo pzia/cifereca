@@ -206,6 +206,9 @@ class KoboVaultClient:
             "download_url", "license_url", "signed_url",
         ):
             item.pop(key, None)
+        # Compatibility with existing catalogue consumers: a public hit is
+        # explicitly *not attested as owned*, never unknown/True by omission.
+        item["owned"] = False
         item["collection"] = "catalog"
         return item
 
