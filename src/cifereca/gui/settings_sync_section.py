@@ -12,14 +12,14 @@ from typing import Any
 
 
 def kobo_backup_action_state(*, persisted_enabled: bool, draft_enabled: bool, dirty: bool) -> tuple[str, bool]:
-    """Truthful, side-effect-free status: automation runs on opening, not a timer."""
+    """Status of legacy opening acquisition, not permission to download here."""
     if dirty or type(draft_enabled) is not bool or draft_enabled is not persisted_enabled:
-        return ("Modifications à enregistrer : aucune acquisition lancée.", False)
+        return ("Modifications à enregistrer : aucun téléchargement depuis les Paramètres.", False)
     if persisted_enabled is not True:
-        return ("Désactivée : activer puis enregistrer pour autoriser une sauvegarde.", False)
+        return ("Téléchargements au démarrage désactivés ; l’actualisation en ligne reste possible.", False)
     return (
-        "Activée : tentative à l’ouverture si intervalle écoulé. "
-        "« Lancer maintenant » déclenche une acquisition manuelle explicite.", True,
+        "Téléchargements Kobo au démarrage activés (tous les comptes éligibles) "
+        "si intervalle écoulé. Gérer les sources sans télécharger ici.", True,
     )
 
 
@@ -39,34 +39,55 @@ class KoboSyncSettings:
 def build_kobo_sync_section(
     *, section: Any, download_group: Any, config: Any, Gtk: Any, Adw: Any,
 ) -> KoboSyncSettings:
-    """Build original controls in original order, without binding new signals."""
-    backup_group = Adw.PreferencesGroup(); backup_group.set_title("Acquisition automatique / activité Kobo"); section.append(backup_group)
-    backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title("Synchroniser automatiquement les ebooks Kobo")
-    backup_auto_row.set_subtitle("Paris résout l’acquisition via Kobo-Vault v2.3+ puis exécute localement via Kobo-Adept contract v8")
+    """Show the legacy opening policy separately from safe source operations."""
+    backup_group = Adw.PreferencesGroup(); backup_group.set_title("Kobo : téléchargements optionnels, distincts des notices"); section.append(backup_group)
+    backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title("Télécharger les livres Kobo au démarrage (tous les comptes)")
+    backup_auto_row.set_subtitle("Ancien réglage global : peut télécharger des fichiers au prochain démarrage, contrairement à l’actualisation des notices par source.")
     backup_switch = Gtk.Switch(); backup_switch.set_active((config.get("kobo_backup.enabled", False) is True)); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
     # The source sync page only refreshes online metadata. Downloading books
     # is a separate, explicit operation with the persisted safety settings.
     manual_row = Adw.ActionRow()
-    manual_row.set_title("Télécharger/sauvegarder mes livres Kobo")
+    manual_row.set_title("Gérer mes sources Kobo dans Synchronisation")
     status, allowed = kobo_backup_action_state(
         persisted_enabled=(config.get("kobo_backup.enabled", False) is True),
         draft_enabled=(config.get("kobo_backup.enabled", False) is True), dirty=False,
     )
     manual_row.set_subtitle(status)
     backup_status = manual_row
-    run_backup_now = Gtk.Button(label="Lancer maintenant")
-    run_backup_now.set_sensitive(allowed)
+    run_backup_now = Gtk.Button(label="Ouvrir Synchronisation…")
+    # Navigation does not start a transfer; it remains available even when
+    # legacy automatic download is disabled or the draft is unsaved.
+    run_backup_now.set_sensitive(True)
     run_backup_now.set_valign(Gtk.Align.CENTER)
     manual_row.add_suffix(run_backup_now)
     backup_group.add(manual_row)
-    unlinked_row = Adw.ActionRow(); unlinked_row.set_title("Autoriser les acquisitions Kobo malgré des livres locaux sans liaison")
-    unlinked_row.set_subtitle("Désactivé : suspend les acquisitions du lot en présence d’EPUB importés non rapprochés. Activé : des doublons peuvent être téléchargés.")
-    unlinked_switch = Gtk.Switch(); unlinked_switch.set_active(bool(config.get("kobo_backup.allow_unlinked_acquisition", False))); unlinked_switch.set_valign(Gtk.Align.CENTER); unlinked_row.add_suffix(unlinked_switch); backup_group.add(unlinked_row)
+    unlinked_row = Adw.ActionRow()
+    unlinked_row.set_title("Dérogation historique : livres locaux non rapprochés")
+    unlinked_row.set_subtitle(
+        "Risque de doublons : une dérogation déjà enregistrée peut être "
+        "révoquée ici, mais ne peut plus être activée depuis les Paramètres. "
+        "L’audit Kobo doit précéder toute nouvelle acquisition incertaine."
+    )
+    previous_unlinked = config.get("kobo_backup.allow_unlinked_acquisition", False) is True
+    unlinked_switch = Gtk.Switch()
+    unlinked_switch.set_active(previous_unlinked)
+    unlinked_switch.set_valign(Gtk.Align.CENTER)
+    unlinked_row.add_suffix(unlinked_switch)
+    backup_group.add(unlinked_row)
+    # No new unsafe bypass. Still allow an existing true setting to be
+    # explicitly revoked, persisted through the unchanged Settings contract.
+    revoked = [not previous_unlinked]
+    def prevent_new_unlinked_override(widget, _param):
+        if not widget.get_active():
+            revoked[0] = True
+        elif revoked[0]:
+            widget.set_active(False)
+    unlinked_switch.connect("notify::active", prevent_new_unlinked_override)
     library_dir_row = Adw.EntryRow(); library_dir_row.set_title("Bibliothèque locale possédée par cifereca")
     library_dir_row.set_text(str(config.get("library.directory", "~/EBooks") or "~/EBooks")); download_group.add(library_dir_row)
     backup_dir_row = Adw.EntryRow(); backup_dir_row.set_title("Sous-répertoire/override Kobo (vide = bibliothèque locale)")
     backup_dir_row.set_text(str(config.get("kobo_backup.directory", "") or "")); backup_group.add(backup_dir_row)
-    backup_interval_row = Adw.EntryRow(); backup_interval_row.set_title("Intervalle automatique (minutes, minimum 15)")
+    backup_interval_row = Adw.EntryRow(); backup_interval_row.set_title("Délai minimal au démarrage entre téléchargements Kobo (minutes)")
     backup_interval_row.set_text(str(config.get("kobo_backup.interval_minutes", 60) or 60)); backup_group.add(backup_interval_row)
     vault_profiles = ["Android", "Desktop"]
     current_vault_profile = str(config.get("kobo_backup.display_profile", "Android") or "Android")
