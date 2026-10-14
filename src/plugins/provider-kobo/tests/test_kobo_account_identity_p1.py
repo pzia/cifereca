@@ -20,10 +20,13 @@ class FakeVault:
     def __init__(self, account):
         self.account_data = account
         self.calls = []
+        self.fail_stage = None
 
     def status(self, *, authenticated=False):
         assert not authenticated
         self.calls.append("status")
+        if self.fail_stage == "status":
+            raise ProviderError("PRIVATE_STATUS_UNAVAILABLE")
         return {
             "api_version": "2.3",
             "capabilities": ["library", "acquisition"],
@@ -32,6 +35,8 @@ class FakeVault:
 
     def account(self):
         self.calls.append("account")
+        if self.fail_stage == "account":
+            raise ProviderError("PRIVATE_ACCOUNT_UNAVAILABLE")
         return self.account_data
 
     def acquisition(self, *_args, **_kwargs):
@@ -136,6 +141,7 @@ def test_reconnect_cannot_replace_existing_account_with_unknown_fallback():
         with pytest.raises(ProviderError):
             provider.connect()
         assert provider.accounts[0].unique_id == "original-reader"
+        assert provider.connected is False
         assert provider._cifereca_delegation_forbidden is True
         assert provider._cifereca_delegation_attempts_saved == 4
     finally:
@@ -177,5 +183,31 @@ def test_reconnect_same_account_after_scope_reauthorization_is_allowed():
         assert provider._cifereca_delegation_forbidden is False
         assert provider._cifereca_delegation_attempts_saved == 0
         assert len(provider.accounts) == 1
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("failed_stage", ["status", "account"])
+def test_failed_reconnect_revokes_active_session_without_losing_403_or_account(failed_stage):
+    provider, fake = session({"id": "reader-alice"})
+    try:
+        assert provider.connect()[0].unique_id == "reader-alice"
+        assert provider.connected is True
+        provider._cifereca_delegation_forbidden = True
+        provider._cifereca_delegation_attempts_saved = 7
+
+        fake.fail_stage = failed_stage
+        with pytest.raises(ProviderError):
+            provider.connect()
+        assert provider.connected is False
+        assert provider.accounts[0].unique_id == "reader-alice"
+        assert provider._cifereca_delegation_forbidden is True
+        assert provider._cifereca_delegation_attempts_saved == 7
+
+        fake.fail_stage = None
+        assert provider.connect()[0].unique_id == "reader-alice"
+        assert provider.connected is True
+        assert provider._cifereca_delegation_forbidden is False
+        assert provider._cifereca_delegation_attempts_saved == 0
     finally:
         provider.close()
