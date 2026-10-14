@@ -1,28 +1,16 @@
 """P0 #1130 — navigation history never resurrects removed identity filters."""
 from __future__ import annotations
 
-import ast
-from pathlib import Path
 from types import SimpleNamespace as NS
 
 from cifereca.gui.navigation_history import NavigationState
+from cifereca.gui.navigation_controller import restore_navigation_state
 
-
-MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _restore_callback():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(x for x in tree.body
-               if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
-    method = next(x for x in cls.body
-                  if isinstance(x, ast.FunctionDef)
-                  and x.name == "_restore_navigation_state")
-    ns = {}
-    exec(compile(ast.fix_missing_locations(ast.Module(
-        body=[method], type_ignores=[],
-    )), str(MAIN), "exec"), ns)
-    return ns["_restore_navigation_state"]
+    # Execute the real owner, not a duplicate AST body from MainWindow.
+    return restore_navigation_state
 
 
 def _host(*, current="bob", known=("bob",), route="library"):
