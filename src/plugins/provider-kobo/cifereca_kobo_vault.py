@@ -225,6 +225,51 @@ class KoboVaultClient:
             ],
         }
 
+    def _quarantine_personal_search(
+        self, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Reject ambiguous personal editions before returning *any* search scope.
+
+        Identical IDs may represent conflicting revisions or distinct accounts.
+        Invalid alias pairs also taint each individually valid edition key.
+        Only constant rejection reasons cross the provider boundary.
+        """
+        rows = payload.get("items")
+        if not isinstance(rows, list):
+            return payload
+        counts: dict[str, int] = {}
+        tainted: set[str] = set()
+        for raw in rows:
+            if type(raw) is not dict:
+                continue
+            product = _strict_product_id(raw)
+            if product is not None:
+                counts[product] = counts.get(product, 0) + 1
+            else:
+                for alias in ("product_id", "id"):
+                    candidate = _strict_product_id({alias: raw.get(alias)})
+                    if candidate is not None:
+                        tainted.add(candidate)
+        tainted.update(key for key, count in counts.items() if count > 1)
+
+        accepted: list[dict[str, Any]] = []
+        for raw in rows:
+            if type(raw) is not dict:
+                reason, category = "item_not_object", "invalid_shape"
+            else:
+                product = _strict_product_id(raw)
+                if product is None:
+                    reason, category = "missing_product_id", "invalid_shape"
+                elif product in tainted:
+                    reason, category = "duplicate_product_id", "invalid_scope"
+                else:
+                    accepted.append(dict(raw))
+                    continue
+            self.last_search_merge_rejections.append({
+                "source": "library", "type": category, "reason": reason,
+            })
+        return {**payload, "items": accepted}
+
     def search(
         self,
         query: str,
@@ -255,7 +300,9 @@ class KoboVaultClient:
                 self.search_catalog(query, field=field, limit=limit, page=page)
             )
         if scope == "library":
-            return self.search_library(query, field=field, limit=limit, cursor=cursor)
+            return self._quarantine_personal_search(
+                self.search_library(query, field=field, limit=limit, cursor=cursor)
+            )
 
         catalog = self._public_catalog_payload(
             self.search_catalog(query, field=field, limit=limit, page=page)
@@ -264,6 +311,9 @@ class KoboVaultClient:
         merged: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for source, payload in (("catalog", catalog), ("library", library)):
+            if source == "library":
+                payload = self._quarantine_personal_search(payload)
+                library = payload
             items = payload.get("items")
             if not isinstance(items, list):
                 self.last_search_merge_rejections.append({
