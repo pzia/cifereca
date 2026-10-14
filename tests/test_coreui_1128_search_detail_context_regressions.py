@@ -147,3 +147,20 @@ def test_current_failure_uses_generic_message_without_exception_details():
     assert calls == ["search", "actions", "cache"]
     assert messages == ["Disponibilités indisponibles. Réessayez ultérieurement."]
     assert "LEAK" not in repr(messages)
+
+
+def test_error_after_window_close_never_formats_provider_details():
+    callback = _extract_search_detail_callback("_search_detail_error")
+    host = SimpleNamespace(
+        _search_detail_context_current=lambda *_args: False,
+        toast=lambda *_args: (_ for _ in ()).throw(AssertionError("unexpected toast")),
+    )
+    callback(host, "book-A", object(), RuntimeError("token=SENSITIVE"), context=(3, 7, 11, "old"))
+
+
+def test_selection_context_rejects_old_query_even_when_book_id_reused():
+    checker = _context_checker()
+    host = _host()
+    # The same book id in a newer query must not make an old response current.
+    assert not checker(host, "book-A", (3, 7, 10, "identity-A"))
+    assert checker(host, "book-A", (3, 7, 11, "identity-A"))
