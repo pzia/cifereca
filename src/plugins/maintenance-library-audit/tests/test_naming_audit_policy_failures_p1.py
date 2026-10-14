@@ -129,3 +129,22 @@ def test_every_naming_policy_error_is_counted_but_sampled_to_twelve():
     assert plan.warnings[11] == "Politique de nommage indisponible : notice n°12"
     assert plan.warnings[12] == "50 entrée(s) sans proposition valide de la politique Core."
     assert all("PRIVATE" not in warning for warning in plan.warnings)
+
+
+def test_naming_audit_with_comparable_mismatch_but_no_policy_error_is_complete():
+    context = Context([
+        {"title": "PRIVATE_SECOND", "filename": "wrong.epub"},
+        {"title": "PRIVATE_MATCHED", "filename": "matched.epub"},
+    ])
+    tool = NamingAuditTool().activate(context)
+    plan = tool.plan(MaintenanceContext(scope="library", identity_id="current"))
+    assert plan.facts == {
+        "checked": 2, "mismatch": 1, "unavailable": 0, "policy_failures": 0,
+    }
+    control = Control()
+    result = tool.run(plan, control)
+    # Finding a mismatch is a successful audit, not a failed scan.
+    assert result.ok and result.changed == 0
+    assert result.facts == dict(plan.facts)
+    assert control.events == [{"message": plan.summary}]
+    assert control.checks == 2
