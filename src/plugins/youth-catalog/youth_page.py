@@ -1096,6 +1096,12 @@ class YouthView:
         self.update_action_availability()
 
     def selected(self, row):
+        # Invalidate callbacks from the previous book on *every* selection,
+        # including an empty selection and a new edition with the same title.
+        # The public bridge also invokes this method on a lightweight host.
+        self._detail_selection_generation = (
+            getattr(self, "_detail_selection_generation", 0) + 1
+        )
         # The public bridge may reuse this callback without the whole GTK view.
         # A real YouthView always exposes the updater; a partial host may not.
         updater = getattr(self, 'update_action_availability', None)
@@ -1115,14 +1121,16 @@ class YouthView:
         search = getattr(self.host, "search_books", None)
         if callable(search):
             identity_id = self.identity_id()
+            selection_generation = self._detail_selection_generation
+            selected_book = self.selected_book
             actions = list(presentation.actions)
             if 2 <= len(title) <= 512:
                 actions.append(UiBookDetailAction(
                     id="search-library",
                     title="Rechercher en bibliothèque",
                     icon_name="system-search-symbolic",
-                    callback=lambda q=title, identity=identity_id: self._search_library(
-                        q, identity, field="title",
+                    callback=lambda q=title, identity=identity_id, token=selection_generation, book=selected_book: self._search_selected_book(
+                        q, identity, token, book, field="title",
                     ),
                 ))
             # ISBN is a bibliographic *lookup* only. It does not establish
@@ -1139,14 +1147,32 @@ class YouthView:
                     id="search-library-isbn",
                     title="Rechercher cette édition par ISBN",
                     icon_name="system-search-symbolic",
-                    callback=lambda q=isbn, identity=identity_id: self._search_library(
-                        q, identity, field="isbn",
+                    callback=lambda q=isbn, identity=identity_id, token=selection_generation, book=selected_book: self._search_selected_book(
+                        q, identity, token, book, field="isbn",
                     ),
                 ))
             if actions:
                 presentation = replace(presentation, actions=tuple(actions))
         self.master.show_detail(presentation)
         refresh_actions()
+
+    def _search_selected_book(
+        self, query: str, identity_id: str, generation: int,
+        book: object, *, field: str = "title",
+    ) -> bool:
+        """Never invoke an action from an old book edition or old profile.
+
+        The host owns real library search and availability. The callback only
+        attests the current UI selection; it grants no ownership or download.
+        """
+        if (
+            generation != getattr(self, "_detail_selection_generation", 0)
+            or self.identity_id() != identity_id
+            or getattr(self, "selected_book", None) is not book
+        ):
+            return False
+        self._search_library(query, identity_id, field=field)
+        return True
 
     def _search_library(self, query: str, identity_id: str, *, field: str = "title") -> None:
         """Explicit local search; no proof of holdings or automatic network I/O."""
