@@ -54,7 +54,7 @@ def test_mainwindow_startup_facade_still_delegates_without_import_cycle():
 
 
 def test_opening_sync_idle_callback_checks_window_liveness_at_dispatch():
-    """#1132: closing between provider success and idle dispatch must suppress sync."""
+    """#1132: an idle callback dispatched after window close must suppress sync."""
     source = _method_source("MainWindow", "connect_configured_sources")
     tree = ast.parse(source)
     callbacks = [
@@ -67,16 +67,27 @@ def test_opening_sync_idle_callback_checks_window_liveness_at_dispatch():
     for callback in callbacks:
         assert callback.args, "idle callback is missing"
         idle = callback.args[0]
-        assert isinstance(idle, ast.Lambda)
-        callback_code = compile(ast.Expression(idle), "<gtk-idle>", "eval")
+        assert isinstance(idle, ast.Name), "expect explicit one-shot callback"
+        callback_def = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == idle.id
+        )
+        code = compile(ast.fix_missing_locations(ast.Module(
+            body=[callback_def], type_ignores=[],
+        )), "<gtk-idle>", "exec")
+        calls = []
         class Window:
             _closed = True
             def run_opening_sync(self):
-                raise AssertionError("sync invoked after window close")
-        # The callback closes over 'self' at runtime; evaluate with a closed
-        # stand-in, exactly as GLib would invoke it after window disposal.
-        fn = eval(callback_code, {"self": Window()})
-        assert fn() is False
+                calls.append("sync")
+        closed = Window()
+        ns = {"self": closed}
+        exec(code, ns)
+        assert ns[idle.id]() is False
+        assert calls == []
+        closed._closed = False
+        assert ns[idle.id]() is False
+        assert calls == ["sync"]
 
 
 def test_startup_without_plugin_manager_still_connects_providers():
