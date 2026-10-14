@@ -6,6 +6,8 @@ checks, pending-request token and GLib main-thread batch delivery.
 """
 from __future__ import annotations
 
+from .search_host_port import SearchControllerHost
+
 import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, GLib, Gtk
@@ -15,20 +17,20 @@ from .query_model import progressive_online_search, merge_results
 from .task_runner import TaskPriority
 
 
-def _reset_search_enter(self):
+def _reset_search_enter(self: SearchControllerHost):
     sequence = getattr(self, "_search_enter_sequence", None)
     if sequence is not None:
         sequence.reset()
 
 
-def _search_controls_changed(self):
+def _search_controls_changed(self: SearchControllerHost):
     if getattr(self, "_closed", False):
         return
     self._reset_search_enter()
     self._render_search_results()
 
 
-def _search_enter(self):
+def _search_enter(self: SearchControllerHost):
     if getattr(self, "_closed", False):
         return
     from .search_intent import SearchEnterSequence
@@ -47,13 +49,13 @@ def _search_enter(self):
     self.run_search(online, keyboard=True)
 
 
-def _search_key_interaction(self, _controller, keyval, _keycode, _state):
+def _search_key_interaction(self: SearchControllerHost, _controller, keyval, _keycode, _state):
     if keyval not in {Gdk.KEY_Return, Gdk.KEY_KP_Enter}:
         self._reset_search_enter()
     return False
 
 
-def _build_search_page(self) -> MasterDetailPage:
+def _build_search_page(self: SearchControllerHost) -> MasterDetailPage:
     page = MasterDetailPage(self, "Recherche", "", "Lancez une recherche", "Recherche dans le connu, puis extension aux catalogues en ligne sur demande.")
     self.search_controls = self._query_controls(self._search_controls_changed, self._search_enter)
     page.toolbar.append(self.search_controls)
@@ -85,7 +87,7 @@ def _build_search_page(self) -> MasterDetailPage:
 
 
 def search_books(
-    self, query: str, *, field: str = "title",
+    self: SearchControllerHost, query: str, *, field: str = "title",
     online: bool = False, identity_id: str | None = None,
 ) -> bool:
     """Search from a trusted book detail; exactly one explicit query.
@@ -119,7 +121,7 @@ def search_books(
     return True
 
 
-def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
+def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: bool = False) -> None:
     if getattr(self, "_closed", False):
         return
     from .search_pending import pending_online_search_matches

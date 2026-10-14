@@ -166,7 +166,7 @@ class Core0917(unittest.TestCase):
     def test_third_enter_while_online_running_does_not_invalidate_callback(self):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
         fn=next(n for n in ast.walk(ast.parse(gui_source_text(source))) if isinstance(n,ast.FunctionDef) and n.name=='_search_enter')
-        module=ast.Module(body=[fn],type_ignores=[]);ns={'__package__':'cifereca.gui'}
+        module=ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), fn],type_ignores=[]);ns={'__package__':'cifereca.gui'}
         exec(compile(ast.fix_missing_locations(module),str(source),'exec'),ns)
         state=QueryState('harari');w=NS(search_controls=NS(state=lambda:state),service=NS(current_identity=NS(identity_id='stable')),run_search=Mock(),_online_pending_key=(state,'stable'),_online_pending_generation=7,_search_generation=7)
         ns['_search_enter'](w);w.run_search.assert_not_called()

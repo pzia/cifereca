@@ -1977,7 +1977,8 @@ class MainWindow(Adw.ApplicationWindow):
         return search_controller.search_books(self, query, field=field, online=online, identity_id=identity_id)
 
     def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
-        return search_controller.run_search(self, force, keyboard=keyboard)
+        from .search_host_port import SearchRunPort
+        return search_controller.run_search(SearchRunPort(self), force, keyboard=keyboard)
 
     def _sync_search_detail_after_results(self) -> None:
         return search_results._sync_search_detail_after_results(self)
@@ -1996,27 +1997,32 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def _search_selected(self, row: BookListItem | None) -> None:
-        return search_details._search_selected(self, row)
+        from .search_host_port import SearchDetailPort
+        return search_details._search_selected(SearchDetailPort(self), row)
 
     def _search_detail_request_context(self) -> tuple[int, int, int, str | None]:
-        return search_details._search_detail_request_context(self)
+        from .search_host_port import SearchDetailPort
+        return search_details._search_detail_request_context(SearchDetailPort(self))
 
     def _search_detail_context_current(
         self, selected_id: str, context: tuple[int, int, int, str | None] | None,
     ) -> bool:
-        return search_details._search_detail_context_current(self, selected_id, context)
+        from .search_host_port import SearchDetailPort
+        return search_details._search_detail_context_current(SearchDetailPort(self), selected_id, context)
 
     def _apply_search_detail(
         self, selected_id: str, item: SearchResult, detail: ItemDetail,
         *, context: tuple[int, int, int, str | None] | None = None,
     ) -> None:
-        return search_details._apply_search_detail(self, selected_id, item, detail, context=context)
+        from .search_host_port import SearchDetailPort
+        return search_details._apply_search_detail(SearchDetailPort(self), selected_id, item, detail, context=context)
 
     def _search_detail_error(
         self, selected_id: str, item: SearchResult, exc: BaseException,
         *, context: tuple[int, int, int, str | None] | None = None,
     ) -> None:
-        return search_details._search_detail_error(self, selected_id, item, exc, context=context)
+        from .search_host_port import SearchDetailPort
+        return search_details._search_detail_error(SearchDetailPort(self), selected_id, item, exc, context=context)
 
     # ---------- history ----------
     def _build_history_page(self) -> MasterDetailPage:
@@ -2622,7 +2628,8 @@ class MainWindow(Adw.ApplicationWindow):
             source_provider=str(provider), metadata=meta)
 
     def _load_known_detail(self, item):
-        return search_details._load_known_detail(self, item)
+        from .search_host_port import SearchDetailPort
+        return search_details._load_known_detail(SearchDetailPort(self), item)
 
     def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
         return library_refresh.refresh_library(self, scan, control, refresh_covers=refresh_covers)
