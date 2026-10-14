@@ -66,8 +66,9 @@ def test_open_window_still_schedules_once_with_original_priority_and_kind():
     assert kwargs["priority"] == 3
     assert kwargs["kind"] == "opening-sync"
     assert kwargs["control"] is None
+    assert kwargs["with_progress"] is True
     assert scheduled == []
-    args[1]()
+    args[1](lambda label: scheduled.append(label))
     assert [item[0] for item in effects] == ["service-work"]
 
 
@@ -76,13 +77,10 @@ def test_closed_owner_drops_progress_completion_and_error_without_gtk_access():
     host, tasks, effects = _host()
     start(host)
     args, _kwargs = tasks[0]
-    progress = args[1].__closure__
-    # Service lambda captures the progress closure directly.
-    progress_fn = next(
-        value for cell in progress
-        if callable(value := cell.cell_contents)
-        and getattr(value, "__name__", "") == "progress"
-    )
+    captured = []
+    host.service.opening_sync = lambda **kwargs: captured.append(kwargs["progress"])
+    args[1](lambda label: scheduled.append(label))
+    progress_fn = captured[0]
     host._closed = True
     progress_fn({"event": "identity_begin", "identity_id": "camille"})
     args[2]({"identities": [{"new_acquisitions": 1}]})
@@ -99,6 +97,11 @@ def test_open_owner_retains_progress_and_success_rendering():
     assert args[0] == "Vérification complète de la bibliothèque…"
     assert kwargs["kind"] == "deep-sync"
     assert kwargs["priority"] == 2
+    captured = []
+    host.service.opening_sync = lambda **kwargs: captured.append(kwargs["progress"])
+    args[1](lambda label: scheduled.append(label))
+    captured[0]({"event": "identity_begin", "label": "Camille"})
+    assert scheduled == ["Synchronisation · Camille…"]
     args[2]({"identities": [{"new_acquisitions": 1}]})
     assert [row[0] for row in effects] == [
         "dashboard", "loans", "library", "recent", "activity",

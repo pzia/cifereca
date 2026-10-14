@@ -182,13 +182,13 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     if getattr(self, "_closed", False):
         return
 
-    def progress(event: dict[str, Any]) -> None:
+    def progress(event: dict[str, Any], report) -> None:
         if getattr(self, "_closed", False):
             return
         kind = str(event.get("event") or "")
         if kind == "identity_begin":
             label = f"Synchronisation · {event.get('label') or event.get('identity_id')}…"
-            GLib.idle_add(self._task_progress, label)
+            report(label)
     def ok(summary: dict[str, Any]) -> None:
         if getattr(self, "_closed", False):
             return
@@ -210,9 +210,12 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
         if control is not None: self.show_error(str(exc), "Synchronisation impossible")
     task_label = "Vérification complète de la bibliothèque…" if deep else "Synchronisation des bibliothèques…"
     self.runner.submit(
-        task_label, lambda: self.service.opening_sync(progress=progress, deep=deep), ok, err, control=control,
+        task_label, lambda report: self.service.opening_sync(
+            progress=lambda event: progress(event, report), deep=deep,
+        ), ok, err, control=control,
         priority=TaskPriority.USER_ACTION if control is not None else (TaskPriority.MAINTENANCE if deep else TaskPriority.ACTIVE_LOAN),
         kind="deep-sync" if deep else "opening-sync",
+        with_progress=True,
     )
 
 # Reader/storage targets are provided by storage.target plugins.
