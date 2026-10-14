@@ -3691,7 +3691,7 @@ class MainWindow(Adw.ApplicationWindow):
             return values
 
         def save_settings(_button=None, *, reconnect_after=False) -> bool:
-            if not page_lifetime.alive:
+            if not page_lifetime.alive or getattr(self, "_closed", False):
                 return False
             if settings_committer.pending:
                 return False
