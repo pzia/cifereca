@@ -158,6 +158,7 @@ def test_existing_credential_cannot_be_rebound_to_a_different_authenticated_acco
         assert "reader-alice" not in str(exc.value)
         assert "reader-bob" not in str(exc.value)
         assert provider.accounts[0].unique_id == "reader-alice"
+        assert provider.connected is False  # old account + new token unusable
         assert provider._cifereca_delegation_forbidden is True
         assert provider._cifereca_delegation_attempts_saved == 9
         assert fake.calls == ["status", "account", "status", "account"]
