@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import acsm_import_chooser_controller
 from . import shell_stylesheet_controller
 from . import settings_chooser_controller
 from . import query_widget_factory_controller
@@ -1361,33 +1362,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.run_search(False)
 
     def choose_acsm(self):
-        if getattr(self, "_acsm_chooser", None):
-            self._acsm_chooser.present(); return
-        identity = self.service.current_identity
-        if identity is None:
-            self.show_error("Choisissez une identité pour importer un ACSM"); return
-        identity_id = identity.identity_id
-        chooser = Gtk.FileChooserDialog(title=f"Importer un ACSM — {identity.label}", transient_for=self, modal=True, action=Gtk.FileChooserAction.OPEN)
-        chooser.add_buttons("Annuler", Gtk.ResponseType.CANCEL, "Importer", Gtk.ResponseType.ACCEPT)
-        self._acsm_chooser = chooser
-        filt = Gtk.FileFilter(); filt.set_name("ACSM (*.acsm)"); filt.add_pattern("*.acsm"); filt.add_pattern("*.ACSM"); chooser.add_filter(filt)
-        def chosen(dialog, response):
-            file = dialog.get_file() if response == Gtk.ResponseType.ACCEPT else None
-            path = file.get_path() if file else None
-            dialog.destroy()
-            self._acsm_chooser = None
-            if not path: return
-            def done(result):
-                if result.get("status") == "attention_required":
-                    self.show_attention("Import en attente : " + str(result.get("code") or "runtime DRM à configurer") + "\nLe staging est conservé pour une nouvelle tentative.", code=result.get("code") or "attention_required")
-                else:
-                    self._activity_result(
-                        "ACSM importé" if result.get("status") != "unchanged" else "ACSM déjà importé"
-                    )
-                    self.refresh_library(False)
-            self.runner.submit("Import ACSM…", lambda: self.service.import_acsm(Path(path), identity_id=identity_id), done,
-                priority=TaskPriority.USER_ACTION, kind="acsm-import")
-        chooser.connect("response", chosen); chooser.present()
+        return acsm_import_chooser_controller.choose_acsm(self, Gtk=Gtk)
 
     def _search_facet(self, field, text, controls):
         from .query_model import apply_facet
