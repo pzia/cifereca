@@ -236,8 +236,11 @@ class KoboVaultClient:
                         "reason": "item_not_object",
                     })
                     continue
-                key = str(raw.get("product_id") or raw.get("id") or "").strip()
-                if not key:
+                # Both catalogue and authenticated-library rows need one
+                # unambiguous edition key. Numeric/contradictory aliases can
+                # otherwise merge unrelated books and their account facts.
+                key = _strict_product_id(raw)
+                if key is None:
                     self.last_search_merge_rejections.append({
                         "source": source,
                         "type": "invalid_shape",
@@ -252,8 +255,18 @@ class KoboVaultClient:
                     # or bibliographic facets. An empty library field must not
                     # erase evidence already supplied by the public catalogue.
                     catalog_row = merged[key]
-                    combined = dict(catalog_row)
-                    combined.update(raw)
+                    # Preserve authority *only* from the authenticated
+                    # library row. Starting with catalogue data and overlaying
+                    # the library used to resurrect public owned/downloadable,
+                    # account, revision and acquisition fields whenever the
+                    # personal result omitted them. Only explicitly listed
+                    # bibliographic facts may be enriched from the catalogue.
+                    combined = dict(raw)
+                    # The authenticated /library/search endpoint can return a
+                    # thin row with neither 'collection' nor 'owned'. Its
+                    # membership (not any catalogue field) establishes that
+                    # this is a personal-library notice for normalization.
+                    combined.setdefault("collection", "library")
                     bibliographic_fields = (
                         "description", "summary", "synopsis", "subjects", "subject",
                         "genres", "categories", "tags", "keywords", "series",
