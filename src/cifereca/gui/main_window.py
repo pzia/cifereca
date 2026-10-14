@@ -1607,7 +1607,8 @@ class MainWindow(Adw.ApplicationWindow):
                                 )
                             else:
                                 self.show_error(
-                                    "Nettoyage des caches impossible." if feedback is not None else str(exc),
+                                    str(exc) if isinstance(exc, (MaintenanceBusyError, MaintenancePlanChangedError))
+                                    else ("Nettoyage des caches impossible." if feedback is not None else str(exc)),
                                     meta.title,
                                 )
 
