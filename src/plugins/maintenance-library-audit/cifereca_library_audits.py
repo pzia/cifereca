@@ -230,9 +230,12 @@ class CoverAuditTool(_ReadOnlyTool):
                     # Encoded CR/LF/NUL are control characters too. The
                     # reference may be decoded by a later URL consumer.
                     or any(
-                        cover[pos:pos + 3].casefold() in {
-                            "%00", "%09", "%0a", "%0d", "%7f"
-                        }
+                        len(cover) >= pos + 3
+                        and all(c in "0123456789abcdefABCDEF" for c in cover[pos + 1:pos + 3])
+                        and (
+                            int(cover[pos + 1:pos + 3], 16) < 32
+                            or int(cover[pos + 1:pos + 3], 16) == 127
+                        )
                         for pos, ch in enumerate(cover) if ch == "%"
                     )
                     or bool(scheme and scheme not in {"http", "https", "file"})
