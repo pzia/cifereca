@@ -471,8 +471,19 @@ class KoboVaultClient:
                 safe_rows.append(row)
         return safe_rows
 
+    @staticmethod
+    def _checked_product_id(product_id: object) -> str:
+        # A direct detail/acquisition caller can bypass inventory normalization.
+        # Apply exactly the same edition-key checks as public and personal
+        # manifests, before a private HTTP request is ever constructed.
+        candidate = _strict_product_id({"product_id": product_id})
+        if candidate is None:
+            raise ProviderError("Kobo-Vault : identifiant de produit non vérifiable")
+        return candidate
+
     def library_item(self, product_id: str) -> dict[str, Any]:
-        payload = self._json("GET", f"/library/{quote(str(product_id), safe='')}")
+        product = self._checked_product_id(product_id)
+        payload = self._json("GET", f"/library/{quote(product, safe='')}")
         item = payload.get("item")
         return dict(item) if isinstance(item, dict) else payload
 
@@ -485,17 +496,20 @@ class KoboVaultClient:
         display_profile: str | None = None,
         include_acsm: bool | None = None,
     ) -> dict[str, Any]:
+        product = self._checked_product_id(product_id)
         mode = str(mode or "descriptor").lower()
         if mode not in {"descriptor", "delegated"}:
-            raise ProviderError(f"Kobo-Vault : mode d'acquisition invalide ({mode})")
+            # Untrusted parameter values may contain URLs, bearer tokens or
+            # private titles; only a constant diagnostic crosses this boundary.
+            raise ProviderError("Kobo-Vault : mode d'acquisition invalide")
         body: dict[str, Any] = {"mode": mode}
         if revision_id:
             body["revision_id"] = revision_id
         if display_profile is not None:
             profile = str(display_profile or "").strip()
             if profile not in {"Android", "Desktop"}:
-                raise ProviderError(f"Kobo-Vault : DisplayProfile invalide ({profile or 'vide'})")
+                raise ProviderError("Kobo-Vault : DisplayProfile invalide")
             body["display_profile"] = profile
         if include_acsm is not None:
             body["include_acsm"] = bool(include_acsm)
-        return self._json("POST", f"/library/{quote(str(product_id), safe='')}/acquisition", json=body)
+        return self._json("POST", f"/library/{quote(product, safe='')}/acquisition", json=body)
