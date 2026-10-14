@@ -249,13 +249,17 @@ class SynchronizationBrokerImpl:
                 if row is None:
                     materialization = SyncPhaseState("materialize")
                 else:
+                    raw_checkpoint_status = row.get("status")
                     status = {
                         "complete": "success", "partial": "partial",
                         "running": "running", "interrupted": "interrupted",
                         "attention_required": "attention_required",
                         "failed": "failed", "aborted": "failed",
                         "cancelled": "cancelled",
-                    }.get(row.get("status"), "unknown")
+                    }.get(
+                        raw_checkpoint_status if type(raw_checkpoint_status) is str
+                        else "", "unknown",
+                    )
                     timestamp = row.get("updated_at")
                     when = (
                         datetime.fromtimestamp(timestamp, timezone.utc)
