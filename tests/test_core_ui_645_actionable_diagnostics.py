@@ -51,7 +51,9 @@ def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
     section = gui_source_text(ROOT / "src/cifereca/gui/settings_diagnostics_section.py")
     assert 'Gtk.DropDown.new_from_strings(["À examiner", "Tous"])' in section
     assert 'diag_scroll.set_visible(False)' in section
-    assert 'label="Ouvrir Plugins"' in source
+    refresh = gui_source_text(ROOT / "src/cifereca/gui/settings_diagnostics_refresh_controller.py")
+    assert 'label="Ouvrir Plugins"' in refresh
+    assert 'open_diagnostic_plugin(button, pid)' in refresh
     assert 'focus(plugin_id)' in source
     assert 'Copier dans le presse-papiers' in section
     assert 'Exporter le diagnostic' in section
