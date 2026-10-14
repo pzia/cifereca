@@ -55,6 +55,14 @@ def _language_values(row: Mapping[str, Any]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
+# Bounds apply to ZIP central-directory *declared* sizes before any member
+# is decompressed. Normal EPUBs are much smaller; extremely large collections
+# should be inspected by a dedicated, resource-budgeted tool.
+_MAX_EPUB_MEMBERS = 8192
+_MAX_EPUB_MEMBER_BYTES = 512 * 1024 * 1024
+_MAX_EPUB_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+
+
 def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected_size: int = 0, expected_sha256: str = "") -> tuple[str, ...]:
     target = Path(path)
     # A dangling link is a symlink, not a missing book. In particular, do
@@ -98,19 +106,47 @@ def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected
                 if fmt in {"epub", "kepub"} or target.name.casefold().endswith((".epub", ".kepub.epub")):
                     stream.seek(0)
                     with zipfile.ZipFile(stream) as archive:
-                        if archive.testzip() is not None:
-                            issues.append("zip_crc")
-                        try:
-                            if archive.read("mimetype") != b"application/epub+zip":
-                                issues.append("epub_mimetype")
-                            archive.getinfo("META-INF/container.xml")
-                        except KeyError:
-                            issues.append("epub_structure")
+                        members = archive.infolist()
+                        total_size = 0
+                        exceeds_budget = len(members) > _MAX_EPUB_MEMBERS
+                        for member in members:
+                            size = member.file_size
+                            if size < 0 or size > _MAX_EPUB_MEMBER_BYTES:
+                                exceeds_budget = True
+                                break
+                            total_size += size
+                            if total_size > _MAX_EPUB_UNCOMPRESSED_BYTES:
+                                exceeds_budget = True
+                                break
+                        if exceeds_budget:
+                            # ZIP bombs may be tiny on disk but enormous once
+                            # unpacked. Never run testzip() or read() on them.
+                            issues.append("archive_limit")
+                        else:
+                            if archive.testzip() is not None:
+                                issues.append("zip_crc")
+                            try:
+                                mimetype = archive.getinfo("mimetype")
+                                # Reading a malformed, giant mimetype entry
+                                # would allocate its decompressed size at once.
+                                if (
+                                    mimetype.file_size != len(b"application/epub+zip")
+                                    or archive.read("mimetype") != b"application/epub+zip"
+                                ):
+                                    issues.append("epub_mimetype")
+                                archive.getinfo("META-INF/container.xml")
+                            except KeyError:
+                                issues.append("epub_structure")
                 elif fmt == "pdf" or target.suffix.casefold() == ".pdf":
                     stream.seek(0)
                     if stream.read(5) != b"%PDF-":
                         issues.append("pdf_header")
-            except (OSError, zipfile.BadZipFile):
+            except (
+                OSError, zipfile.BadZipFile, zipfile.LargeZipFile,
+                RuntimeError, EOFError, NotImplementedError, ValueError,
+            ):
+                # A malformed/unsupported ZIP cannot take down the full
+                # library audit or expose its archive member names.
                 issues.append("container_invalid")
         except OSError:
             issues.append("unreadable")
@@ -184,11 +220,35 @@ class CoverAuditTool(_ReadOnlyTool):
                 continue
             try:
                 parsed = urlsplit(cover)
-                suspicious = bool(
-                    parsed.scheme and parsed.scheme not in {"http", "https", "file"}
+                scheme = parsed.scheme.casefold()
+                # An allowed scheme alone is not evidence of a usable cover.
+                # Catch absent hosts, malformed ports, embedded credentials,
+                # remote file:// hosts and control characters. Preserve local
+                # relative cover paths used by legacy library entries.
+                suspicious = (
+                    any(ord(ch) < 32 or ord(ch) == 127 for ch in cover)
+                    or bool(scheme and scheme not in {"http", "https", "file"})
                 )
+                if scheme in {"http", "https"}:
+                    suspicious = suspicious or (
+                        not parsed.hostname
+                        or parsed.username is not None
+                        or parsed.password is not None
+                        or parsed.port == 0
+                    )
+                    # Accessing .port validates non-numeric/out-of-range ports.
+                    _ = parsed.port
+                elif scheme == "file":
+                    suspicious = suspicious or (
+                        parsed.netloc not in {"", "localhost"}
+                        or not parsed.path.startswith("/")
+                        or parsed.username is not None
+                        or parsed.password is not None
+                    )
+                elif not scheme:
+                    suspicious = suspicious or bool(parsed.netloc)
             except ValueError:
-                # Malformed bracketed IPv6 hosts and other invalid URL shapes
+                # Malformed IPv6 hosts, ports and other invalid URL shapes
                 # are rejected per row instead of aborting the entire scan.
                 suspicious = True
             if suspicious:
@@ -266,6 +326,7 @@ class NamingAuditTool(_ReadOnlyTool):
         checked = 0
         mismatch = 0
         unavailable = 0
+        policy_failures = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
             title = str(row.get("title") or "").strip()
@@ -277,13 +338,29 @@ class NamingAuditTool(_ReadOnlyTool):
                 unavailable += 1
                 continue
             extension = PurePath(current).suffix.lstrip(".") or str(row.get("format") or "epub").lower()
-            expected = naming.preview(
-                title=title,
-                author=str(row.get("author") or ""),
-                series=str(row.get("series") or row.get("collection") or ""),
-                index=str(row.get("series_index") or row.get("index") or ""),
-                extension=extension,
-            )
+            try:
+                expected = naming.preview(
+                    title=title,
+                    author=str(row.get("author") or ""),
+                    series=str(row.get("series") or row.get("collection") or ""),
+                    index=str(row.get("series_index") or row.get("index") or ""),
+                    extension=extension,
+                )
+            except Exception:
+                # A single unreadable/malformed entry must not abort the
+                # remaining read-only audit. The broker can embed private
+                # titles, paths or credentials in its error/class name.
+                policy_failures += 1
+                if len(samples) < 12:
+                    samples.append(f"Politique de nommage indisponible : notice n°{notice_index}")
+                continue
+            if expected is None or not str(expected).strip():
+                # An empty proposed name is not a legitimate discrepancy:
+                # comparison with it would classify every file as mismatched.
+                policy_failures += 1
+                if len(samples) < 12:
+                    samples.append(f"Politique de nommage indisponible : notice n°{notice_index}")
+                continue
             checked += 1
             if PurePath(current).name != PurePath(str(expected)).name:
                 mismatch += 1
@@ -296,12 +373,17 @@ class NamingAuditTool(_ReadOnlyTool):
         warnings = list(samples)
         if unavailable:
             warnings.append(f"{unavailable} entrée(s) sans nom/titre public vérifiable.")
+        if policy_failures:
+            warnings.append(f"{policy_failures} entrée(s) sans proposition valide de la politique Core.")
         warnings.append("Audit uniquement : aucune mutation de placement n'est effectuée.")
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=summary,
             warnings=tuple(warnings),
-            facts={"checked": checked, "mismatch": mismatch, "unavailable": unavailable},
+            facts={
+                "checked": checked, "mismatch": mismatch,
+                "unavailable": unavailable, "policy_failures": policy_failures,
+            },
         )
 
 
@@ -323,6 +405,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
         candidates=[]
         missing_path=0
         read_failures=0
+        reference_failures=0
         for row in _rows(metadata.library_entries(identity_id=context.identity_id)):
             if not row.get("local"):
                 continue
@@ -337,11 +420,32 @@ class IntegrityAuditTool(_ReadOnlyTool):
                     artifact=library_read.artifact(artifact_id)
                 except Exception:
                     read_failures += 1
+            # Broker-supplied size metadata is untrusted, even when it comes
+            # from a typed artifact facade. Do not abort the whole audit if a
+            # single reference is malformed, or silently coerce booleans,
+            # floats and negative sizes into an apparent successful check.
+            raw_size = getattr(artifact, "size_bytes", 0)
+            try:
+                if type(raw_size) is int and raw_size >= 0:
+                    expected_size = raw_size
+                elif (
+                    type(raw_size) is str and 1 <= len(raw_size) <= 20
+                    and raw_size.isdecimal()
+                ):
+                    expected_size = int(raw_size)
+                elif raw_size is None:
+                    expected_size = 0
+                else:
+                    raise ValueError("invalid reference size")
+            except (ValueError, OverflowError, TypeError):
+                reference_failures += 1
+                expected_size = 0
             candidates.append({
+                # The private path is needed for execution and remains in
+                # facts, not warnings/progress. A book title is unnecessary.
                 "path": path,
-                "title": str(row.get("title") or PurePath(path).name),
                 "format": str(row.get("media_format") or getattr(artifact,"format","") or ""),
-                "expected_size": int(getattr(artifact,"size_bytes",0) or 0),
+                "expected_size": expected_size,
                 "expected_sha256": str(getattr(artifact,"sha256","") or row.get("sha256") or ""),
             })
         warnings=[]
@@ -351,6 +455,10 @@ class IntegrityAuditTool(_ReadOnlyTool):
             warnings.append(
                 f"{read_failures} artefact(s) sans métadonnées de référence : broker library.read en erreur."
             )
+        if reference_failures:
+            warnings.append(
+                f"{reference_failures} taille(s) de référence invalide(s) : contrôle de taille indisponible."
+            )
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=f"{len(candidates)} fichier(s) local(aux) à vérifier.",
@@ -359,6 +467,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 "candidates": tuple(candidates),
                 "missing_path": missing_path,
                 "read_failures": read_failures,
+                "reference_failures": reference_failures,
             },
         )
 
@@ -367,6 +476,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
         total=len(candidates)
         warnings=list(plan.warnings)
         read_failures=int(plan.facts.get("read_failures") or 0)
+        reference_failures=int(plan.facts.get("reference_failures") or 0)
         invalid=0
         missing=0
         by_issue={}
@@ -400,7 +510,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
         else:
             control.report(message="Audit d’intégrité terminé : aucun fichier")
         return MaintenanceResult(
-            ok=invalid==0 and read_failures==0,
+            ok=invalid==0 and read_failures==0 and reference_failures==0,
             changed=0,
             summary=f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), dont {missing} manquant(s).",
             warnings=tuple(warnings),
@@ -409,6 +519,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 "invalid":invalid,
                 "missing":missing,
                 "read_failures":read_failures,
+                "reference_failures":reference_failures,
                 "issues":by_issue,
             },
         )
@@ -464,6 +575,7 @@ class NamingRepairTool(_ReadOnlyTool):
         placement_ids: list[str] = []
         changes: list[str] = []
         skipped = 0
+        policy_failures = 0
         read_failures: list[str] = []
         seen: set[str] = set()
 
@@ -489,13 +601,25 @@ class NamingRepairTool(_ReadOnlyTool):
                     skipped += 1
                     continue
                 extension = PurePath(current).suffix.lstrip(".") or "epub"
-                expected = str(naming.preview(
-                    title=title,
-                    author=author,
-                    series=series,
-                    index=index,
-                    extension=extension,
-                ))
+                try:
+                    proposed = naming.preview(
+                        title=title,
+                        author=author,
+                        series=series,
+                        index=index,
+                        extension=extension,
+                    )
+                except Exception:
+                    # A malformed item or a failed Core policy must not abort
+                    # unrelated placements, nor leak the private exception
+                    # message or class name into the Outils preview.
+                    policy_failures += 1
+                    continue
+                if proposed is None or not str(proposed).strip():
+                    # No valid proposal means no authorized rename target.
+                    policy_failures += 1
+                    continue
+                expected = str(proposed)
                 if PurePath(current).name == PurePath(expected).name:
                     continue
                 placement_ids.append(placement.placement_id)
@@ -510,6 +634,10 @@ class NamingRepairTool(_ReadOnlyTool):
         warnings: list[str] = []
         if skipped:
             warnings.append(f"{skipped} entrée(s) non vérifiable(s) ignorée(s).")
+        if policy_failures:
+            warnings.append(
+                f"{policy_failures} placement(s) sans proposition valide de la politique Core."
+            )
         if read_failures:
             warnings.append(
                 f"{len(read_failures)} artefact(s) non inspecté(s) : broker library.read en erreur."
@@ -522,6 +650,7 @@ class NamingRepairTool(_ReadOnlyTool):
             facts={
                 "placement_ids": tuple(placement_ids),
                 "skipped": skipped,
+                "policy_failures": policy_failures,
                 "read_failures": len(read_failures),
             },
         )
@@ -533,6 +662,7 @@ class NamingRepairTool(_ReadOnlyTool):
         ids = tuple(str(x) for x in plan.facts.get("placement_ids", ()) if str(x))
         changed = 0
         failures = 0
+        preview_failures = int(plan.facts.get("policy_failures") or 0)
         total = len(ids)
         warnings: list[str] = list(plan.warnings)
         control.check_cancelled()
@@ -560,25 +690,40 @@ class NamingRepairTool(_ReadOnlyTool):
                         f"Renormalisation {index}/{total} : "
                         f"{min(count, 1_000_000)} avertissement(s) du service"
                     )
-            except Exception as exc:
+            except Exception:
                 # A cancellation during the Core mutation is not a failed
-                # placement to swallow. Never leak an exception's private path.
+                # placement to swallow. Never leak exception messages, class
+                # names or paths from an untrusted mutation broker.
                 control.check_cancelled()
                 failures += 1
-                warnings.append(f"Renormalisation {index}/{total} : {type(exc).__name__}")
+                warnings.append(f"Renormalisation {index}/{total} : échec du service")
         # A cancellation during the last mutation must not emit completion.
         control.check_cancelled()
         if total:
-            status = "Renormalisation terminée" if not failures else f"Renormalisation : {failures} échec(s)"
+            status = (
+                "Renormalisation terminée"
+                if not failures and not preview_failures
+                else (
+                    f"Renormalisation : {failures} échec(s), "
+                    f"{preview_failures} proposition(s) indisponible(s)"
+                )
+            )
             control.report(current=total, total=total, message=status)
         else:
-            control.report(message="Renormalisation terminée : aucun placement")
+            message = (
+                f"Renormalisation : {preview_failures} placement(s) sans proposition"
+                if preview_failures else "Renormalisation terminée : aucun placement"
+            )
+            control.report(message=message)
+        facts = {"planned": len(ids), "failures": failures}
+        if preview_failures:
+            facts["policy_failures"] = preview_failures
         return MaintenanceResult(
-            ok=failures == 0,
+            ok=failures == 0 and preview_failures == 0,
             changed=changed,
             summary=f"{changed} placement(s) renormalisé(s).",
             warnings=tuple(warnings),
-            facts={"planned": len(ids), "failures": failures},
+            facts=facts,
         )
 
 
@@ -686,12 +831,13 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                     warnings.append(
                         f"Doublon {index}/{total} : {min(count, 1_000_000)} avertissement(s) du service"
                     )
-            except Exception as exc:
+            except Exception:
                 # A cancelled destructive mutation must stop the batch. Never
-                # expose placement IDs or the exception's private path.
+                # expose placement IDs, exception messages *or exception class
+                # names* (third-party brokers may generate private class names).
                 control.check_cancelled()
                 failures += 1
-                warnings.append(f"Doublon {index}/{total} : {type(exc).__name__}")
+                warnings.append(f"Doublon {index}/{total} : échec du service")
         # Cancellation during the final mutation must not report completion.
         control.check_cancelled()
         if total:
