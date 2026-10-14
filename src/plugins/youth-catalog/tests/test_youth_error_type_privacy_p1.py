@@ -56,7 +56,7 @@ def test_direct_recording_rejects_identifier_shaped_private_error_type():
 def test_safe_generic_error_can_be_stored_without_private_class():
     index = YouthCatalogIndex()
     index.record_collection(
-        "synthetic-identity", "ecole-loisirs", state="error",
+        "synthetic-identity", "ecole-loisirs",
         **collection_failure_diagnostic(type("Account_PRIVATE_SECRET", (OSError,), {})("hidden")),
     )
     row = next(r for r in index.source_diagnostics("synthetic-identity") if r["source_id"] == "ecole-loisirs")
