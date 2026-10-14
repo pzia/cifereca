@@ -155,3 +155,30 @@ def test_taskrunner_delivery_stops_when_success_callback_closes_window():
     assert namespace["deliver"]() is False
     assert events == ["finished", "ok"]
     assert runner._count == 0
+
+
+def test_taskrunner_error_delivery_skips_callbacks_after_teardown():
+    """#1132: closed windows must not receive late failure callbacks."""
+    import threading
+    from types import SimpleNamespace
+
+    tree = ast.parse(RUNNER.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "TaskRunner")
+    submit = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "submit")
+    done = next(n for n in ast.walk(submit) if isinstance(n, ast.FunctionDef) and n.name == "done")
+    deliver = next(n for n in ast.walk(done) if isinstance(n, ast.FunctionDef) and n.name == "deliver")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[deliver], type_ignores=[])), "<deliver>", "exec"), namespace)
+
+    events = []
+    window = SimpleNamespace(_closed=True)
+    window._task_finished = lambda *args: events.append("finished")
+    runner = SimpleNamespace(window=window, _lock=threading.Lock(), _count=1)
+    namespace.update(
+        self=runner, control=None, outcome=("error", RuntimeError("failure")),
+        task_id=1, label="test", ok=None,
+        err=lambda error: events.append("error"), success_toast=None,
+    )
+    assert namespace["deliver"]() is False
+    assert events == []
+    assert runner._count == 0
