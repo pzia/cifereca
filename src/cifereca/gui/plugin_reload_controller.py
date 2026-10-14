@@ -46,13 +46,13 @@ def subscribe_cached_book_details(window, *, idle_add, subscribe_cached_book_det
     token = object()
     window._cached_book_subscription_token = token
     window._cached_book_unsubscribe()
-    if getattr(window, "_closed", False):
+    if getattr(window, "_closed", False) or window._cached_book_subscription_token is not token:
         return
     try:
         services = tuple(window.plugin_manager.services("book.detail.enrichment"))
     except Exception:
         services = ()
-    if getattr(window, "_closed", False):
+    if getattr(window, "_closed", False) or window._cached_book_subscription_token is not token:
         return
     window._cached_book_services = services
 
