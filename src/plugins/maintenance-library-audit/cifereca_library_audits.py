@@ -157,19 +157,28 @@ class CoverAuditTool(_ReadOnlyTool):
         missing = 0
         invalid = 0
         samples: list[str] = []
-        for row in entries:
+        for notice_index, row in enumerate(entries, start=1):
             cover = _cover_value(row)
-            title = str(row.get("title") or row.get("name") or row.get("id") or "notice")
+            # Preview warnings cross the UI/diagnostic boundary. Never embed
+            # free-form titles, local paths or untrusted cover URLs there.
             if not cover:
                 missing += 1
                 if len(samples) < 12:
-                    samples.append(f"Sans couverture : {title[:100]}")
+                    samples.append(f"Sans couverture : notice n°{notice_index}")
                 continue
-            parsed = urlsplit(cover)
-            if parsed.scheme and parsed.scheme not in {"http", "https", "file"}:
+            try:
+                parsed = urlsplit(cover)
+                suspicious = bool(
+                    parsed.scheme and parsed.scheme not in {"http", "https", "file"}
+                )
+            except ValueError:
+                # Malformed bracketed IPv6 hosts and other invalid URL shapes
+                # are rejected per row instead of aborting the entire scan.
+                suspicious = True
+            if suspicious:
                 invalid += 1
                 if len(samples) < 12:
-                    samples.append(f"Couverture non reconnue : {title[:100]}")
+                    samples.append(f"Couverture non reconnue : notice n°{notice_index}")
         total = len(entries)
         summary = f"{missing} notice(s) sans couverture, {invalid} référence(s) suspecte(s), sur {total} notice(s)."
         return MaintenancePlan(
@@ -242,7 +251,7 @@ class NamingAuditTool(_ReadOnlyTool):
         mismatch = 0
         unavailable = 0
         samples: list[str] = []
-        for row in entries:
+        for notice_index, row in enumerate(entries, start=1):
             title = str(row.get("title") or "").strip()
             current = str(row.get("filename") or row.get("file_name") or "").strip()
             if not current:
@@ -263,7 +272,10 @@ class NamingAuditTool(_ReadOnlyTool):
             if PurePath(current).name != PurePath(str(expected)).name:
                 mismatch += 1
                 if len(samples) < 12:
-                    samples.append(f"{PurePath(current).name} → {PurePath(str(expected)).name}")
+                    # Names suggested by the policy can contain private
+                    # titles, authors, paths or arbitrary provider metadata.
+                    # Surface the finding, never the raw filenames.
+                    samples.append(f"Nom non conforme : notice n°{notice_index}")
         summary = f"{mismatch} nom(s) différent(s) de la politique Core sur {checked} fichier(s) vérifiable(s)."
         warnings = list(samples)
         if unavailable:
@@ -469,7 +481,11 @@ class NamingRepairTool(_ReadOnlyTool):
                     continue
                 placement_ids.append(placement.placement_id)
                 if len(changes) < 100:
-                    changes.append(f"{PurePath(current).name} → {PurePath(expected).name}")
+                    # Preview rows are displayed outside the trusted broker.
+                    # Filenames and suggested names may contain private
+                    # titles, paths and tokens. Preserve the real placement
+                    # identifier only in facts for the Core mutation.
+                    changes.append(f"Renommer le placement n°{len(placement_ids)}")
 
         summary = f"{len(placement_ids)} placement(s) à renormaliser selon la politique Core."
         warnings: list[str] = []
@@ -512,7 +528,19 @@ class NamingRepairTool(_ReadOnlyTool):
                 if getattr(result, "ok", True) is False:
                     failures += 1
                 changed += int(getattr(result, "changed", 0) or 0)
-                warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
+                # Broker warnings may include private local paths or provider
+                # responses. Public results expose only a bounded count.
+                core_warnings = getattr(result, "warnings", ())
+                count = (
+                    len(core_warnings)
+                    if isinstance(core_warnings, (tuple, list))
+                    else 1 if core_warnings else 0
+                )
+                if count:
+                    warnings.append(
+                        f"Renormalisation {index}/{total} : "
+                        f"{min(count, 1_000_000)} avertissement(s) du service"
+                    )
             except Exception as exc:
                 # A cancellation during the Core mutation is not a failed
                 # placement to swallow. Never leak an exception's private path.
