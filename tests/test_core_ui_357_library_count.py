@@ -23,8 +23,11 @@ def _standalone(class_name: str, method_name: str):
 
 
 def test_library_render_passes_unfiltered_total_to_master_detail():
-    source = ast.unparse(_method("MainWindow", "_render_library"))
-    assert "self.library_page.show_rows(rows, total_count=len(entries))" in source
+    owner = MAIN.parent / "library_render_controller.py"
+    module = ast.parse(owner.read_text(encoding="utf-8"))
+    source = ast.unparse(next(node for node in module.body
+                              if isinstance(node, ast.FunctionDef) and node.name == "render_library"))
+    assert "window.library_page.show_rows(rows, total_count=len(entries))" in source
 
 
 def test_count_label_shows_filtered_over_total_only_when_reduced():

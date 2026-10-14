@@ -10,6 +10,13 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 def _method(name: str) -> str:
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    if name in {"_render_library", "_render_recent"}:
+        owner = MAIN.with_name("library_render_controller.py")
+        module = ast.parse(owner.read_text(encoding="utf-8"))
+        real_name = name.removeprefix("_")
+        return ast.unparse(next(node for node in module.body
+                                if isinstance(node, ast.FunctionDef)
+                                and node.name == real_name))
     if name == "refresh_library":
         tree = ast.parse(MAIN.with_name("library_refresh.py").read_text(encoding="utf-8"))
         return ast.unparse(next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name))
@@ -27,9 +34,9 @@ def test_library_none_selection_has_neutral_detail_state():
 
 def test_rendered_library_resets_stale_detail_when_no_selection_restored():
     source = _method("_render_library")
-    assert "restored_pending = self._select_pending_library_item()" in source
-    assert "self.library_page.selection.get_selected_item() is None" in source
-    assert "self._library_selected(None)" in source
+    assert "restored_pending = window._select_pending_library_item()" in source
+    assert "window.library_page.selection.get_selected_item() is None" in source
+    assert "window._library_selected(None)" in source
 
 
 def test_identity_change_clears_old_library_before_async_refresh():
