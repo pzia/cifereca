@@ -198,19 +198,22 @@ class LanguageAuditTool(_ReadOnlyTool):
         invalid = 0
         noncanonical = 0
         samples: list[str] = []
-        for row in entries:
-            title = str(row.get("title") or row.get("name") or row.get("id") or "notice")
+        for notice_index, row in enumerate(entries, start=1):
+            # Tool plans and results can be exported to diagnostics/UI. Neither
+            # free-form book titles nor untrusted raw language tags are safe
+            # diagnostic labels (both may contain credentials or private paths).
+            # Keep only the deterministic catalogue ordinal and issue class.
             for raw in _language_values(row):
                 seen += 1
                 canonical = normalize_language_tag(raw)
                 if canonical is None:
                     invalid += 1
                     if len(samples) < 12:
-                        samples.append(f"Langue invalide {raw!r} : {title[:80]}")
+                        samples.append(f"Langue invalide : notice n°{notice_index}")
                 elif canonical != raw:
                     noncanonical += 1
                     if len(samples) < 12:
-                        samples.append(f"{raw!r} → {canonical!r} : {title[:80]}")
+                        samples.append(f"Langue non canonique : notice n°{notice_index}")
         summary = f"{seen} valeur(s) de langue ; {invalid} invalide(s), {noncanonical} non canonique(s)."
         return MaintenancePlan(
             tool_id=self.info.id,
