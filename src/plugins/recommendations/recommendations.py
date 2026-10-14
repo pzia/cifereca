@@ -78,6 +78,11 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
         isbn = getattr(notice, "isbn", "")
         if type(isbn) is not str or not re.fullmatch(r"97[89][0-9]{10}", isbn):
             continue
+        if sum(
+            int(digit) * (1 if index % 2 == 0 else 3)
+            for index, digit in enumerate(isbn)
+        ) % 10:
+            continue
         if isbn not in selections:
             selections.append(isbn)
         if len(selections) == 4:
@@ -1223,9 +1228,8 @@ class UxRecommendationsView:
             edition_fields = []
             for index, variant in enumerate(exact_variants, 1):
                 name = self._display_source(variant.source_provider)
-                isbn = variant.isbn if re.fullmatch(
-                    r"97[89][0-9]{10}", variant.isbn or "",
-                ) else ""
+                valid_isbns = _attested_catalogue_isbns((variant,))
+                isbn = valid_isbns[0] if valid_isbns else ""
                 edition_fields.append(DetailField(
                     f"source-edition-{index}", f"Notice source {index}",
                     f"{name} · ISBN {isbn}" if isbn else
