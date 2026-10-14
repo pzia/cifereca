@@ -560,12 +560,13 @@ class NamingRepairTool(_ReadOnlyTool):
                         f"Renormalisation {index}/{total} : "
                         f"{min(count, 1_000_000)} avertissement(s) du service"
                     )
-            except Exception as exc:
+            except Exception:
                 # A cancellation during the Core mutation is not a failed
-                # placement to swallow. Never leak an exception's private path.
+                # placement to swallow. Never leak exception messages, class
+                # names or paths from an untrusted mutation broker.
                 control.check_cancelled()
                 failures += 1
-                warnings.append(f"Renormalisation {index}/{total} : {type(exc).__name__}")
+                warnings.append(f"Renormalisation {index}/{total} : échec du service")
         # A cancellation during the last mutation must not emit completion.
         control.check_cancelled()
         if total:
