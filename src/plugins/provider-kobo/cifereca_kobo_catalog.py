@@ -3,6 +3,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag, description_text, description_element
+from cifereca_kobo_policy import _strict_product_id
 
 
 class KoboCatalogService:
@@ -71,9 +72,13 @@ class KoboCatalogService:
         return (str(price) if price is not None else None, str(item.get("currency")) if item.get("currency") else None)
 
     def normalize_item(self, item: dict[str, Any], *, default_collection: str = "catalog") -> SearchResult:
-        product_id = str(item.get("product_id") or item.get("id") or "").strip()
-        if not product_id:
-            raise ProviderError("Kobo-Vault : résultat sans product_id")
+        # Keep the same edition identity checks as the Vault search/manifest
+        # boundary. A direct catalogue normalizer must not accept conflicting
+        # aliases, coerce numeric IDs, or trim malformed keys into another
+        # product that can inherit personal ownership.
+        product_id = _strict_product_id(item)
+        if product_id is None:
+            raise ProviderError("Kobo-Vault : identifiant de notice non vérifiable")
         authors = item.get("authors")
         if isinstance(authors, list):
             author = ", ".join(str(x) for x in authors if str(x).strip()) or None
@@ -157,7 +162,7 @@ class KoboCatalogService:
             except ProviderError:
                 reason = (
                     "missing_product_id"
-                    if not str(raw.get("product_id") or raw.get("id") or "").strip()
+                    if _strict_product_id(raw) is None
                     else "normalization_error"
                 )
                 self.last_search_rejections.append({
