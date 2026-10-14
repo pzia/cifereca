@@ -109,7 +109,7 @@ def test_naming_repair_reports_mutation_failure_as_failed_result():
     assert result.ok is False
     assert result.changed==0
     assert result.facts['failures']==1
-    assert any('RuntimeError' in warning for warning in result.warnings)
+    assert result.warnings == ('Renormalisation 1/1 : échec du service',)
 
 
 def test_duplicate_cleanup_reports_mutation_failure_as_failed_result():
