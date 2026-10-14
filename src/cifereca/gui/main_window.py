@@ -38,6 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
+from . import route_display_controller
 from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
@@ -866,36 +867,7 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as exc: self.show_error(str(exc), "Action impossible")
 
     def _show_route(self, route: str) -> None:
-        if route not in self._pages: return
-        self.view_stack.set_visible_child_name(route)
-        page = self._pages.get(route)
-        self.header_subtitle.set_label(page.title if page else "")
-        self._refresh_header_actions(route)
-        widget = self._plugin_page_widgets.get(route)
-        if widget and isinstance(widget.get_root(), Gtk.Window):
-            widget.child_focus(Gtk.DirectionType.TAB_FORWARD)
-        if route == "dashboard":
-            self._render_dashboard()
-        elif route == "library":
-            self._render_library(self._library_entries_cache)
-            if not self._library_entries_cache:
-                self.refresh_library(False)
-        elif route == "recent":
-            self._render_recent(self._recent_entries_cache)
-            if not self._recent_entries_cache:
-                self.refresh_recent()
-        elif route == "history" and not self.service.last_history:
-            self.refresh_history(False)
-        elif route == "bookings" and not self.service.last_bookings:
-            self.refresh_bookings(False)
-        elif route == "sync":
-            self._refresh_sync_page()
-        elif route == "tools":
-            self._refresh_tools_page()
-        elif route == "settings":
-            self.refresh_diagnostics_text()
-        elif route == "plugins" and hasattr(self.plugins_page, "refresh"):
-            self.plugins_page.refresh()
+        return route_display_controller.show_route(self, route, Gtk=Gtk)
 
     def _navigation_state(self, route: str):
         return navigation_controller.navigation_state(self, route)
