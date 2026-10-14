@@ -156,7 +156,8 @@ def test_duplicate_cleanup_reports_unsuccessful_mutation_result():
     assert result.ok is False
     assert result.changed==0
     assert result.facts['failures']==1
-    assert 'mutation refused' in result.warnings
+    assert 'Doublon 1/1 : 1 avertissement(s) du service' in result.warnings
+    assert all('mutation refused' not in warning for warning in result.warnings)
 
 
 class UserCancelled(Exception):
