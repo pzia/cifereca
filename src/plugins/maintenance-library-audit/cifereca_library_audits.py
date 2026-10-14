@@ -184,11 +184,36 @@ class CoverAuditTool(_ReadOnlyTool):
                 continue
             try:
                 parsed = urlsplit(cover)
-                suspicious = bool(
-                    parsed.scheme and parsed.scheme not in {"http", "https", "file"}
+                scheme = parsed.scheme.casefold()
+                # An allowed scheme alone is not evidence of a usable cover.
+                # Catch absent hosts, malformed ports, embedded credentials,
+                # remote file:// hosts and control characters. Preserve local
+                # relative cover paths used by legacy library entries.
+                suspicious = (
+                    any(ord(ch) < 32 or ord(ch) == 127 for ch in cover)
+                    or bool(scheme and scheme not in {"http", "https", "file"})
                 )
+                if scheme in {"http", "https"}:
+                    suspicious = suspicious or (
+                        not parsed.hostname
+                        or parsed.username is not None
+                        or parsed.password is not None
+                        or parsed.port == 0
+                        or not parsed.path and not parsed.query
+                    )
+                    # Accessing .port validates non-numeric/out-of-range ports.
+                    _ = parsed.port
+                elif scheme == "file":
+                    suspicious = suspicious or (
+                        parsed.netloc not in {"", "localhost"}
+                        or not parsed.path.startswith("/")
+                        or parsed.username is not None
+                        or parsed.password is not None
+                    )
+                elif not scheme:
+                    suspicious = suspicious or bool(parsed.netloc)
             except ValueError:
-                # Malformed bracketed IPv6 hosts and other invalid URL shapes
+                # Malformed IPv6 hosts, ports and other invalid URL shapes
                 # are rejected per row instead of aborting the entire scan.
                 suspicious = True
             if suspicious:
