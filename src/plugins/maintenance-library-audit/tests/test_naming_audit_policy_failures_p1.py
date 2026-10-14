@@ -94,7 +94,7 @@ def test_naming_audit_continues_after_broker_errors_and_empty_previews():
     )
     control = Control()
     result = tool.run(plan, control)
-    assert result.ok and result.changed == 0
+    assert not result.ok and result.changed == 0
     assert result.warnings == plan.warnings
     assert result.facts == dict(plan.facts)
     assert control.events == [{"message": plan.summary}]
