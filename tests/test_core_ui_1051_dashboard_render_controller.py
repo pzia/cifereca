@@ -28,6 +28,9 @@ class Widget:
     def get_child(self):
         return self
 
+    def get_next_sibling(self):
+        return getattr(self, "_next_sibling", None)
+
     def connect(self, signal, handler):
         self.handlers[signal] = handler
 
@@ -64,6 +67,13 @@ class Widget:
 
 class Grid(Widget):
     def get_first_child(self):
+        # GTK links siblings; the double must expose the same traversal when
+        # a second render removes actual Widget cards (not only Child fixtures).
+        for index, child in enumerate(self.children):
+            child._next_sibling = (
+                self.children[index + 1] if index + 1 < len(self.children)
+                else None
+            )
         return self.children[0] if self.children else None
 
     def remove(self, child):
@@ -295,4 +305,161 @@ def test_zero_cards_refreshes_stats_and_clears_old_cards_without_scan():
     window, events, _diagnostics, _styles, render = _window([], existing=[Child()])
     render()
     assert window.dashboard_cards.children == []
+    assert events == ["statistics", "snapshot"]
+
+
+def test_reentrant_close_during_statistics_skips_subscribers_and_cards():
+    window, events, diagnostics, _styles, render = _window([_card()])
+    callback = Mock()
+    window._overview_listeners = [callback]
+    def close():
+        events.append("statistics")
+        window._closed = True
+    window._refresh_statistics = close
+    render()
+    callback.assert_not_called()
+    assert events == ["statistics"]
+    assert window.dashboard_cards.children == []
+
+
+def test_observer_unsubscribe_skips_queued_snapshot_callback():
+    window, events, diagnostics, _styles, render = _window([_card()])
+    def second():
+        events.append("second")
+    def first():
+        events.append("first")
+        window._overview_listeners.remove(second)
+    window._overview_listeners = [first, second]
+    render()
+    assert events == ["statistics", "first", "snapshot"]
+    assert len(window.dashboard_cards.children) == 1
+
+
+def test_old_snapshot_callbacks_skip_new_listener_list_generation():
+    window, events, diagnostics, _styles, render = _window([])
+    def previous():
+        events.append("previous")
+    def replace():
+        events.append("replace")
+        window._overview_listeners = [lambda: events.append("new")]
+    window._overview_listeners = [replace, previous]
+    render()
+    assert events == ["statistics", "replace", "snapshot"]
+
+
+def test_observer_close_does_not_notify_others_or_read_service():
+    window, events, diagnostics, _styles, render = _window([_card()])
+    def close():
+        events.append("close")
+        window._closed = True
+    window._overview_listeners = [close, lambda: events.append("stale")]
+    render()
+    assert events == ["statistics", "close"]
+    assert diagnostics == []
+    assert window.dashboard_cards.children == []
+
+
+def test_bad_observer_diagnostic_closing_window_aborts_safely():
+    window, events, diagnostics, _styles, render = _window([_card()])
+    def broken():
+        raise ValueError("private source")
+    window._overview_listeners = [broken, lambda: events.append("stale")]
+    def close(*args, **kwargs):
+        diagnostics.append((args, kwargs))
+        window._closed = True
+    window.diagnostics.add = close
+    render()
+    assert events == ["statistics"]
+    assert diagnostics[0][1]["detail"] == {"error": "ValueError"}
+    assert window.dashboard_cards.children == []
+
+
+def test_nested_dashboard_render_cannot_resume_old_generation():
+    window, events, diagnostics, styles, render = _window([_card()])
+    def nested():
+        events.append("nested")
+        window._overview_listeners = []
+        render()
+    window._overview_listeners = [nested, lambda: events.append("stale")]
+    render()
+    assert events == ["statistics", "nested", "statistics", "snapshot"]
+    assert len(window.dashboard_cards.children) == 1
+
+
+def test_service_snapshot_that_closes_owner_never_builds_cards():
+    window, events, diagnostics, _styles, render = _window([_card()])
+    def snapshot():
+        window._closed = True
+        events.append("snapshot")
+        return [_card()]
+    window.service.dashboard_state = snapshot
+    render()
+    assert events == ["statistics", "snapshot"]
+    assert window.dashboard_cards.children == []
+
+
+def test_detached_identity_button_cannot_reopen_old_card_after_redraw():
+    window, events, diagnostics, _styles, render = _window([_card("alice")])
+    render()
+    old = window.dashboard_cards.children[0].children[0].children[0]
+    render()
+    current = window.dashboard_cards.children[0].children[0].children[0]
+    assert current is not old
+    events.clear()
+    old.click()
+    assert events == []
+    current.click()
+    assert events == [("open", "alice")]
+    window._closed = True
+    current.click()
+    assert events == [("open", "alice")]
+
+
+def test_detached_sync_issues_button_cannot_open_previous_context():
+    window, events, diagnostics, _styles, render = _window([
+        _card(sync={"errors": 1, "attention_required": 0}),
+    ])
+    render()
+    old = next(item for item in window.dashboard_cards.children[0].children
+               if item.props.get("label") == "Voir les erreurs et actions")
+    render()
+    current = next(item for item in window.dashboard_cards.children[0].children
+                   if item.props.get("label") == "Voir les erreurs et actions")
+    events.clear()
+    old.click()
+    assert events == []
+    current.click()
+    assert len(events) == 1 and events[0][0] == "issues"
+
+
+def test_close_during_card_removal_does_not_read_service_or_remove_remaining():
+    previous = [Child(), Child()]
+    window, events, diagnostics, _styles, render = _window(
+        [_card()], existing=previous,
+    )
+    def close_on_remove(item):
+        window.dashboard_cards.removed.append(item)
+        window.dashboard_cards.children.remove(item)
+        window._closed = True
+    window.dashboard_cards.remove = close_on_remove
+    render()
+    assert window.dashboard_cards.removed == [previous[0]]
+    assert window.dashboard_cards.children == [previous[1]]
+    assert events == ["statistics"]
+
+
+def test_only_active_callback_identity_survives_equals_implementation():
+    window, events, diagnostics, _styles, render = _window([])
+    class EqCallable:
+        def __init__(self, value):
+            self.value = value
+        def __eq__(self, other):
+            return isinstance(other, EqCallable)
+        def __call__(self):
+            events.append(self.value)
+    old, active = EqCallable("old"), EqCallable("active")
+    def swap():
+        window._overview_listeners = [swap, active]
+    window._overview_listeners = [swap, old]
+    render()
     assert events == ["statistics", "snapshot"]
