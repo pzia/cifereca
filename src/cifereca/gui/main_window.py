@@ -1977,7 +1977,8 @@ class MainWindow(Adw.ApplicationWindow):
         return search_controller.search_books(self, query, field=field, online=online, identity_id=identity_id)
 
     def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
-        return search_controller.run_search(self, force, keyboard=keyboard)
+        from .search_host_port import SearchRunPort
+        return search_controller.run_search(SearchRunPort(self), force, keyboard=keyboard)
 
     def _sync_search_detail_after_results(self) -> None:
         return search_results._sync_search_detail_after_results(self)
