@@ -31,6 +31,8 @@ def navigation_state(host: NavigationHost, route: str) -> NavigationState:
 
 
 def update_navigation_buttons(host: NavigationHost) -> None:
+    if getattr(host, "_closed", False):
+        return
     history = getattr(host, "_navigation_history", None)
     if hasattr(host, "back_button"):
         host.back_button.set_sensitive(bool(history and history.can_back()))
@@ -39,15 +41,23 @@ def update_navigation_buttons(host: NavigationHost) -> None:
 
 
 def visit_route(host: NavigationHost, route: str) -> None:
-    if route not in host._pages:
+    if getattr(host, "_closed", False) or route not in host._pages:
         return
     if not getattr(host, "_restoring_navigation", False):
-        host._navigation_history.visit(host._navigation_state(route))
+        state = host._navigation_state(route)
+        if getattr(host, "_closed", False):
+            return
+        host._navigation_history.visit(state)
+    if getattr(host, "_closed", False):
+        return
     host._show_route(route)
-    host._update_navigation_buttons()
+    if not getattr(host, "_closed", False):
+        host._update_navigation_buttons()
 
 
 def restore_navigation_state(host: NavigationHost, state: NavigationState | None) -> None:
+    if getattr(host, "_closed", False):
+        return
     if state is None or state.route not in host._pages:
         host._update_navigation_buttons()
         return
@@ -60,47 +70,58 @@ def restore_navigation_state(host: NavigationHost, state: NavigationState | None
                 return
             if current is None or current.identity_id != state.identity_id:
                 host._activate_identity(state.identity_id)
+                if getattr(host, "_closed", False):
+                    return
         controls = getattr(host, state.route + "_controls", None)
         if controls is not None and state.query_state is not None:
             controls.set_state(state.query_state)
+            if getattr(host, "_closed", False):
+                return
         row = host.nav_rows.get(state.route)
         if row is not None:
             host.nav_list.select_row(row)
+            if getattr(host, "_closed", False):
+                return
         host._show_route(state.route)
+        if getattr(host, "_closed", False):
+            return
         if state.route == "library":
             host._render_library()
         elif state.route == "search":
             host._render_search_results()
     finally:
         host._restoring_navigation = False
-        host._update_navigation_buttons()
+        if not getattr(host, "_closed", False):
+            host._update_navigation_buttons()
 
 
 def can_go_back(host: NavigationHost) -> bool:
-    return bool(getattr(host, "_navigation_history", None) and host._navigation_history.can_back())
+    return bool(not getattr(host, "_closed", False) and getattr(host, "_navigation_history", None) and host._navigation_history.can_back())
 
 
 def can_go_forward(host: NavigationHost) -> bool:
-    return bool(getattr(host, "_navigation_history", None) and host._navigation_history.can_forward())
+    return bool(not getattr(host, "_closed", False) and getattr(host, "_navigation_history", None) and host._navigation_history.can_forward())
 
 
 def go_back(host: NavigationHost) -> None:
-    if getattr(host, "_navigation_history", None):
+    if not getattr(host, "_closed", False) and getattr(host, "_navigation_history", None):
         host._restore_navigation_state(host._navigation_history.back())
 
 
 def go_forward(host: NavigationHost) -> None:
-    if getattr(host, "_navigation_history", None):
+    if not getattr(host, "_closed", False) and getattr(host, "_navigation_history", None):
         host._restore_navigation_state(host._navigation_history.forward())
 
 
 def nav_selected(host: NavigationHost, _listbox: Any, row: Any) -> None:
-    if row is None:
+    if getattr(host, "_closed", False) or row is None:
         return
     host._visit_route(row.get_name() or "library")
 
 
 def navigate(host: NavigationHost, route: str) -> None:
+    if getattr(host, "_closed", False):
+        return
     row = host.nav_rows.get(route)
     if row:
         if host.nav_list.get_selected_row() is row:
