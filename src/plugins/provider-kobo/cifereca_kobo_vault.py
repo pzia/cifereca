@@ -520,19 +520,26 @@ class KoboVaultClient:
         include_acsm: bool | None = None,
     ) -> dict[str, Any]:
         product = self._checked_product_id(product_id)
-        mode = str(mode or "descriptor").lower()
-        if mode not in {"descriptor", "delegated"}:
-            # Untrusted parameter values may contain URLs, bearer tokens or
-            # private titles; only a constant diagnostic crosses this boundary.
+        if type(mode) is not str or mode.lower() not in {"descriptor", "delegated"}:
+            # Never echo caller-supplied control fields in an exception: they
+            # can contain bearer tokens, signed URLs and account identifiers.
             raise ProviderError("Kobo-Vault : mode d'acquisition invalide")
+        mode = mode.lower()
         body: dict[str, Any] = {"mode": mode}
-        if revision_id:
+        if revision_id is not None and revision_id != "":
+            # A revision selector is a private acquisition authority. Never
+            # stringify booleans/numbers or forward untrusted control chars.
+            if _strict_product_id({"product_id": revision_id}) is None:
+                raise ProviderError("Kobo-Vault : identifiant de révision invalide")
             body["revision_id"] = revision_id
         if display_profile is not None:
-            profile = str(display_profile or "").strip()
-            if profile not in {"Android", "Desktop"}:
+            if type(display_profile) is not str or display_profile.strip() not in {"Android", "Desktop"}:
                 raise ProviderError("Kobo-Vault : DisplayProfile invalide")
-            body["display_profile"] = profile
+            body["display_profile"] = display_profile.strip()
         if include_acsm is not None:
-            body["include_acsm"] = bool(include_acsm)
+            # bool("false") is True. A malformed flag must not unexpectedly
+            # enable an ACSM export; JSON boolean is the only accepted type.
+            if type(include_acsm) is not bool:
+                raise ProviderError("Kobo-Vault : option ACSM invalide")
+            body["include_acsm"] = include_acsm
         return self._json("POST", f"/library/{quote(product, safe='')}/acquisition", json=body)
