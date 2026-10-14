@@ -160,7 +160,10 @@ def test_new_selection_cancels_pending_and_identity_switch_invalidates_context()
 
 def test_subscription_and_shutdown_do_not_leak_plugin_callbacks():
     assert "subscribe_cached_book_detail_changes(" in _source("_subscribe_cached_book_details")
-    assert "idle_add(window._cached_book_cache_invalidated)" in _source("_subscribe_cached_book_details")
+    source = _source("_subscribe_cached_book_details")
+    assert "idle_add(deliver)" in source
+    assert "window._cached_book_cache_invalidated()" in source
+    assert "not is_current()" in source
     assert "window._subscribe_cached_book_details()" in _source("_plugins_changed")
     assert "close_window_resources(self, source_remove=GLib.source_remove)" in _source("_on_close_request")
     assert "window._cached_book_unsubscribe()" in (MAIN.parent / "window_close.py").read_text(encoding="utf-8")
