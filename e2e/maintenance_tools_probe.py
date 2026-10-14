@@ -314,7 +314,10 @@ def main():
         # Mapping precedes GTK's first size allocation. Wait for measurable
         # widgets, not for overflow: first_dialog must still detect a broken
         # scroll layout after the allocation has actually happened.
-        return all(geometry[key] > 0 for key in (
+        # Modal mapping and the idle-delivered row state may arrive in
+        # different main-loop turns. Wait for both; first_dialog still
+        # validates the exact label, spinner, and layout independently.
+        return line_is("Confirmation attendue") and all(geometry[key] > 0 for key in (
             "width", "height", "content_width", "content_height", "page_size",
         ))
 
