@@ -12,6 +12,7 @@ import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
@@ -137,6 +138,7 @@ _ECOLE_DIAGNOSTIC_FLAGS = frozenset({
 })
 _ECOLE_DIAGNOSTIC_PHASES = frozenset({"listing", "parsing", "complete"})
 _ECOLE_DIAGNOSTIC_STATES = frozenset({"items", "empty_unverified", "error"})
+_SAFE_ERROR_TYPES = frozenset({"RuntimeError", "ValueError", "TypeError", "ProviderError", "ConnectError", "ReadTimeout", "ConnectTimeout", "HTTPStatusError", "TimeoutError"})
 
 
 def plugin_diagnostic_for(source: object, source_id: str) -> dict[str, object]:
@@ -176,7 +178,7 @@ def plugin_diagnostic_for(source: object, source_id: str) -> dict[str, object]:
         if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{16}", digest):
             result["html_sha256_prefix"] = digest
         error_type = raw.get("error_type")
-        if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z][A-Za-z_0-9]{0,49}", error_type):
+        if type(error_type) is str and error_type in _SAFE_ERROR_TYPES:
             result["error_type"] = error_type
         return result
     for key in _MILAN_DIAGNOSTIC_COUNTS:
@@ -194,9 +196,73 @@ def plugin_diagnostic_for(source: object, source_id: str) -> dict[str, object]:
     if isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{16}", digest):
         result["html_sha256_prefix"] = digest
     error_type = raw.get("error_type")
-    if isinstance(error_type, str) and re.fullmatch(r"[A-Za-z][A-Za-z_0-9]{0,49}", error_type):
+    if type(error_type) is str and error_type in _SAFE_ERROR_TYPES:
         result["error_type"] = error_type
     return result
+
+
+def public_report(report: Mapping) -> dict[str, object]:
+    """Only explicit schema fields may reach stdout / GitHub Actions.
+
+    Untrusted publisher/provider strings must not be serialised even when a
+    future caller mistakenly inserts them into the in-memory report.
+    """
+    states = {"PASS", "BLOCKED", "NO_VERIFIED_NOTICE", "NOT_RUN", "INVALID_INPUT"}
+    result = report.get("result")
+    safe: dict[str, object] = {
+        "result": result if type(result) is str and result in states else "BLOCKED"
+    }
+    source = report.get("source")
+    if type(source) is not str or source not in SOURCES:
+        return safe
+    safe["source"] = source
+    safe["allowed_host"] = SOURCES[source]["host"]
+    if report.get("source_plugin_id") == SOURCES[source]["plugin"]:
+        safe["source_plugin_id"] = SOURCES[source]["plugin"]
+    for name, bound in (
+        ("age", 17), ("limit", 3), ("accepted", 1_000_000),
+        ("rejected", 1_000_000), ("ingest_error_count", 1_000_000),
+        ("qualified_notice_count", 1_000_000),
+        ("requests_count", SOURCES[source]["max_requests"]),
+    ):
+        value = report.get(name)
+        if type(value) is int and 0 <= value <= bound:
+            safe[name] = value
+    if type(report.get("next_cursor_present")) is bool:
+        safe["next_cursor_present"] = report["next_cursor_present"]
+    budget = report.get("request_budget")
+    if type(budget) is int and budget == SOURCES[source]["max_requests"]:
+        safe["request_budget"] = budget
+    timeout = report.get("timeout_seconds")
+    if type(timeout) in (int, float) and 2 <= timeout <= 15:
+        safe["timeout_seconds"] = timeout
+    timestamp = report.get("timestamp_utc")
+    if type(timestamp) is str and re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?\+00:00",
+        timestamp,
+    ):
+        safe["timestamp_utc"] = timestamp
+    commit = report.get("source_commit")
+    if type(commit) is str and (commit == "unknown" or re.fullmatch(r"[0-9a-f]{40}", commit)):
+        safe["source_commit"] = commit
+    version = report.get("core_version")
+    if type(version) is str and re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}[A-Za-z0-9.+_-]{0,48}", version):
+        safe["core_version"] = version
+    error_code = report.get("error_code")
+    if type(error_code) is str and error_code in {
+        "invalid_parameters", "consent_required", "no_public_https_request",
+        "timeout", "transport_error", "http_error", "execution_failed",
+        "invalid_evidence",
+    }:
+        safe["error_code"] = error_code
+    raw_diagnostic = report.get("plugin_diagnostic")
+    if isinstance(raw_diagnostic, dict):
+        diagnostic = plugin_diagnostic_for(
+            SimpleNamespace(diagnostic_snapshot=lambda: raw_diagnostic), source,
+        )
+        if diagnostic:
+            safe["plugin_diagnostic"] = diagnostic
+    return safe
 
 
 def bundle(name: str, files: tuple[str, ...], workspace: Path) -> Path:
@@ -252,7 +318,8 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
                 raise RuntimeError("request outside public HTTPS allowlist")
             if len(requests) >= choice["max_requests"]:
                 raise RuntimeError("live request budget exhausted")
-            requests.append(str(req.url))
+            # Never retain query strings, signed URLs or acquisition paths.
+            requests.append(choice["host"])
 
         source.client.close()
         client = httpx.Client(
@@ -269,7 +336,6 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
                 # ISBN and public notice link on the first page. Exactly ONE
                 # GET, no product-page fetch, no pagination or open crawler.
                 raw = source.search("loup", cursor=None, limit=40)
-                report["public_query"] = "loup"
             else:
                 raw = source.browse(age=args.age, themes=(), text_filter="",
                                     cursor=None, limit=args.limit)
@@ -287,13 +353,13 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
             notices = evidence_for(cached, args.source)
             report.update({
                 "accepted": result.accepted, "rejected": result.rejected,
-                "ingest_errors": list(result.errors),
+                "ingest_error_count": len(result.errors),
                 "next_cursor_present": bool(raw.get("next_cursor")),
-                "qualified_notices": notices[:args.limit],
+                "qualified_notice_count": min(len(notices), args.limit),
                 "result": qualification_status(requests, notices),
             })
             if not requests:
-                report["reason"] = "no public HTTPS request observed"
+                report["error_code"] = "no_public_https_request"
         finally:
             # The transient Core profile is deleted after this call. Capture
             # only whitelisted diagnostic counters before it disappears,
@@ -302,7 +368,6 @@ def qualify(args: argparse.Namespace, report: dict) -> None:
             if diagnostic:
                 report["plugin_diagnostic"] = diagnostic
             client.close()
-            report["https_requests"] = requests
             report["requests_count"] = len(requests)
 
 
@@ -311,12 +376,12 @@ def main(argv=None) -> int:
     try:
         settings = plan(args)
     except ValueError as exc:
-        print(json.dumps({"result": "INVALID_INPUT", "reason": str(exc)}, ensure_ascii=False))
+        print(json.dumps({"result": "INVALID_INPUT", "error_code": "invalid_parameters"}, ensure_ascii=False))
         return 2
     report = {"timestamp_utc": datetime.now(timezone.utc).isoformat(), **settings}
     if not args.confirm_live:
-        report.update(result="NOT_RUN", reason="--confirm-live required for public HTTPS")
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        report.update(result="NOT_RUN", error_code="consent_required")
+        print(json.dumps(public_report(report), ensure_ascii=False, indent=2))
         return 2
     try:
         report["source_commit"] = subprocess.check_output(
@@ -327,8 +392,13 @@ def main(argv=None) -> int:
     try:
         qualify(args, report)
     except Exception as exc:
-        report.update(result="BLOCKED", error_type=type(exc).__name__, reason=str(exc)[:300])
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+        name = type(exc).__name__
+        error_code = ("timeout" if name in {"TimeoutError", "ReadTimeout", "ConnectTimeout", "PoolTimeout"}
+                      else "transport_error" if name in {"ConnectError", "NetworkError", "ProxyError"}
+                      else "http_error" if name == "HTTPStatusError"
+                      else "execution_failed")
+        report.update(result="BLOCKED", error_code=error_code)
+    print(json.dumps(public_report(report), ensure_ascii=False, indent=2))
     return 0 if report.get("result") == "PASS" else 1
 
 
