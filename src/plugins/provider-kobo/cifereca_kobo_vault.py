@@ -189,6 +189,42 @@ class KoboVaultClient:
             params["cursor"] = cursor
         return self._json("GET", "/library/search", params=params)
 
+    @staticmethod
+    def _public_catalog_hit(raw: dict[str, Any]) -> dict[str, Any]:
+        """Public discovery never attests ownership or a download entitlement.
+
+        Keep bibliographic and commercial catalogue metadata while erasing
+        account-only facts, even when Vault unexpectedly includes them.
+        A public record cannot claim to belong to a user's library via its
+        untrusted `collection` field.
+        """
+        item = dict(raw)
+        for key in (
+            "owned", "downloadable", "archived", "account_id",
+            "credential_id", "source_credential", "revision_id",
+            "acquisition", "entitlements", "rights", "local_path",
+            "download_url", "license_url", "signed_url",
+        ):
+            item.pop(key, None)
+        # Compatibility with existing catalogue consumers: a public hit is
+        # explicitly *not attested as owned*, never unknown/True by omission.
+        item["owned"] = False
+        item["collection"] = "catalog"
+        return item
+
+    @classmethod
+    def _public_catalog_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        items = payload.get("items")
+        if type(items) is not list:
+            return payload
+        return {
+            **payload,
+            "items": [
+                cls._public_catalog_hit(row) if type(row) is dict else row
+                for row in items
+            ],
+        }
+
     def search(
         self,
         query: str,
@@ -208,14 +244,22 @@ class KoboVaultClient:
         public catalogue bibliographic details absent from the account row.
         No ownership/download state is inferred from catalogue data.
         """
-        scope = str(scope or "all").lower()
+        # Unknown scopes must not silently broaden a catalog-only lookup
+        # into an authenticated two-endpoint library query.
         self.last_search_merge_rejections = []
+        if type(scope) is not str or scope.lower() not in {"catalog", "library", "all"}:
+            raise ProviderError("Kobo-Vault : portée de recherche invalide")
+        scope = scope.lower()
         if scope == "catalog":
-            return self.search_catalog(query, field=field, limit=limit, page=page)
+            return self._public_catalog_payload(
+                self.search_catalog(query, field=field, limit=limit, page=page)
+            )
         if scope == "library":
             return self.search_library(query, field=field, limit=limit, cursor=cursor)
 
-        catalog = self.search_catalog(query, field=field, limit=limit, page=page)
+        catalog = self._public_catalog_payload(
+            self.search_catalog(query, field=field, limit=limit, page=page)
+        )
         library = self.search_library(query, field=field, limit=limit, cursor=cursor)
         merged: dict[str, dict[str, Any]] = {}
         order: list[str] = []
