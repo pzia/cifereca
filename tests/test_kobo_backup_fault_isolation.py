@@ -295,6 +295,8 @@ def test_real_plugin_error_only_probes_denied_delegate_once_per_session(tmp_path
     import sys
 
     source = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
+    # Direct-file imports need sibling provider modules on the scoped test path.
+    monkeypatch.syspath_prepend(str(source.parent))
     spec = importlib.util.spec_from_file_location("test_real_cifereca_kobo_vault", source)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
