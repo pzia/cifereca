@@ -466,7 +466,11 @@ class NamingRepairTool(_ReadOnlyTool):
                     continue
                 placement_ids.append(placement.placement_id)
                 if len(changes) < 100:
-                    changes.append(f"{PurePath(current).name} → {PurePath(expected).name}")
+                    # Preview rows are displayed outside the trusted broker.
+                    # Filenames and suggested names may contain private
+                    # titles, paths and tokens. Preserve the real placement
+                    # identifier only in facts for the Core mutation.
+                    changes.append(f"Renommer le placement n°{len(placement_ids)}")
 
         summary = f"{len(placement_ids)} placement(s) à renormaliser selon la politique Core."
         warnings: list[str] = []
@@ -509,7 +513,19 @@ class NamingRepairTool(_ReadOnlyTool):
                 if getattr(result, "ok", True) is False:
                     failures += 1
                 changed += int(getattr(result, "changed", 0) or 0)
-                warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
+                # Broker warnings may include private local paths or provider
+                # responses. Public results expose only a bounded count.
+                core_warnings = getattr(result, "warnings", ())
+                count = (
+                    len(core_warnings)
+                    if isinstance(core_warnings, (tuple, list))
+                    else 1 if core_warnings else 0
+                )
+                if count:
+                    warnings.append(
+                        f"Renormalisation {index}/{total} : "
+                        f"{min(count, 1_000_000)} avertissement(s) du service"
+                    )
             except Exception as exc:
                 # A cancellation during the Core mutation is not a failed
                 # placement to swallow. Never leak an exception's private path.
