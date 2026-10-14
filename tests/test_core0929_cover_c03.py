@@ -72,7 +72,9 @@ def test_cli_refresh_covers_uses_catalog_force_flag():
 
 
 def test_library_cover_action_forces_reinspection_without_download():
-    build = _method_source(MAIN, "MainWindow", "_build_library_page")
+    module = ast.parse(MAIN.with_name("library_page_controller.py").read_text(encoding="utf-8"))
+    build = ast.unparse(next(n for n in module.body if isinstance(n, ast.FunctionDef)
+                             and n.name == "build_library_page"))
     refresh = _method_source(MAIN, "MainWindow", "refresh_library")
 
     assert "refresh_covers=True" in build
