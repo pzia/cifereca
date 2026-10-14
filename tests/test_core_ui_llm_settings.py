@@ -123,6 +123,83 @@ def test_probe_statuses_do_not_echo_backend_errors(reason, expected):
     assert probe_llm_connection(BASE, service_factory=lambda _cfg: FakeService()) == expected
 
 
+
+@pytest.mark.parametrize("reason,expected_code", [
+    ("cancelled", "cancelled"),
+    ("timeout", "timeout"),
+    ("auth_refused", "auth_refused"),
+    ("not_found", "not_found"),
+    ("rate_limited", "rate_limited"),
+    ("invalid_request", "invalid_request"),
+    ("backend_unavailable", "backend_unavailable"),
+    ("busy", "busy"),
+    ("unavailable", "invalid_config"),
+    ("request_too_large", "invalid_request"),
+    ("invalid_response", "inconclusive"),
+    ("SENSITIVE_REASON_not_for_logs", "inconclusive"),
+])
+def test_typed_probe_maps_only_known_codes_and_fixed_labels(reason, expected_code):
+    from cifereca.gui.llm_settings import (
+        probe_llm_connection_result, probe_llm_connection,
+    )
+    class FakeService:
+        def available(self):
+            return True
+
+        def generate(self, request):
+            return SimpleNamespace(
+                ok=False, text="PRIVATE_RESPONSE_NOT_FOR_LOGS", reason=reason,
+            )
+    factory = lambda _cfg: FakeService()
+    typed = probe_llm_connection_result(BASE, service_factory=factory)
+    assert typed.status == expected_code
+    assert "PRIVATE_RESPONSE" not in typed.label
+    assert "SENSITIVE_REASON" not in typed.label
+    assert typed.label == probe_llm_connection(BASE, service_factory=factory)
+
+
+def test_typed_probe_success_only_if_response_is_non_empty():
+    from cifereca.gui.llm_settings import probe_llm_connection_result
+    class FakeService:
+        def __init__(self, text):
+            self.text = text
+
+        def available(self):
+            return True
+
+        def generate(self, request):
+            return SimpleNamespace(ok=True, text=self.text, reason="")
+
+    positive = probe_llm_connection_result(
+        BASE, service_factory=lambda _cfg: FakeService("OK"),
+    )
+    empty = probe_llm_connection_result(
+        BASE, service_factory=lambda _cfg: FakeService(" "),
+    )
+    assert (positive.status, positive.label) == ("success", "Test réussi")
+    assert empty.status == "inconclusive"
+
+
+def test_typed_probe_never_contacts_unavailable_or_unapproved_destination():
+    from cifereca.gui.llm_settings import probe_llm_connection_result
+    calls = []
+    def no_network(cfg):
+        calls.append(True)
+        return SimpleNamespace(available=lambda: False)
+
+    unavailable = probe_llm_connection_result(BASE, service_factory=no_network)
+    assert unavailable.status == "invalid_config"
+    assert calls == [True]
+
+    remote = {
+        **BASE, "endpoint": "https://remote.example/private/api",
+        "allow_remote": True,
+    }
+    with pytest.raises(LLMSettingsError, match="Confirmer"):
+        probe_llm_connection_result(remote, service_factory=no_network)
+    assert calls == [True]  # No POST, no factory construction.
+
+
 def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
     source = (
         Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
