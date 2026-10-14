@@ -53,9 +53,39 @@ jobs:
           AGE=8
           if [[ "$SOURCE" == "ecole-loisirs" ]]; then AGE=3; fi
           mkdir -p youth-live-evidence
+          # Keep untrusted stdout/stderr outside uploaded artifacts and summaries.
+          raw="$RUNNER_TEMP/youth-live-unvalidated.json"
+          trap 'rm -f "$raw"' EXIT
           python scripts/qualify-youth-source-live.py \
             --source "$SOURCE" --age "$AGE" --limit 2 --timeout 6 \
-            --confirm-live > youth-live-evidence/result.json
+            --confirm-live > "$raw" 2>/dev/null || :
+          # Fail closed, even if a plugin wrote extra text to stdout.
+          python - "$raw" <<'PY' > youth-live-evidence/result.json
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import sys
+          spec = importlib.util.spec_from_file_location(
+              "youth_live_evidence", "scripts/qualify-youth-source-live.py"
+          )
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          try:
+              raw_report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+              if not isinstance(raw_report, dict) or raw_report.get("source") != os.environ["SOURCE"]:
+                  raise ValueError("invalid report source")
+              safe = module.public_report(raw_report)
+              if safe["result"] == "PASS" and (
+                  safe.get("requests_count", 0) < 1
+                  or safe.get("qualified_notice_count", 0) < 1
+              ):
+                  raise ValueError("unverified PASS")
+          except Exception:
+              safe = {"result": "BLOCKED", "error_code": "invalid_evidence"}
+          print(json.dumps(safe, ensure_ascii=False, indent=2))
+          sys.exit(0 if safe["result"] == "PASS" else 1)
+          PY
       - name: Publish result summary
         if: always()
         shell: bash

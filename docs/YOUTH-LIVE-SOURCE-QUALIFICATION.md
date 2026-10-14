@@ -74,10 +74,20 @@ ce workflow n'est ni un check requis ni une release.
 
 ## Interprétation des résultats
 
-Le JSON inclut UTC, SHA Git, version Core, identifiant du plugin réellement
-installé, URLs publiques consultées, décompte des requêtes et des notices,
-titres, ISBN si présent, tranches d'âge explicitement publiées, provenance et
-erreurs éventuelles. Aucun jeton, compte utilisateur ou cache permanent.
+Le JSON **publié** (résumé Actions et artefact) applique désormais une
+**liste blanche fermée** : état de qualification, source/hôte public autorisé,
+date/version/SHA formatés, décomptes de requêtes, d'ingestion, d'erreurs et de
+notices qualifiées, indicateurs booléens, code d'erreur énuméré et diagnostic
+structurel borné. Les titres, ISBN, notices, URL complètes (requêtes ou
+produits), recherches, libellés libres, messages d'exception et chemins privés
+ne sont **jamais exportés**. Les preuves bibliographiques détaillées sont
+utilisées seulement en mémoire pour calculer le verdict.
+
+Le workflow capture la sortie brute du script hors des artefacts, la valide
+séparément puis ne publie que le rapport filtré. Toute sortie non JSON,
+source incohérente ou déclaration de succès sans requête et notice qualifiée
+devient un résultat `BLOCKED / invalid_evidence`, sans reprise automatique.
+Les journaux bruts de la qualification ne sont pas exposés dans Actions.
 
 ### Diagnostic Milan embarqué dans le JSON (depuis le correctif P1)
 
@@ -106,7 +116,8 @@ Seuls les compteurs bornés (`http_status`, `html_bytes`,
 `unqualified_age_count`, `duration_ms`), les indicateurs booléens
 (`content_type_is_html`, `text_filter_present`,
 `next_cursor_present`), les états explicitement connus,
-l'empreinte HTML SHA256 tronquée et un type d'exception neutre sont admis.
+l'empreinte HTML SHA256 tronquée et un type d'exception issu d'une liste
+fermée sont admis.
 Aucun terme recherché, URL supplémentaire, titre, en-tête, cookie ou HTML
 brut n'est exporté. `http_status=200` avec zéro notice ne vaut **pas**
 `PASS` : le verdict conserve les règles strictes du catalogue.
