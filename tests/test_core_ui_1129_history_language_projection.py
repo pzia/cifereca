@@ -82,7 +82,12 @@ def test_owner_is_headless_and_mainwindow_public_language_lookup_signature_uncha
     assert [arg.arg for arg in known.args.args] == [
         "self", "provider_id", "item_id", "metadata",
     ]
-    assert "history_language_projection.item_languages" in ast.unparse(known)
+    assert "known_languages_controller.known_item_languages" in ast.unparse(known)
+    # The extracted façade delegates to the existing, single-owner projection.
+    controller = ast.parse(
+        (ROOT / "known_languages_controller.py").read_text(encoding="utf-8")
+    )
+    assert "history_language_projection.item_languages" in ast.unparse(controller)
     populate = next(n for n in cls.body
                     if isinstance(n, ast.FunctionDef) and n.name == "_populate_history")
     source = ast.unparse(populate)
