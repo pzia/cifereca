@@ -12,6 +12,22 @@ LOCAL_NODE_LIMIT = 300
 PAGE_CACHE_PROFILES = 8
 
 
+def _usable_nodes(rows, *, origin='catalogue'):
+    """Project individually: one bad provider row must not erase the graph.
+
+    The returned counter is public; failures never surface their exception
+    text, row contents, provider credentials or private file paths.
+    """
+    nodes = []
+    rejected = 0
+    for row in rows:
+        try:
+            nodes.append(node_from_row(row, origin=origin))
+        except Exception:
+            rejected += 1
+    return tuple(nodes), rejected
+
+
 def constellation_detail_presentation(node) -> UiBookDetailPresentation:
     """Public book-detail projection with individual bibliographic values.
 
@@ -244,15 +260,20 @@ class View:
                 rows, truncated = cached
             if control.cancelled():
                 return None
-            local = tuple(node_from_row(r, origin='bibliothèque') for r in rows)
-            extra = ()
+            local, skipped_local = _usable_nodes(rows, origin='bibliothèque')
+            extra, skipped_remote = (), 0
             if remote and not control.cancelled():
-                extra = tuple(node_from_row(r) for r in context.broker('catalog').search(remote, identity_id=identity, limit=100)[:100])
+                remote_rows = context.broker('catalog').search(remote, identity_id=identity, limit=100)[:100]
+                extra, skipped_remote = _usable_nodes(remote_rows)
             if control.cancelled():
                 return None
-            seed = node_from_row(pending, origin='sélection') if pending else None
-            nodes = merge_nodes(local + extra + ((seed,) if seed else ()))
-            return rows, local, nodes, seed.key if seed else None, truncated
+            seeds, skipped_seed = _usable_nodes((pending,), origin='sélection') if pending else ((), 0)
+            seed = seeds[0] if seeds else None
+            nodes = merge_nodes(local + extra + seeds)
+            return (
+                rows, local, nodes, seed.key if seed else None, truncated,
+                skipped_local + skipped_remote + skipped_seed,
+            )
         self.run_calculation(operation, lambda result: self.loaded(self.generation, identity, result, ''), 'Chargement Constellations')
 
     def run_calculation(self, operation, complete, label):
@@ -287,6 +308,7 @@ class View:
             self.status.set_label(error); return False
         rows, self.local, self.nodes, seed_key, *extra = result
         truncated = bool(extra[0]) if extra else False
+        rejected = int(extra[1]) if len(extra) > 1 else 0
         self.cache.pop(identity, None)
         self.cache[identity] = (rows, truncated)
         while len(self.cache) > PAGE_CACHE_PROFILES:
@@ -299,6 +321,7 @@ class View:
         self.status.set_label(
             f'{coverage} · {len(self.nodes)} nœud(s) pour ce profil · '
             'voisinage local sans collecte automatique'
+            + (f' · {rejected} notice(s) non exploitables' if rejected else '')
         )
         if seed_key or not getattr(self.plugin, 'pending_identity', '') or (
             self.plugin.pending_identity == identity
