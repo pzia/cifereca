@@ -4,13 +4,16 @@ Ce fichier s'applique à tout le dépôt. Il fixe les priorités, les frontière
 
 ## Priorités : une seule file
 
-- **P0 — stabilité** : sécurité, régressions bloquantes, intégrité des données, installation, CI et release fiable.
-- **P1 — réalisation prioritaire** : suites Core/CoreUI, Plugins, UX et CI/CD non bloquantes, selon le classement GitHub et les dépendances indispensables.
-- **P2 — reste** : autres plugins, ergonomie non bloquante, recherche et idées.
+La priorité exprime **l'urgence et l'engagement dans la réalisation**, non le rôle, le composant ou la catégorie technique du ticket.
 
-Le label GitHub P0/P1/P2 fait foi et doit être **unique par issue**. Le rôle, l'ancienneté et les anciennes sous-priorités de plugin ne changent pas le rang. Pour les travaux Plugins P1, la cible reste fixée par le backlog, pas par opportunité ; les autres rôles traitent leurs propres P1 sans être artificiellement bloqués par ce choix. Voir [#839](https://github.com/pzia/cifereca/issues/839) pour les critères courants de stabilité.
+- **P0 — bloquant ou urgent** : défaut ou décision nécessitant un traitement immédiat, **le plus souvent à l'initiative du propriétaire du projet**. Un agent peut signaler une urgence étayée (sécurité, perte de données, panne bloquante, etc.) au backlog ; il ne transforme pas par précaution toutes les anomalies techniques en P0.
+- **P1 — chantier actif important** : sujet important **sur lequel on travaille actuellement**, quel que soit le rôle exécutant (`core/coreui`, `plugins`, `cicd/merger`, etc.). **P1 n'est pas réservé au prochain plugin.**
+- **P2 — backlog fonctionnel** : ticket **précis et actionnable**, non directement lié au sujet du moment. Le conserver au backlog sans réalisation opportuniste ; sa promotion en P1 traduit la décision de l'engager comme chantier actif.
+- **P3 — idées** : concepts, pistes ou propositions **non retenus pour implémentation**. Les conserver sans créer de branche/PR ni lancer de développement jusqu'à décision explicite, puis requalification en P1/P2 selon le cas.
 
-Avant chaque étape, examiner issues, PR, branches et CI récentes ; éviter les travaux concurrents. Si le premier sujet est bloqué, documenter précisément le blocage et avancer sur un autre sujet de **même priorité**. Ne passer plus bas que si les travaux prioritaires sont réellement bloqués ou indépendants, en laissant cette situation visible.
+Le **label GitHub unique P0/P1/P2/P3** fait foi sur chaque issue ; le rôle, l'ancienneté et la seule existence d'une implémentation possible n'autorisent aucune promotion automatique. Le propriétaire peut réviser la priorité à tout moment ; `backlog` documente les changements de périmètre, l'arbitrage et le lien avec le chantier actif. Voir [#839](https://github.com/pzia/cifereca/issues/839) pour les critères de stabilité, qui ne remplacent pas cette classification produit.
+
+Avant chaque étape, examiner issues, PR, branches et CI récentes ; éviter les travaux concurrents. Un **P0 réel** interrompt les travaux moins urgents lorsque c'est nécessaire à son traitement. Hors P0, avancer sur le **P1 actif** et ses dépendances indispensables. Si le sujet actif est bloqué, documenter précisément le blocage et poursuivre un autre travail P0/P1 autorisé, **pas un P2 ou P3 opportuniste**. Un P2 n'entre en réalisation que sur demande explicite ou promotion décidée ; un P3 exige une décision produit explicite.
 
 ## Périmètre strict du ticket et restitution par défaut
 
@@ -31,15 +34,15 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 | **plugins** | Fonctionnalités sous src/plugins/, manifestes et tests de chaque plugin. Consommer uniquement cifereca.plugin_api ; demander une évolution Core si nécessaire. |
 | **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires, preuves GTK et tickets UX ; ne corrige pas le produit. |
 | **cicd** | Workflows, packaging, intégration des E2E ciblés, contrôles, **merge** des PR prêtes et vérification de la clôture des issues. |
-| **focus** | **Méta-rôle** : choisit les étapes selon P0 → P1 → P2 ; adopte `backlog`, `core`, `plugins` ou `cicd`. Le rôle `ux` reste indépendant et **exclu de focus**. |
+| **focus** | **Méta-rôle** : choisit les étapes selon P0 urgent → P1 actif ; P2 seulement sur demande/promotion, P3 en idées ; adopte `backlog`, `core`, `plugins` ou `cicd`. Le rôle `ux` reste indépendant et **exclu de focus**. |
 
-Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **simulation** = ux (périmètre simulateurs et recettes). Le rôle core donne priorité au non-UI à **priorité égale**, et cicd aux gates CI avant les merges à **priorité égale**. Ces préférences ne dépassent jamais P0/P1/P2.
+Alias acceptés : **merger** = cicd ; **coreui** = core (périmètre UI) ; **simulation** = ux (périmètre simulateurs et recettes). Le rôle core donne priorité au non-UI à **priorité égale**, et cicd aux gates CI avant les merges à **priorité égale**. Ces préférences ne dépassent jamais P0/P1/P2/P3.
 
 ## Méta-rôle focus : une étape à la fois
 
 Quand le rôle demandé est focus, ou quand une demande porte sur un enchaînement transversal : **focus ne prend jamais le rôle `ux` (ni son alias `simulation`)**. Il transmet les recettes visuelles et simulations UX au propriétaire UX indépendant, même pour un P0, puis avance sur un autre travail autorisé.
 
-1. **Lire la situation** : état de main, issues P0/P1/P2, PR, CI, dépendances et preuves déjà disponibles.
+1. **Lire la situation** : état de main, issues P0/P1/P2/P3, PR, CI, dépendances et preuves déjà disponibles.
 2. **Choisir une seule action utile** : priorité la plus haute, travail non dupliqué et résultat vérifiable ; annoncer le rôle actif et la référence GitHub.
 3. **Agir dans ce rôle** : produire un incrément cohérent (correctif + tests + PR, recette + preuves, triage, ou merge). Un changement de propriétaire implique une nouvelle étape.
 4. **Synchroniser** si un état change ou qu'un autre rôle doit intervenir : actualiser l'issue existante ou la PR avec **état, résultat, preuve/SHA, blocage, prochain rôle et action**. Ne pas créer une issue-journal par étape ni publier des commentaires sans information nouvelle.
