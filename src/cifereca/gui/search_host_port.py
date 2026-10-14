@@ -61,3 +61,33 @@ class SearchDetailHost(Protocol):
     def _book_description(self, item: Any) -> Any: ...
     def run_search(self, online: bool = False, **kwargs: Any) -> Any: ...
     def toast(self, message: str, *args: Any) -> Any: ...
+
+
+# Only capabilities actually read/written by the async search orchestration.
+SEARCH_RUN_CAPABILITIES = frozenset({
+    "_closed", "_reset_search_enter", "search_controls", "service",
+    "_search_generation", "toast", "_last_search_query", "_search_mode",
+    "_populate_local_search", "runner", "search_button", "_remote_query_key",
+    "_remote_search_results", "_search_local_objects", "_online_pending_key",
+    "_online_pending_token", "_online_pending_generation", "_populate_search",
+    "show_error",
+})
+
+
+class SearchRunPort:
+    """Bounded adapter: search orchestration cannot access arbitrary window UI."""
+
+    __slots__ = ("_window",)
+
+    def __init__(self, window: Any) -> None:
+        object.__setattr__(self, "_window", window)
+
+    def __getattr__(self, name: str) -> Any:
+        if name not in SEARCH_RUN_CAPABILITIES:
+            raise AttributeError(name)
+        return getattr(self._window, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name not in SEARCH_RUN_CAPABILITIES:
+            raise AttributeError(name)
+        setattr(self._window, name, value)
