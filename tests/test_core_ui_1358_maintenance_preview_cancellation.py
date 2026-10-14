@@ -135,9 +135,11 @@ def _method():
                if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     fn = next(n for n in cls.body
               if isinstance(n, ast.FunctionDef) and n.name == "_refresh_tools_page")
+    dispose = next(n for n in cls.body
+                   if isinstance(n, ast.FunctionDef) and n.name == "_dispose_maintenance_lines")
     code = ast.fix_missing_locations(ast.Module(body=[
         ast.ImportFrom(module="__future__",
-                       names=[ast.alias(name="annotations")], level=0), fn,
+                       names=[ast.alias(name="annotations")], level=0), dispose, fn,
     ], type_ignores=[]))
     namespace = {
         "clear_box": lambda box: box.children.clear(),
@@ -153,12 +155,19 @@ def _method():
         "MaintenanceContext": lambda **kw: NS(**kw),
         "MaintenanceCancelControl": guard.MaintenanceCancelControl,
         "MaintenanceCancelledError": guard.MaintenanceCancelledError,
+        "MaintenanceBusyError": guard.MaintenanceBusyError,
+        "MaintenancePlanChangedError": guard.MaintenancePlanChangedError,
         "preview_maintenance_tool": guard.preview_maintenance_tool,
         "execute_maintenance_tool": guard.execute_maintenance_tool,
         "TaskPriority": NS(MAINTENANCE=1),
     }
     exec(compile(code, str(MAIN), "exec"), namespace)
-    return namespace["_refresh_tools_page"]
+    def refresh(host):
+        host._dispose_maintenance_lines = lambda: namespace["_dispose_maintenance_lines"](host)
+        return namespace["_refresh_tools_page"](host)
+    # Keep the production namespace injectable by specialised headless fixtures.
+    refresh.production_globals = namespace
+    return refresh
 
 
 def _mounted():
