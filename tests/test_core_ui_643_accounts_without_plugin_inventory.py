@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from pathlib import Path
@@ -21,7 +22,7 @@ def _method(path: Path, name: str, class_name: str | None = None) -> str:
 def test_accounts_tab_starts_with_identity_configuration_not_plugin_inventory():
     identity = _method(ACCOUNTS, "build_identity_settings_header")
     provider = _method(ACCOUNTS, "build_provider_accounts_header")
-    main = _method(MAIN, "_build_settings_page", "MainWindow")
+    main = ast.unparse(ast.parse(settings_source_text()))
     source = identity + provider + main
     assert "Plugins fournisseurs" not in source
     assert "descriptor.capabilities.names()" not in source
@@ -32,7 +33,7 @@ def test_accounts_tab_starts_with_identity_configuration_not_plugin_inventory():
 
 
 def test_provider_descriptors_still_drive_account_editors_without_exposing_capability_codes():
-    source = _method(MAIN, "_build_settings_page", "MainWindow")
+    source = ast.unparse(ast.parse(settings_source_text()))
     buttons = _method(ACCOUNTS, "build_provider_account_buttons")
     assert "descriptors = {d.id: d for d in self.service.provider_descriptors()}" in source
     assert "descriptor.credential_fields" in buttons
@@ -42,7 +43,7 @@ def test_provider_descriptors_still_drive_account_editors_without_exposing_capab
 
 def test_technical_plugin_information_is_redirected_out_of_normal_account_flow():
     headers = _method(ACCOUNTS, "build_provider_accounts_header")
-    source = _method(MAIN, "_build_settings_page", "MainWindow")
+    source = ast.unparse(ast.parse(settings_source_text()))
     assert "Gérer les plugins et leurs capacités techniques…" in headers
     assert "self.navigate('plugins')" in source
     assert "Les capacités internes des plugins restent dans Plugins et Diagnostic." in headers

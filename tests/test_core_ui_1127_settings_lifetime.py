@@ -1,5 +1,6 @@
 """P0 #1127: stale asynchronous Settings UI callbacks are inert."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from pathlib import Path
@@ -49,7 +50,7 @@ def test_window_lifecycle_disposes_on_close_rebuild_and_standalone():
         n for n in window.body if isinstance(n, ast.FunctionDef) and n.name == name
     ))
     init = get("__init__")
-    build = get("_build_settings_page")
+    build = ast.unparse(ast.parse(settings_source_text()))
     close = get("_on_close_request")
     standalone = get("_open_prelogin_diagnostics")
     assert "SettingsPageLifetime()" in build

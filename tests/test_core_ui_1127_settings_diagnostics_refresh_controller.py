@@ -137,11 +137,8 @@ def test_headless_controller_and_settings_builder_delegation():
     assert "import gi" not in source and "from .main_window" not in source
     assert any(isinstance(n, ast.FunctionDef)
                and n.name == "refresh_settings_diagnostics" for n in owner.body)
-    main = ast.parse(MAIN.read_text(encoding="utf-8"))
-    window = next(x for x in main.body if isinstance(x, ast.ClassDef)
-                  and x.name == "MainWindow")
-    builder = next(x for x in window.body if isinstance(x, ast.FunctionDef)
-                   and x.name == "_build_settings_page")
+    main = ast.parse(MAIN.with_name("settings_diagnostics_actions.py").read_text(encoding="utf-8"))
+    builder = next(x for x in main.body if isinstance(x, ast.FunctionDef) and x.name == "bind_settings_diagnostics")
     nested = next(x for x in ast.walk(builder) if isinstance(x, ast.FunctionDef)
                   and x.name == "refresh_text")
     body = ast.unparse(nested)

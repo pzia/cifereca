@@ -125,10 +125,9 @@ def test_mainwindow_explicit_kobo_action_is_saved_and_lifetime_gated():
     import ast
     from pathlib import Path
     source = (Path(__file__).resolve().parents[1] /
-              "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+              "src/cifereca/gui/settings_sync_actions.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
-    window = next(c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "MainWindow")
-    builder = next(f for f in window.body if isinstance(f, ast.FunctionDef) and f.name == "_build_settings_page")
+    builder = next(f for f in tree.body if isinstance(f, ast.FunctionDef) and f.name == "bind_settings_sync_actions")
     manual = next(f for f in builder.body if isinstance(f, ast.FunctionDef) and f.name == "manual_kobo_backup")
     rendered = ast.unparse(manual)
     assert 'page_lifetime.alive' in rendered
@@ -161,12 +160,9 @@ def test_manual_kobo_callback_requires_exact_saved_boolean_opt_in():
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] /
-              "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+              "src/cifereca/gui/settings_sync_actions.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
-    window = next(c for c in tree.body
-                  if isinstance(c, ast.ClassDef) and c.name == "MainWindow")
-    builder = next(f for f in window.body
-                   if isinstance(f, ast.FunctionDef) and f.name == "_build_settings_page")
+    builder = next(f for f in tree.body if isinstance(f, ast.FunctionDef) and f.name == "bind_settings_sync_actions")
     manual = next(f for f in builder.body
                   if isinstance(f, ast.FunctionDef) and f.name == "manual_kobo_backup")
     refresh = next(f for f in builder.body

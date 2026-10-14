@@ -5,13 +5,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_commit_actions.py"
 
 
 def _save_callback():
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    owner = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    builder = next(node for node in owner.body if isinstance(node, ast.FunctionDef) and node.name == "_build_settings_page")
+    builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "bind_settings_commit")
     callback = next(node for node in ast.walk(builder) if isinstance(node, ast.FunctionDef) and node.name == "save_settings")
     return compile(ast.fix_missing_locations(ast.Module(body=[callback], type_ignores=[])), str(MAIN), "exec")
 
