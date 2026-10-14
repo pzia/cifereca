@@ -25,7 +25,7 @@ def build_main_shell(window, *, Gtk, add_css, version):
     sidebar.set_size_request(160, -1)
     add_css(sidebar, "sidebar")
     body.append(sidebar)
-    brand = Gtk.Label(label=f"v{__version__}", xalign=0)
+    brand = Gtk.Label(label=f"v{version}", xalign=0)
     brand.set_margin_top(14); brand.set_margin_start(16); brand.set_margin_bottom(4)
     add_css(brand, "caption", "dim-label")
     sidebar.append(brand)
