@@ -193,10 +193,16 @@ class KoboCatalogService:
         if product_id is None:
             raise ProviderError("Kobo-Vault : identifiant de notice non vérifiable")
         authors = item.get("authors")
-        if isinstance(authors, list):
-            author = ", ".join(str(x) for x in authors if str(x).strip()) or None
+        if type(authors) in (list, tuple):
+            accepted_authors = [
+                value.strip() for value in authors
+                if type(value) is str and value.strip()
+            ]
+            author = ", ".join(accepted_authors) or None
         else:
-            author = str(item.get("author") or "").strip() or None
+            accepted_authors = []
+            raw_author = item.get("author")
+            author = raw_author.strip() or None if type(raw_author) is str else None
         fmt = str(item.get("format") or item.get("file_format") or "").strip().upper() or None
         content_type = str(item.get("content_type") or "ebook").lower()
         owned = item.get("owned")
@@ -237,13 +243,51 @@ class KoboCatalogService:
             metadata.pop("product_url", None)
         else:
             metadata["product_url"] = product_url
-        if isinstance(metadata.get("language"), str):
-            metadata["language"] = normalize_language_tag(metadata["language"])
-        if isinstance(metadata.get("languages"), (list, tuple)):
-            metadata["languages"] = list(dict.fromkeys(
-                canonical for raw in metadata["languages"]
-                if (canonical := normalize_language_tag(str(raw))) is not None
-            ))
+        # SearchResult.metadata also reaches public details and diagnostics.
+        # Replace (or remove) malformed author/language fields rather than
+        # retaining the raw nested objects that the byline just rejected.
+        if "authors" in metadata:
+            if type(authors) in (list, tuple):
+                metadata["authors"] = list(accepted_authors)
+            else:
+                metadata.pop("authors")
+        if "author" in metadata and type(item.get("author")) is not str:
+            metadata.pop("author")
+        if "language" in metadata:
+            raw_language = metadata["language"]
+            if type(raw_language) is not str:
+                metadata.pop("language")
+            elif not raw_language.strip():
+                metadata["language"] = None
+            else:
+                try:
+                    canonical = normalize_language_tag(raw_language)
+                    metadata["language"] = (
+                        canonical if type(canonical) is str and canonical.strip() else None
+                    )
+                except Exception:
+                    # An upstream invalid tag or failing normalizer must not
+                    # abort all other catalogue hits or export its exception.
+                    metadata["language"] = None
+        if "languages" in metadata:
+            raw_languages = metadata["languages"]
+            if type(raw_languages) not in (list, tuple):
+                metadata.pop("languages")
+            else:
+                accepted_languages: list[str] = []
+                for raw in raw_languages:
+                    if type(raw) is not str or not raw.strip():
+                        continue
+                    try:
+                        canonical = normalize_language_tag(raw)
+                    except Exception:
+                        continue
+                    if (
+                        type(canonical) is str and canonical.strip()
+                        and canonical not in accepted_languages
+                    ):
+                        accepted_languages.append(canonical)
+                metadata["languages"] = accepted_languages
         if cover and collection == "catalog":
             metadata["catalog_cover"] = {
                 "url": cover,
