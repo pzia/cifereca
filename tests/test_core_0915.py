@@ -12,6 +12,7 @@ from cifereca.identities.directory_selection import directory_choice
 from cifereca.identities.directory_migration import DirectoryMigrationError
 from cifereca.catalog import LocalCatalog
 from cifereca.gui.dashboard_render_controller import render_dashboard
+from cifereca.gui.dashboard_page_controller import build_dashboard_page
 
 class Core0915(unittest.TestCase):
     def setUp(self):
@@ -178,7 +179,8 @@ class Core0915(unittest.TestCase):
             widget=Mock();widget.children=[];widget.append.side_effect=widget.children.append;boxes.append(widget);return widget
         grid=Mock();scroll=Mock();window=NS(action_button=Mock(return_value=Mock()))
         ns={'Gtk':NS(ScrolledWindow=lambda:scroll,PolicyType=NS(NEVER=0,AUTOMATIC=1),Box=box,Label=lambda **kw:Mock(),FlowBox=lambda:grid,Orientation=NS(VERTICAL=0,HORIZONTAL=1),SelectionMode=NS(NONE=0),Align=NS(END=1)), 'add_css':Mock(), 'AdaptiveActionBar':lambda source=None:box()}
-        exec(self.extract('_build_dashboard_page'),ns);ns['_build_dashboard_page'](window)
+        build_dashboard_page(window, Gtk=ns['Gtk'], add_css=ns['add_css'],
+                             AdaptiveActionBar=ns['AdaptiveActionBar'])
         grid.set_max_children_per_line.assert_called_once_with(3)
         self.assertIn(boxes[2],boxes[1].children);self.assertNotIn(boxes[2],boxes[0].children)
     def test_home_name_button_uses_label_and_exact_identity(self):

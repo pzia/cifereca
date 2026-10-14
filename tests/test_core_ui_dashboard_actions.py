@@ -16,7 +16,13 @@ def _method_source(class_name: str, method_name: str) -> str:
 
 
 def test_dashboard_header_actions_use_adaptive_bar():
-    source = _method_source("MainWindow", "_build_dashboard_page")
+    owner = MAIN_WINDOW.with_name("dashboard_page_controller.py")
+    tree = ast.parse(owner.read_text(encoding="utf-8"))
+    method = next(node for node in tree.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "build_dashboard_page")
+    source = ast.unparse(method)
+    facade = _method_source("MainWindow", "_build_dashboard_page")
+    assert "dashboard_page_controller.build_dashboard_page" in facade
 
     assert "actions = AdaptiveActionBar(source=heading)" in source
     assert "Synchronisation rapide" in source

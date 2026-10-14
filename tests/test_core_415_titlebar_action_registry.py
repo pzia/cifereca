@@ -94,6 +94,11 @@ def test_plugin_configuration_surfaces_scope_and_obsolete_ids():
 
 
 def _method_source(name: str) -> str:
+    if name == "_create_shell_header":
+        owner = ast.parse(MAIN.with_name("shell_header_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body
+                                if isinstance(n, ast.FunctionDef)
+                                and n.name == "create_shell_header"))
     if name == "_refresh_header_actions":
         tree = ast.parse(HEADER_OWNER.read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in tree.body
@@ -124,8 +129,8 @@ def test_page_menu_is_reasserted_rightmost_after_build_refresh_and_reconstructio
                                and node.name == "plugins_changed"))
     assert "plugin_reload_controller.plugins_changed(self)" in _method_source("_plugins_changed")
 
-    assert "self._header_controls = controls" in create
-    assert "self._ensure_pages_menu_rightmost()" in create
+    assert "window._header_controls = controls" in create
+    assert "window._ensure_pages_menu_rightmost()" in create
     assert "window._ensure_pages_menu_rightmost()" in refresh
     assert "window._ensure_pages_menu_rightmost()" in changed
 

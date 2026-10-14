@@ -14,6 +14,7 @@ ACTIVITY = ROOT / "src/cifereca/gui/task_activity_adapter.py"
 STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
 RESULT_OWNER = ROOT / "src/cifereca/gui/activity_result_controller.py"
 VIEW_OWNER = ROOT / "src/cifereca/gui/activity_feedback_view_controller.py"
+SHELL_OWNER = ROOT / "src/cifereca/gui/shell_body_controller.py"
 
 
 def _method(path: Path, class_name: str, name: str) -> str:
@@ -27,6 +28,10 @@ def _method(path: Path, class_name: str, name: str) -> str:
         path = ACTIVITY
         class_name = None
         name = activity_methods[name]
+    if name == "_build_main_shell":
+        path = SHELL_OWNER
+        class_name = None
+        name = "build_main_shell"
     if name == "_activity_result":
         path = RESULT_OWNER
         class_name = None
@@ -83,9 +88,12 @@ def test_history_is_bounded_and_newest_first():
 
 def test_main_footer_has_one_activity_row_with_history_and_acknowledgement():
     source = _method(MAIN, "MainWindow", "_build_main_shell")
-    assert source.count("self.busy_revealer = Gtk.Revealer()") == 1
+    facade = _method(MAIN, "MainWindow", "_build_main_shell")
+    assert "window.busy_revealer" in source
+    assert "shell_body_controller.build_main_shell" in MAIN.read_text(encoding="utf-8")
+    assert source.count("window.busy_revealer = Gtk.Revealer()") == 1
     assert "Gtk.MenuButton(label='Historique')" in source
-    assert "self.activity_history_box" in source
+    assert "window.activity_history_box" in source
     assert "Acquitter le résultat courant" in source
 
 

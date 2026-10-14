@@ -36,10 +36,15 @@ from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
 from . import shell_shortcut_controller
 from . import statistics_presentation_controller
+from . import dashboard_page_controller
 from . import dashboard_render_controller
+from . import plugin_action_dispatch_controller
 from . import shell_identity_selector_controller
+from . import shell_account_selection_controller
 from . import shell_layout_controller
+from . import shell_body_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
+from . import shell_header_controller
 from .search_state import SearchStateField
 from .settings_lifetime import SettingsPageLifetime
 from . import settings_page, standalone_settings_controller
@@ -413,72 +418,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- shell / navigation ----------
     def _build_main_shell(self) -> Gtk.Widget:
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.shell_root = root
-        from .navigation_history import NavigationHistory
-        self._navigation_history = NavigationHistory()
-        self._restoring_navigation = False
-        self.shell_header = self._create_shell_header()
-        root.append(self.shell_header)
-
-        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        body.set_vexpand(True)
-        root.append(body)
-        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.sidebar = sidebar
-        sidebar.set_size_request(160, -1)
-        add_css(sidebar, "sidebar")
-        body.append(sidebar)
-        brand = Gtk.Label(label=f"v{__version__}", xalign=0)
-        brand.set_margin_top(14); brand.set_margin_start(16); brand.set_margin_bottom(4)
-        add_css(brand, "caption", "dim-label")
-        sidebar.append(brand)
-        self.nav_list = Gtk.ListBox()
-        self.nav_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.nav_list.set_activate_on_single_click(True)
-        self.nav_list.connect("row-selected", self._nav_selected)
-        sidebar.append(self.nav_list)
-        self.nav_rows: dict[str, Gtk.ListBoxRow] = {}
-        self._nav_groups = {}
-        self._nav_group_expanded = {}
-        self.view_stack = Gtk.Stack()
-        self.view_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.view_stack.set_hhomogeneous(False)
-        self.view_stack.set_hexpand(True); self.view_stack.set_vexpand(True)
-        body.append(self.view_stack)
-        self._rebuild_plugin_pages()
-
-        self.busy_revealer = Gtk.Revealer()
-        self.busy_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-        busy = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=9)
-        add_css(busy, "busy-bar")
-        self.busy_spinner = Gtk.Spinner(); self.busy_spinner.set_visible(False); busy.append(self.busy_spinner)
-        self.activity_status_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
-        self.activity_status_icon.set_visible(False); busy.append(self.activity_status_icon)
-        self.busy_label = Gtk.Label(label="", xalign=0)
-        self.busy_label.set_hexpand(True); self.busy_label.set_wrap(True); busy.append(self.busy_label)
-
-        self.activity_history_button = Gtk.MenuButton(label="Historique")
-        self.activity_history_button.set_icon_name("view-list-symbolic")
-        self.activity_history_button.set_tooltip_text("Historique des opérations")
-        self.activity_history_button.set_visible(False)
-        history_popover = Gtk.Popover()
-        self.activity_history_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        self.activity_history_box.set_margin_top(8); self.activity_history_box.set_margin_bottom(8)
-        self.activity_history_box.set_margin_start(10); self.activity_history_box.set_margin_end(10)
-        history_popover.set_child(self.activity_history_box)
-        self.activity_history_button.set_popover(history_popover)
-        busy.append(self.activity_history_button)
-
-        self.activity_dismiss = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        self.activity_dismiss.set_tooltip_text("Acquitter le résultat courant")
-        self.activity_dismiss.set_visible(False)
-        self.activity_dismiss.connect("clicked", lambda _button: self._dismiss_activity_feedback())
-        busy.append(self.activity_dismiss)
-        root.append(self.busy_revealer); self.busy_revealer.set_child(busy)
-
-        self.navigate("dashboard")
-        return root
+        return shell_body_controller.build_main_shell(
+            self, Gtk=Gtk, add_css=add_css, version=__version__,
+        )
 
     _UiHost = _UiHost
 
@@ -589,88 +531,9 @@ class MainWindow(Adw.ApplicationWindow):
         return shell_shortcut_controller.show_shortcuts(self, Adw=Adw)
 
     def _create_shell_header(self):
-        host = self._UiHost(self)
-        self._titlebar_service = None
-        if self.plugin_manager:
-            try:
-                selected = self.plugin_manager.select("ui.titlebar")
-                self._titlebar_service = self.plugin_manager.service(selected.descriptor.id) if selected else None
-            except Exception:
-                self._titlebar_service = None
-        try:
-            header = self._titlebar_service.build(host) if self._titlebar_service else Adw.HeaderBar()
-            if not isinstance(header, Adw.HeaderBar): raise TypeError("Titlebar must return Adw.HeaderBar")
-        except Exception as exc:
-            self.diagnostics.add("PLUGIN", "titlebar build", "error", detail={"error": str(exc)})
-            header = Adw.HeaderBar(); self._titlebar_service = None
-        self.header_title = Gtk.Label(label="cifereca")
-        self.header_subtitle = Gtk.Label(label="")
-        title = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        title.append(self.header_title); title.append(self.header_subtitle); header.set_title_widget(title)
-        navigation = Gtk.Box(spacing=2)
-        self.back_button = Gtk.Button(icon_name="go-previous-symbolic")
-        self.back_button.set_tooltip_text("Précédent (Alt+Gauche)")
-        self.back_button.connect("clicked", lambda _b: self.go_back())
-        self.forward_button = Gtk.Button(icon_name="go-next-symbolic")
-        self.forward_button.set_tooltip_text("Suivant (Alt+Droite)")
-        self.forward_button.connect("clicked", lambda _b: self.go_forward())
-        navigation.append(self.back_button); navigation.append(self.forward_button)
-        header.pack_start(navigation)
-        self.header_actions = Gtk.Box(spacing=4); header.pack_start(self.header_actions)
-        updater = getattr(self, "_update_navigation_buttons", None)
-        if callable(updater): updater()
-        def compact_dropdown(tooltip: str) -> Gtk.DropDown:
-            dropdown = Gtk.DropDown()
-            factory = Gtk.SignalListItemFactory()
-            def setup(_factory, list_item):
-                label = Gtk.Label(xalign=0)
-                label.set_ellipsize(Pango.EllipsizeMode.END)
-                label.set_single_line_mode(True)
-                list_item.set_child(label)
-            def bind(_factory, list_item):
-                item = list_item.get_item()
-                label = list_item.get_child()
-                text = item.get_string() if isinstance(item, Gtk.StringObject) else str(item or "")
-                label.set_label(text)
-                label.set_tooltip_text(text)
-            factory.connect("setup", setup)
-            factory.connect("bind", bind)
-            dropdown.set_factory(factory)
-
-            list_factory = Gtk.SignalListItemFactory()
-            def setup_list(_factory, list_item):
-                label = Gtk.Label(xalign=0)
-                label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
-                label.set_single_line_mode(True)
-                label.set_max_width_chars(44)
-                list_item.set_child(label)
-            list_factory.connect("setup", setup_list)
-            list_factory.connect("bind", bind)
-            dropdown.set_list_factory(list_factory)
-            dropdown.set_tooltip_text(tooltip)
-            return dropdown
-
-        self.identity_dropdown = compact_dropdown("Identité active")
-        self.identity_dropdown.connect("notify::selected", self._identity_changed)
-        self.account_dropdown = compact_dropdown("Délégations de l’identité active")
-        self.account_dropdown.connect("notify::selected", self._account_changed)
-        self.pages_menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
-        self.pages_menu_button.set_tooltip_text("Menu des pages (F10)")
-        self.shell_menu = Gtk.PopoverMenu.new_from_model(Gio.Menu())
-        self.pages_menu_button.set_popover(self.shell_menu)
-        # One ordered box makes the menu the rightmost application control.
-        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.statistics_button=Gtk.Button(label="— livres · — prêts")
-        self.statistics_button.add_css_class('flat')
-        self.statistics_button.set_tooltip_text("Statistiques de l’identité : inventaire local et derniers prêts connus")
-        self.statistics_button.connect('clicked',lambda _b:self._show_statistics())
-        controls.append(self.identity_dropdown); controls.append(self.account_dropdown)
-        controls.append(self.statistics_button)
-        controls.append(self.pages_menu_button)
-        self._header_controls = controls
-        header.pack_end(controls)
-        self._ensure_pages_menu_rightmost()
-        return header
+        return shell_header_controller.create_shell_header(
+            self, Gtk=Gtk, Adw=Adw, Gio=Gio, Pango=Pango,
+        )
 
     def _ensure_pages_menu_rightmost(self):
         return shell_layout_controller.ensure_pages_menu_rightmost(self)
@@ -683,9 +546,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _invoke_ui_action(self, action, host):
-        self.shell_menu.popdown()
-        try: action.callback(host)
-        except Exception as exc: self.show_error(str(exc), "Action impossible")
+        return plugin_action_dispatch_controller.invoke_ui_action(self, action, host)
 
     def _show_route(self, route: str) -> None:
         return route_display_controller.show_route(self, route, Gtk=Gtk)
@@ -734,13 +595,7 @@ class MainWindow(Adw.ApplicationWindow):
         return shell_identity_selector_controller.populate_accounts(self, Gtk=Gtk)
 
     def _identity_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
-        if self._identity_changing:
-            return
-        idx = dropdown.get_selected()
-        if idx < 0 or idx >= len(self.service.identities):
-            return
-        identity = self.service.identities[idx]
-        self._activate_identity(identity.identity_id)
+        return shell_account_selection_controller.identity_changed(self, dropdown, _pspec)
 
     def open_identity_library(self, identity_id: str) -> None:
         self._activate_identity(identity_id)
@@ -843,63 +698,12 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _account_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
-        if self._account_changing:
-            return
-        idx = dropdown.get_selected()
-        accounts = getattr(self, "_visible_accounts", [])
-        if idx < 0 or idx >= len(accounts):
-            return
-        account = accounts[idx]
-        current = self.service.current_account
-        if current is not None and (
-            current.unique_id == account.unique_id
-            and current.provider_id == account.provider_id
-            and current.credential_id == account.credential_id
-        ):
-            _TRACE_LOG.debug("Account selection notification ignored: already current account=%s", account.unique_id)
-            return
-        self.service.select_account(account.unique_id, account.provider_id, account.credential_id)
-        self._account_context_generation += 1
-        self.service.last_history = []
-        self.service.last_bookings = []
-        self.history_objects = {}
-        self.booking_objects = {}
-        self._history_all_rows = []
-        self._history_rows = []
-        self._history_loaded_count = 0
-        self._history_append_scheduled = False
-        if hasattr(self, "history_page"):
-            self.history_page.show_rows([])
-            self.history_page.detail.empty("Historique non chargé", "Ouvrez l’onglet Historique pour charger ce compte.")
-        if hasattr(self, "booking_page"):
-            self.booking_page.show_rows([])
-            self.booking_page.detail.empty("Réservations non chargées", "Ouvrez l’onglet Réservations pour charger ce compte.")
-        self.toast(f"Compte : {account.display_name or account.provider_label}")
+        return shell_account_selection_controller.account_changed(self, dropdown, _pspec)
 
-
-    # ---------- 0.8.2 opening dashboard ----------
     def _build_dashboard_page(self) -> Gtk.Widget:
-        scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        outer.set_margin_top(24); outer.set_margin_bottom(24); outer.set_margin_start(24); outer.set_margin_end(24)
-        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.append(heading)
-        title = Gtk.Label(label="Bibliothèque familiale", xalign=0); title.set_hexpand(True); title.set_wrap(True); add_css(title, "page-title"); heading.append(title)
-        subtitle = Gtk.Label(label="État des identités et de la synchronisation automatique", xalign=0); add_css(subtitle, "dim-label"); outer.append(subtitle)
-        self.dashboard_loading_status = Gtk.Label(label="Connexion aux sources en arrière-plan…", xalign=0)
-        self.dashboard_loading_status.set_wrap(True); add_css(self.dashboard_loading_status, "dim-label", "caption")
-        outer.append(self.dashboard_loading_status)
-        actions = AdaptiveActionBar(source=heading)
-        refresh = self.action_button("Synchronisation rapide", "view-refresh-symbolic", suggested=True)
-        refresh.connect("clicked", lambda _b: self.run_opening_sync(refresh, deep=False)); actions.append(refresh)
-        deep = self.action_button("Vérifier toute la bibliothèque", "system-search-symbolic")
-        deep.connect("clicked", lambda _b: self.run_opening_sync(deep, deep=True)); actions.append(deep)
-        actions.set_halign(Gtk.Align.END); heading.append(actions)
-        self.dashboard_cards = Gtk.FlowBox(); self.dashboard_cards.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.dashboard_cards.set_min_children_per_line(1); self.dashboard_cards.set_max_children_per_line(3)
-        self.dashboard_cards.set_homogeneous(True); self.dashboard_cards.set_column_spacing(12); self.dashboard_cards.set_row_spacing(12)
-        outer.append(self.dashboard_cards)
-        scroll.set_child(outer)
-        return scroll
+        return dashboard_page_controller.build_dashboard_page(
+            self, Gtk=Gtk, add_css=add_css, AdaptiveActionBar=AdaptiveActionBar,
+        )
 
     @staticmethod
     def _sync_status_label(status: str | None) -> str:
