@@ -86,3 +86,40 @@ def test_explicit_known_detail_uses_generation_guard_without_extra_search():
     assert "context = self._search_detail_request_context()" in text
     assert "self._apply_search_detail(selected, item, detail, context=context)" in text
     assert "self.run_search(" not in text
+
+
+def _extract_search_detail_callback(name):
+    tree = ast.parse(DETAILS.read_text(encoding="utf-8"))
+    function = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+    scope = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(
+        body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), function],
+        type_ignores=[],
+    )), str(DETAILS), "exec"), scope)
+    return scope[name]
+
+
+def test_late_success_and_error_never_touch_deselected_book():
+    calls = []
+    host = SimpleNamespace(
+        _search_detail_context_current=lambda *_args: False,
+        search_page=SimpleNamespace(detail=SimpleNamespace(
+            show_item_detail=lambda *_args: calls.append("detail"),
+            show_search=lambda *_args, **_kw: calls.append("search"),
+        )),
+        _add_facets=lambda *_args: calls.append("facets"),
+        _add_local_book_actions=lambda *_args: calls.append("actions"),
+        _request_cached_book_details=lambda *_args: calls.append("cache"),
+        toast=lambda *_args: calls.append("toast"),
+    )
+    item = SimpleNamespace(id="book-A")
+    _extract_search_detail_callback("_apply_search_detail")(
+        host, "book-A", item, object(), context=(1, 2, 3, "old")
+    )
+    _extract_search_detail_callback("_search_detail_error")(
+        host, "book-A", item, RuntimeError("secret"), context=(1, 2, 3, "old")
+    )
+    assert calls == []
