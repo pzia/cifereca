@@ -13,6 +13,7 @@ SYNC = ROOT / "src/cifereca/gui/sync_controller.py"
 ACTIVITY = ROOT / "src/cifereca/gui/task_activity_adapter.py"
 STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
 RESULT_OWNER = ROOT / "src/cifereca/gui/activity_result_controller.py"
+VIEW_OWNER = ROOT / "src/cifereca/gui/activity_feedback_view_controller.py"
 
 
 def _method(path: Path, class_name: str, name: str) -> str:
@@ -30,6 +31,14 @@ def _method(path: Path, class_name: str, name: str) -> str:
         path = RESULT_OWNER
         class_name = None
         name = "activity_result"
+    view_methods = {
+        "_show_pending_activity_error": "show_pending_activity_error",
+        "_hide_activity_feedback": "hide_activity_feedback",
+    }
+    if name in view_methods:
+        path = VIEW_OWNER
+        class_name = None
+        name = view_methods[name]
     if name == "connect_configured_sources":
         path = STARTUP_OWNER
         class_name = None
