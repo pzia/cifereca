@@ -13,7 +13,7 @@ def test_public_book_ref_and_catalog_row_resolve_same_node():
 
 
 def test_view_delegates_ranking_and_keeps_notice_and_access():
-    cards=merge_nodes([node_from_row({'book_id':'a','title':'A','author':'Writer','local_path':'/a'}),
+    cards=merge_nodes([node_from_row({'book_id':'a','title':'A','author':'Writer','local_path':'/a'}, origin='bibliothèque'),
                        node_from_row({'book_id':'b','title':'B','author':'Writer','friendly_url':'https://r.test/b','metadata':{'free':True}})])
     center=next(c for c in cards if c.book.title=='A')
     edge=neighbours(cards,center)[0]
