@@ -14,6 +14,10 @@ LOANS = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controller
 
 
 def _method(name):
+    if name == "_library_selected":
+        owner = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef)
+                                and n.name == "library_selected"))
     moved = name in {"_populate_loans", "_render_loans", "_loan_selected"}
     tree = ast.parse((LOANS if moved else MAIN).read_text(encoding="utf-8"))
     scope = (tree.body if moved else next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow").body)
@@ -92,5 +96,5 @@ def test_main_window_uses_source_bound_keys_for_rows_and_details():
     assert "loan_source_key(x)" in populate
     assert "loan_source_key(loan)" in render
     assert "self.loan_objects.get(row.key)" in selected
-    assert "unique_library_loan(self.loan_objects.values(), item)" in library
+    assert "unique_library_loan(window.loan_objects.values(), item)" in library
     assert "loan_objects.get(str(item.get('loan_id')))" not in library
