@@ -25,6 +25,10 @@ def _method(path: Path, class_name: str, name: str) -> str:
         path = ACTIVITY
         class_name = None
         name = activity_methods[name]
+    if name == "_show_pending_activity_error":
+        path = MAIN.with_name("activity_display_controller.py")
+        class_name = None
+        name = "show_pending_activity_error"
     if name == "connect_configured_sources":
         path = STARTUP_OWNER
         class_name = None
