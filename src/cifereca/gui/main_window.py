@@ -38,6 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
+from . import shell_layout_controller
 from . import book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
@@ -613,14 +614,9 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_nav_row(self, route: str, label: str, icon_name: str) -> None:
-        if route in self.nav_rows:
-            return
-        row = Gtk.ListBoxRow(); row.set_name(route)
-        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        line.set_margin_top(7); line.set_margin_bottom(7); line.set_margin_start(8); line.set_margin_end(8)
-        icon = Gtk.Image.new_from_icon_name(icon_name); icon.set_pixel_size(18); line.append(icon)
-        text = Gtk.Label(label=label, xalign=0); text.set_hexpand(True); line.append(text)
-        row.set_child(line); self.nav_list.append(row); self.nav_rows[route] = row
+        return shell_layout_controller.add_nav_row(
+            self, route, label, icon_name, Gtk=Gtk,
+        )
 
     def _build_standard_page(self, route):
         builders = {"dashboard": self._build_dashboard_page, "loans": self._build_loans_page,
@@ -794,23 +790,7 @@ class MainWindow(Adw.ApplicationWindow):
         return header
 
     def _ensure_pages_menu_rightmost(self):
-        controls = getattr(self, "_header_controls", None)
-        menu = getattr(self, "pages_menu_button", None)
-        if controls is None or menu is None:
-            return
-        children = getattr(controls, "children", None)
-        if isinstance(children, list):
-            if menu in children:
-                children.remove(menu)
-            children.append(menu)
-            return
-        get_last = getattr(controls, "get_last_child", None)
-        if callable(get_last) and get_last() is menu:
-            return
-        get_parent = getattr(menu, "get_parent", None)
-        if callable(get_parent) and get_parent() is controls:
-            controls.remove(menu)
-        controls.append(menu)
+        return shell_layout_controller.ensure_pages_menu_rightmost(self)
 
     def _refresh_header_actions(self, route):
         return header_action_controller.refresh_header_actions(
