@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from cifereca.plugin_api import Account
 from tests.test_kobo_manifest_policy_p1 import FakeVault, session_with_vault
 
@@ -137,5 +139,32 @@ def test_wrong_provider_or_credential_binding_is_not_inventory_authority():
         )]
         assert [row.record_id for row in session.library()] == ["private-book"]
         assert vault.manifest_calls == 1 and vault.acquisition_calls == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize(
+    "account_id",
+    ["", "bad id", " leading", "trailing ", "has\tcontrol", "x" * 257, 123, None],
+    ids=["empty", "space", "leading-space", "trailing-space", "control",
+         "too-long", "non-string", "missing"],
+)
+def test_malformed_account_id_never_fetches_personal_inventory(account_id):
+    """A connected session without a strict account scope has no personal rights."""
+    vault = FakeVault([{"product_id": "PRIVATE_BOOK", "owned": True}])
+    session = session_with_vault(vault)
+    try:
+        session._accounts = [Account(
+            unique_id=account_id, display_name="Private",
+            provider_id="kobo", credential_id=session.credential_id,
+        )]
+        assert session.connected is True
+        assert session.library() == []
+        assert vault.manifest_calls == 0
+        assert vault.acquisition_calls == 0
+        assert session.last_library_rejections == [
+            {"type": "invalid_scope", "reason": "unbound_account"},
+        ]
+        assert "PRIVATE" not in json.dumps(session.diagnostic_state()["library_rejections"])
     finally:
         session.close()
