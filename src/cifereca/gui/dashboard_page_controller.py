@@ -7,6 +7,8 @@ from __future__ import annotations
 
 
 def build_dashboard_page(window, *, Gtk, add_css, AdaptiveActionBar):
+    if getattr(window, "_closed", False):
+        return None
     scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
     outer.set_margin_top(24); outer.set_margin_bottom(24); outer.set_margin_start(24); outer.set_margin_end(24)
