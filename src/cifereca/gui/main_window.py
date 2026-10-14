@@ -38,6 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
+from . import shell_shortcut_controller
 from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
@@ -711,67 +712,25 @@ class MainWindow(Adw.ApplicationWindow):
                 self.nav_rows[route].set_visible(expanded)
 
     def _install_shell_shortcuts(self):
-        from .shortcuts import SHORTCUTS
-        callbacks = {
-            "quit": self._quit_application,
-            "close": self.close,
-            "pages-menu": self._open_pages_menu,
-            "focus-search": self._focus_search,
-            "settings": self._show_settings,
-            "next-page": lambda: self._cycle_page(1),
-            "previous-page": lambda: self._cycle_page(-1),
-            "go-back": lambda: getattr(self, "go_back", lambda: None)(),
-            "go-forward": lambda: getattr(self, "go_forward", lambda: None)(),
-            "shortcuts": self._show_shortcuts,
-            "reconnect-sources": self.reconnect_sources,
-        }
-        for name, callback in callbacks.items():
-            action = Gio.SimpleAction.new(name, None)
-            action.connect("activate", lambda _a, _p, cb=callback: cb())
-            self.add_action(action)
-        for name, keys, _description in SHORTCUTS:
-            self.get_application().set_accels_for_action("win." + name, list(keys))
+        return shell_shortcut_controller.install_shell_shortcuts(self, Gio=Gio)
 
     def _quit_application(self):
-        # Close through the normal handler before application shutdown.
-        application = self.get_application()
-        self.close()
-        if application is not None:
-            application.quit()
+        return shell_shortcut_controller.quit_application(self)
 
     def _open_pages_menu(self):
-        button = getattr(self, "pages_menu_button", None)
-        if button is not None:
-            button.popup()
+        return shell_shortcut_controller.open_pages_menu(self)
 
     def _focus_search(self):
-        if not hasattr(self, "_pages"):
-            return
-        route = self.view_stack.get_visible_child_name()
-        if route not in {"search", "library"}:
-            if "search" not in self._pages:
-                return
-            self.navigate("search"); route = "search"
-        controls = getattr(self, route + "_controls", None)
-        if controls is not None:
-            controls.entry.grab_focus()
+        return shell_shortcut_controller.focus_search(self)
 
     def _show_settings(self):
-        if "settings" in getattr(self, "_pages", {}):
-            self.navigate("settings")
-        else:
-            self._open_prelogin_diagnostics()
+        return shell_shortcut_controller.show_settings(self)
 
     def _cycle_page(self, direction):
-        from .shortcuts import adjacent_route
-        routes = list(getattr(self, "_pages", {}))
-        if routes:
-            self.navigate(adjacent_route(routes, self.view_stack.get_visible_child_name(), direction))
+        return shell_shortcut_controller.cycle_page(self, direction)
 
     def _show_shortcuts(self):
-        from .shortcuts import shortcuts_text
-        dialog = Adw.MessageDialog.new(self, "Raccourcis clavier", shortcuts_text())
-        dialog.add_response("close", "Fermer"); dialog.present()
+        return shell_shortcut_controller.show_shortcuts(self, Adw=Adw)
 
     def _create_shell_header(self):
         host = self._UiHost(self)
