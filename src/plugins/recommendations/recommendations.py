@@ -105,7 +105,7 @@ def _external_book_url(value: Any) -> str | None:
     }
     # A path segment or control byte may be encoded several times. Never
     # dereference it; decoding here is used exclusively for rejection.
-    for _ in range(3):
+    for _ in range(4):
         if any(ord(char) < 32 or ord(char) == 127 for char in path):
             return None
         segments = [part.casefold() for part in path.split("/") if part]
@@ -117,9 +117,10 @@ def _external_book_url(value: Any) -> str | None:
             return None
         decoded = unquote(path)
         if decoded == path:
-            break
+            return url
         path = decoded
-    return url
+    # Do not accept deeply nested encodings with uninspected final content.
+    return None
 
 
 def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
