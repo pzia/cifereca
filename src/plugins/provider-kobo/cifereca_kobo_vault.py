@@ -243,9 +243,10 @@ class KoboVaultClient:
         """
         # Unknown scopes must not silently broaden a catalog-only lookup
         # into an authenticated two-endpoint library query.
-        if type(scope) is not str or scope not in {"catalog", "library", "all"}:
-            raise ProviderError("Kobo-Vault : portée de recherche invalide")
         self.last_search_merge_rejections = []
+        if type(scope) is not str or scope.lower() not in {"catalog", "library", "all"}:
+            raise ProviderError("Kobo-Vault : portée de recherche invalide")
+        scope = scope.lower()
         if scope == "catalog":
             return self._public_catalog_payload(
                 self.search_catalog(query, field=field, limit=limit, page=page)
