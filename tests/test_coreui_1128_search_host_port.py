@@ -63,3 +63,30 @@ def test_main_window_routes_search_execution_via_restricted_port():
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
                   and node.name == "run_search")
     assert "SearchRunPort(self)" in ast.unparse(method)
+
+
+def test_detail_port_rejects_ambient_window_capabilities():
+    from types import SimpleNamespace
+    from cifereca.gui.search_host_port import SearchDetailPort
+    import pytest
+
+    window = SimpleNamespace(_closed=False, _selected_search_id="book", private_token="secret")
+    port = SearchDetailPort(window)
+    assert port._selected_search_id == "book"
+    port._selected_search_id = "other"
+    assert window._selected_search_id == "other"
+    with pytest.raises(AttributeError):
+        _ = port.private_token
+    with pytest.raises(AttributeError):
+        port.private_token = "changed"
+
+
+def test_main_window_routes_detail_selection_and_known_lookup_through_port():
+    main = (ROOT / "main_window.py").read_text(encoding="utf-8")
+    tree = ast.parse(main)
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+               and node.name == "MainWindow")
+    for name in ("_search_selected", "_load_known_detail"):
+        method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
+                      and node.name == name)
+        assert "SearchDetailPort(self)" in ast.unparse(method)
