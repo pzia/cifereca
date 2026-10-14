@@ -30,10 +30,20 @@ def test_master_detail_switches_to_single_pane_below_breakpoint():
     assert "Retour à la liste" in source
 
 
-def test_main_view_stack_does_not_inherit_hidden_page_width():
-    source = _method_source("MainWindow", "_build_main_shell")
+def _main_shell_owner_source():
+    owner = MAIN_WINDOW.with_name("shell_body_controller.py")
+    tree = ast.parse(owner.read_text(encoding="utf-8"))
+    method = next(node for node in tree.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "build_main_shell")
+    facade = _method_source("MainWindow", "_build_main_shell")
+    assert "shell_body_controller.build_main_shell" in facade
+    return ast.unparse(method)
 
-    assert "self.view_stack.set_hhomogeneous(False)" in source
+
+def test_main_view_stack_does_not_inherit_hidden_page_width():
+    source = _main_shell_owner_source()
+
+    assert "window.view_stack.set_hhomogeneous(False)" in source
 
 def test_narrow_selection_opens_full_width_detail_and_back_returns_to_list():
     selected = _method_source("MasterDetailPage", "_selection_changed")
@@ -60,9 +70,9 @@ def test_narrow_detail_hides_list_context_without_destroying_state():
 
 
 def test_main_shell_exposes_sidebar_for_contextual_narrow_detail():
-    source = _method_source("MainWindow", "_build_main_shell")
+    source = _main_shell_owner_source()
 
-    assert "self.sidebar = sidebar" in source
+    assert "window.sidebar = sidebar" in source
 
 def test_narrow_detail_restores_shell_navigation_when_page_unmaps():
     source = _method_source("MasterDetailPage", "__init__")
