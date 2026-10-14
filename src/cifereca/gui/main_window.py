@@ -1880,7 +1880,6 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     @staticmethod
-
     def _kobo_backup_status_label(status: str) -> str:
         return {
             "ok": "À jour",
