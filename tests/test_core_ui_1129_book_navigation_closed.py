@@ -13,6 +13,9 @@ MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str):
+    if name in {"_open_library_item", "_select_pending_library_item"}:
+        from cifereca.gui import library_navigation
+        return getattr(library_navigation, name.lstrip("_"))
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     owner = next(node for node in tree.body
                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
