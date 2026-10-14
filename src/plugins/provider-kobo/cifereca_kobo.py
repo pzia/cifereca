@@ -289,8 +289,15 @@ class KoboSession(ProviderSession):
         )
         accepted: list[SearchResult] = []
         for item in rows:
-            meta = item.metadata if isinstance(item.metadata, dict) else {}
-            private = item.owned is True or item.source_collection in {"library", "archived"}
+            # SearchResult is the normal catalogue contract. Some legacy
+            # providers/test doubles omit optional attributes: do not crash
+            # while deciding whether a returned result is account-scoped.
+            raw_metadata = getattr(item, "metadata", None)
+            meta = raw_metadata if isinstance(raw_metadata, dict) else {}
+            private = (
+                getattr(item, "owned", None) is True
+                or getattr(item, "source_collection", None) in {"library", "archived"}
+            )
             if private and account_id is None:
                 continue
             if "account_id" in meta and (
