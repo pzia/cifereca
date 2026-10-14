@@ -1756,7 +1756,27 @@ class MainWindow(Adw.ApplicationWindow):
                         ),
                         "Portée :\n" + scope,
                     ]
-                    dialog = Adw.MessageDialog.new(self, meta.title, "\n\n".join(sections))
+                    # Keep action responses in the dialog footer, outside the
+                    # scrolling preview. Long paths must wrap rather than
+                    # expanding the dialog beyond the available screen.
+                    dialog = Adw.MessageDialog.new(self, meta.title, "")
+                    preview_text = Gtk.Label(label="\n\n".join(sections))
+                    preview_text.set_wrap(True)
+                    preview_text.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                    preview_text.set_xalign(0)
+                    preview_text.set_yalign(0)
+                    preview_text.set_selectable(True)
+                    preview_text.set_max_width_chars(76)
+                    preview_text.set_focusable(True)
+                    preview_scroll = Gtk.ScrolledWindow()
+                    preview_scroll.set_policy(
+                        Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC,
+                    )
+                    preview_scroll.set_min_content_height(100)
+                    preview_scroll.set_max_content_height(340)
+                    preview_scroll.set_propagate_natural_height(True)
+                    preview_scroll.set_child(preview_text)
+                    dialog.set_extra_child(preview_scroll)
                     dialog.add_response("cancel", "Annuler"); dialog.add_response("run", "Exécuter")
                     if destructive:
                         dialog.set_response_appearance("run", Adw.ResponseAppearance.DESTRUCTIVE)
