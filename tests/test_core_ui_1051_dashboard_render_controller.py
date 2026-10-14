@@ -28,6 +28,9 @@ class Widget:
     def get_child(self):
         return self
 
+    def get_next_sibling(self):
+        return getattr(self, "_next_sibling", None)
+
     def connect(self, signal, handler):
         self.handlers[signal] = handler
 
@@ -64,6 +67,13 @@ class Widget:
 
 class Grid(Widget):
     def get_first_child(self):
+        # GTK links siblings; the double must expose the same traversal when
+        # a second render removes actual Widget cards (not only Child fixtures).
+        for index, child in enumerate(self.children):
+            child._next_sibling = (
+                self.children[index + 1] if index + 1 < len(self.children)
+                else None
+            )
         return self.children[0] if self.children else None
 
     def remove(self, child):
