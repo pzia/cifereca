@@ -39,6 +39,7 @@ from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
 from . import route_display_controller
+from . import shell_account_selection_controller
 from . import shell_layout_controller
 from . import book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller
 from .search_state import SearchStateField
@@ -880,13 +881,7 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
 
     def _identity_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
-        if self._identity_changing:
-            return
-        idx = dropdown.get_selected()
-        if idx < 0 or idx >= len(self.service.identities):
-            return
-        identity = self.service.identities[idx]
-        self._activate_identity(identity.identity_id)
+        return shell_account_selection_controller.identity_changed(self, dropdown, _pspec)
 
     def open_identity_library(self, identity_id: str) -> None:
         self._activate_identity(identity_id)
@@ -989,41 +984,8 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _account_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
-        if self._account_changing:
-            return
-        idx = dropdown.get_selected()
-        accounts = getattr(self, "_visible_accounts", [])
-        if idx < 0 or idx >= len(accounts):
-            return
-        account = accounts[idx]
-        current = self.service.current_account
-        if current is not None and (
-            current.unique_id == account.unique_id
-            and current.provider_id == account.provider_id
-            and current.credential_id == account.credential_id
-        ):
-            _TRACE_LOG.debug("Account selection notification ignored: already current account=%s", account.unique_id)
-            return
-        self.service.select_account(account.unique_id, account.provider_id, account.credential_id)
-        self._account_context_generation += 1
-        self.service.last_history = []
-        self.service.last_bookings = []
-        self.history_objects = {}
-        self.booking_objects = {}
-        self._history_all_rows = []
-        self._history_rows = []
-        self._history_loaded_count = 0
-        self._history_append_scheduled = False
-        if hasattr(self, "history_page"):
-            self.history_page.show_rows([])
-            self.history_page.detail.empty("Historique non chargé", "Ouvrez l’onglet Historique pour charger ce compte.")
-        if hasattr(self, "booking_page"):
-            self.booking_page.show_rows([])
-            self.booking_page.detail.empty("Réservations non chargées", "Ouvrez l’onglet Réservations pour charger ce compte.")
-        self.toast(f"Compte : {account.display_name or account.provider_label}")
+        return shell_account_selection_controller.account_changed(self, dropdown, _pspec)
 
-
-    # ---------- 0.8.2 opening dashboard ----------
     def _build_dashboard_page(self) -> Gtk.Widget:
         scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
