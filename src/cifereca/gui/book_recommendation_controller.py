@@ -13,9 +13,22 @@ def add_book_recommendation_action(window, detail, item) -> None:
     )
     button._cifereca_action_id = "recommend-from-book"
     button._cifereca_action_priority = 25
+    context = (
+        getattr(window, "_identity_context_generation", None),
+        getattr(window, "_account_context_generation", None),
+    )
+
+    def current():
+        return (
+            not getattr(window, "_closed", False)
+            and context == (
+                getattr(window, "_identity_context_generation", None),
+                getattr(window, "_account_context_generation", None),
+            )
+        )
 
     def recommend(_button):
-        if getattr(window, '_closed', False):
+        if not current():
             return
         target = window._book_recommendation_target(item)
         if target is None:
@@ -25,7 +38,10 @@ def add_book_recommendation_action(window, detail, item) -> None:
         try:
             route = str(service.recommend_from_book(book) or "").strip()
         except Exception as exc:
-            window.show_error(str(exc), "Recommandation impossible")
+            if current():
+                window.show_error(str(exc), "Recommandation impossible")
+            return
+        if not current():
             return
         if not route:
             window.show_error(
