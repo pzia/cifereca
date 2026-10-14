@@ -122,6 +122,7 @@ def test_unresolved_or_invalid_variants_never_create_search_action():
     assert "vault-1" not in rendered and "bad" not in rendered
     # Pure helper receives only pre-verified CatalogNoticeVariant objects.
     assert ISBN_1 not in _attested_catalogue_isbns((_variant(isbn=""),))
+    assert _attested_catalogue_isbns((invalid,)) == ()  # ISBN13 checksum
 
 
 def test_local_search_unavailable_never_falls_back_to_remote_or_borrow():
