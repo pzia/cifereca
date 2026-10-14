@@ -112,12 +112,13 @@ def test_debug_traces_do_not_iterate_or_reveal_untrusted_manifest_keys(caplog):
     session.catalog = NS(cover_url=lambda _item: None)
     try:
         with caplog.at_level(logging.DEBUG, logger="cifereca"):
-            assert len(session.backup_manifest()) == 1
+            assert session.backup_manifest() == []
         trace = " ".join(
             rec.getMessage() for rec in caplog.records
             if rec.getMessage().startswith("TRACE kobo covers")
         )
-        assert "items=1" in trace and "missing=1" in trace
+        assert "items=0" in trace and "missing=0" in trace
         assert "PRIVATE" not in trace
+        assert session.backup_manifest_rejection_count == 1
     finally:
         session.close()
