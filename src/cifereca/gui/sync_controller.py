@@ -31,6 +31,14 @@ def _build_sync_page(self):
     self._sync_all_button = all_now
     actions.append(refresh); actions.append(all_now)
     heading.append(title); heading.append(actions); outer.append(heading)
+    scope_note = Gtk.Label(
+        label="Actualiser les sources met à jour les notices et droits en ligne. "
+        "Ce bouton ne télécharge aucun ebook. L’acquisition locale Kobo est "
+        "une opération distincte qui requiert un compte et une confirmation explicites.",
+        xalign=0,
+    )
+    scope_note.set_wrap(True)
+    outer.append(scope_note)
     self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
     refresh.connect("clicked", lambda _b: self._refresh_sync_page())
     def sync_all(button):

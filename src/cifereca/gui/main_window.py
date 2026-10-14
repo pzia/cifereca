@@ -2248,11 +2248,14 @@ class MainWindow(Adw.ApplicationWindow):
         acsm.connect("clicked", lambda _b: self.choose_acsm())
         advanced_box.append(acsm)
 
-        acquire = Gtk.Button(label="Synchroniser les comptes Kobo")
+        # Library maintenance must never launch a global Kobo acquisition.
+        # The Synchronisation page exposes the source/identity-scoped actions.
+        acquire = Gtk.Button(label="Gérer la synchronisation Kobo…")
         acquire.set_tooltip_text(
-            "Opération globale : télécharge les livres manquants de tous les comptes Kobo connectés compatibles."
+            "Ouvrir Synchronisation pour actualiser les notices et droits Kobo ; "
+            "aucun téléchargement ne démarre depuis Bibliothèque."
         )
-        acquire.connect("clicked", lambda _b: self.run_kobo_backup(True, acquire))
+        acquire.connect("clicked", lambda _b: self.navigate("sync"))
         advanced_box.append(acquire)
 
         advanced_popover.set_child(advanced_box)
