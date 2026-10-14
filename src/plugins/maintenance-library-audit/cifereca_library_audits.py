@@ -3,7 +3,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePath
 from typing import Any
+import errno
 import hashlib
+import os
+import stat
 import zipfile
 from urllib.parse import urlsplit
 
@@ -53,52 +56,60 @@ def _language_values(row: Mapping[str, Any]) -> list[str]:
 
 
 def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected_size: int = 0, expected_sha256: str = "") -> tuple[str, ...]:
-    target=Path(path)
-    issues=[]
+    target = Path(path)
+    # A dangling link is a symlink, not a missing book. In particular, do
+    # not hash or unpack its target, which may lie outside the library.
+    if target.is_symlink():
+        return ("symlink",)
     if not target.exists():
         return ("missing",)
-    if target.is_symlink():
-        issues.append("symlink")
     if not target.is_file():
-        return tuple(issues + ["not_file"])
+        return ("not_file",)
+
+    issues: list[str] = []
+    # Open the same inode once for size, SHA and structural checks. O_NOFOLLOW
+    # avoids following a link substituted after the initial lstat; NONBLOCK
+    # prevents a concurrently substituted FIFO from hanging the audit.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
-        stat=target.stat()
-    except OSError:
-        return tuple(issues + ["unreadable"])
-    if expected_size and stat.st_size != int(expected_size):
-        issues.append("size_mismatch")
-    digest=""
-    if expected_sha256:
+        fd = os.open(target, flags)
+    except OSError as exc:
+        return ("symlink",) if exc.errno == errno.ELOOP else ("unreadable",)
+    with os.fdopen(fd, "rb") as stream:
         try:
-            h=hashlib.sha256()
-            with target.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024*1024), b""):
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                return ("not_file",)
+            if expected_size and info.st_size != int(expected_size):
+                issues.append("size_mismatch")
+            if expected_sha256:
+                h = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                     h.update(chunk)
-            digest=h.hexdigest()
-            if digest.casefold() != str(expected_sha256).removeprefix("sha256:").casefold():
-                issues.append("sha256_mismatch")
+                if h.hexdigest().casefold() != str(expected_sha256).removeprefix("sha256:").casefold():
+                    issues.append("sha256_mismatch")
+            fmt = str(media_format or target.suffix.lstrip(".")).casefold()
+            try:
+                if fmt in {"epub", "kepub"} or target.name.casefold().endswith((".epub", ".kepub.epub")):
+                    stream.seek(0)
+                    with zipfile.ZipFile(stream) as archive:
+                        if archive.testzip() is not None:
+                            issues.append("zip_crc")
+                        try:
+                            if archive.read("mimetype") != b"application/epub+zip":
+                                issues.append("epub_mimetype")
+                            archive.getinfo("META-INF/container.xml")
+                        except KeyError:
+                            issues.append("epub_structure")
+                elif fmt == "pdf" or target.suffix.casefold() == ".pdf":
+                    stream.seek(0)
+                    if stream.read(5) != b"%PDF-":
+                        issues.append("pdf_header")
+            except (OSError, zipfile.BadZipFile):
+                issues.append("container_invalid")
         except OSError:
             issues.append("unreadable")
-    fmt=str(media_format or target.suffix.lstrip(".")).casefold()
-    try:
-        if fmt in {"epub","kepub"} or target.name.casefold().endswith((".epub",".kepub.epub")):
-            with zipfile.ZipFile(target) as archive:
-                if archive.testzip() is not None:
-                    issues.append("zip_crc")
-                try:
-                    if archive.read("mimetype") != b"application/epub+zip":
-                        issues.append("epub_mimetype")
-                    archive.getinfo("META-INF/container.xml")
-                except KeyError:
-                    issues.append("epub_structure")
-        elif fmt=="pdf" or target.suffix.casefold()==".pdf":
-            with target.open("rb") as stream:
-                if stream.read(5) != b"%PDF-":
-                    issues.append("pdf_header")
-    except (OSError, zipfile.BadZipFile):
-        issues.append("container_invalid")
     return tuple(dict.fromkeys(issues))
-
 
 class _ReadOnlyTool:
     info: MaintenanceToolInfo
