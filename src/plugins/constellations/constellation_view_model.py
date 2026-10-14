@@ -2,6 +2,7 @@
 from dataclasses import dataclass, asdict, is_dataclass, replace
 from collections.abc import Mapping
 from ipaddress import ip_address
+import re
 from urllib.parse import urlsplit
 from cifereca.plugin_api import BookRef, book_ref_from_row
 from constellations import ConstellationGraph, normalize_book
@@ -51,6 +52,10 @@ def public_url(value):
         or hostname in {'localhost', 'local', 'internal'}
         or hostname.endswith(('.localhost', '.local', '.internal', '.lan', '.home.arpa'))
     ):
+        return ''
+    if re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I):
+        # Encoded C0/DEL control characters must not be forwarded to the
+        # public browser or used to disguise a signed/private target.
         return ''
     try:
         address = ip_address(hostname)
