@@ -115,3 +115,12 @@ def test_common_task_success_callbacks_use_activity_bar():
     ):
         source = _method(MAIN, "MainWindow", name)
         assert "self._activity_result(" in source
+
+
+def test_task_callbacks_ignore_late_start_and_repeated_finish():
+    started = _method(MAIN, "MainWindow", "_task_started")
+    finished = _method(MAIN, "MainWindow", "_task_finished")
+    assert "self._finished_task_ids.discard" not in started
+    assert "if int(task_id) in self._finished_task_ids:" in started
+    assert "if task_id in self._finished_task_ids:" in finished
+    assert finished.index("if task_id in self._finished_task_ids:") < finished.index("self.activity_feedback.finished(")
