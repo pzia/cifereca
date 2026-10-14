@@ -41,18 +41,33 @@ def _cover_value(row: Mapping[str, Any]) -> str:
     return ""
 
 
-def _language_values(row: Mapping[str, Any]) -> list[str]:
+def _language_values(row: Mapping[str, Any]) -> tuple[list[str], int]:
+    """Return only text language tags and count malformed non-text values.
+
+    Core catalogue fields are untrusted. Coercing arbitrary objects with
+    str(item) can execute custom code or invent language tags from booleans,
+    nested objects, or private data; neither belongs in this read-only audit.
+    Empty strings and absent values remain missing rather than invalid.
+    """
     meta = _metadata(row)
     values: list[str] = []
+    malformed = 0
     for container in (row, meta):
         for key in ("language", "languages", "lang", "langs"):
             value = container.get(key)
-            if isinstance(value, str):
+            if type(value) is str:
                 if value.strip():
                     values.append(value.strip())
-            elif isinstance(value, (list, tuple, set)):
-                values.extend(str(item).strip() for item in value if str(item).strip())
-    return list(dict.fromkeys(values))
+            elif type(value) in (list, tuple, set):
+                for item in value:
+                    if type(item) is str:
+                        if item.strip():
+                            values.append(item.strip())
+                    else:
+                        malformed += 1
+            elif value is not None:
+                malformed += 1
+    return list(dict.fromkeys(values)), malformed
 
 
 # Bounds apply to ZIP central-directory *declared* sizes before any member
@@ -293,16 +308,35 @@ class LanguageAuditTool(_ReadOnlyTool):
         seen = 0
         invalid = 0
         noncanonical = 0
+        malformed = 0
+        normalization_failures = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
             # Tool plans and results can be exported to diagnostics/UI. Neither
             # free-form book titles nor untrusted raw language tags are safe
             # diagnostic labels (both may contain credentials or private paths).
             # Keep only the deterministic catalogue ordinal and issue class.
-            for raw in _language_values(row):
+            tags, rejected = _language_values(row)
+            malformed += rejected
+            if rejected and len(samples) < 12:
+                samples.append(f"Langue non textuelle : notice n°{notice_index}")
+            for raw in tags:
                 seen += 1
-                canonical = normalize_language_tag(raw)
-                if canonical is None:
+                try:
+                    canonical = normalize_language_tag(raw)
+                except Exception:
+                    # One malformed provider tag or unexpected Core policy
+                    # failure cannot abort the remaining catalogue scan.
+                    # Never copy exception messages or their class names.
+                    normalization_failures += 1
+                    if len(samples) < 12:
+                        samples.append(f"Langue non vérifiable : notice n°{notice_index}")
+                    continue
+                if canonical is not None and type(canonical) is not str:
+                    normalization_failures += 1
+                    if len(samples) < 12:
+                        samples.append(f"Langue non vérifiable : notice n°{notice_index}")
+                elif canonical is None:
                     invalid += 1
                     if len(samples) < 12:
                         samples.append(f"Langue invalide : notice n°{notice_index}")
@@ -311,11 +345,21 @@ class LanguageAuditTool(_ReadOnlyTool):
                     if len(samples) < 12:
                         samples.append(f"Langue non canonique : notice n°{notice_index}")
         summary = f"{seen} valeur(s) de langue ; {invalid} invalide(s), {noncanonical} non canonique(s)."
+        if malformed or normalization_failures:
+            summary += (
+                f" {malformed} valeur(s) non textuelle(s) ;"
+                f" {normalization_failures} normalisation(s) indisponible(s)."
+            )
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=summary,
             warnings=tuple(samples),
-            facts={"language_values": seen, "invalid": invalid, "noncanonical": noncanonical},
+            facts={
+                "language_values": seen, "invalid": invalid,
+                "noncanonical": noncanonical,
+                "malformed": malformed,
+                "normalization_failures": normalization_failures,
+            },
         )
 
 
