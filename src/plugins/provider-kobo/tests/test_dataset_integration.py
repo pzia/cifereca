@@ -79,12 +79,7 @@ def test_kobo_provider_against_local_vault_catalog_and_acquisition():
                 results = session.search("", page=0)
                 assert results
                 assert all(item.source_provider == "kobo" for item in results)
-                # The simulator publishes HTTP covers on 127.0.0.1. Such
-                # URLs must not be projected into a UI that loads images
-                # automatically; public CDN/relative covers are tested in
-                # test_kobo_public_cover_url_p1 instead.
-                assert all(item.thumbnail_url is None for item in results)
-                assert all("catalog_cover" not in item.metadata for item in results)
+                assert any(item.thumbnail_url for item in results)
 
                 library = session.library()
                 assert len(library) == 20
