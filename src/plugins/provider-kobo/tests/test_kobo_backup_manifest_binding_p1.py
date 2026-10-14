@@ -23,7 +23,7 @@ def _account(session, *, provider_id="kobo", credential_id=None, unique_id="alic
 
 @pytest.mark.parametrize("bad_binding", (
     "disconnected", "no_account", "two_accounts", "wrong_provider",
-    "wrong_credential", "empty_account",
+    "wrong_credential", "empty_account", "malformed_account",
 ))
 def test_backup_manifest_does_not_fetch_or_return_rows_without_verified_account(bad_binding):
     vault = FakeVault([{"product_id": "PRIVATE_BOOK", "owned": True,
@@ -47,6 +47,8 @@ def test_backup_manifest_does_not_fetch_or_return_rows_without_verified_account(
             session._accounts = [_account(session, credential_id="PRIVATE_FOREIGN_CREDENTIAL")]
         elif bad_binding == "empty_account":
             session._accounts = [_account(session, unique_id="")]
+        elif bad_binding == "malformed_account":
+            session._accounts = [_account(session, unique_id="alice\nPRIVATE_TOKEN")]
 
         assert session.backup_manifest() == []
         assert vault.manifest_calls == 1
