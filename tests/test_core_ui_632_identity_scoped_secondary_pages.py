@@ -37,7 +37,7 @@ def test_identity_change_clears_history_and_booking_models_and_views():
 def test_identity_context_generation_invalidates_callbacks():
     source = _method("_activate_identity")
     assert "window._identity_context_generation += 1" in source
-    assert "identity_generation = self._identity_context_generation" in source
+    assert "identity_generation = window._identity_context_generation" in source
     assert "window._identity_request_current(identity.identity_id, identity_generation)" in source
 
 
