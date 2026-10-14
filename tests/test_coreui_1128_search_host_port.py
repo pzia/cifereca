@@ -90,3 +90,29 @@ def test_main_window_routes_detail_selection_and_known_lookup_through_port():
         method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
                       and node.name == name)
         assert "SearchDetailPort(self)" in ast.unparse(method)
+
+
+def test_restricted_ports_declare_every_ambient_search_dependency():
+    """A future MainWindow capability addition must be reviewed explicitly."""
+    from cifereca.gui.search_host_port import (
+        SEARCH_DETAIL_CAPABILITIES, SEARCH_RUN_CAPABILITIES,
+    )
+
+    for filename, names, capabilities in (
+        ("search_controller.py", {"run_search"}, SEARCH_RUN_CAPABILITIES),
+        ("search_details.py", {
+            "_search_selected", "_search_detail_request_context",
+            "_search_detail_context_current", "_apply_search_detail",
+            "_search_detail_error", "_load_known_detail",
+        }, SEARCH_DETAIL_CAPABILITIES),
+    ):
+        tree = ast.parse((ROOT / filename).read_text(encoding="utf-8"))
+        functions = [node for node in tree.body
+                     if isinstance(node, ast.FunctionDef) and node.name in names]
+        assert {node.name for node in functions} == names
+        used = {
+            node.attr for function in functions for node in ast.walk(function)
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        }
+        assert used <= capabilities, sorted(used - capabilities)
