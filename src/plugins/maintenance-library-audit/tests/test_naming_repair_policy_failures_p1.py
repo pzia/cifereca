@@ -128,8 +128,10 @@ def test_failed_renaming_preview_never_blocks_an_independent_placement():
 
     control = Control()
     result = tool.run(plan, control)
-    assert result.ok and result.changed == 1
-    assert result.facts == {"planned": 1, "failures": 0}
+    assert not result.ok and result.changed == 1
+    assert result.facts == {
+        "planned": 1, "failures": 0, "policy_failures": 2,
+    }
     assert [req.placement_id for req in context.maintenance.requests] == [
         "PRIVATE_PDF",
     ]
@@ -137,6 +139,7 @@ def test_failed_renaming_preview_never_blocks_an_independent_placement():
         (0, 1), (1, 1),
     ]
     assert plan.warnings == result.warnings
+    assert "2 proposition(s) indisponible(s)" in control.events[-1]["message"]
     assert "PRIVATE" not in str(result.warnings) + result.summary
 
 
@@ -154,9 +157,14 @@ def test_all_preview_failures_cause_no_core_mutation_or_false_progress():
     )
     control = Control()
     result = tool.run(plan, control)
-    assert result.ok and result.changed == 0
-    assert result.facts == {"planned": 0, "failures": 0}
+    assert not result.ok and result.changed == 0
+    assert result.facts == {
+        "planned": 0, "failures": 0, "policy_failures": 35,
+    }
     assert context.maintenance.requests == []
     assert len(control.events) == 2
     assert all("current" not in e and "total" not in e for e in control.events)
+    assert control.events[-1]["message"] == (
+        "Renormalisation : 35 placement(s) sans proposition"
+    )
     assert "PRIVATE" not in str(result.warnings) + result.summary
