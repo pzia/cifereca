@@ -4,6 +4,7 @@ from urllib.parse import urljoin, urlsplit
 
 from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag, description_text, description_element
 from cifereca_kobo_policy import _strict_product_id
+from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
 
 
 class KoboCatalogService:
@@ -140,7 +141,28 @@ class KoboCatalogService:
 
     def search(self, query: str, *, field: str = "all", limit: int = 50, page: int = 0) -> list[SearchResult]:
         self.last_search_rejections = []
-        payload = self.client.search(query, field=field, scope="all", limit=limit, page=page)
+        try:
+            payload = self.client.search(query, field=field, scope="all", limit=limit, page=page)
+        except KoboVaultError as exc:
+            # Vault may authorize catalogue discovery yet refuse the separate
+            # private /library/search route (e.g. missing delegated scope).
+            # That denial must not make public discovery unavailable. Never
+            # downgrade transport, throttling, or server failures to success.
+            if exc.status_code not in (401, 403):
+                raise
+            # A public-only request contains no evidence of account rights.
+            # Apply the provider's public projection at this boundary as well,
+            # even if an alternate client returns private-looking flags.
+            payload = KoboVaultClient._public_catalog_payload(
+                self.client.search(
+                    query, field=field, scope="catalog", limit=limit, page=page
+                )
+            )
+            self.last_search_rejections.append({
+                "source": "library",
+                "type": "invalid_scope",
+                "reason": "personal_search_denied",
+            })
         self.last_search_rejections.extend(
             dict(row)
             for row in getattr(self.client, "last_search_merge_rejections", ())
