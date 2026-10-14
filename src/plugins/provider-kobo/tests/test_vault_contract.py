@@ -823,6 +823,11 @@ def test_backup_manifest_reports_only_rejected_row_count_to_core():
     )
     session.client.close()
     session.client = FakeVault()
+    session.connected = True
+    session._accounts = [Account(
+        unique_id="fixture-account", provider_id="kobo",
+        credential_id=session.credential_id, display_name="Synthetic Kobo",
+    )]
     session.catalog = KoboCatalogService(
         session.client, credential_id=session.credential_id,
         provider_id=session.provider_id,
