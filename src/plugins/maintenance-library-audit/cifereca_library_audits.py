@@ -323,6 +323,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
         candidates=[]
         missing_path=0
         read_failures=0
+        reference_failures=0
         for row in _rows(metadata.library_entries(identity_id=context.identity_id)):
             if not row.get("local"):
                 continue
@@ -337,11 +338,32 @@ class IntegrityAuditTool(_ReadOnlyTool):
                     artifact=library_read.artifact(artifact_id)
                 except Exception:
                     read_failures += 1
+            # Broker-supplied size metadata is untrusted, even when it comes
+            # from a typed artifact facade. Do not abort the whole audit if a
+            # single reference is malformed, or silently coerce booleans,
+            # floats and negative sizes into an apparent successful check.
+            raw_size = getattr(artifact, "size_bytes", 0)
+            try:
+                if type(raw_size) is int and raw_size >= 0:
+                    expected_size = raw_size
+                elif (
+                    type(raw_size) is str and 1 <= len(raw_size) <= 20
+                    and raw_size.isdecimal()
+                ):
+                    expected_size = int(raw_size)
+                elif raw_size is None:
+                    expected_size = 0
+                else:
+                    raise ValueError("invalid reference size")
+            except (ValueError, OverflowError, TypeError):
+                reference_failures += 1
+                expected_size = 0
             candidates.append({
+                # The private path is needed for execution and remains in
+                # facts, not warnings/progress. A book title is unnecessary.
                 "path": path,
-                "title": str(row.get("title") or PurePath(path).name),
                 "format": str(row.get("media_format") or getattr(artifact,"format","") or ""),
-                "expected_size": int(getattr(artifact,"size_bytes",0) or 0),
+                "expected_size": expected_size,
                 "expected_sha256": str(getattr(artifact,"sha256","") or row.get("sha256") or ""),
             })
         warnings=[]
@@ -351,6 +373,10 @@ class IntegrityAuditTool(_ReadOnlyTool):
             warnings.append(
                 f"{read_failures} artefact(s) sans métadonnées de référence : broker library.read en erreur."
             )
+        if reference_failures:
+            warnings.append(
+                f"{reference_failures} taille(s) de référence invalide(s) : contrôle de taille indisponible."
+            )
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=f"{len(candidates)} fichier(s) local(aux) à vérifier.",
@@ -359,6 +385,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 "candidates": tuple(candidates),
                 "missing_path": missing_path,
                 "read_failures": read_failures,
+                "reference_failures": reference_failures,
             },
         )
 
@@ -367,6 +394,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
         total=len(candidates)
         warnings=list(plan.warnings)
         read_failures=int(plan.facts.get("read_failures") or 0)
+        reference_failures=int(plan.facts.get("reference_failures") or 0)
         invalid=0
         missing=0
         by_issue={}
@@ -400,7 +428,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
         else:
             control.report(message="Audit d’intégrité terminé : aucun fichier")
         return MaintenanceResult(
-            ok=invalid==0 and read_failures==0,
+            ok=invalid==0 and read_failures==0 and reference_failures==0,
             changed=0,
             summary=f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), dont {missing} manquant(s).",
             warnings=tuple(warnings),
@@ -409,6 +437,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 "invalid":invalid,
                 "missing":missing,
                 "read_failures":read_failures,
+                "reference_failures":reference_failures,
                 "issues":by_issue,
             },
         )
