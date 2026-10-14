@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2631,86 +2631,11 @@ class MainWindow(Adw.ApplicationWindow):
         detail.add_actions([button])
 
     def _library_selected(self, row: BookListItem | None) -> None:
-        self._cancel_cached_book_details()
-        if not row:
-            self.library_page.detail.empty(
-                "Sélectionnez un livre",
-                "Sélectionnez un livre dans la liste pour afficher ses détails.",
-            )
-            return
-        item = self._library_objects.get(row.key)
-        if not item:
-            return
-        if item.get("source") == "loan" and item.get("loan_id"):
-            # A merged catalogue notice may not identify the exact borrower.
-            # In that case never expose an action for an arbitrary loan source.
-            loan = unique_library_loan(self.loan_objects.values(), item)
-            if loan:
-                self.library_page.detail.show_loan(loan, include_pnb_action=False)
-                actions = []
-                if self.service.can_download_loan(loan):
-                    prepare = Gtk.Button(label="Télécharger le livre du prêt"); prepare.add_css_class("suggested-action")
-                    prepare.set_tooltip_text("Récupère le prêt et traite son ACSM avec Kobo-Adept. Un fichier déjà présent est conservé ; une nouvelle copie peut être créée. Aucun nouvel emprunt.")
-                    prepare.connect("clicked", lambda _b: self.prepare_pnb_for_loan(loan, False, prepare)); actions.append(prepare)
-                self.library_page.detail.add_actions(actions)
-                self._add_facets(self.library_page.detail, item, self.library_controls)
-                self._add_local_book_actions(self.library_page.detail, item)
-                self._add_book_recommendation_action(self.library_page.detail, item)
-                self._request_cached_book_details("library", row.key, item)
-                return
-
-        detail = self.library_page.detail
-        provider = str(item.get("provider_id") or "local")
-        availability = self._library_availability_label(item)
-        identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
-        sync_label = self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
-        if sync_label == "À jour":
-            sync_label = ""
-        description = self._book_description(item)
-        detail.show_presentation(book_detail_presentation(
-            title=str(item.get("title") or "Sans titre"),
-            subtitle=str(item.get("author") or ""),
-            thumbnail=item.get("thumbnail_url"),
-            badges=[],
-            section_rows=[
-                ("Essentiel", [
-                    ("Source", self.service.provider_display_name(provider)),
-                    ("Format", str(item.get("media_format") or "").upper()),
-                    ("Langue", detail_language(item.get("metadata"))),
-                    ("Disponibilité", availability),
-                ]),
-                ("Bibliothèque", [
-                    ("Identité", identity.label if identity else str(item.get("identity_id") or "")),
-                    ("Fichier local", str(item.get("local_path") or "")),
-                    ("État acquisition", sync_label),
-                ]),
-            ],
-            links=document_links(item),
-            metadata=item.get('metadata'),
-        ), description=description)
-        placements = list(item.get('placements') or [])
-        possessions = list(item.get('possessions') or [])
-        presence_rows = []
-        for placement in placements:
-            iid = str(placement.get('identity_id') or '')
-            identity_ref = self.service.identity_by_id(iid) if iid else None
-            owner = identity_ref.label if identity_ref else (iid or 'Bibliothèque')
-            target = placement.get('storage_target_id') or placement.get('provider_id') or 'local'
-            presence_rows.append((owner, f"Stockage : {target}"))
-        for possession in possessions:
-            iid = str(possession.get('identity_id') or '')
-            identity_ref = self.service.identity_by_id(iid) if iid else None
-            owner = identity_ref.label if identity_ref else (iid or 'Compte')
-            provider_name = self.service.provider_display_name(str(possession.get('provider_id') or ''))
-            presence_rows.append((owner, f"Droit distant : {provider_name}"))
-        unique_presence = list(dict.fromkeys(presence_rows))
-        if len(unique_presence) > 1:
-            detail.add_group('Présence / Bibliothèques / Sources', unique_presence)
-        self._add_book_notice(detail,item, include_description=False)
-        self._add_local_book_actions(detail,item)
-        self._add_book_recommendation_action(detail, item)
-        self._add_facets(self.library_page.detail, item, self.library_controls)
-        self._request_cached_book_details("library", row.key, item)
+        return library_detail_controller.library_selected(
+            self, row, Gtk=Gtk, unique_library_loan=unique_library_loan,
+            book_detail_presentation=book_detail_presentation,
+            detail_language=detail_language, document_links=document_links,
+        )
 
     def _kobo_selected(self, row: BookListItem | None) -> None:
         self._library_selected(row)
