@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, list_facet_controller, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2084,27 +2084,11 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _attach_row_facets(self, rows, objects, controls):
         from .book_facets import facets_for_book, project_list_facets
-        allowed = {'author': 0, 'format': 1, 'language': 2, 'collection': 3, 'source': 4}
-        for row in rows:
-            facets=[
-                facet for facet in facets_for_book(
-                    objects.get(row.key,{}),
-                    self.service.provider_display_name,
-                )
-                if facet.field in allowed
-            ]
-            facets.sort(key=lambda facet:(allowed[facet.field], facet.label.casefold()))
-            facets=project_list_facets(facets)
-            row.tags=[
-                (
-                    facet,
-                    None if facet.field=='_overflow' else
-                    (lambda _b,f=facet.field,text=facet.value:self._search_facet(f,text,controls)),
-                )
-                for facet in facets
-            ]
-            row.author_actions=[];row.source_action=None;row.facet_actions=[]
-
+        return list_facet_controller.attach_row_facets(
+            self, rows, objects, controls,
+            facets_for_book=facets_for_book,
+            project_list_facets=project_list_facets,
+        )
 
     def _add_facets(self, detail, item, controls):
         values = self._facet_values(item)
