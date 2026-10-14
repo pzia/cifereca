@@ -109,3 +109,27 @@ def test_nontext_cover_objects_not_rendered_or_stringified():
     assert row.thumbnail_url is None
     assert "cover_url" not in row.metadata
     assert "images" not in row.metadata
+
+
+def test_explicit_same_origin_local_vault_keeps_covers_without_trusting_other_hosts():
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="http://127.0.0.1:9854/api"),
+        credential_id="fixture",
+    )
+    expected = "http://127.0.0.1:9854/covers/book.jpg"
+    assert catalog.cover_url({"cover_url": "/covers/book.jpg"}) == expected
+    assert catalog.cover_url({"cover_url": expected}) == expected
+    projected = catalog.normalize_item({
+        "product_id": "edition-1", "title": "Book",
+        "cover_url": expected, "collection": "catalog",
+    })
+    assert projected.thumbnail_url == expected
+    assert projected.metadata["catalog_cover"]["url"] == expected
+    for value in (
+        "http://127.0.0.1:9855/covers/book.jpg",
+        "http://127.0.0.2:9854/covers/book.jpg",
+        "http://localhost:9854/covers/book.jpg",
+        "http://127.0.0.1:9854/covers/book.jpg?token=PRIVATE",
+        "http://127.0.0.1:9854/covers/book%0aPRIVATE.jpg",
+    ):
+        assert catalog.cover_url({"cover_url": value}) is None
