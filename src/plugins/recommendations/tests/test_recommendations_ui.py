@@ -47,6 +47,16 @@ def test_external_book_url_accepts_only_safe_http_sources():
     assert _external_book_url("https:///missing-host") is None
     assert _external_book_url("https://example.org:bad/book") is None
     assert _external_book_url("https://example.org/book 1") is None
+    assert _external_book_url("https://example.org/book/1?token=PRIVATE_SIG") is None
+    assert _external_book_url("https://example.org/book/1#PRIVATE_SESSION") is None
+    assert _external_book_url("https://127.0.0.1/book") is None
+    assert _external_book_url("https://192.168.1.10/book") is None
+    assert _external_book_url("http://localhost/book") is None
+    assert _external_book_url("https://reader.local/book") is None
+    assert _external_book_url("https://intranet/book") is None
+    assert _external_book_url("https://example.org/a%0ab") is None
+    assert _external_book_url("https://example.org/a%7fb") is None
+    assert _external_book_url("https://example.org:443/book/1") == "https://example.org:443/book/1"
 
 
 def test_affinity_tooltips_explain_low_high_effect_without_external_docs():
