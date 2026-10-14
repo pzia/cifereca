@@ -477,7 +477,8 @@ class MainWindow(Adw.ApplicationWindow):
             self.activity_status_icon.remove_css_class("activity-error")
             self.activity_dismiss.set_visible(False)
             self.busy_label.set_visible(True)
-            prefix = f"{count} opérations · " if count > 1 else ""
+            active_count = len(self._active_tasks)
+            prefix = f"{active_count} opérations · " if active_count > 1 else ""
             self.busy_label.set_label("En cours · " + prefix + str(label))
             self.busy_revealer.set_reveal_child(True)
             self.busy_spinner.set_visible(True)
