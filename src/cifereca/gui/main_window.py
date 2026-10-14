@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller
+from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2141,17 +2141,9 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_plugin_book_actions(self, detail, item) -> None:
-        pages = getattr(self, "_pages", {}).values()
-        context = self._book_action_context(item)
-        buttons = []
-        for _route, action, enabled in contextual_actions(pages, "book.detail", context):
-            button = self.action_button(action.title, action.icon_name)
-            button._cifereca_action_id = "plugin:" + action.id
-            button.set_sensitive(enabled)
-            button.connect("clicked", lambda _b, a=action, c=context: self._invoke_ui_action(a, self._UiHost(self, c)))
-            buttons.append(button)
-        if buttons:
-            detail.add_actions(buttons)
+        return plugin_book_action_controller.add_plugin_book_actions(
+            self, detail, item, contextual_actions=contextual_actions,
+        )
 
     def _known_search_result(self, row):
         meta = row.get("metadata") or {}
