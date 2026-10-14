@@ -60,6 +60,7 @@ from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
 from .startup_lifecycle import once_while_open
+from . import startup_coordinator
 from . import feedback_timers
 from .loan_view import (
     LOAN_FILTER_LABELS,
@@ -549,55 +550,7 @@ class MainWindow(Adw.ApplicationWindow):
     def connect_configured_sources(self) -> bool:
         if getattr(self, "_closed", False):
             return False
-        _TRACE_LOG.info("TRACE gui connect-configured-sources begin")
-        if hasattr(self, "startup_status"):
-            self.startup_status.set_label("Connexion aux sources configurées…")
-        if hasattr(self, "dashboard_loading_status"):
-            self.dashboard_loading_status.set_label("Connexion aux sources en arrière-plan…")
-            self.dashboard_loading_status.set_visible(True)
-
-        def ok(result: dict[str, Any]) -> None:
-            # A TaskRunner result may have been queued before close().
-            # Detached GTK widgets must never receive its completion.
-            if getattr(self, "_closed", False):
-                return
-            _TRACE_LOG.info("TRACE gui connect-configured ok connected=%s errors=%s", len(result.get("connected", [])), len(result.get("errors", {}) or {}))
-            if hasattr(self, "dashboard_loading_status"):
-                self.dashboard_loading_status.set_visible(False)
-            _TRACE_LOG.info("TRACE gui populate-accounts begin")
-            self._populate_accounts()
-            _TRACE_LOG.info("TRACE gui populate-accounts end")
-            _TRACE_LOG.info("TRACE gui populate-loans begin count=%s", len(self.service.last_loans))
-            self._populate_loans(self.service.last_loans)
-            _TRACE_LOG.info("TRACE gui populate-loans end")
-            connected = len(result.get("connected", []))
-            errors = result.get("errors", {}) or {}
-            self._activity_result(
-                f"{connected} source(s) connectée(s)" + (f", {len(errors)} en erreur" if errors else ""),
-                success=not bool(errors),
-                persistent=bool(errors),
-            )
-            self._render_dashboard()
-            # A close can happen after the connection callback but before GTK
-            # dispatches this idle source. Never start sync on a dead window.
-            GLib.idle_add(once_while_open(self, self.run_opening_sync))
-
-        def err(exc: BaseException) -> None:
-            if getattr(self, "_closed", False):
-                return
-            if hasattr(self, "startup_status"):
-                # Provider errors can include credentials or signed URLs.
-                self.startup_status.set_label("Connexion aux sources indisponible.")
-            if hasattr(self, "dashboard_loading_status"):
-                self.dashboard_loading_status.set_label("Connexion aux sources indisponible. La navigation locale reste disponible.")
-                self.dashboard_loading_status.set_visible(True)
-
-        control = getattr(self, "startup_connect_button", None)
-        self.runner.submit(
-            "Connexion aux providers…", self.service.connect_configured, ok, err, control=control,
-            priority=TaskPriority.PROVIDER_SYNC, kind="provider-connect",
-        )
-        return False
+        return startup_coordinator.connect_configured_sources(self, idle_add=GLib.idle_add)
 
     def reconnect_sources(self) -> None:
         self.connect_configured_sources()
@@ -607,43 +560,9 @@ class MainWindow(Adw.ApplicationWindow):
         return once_while_open(self, self.connect_configured_sources)()
 
     def activate_startup_plugins(self) -> bool:
-        # Activation is posted to GTK after the window is presented. That
-        # queued callback may fire after the user has closed the window.
         if getattr(self, "_closed", False):
             return False
-        if self.plugin_manager is None:
-            # A local-only/no-plugin installation must still connect its
-            # configured providers; plugin activation is optional.
-            GLib.idle_add(self._connect_sources_if_open)
-            return False
-        _TRACE_LOG.info("TRACE gui plugin-activation begin")
-        started = time.perf_counter()
-        try:
-            self.plugin_manager.activate()
-            if getattr(self, "_closed", False):
-                return False
-            self.service.attach_plugin_manager(self.plugin_manager)
-            if getattr(self, "_closed", False):
-                return False
-            self._plugins_changed()
-        except Exception:
-            if not getattr(self, "_closed", False):
-                # Plugin errors may contain URLs, account IDs or tokens.
-                self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"reason": "activation_failed"})
-                if hasattr(self, "dashboard_loading_status"):
-                    self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
-                    self.dashboard_loading_status.set_visible(True)
-        finally:
-            # Provider connection must not depend on successful page/header
-            # reconstruction. A CoreUI exception must never strand startup in
-            # local-only mode after plugins have been activated.
-            if not getattr(self, "_closed", False):
-                _TRACE_LOG.info("TRACE gui schedule connect-configured")
-                GLib.idle_add(self._connect_sources_if_open)
-            duration_ms = (time.perf_counter() - started) * 1000.0
-            self.ui_perf.record("startup.plugins_activation", duration_ms)
-            _TRACE_LOG.info("TRACE gui plugin-activation end duration_ms=%.1f", duration_ms)
-        return False
+        return startup_coordinator.activate_startup_plugins(self, idle_add=GLib.idle_add)
 
     # ---------- compatibility / source configuration ----------
     def logout(self) -> None:
