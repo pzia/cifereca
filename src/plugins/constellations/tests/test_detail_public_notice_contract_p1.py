@@ -68,7 +68,7 @@ def test_invalid_preferred_link_does_not_hide_independent_public_notice(metadata
 @pytest.mark.parametrize("malformed", (
     "PRIVATE_SECRET",
     [],
-    {"friendly_url": "https://example.org/books/unexpected"},
+    {"friendly_url": "https://example.org/books/unexpected?token=PRIVATE"},
 ))
 def test_malformed_nested_search_result_cannot_invent_link_or_abort(malformed):
     node = node_from_row({
