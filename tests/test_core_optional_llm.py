@@ -318,13 +318,13 @@ def test_structured_llm_valid_nested_unicode_json_survives_unchanged():
 
 
 @pytest.mark.parametrize("model", [
-    "test-model\\nBearer SECRET_AT_NEWLINE",
-    "test-model\\rOverwrite-model",
-    "model\\tPRIVATE_VALUE",
-    "model\\u202ePRIVATE_RTL",
-    "model\\u2066PRIVATE_ISOLATE",
-    "model\\u200ePRIVATE_MARK",
-    "model\\ud800PRIVATE_SURROGATE",
+    "test-model\nBearer SECRET_AT_NEWLINE",
+    "test-model\rOverwrite-model",
+    "model\tPRIVATE_VALUE",
+    "model\u202ePRIVATE_RTL",
+    "model\u2066PRIVATE_ISOLATE",
+    "model\u200ePRIVATE_MARK",
+    "model\ud800PRIVATE_SURROGATE",
     "x" * 129,
 ])
 def test_direct_llm_service_rejects_spoofed_model_before_consent_or_http(model):
@@ -345,7 +345,7 @@ def test_direct_llm_service_rejects_spoofed_model_before_consent_or_http(model):
 
 
 @pytest.mark.parametrize("provider", [
-    "Bearer PRIVATE_PROVIDER", "custom\\nPRIVATE_PROVIDER", "unsupported-vendor",
+    "Bearer PRIVATE_PROVIDER", "custom\nPRIVATE_PROVIDER", "unsupported-vendor",
 ])
 def test_direct_llm_service_masks_unsupported_provider_in_diagnostics(provider):
     http = FakeHTTP()
