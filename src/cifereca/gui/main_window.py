@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import query_widget_factory_controller
 from . import history_language_projection
 from . import adept_loan_choice_controller
 from . import sync_issues_dialog_controller
@@ -1106,26 +1107,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- search ----------
     def _query_controls(self, changed, activate, *, library=False):
-        providers = dict(self.service.searchable_providers())
-        providers["local"] = "Local"
-        for row in self.service.catalog_entries():
-            provider = str(row.get("provider_id") or "local")
-            providers.setdefault(provider, self.service.provider_display_name(provider))
-        providers = sorted(providers.items(), key=lambda pair: pair[1])
-        catalog = self.plugin_manager.widget_catalog() if self.plugin_manager else None
-        factory = getattr(catalog, "build_query_controls", None)
-        controls = None
-        if callable(factory):
-            try:
-                controls = factory(providers, changed, activate, library=library)
-            except Exception as exc:
-                self.diagnostics.add("PLUGIN", "query widget", "error", detail={"error": str(exc)})
-        if controls is None:
-            controls = QueryControls(providers, changed, activate, library=library)
-        setter = getattr(controls, "set_provider_search_capabilities", None)
-        if callable(setter) and not library:
-            setter(self.service.provider_search_capabilities())
-        return controls
+        return query_widget_factory_controller.build_query_controls(
+            self, changed, activate, library=library, QueryControls=QueryControls,
+        )
 
     def _reset_search_enter(self):
         return search_controller._reset_search_enter(self)
