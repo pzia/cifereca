@@ -12,6 +12,8 @@ RUNNER = ROOT / "src/cifereca/gui/task_runner.py"
 SYNC = ROOT / "src/cifereca/gui/sync_controller.py"
 ACTIVITY = ROOT / "src/cifereca/gui/task_activity_adapter.py"
 STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
+RESULT_OWNER = ROOT / "src/cifereca/gui/activity_result_controller.py"
+VIEW_OWNER = ROOT / "src/cifereca/gui/activity_feedback_view_controller.py"
 
 
 def _method(path: Path, class_name: str, name: str) -> str:
@@ -25,6 +27,18 @@ def _method(path: Path, class_name: str, name: str) -> str:
         path = ACTIVITY
         class_name = None
         name = activity_methods[name]
+    if name == "_activity_result":
+        path = RESULT_OWNER
+        class_name = None
+        name = "activity_result"
+    view_methods = {
+        "_show_pending_activity_error": "show_pending_activity_error",
+        "_hide_activity_feedback": "hide_activity_feedback",
+    }
+    if name in view_methods:
+        path = VIEW_OWNER
+        class_name = None
+        name = view_methods[name]
     if name == "connect_configured_sources":
         path = STARTUP_OWNER
         class_name = None
@@ -97,9 +111,9 @@ def test_success_reduces_automatically_but_error_has_no_timeout():
 
 def test_later_success_cannot_mask_unacknowledged_error():
     source = _method(MAIN, "MainWindow", "_activity_result")
-    assert "if self._show_pending_activity_error():" in source
-    assert source.index("if self._show_pending_activity_error():") < source.index(
-        "self.busy_label.set_label(f'Terminé · {message}')"
+    assert "if window._show_pending_activity_error():" in source
+    assert source.index("if window._show_pending_activity_error():") < source.index(
+        "window.busy_label.set_label(f'Terminé · {message}')"
     )
 
 

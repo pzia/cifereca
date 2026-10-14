@@ -24,10 +24,18 @@ class _BadRecommendation:
 
 
 def _method(name: str) -> str:
+    if name == "_book_action_context":
+        owner = ast.parse(MAIN.with_name("book_action_context_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef)
+                                and n.name == "book_action_context"))
     if name == "_library_selected":
         tree = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                                 and n.name == "library_selected"))
+    if name == "_add_book_recommendation_action":
+        tree = ast.parse(MAIN.with_name("book_recommendation_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                                and n.name == "add_book_recommendation_action"))
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
@@ -73,7 +81,7 @@ def test_recommendation_callback_uses_plugin_route_not_concrete_route_name():
     source = _method("_add_book_recommendation_action")
     assert "Recommander à partir de ce livre" in source
     assert "service.recommend_from_book(book)" in source
-    assert "self.navigate(route)" in source
+    assert "window.navigate(route)" in source
     assert "navigate('recommendations')" not in source
 
 

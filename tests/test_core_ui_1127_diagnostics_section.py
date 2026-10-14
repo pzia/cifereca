@@ -114,8 +114,11 @@ def test_host_and_action_adapter_keep_expurgation_copy_export_navigation_and_ref
     build = next(x for x in window.body if isinstance(x, ast.FunctionDef) and x.name == "_build_settings_page")
     rendered = ast.unparse(build)
     assert "build_settings_diagnostics_section(" in rendered
-    assert "diagnostic_plugin_rows(data, attention_only=attention_only)" in rendered
-    assert "self.diagnostics.text(" in rendered
+    assert "settings_diagnostics_refresh_controller.refresh_settings_diagnostics(" in rendered
+    owner = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_diagnostics_refresh_controller.py"
+    owner_source = ast.unparse(ast.parse(owner.read_text("utf-8")))
+    assert "diagnostic_plugin_rows(data, attention_only=attention_only)" in owner_source
+    assert "window.diagnostics.text(" in owner_source
     assert "self.navigate('plugins')" in rendered
     assert "diag_scroll.set_visible(visible)" in rendered
     assert "build_settings_diagnostic_callbacks(" in rendered

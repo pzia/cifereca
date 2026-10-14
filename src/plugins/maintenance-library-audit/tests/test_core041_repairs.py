@@ -140,7 +140,8 @@ def test_naming_repair_reports_unsuccessful_mutation_result():
     assert result.ok is False
     assert result.changed==0
     assert result.facts['failures']==1
-    assert 'mutation refused' in result.warnings
+    assert 'Renormalisation 1/1 : 1 avertissement(s) du service' in result.warnings
+    assert all('mutation refused' not in warning for warning in result.warnings)
 
 
 def test_duplicate_cleanup_reports_unsuccessful_mutation_result():
@@ -207,3 +208,95 @@ def test_duplicate_cleanup_checks_cancel_after_final_mutation():
     with pytest.raises(UserCancelled, match="explicit cleanup cancellation"):
         tool.run(plan, control)
     assert len(ctx.maintenance.requests) == 1
+
+
+def test_naming_repair_private_preview_and_core_warnings_are_redacted():
+    class PrivateMetadata:
+        def library_entries(self, **_options):
+            return [{
+                "artifact_id": ARTIFACT,
+                "title": "PRIVATE_BOOK_TITLE", "author": "PRIVATE_AUTHOR",
+            }]
+
+    class PrivateRead:
+        def for_artifact(self, artifact_id):
+            assert artifact_id == ARTIFACT
+            return LogicalBookArtifacts(
+                BookRef("PRIVATE_BOOK_ID", "PRIVATE_BOOK_TITLE", ("PRIVATE_AUTHOR",)),
+                artifacts=(),
+                placements=(ArtifactPlacementRef(
+                    "PRIVATE_PLACEMENT_ID", artifact_id, "id1",
+                    filename="PRIVATE_SOURCE_TOKEN.epub",
+                ),),
+            )
+
+    class PrivateNaming:
+        def preview(self, **_options):
+            return "PRIVATE_EXPECTED_TOKEN.epub"
+
+    class CaptureControl(Control):
+        def __init__(self):
+            self.events = []
+
+        def report(self, **event):
+            self.events.append(dict(event))
+
+    ctx = Context()
+    ctx.brokers["metadata"] = PrivateMetadata()
+    ctx.brokers["library.read"] = PrivateRead()
+    ctx.brokers["library.naming"] = PrivateNaming()
+    ctx.maintenance.run = lambda _plan, _control=None: LibraryMutationResult(
+        False, changed=1, summary="PRIVATE_RESPONSE_TITLE",
+        warnings=(
+            "Bearer PRIVATE_ACCESS_TOKEN",
+            "/home/PRIVATE_USER/books/secret.epub",
+        ),
+    )
+
+    tool = NamingRepairTool().activate(ctx)
+    plan = tool.plan(MaintenanceContext(scope="library", identity_id="id1"))
+    assert plan.facts["placement_ids"] == ("PRIVATE_PLACEMENT_ID",)
+    assert plan.changes == ("Renommer le placement n°1",)
+    assert plan.warnings == ()
+
+    control = CaptureControl()
+    result = tool.run(plan, control)
+    assert not result.ok and result.changed == 1
+    assert result.facts == {"planned": 1, "failures": 1}
+    assert result.warnings == (
+        "Renormalisation 1/1 : 2 avertissement(s) du service",
+    )
+    assert [(event.get("current"), event.get("total"))
+            for event in control.events] == [(0, 1), (1, 1)]
+    assert "échec" in control.events[-1]["message"]
+    assert ctx.maintenance.requests[0].operation == "normalize_filename"
+    assert ctx.maintenance.requests[0].placement_id == "PRIVATE_PLACEMENT_ID"
+
+    public = str((
+        plan.summary, plan.changes, plan.warnings, result.summary,
+        result.warnings, result.facts, control.events,
+    ))
+    for private in (
+        "PRIVATE_", "Bearer", "secret.epub", "/home/", "TOKEN",
+        "BOOK_TITLE", "EXPECTED", "ACCESS",
+    ):
+        assert private not in public
+
+
+def test_naming_repair_nonsequence_core_warning_is_counted_not_iterated():
+    ctx = Context()
+    tool = NamingRepairTool().activate(ctx)
+    plan = tool.plan(MaintenanceContext(scope="library", identity_id="id1"))
+
+    def broker_result(_plan, _control):
+        return type("Result", (), {
+            "ok": True, "changed": 0,
+            "warnings": "Bearer PRIVATE_ACCESS_TOKEN",
+        })()
+
+    ctx.maintenance.run = broker_result
+    result = tool.run(plan, Control())
+    assert result.ok and result.changed == 0
+    assert result.warnings == (
+        "Renormalisation 1/1 : 1 avertissement(s) du service",
+    )

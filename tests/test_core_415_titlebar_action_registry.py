@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from cifereca.gui.shell_layout_controller import ensure_pages_menu_rightmost
 from cifereca.gui.shell_model import (
     action_registry,
     validate_action_selection,
@@ -130,18 +131,12 @@ def test_page_menu_is_reasserted_rightmost_after_build_refresh_and_reconstructio
 
 
 def test_rightmost_helper_moves_menu_to_last_position_for_headless_box():
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_ensure_pages_menu_rightmost")
-    module = ast.Module(body=[method], type_ignores=[])
-    ns = {}
-    exec(compile(ast.fix_missing_locations(module), str(MAIN), "exec"), ns)
-
+    # Test the actual headless owner, not an unbound MainWindow facade.
     menu = object()
     controls = type("Box", (), {})()
     controls.children = [menu, "identity", "statistics"]
     host = type("Host", (), {"_header_controls": controls, "pages_menu_button": menu})()
 
-    ns["_ensure_pages_menu_rightmost"](host)
+    ensure_pages_menu_rightmost(host)
 
     assert controls.children == ["identity", "statistics", menu]

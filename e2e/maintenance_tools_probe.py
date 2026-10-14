@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P0 #1358: real GTK/XTEST maintenance confirmation and shared-lock exclusion.
+"""P0 #1358/#1492: GTK/XTEST safety and cache progress on the tool row.
 
 The fake tool never touches a real book. All HOME/XDG locations come from the
 runner's isolated fixture. Explicit actions are sent through XTEST.
@@ -47,9 +47,14 @@ class DummyTool:
         self.plan_started = threading.Event()
         self.version = 0
         self.delay = 0.65
+        self.progress_sent = threading.Event()
+        self.release_run = threading.Event()
+        self.run_finished = threading.Event()
+        self.worker_threads = []
 
     def describe(self):
         return SimpleNamespace(
+            id="core.cache.cleanup",
             title="Nettoyage test sans suppression", description="Simulation locale",
             supports_dry_run=True, cancellable=True, scope="identity", danger_level="destructive",
             icon_name="edit-delete-symbolic",
@@ -60,7 +65,7 @@ class DummyTool:
         self.plan_started.set()
         time.sleep(self.delay)  # an intentionally slow scan, never on GTK
         return SimpleNamespace(
-            tool_id="library.duplicates.cleanup",
+            tool_id="core.cache.cleanup",
             summary="Aucune suppression réelle",
             changes=tuple(
                 f"fichier témoin simulé {i:02d} /chemin/long/vers/la/bibliothèque/romans/doublons/exemple.epub"
@@ -73,7 +78,19 @@ class DummyTool:
     def run(self, plan, control):
         control.check_cancelled()
         self.run_calls += 1
-        return SimpleNamespace(ok=True, summary="Simulation confirmée")
+        self.worker_threads.append(threading.get_ident())
+        control.report(current=1, total=1, message="Témoin traité")
+        self.progress_sent.set()
+        try:
+            if not self.release_run.wait(8):
+                raise TimeoutError("GTK did not release simulated maintenance worker")
+            # Exercise late progress after cancellation/refresh: it must never
+            # repaint the detached row or the replacement row.
+            control.report(current=1, total=1, message="Retour tardif")
+            control.check_cancelled()
+            return SimpleNamespace(ok=True, summary="Simulation confirmée")
+        finally:
+            self.run_finished.set()
 
 
 def main():
@@ -97,6 +114,28 @@ def main():
     started = monotonic()
     heartbeat = [0]
     result = [1]
+    gtk_thread = threading.get_ident()
+    detached_label = [None]
+
+    def line_widgets():
+        row = next(w for w in walk(window[0]._tools_box) if isinstance(w, Adw.ActionRow))
+        label = next(w for w in walk(row) if isinstance(w, Gtk.Label)
+                     and w.get_tooltip_text() == "État de l’opération")
+        spinner = next(w for w in walk(row) if isinstance(w, Gtk.Spinner))
+        bar = next(w for w in walk(row) if isinstance(w, Gtk.ProgressBar))
+        return row, label, spinner, bar
+
+    def line_is(text):
+        return line_widgets()[1].get_text() == text
+
+    def assert_line(text, *, fraction=None, busy=False):
+        row, label, spinner, bar = line_widgets()
+        assert row.get_mapped() and label.get_mapped(), "Progress must appear on the tool row"
+        assert label.get_text() == text, label.get_text()
+        assert spinner.get_visible() == busy
+        assert bar.get_visible() == (fraction is not None)
+        if fraction is not None:
+            assert abs(bar.get_fraction() - fraction) < 0.001
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -114,6 +153,7 @@ def main():
     def fail(exc):
         if report["status"] != "RUNNING":
             return
+        tool.release_run.set()
         report.update(
             status="FAIL", error=f"{type(exc).__name__}: {exc}",
             failure_stack=__import__("traceback").format_exc(limit=12),
@@ -159,14 +199,18 @@ def main():
             f"GTK action unavailable: mapped={button.get_mapped()} "
             f"sensitive={button.get_sensitive()} page={window[0].view_stack.get_visible_child_name()}"
         )
-        if button is preview_button[0]:
+        if button.get_root() is window[0] and button in tuple(walk(window[0]._tools_box)):
             # The GTK4 ActionRow reports unreliable native transformations
             # under our rootless Xvfb runner (its computed click landed on the
             # title bar). This isolated screen is fixed at 1366/1600, window
             # starts at 0,0 and the trailing action is top-right at y=144.
             # Explicit screen coordinates still send genuine XTEST events.
             assert window[0].get_width() > 800, "Unexpected GTK window geometry"
-            x = window[0].get_width() - 116
+            # Progress is now a suffix after the preview button. GTK's
+            # horizontal bounds remain usable; keep the verified row y.
+            ok, bounds = button.compute_bounds(window[0])
+            assert ok, "Preview button horizontal bounds unavailable"
+            x = round(bounds.get_x() + bounds.get_width() / 2)
             y = 144
             device[0].click(x, y)
             report["pointer_actions"].append({
@@ -212,6 +256,8 @@ def main():
         )
 
     def begin_busy():
+        assert_line("Au repos")
+        report["checks"]["cache_progress_attached_to_real_tool_row"] = True
         lock[0] = InterProcessLock(acquisition_lock_file())
         lock[0].acquire()
         physical(preview_button[0])
@@ -236,6 +282,8 @@ def main():
     def preview_pending():
         assert modal() is None, "GTK dialog opened before slow plan finished"
         assert tool.run_calls == 0
+        assert_line("Analyse…", busy=True)
+        report["checks"]["analysis_indeterminate_on_tool_row"] = True
         before = heartbeat[0]
         report["checks"]["slow_worker_started_without_mutation"] = True
         def after():
@@ -266,12 +314,17 @@ def main():
         # Mapping precedes GTK's first size allocation. Wait for measurable
         # widgets, not for overflow: first_dialog must still detect a broken
         # scroll layout after the allocation has actually happened.
-        return all(geometry[key] > 0 for key in (
+        # Modal mapping and the idle-delivered row state may arrive in
+        # different main-loop turns. Wait for both; first_dialog still
+        # validates the exact label, spinner, and layout independently.
+        return line_is("Confirmation attendue") and all(geometry[key] > 0 for key in (
             "width", "height", "content_width", "content_height", "page_size",
         ))
 
     def first_dialog():
         dialog = modal()
+        assert_line("Confirmation attendue")
+        report["checks"]["confirmation_on_tool_row_without_percentage"] = True
         preview_scroll = dialog.get_extra_child()
         assert isinstance(preview_scroll, Gtk.ScrolledWindow)
         # GTK may insert a Gtk.Viewport between ScrolledWindow and Label.
@@ -310,7 +363,25 @@ def main():
     def after_cancel():
         assert tool.run_calls == 0
         report["checks"]["physical_cancel_never_runs_destructive_tool"] = True
-        until(lambda: modal() is None and preview_button[0].get_sensitive(), begin_stale)
+        until(lambda: modal() is None and preview_button[0].get_sensitive()
+              and line_is("Annulé"), cancel_scan)
+
+    def cancel_scan():
+        assert_line("Annulé")
+        tool.plan_started.clear()
+        physical(preview_button[0])
+        until(lambda: tool.plan_started.is_set() and line_is("Analyse…"), cancel_pending_scan)
+
+    def cancel_pending_scan():
+        cancel = next(w for w in walk(window[0]._tools_box)
+                      if isinstance(w, Gtk.Button) and w.get_label() == "Annuler")
+        physical(cancel)
+        def discarded():
+            assert modal() is None and tool.run_calls == 0
+            assert_line("Annulé")
+            report["checks"]["cancelled_scan_never_reopens_confirmation"] = True
+            until(lambda: preview_button[0].get_sensitive(), begin_stale)
+        later(discarded, 850)
 
     def begin_stale():
         tool.delay = 0.12
@@ -335,13 +406,56 @@ def main():
     def final_dialog():
         assert tool.run_calls == 0
         respond(modal(), "Exécuter")
-        until(lambda: tool.run_calls == 1, completed)
+        until(lambda: tool.progress_sent.is_set() and line_is("Purge en cours · 99 %"), progress_before_completion)
+
+    def progress_before_completion():
+        assert tool.run_calls == 1 and not tool.run_finished.is_set()
+        assert tool.worker_threads[0] != gtk_thread, "Tool reports must originate in worker"
+        assert_line("Purge en cours · 99 %", fraction=0.99)
+        report["checks"]["real_worker_report_caps_percentage_before_success"] = True
+        capture("02-worker-progress")
+        tool.release_run.set()
+        until(lambda: tool.run_finished.is_set() and line_is("Terminé · 100 %"), completed)
 
     def completed():
         assert tool.run_calls == 1
         assert lock[0] is None
         report["checks"]["only_explicit_confirmed_safe_simulation_executes"] = True
-        capture("02-confirmed-noop")
+        assert_line("Terminé · 100 %", fraction=1.0)
+        report["checks"]["success_alone_renders_100_percent"] = True
+        capture("03-confirmed-noop")
+        tool.progress_sent.clear()
+        tool.release_run.clear()
+        tool.run_finished.clear()
+        physical(preview_button[0])
+        until(lambda: modal() is not None and preview_button[0].get_sensitive(), refresh_dialog)
+
+    def refresh_dialog():
+        respond(modal(), "Exécuter")
+        until(lambda: tool.progress_sent.is_set() and line_is("Purge en cours · 99 %"), refresh_running)
+
+    def refresh_running():
+        detached_label[0] = line_widgets()[1]
+        window[0]._refresh_tools_page()
+        until(lambda: line_is("Au repos"), refresh_ready)
+
+    def refresh_ready():
+        assert_line("Au repos")
+        assert detached_label[0].get_root() is None
+        tool.release_run.set()
+        until(lambda: tool.run_finished.is_set(), refresh_finished)
+
+    def refresh_finished():
+        def verify():
+            assert_line("Au repos")
+            assert detached_label[0].get_text() == "Purge en cours · 99 %"
+            assert tool.run_calls == 2
+            report["checks"]["refresh_cancels_worker_and_discards_late_progress"] = True
+            capture("04-refresh-discards-late-worker")
+            finish()
+        later(verify, 250)
+
+    def finish():
         report["status"] = "PASS"
         result[0] = 0
         save()

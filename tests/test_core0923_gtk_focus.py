@@ -46,6 +46,7 @@ def _host(widget):
         view_stack=SimpleNamespace(set_visible_child_name=lambda route: None),
         header_subtitle=SimpleNamespace(set_label=lambda label: None),
         _refresh_header_actions=lambda route: None,
+        _dispose_maintenance_lines=lambda: None,
         _plugin_page_widgets={"x": widget},
         _render_dashboard=lambda: None,
         _render_library=lambda rows: None,
