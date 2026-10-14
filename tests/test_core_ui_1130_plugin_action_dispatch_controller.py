@@ -141,3 +141,68 @@ def test_failure_in_menu_dismissal_does_not_execute_plugin_callback():
     with pytest.raises(RuntimeError, match="detached"):
         invoke_ui_action(window, action, NS())
     assert events == []
+
+
+def test_popdown_that_closes_window_never_dispatches_plugin_action():
+    window, events = _window()
+    def popdown():
+        events.append("dismiss")
+        window._closed = True
+    window.shell_menu.popdown = popdown
+    action = _action(lambda host: events.append("plugin"))
+    invoke_ui_action(window, action, NS())
+    assert events == ["dismiss"]
+
+
+def test_popdown_that_redirects_to_new_route_skips_old_plugin_action():
+    window, events = _window()
+    window._route_display_token = object()
+    def popdown():
+        events.append("dismiss")
+        window._route_display_token = object()
+    window.shell_menu.popdown = popdown
+    invoke_ui_action(window, _action(lambda host: events.append("old-page")), NS())
+    assert events == ["dismiss"]
+
+
+def test_popdown_that_rebuilds_header_skips_obsolete_action():
+    window, events = _window()
+    window._header_action_generation = object()
+    def popdown():
+        events.append("dismiss")
+        window._header_action_generation = object()
+    window.shell_menu.popdown = popdown
+    invoke_ui_action(window, _action(lambda host: events.append("old-header")), NS())
+    assert events == ["dismiss"]
+
+
+def test_live_action_still_dispatches_when_owner_tokens_are_unchanged():
+    window, events = _window()
+    window._route_display_token = object()
+    window._header_action_generation = object()
+    host = object()
+    invoke_ui_action(
+        window,
+        _action(lambda owner: events.append(("plugin", owner))),
+        host,
+    )
+    assert events == ["dismiss", ("plugin", host)]
+
+
+def test_reentrant_change_to_both_generations_never_presents_plugin_error():
+    window, events = _window()
+    window._route_display_token = object()
+    window._header_action_generation = object()
+    def popdown():
+        events.append("dismiss")
+        window._route_display_token = object()
+        window._header_action_generation = object()
+    window.shell_menu.popdown = popdown
+    invoke_ui_action(
+        window,
+        _action(lambda host: (_ for _ in ()).throw(
+            RuntimeError("private source error"),
+        )),
+        NS(),
+    )
+    assert events == ["dismiss"]
