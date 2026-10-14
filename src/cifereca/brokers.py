@@ -206,7 +206,28 @@ class SynchronizationBrokerImpl:
         source_id = self._source_id(account)
         account_ref = _account_ref(self.service, account)
         state = self._state(source_id)
-        sync_capable = bool(set(account_ref.capabilities) & {"loans", "personal_library"})
+        source_caps = set(account_ref.capabilities)
+        sync_capable = bool(source_caps & {"loans", "personal_library"})
+        declared_sync_caps = []
+        if "personal_library" in source_caps:
+            declared_sync_caps.append("remote_inventory")
+        if source_caps & {"loans", "personal_library"}:
+            declared_sync_caps.append("entitlements")
+        # The service owns this session. Kobo's explicit backup capability
+        # alone licenses declaring the *availability* of an opt-in local
+        # materialization phase; this metadata read never executes it.
+        # Do NOT announce scheduled_refresh: the current Kobo timer does
+        # not yet implement periodic source refresh (#1346).
+        provider_id = account_ref.provider_id
+        credential_id = str(getattr(account, "credential_id", "") or "")
+        session = getattr(self.service, "_sessions", {}).get(
+            self.service._session_key(provider_id, credential_id)
+        )
+        if (
+            provider_id == "kobo" and session is not None
+            and bool(getattr(getattr(session, "capabilities", None), "backup", False))
+        ):
+            declared_sync_caps.append("local_materialization")
         return SyncSourceRef(
             source_id=source_id,
             identity_id=account_ref.identity_id,
@@ -220,6 +241,7 @@ class SynchronizationBrokerImpl:
             last_success=str(state.get("last_success") or ""),
             status=str(state.get("status") or "idle"),
             error=str(state.get("error") or ""),
+            sync_capabilities=tuple(declared_sync_caps),
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
