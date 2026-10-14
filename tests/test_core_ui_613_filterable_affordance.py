@@ -10,6 +10,9 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name == "_add_facets":
+        owner = ast.parse(MAIN.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "add_facets"))
     tree = ast.parse(gui_source_text(MAIN))
     cls = next(
         node for node in tree.body
@@ -47,7 +50,7 @@ def test_all_supported_detail_facets_share_same_affordance():
         "subject", "collection", "series", "isbn", "language",
     ):
         assert repr(field) in source
-    assert "self._facet_value_group(choices, field, controls)" in source
+    assert "window._facet_value_group(choices, field, controls)" in source
     assert "widget.set_activatable(False)" in source
 
 
@@ -62,7 +65,7 @@ def test_detail_facets_no_longer_use_distant_search_icon_or_blue_author_links():
 def test_author_subtitle_uses_same_filter_value_buttons():
     source = _method("_add_facets")
     assert "subtitle.set_visible(False)" in source
-    assert "self._facet_value_group(authors, 'author', controls)" in source
+    assert "window._facet_value_group(authors, 'author', controls)" in source
     assert "parent.append(author_box)" in source
 
 
