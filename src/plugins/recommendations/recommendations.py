@@ -817,12 +817,14 @@ class UxRecommendationsView:
         if self._task_handle is not None:
             self._task_handle.cancel()
         self._task_handle = None
+        # The previous task may have been busy even when the newly selected
+        # profile is no longer valid or the Core brokers disappear.
+        self._busy = False
+        self._spinner.stop()
+        self._refresh_button.set_sensitive(True)
 
         identity_id = self.selected_identity_id()
         if not identity_id:
-            self._busy = False
-            self._spinner.stop()
-            self._refresh_button.set_sensitive(True)
             self._summary.set_label("Aucun profil disponible.")
             return False
         context = self.plugin.context
