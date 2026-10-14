@@ -173,3 +173,56 @@ def test_window_close_drops_cached_book_subscription_references():
     assert "window._cached_book_unsubscribe = lambda: None" in source
     assert "window._cached_book_services = ()" in source
     assert "window._cached_book_context = None" in source
+
+
+def test_window_close_continues_after_dispose_and_worker_failures():
+    """#1132: a failing plugin/page must not strand the remaining resources."""
+    import importlib.util
+    from types import SimpleNamespace
+
+    spec = importlib.util.spec_from_file_location(
+        "window_close_failure_isolation",
+        ROOT / "src/cifereca/gui/window_close.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    calls = []
+
+    def fail(name):
+        calls.append(name)
+        raise RuntimeError(name)
+
+    def done(name):
+        calls.append(name)
+
+    class Window:
+        _closed = False
+        _kobo_backup_timer_id = 17
+        _settings_main_lifetime = SimpleNamespace(dispose=lambda: fail("settings"))
+        _settings_standalone_lifetime = SimpleNamespace(dispose=lambda: done("standalone"))
+        _cached_book_unsubscribe = lambda self: fail("unsubscribe")
+        _cancel_notification_hide = lambda self: fail("notification")
+        _cancel_activity_hide = lambda self: done("activity")
+        _diag_refresh = object()
+        def get_width(self): return 800
+        def get_height(self): return 600
+
+    window = Window()
+    window.config = SimpleNamespace(set=lambda *args: None, save=lambda: None)
+    window.runner = SimpleNamespace(close=lambda: fail("runner"))
+    window.history_cover_resolver = SimpleNamespace(close=lambda: done("history"))
+    window.covers = SimpleNamespace(close=lambda: done("covers"))
+    window.service = SimpleNamespace(close=lambda: done("service"))
+    assert module.close_window_resources(window, source_remove=lambda source: done("timer")) is False
+    assert window._closed is True
+    assert window._settings_main_lifetime is None
+    assert window._settings_standalone_lifetime is None
+    assert window._kobo_backup_timer_id is None
+    assert window._cached_book_services == ()
+    assert calls == [
+        "settings", "standalone", "timer", "notification", "activity",
+        "unsubscribe", "runner", "history", "covers", "service",
+    ]
+    assert module.close_window_resources(window, source_remove=lambda source: fail("repeat")) is False
+    assert "repeat" not in calls
