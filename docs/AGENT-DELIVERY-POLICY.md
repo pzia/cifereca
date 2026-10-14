@@ -48,11 +48,16 @@ Distinguer sans ambiguïté :
    changements et transmettent le routage nécessaire à `cicd`. Réutiliser
    `E2E Smoke`, `e2e/run.py` et les fixtures, sans nouveau workflow par
    parcours.
-6. **UX autonome** : `ux` conduit des campagnes exploratoires et recettes
-   ciblées sur demande, fournit des preuves et crée des tickets ; il ne
-   corrige pas le produit, ne merge pas et ne transforme pas de lui-même
-   une observation en gate CI. L'absence de campagne UX exploratoire ne
-   bloque pas par défaut la clôture.
+6. **UX autonome et tickets soumis à validation** : `ux` conduit des
+   campagnes exploratoires et recettes ciblées sur demande, fournit des
+   preuves, puis **propose une courte liste numérotée** (impact, priorité
+   proposée, rôle) avant de créer des tickets. Seuls les items explicitement
+   approuvés par l'utilisateur deviennent de nouvelles issues ; le silence
+   ne vaut pas accord, l'acceptation peut être partielle. Un ticket précis
+   demandé directement par l'utilisateur est déjà autorisé. `ux` ne
+   corrige pas le produit, ne merge pas et ne transforme pas une observation
+   en gate CI. **Cette approbation de tickets n'est pas un gate de merge** :
+   l'absence de campagne exploratoire ne bloque pas la clôture.
 7. **Ownership asynchrone explicite** : avant de travailler, lire issue,
    branches, PR et checks actuels. Un rôle pilote et un prochain handoff
    visibles par issue ; ne pas dupliquer le travail d'un autre fil.
