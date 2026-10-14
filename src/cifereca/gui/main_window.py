@@ -1997,7 +1997,8 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def _search_selected(self, row: BookListItem | None) -> None:
-        return search_details._search_selected(self, row)
+        from .search_host_port import SearchDetailPort
+        return search_details._search_selected(SearchDetailPort(self), row)
 
     def _search_detail_request_context(self) -> tuple[int, int, int, str | None]:
         return search_details._search_detail_request_context(self)
@@ -2623,7 +2624,8 @@ class MainWindow(Adw.ApplicationWindow):
             source_provider=str(provider), metadata=meta)
 
     def _load_known_detail(self, item):
-        return search_details._load_known_detail(self, item)
+        from .search_host_port import SearchDetailPort
+        return search_details._load_known_detail(SearchDetailPort(self), item)
 
     def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
         return library_refresh.refresh_library(self, scan, control, refresh_covers=refresh_covers)
