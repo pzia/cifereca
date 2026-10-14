@@ -5,12 +5,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_WINDOW = ROOT / "src/cifereca/gui/main_window.py"
+STARTUP_COORDINATOR = ROOT / "src/cifereca/gui/startup_coordinator.py"
 APP = ROOT / "src/cifereca/app.py"
 
 def _class_method(path: Path, class_name: str, method_name: str) -> ast.FunctionDef:
     tree = ast.parse(path.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
+
+def _startup_owner_method(name: str) -> ast.FunctionDef:
+    tree = ast.parse(STARTUP_COORDINATOR.read_text(encoding="utf-8"))
+    return next(node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == name)
+
 
 def test_main_window_builds_and_shows_shell_before_provider_connection():
     method = _class_method(MAIN_WINDOW, "MainWindow", "__init__")
@@ -41,10 +48,13 @@ def test_application_records_window_presented_timing():
 
 def test_dashboard_exposes_local_background_connection_state():
     build = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_build_dashboard_page"))
-    connect = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "connect_configured_sources"))
+    connect = ast.unparse(_startup_owner_method("connect_configured_sources"))
+    facade = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "connect_configured_sources"))
     assert "Connexion aux sources en arrière-plan…" in build
     assert "dashboard_loading_status" in connect
     assert "La navigation locale reste disponible." in connect
+    assert "startup_coordinator.connect_configured_sources(" in facade
+    assert "idle_add=GLib.idle_add" in facade
 
 def test_core_open_keeps_plugin_activation_enabled_by_default():
     runtime = (ROOT / "src/cifereca/core/runtime.py").read_text()
@@ -78,12 +88,15 @@ def test_titlebar_falls_back_before_plugin_categories_are_ready():
     assert "self._titlebar_service = None" in source
 
 def test_provider_connection_survives_plugin_ui_refresh_failure():
-    source = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "activate_startup_plugins"))
-    activate = source.index("self.plugin_manager.activate()")
-    attach = source.index("self.service.attach_plugin_manager(self.plugin_manager)")
-    refresh = source.index("self._plugins_changed()")
+    source = ast.unparse(_startup_owner_method("activate_startup_plugins"))
+    facade = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "activate_startup_plugins"))
+    activate = source.index("window.plugin_manager.activate()")
+    attach = source.index("window.service.attach_plugin_manager(window.plugin_manager)")
+    refresh = source.index("window._plugins_changed()")
     finalizer = source.index("finally:")
     # The no-plugin fallback schedules a connection earlier in source order.
     # Check the normal plugin-activation path, whose schedule follows finally.
-    connect = source.rindex("GLib.idle_add(self._connect_sources_if_open)")
+    connect = source.rindex("idle_add(window._connect_sources_if_open)")
     assert activate < attach < refresh < finalizer < connect
+    assert "startup_coordinator.activate_startup_plugins(" in facade
+    assert "idle_add=GLib.idle_add" in facade
