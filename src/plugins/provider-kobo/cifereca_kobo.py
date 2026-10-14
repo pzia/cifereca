@@ -277,11 +277,40 @@ class KoboSession(ProviderSession):
         if scope == "physical":
             return []
         rows = self.catalog.search(query, field=field, limit=50, page=page)
+        # The public catalogue remains queryable without a personal account.
+        # Only a verified account may publish private /library/search facts.
+        # Never trust a returned account_id over the authenticated session.
+        account_id = (
+            self._accounts[0].unique_id
+            if self.connected and len(self._accounts) == 1
+            and self._accounts[0].provider_id == self.provider_id
+            and self._accounts[0].credential_id == self.credential_id
+            else None
+        )
+        accepted: list[SearchResult] = []
+        for item in rows:
+            # SearchResult is the normal catalogue contract. Some legacy
+            # providers/test doubles omit optional attributes: do not crash
+            # while deciding whether a returned result is account-scoped.
+            raw_metadata = getattr(item, "metadata", None)
+            meta = raw_metadata if isinstance(raw_metadata, dict) else {}
+            private = (
+                getattr(item, "owned", None) is True
+                or getattr(item, "source_collection", None) in {"library", "archived"}
+            )
+            if private and account_id is None:
+                continue
+            if "account_id" in meta and (
+                account_id is None or type(meta["account_id"]) is not str
+                or meta["account_id"] != account_id
+            ):
+                continue
+            accepted.append(item)
         _TRACE_LOG.debug(
             "TRACE kobo catalog plugin source=search items=%s with_cover=%s",
-            len(rows), sum(1 for row in rows if row.thumbnail_url),
+            len(accepted), sum(1 for row in accepted if row.thumbnail_url),
         )
-        return rows
+        return accepted
 
     def library(self) -> list[SearchResult]:
         items = self.client.library_manifest()
