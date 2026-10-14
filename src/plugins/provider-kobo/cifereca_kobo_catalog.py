@@ -139,16 +139,21 @@ class KoboCatalogService:
             metadata=metadata,
         )
 
-    def search(self, query: str, *, field: str = "all", limit: int = 50, page: int = 0) -> list[SearchResult]:
+    def search(
+        self, query: str, *, field: str = "all", limit: int = 50,
+        page: int = 0, scope: str = "all",
+    ) -> list[SearchResult]:
         self.last_search_rejections = []
+        if scope not in {"catalog", "all"}:
+            raise ProviderError("Kobo-Vault : portée de recherche invalide")
         try:
-            payload = self.client.search(query, field=field, scope="all", limit=limit, page=page)
+            payload = self.client.search(query, field=field, scope=scope, limit=limit, page=page)
         except KoboVaultError as exc:
             # Vault may authorize catalogue discovery yet refuse the separate
             # private /library/search route (e.g. missing delegated scope).
             # That denial must not make public discovery unavailable. Never
             # downgrade transport, throttling, or server failures to success.
-            if exc.status_code not in (401, 403):
+            if scope != "all" or exc.status_code not in (401, 403):
                 raise
             # A public-only request contains no evidence of account rights.
             # Apply the provider's public projection at this boundary as well,
@@ -168,6 +173,10 @@ class KoboCatalogService:
             for row in getattr(self.client, "last_search_merge_rejections", ())
             if isinstance(row, dict)
         )
+        if scope == "catalog":
+            # Public-only projection is obligatory even with a substitute
+            # client that returns forged personal rights on /catalog/search.
+            payload = KoboVaultClient._public_catalog_payload(payload)
         items = payload.get("items")
         if not isinstance(items, list):
             return []
