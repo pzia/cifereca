@@ -13,7 +13,7 @@ def test_ports_are_headless_and_do_not_import_main_window():
     imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
     assert not any("gi" in ast.unparse(node) or "main_window" in ast.unparse(node) for node in imports)
     names = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
-    assert names == {"SearchControllerHost", "SearchDetailHost"}
+    assert names == {"SearchControllerHost", "SearchDetailHost", "SearchRunPort", "SearchDetailPort"}
 
 
 def test_search_adapter_functions_bind_to_declared_ports():
