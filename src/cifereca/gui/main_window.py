@@ -1558,25 +1558,12 @@ class MainWindow(Adw.ApplicationWindow):
     def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool:
         """Open an attested book in the active identity's standard Library detail.
 
-        Public plugin callers cannot navigate to another identity implicitly.
-        The lookup uses only the already loaded Library snapshot, with no
-        filesystem scan or network operation on the GTK main thread.
+        Public plugins never navigate to another identity implicitly. Resolution
+        is local-only; the Core rechecks identity context before dispatch.
         """
-        if getattr(self, "_closed", False):
-            return False
-        from ..core.book_navigation import library_key_for_book
-
-        identity = getattr(self.service, "current_identity", None)
-        active_id = str(getattr(identity, "identity_id", "") or "")
-        if not active_id or (identity_id is not None and identity_id != active_id):
-            return False
-        key = library_key_for_book(
-            book, getattr(self, "_library_entries_cache", ()), identity_id=active_id,
+        return library_navigation.open_book_detail(
+            self, book, identity_id=identity_id,
         )
-        if not key:
-            return False
-        self._open_library_item(key)
-        return True
 
     def _open_library_item(self, key: str) -> None:
         return library_navigation.open_library_item(self, key)
