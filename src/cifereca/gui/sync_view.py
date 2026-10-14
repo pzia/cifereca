@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import Mapping
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,70 @@ def sync_identity_action_label(identity: object | None) -> str:
     label = str(getattr(identity, "label", "") or "").strip() if identity is not None else ""
     return f"Synchroniser {label}" if label else "Synchroniser les sources"
 
+
+
+
+def sync_local_preflight_presentation(result: object) -> str:
+    """Fixed French labels and bounded counts; never echo provider metadata."""
+    facts = getattr(result, "facts", None)
+    if not isinstance(facts, Mapping):
+        return "Aperçu indisponible. Aucun téléchargement autorisé."
+    status = facts.get("status")
+    if getattr(result, "ok", False) is not True or status != "preview_only":
+        reasons = {
+            "source_disabled": "Source désactivée.",
+            "not_supported": "Cette source ne propose pas de prévisualisation Kobo.",
+            "unknown_source": "Source introuvable.",
+            "invalid_source": "Identité ou compte incohérent.",
+            "invalid_options": "Paramètres de prévisualisation invalides.",
+            "preview_unavailable": "État local indisponible.",
+        }
+        return (
+            reasons.get(status, "Aperçu indisponible.")
+            if type(status) is str else "Aperçu indisponible."
+        ) + " Aucun téléchargement autorisé."
+    if (
+        facts.get("acquisition_authorized") is not False
+        or facts.get("read_only") is not True
+        or facts.get("requires_manifest_validation") is not True
+    ):
+        return "Aperçu indisponible. Aucun téléchargement autorisé."
+    counts = facts.get("counts")
+    expected = (
+        "already_local_linked", "already_local_verified",
+        "needs_reconciliation", "candidate_unverified",
+        "potentially_missing", "attention_required", "blocked_scope",
+        "blocked_unlinked", "not_downloadable", "invalid_manifest_items",
+    )
+    known = facts.get("known_item_count")
+    if (
+        type(known) is not int or not 0 <= known <= 1_000_000
+        or not isinstance(counts, Mapping)
+        or any(
+            type(counts.get(key)) is not int or not 0 <= counts[key] <= 1_000_000
+            for key in expected
+        )
+    ):
+        return "Aperçu indisponible. Aucun téléchargement autorisé."
+    local = counts["already_local_linked"] + counts["already_local_verified"]
+    blockers = sum(counts[key] for key in (
+        "attention_required", "blocked_scope", "blocked_unlinked",
+        "not_downloadable", "invalid_manifest_items",
+    ))
+    evidence = (
+        "Fichiers vérifiés par empreinte"
+        if facts.get("files_verified") is True
+        else "État des liens locaux uniquement (sans vérification SHA)"
+    )
+    return (
+        f"Notices connues : {known} · déjà liées : {local} · "
+        f"à rapprocher : {counts['needs_reconciliation']} · "
+        f"candidats incertains : {counts['candidate_unverified']} · "
+        f"potentiellement manquants : {counts['potentially_missing']} · "
+        f"actions requises : {blockers}.\\n"
+        f"{evidence}. Manifeste distant non actualisé ; "
+        "aucun téléchargement autorisé depuis cet aperçu."
+    )
 
 def sync_source_presentation(source: object) -> SyncSourcePresentation:
     enabled = bool(getattr(source, "enabled", False))
