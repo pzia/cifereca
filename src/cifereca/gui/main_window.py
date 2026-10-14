@@ -55,6 +55,7 @@ from .settings_lifetime import SettingsPageLifetime
 from .settings_tracking import bind_settings_actions
 from .settings_diagnostic_actions import build_settings_diagnostic_callbacks
 from .task_state import register_task_start, register_task_finish
+from .task_progress_presentation import live_task_progress_label
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .loan_view import (
@@ -492,21 +493,10 @@ class MainWindow(Adw.ApplicationWindow):
         if getattr(self, "_closed", False):
             return False
         if hasattr(self, "busy_revealer") and self._active_tasks:
-            count = len(self._active_tasks)
-            prefix = f"{count} opérations · " if count > 1 else ""
-            # Progress can be delivered after its operation completed.
-            # Never overwrite the live task banner with a stale label.
-            active_labels = tuple(row[1] for row in self._active_tasks.values())
-            display_label = str(label)
-            if not any(
-                display_label == active or display_label.startswith(active + " ")
-                for active in active_labels
-            ):
-                _priority, display_label, _kind = min(
-                    self._active_tasks.values(), key=lambda row: row[0]
-                )
-            self.busy_label.set_visible(True)
-            self.busy_label.set_label("En cours · " + prefix + display_label)
+            presentation = live_task_progress_label(self._active_tasks, label)
+            if presentation is not None:
+                self.busy_label.set_visible(True)
+                self.busy_label.set_label(presentation)
         return False
 
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
