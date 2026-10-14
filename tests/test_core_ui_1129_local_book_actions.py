@@ -68,10 +68,11 @@ def _environment(*, item=None, identities=("alice", "bob"), local=True,
     }
     actions, submissions, launched = [], [], []
     detail = NS(add_actions=lambda buttons: actions.extend(buttons))
+    identity_rows = tuple(NS(identity_id=i, label=i.title()) for i in identities)
 
     class Service:
         current_identity = NS(identity_id="alice")
-        identities = tuple(NS(identity_id=i, label=i.title()) for i in identities)
+        identities = identity_rows
 
         def __init__(self):
             self.exists = local
