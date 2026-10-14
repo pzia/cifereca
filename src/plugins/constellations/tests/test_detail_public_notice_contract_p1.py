@@ -29,6 +29,9 @@ from constellation_view_model import node_from_row, public_url
     "https://example.org\\@attacker.example.org/book",
     "https://[malformed/book",
     "https://example.org/%0Abook?auth=PRIVATE_TOKEN",
+    "https://example.org/%0Abook",
+    "https://example.org/%1fbook",
+    "https://example.org/%7Fbook",
     "https://example.org/" + "x" * 2100,
     "https://example.org/book\tPRIVATE_TOKEN",
 ))
