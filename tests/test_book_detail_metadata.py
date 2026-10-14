@@ -94,3 +94,66 @@ def test_identifiers_mapping_is_explicitly_allowlisted_without_provider_ids():
     assert ("DOI déclaré", "10.1234/other", "all") in fields
     assert all("secret-internal-id" not in value for _, value, _ in fields)
     assert all("kobo" != value for _, value, _ in fields)
+
+
+def test_youth_age_ranges_are_projected_only_with_attested_kind_and_bounds():
+    rows = detail_metadata_items({
+        "youth_age_ranges": [
+            {"age_min": 8, "age_max": 11, "age_kind": "publisher",
+             "source_label": "PRIVATE_FAMILY_ACCOUNT",
+             "source_id": "secret-library"},
+            {"age_min": 8, "age_max": 11, "age_kind": "reading"},
+            {"age_min": 13, "age_max": None, "age_kind": "interest"},
+            {"age_min": 10, "age_max": None, "age_kind": "inferred"},
+        ],
+    })
+    assert ("Âge éditeur", "De 8 à 11 ans", "copy") in rows
+    assert ("Âge de lecture", "De 8 à 11 ans", "copy") in rows
+    assert ("Âge d’intérêt", "À partir de 13 ans", "copy") in rows
+    assert ("Âge inféré (non attesté)", "À partir de 10 ans", "copy") in rows
+    assert "PRIVATE_FAMILY_ACCOUNT" not in repr(rows)
+    assert "secret-library" not in repr(rows)
+
+
+def test_invalid_youth_age_bounds_cannot_be_displayed_as_publisher_attestations():
+    rows = detail_metadata_items({
+        "youth_age_ranges": [
+            {"age_min": True, "age_max": 12, "age_kind": "publisher"},
+            {"age_min": "13", "age_max": None, "age_kind": "publisher"},
+            {"age_min": -1, "age_max": 12, "age_kind": "publisher"},
+            {"age_min": 13, "age_max": 8, "age_kind": "publisher"},
+            {"age_min": None, "age_max": None, "age_kind": "publisher"},
+            {"age_min": 8, "age_max": 70, "age_kind": "publisher"},
+            {"age_min": 8, "age_max": 11, "age_kind": "PRIVATE_SOURCE"},
+            {"age_min": 8, "age_max": 11,
+             "age_kind": "publisher", "source_label": "Bearer PRIVATE"},
+            {"age_min": None, "age_max": 6, "age_kind": "interest"},
+            {"age_min": 15, "age_max": 18, "age_kind": "publisher"},
+        ],
+        "token": "Bearer PRIVATE",
+        "local_path": "/home/private/reader",
+    })
+    assert rows == (
+        ("Âge éditeur", "De 8 à 11 ans", "copy"),
+        ("Âge d’intérêt", "Jusqu’à 6 ans", "copy"),
+        ("Âge éditeur", "De 15 à 18 ans", "copy"),
+    )
+    assert "Bearer PRIVATE" not in repr(rows)
+    assert "/home/private" not in repr(rows)
+
+
+def test_youth_age_projection_remains_bounded_and_preserves_provenance_namespace():
+    repeated = [{"age_min": i % 12, "age_max": 16, "age_kind": "publisher"}
+                for i in range(620)]
+    rows = detail_metadata_items({
+        "youth_age_ranges": repeated,
+        "catalogue_metadata": {
+            "youth_age_ranges": [{"age_min": 7, "age_max": 9, "age_kind": "reading"}],
+        },
+    })
+    assert len(rows) <= 201
+    assert ("Catalogue · Âge de lecture", "De 7 à 9 ans", "copy") in rows
+    crowded = detail_metadata_items({"subjects": [f"sujet-{i}" for i in range(220)]})
+    assert len(crowded) == 201
+    assert any("valeur(s) supplémentaires non affichées" in value
+               for _, value, _ in crowded)
