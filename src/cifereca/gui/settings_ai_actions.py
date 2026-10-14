@@ -6,10 +6,17 @@ contract remain unchanged. No service is contacted when this factory runs.
 """
 from __future__ import annotations
 
+import logging
+from time import monotonic
+
 from .llm_settings import (
     LLMSettingsError, normalize_llm_settings, destination_summary,
-    env_key_is_set, probe_llm_connection,
+    env_key_is_set, LLMProbeResult, probe_llm_connection_result,
+    _probe_outcome,
 )
+
+
+_TRACE_LOG = logging.getLogger("cifereca")
 
 
 def bind_settings_ai_callbacks(
@@ -109,10 +116,41 @@ def bind_settings_ai_callbacks(
         def done(result):
             if version == ai_probe_version[0] and page_lifetime.alive:
                 host, _ = destination_summary(settings)
-                ai_status.set_text(f"{result} · {host} · modèle {settings['model']}")
+                label = (
+                    result.label if isinstance(result, LLMProbeResult)
+                    else "Test non concluant"
+                )
+                ai_status.set_text(f"{label} · {host} · modèle {settings['model']}")
         def failed(_exc):
             if version == ai_probe_version[0] and page_lifetime.alive:
                 ai_status.set_text("Test non concluant ; vérifier la configuration")
+        # Log one terminal classification from the worker, never a TaskRunner
+        # completion callback: closing the page or editing fields must not
+        # erase the actual probe result. A queued task never started emits none.
+        def run_probe():
+            started = monotonic()
+            try:
+                outcome = probe_llm_connection_result(
+                    settings, remote_confirmed=confirmed,
+                )
+            except LLMSettingsError:
+                outcome = _probe_outcome("invalid_config")
+            except TimeoutError:
+                outcome = _probe_outcome("timeout")
+            except (ConnectionError, OSError):
+                outcome = _probe_outcome("backend_unavailable")
+            except Exception:
+                # Never log exception text, class names, headers or URL.
+                outcome = _probe_outcome("internal_error")
+            elapsed = min(60_000, max(0, int((monotonic() - started) * 1000)))
+            _host, remote = destination_summary(settings)
+            _TRACE_LOG.info(
+                "TRACE llm probe operation=llm_connection_probe "
+                "status=%s destination=%s duration_ms=%d",
+                outcome.status, "remote" if remote else "local", elapsed,
+            )
+            return outcome
+
         # TaskRunner makes the focused test button insensitive. Keep a
         # live keyboard focus anchor without stealing unrelated focus.
         if self.get_focus() is ai_test:
@@ -120,7 +158,7 @@ def bind_settings_ai_callbacks(
         try:
             self.runner.submit(
                 "Test connexion IA synthétique",
-                lambda: probe_llm_connection(settings, remote_confirmed=confirmed),
+                run_probe,
                 done, failed, control=ai_test,
                 priority=TaskPriority.USER_ACTION, kind="settings",
             )

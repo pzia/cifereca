@@ -73,4 +73,4 @@ def test_stale_ai_callbacks_are_gated_but_explicit_approval_remains():
     assert "if not page_lifetime.alive:" in text
     assert "confirmation_version != ai_probe_version[0]" in text
     assert "submit_ai_probe(settings, confirmed=True)" in text
-    assert "probe_llm_connection(settings, remote_confirmed=confirmed)" in text
+    assert "probe_llm_connection_result(" in text

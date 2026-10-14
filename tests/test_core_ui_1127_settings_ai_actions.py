@@ -149,3 +149,114 @@ def test_local_probe_is_lazy_and_late_result_cannot_change_disposed_view():
     args[2]("Test réussi")
     args[3](RuntimeError("private-backend-error"))
     assert ui.status.text == status
+
+
+def test_probe_logs_one_safe_terminal_event_per_executed_job(caplog, monkeypatch):
+    import logging
+    from cifereca.gui.llm_settings import LLMProbeResult
+
+    window, ui, lifetime, _capture = _bind()
+    secrets = (
+        "SECRET_API_BEARER", "ENV_SECRET_NAME",
+        "https://remote.example/secret?token=PRIVATE",
+        "private-model-name", "Camille Dupont",
+    )
+    ui.key_env.set_text("ENV_SECRET_NAME")
+    ui.model.set_text("private-model-name")
+    outcomes = iter(("auth_refused", "success"))
+    def probe(settings, *, remote_confirmed):
+        assert settings["api_key_env"] == "ENV_SECRET_NAME"
+        assert remote_confirmed is False
+        status = next(outcomes)
+        return LLMProbeResult(status, "Authentification refusée" if status == "auth_refused" else "Test réussi")
+
+    monkeypatch.setattr(
+        "cifereca.gui.settings_ai_actions.probe_llm_connection_result", probe,
+    )
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        ui.test_button.emit("clicked", ui.test_button)
+        first = window.runner.jobs[0][0]
+        assert "operation=llm_connection_probe" not in caplog.text
+        # First worker has really executed, even if its UI callback arrives late.
+        result1 = first[1]()
+        assert result1.status == "auth_refused"
+        ui.model.set_text("new-model-name")
+        ui.test_button.emit("clicked", ui.test_button)
+        second = window.runner.jobs[1][0]
+        result2 = second[1]()
+        first[2](result1)  # Stale completion must not overwrite the latest test.
+        assert ui.status.text == "Test synthétique en cours…"
+        second[2](result2)
+        assert "Test réussi" in ui.status.text
+        lifetime.dispose()
+        assert caplog.text.count("operation=llm_connection_probe") == 2
+        assert "status=auth_refused" in caplog.text
+        assert "status=success" in caplog.text
+        assert "destination=local" in caplog.text
+        for value in secrets:
+            assert value not in caplog.text
+
+
+def test_probe_exception_is_classified_without_str_or_repr(caplog, monkeypatch):
+    import logging
+    class HostileException(RuntimeError):
+        def __str__(self):
+            return "Bearer PRIVATE_TOKEN username=Camille"
+        def __repr__(self):
+            raise AssertionError("raw exception repr attempted")
+
+    def raise_hostile(*_a, **_kw):
+        raise HostileException("https://private.example/secret/model")
+
+    monkeypatch.setattr(
+        "cifereca.gui.settings_ai_actions.probe_llm_connection_result", raise_hostile,
+    )
+    window, ui, _life, _capture = _bind()
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        ui.test_button.emit("clicked", ui.test_button)
+        args, _kwargs = window.runner.jobs[0]
+        outcome = args[1]()
+        assert outcome.status == "internal_error"
+        args[2](outcome)
+    assert "Test non concluant" in ui.status.text
+    assert caplog.text.count("operation=llm_connection_probe") == 1
+    assert "status=internal_error" in caplog.text
+    assert "PRIVATE_TOKEN" not in caplog.text
+    assert "private.example" not in caplog.text
+    assert "Camille" not in caplog.text
+
+
+def test_completed_probe_logs_after_page_disposal_even_when_ui_is_inert(caplog, monkeypatch):
+    import logging
+    from cifereca.gui.llm_settings import LLMProbeResult
+    monkeypatch.setattr(
+        "cifereca.gui.settings_ai_actions.probe_llm_connection_result",
+        lambda *_a, **_kw: LLMProbeResult("timeout", "Délai de connexion dépassé"),
+    )
+    window, ui, lifetime, _capture = _bind()
+    ui.test_button.emit("clicked", ui.test_button)
+    args, _kwargs = window.runner.jobs[0]
+    before = ui.status.text
+    lifetime.dispose()
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        result = args[1]()
+        args[2](result)
+    assert ui.status.text == before
+    assert caplog.text.count("operation=llm_connection_probe") == 1
+    assert "status=timeout" in caplog.text
+
+
+def test_preflight_rejection_and_refused_remote_consent_do_not_claim_executed_probe(caplog):
+    import logging
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        window, ui, _life, _capture = _bind()
+        ui.model.set_text("")
+        ui.test_button.emit("clicked", ui.test_button)
+        assert window.runner.jobs == []
+        Dialog.instances.clear()
+        remote_window, remote_ui, _life, _capture = _bind(remote=True)
+        remote_ui.test_button.emit("clicked", remote_ui.test_button)
+        assert len(Dialog.instances) == 1
+        Dialog.instances[-1].respond("cancel")
+        assert remote_window.runner.jobs == []
+    assert "operation=llm_connection_probe" not in caplog.text
