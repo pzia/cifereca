@@ -157,19 +157,28 @@ class CoverAuditTool(_ReadOnlyTool):
         missing = 0
         invalid = 0
         samples: list[str] = []
-        for row in entries:
+        for notice_index, row in enumerate(entries, start=1):
             cover = _cover_value(row)
-            title = str(row.get("title") or row.get("name") or row.get("id") or "notice")
+            # Preview warnings cross the UI/diagnostic boundary. Never embed
+            # free-form titles, local paths or untrusted cover URLs there.
             if not cover:
                 missing += 1
                 if len(samples) < 12:
-                    samples.append(f"Sans couverture : {title[:100]}")
+                    samples.append(f"Sans couverture : notice n°{notice_index}")
                 continue
-            parsed = urlsplit(cover)
-            if parsed.scheme and parsed.scheme not in {"http", "https", "file"}:
+            try:
+                parsed = urlsplit(cover)
+                suspicious = bool(
+                    parsed.scheme and parsed.scheme not in {"http", "https", "file"}
+                )
+            except ValueError:
+                # Malformed bracketed IPv6 hosts and other invalid URL shapes
+                # are rejected per row instead of aborting the entire scan.
+                suspicious = True
+            if suspicious:
                 invalid += 1
                 if len(samples) < 12:
-                    samples.append(f"Couverture non reconnue : {title[:100]}")
+                    samples.append(f"Couverture non reconnue : notice n°{notice_index}")
         total = len(entries)
         summary = f"{missing} notice(s) sans couverture, {invalid} référence(s) suspecte(s), sur {total} notice(s)."
         return MaintenancePlan(
