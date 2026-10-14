@@ -34,8 +34,9 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import shell_shortcut_controller
 from . import shell_layout_controller
-from . import book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
+from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from .search_state import SearchStateField
 from .settings_lifetime import SettingsPageLifetime
 from . import settings_page
@@ -627,67 +628,25 @@ class MainWindow(Adw.ApplicationWindow):
                 self.nav_rows[route].set_visible(expanded)
 
     def _install_shell_shortcuts(self):
-        from .shortcuts import SHORTCUTS
-        callbacks = {
-            "quit": self._quit_application,
-            "close": self.close,
-            "pages-menu": self._open_pages_menu,
-            "focus-search": self._focus_search,
-            "settings": self._show_settings,
-            "next-page": lambda: self._cycle_page(1),
-            "previous-page": lambda: self._cycle_page(-1),
-            "go-back": lambda: getattr(self, "go_back", lambda: None)(),
-            "go-forward": lambda: getattr(self, "go_forward", lambda: None)(),
-            "shortcuts": self._show_shortcuts,
-            "reconnect-sources": self.reconnect_sources,
-        }
-        for name, callback in callbacks.items():
-            action = Gio.SimpleAction.new(name, None)
-            action.connect("activate", lambda _a, _p, cb=callback: cb())
-            self.add_action(action)
-        for name, keys, _description in SHORTCUTS:
-            self.get_application().set_accels_for_action("win." + name, list(keys))
+        return shell_shortcut_controller.install_shell_shortcuts(self, Gio=Gio)
 
     def _quit_application(self):
-        # Close through the normal handler before application shutdown.
-        application = self.get_application()
-        self.close()
-        if application is not None:
-            application.quit()
+        return shell_shortcut_controller.quit_application(self)
 
     def _open_pages_menu(self):
-        button = getattr(self, "pages_menu_button", None)
-        if button is not None:
-            button.popup()
+        return shell_shortcut_controller.open_pages_menu(self)
 
     def _focus_search(self):
-        if not hasattr(self, "_pages"):
-            return
-        route = self.view_stack.get_visible_child_name()
-        if route not in {"search", "library"}:
-            if "search" not in self._pages:
-                return
-            self.navigate("search"); route = "search"
-        controls = getattr(self, route + "_controls", None)
-        if controls is not None:
-            controls.entry.grab_focus()
+        return shell_shortcut_controller.focus_search(self)
 
     def _show_settings(self):
-        if "settings" in getattr(self, "_pages", {}):
-            self.navigate("settings")
-        else:
-            self._open_prelogin_diagnostics()
+        return shell_shortcut_controller.show_settings(self)
 
     def _cycle_page(self, direction):
-        from .shortcuts import adjacent_route
-        routes = list(getattr(self, "_pages", {}))
-        if routes:
-            self.navigate(adjacent_route(routes, self.view_stack.get_visible_child_name(), direction))
+        return shell_shortcut_controller.cycle_page(self, direction)
 
     def _show_shortcuts(self):
-        from .shortcuts import shortcuts_text
-        dialog = Adw.MessageDialog.new(self, "Raccourcis clavier", shortcuts_text())
-        dialog.add_response("close", "Fermer"); dialog.present()
+        return shell_shortcut_controller.show_shortcuts(self, Adw=Adw)
 
     def _create_shell_header(self):
         host = self._UiHost(self)
@@ -2073,17 +2032,9 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_plugin_book_actions(self, detail, item) -> None:
-        pages = getattr(self, "_pages", {}).values()
-        context = self._book_action_context(item)
-        buttons = []
-        for _route, action, enabled in contextual_actions(pages, "book.detail", context):
-            button = self.action_button(action.title, action.icon_name)
-            button._cifereca_action_id = "plugin:" + action.id
-            button.set_sensitive(enabled)
-            button.connect("clicked", lambda _b, a=action, c=context: self._invoke_ui_action(a, self._UiHost(self, c)))
-            buttons.append(button)
-        if buttons:
-            detail.add_actions(buttons)
+        return plugin_book_action_controller.add_plugin_book_actions(
+            self, detail, item, contextual_actions=contextual_actions,
+        )
 
     def _known_search_result(self, row):
         meta = row.get("metadata") or {}
