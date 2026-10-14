@@ -39,9 +39,11 @@ class MaintenanceCancelledError(RuntimeError):
 class MaintenanceCancelControl:
     """Thread-safe cancellation bridge; no GTK widgets enter worker code."""
 
-    def __init__(self, *, owner_closed: Callable[[], bool] | None = None) -> None:
+    def __init__(self, *, owner_closed: Callable[[], bool] | None = None,
+                 on_progress: Callable[[int | None, int | None, str], None] | None = None) -> None:
         self._event = Event()
         self._owner_closed = owner_closed
+        self._on_progress = on_progress
 
     def cancel(self) -> None:
         self._event.set()
@@ -55,8 +57,18 @@ class MaintenanceCancelControl:
         if self.cancelled():
             raise MaintenanceCancelledError("Opération de maintenance annulée")
 
-    def report(self, **_kwargs: Any) -> None:
-        return None
+    def report(
+        self, *, current: int | None = None, total: int | None = None,
+        message: str = "",
+    ) -> None:
+        """Forward progress from any worker thread; never touch GTK here."""
+        if self.cancelled() or self._on_progress is None:
+            return
+        try:
+            self._on_progress(current, total, str(message or ""))
+        except Exception:
+            # Presentation failures must not corrupt a maintenance mutation.
+            return
 
 
 def preview_maintenance_tool(
