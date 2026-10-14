@@ -3521,20 +3521,16 @@ class MainWindow(Adw.ApplicationWindow):
                 dirty=settings_state.dirty("sync"),
             )
             kobo_status.set_subtitle(status)
-            kobo_run_now.set_sensitive(ready)
+            # This control is navigation only. No materialization is authorized
+            # by the persisted policy or by a partially edited Settings draft.
+            kobo_run_now.set_sensitive(True)
 
         def manual_kobo_backup(_button) -> None:
             if not page_lifetime.alive or getattr(self, "_closed", False):
                 return
-            # Do not initiate download from an unsaved draft. A deliberate
-            # physical click is the *only* new path to Kobo acquisition.
-            _, ready = kobo_backup_action_state(
-                persisted_enabled=(self.config.get("kobo_backup.enabled", False) is True),
-                draft_enabled=bool(backup_switch.get_active()),
-                dirty=settings_state.dirty("sync"),
-            )
-            if ready:
-                self.run_kobo_backup(manual=True, control=_button)
+            # A settings click must never launch a cross-identity Kobo batch.
+            # Synchronisation displays exact sources and read-only previews.
+            self.navigate("sync")
 
         kobo_run_now.connect("clicked", manual_kobo_backup)
 
