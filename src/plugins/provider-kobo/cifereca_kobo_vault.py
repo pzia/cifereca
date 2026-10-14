@@ -190,40 +190,63 @@ class KoboVaultClient:
         return self._json("GET", "/library/search", params=params)
 
     @staticmethod
-    def _public_catalog_hit(raw: dict[str, Any]) -> dict[str, Any]:
-        """Public discovery never attests ownership or a download entitlement.
+    def _strip_public_private_fields(value: Any, depth: int = 0) -> Any:
+        """Keep public bibliography, never nested account or acquisition data.
 
-        Keep bibliographic and commercial catalogue metadata while erasing
-        account-only facts, even when Vault unexpectedly includes them.
-        A public record cannot claim to belong to a user's library via its
-        untrusted `collection` field.
+        Vault JSON can wrap rights in metadata/variants/lists, with snake_case
+        or camelCase keys. Removing only top-level keys leaks those fields into
+        SearchResult.metadata and into the public catalogue response envelope.
+        The depth cap also fails closed on an abnormally nested JSON structure.
         """
-        item = dict(raw)
-        for key in (
-            "owned", "downloadable", "archived", "account_id",
-            "credential_id", "source_credential", "revision_id",
-            "acquisition", "entitlements", "rights", "local_path",
-            "download_url", "license_url", "signed_url",
-        ):
-            item.pop(key, None)
-        # Compatibility with existing catalogue consumers: a public hit is
-        # explicitly *not attested as owned*, never unknown/True by omission.
+        private_keys = {
+            "owned", "isowned", "downloadable", "candownload", "archived",
+            "account", "accounts", "accountid", "customerid", "userid",
+            "credential", "credentials", "credentialid", "sourcecredential",
+            "revisionid", "acquisition", "entitlement", "entitlements",
+            "rights", "ownership", "localpath", "downloadurl", "licenseurl",
+            "signedurl", "authorization", "accesstoken", "refreshtoken",
+            "apitoken", "authtoken", "bearertoken", "sessiontoken",
+            "library",
+        }
+        if depth >= 16:
+            return None
+        if type(value) is dict:
+            return {
+                key: KoboVaultClient._strip_public_private_fields(child, depth + 1)
+                for key, child in value.items()
+                if type(key) is str
+                and "".join(ch for ch in key.casefold() if ch.isalnum()) not in private_keys
+            }
+        if type(value) is list:
+            return [
+                KoboVaultClient._strip_public_private_fields(child, depth + 1)
+                for child in value
+            ]
+        return value
+
+    @classmethod
+    def _public_catalog_hit(cls, raw: dict[str, Any]) -> dict[str, Any]:
+        """Public discovery never attests ownership or a download entitlement."""
+        item = cls._strip_public_private_fields(raw)
+        # An upstream catalogue can falsely describe a public hit as a
+        # library collection or as owned. Explicitly override that claim.
         item["owned"] = False
         item["collection"] = "catalog"
         return item
 
     @classmethod
     def _public_catalog_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        items = payload.get("items")
+        # Sanitize envelope metadata as well as individual hit metadata: both
+        # are observable in scope=all through result["catalog"].
+        public = cls._strip_public_private_fields(payload)
+        items = public.get("items")
         if type(items) is not list:
-            return payload
-        return {
-            **payload,
-            "items": [
-                cls._public_catalog_hit(row) if type(row) is dict else row
-                for row in items
-            ],
-        }
+            return public
+        public["items"] = [
+            cls._public_catalog_hit(row) if type(row) is dict else row
+            for row in items
+        ]
+        return public
 
     def _quarantine_personal_search(
         self, payload: dict[str, Any],
