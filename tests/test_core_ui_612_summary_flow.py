@@ -10,6 +10,10 @@ SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name == "_add_book_notice":
+        owner = ast.parse(SOURCE.with_name("book_notice_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in owner.body
+                                if isinstance(node, ast.FunctionDef) and node.name == "add_book_notice"))
     if name == "_library_selected":
         owner = ast.parse(SOURCE.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(node for node in owner.body
@@ -47,4 +51,4 @@ def test_notice_can_skip_summary_to_avoid_duplicate_render():
     source = _method("_add_book_notice")
     assert "include_description=True" in source
     assert "if include_description:" in source
-    assert "detail._show_description(self._book_description(item))" in source
+    assert "detail._show_description(window._book_description(item))" in source
