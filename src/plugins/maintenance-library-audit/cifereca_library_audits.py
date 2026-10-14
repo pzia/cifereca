@@ -8,7 +8,7 @@ import hashlib
 import os
 import stat
 import zipfile
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from cifereca.plugin_api import (
     MaintenanceContext,
@@ -39,6 +39,22 @@ def _cover_value(row: Mapping[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _encoded_cover_has_control(value: str) -> bool:
+    """Inspect nested percent-encodings without decoding URLs for display.
+
+    A doubly encoded newline becomes a control character after a second
+    downstream decoding step. Ordinary percent encodings remain valid.
+    """
+    for _ in range(4):
+        decoded = unquote(value)
+        if decoded == value:
+            return False
+        if any(ord(char) < 32 or ord(char) == 127 for char in decoded):
+            return True
+        value = decoded
+    return False
 
 
 def _language_values(row: Mapping[str, Any]) -> tuple[list[str], int]:
@@ -234,6 +250,13 @@ class CoverAuditTool(_ReadOnlyTool):
                     samples.append(f"Sans couverture : notice n°{notice_index}")
                 continue
             try:
+                # The audit stays bounded for a corrupted remote metadata
+                # field. Nested decoding is only for rejection, with no I/O.
+                if len(cover) > 8192 or _encoded_cover_has_control(cover):
+                    invalid += 1
+                    if len(samples) < 12:
+                        samples.append(f"Couverture non reconnue : notice n°{notice_index}")
+                    continue
                 parsed = urlsplit(cover)
                 scheme = parsed.scheme.casefold()
                 # An allowed scheme alone is not evidence of a usable cover.
