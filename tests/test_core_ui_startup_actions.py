@@ -54,40 +54,24 @@ def test_mainwindow_startup_facade_still_delegates_without_import_cycle():
 
 
 def test_opening_sync_idle_callback_checks_window_liveness_at_dispatch():
-    """#1132: an idle callback dispatched after window close must suppress sync."""
+    """#1132: the queued callback must guard the live window."""
     source = _method_source("MainWindow", "connect_configured_sources")
-    tree = ast.parse(source)
-    callbacks = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "idle_add"
-    ]
-    assert callbacks, "provider startup must schedule opening sync via GTK idle"
-    for callback in callbacks:
-        assert callback.args, "idle callback is missing"
-        idle = callback.args[0]
-        assert isinstance(idle, ast.Name), "expect explicit one-shot callback"
-        callback_def = next(
-            node for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef) and node.name == idle.id
-        )
-        code = compile(ast.fix_missing_locations(ast.Module(
-            body=[callback_def], type_ignores=[],
-        )), "<gtk-idle>", "exec")
-        calls = []
-        class Window:
-            _closed = True
-            def run_opening_sync(self):
-                calls.append("sync")
-        closed = Window()
-        ns = {"self": closed}
-        exec(code, ns)
-        assert ns[idle.id]() is False
-        assert calls == []
-        closed._closed = False
-        assert ns[idle.id]() is False
-        assert calls == ["sync"]
+    assert "GLib.idle_add(once_while_open(self, self.run_opening_sync))" in source
+    from cifereca.gui.startup_lifecycle import once_while_open
+
+    calls = []
+    class Window:
+        _closed = True
+        def run_opening_sync(self):
+            calls.append("sync")
+
+    window = Window()
+    idle = once_while_open(window, window.run_opening_sync)
+    assert idle() is False
+    assert calls == []
+    window._closed = False
+    assert idle() is False
+    assert calls == ["sync"]
 
 
 def test_startup_without_plugin_manager_still_connects_providers():
@@ -105,8 +89,7 @@ def test_startup_without_plugin_manager_still_connects_providers():
     assert "GLib.idle_add(self._connect_sources_if_open)" in body
     assert "return False" in body
     guarded = _method_source("MainWindow", "_connect_sources_if_open")
-    assert "if not self._closed:" in guarded
-    assert "self.connect_configured_sources()" in guarded
+    assert "once_while_open(self, self.connect_configured_sources)()" in guarded
     assert "return False" in guarded
 
 
