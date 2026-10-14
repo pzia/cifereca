@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from cifereca.plugin_api import ProviderError, RuntimeAcquisitionCapabilities
+from cifereca.plugin_api import Account, ProviderError, RuntimeAcquisitionCapabilities
 from cifereca_kobo import DESCRIPTOR, KoboSession
 from cifereca_kobo_catalog import KoboCatalogService
 from cifereca_kobo_vault import KoboVaultClient
@@ -427,6 +427,11 @@ def test_kobo_library_keeps_valid_rows_and_resets_rejections():
     )
     session.client.close()
     session.client = FakeVault()
+    session.connected = True
+    session._accounts = [Account(
+        unique_id="fixture-account", provider_id="kobo",
+        credential_id=session.credential_id, display_name="Synthetic Kobo",
+    )]
     session.catalog = KoboCatalogService(
         session.client,
         credential_id=session.credential_id,
