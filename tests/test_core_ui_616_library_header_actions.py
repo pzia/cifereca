@@ -9,6 +9,10 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name == "_build_library_page":
+        owner = ast.parse(MAIN.with_name("library_page_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef)
+                                and n.name == "build_library_page"))
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
@@ -44,17 +48,17 @@ def test_rare_library_operations_are_grouped_in_named_menu():
 def test_library_kobo_action_is_only_safe_navigation_to_sync():
     source = _method("_build_library_page")
     assert "Gérer la synchronisation Kobo" in source
-    assert "self.navigate('sync')" in source
+    assert "window.navigate('sync')" in source
     assert "self.run_kobo_backup(" not in source
     assert "aucun téléchargement ne démarre depuis Bibliothèque" in source
 
 
 def test_underlying_business_callbacks_are_unchanged():
     source = _method("_build_library_page")
-    assert "self.refresh_library(True, covers, refresh_covers=True)" in source
-    assert "self.choose_acsm()" in source
-    assert "self.navigate('sync')" in source
-    assert "self.open_library_folder()" in source
+    assert "window.refresh_library(True, covers, refresh_covers=True)" in source
+    assert "window.choose_acsm()" in source
+    assert "window.navigate('sync')" in source
+    assert "window.open_library_folder()" in source
 
 def test_sync_page_explains_metadata_only_and_global_download_not_embedded():
     path = ROOT / "src/cifereca/gui/sync_controller.py"
