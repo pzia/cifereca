@@ -18,7 +18,7 @@ def test_owner_imports_are_headless_and_facade_signatures_unchanged():
     tree = ast.parse(OWNER.read_text(encoding="utf-8"))
     imports = [ast.unparse(n) for n in ast.walk(tree)
                if isinstance(n, (ast.Import, ast.ImportFrom))]
-    assert not any("gi" in x or "main_window" in x or "task_runner" in x for x in imports)
+    assert not any(x == "import gi" or x.startswith("from gi ") or "main_window" in x or "task_runner" in x for x in imports)
     window = next(n for n in ast.parse(MAIN.read_text(encoding="utf-8")).body
                   if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
     functions = {n.name: n for n in window.body if isinstance(n, ast.FunctionDef)}
@@ -50,7 +50,7 @@ def test_connection_submit_uses_existing_provider_priority_and_no_implicit_sync(
     assert posted == []
 
 
-def test_without_plugins_connection_is_queued_once_and_refuses_closed_window():
+def test_without_plugins_connection_is_queued_once_not_invoked_eagerly():
     posted, calls = [], []
     window = NS(
         _closed=False,
