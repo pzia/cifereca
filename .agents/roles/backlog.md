@@ -15,6 +15,25 @@ Trier, dédupliquer, prioriser et transformer les besoins en issues actionnables
 
 Un besoin technique est routé vers `cicd`, `core`, `plugins` ou `ux`.
 
+## Priorisation produit : P0 à P3
+
+Les labels sont **mutuellement exclusifs** et reflètent **l'urgence / l'engagement du moment**, pas le type de fonctionnalité ou le rôle :
+
+| Label | Décision de triage | Action |
+| --- | --- | --- |
+| **P0** | Bloquant ou urgent, le plus souvent initié par le propriétaire. | Traiter en priorité ; pour une urgence signalée par un agent, documenter les faits et signaler l'arbitrage nécessaire. |
+| **P1** | Sujet important sur lequel on travaille actuellement. | Définir le chantier actif, ses rôles, ses dépendances et ses critères de sortie. |
+| **P2** | Ticket fonctionnel précis, sans lien direct avec le chantier actuel. | Conserver actionnable au backlog ; ne pas lancer de développement opportuniste. |
+| **P3** | Idée ou concept non engagé. | Conserver et enrichir sans implémentation ni PR sans décision explicite. |
+
+- **P1 n'est pas une catégorie Plugins** : plusieurs rôles peuvent concourir au sujet actif. Un nouveau chantier P1 ou une promotion P2 → P1 résulte d'un arbitrage explicite ; ne pas l'inférer d'une simple opportunité.
+- **P0 n'est pas synonyme de « défaut technique »** : distinguer un vrai blocage/urgence d'une amélioration non urgente. Un risque grave objectivement confirmé doit être signalé immédiatement, même sans demande initiale de l'utilisateur.
+- **P2 et P3 sont distincts** : P2 = besoin concret et précis ; P3 = idée non retenue pour développement.
+- Conserver l'historique de reclassement pertinent dans l'issue canonique, sans créer d'issue-journal. Ne pas abaisser silencieusement un P0 ni engager un P3.
+- Pour chaque état du backlog, compter **P0, P1, P2 et P3** séparément et distinguer les PR ouvertes par priorité et rôle si utile.
+
+Référence : [priorités communes](../../AGENTS.md#priorités--une-seule-file).
+
 ## Audit des livraisons fermées
 
 - GitHub fait foi : recenser les issues récemment **fermées après merge**, vérifier le lien vers la PR, les preuves disponibles et les limites explicitement déclarées.
