@@ -10,6 +10,10 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name == "_install_css":
+        owner = ast.parse(MAIN.with_name("shell_stylesheet_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body
+                                if isinstance(n, ast.FunctionDef) and n.name == "install_css"))
     if name == "_add_facets":
         owner = ast.parse(MAIN.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "add_facets"))
