@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import known_languages_controller
 from . import adept_loan_choice_controller
 from . import sync_issues_dialog_controller
 from . import shell_shortcut_controller
@@ -1057,19 +1058,9 @@ class MainWindow(Adw.ApplicationWindow):
         return sync_controller.run_opening_sync(self, control, deep=deep)
 
     def _known_item_languages(self, provider_id: str, item_id: str | None, metadata: dict[str, Any] | None = None) -> set[str]:
-        from cifereca.language import normalize_language_tag
-        values = []
-        meta = dict(metadata or {})
-        raw = meta.get('languages') or meta.get('language') or ()
-        values.extend(raw if isinstance(raw, (list, tuple, set)) else (raw,))
-        if item_id:
-            for row in self.service.storage.catalog_entries():
-                if str(row.get('provider_id') or '') != str(provider_id or ''): continue
-                if str(row.get('item_id') or '') != str(item_id): continue
-                row_meta = dict(row.get('metadata') or {})
-                raw = row_meta.get('languages') or row_meta.get('language') or ()
-                values.extend(raw if isinstance(raw, (list, tuple, set)) else (raw,))
-        return {tag for value in values if (tag := normalize_language_tag(value))}
+        return known_languages_controller.known_item_languages(
+            self, provider_id, item_id, metadata,
+        )
 
     def _build_loans_page(self) -> MasterDetailPage:
         return loans_controller._build_loans_page(self)
