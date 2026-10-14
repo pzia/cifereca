@@ -24,6 +24,8 @@ from recommendations import UxRecommendationsView, _public_cover_url
     "http://127.0.0.1/PRIVATE_COVER",
     "http://169.254.169.254/latest",
     "https://reader.local/cover.jpg",
+    "http://printer.lan/PRIVATE_IMAGE",
+    "https://host.home.arpa/PRIVATE_COVER",
     "https://example.org:8443/cover.jpg",
     "https://example.org/cover.jpg\\evil",
     "https://example.org/cover.jpg\x01PRIVATE_TOKEN",
