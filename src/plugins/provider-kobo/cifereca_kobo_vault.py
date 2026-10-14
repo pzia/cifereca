@@ -261,6 +261,21 @@ class KoboVaultClient:
             self.search_catalog(query, field=field, limit=limit, page=page)
         )
         library = self.search_library(query, field=field, limit=limit, cursor=cursor)
+        # /library/search may return several revisions or account variants of
+        # the same product. Last-wins would promote arbitrary ownership/rights
+        # to a public search result. Quarantine every personal variant while
+        # keeping any independently attested public catalogue result.
+        library_counts: dict[str, int] = {}
+        library_items = library.get("items")
+        if isinstance(library_items, list):
+            for raw in library_items:
+                if isinstance(raw, dict):
+                    product = _strict_product_id(raw)
+                    if product is not None:
+                        library_counts[product] = library_counts.get(product, 0) + 1
+        ambiguous_library_products = {
+            product for product, count in library_counts.items() if count > 1
+        }
         merged: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for source, payload in (("catalog", catalog), ("library", library)):
@@ -289,6 +304,16 @@ class KoboVaultClient:
                         "source": source,
                         "type": "invalid_shape",
                         "reason": "missing_product_id",
+                    })
+                    continue
+                if source == "library" and key in ambiguous_library_products:
+                    # Never select first/last, including when the duplicates
+                    # disagree about account_id, owned, or revision_id.
+                    # Keep diagnostics free of all untrusted product/account IDs.
+                    self.last_search_merge_rejections.append({
+                        "source": "library",
+                        "type": "invalid_scope",
+                        "reason": "duplicate_product_id",
                     })
                     continue
                 if key not in merged:
