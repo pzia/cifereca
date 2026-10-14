@@ -90,7 +90,8 @@ def test_startup_without_plugin_manager_still_connects_providers():
     assert "return False" in body
     guarded = _method_source("MainWindow", "_connect_sources_if_open")
     assert "once_while_open(self, self.connect_configured_sources)()" in guarded
-    assert "return False" in guarded
+    from cifereca.gui.startup_lifecycle import once_while_open
+    assert once_while_open(type("Window", (), {"_closed": True, "connect_configured_sources": lambda self: None})(), lambda: None)() is False
 
 
 def test_queued_history_chunk_does_not_touch_disposed_widgets():
