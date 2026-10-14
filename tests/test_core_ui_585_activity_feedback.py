@@ -278,3 +278,26 @@ def test_finished_callback_counts_two_live_tasks_when_runner_reports_one():
     )
     assert namespace["_task_finished"](window, 1, 1, "terminée", True, None) is False
     assert window.busy_label.label == "En cours · 2 opérations · en cours"
+
+
+def test_duplicate_task_start_does_not_duplicate_activity_feedback():
+    """#1132: a repeated GTK start delivery is idempotent."""
+    import types
+
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_started")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<start>", "exec"), namespace)
+
+    calls = []
+    window = types.SimpleNamespace(
+        _closed=False, _finished_task_ids=set(),
+        _active_tasks={7: (1, "existante", "task")},
+        _cancel_activity_hide=lambda: calls.append("cancel"),
+        activity_feedback=types.SimpleNamespace(started=lambda *args: calls.append("started")),
+        _refresh_activity_history=lambda: calls.append("refresh"),
+    )
+    assert namespace["_task_started"](window, 7, 1, "existante", 1, "task") is False
+    assert calls == []
+    assert window._active_tasks == {7: (1, "existante", "task")}
