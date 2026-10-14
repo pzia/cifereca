@@ -17,6 +17,11 @@ def _method(class_name: str, method_name: str):
 
 
 def _standalone(class_name: str, method_name: str):
+    if class_name == "MainWindow" and method_name in {
+        "_open_library_item", "_select_pending_library_item",
+    }:
+        from cifereca.gui import library_navigation
+        return getattr(library_navigation, method_name.lstrip("_"))
     method = _method(class_name, method_name)
     ns = {}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), str(MAIN), "exec"), ns)
