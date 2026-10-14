@@ -32,7 +32,7 @@ def test_language_facet_uses_same_multiselect_contract_as_top_bar():
 
 def test_detail_facet_updates_controls_silently_then_refreshes_once():
     source = _method(MAIN, "MainWindow", "_search_facet")
-    assert "controls.set_state(updated, notify=False)" in source
+    assert "target_controls.set_state(updated, notify=False)" in source
     assert "window._render_library()" in source
     assert "window.run_search(False)" in source
     assert "self.library_controls.set_state(updated)" not in source
@@ -52,4 +52,4 @@ def test_same_facet_still_has_explicit_refresh_path():
     # No early return on updated == state: clicking an already-selected facet
     # still refreshes the current list/search as an explicit user action.
     assert "updated == state" not in source
-    assert "controls.set_state(updated, notify=False)" in source
+    assert "target_controls.set_state(updated, notify=False)" in source
