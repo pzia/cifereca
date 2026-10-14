@@ -8,6 +8,7 @@ import pytest
 
 from cifereca.models import Account, Booking, HistoryItem
 from cifereca.services import LibraryService
+from cifereca.gui import shell_account_selection_controller
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -40,7 +41,8 @@ def _ui_host():
         ],
         type_ignores=[],
     )
-    namespace = {"TaskPriority": NS(USER_ACTION="user", NORMAL="normal")}
+    namespace = {"TaskPriority": NS(USER_ACTION="user", NORMAL="normal"),
+                 "shell_account_selection_controller": shell_account_selection_controller}
     exec(compile(ast.fix_missing_locations(module), str(MAIN), "exec"), namespace)
 
     class Runner:
