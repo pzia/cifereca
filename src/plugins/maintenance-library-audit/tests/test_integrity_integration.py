@@ -360,3 +360,20 @@ def test_integrity_rejects_symlink_swapped_between_check_and_open(monkeypatch, t
     assert len(flags_seen) == 1
     assert flags_seen[0] & os.O_NOFOLLOW
     assert external.is_file()
+
+
+def test_integrity_fails_closed_when_nofollow_not_supported(monkeypatch, tmp_path):
+    ordinary = tmp_path / "local.pdf"
+    ordinary.write_bytes(b"%PDF-1.4\\nno redirect")
+    seen = []
+
+    def no_open(*_args, **_kwargs):
+        seen.append(True)
+        raise AssertionError("Cannot open without atomic no-follow")
+
+    with monkeypatch.context() as patch:
+        patch.delattr(audits.os, "O_NOFOLLOW", raising=False)
+        patch.setattr(audits.os, "open", no_open)
+        assert audits._file_integrity_issues(ordinary, "pdf") == ("unreadable",)
+    assert seen == []
+    assert ordinary.read_bytes().startswith(b"%PDF-")
