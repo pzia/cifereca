@@ -288,7 +288,11 @@ class KoboSession(ProviderSession):
         # independently of the acquisition-specific backup_manifest() path.
         # A stale account from a failed reconnect is not valid authority.
         self.last_library_rejections = []
-        if not self.connected or len(self._accounts) != 1:
+        if (
+            not self.connected or len(self._accounts) != 1
+            or self._accounts[0].provider_id != self.provider_id
+            or self._accounts[0].credential_id != self.credential_id
+        ):
             self.last_library_rejections.append({
                 "type": "invalid_scope", "reason": "unbound_account",
             })

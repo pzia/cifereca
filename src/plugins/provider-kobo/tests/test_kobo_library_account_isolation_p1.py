@@ -112,3 +112,30 @@ def test_untrusted_product_identity_not_normalized_to_foreign_or_local_owned():
         assert vault.manifest_calls == 1 and vault.acquisition_calls == 0
     finally:
         session.close()
+
+
+def test_wrong_provider_or_credential_binding_is_not_inventory_authority():
+    vault = FakeVault([{"product_id": "private-book", "owned": True}])
+    session = session_with_vault(vault)
+    try:
+        for provider, credential in (
+            ("other-provider", session.credential_id),
+            ("kobo", "PRIVATE_OTHER_CREDENTIAL"),
+        ):
+            session._accounts = [Account(
+                unique_id="alice", display_name="Private",
+                provider_id=provider, credential_id=credential,
+            )]
+            assert session.library() == []
+            assert session.last_library_rejections == [
+                {"type": "invalid_scope", "reason": "unbound_account"},
+            ]
+            assert vault.manifest_calls == 0
+        session._accounts = [Account(
+            unique_id="alice", display_name="Private",
+            provider_id="kobo", credential_id=session.credential_id,
+        )]
+        assert [row.record_id for row in session.library()] == ["private-book"]
+        assert vault.manifest_calls == 1 and vault.acquisition_calls == 0
+    finally:
+        session.close()
