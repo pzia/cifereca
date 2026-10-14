@@ -1323,10 +1323,11 @@ def test_906_same_title_different_editions_do_not_assert_possession():
     YouthView.selected(view, NS(key="a"))
     YouthView.selected(view, NS(key="b"))
     assert calls == []
-    for projection in shown:
-        projection.actions[0].callback()
+    # The previous edition's action is now stale, despite the same title.
+    # Only the currently selected edition can start an explicit lookup.
+    assert shown[0].actions[0].callback() is False
+    assert shown[1].actions[0].callback() is True
     assert calls == [
-        (("Deux éditions",), {"field": "title", "online": False, "identity_id": "alice"}),
         (("Deux éditions",), {"field": "title", "online": False, "identity_id": "alice"}),
     ]
 
