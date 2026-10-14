@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 import zipfile
@@ -17,6 +18,7 @@ from cifereca.plugin_api import (
     PluginDirectories,
 )
 
+import cifereca_library_audits as audits
 from cifereca_library_audits import IntegrityAuditTool
 
 
@@ -153,6 +155,12 @@ def test_integrity_audit_through_public_brokers_is_read_only():
         assert result.facts["issues"]["sha256_mismatch"] == 1
         assert result.facts["issues"]["missing"] == 1
         assert control.events[-1]["message"] == "Audit d’intégrité terminé"
+        # Result warnings are also displayed/exportable diagnostics: use
+        # positions and issue codes, never private filenames or titles.
+        assert all(name not in "\\n".join(result.warnings)
+                   for name in ("good.epub", "broken.epub", "broken.pdf", "missing.epub"))
+        assert any("Fichier 2/4 : container_invalid" in w for w in result.warnings)
+        assert any("Fichier 4/4 : missing" in w for w in result.warnings)
 
         # The read fakes expose no mutation method: any attempted write fails immediately.
         assert not any(
@@ -291,3 +299,87 @@ def test_cancellation_on_last_integrity_file_prevents_completed_progress():
         assert control.events == [{
             "current": 0, "total": 1, "message": "Intégrité 1/1",
         }]
+
+
+def test_integrity_symlink_is_reported_without_opening_its_target(monkeypatch, tmp_path):
+    external = tmp_path / "PRIVATE_EXTERNAL.pdf"
+    external.write_bytes(b"%PDF-1.4\\nPRIVATE_PAYLOAD")
+    linked = tmp_path / "linked.pdf"
+    linked.symlink_to(external)
+    dangling = tmp_path / "dangling.epub"
+    dangling.symlink_to(tmp_path / "PRIVATE_NONEXISTENT.epub")
+
+    def unexpected_open(*_args, **_kwargs):
+        raise AssertionError("Symlink audit may not open its target")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audits.os, "open", unexpected_open)
+        for path in (linked, dangling):
+            assert audits._file_integrity_issues(
+                path, expected_size=999, expected_sha256="0" * 64
+            ) == ("symlink",)
+
+    tool, plan = _make_integrity_tool(tmp_path, [
+        {"identity_id": "id1", "local": True,
+         "local_path": str(linked), "title": "PRIVATE LINK"},
+        {"identity_id": "id1", "local": True,
+         "local_path": str(dangling), "title": "PRIVATE DANGLING"},
+    ])
+    control = Control()
+    result = tool.run(plan, control)
+    assert result.changed == 0
+    assert result.ok is False
+    assert result.facts["checked"] == 2
+    assert result.facts["invalid"] == 2
+    assert result.facts["missing"] == 0
+    assert result.facts["issues"] == {"symlink": 2}
+    assert [(event.get("current"), event.get("total"))
+            for event in control.events] == [(0, 2), (1, 2), (2, 2)]
+    assert all("PRIVATE" not in event["message"] for event in control.events)
+    assert external.read_bytes() == b"%PDF-1.4\\nPRIVATE_PAYLOAD"
+
+
+def test_integrity_rejects_symlink_swapped_between_check_and_open(monkeypatch, tmp_path):
+    if not hasattr(os, "O_NOFOLLOW"):
+        pytest.skip("Atomic no-follow open is unavailable on this platform")
+    external = tmp_path / "PRIVATE_TARGET.epub"
+    write_valid_epub(external)
+    subject = tmp_path / "switch.epub"
+    write_valid_epub(subject)
+    original_open = os.open
+    flags_seen = []
+
+    def substituted_open(path, flags, *args, **kwargs):
+        if Path(path) == subject:
+            flags_seen.append(flags)
+            subject.unlink()
+            subject.symlink_to(external)
+        return original_open(path, flags, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audits.os, "open", substituted_open)
+        issues = audits._file_integrity_issues(
+            subject, expected_size=999, expected_sha256="0" * 64,
+        )
+
+    assert issues == ("symlink",)
+    assert len(flags_seen) == 1
+    assert flags_seen[0] & os.O_NOFOLLOW
+    assert external.is_file()
+
+
+def test_integrity_fails_closed_when_nofollow_not_supported(monkeypatch, tmp_path):
+    ordinary = tmp_path / "local.pdf"
+    ordinary.write_bytes(b"%PDF-1.4\\nno redirect")
+    seen = []
+
+    def no_open(*_args, **_kwargs):
+        seen.append(True)
+        raise AssertionError("Cannot open without atomic no-follow")
+
+    with monkeypatch.context() as patch:
+        patch.delattr(audits.os, "O_NOFOLLOW", raising=False)
+        patch.setattr(audits.os, "open", no_open)
+        assert audits._file_integrity_issues(ordinary, "pdf") == ("unreadable",)
+    assert seen == []
+    assert ordinary.read_bytes().startswith(b"%PDF-")
