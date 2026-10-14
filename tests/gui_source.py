@@ -70,6 +70,10 @@ def gui_source_text(path: Path) -> str:
         body = method.body
         if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
             body = body[1:]
+        # A narrow host port adds a local import before the delegation.
+        # Keep source-contract tests bound to the real owner implementation.
+        if len(body) == 2 and isinstance(body[0], ast.ImportFrom) and body[0].module == 'search_host_port':
+            body = body[1:]
         if len(body) != 1:
             continue
         statement = body[0]
@@ -80,7 +84,7 @@ def gui_source_text(path: Path) -> str:
         if not isinstance(module, ast.Name) or method.name not in DELEGATES.get(module.id, set()):
             continue
         assert call.func.attr == method.name
-        assert call.args and isinstance(call.args[0], ast.Name) and call.args[0].id == 'self'
+        assert call.args and (isinstance(call.args[0], ast.Name) and call.args[0].id == 'self' or isinstance(call.args[0], ast.Call) and len(call.args[0].args) == 1 and isinstance(call.args[0].args[0], ast.Name) and call.args[0].args[0].id == 'self' and isinstance(call.args[0].func, ast.Name) and call.args[0].func.id in {'SearchRunPort', 'SearchDetailPort'})
         owner = path.parent / (module.id + '.py')
         owner_text = owner.read_text(encoding='utf-8')
         declaration = next(n for n in ast.parse(owner_text).body
