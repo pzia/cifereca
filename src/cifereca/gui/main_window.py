@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import recommendation_target_controller
 from . import secondary_results_controller
 from . import acsm_import_chooser_controller
 from . import shell_stylesheet_controller
@@ -1527,24 +1528,10 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def _book_recommendation_target(self, item):
-        manager = getattr(self, "plugin_manager", None)
-        if manager is None:
-            return None
-        context = self._book_action_context(item)
-        book = context.book
-        if book is None:
-            return None
-        try:
-            services = manager.services("recommendation")
-        except Exception:
-            return None
-        for resolved in services:
-            if "recommendation.book-reference" not in set(resolved.capabilities):
-                continue
-            service = resolved.service
-            if isinstance(service, BookReferenceRecommendationService):
-                return service, book
-        return None
+        return recommendation_target_controller.book_recommendation_target(
+            self, item,
+            BookReferenceRecommendationService=BookReferenceRecommendationService,
+        )
 
     def _add_book_recommendation_action(self, detail, item) -> None:
         return book_recommendation_controller.add_book_recommendation_action(
