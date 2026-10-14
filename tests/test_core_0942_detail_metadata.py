@@ -11,6 +11,9 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(class_name, method_name):
+    if class_name == "MainWindow" and method_name == "_add_facets":
+        owner = ast.parse(MAIN.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
+        return next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "add_facets")
     if class_name == "MainWindow" and method_name == "_library_selected":
         owner = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
         return next(n for n in owner.body if isinstance(n, ast.FunctionDef)
@@ -120,10 +123,14 @@ def test_shared_facets_do_not_replace_multivalued_detail_rows():
     class Expander(Row):
         pass
 
-    method = _method("MainWindow", "_add_facets")
-    module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
-    namespace = {"Adw": NS(ActionRow=Row, ExpanderRow=Expander)}
-    exec(compile(module, str(MAIN), "exec"), namespace)
+    from cifereca.gui.detail_facets_controller import add_facets
+    namespace = {
+        "_add_facets": lambda host, detail, item, controls: add_facets(
+            host, detail, item, controls,
+            Adw=NS(ActionRow=Row, ExpanderRow=Expander),
+            Gtk=NS(), TaskPriority=NS(USER_ACTION=0),
+        ),
+    }
 
     alice = Row("Auteur", "Alice Exemple")
     bob = Row("Auteur", "Bob Exemple")
