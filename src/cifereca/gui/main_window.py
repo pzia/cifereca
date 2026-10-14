@@ -60,6 +60,7 @@ from .timeout_policy import bounded_seconds
 from .startup_lifecycle import once_while_open
 from . import startup_coordinator
 from . import feedback_timers
+from . import activity_display_controller
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -343,35 +344,15 @@ class MainWindow(Adw.ApplicationWindow):
     def _refresh_activity_history(self) -> None:
         if getattr(self, "_closed", False):
             return
-        if not hasattr(self, "activity_history_box"):
-            return
-        clear_box(self.activity_history_box)
-        rows = activity_history_rows(self.activity_feedback.rows())
-        for display_text, is_error in rows:
-            label = Gtk.Label(label=display_text, xalign=0)
-            label.set_wrap(True)
-            label.add_css_class("caption")
-            if is_error:
-                label.add_css_class("warning")
-            self.activity_history_box.append(label)
-        self.activity_history_button.set_visible(bool(rows))
+        return activity_display_controller.refresh_activity_history(
+            self, Gtk=Gtk, clear_box=clear_box,
+            activity_history_rows=activity_history_rows,
+        )
 
     def _show_pending_activity_error(self) -> bool:
         if getattr(self, "_closed", False):
             return False
-        entry = self.activity_feedback.latest_unacknowledged_error()
-        if entry is None or not hasattr(self, "busy_revealer"):
-            return False
-        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
-        self.activity_status_icon.set_visible(True)
-        self.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
-        self.activity_status_icon.add_css_class("activity-error")
-        self.activity_status_icon.remove_css_class("activity-success")
-        self.busy_label.set_visible(True)
-        self.busy_label.set_label(entry.display_text)
-        self.activity_dismiss.set_visible(True)
-        self.busy_revealer.set_reveal_child(True)
-        return True
+        return activity_display_controller.show_pending_activity_error(self)
 
     def _hide_activity_feedback(self) -> bool:
         self._activity_hide_source = None
