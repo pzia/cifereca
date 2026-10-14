@@ -36,12 +36,20 @@ def test_duplicate_personal_search_variants_keep_only_public_evidence(monkeypatc
              "owned": True, "revision_id": "second"},
             {"product_id": "unambiguous", "account_id": "PRIVATE_ALICE",
              "owned": True, "title": "One personal book"},
+            # Conflicting legacy aliases taint both otherwise valid products.
+            {"product_id": "ALIAS_A", "id": "ALIAS_B",
+             "account_id": "PRIVATE_BOB", "owned": True},
+            {"product_id": "ALIAS_A", "account_id": "PRIVATE_ALICE",
+             "owned": True, "title": "PRIVATE_ALIAS_A"},
+            {"product_id": "ALIAS_B", "account_id": "PRIVATE_ALICE",
+             "owned": True, "title": "PRIVATE_ALIAS_B"},
         ]}
 
     monkeypatch.setattr(vault, "search_catalog", catalog)
     monkeypatch.setattr(vault, "search_library", library)
     try:
-        rows = vault.search("example", scope="all")["items"]
+        payload = vault.search("example", scope="all")
+        rows = payload["items"]
         assert calls == ["catalog", "library"]
         assert [row["product_id"] for row in rows] == [
             "shared", "catalog-only", "unambiguous",
@@ -55,10 +63,17 @@ def test_duplicate_personal_search_variants_keep_only_public_evidence(monkeypatc
             "account_id", "revision_id", "downloadable",
         ))
         assert rows[-1]["owned"] is True
-        assert vault.last_search_merge_rejections == [
-            {"source": "library", "type": "invalid_scope",
-             "reason": "duplicate_product_id"},
-        ] * 4
+        assert vault.last_search_merge_rejections == (
+            [{"source": "library", "type": "invalid_scope",
+              "reason": "duplicate_product_id"}] * 4
+            + [{"source": "library", "type": "invalid_shape",
+                "reason": "missing_product_id"}]
+            + [{"source": "library", "type": "invalid_scope",
+                "reason": "duplicate_product_id"}] * 2
+        )
+        assert [row["product_id"] for row in payload["library"]["items"]] == [
+            "unambiguous",
+        ]
 
         # The *accepted* unambiguous personal hit legitimately carries
         # its own account binding. Only the excluded conflicting variants
@@ -66,6 +81,7 @@ def test_duplicate_personal_search_variants_keep_only_public_evidence(monkeypatc
         public_and_diagnostics = json.dumps({
             "public": rows[:2],
             "rejections": vault.last_search_merge_rejections,
+            "filtered_library": payload["library"],
         })
         for secret in (
             "PRIVATE_ALICE", "PRIVATE_BOB", "PRIVATE_TITLE", "PRIVATE_REVISION",
@@ -76,6 +92,7 @@ def test_duplicate_personal_search_variants_keep_only_public_evidence(monkeypatc
         assert "PRIVATE_TITLE_A" not in json.dumps(rows)
         assert "PRIVATE_TITLE_B" not in json.dumps(rows)
         assert "PRIVATE_REVISION" not in json.dumps(rows)
+        assert "PRIVATE_ALIAS" not in json.dumps(payload)
     finally:
         vault.close()
 
