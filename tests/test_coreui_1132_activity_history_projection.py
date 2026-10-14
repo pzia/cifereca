@@ -25,3 +25,18 @@ def test_projection_consumes_lazy_history_once():
         yield SimpleNamespace(display_text="Résultat", state="error")
     assert activity_history_rows(rows()) == (("Résultat", True),)
     assert consumed == [1]
+
+def test_main_window_history_uses_shared_projection_without_duplicate_rules():
+    """GTK remains responsible only for rendering the projected rows."""
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    owner = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    method = next(node for node in owner.body if isinstance(node, ast.FunctionDef) and node.name == "_refresh_activity_history")
+    body = ast.unparse(method)
+    assert "activity_history_rows(self.activity_feedback.rows())" in body
+    assert "for display_text, is_error in rows:" in body
+    assert "label.add_css_class('warning')" in body
+    assert "self.activity_history_button.set_visible(bool(rows))" in body
