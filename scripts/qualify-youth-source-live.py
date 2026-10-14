@@ -214,7 +214,7 @@ def public_report(report: Mapping) -> dict[str, object]:
     }
     source = report.get("source")
     if type(source) is not str or source not in SOURCES:
-        return safe
+        return {"result": "BLOCKED", "error_code": "invalid_evidence"}
     safe["source"] = source
     safe["allowed_host"] = SOURCES[source]["host"]
     if report.get("source_plugin_id") == SOURCES[source]["plugin"]:
@@ -262,6 +262,12 @@ def public_report(report: Mapping) -> dict[str, object]:
         )
         if diagnostic:
             safe["plugin_diagnostic"] = diagnostic
+    if safe["result"] == "PASS" and (
+        safe.get("requests_count", 0) < 1
+        or safe.get("qualified_notice_count", 0) < 1
+    ):
+        safe["result"] = "BLOCKED"
+        safe["error_code"] = "invalid_evidence"
     return safe
 
 
