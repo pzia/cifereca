@@ -706,6 +706,18 @@ class NamingRepairTool(_ReadOnlyTool):
             invalid_plan = True
             preview_failures = 0
 
+        # Plan warnings can come from a stale cache or a caller. Never copy
+        # arbitrary warning text (potential paths, credentials, titles) to a
+        # public maintenance result. Reconstruct only the known diagnostics
+        # from bounded counters produced by plan().
+        plan_counts: dict[str, int] = {}
+        for name in ("skipped", "read_failures"):
+            count = plan.facts.get(name, 0)
+            if type(count) is not int or not 0 <= count <= 1_000_000:
+                invalid_plan = True
+            else:
+                plan_counts[name] = count
+
         if invalid_plan:
             control.check_cancelled()
             control.report(message="Renormalisation impossible : plan invalide")
@@ -721,7 +733,17 @@ class NamingRepairTool(_ReadOnlyTool):
         changed = 0
         failures = 0
         total = len(ids)
-        warnings: list[str] = list(plan.warnings)
+        warnings: list[str] = []
+        if plan_counts["skipped"]:
+            warnings.append(f"{plan_counts['skipped']} entrée(s) non vérifiable(s) ignorée(s).")
+        if preview_failures:
+            warnings.append(
+                f"{preview_failures} placement(s) sans proposition valide de la politique Core."
+            )
+        if plan_counts["read_failures"]:
+            warnings.append(
+                f"{plan_counts['read_failures']} artefact(s) non inspecté(s) : broker library.read en erreur."
+            )
         control.check_cancelled()
         if not total:
             control.report(message="Aucun placement à renormaliser")
