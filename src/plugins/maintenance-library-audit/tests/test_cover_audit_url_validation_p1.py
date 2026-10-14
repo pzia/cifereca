@@ -39,6 +39,12 @@ class Context:
     "//covers.example/path.jpg",
     "https://covers.example/path.jpg\nPRIVATE_SECRET",
     "javascript:PRIVATE_TOKEN", "https://[unclosed/cover.jpg",
+    "https://covers.example/cover%0D%0APRIVATE_TOKEN.jpg",
+    "https://covers.example/%00cover.jpg",
+    "https://covers.example/%1fcover.jpg",
+    "https://covers.example/%7Fcover.jpg",
+    "covers/%09PRIVATE_TOKEN.jpg",
+    "file:///home/user/cover%0aPRIVATE_SECRET.jpg",
 ])
 def test_invalid_cover_reference_is_counted_without_leaking_private_values(cover):
     ctx = Context([{"title": "PRIVATE_TITLE", "thumbnail_url": cover}])
@@ -58,6 +64,9 @@ def test_invalid_cover_reference_is_counted_without_leaking_private_values(cover
     "https://[::1]:443/cover.png", "https://covers.example:8443/a.png",
     "file:///home/user/cover.jpg", "file://localhost/home/user/cover.jpg",
     "covers/cover.jpg", "cover.jpg",
+    "https://covers.example/cover%20image.jpg",
+    "https://covers.example/cover%25discount.jpg",
+    "https://covers.example/cover%GG.jpg",
 ])
 def test_valid_remote_local_and_relative_cover_references_remain_accepted(cover):
     ctx = Context([{"cover_url": cover}])
