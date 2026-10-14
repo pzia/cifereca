@@ -39,7 +39,7 @@ from . import shell_layout_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from .search_state import SearchStateField
 from .settings_lifetime import SettingsPageLifetime
-from . import settings_page
+from . import settings_page, standalone_settings_controller
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
@@ -424,43 +424,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.reconnect_sources()
 
     def _open_prelogin_diagnostics(self) -> None:
-        win = Adw.Window(transient_for=self, modal=False)
-        win.set_title("Diagnostic / Configuration")
-        win.set_default_size(900, 650)
-
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        header = Adw.HeaderBar()
-        header.set_title_widget(Gtk.Label(label="Configuration et diagnostic"))
-        close = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        close.set_tooltip_text("Fermer")
-        close.connect("clicked", lambda _b: win.close())
-        header.pack_end(close)
-        content.append(header)
-        page = self._build_settings_page(standalone=True)
-        page.set_vexpand(True)
-        content.append(page)
-        win.set_content(content)
-
-        keys = Gtk.EventControllerKey()
-        def on_key(_controller, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Escape:
-                win.close()
-                return True
-            return False
-        keys.connect("key-pressed", on_key)
-        win.add_controller(keys)
-        # Garder une référence explicite pendant toute la vie de la fenêtre.
-        self._standalone_settings_window = win
-        def standalone_closed(_window):
-            if getattr(self, "_standalone_settings_window", None) is win:
-                standalone_lifetime = self._settings_standalone_lifetime
-                if standalone_lifetime is not None:
-                    standalone_lifetime.dispose()
-                    self._settings_standalone_lifetime = None
-                self._standalone_settings_window = None
-            return False
-        win.connect("close-request", standalone_closed)
-        win.present()
+        return standalone_settings_controller.open_standalone_settings(
+            self, Gtk=Gtk, Adw=Adw, Gdk=Gdk,
+        )
 
     # ---------- shell / navigation ----------
     def _build_main_shell(self) -> Gtk.Widget:
