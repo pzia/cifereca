@@ -89,7 +89,8 @@ def test_controller_is_headless_and_exact_facade_signatures_remain_stable():
 def test_registration_preserves_accelerators_and_unique_commands():
     host, events, actions, accelerators = _application_host()
     install_shell_shortcuts(host, Gio=NS(SimpleAction=Action))
-    assert set(actions) == {name for name, _keys, _description in SHORTCUTS}
+    # Reconnect has a menu action but deliberately no dedicated accelerator.
+    assert set(actions) == {name for name, _keys, _description in SHORTCUTS} | {"reconnect-sources"}
     assert accelerators == {
         "win." + name: list(keys) for name, keys, _description in SHORTCUTS
     }
