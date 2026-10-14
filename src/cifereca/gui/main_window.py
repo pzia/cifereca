@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import dashboard_page_controller
 from . import dashboard_render_controller
 from . import shell_identity_selector_controller
 from . import shell_layout_controller
@@ -974,27 +975,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- 0.8.2 opening dashboard ----------
     def _build_dashboard_page(self) -> Gtk.Widget:
-        scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        outer.set_margin_top(24); outer.set_margin_bottom(24); outer.set_margin_start(24); outer.set_margin_end(24)
-        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8); outer.append(heading)
-        title = Gtk.Label(label="Bibliothèque familiale", xalign=0); title.set_hexpand(True); title.set_wrap(True); add_css(title, "page-title"); heading.append(title)
-        subtitle = Gtk.Label(label="État des identités et de la synchronisation automatique", xalign=0); add_css(subtitle, "dim-label"); outer.append(subtitle)
-        self.dashboard_loading_status = Gtk.Label(label="Connexion aux sources en arrière-plan…", xalign=0)
-        self.dashboard_loading_status.set_wrap(True); add_css(self.dashboard_loading_status, "dim-label", "caption")
-        outer.append(self.dashboard_loading_status)
-        actions = AdaptiveActionBar(source=heading)
-        refresh = self.action_button("Synchronisation rapide", "view-refresh-symbolic", suggested=True)
-        refresh.connect("clicked", lambda _b: self.run_opening_sync(refresh, deep=False)); actions.append(refresh)
-        deep = self.action_button("Vérifier toute la bibliothèque", "system-search-symbolic")
-        deep.connect("clicked", lambda _b: self.run_opening_sync(deep, deep=True)); actions.append(deep)
-        actions.set_halign(Gtk.Align.END); heading.append(actions)
-        self.dashboard_cards = Gtk.FlowBox(); self.dashboard_cards.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.dashboard_cards.set_min_children_per_line(1); self.dashboard_cards.set_max_children_per_line(3)
-        self.dashboard_cards.set_homogeneous(True); self.dashboard_cards.set_column_spacing(12); self.dashboard_cards.set_row_spacing(12)
-        outer.append(self.dashboard_cards)
-        scroll.set_child(outer)
-        return scroll
+        return dashboard_page_controller.build_dashboard_page(
+            self, Gtk=Gtk, add_css=add_css, AdaptiveActionBar=AdaptiveActionBar,
+        )
 
     @staticmethod
     def _sync_status_label(status: str | None) -> str:
