@@ -25,13 +25,14 @@ Privilégier l'édition d'un ticket existant à la création de doublons ; comme
 ## Limitations
 
 - Un changement de rôle commence une **nouvelle étape** ; ne pas mélanger deux propriétaires dans une même PR.
-- Le rôle `cicd` conserve l'exclusivité des merges et ne publie une release que sur **ordre explicite**.
+- Le rôle `cicd` (alias `merger`) conserve l'exclusivité des merges, **y compris lorsque focus assume explicitement ce rôle**. Focus peut alors fusionner et vérifier la clôture lui-même, sans transfert obligatoire à un autre fil. Une étape `core` ou `plugins` doit être terminée avant d'annoncer la nouvelle étape `cicd`.
+- Lors de cette étape, appliquer intégralement [le profil cicd](cicd.md) : permissions, reviews, protections, CI et E2E ciblés sur le SHA pertinent ; tenter les résolutions mécaniques de conflits, relire le diff et revérifier les tests/gates sur le nouveau SHA. Transmettre les arbitrages métier ou architecturaux au propriétaire. Aucune release sans **ordre explicite**.
 - Une CI verte ne signifie pas automatiquement une recette UX ou une release valide.
 - Pas de promotion opportuniste d'un P2 (plugin ou autre), ni d'effacement des blocages P0 pour accélérer P1. Un P3 reste une idée hors exécution tant qu'une décision explicite ne l'a pas promu.
 
 ## Sortie des tickets sans attente manuelle
 
-- Le méta-rôle `focus` réutilise la [politique de livraison](../../docs/AGENT-DELIVERY-POLICY.md) : quand Core/Plugins ont apporté les preuves suffisantes, transmettre la PR à `cicd` pour fusion et clôture, **pas au propriétaire utilisateur pour une recette GTK implicite**.
+- Le méta-rôle `focus` réutilise la [politique de livraison](../../docs/AGENT-DELIVERY-POLICY.md) : quand Core/Plugins ont apporté les preuves suffisantes, annoncer une nouvelle étape où focus adopte `cicd` pour fusion et clôture, ou transmettre la PR à un autre cicd si utile. Ne pas imposer de recette GTK implicite au propriétaire utilisateur ; `ux` / `simulation` reste indépendant et exclu de focus.
 - Après clôture, ne pas rouvrir pour « UX non testé par l'utilisateur » ; transmettre les contrôles terrain utiles à l'audit `backlog` ou à un `ux` indépendant. Une vraie défaillance sera traitée par issue rouverte ou nouvelle issue selon le périmètre.
 - Lors de l'analyse `Next`, vérifier **également les PR prêtes à merger et les issues encore ouvertes malgré un merge**, afin de résorber le stock de livraison plutôt que multiplier des implémentations non intégrées.
 - Respecter toujours les contrôles CI requis et les exceptions documentées ; ne pas assimiler un travail technique achevé à un merge réalisé.

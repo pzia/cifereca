@@ -48,7 +48,7 @@ Quand le rôle demandé est focus, ou quand une demande porte sur un enchaîneme
 4. **Synchroniser** si un état change ou qu'un autre rôle doit intervenir : actualiser l'issue existante ou la PR avec **état, résultat, preuve/SHA, blocage, prochain rôle et action**. Ne pas créer une issue-journal par étape ni publier des commentaires sans information nouvelle.
 5. **Réévaluer** les priorités après l'étape ; continuer avec le même rôle ou en adopter un autre. « Next » demande l'étape suivante, **jamais** une release.
 
-Un blocage doit produire un handoff exploitable, pas un faux succès. Focus coordonne ; seul **cicd** réalise un merge, après validation, et une release exige toujours une **commande explicite** (tag, packaging, publication et vérification des artefacts).
+Un blocage doit produire un handoff exploitable, pas un faux succès. Seul **cicd** réalise un merge, **y compris focus lorsqu'il assume explicitement ce rôle** (alias `merger`). Focus peut alors vérifier, fusionner et clore lui-même, sans transfert obligatoire à un autre fil, en respectant le profil cicd : permissions, reviews, protections, contrôles CI et E2E ciblés, vérification du SHA et tentative de résolution mécanique des conflits ; les arbitrages métier ou architecturaux restent au propriétaire. Une étape `core` ou `plugins` ne fusionne pas : la terminer puis annoncer une nouvelle étape `cicd` avant le merge, ou transmettre à un autre cicd si utile. Une release exige toujours une **commande explicite** (tag, packaging, publication et vérification des artefacts).
 
 ## Livraison asynchrone, preuves et clôture
 
