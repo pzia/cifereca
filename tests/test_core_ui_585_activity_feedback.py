@@ -182,3 +182,30 @@ def test_taskrunner_error_delivery_skips_callbacks_after_teardown():
     assert namespace["deliver"]() is False
     assert events == []
     assert runner._count == 0
+
+
+def test_rejected_task_skips_error_callback_when_feedback_closes_window():
+    """#1132: shutdown race must not invoke plugin error handlers after teardown."""
+    import threading
+    from types import SimpleNamespace
+
+    tree = ast.parse(RUNNER.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "TaskRunner")
+    submit = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "submit")
+    rejected = next(n for n in ast.walk(submit) if isinstance(n, ast.FunctionDef) and n.name == "rejected")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[rejected], type_ignores=[])), "<rejected>", "exec"), namespace)
+
+    events = []
+    window = SimpleNamespace(_closed=False)
+    def finish(*args):
+        events.append("finished")
+        window._closed = True
+    window._task_finished = finish
+    runner = SimpleNamespace(window=window)
+    namespace.update(
+        self=runner, control=None, task_id=7, remaining=0, label="test",
+        err=lambda error: events.append("error"),
+    )
+    assert namespace["rejected"]() is False
+    assert events == ["finished"]
