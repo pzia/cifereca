@@ -266,11 +266,21 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
     second_session = None
     third_session = None
     try:
-        for credential, count, prefix in (
-            ("vault-2", 522, "b"), ("vault-3", 5, "c")
+        # One Kobo connection per identity is a production invariant.
+        # Test checkpoint isolation across three identities, not an invalid
+        # three-connections-on-one-identity configuration.
+        service.config.set("identities", [
+            {"id": "default", "label": "Default", "directory_name": "default"},
+            {"id": "reader-2", "label": "Reader 2", "directory_name": "reader-2"},
+            {"id": "reader-3", "label": "Reader 3", "directory_name": "reader-3"},
+        ])
+        service._sync_identity_configuration()
+        for credential, identity, count, prefix in (
+            ("vault-2", "reader-2", 522, "b"),
+            ("vault-3", "reader-3", 5, "c"),
         ):
             service.storage.provider_connection_put({
-                "identity_id": "default", "provider_id": "kobo",
+                "identity_id": identity, "provider_id": "kobo",
                 "credential_id": credential, "label": "Kobo",
             })
             session = BackupSession(
@@ -306,7 +316,7 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
         with pytest.raises(KeyboardInterrupt, match="second account"):
             service.sync_kobo_backup_account("vault-2")
         second_checkpoint = json.loads(service.storage.metadata_get(
-            _kobo_checkpoint_key("default", "vault-2")))
+            _kobo_checkpoint_key("reader-2", "vault-2")))
         assert second_checkpoint["processed"] == 117
         assert second_checkpoint["total"] == 522
         assert second_checkpoint["status"] == "interrupted"
@@ -320,10 +330,13 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
         assert resumed["attempted"] == 405
         assert len(downloads) == 536
         assert len(set(downloads)) == 536
-        for credential, expected in (("vault-1", 9), ("vault-2", 522),
-                                     ("vault-3", 5)):
+        for credential, identity, expected in (
+            ("vault-1", "default", 9),
+            ("vault-2", "reader-2", 522),
+            ("vault-3", "reader-3", 5),
+        ):
             checkpoint = json.loads(service.storage.metadata_get(
-                _kobo_checkpoint_key("default", credential)))
+                _kobo_checkpoint_key(identity, credential)))
             assert checkpoint["status"] == "complete"
             assert checkpoint["total"] == expected
     finally:
