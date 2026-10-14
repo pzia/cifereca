@@ -78,5 +78,5 @@ def test_provider_connection_survives_plugin_ui_refresh_failure():
     finalizer = source.index("finally:")
     # The no-plugin fallback schedules a connection earlier in source order.
     # Check the normal plugin-activation path, whose schedule follows finally.
-    connect = source.rindex("GLib.idle_add(self.connect_configured_sources)")
+    connect = source.rindex("GLib.idle_add(self._connect_sources_if_open)")
     assert activate < attach < refresh < finalizer < connect

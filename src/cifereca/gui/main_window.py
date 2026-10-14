@@ -618,6 +618,12 @@ class MainWindow(Adw.ApplicationWindow):
     def reconnect_sources(self) -> None:
         self.connect_configured_sources()
 
+    def _connect_sources_if_open(self) -> bool:
+        """One-shot GTK callback; never connect after window teardown."""
+        if not self._closed:
+            self.connect_configured_sources()
+        return False
+
     def activate_startup_plugins(self) -> bool:
         # Activation is posted to GTK after the window is presented. That
         # queued callback may fire after the user has closed the window.
@@ -626,7 +632,7 @@ class MainWindow(Adw.ApplicationWindow):
         if self.plugin_manager is None:
             # A local-only/no-plugin installation must still connect its
             # configured providers; plugin activation is optional.
-            GLib.idle_add(lambda: self.connect_configured_sources())
+            GLib.idle_add(self._connect_sources_if_open)
             return False
         _TRACE_LOG.info("TRACE gui plugin-activation begin")
         started = time.perf_counter()
@@ -650,7 +656,7 @@ class MainWindow(Adw.ApplicationWindow):
             # local-only mode after plugins have been activated.
             if not getattr(self, "_closed", False):
                 _TRACE_LOG.info("TRACE gui schedule connect-configured")
-                GLib.idle_add(self.connect_configured_sources)
+                GLib.idle_add(self._connect_sources_if_open)
             duration_ms = (time.perf_counter() - started) * 1000.0
             self.ui_perf.record("startup.plugins_activation", duration_ms)
             _TRACE_LOG.info("TRACE gui plugin-activation end duration_ms=%.1f", duration_ms)

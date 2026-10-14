@@ -50,6 +50,8 @@ def _host(*, activate=None, refresh=None):
         refresh if refresh is not None else lambda: calls.append(("refresh",))
     )
     host.connect_configured_sources = lambda: calls.append(("connect",))
+    connect_if_open, _posted = _method("_connect_sources_if_open")
+    host._connect_sources_if_open = lambda: connect_if_open(host)
     return host, calls
 
 
@@ -88,6 +90,16 @@ def test_plugin_refresh_failure_still_schedules_provider_connection_when_open():
     assert len(queued) == 1
     queued[0]()
     assert calls[-1] == ("connect",)
+
+
+def test_deferred_provider_connect_refuses_connection_after_close():
+    run, queued = _method("activate_startup_plugins")
+    host, calls = _host()
+    assert run(host) is False
+    assert len(queued) == 1
+    host._closed = True
+    assert queued[0]() is False
+    assert ("connect",) not in calls
 
 
 def test_connect_callback_on_closed_window_does_not_touch_status_or_submit():
