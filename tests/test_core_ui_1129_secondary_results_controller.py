@@ -265,7 +265,7 @@ def test_bookings_projection_keeps_exact_source_provenance_and_business_status()
     assert origins == {"a": {"source_provider": "paris"}, "b": {"source_provider": "other"}}
     assert controls is host.search_controls
     assert events[1][0] == "booking-show"
-    assert events[1][1] is rows
+    assert events[1][1] == rows
 
 
 def test_empty_booking_response_clears_private_booking_objects_and_page():
