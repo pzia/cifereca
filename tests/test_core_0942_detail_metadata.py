@@ -11,6 +11,10 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(class_name, method_name):
+    if class_name == "MainWindow" and method_name == "_library_selected":
+        owner = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
+        return next(n for n in owner.body if isinstance(n, ast.FunctionDef)
+                    and n.name == "library_selected")
     tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     return next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
