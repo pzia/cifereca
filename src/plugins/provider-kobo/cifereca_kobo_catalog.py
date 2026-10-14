@@ -27,19 +27,55 @@ class KoboCatalogService:
         keys = {"url", "src", "href", "large", "medium", "thumbnail", "small", "cover_url", "thumbnail_url", "image_url", "coverimageurl", "imageurl"}
         budget = [256]
         def valid(value):
-            if not isinstance(value, str) or len(value) > 8192:return None
-            text=value.strip()
-            if not text or any(ord(c)<32 for c in text):return None
+            # A cover can be fetched by the UI without an explicit user click.
+            # Never emit signed links, local/private destinations or credentials
+            # from untrusted catalogue/personal-manifest JSON.
+            if type(value) is not str or not 1 <= len(value) <= 4096:
+                return None
+            if (
+                value != value.strip()
+                or any(ord(ch) < 33 or ord(ch) == 127 for ch in value)
+                or any(ch in value for ch in '<>\\')
+            ):
+                return None
             try:
-                raw=urlsplit(text)
-                if not raw.scheme and not raw.netloc and '/' not in raw.path and '.' not in raw.path:return None
-                if raw.scheme and raw.scheme.lower() not in {'http','https'}:return None
-                resolved=urljoin(self.client.base_url.rstrip('/')+'/',text)
-                parsed=urlsplit(resolved)
-                if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password:return None
-                parsed.port
-                return resolved
-            except ValueError:return None
+                raw = urlsplit(value)
+                if raw.query or raw.fragment:
+                    return None
+                if not raw.scheme and not raw.netloc and '/' not in raw.path and '.' not in raw.path:
+                    return None
+                if raw.scheme and raw.scheme.lower() not in {'http', 'https'}:
+                    return None
+                resolved = urljoin(self.client.base_url.rstrip('/') + '/', value)
+                parsed = urlsplit(resolved)
+                hostname = parsed.hostname
+                port = parsed.port
+            except (ValueError, TypeError):
+                return None
+            if (
+                parsed.scheme not in {'http', 'https'}
+                or not hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment
+                or port not in (None, 443 if parsed.scheme == 'https' else 80)
+                or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+            ):
+                return None
+            host = hostname.rstrip('.').casefold()
+            if (
+                '.' not in host or '%' in host
+                or host in {'localhost', 'local', 'internal'}
+                or host.endswith(('.localhost', '.local', '.internal', '.lan', '.home.arpa'))
+            ):
+                return None
+            try:
+                address = ip_address(host)
+            except ValueError:
+                pass
+            else:
+                if not address.is_global:
+                    return None
+            return resolved
         def candidate(value, depth=0):
             budget[0]-=1
             if depth>6 or budget[0]<0:return None
@@ -166,7 +202,19 @@ class KoboCatalogService:
         downloadable_flag = downloadable if type(downloadable) is bool else None
         price, currency = self._price(item)
         cover = self.cover_url(item)
-        metadata = {k: v for k, v in item.items() if k not in {"description"}}
+        # The normalized cover URL is the only cover reference safe to export.
+        # Dropping raw nested variants prevents an unsafe fallback (including
+        # query tokens) from surviving in SearchResult.metadata.
+        cover_keys = {
+            "cover_url", "thumbnail_url", "image_url", "cover", "image",
+            "images", "covers", "CoverImageUrl", "ImageUrl",
+        }
+        metadata = {
+            k: v for k, v in item.items()
+            if k != "description" and k not in cover_keys
+        }
+        if cover:
+            metadata["cover_url"] = cover
         product_url = self._public_product_url(item.get("product_url"))
         if product_url is None:
             metadata.pop("product_url", None)
