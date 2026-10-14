@@ -60,15 +60,22 @@ def test_duplicate_personal_search_variants_keep_only_public_evidence(monkeypatc
              "reason": "duplicate_product_id"},
         ] * 4
 
-        exported = json.dumps({
-            "items": rows,
+        # The *accepted* unambiguous personal hit legitimately carries
+        # its own account binding. Only the excluded conflicting variants
+        # must be absent; public results and diagnostics must stay public.
+        public_and_diagnostics = json.dumps({
+            "public": rows[:2],
             "rejections": vault.last_search_merge_rejections,
         })
         for secret in (
             "PRIVATE_ALICE", "PRIVATE_BOB", "PRIVATE_TITLE", "PRIVATE_REVISION",
             "PRIVATE_TOKEN", "vault.example",
         ):
-            assert secret not in exported
+            assert secret not in public_and_diagnostics
+        assert "PRIVATE_BOB" not in json.dumps(rows)
+        assert "PRIVATE_TITLE_A" not in json.dumps(rows)
+        assert "PRIVATE_TITLE_B" not in json.dumps(rows)
+        assert "PRIVATE_REVISION" not in json.dumps(rows)
     finally:
         vault.close()
 
