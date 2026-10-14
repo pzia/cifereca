@@ -29,10 +29,15 @@ def test_master_detail_list_viewport_owns_horizontal_allocation():
 
 
 def test_search_and_library_share_the_fixed_master_detail_viewport():
+    # Library's GTK assembly now belongs to its extracted controller; the
+    # MainWindow facade injects the very same MasterDetailPage as Search.
     source = gui_source_text(MAIN)
-    assert source.count("MasterDetailPage(") >= 2
+    library_owner = MAIN.with_name("library_page_controller.py").read_text(encoding="utf-8")
     assert 'MasterDetailPage(self, "Recherche"' in source
-    assert 'MasterDetailPage(self, "Bibliothèque"' in source
+    assert 'MasterDetailPage(window, "Bibliothèque"' in library_owner
+    facade = _method(MAIN, "MainWindow", "_build_library_page")
+    assert "library_page_controller.build_library_page(" in facade
+    assert "MasterDetailPage=MasterDetailPage" in facade
 
 
 def test_list_rows_fill_viewport_instead_of_requesting_global_width():
