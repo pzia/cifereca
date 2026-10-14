@@ -353,22 +353,42 @@ class KoboSession(ProviderSession):
                     )
                 )
 
-            # If a foreign row duplicates a local product ID, BOTH are
-            # ambiguous. Dropping the foreign row alone would hide this
-            # duplicate from Core's legacy per-product checkpoint guard.
-            foreign_products = {
-                product for row in items if foreign_account(row)
+            def invalid_permission_flags(row: Any) -> bool:
+                # The legacy Core backup loop can acquire a manifest entry
+                # unless downloadable is *exactly* False. String "false",
+                # archived=0 or an explicit owned=False must NEVER silently
+                # pass through as an authorized personal library item.
+                return (
+                    type(row) is not dict
+                    or row.get("owned") is False
+                    or any(
+                        key in row and row[key] is not None
+                        and type(row[key]) is not bool
+                        for key in ("owned", "downloadable", "archived")
+                    )
+                )
+
+            # A rejected permission/foreign row may share its product with
+            # another otherwise plausible row. Quarantine the *whole* group
+            # rather than letting Core treat the duplicate as a sole item.
+            blocked_products = {
+                product for row in items
+                if type(row) is dict
+                and (foreign_account(row) or invalid_permission_flags(row))
                 if (product := _strict_product_id(row)) is not None
             }
             accepted = []
             rejected_count = 0
             for item in items:
-                # Only an explicitly claimed account is checked here: legacy
-                # personal-library rows without account_id may still be
-                # reported, but never independently authorize downloading.
-                product = _strict_product_id(item) if isinstance(item, dict) else None
-                if foreign_account(item) or (
-                    product is not None and product in foreign_products
+                # Legacy entries without an explicit owned/downloadable flag
+                # remain visible as inventory facts, NEVER as an acquisition
+                # authorization from this provider's advisory policy.
+                product = _strict_product_id(item) if type(item) is dict else None
+                if (
+                    product is None
+                    or foreign_account(item)
+                    or invalid_permission_flags(item)
+                    or product in blocked_products
                 ):
                     rejected_count += 1
                     continue
