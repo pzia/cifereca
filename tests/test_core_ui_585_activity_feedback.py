@@ -164,3 +164,43 @@ def test_activity_count_uses_live_tasks_when_queued_start_is_stale():
     assert started(window, 3, 3, "courante", 0, "task") is False
     assert window.busy_label.label == "En cours · 2 opérations · courante"
     assert set(window._active_tasks) == {2, 3}
+
+
+def test_task_finish_uses_live_activity_when_runner_count_is_stale():
+    """#1132: queued completion must not show success while a task is active."""
+    import types
+
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<task-finished>", "exec"), namespace)
+
+    class Widget:
+        def __init__(self):
+            self.label = None
+        def set_visible(self, value): pass
+        def set_label(self, value): self.label = value
+        def start(self): pass
+
+    calls = []
+    window = types.SimpleNamespace(
+        _closed=False,
+        _finished_task_ids=set(),
+        _active_tasks={1: (0, "première", "task"), 2: (1, "seconde", "task")},
+        _last_finished_task_id=None,
+        _functional_error_message=lambda value: value,
+        activity_feedback=types.SimpleNamespace(finished=lambda *args, **kwargs: calls.append(args[0])),
+        _refresh_activity_history=lambda: None,
+        busy_revealer=Widget(),
+        busy_label=Widget(),
+        activity_dismiss=Widget(),
+        busy_spinner=Widget(),
+    )
+    finished = namespace["_task_finished"]
+    assert finished(window, 1, 0, "première", True, None) is False
+    assert window.busy_label.label == "En cours · seconde"
+    assert window._active_tasks == {2: (1, "seconde", "task")}
+    assert calls == [1]
+    assert finished(window, 1, 0, "première", True, None) is False
+    assert calls == [1]
