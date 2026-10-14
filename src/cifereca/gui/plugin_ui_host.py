@@ -38,7 +38,9 @@ class _UiHost:
         route = self.action_context().route
         if route in {"library", "recent"}:
             self.window.refresh_library(False)
-            self.window.refresh_recent()
+            # The library refresh can synchronously close MainWindow.
+            if self._window_alive():
+                self.window.refresh_recent()
         elif route == "search":
             self.window.run_search(False)
     def current_book(self):
@@ -51,6 +53,13 @@ class _UiHost:
         if not self._window_alive():
             return
         self.window.navigate("plugins")
+        if not self._window_alive():
+            return
+        # Reentrant navigation may have selected another page. Do not focus
+        # controls belonging to an inactive (or detached) plugin manager.
+        stack = getattr(self.window, "view_stack", None)
+        if stack is not None and stack.get_visible_child_name() != "plugins":
+            return
         page = getattr(self.window, "plugins_page", None)
         opener = getattr(page, "focus_plugin", None)
         if callable(opener):
@@ -73,10 +82,16 @@ class _UiHost:
         )
     def build_action_bar(self, actions):
         bar = AdaptiveActionBar()
+        generation = getattr(self.window, "_shell_page_rebuild_token", None)
         for action in actions:
             button = action_button(action.title, action.icon_name)
+            # A detached plugin page may outlive its source registration and
+            # dispatch a queued GTK click after the shell has been rebuilt.
             button.connect('clicked', lambda _button, contribution=action: (
-                contribution.callback(self) if self._window_alive() else None
+                contribution.callback(self)
+                if self._window_alive()
+                and getattr(self.window, "_shell_page_rebuild_token", None) is generation
+                else None
             ))
             bar.append(button)
         return bar
@@ -115,7 +130,12 @@ class _UiHost:
             listeners = []; self.window._overview_listeners = listeners
         listeners.append(callback)
         def cancel():
-            if callback in listeners: listeners.remove(callback)
+            # Equality is not subscription identity: callable objects may
+            # compare equal while representing distinct plugin subscriptions.
+            for index, listener in enumerate(listeners):
+                if listener is callback:
+                    del listeners[index]
+                    break
         return cancel
     def plugin_statuses(self) -> list[dict[str, Any]]:
         if not self._window_alive():
