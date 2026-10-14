@@ -37,3 +37,29 @@ def test_search_ports_contain_explicit_lifecycle_and_context_interfaces():
     assert "_search_detail_request_generation:" in detail
     assert "_identity_context_generation:" in detail
     assert "_search_detail_context_current" in detail
+
+
+def test_search_run_port_exposes_only_declared_capabilities():
+    from types import SimpleNamespace
+    from cifereca.gui.search_host_port import SearchRunPort
+
+    owner = SimpleNamespace(_closed=False, _search_generation=4, secret="private")
+    port = SearchRunPort(owner)
+    assert port._closed is False
+    port._search_generation = 5
+    assert owner._search_generation == 5
+    import pytest
+    with pytest.raises(AttributeError):
+        _ = port.secret
+    with pytest.raises(AttributeError):
+        port.secret = "leaked"
+
+
+def test_main_window_routes_search_execution_via_restricted_port():
+    main = (ROOT / "main_window.py").read_text(encoding="utf-8")
+    tree = ast.parse(main)
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+               and node.name == "MainWindow")
+    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "run_search")
+    assert "SearchRunPort(self)" in ast.unparse(method)
