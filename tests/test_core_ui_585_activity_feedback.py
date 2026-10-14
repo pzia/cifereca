@@ -10,10 +10,21 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "src/cifereca/gui/main_window.py"
 RUNNER = ROOT / "src/cifereca/gui/task_runner.py"
 SYNC = ROOT / "src/cifereca/gui/sync_controller.py"
+ACTIVITY = ROOT / "src/cifereca/gui/task_activity_adapter.py"
 STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
 
 
 def _method(path: Path, class_name: str, name: str) -> str:
+    # Source assertions follow the real implementation after modularization.
+    activity_methods = {
+        "_task_started": "task_started",
+        "_task_progress": "task_progress",
+        "_task_finished": "task_finished",
+    }
+    if name in activity_methods:
+        path = ACTIVITY
+        class_name = None
+        name = activity_methods[name]
     if name == "connect_configured_sources":
         path = STARTUP_OWNER
         class_name = None
@@ -79,7 +90,7 @@ def test_success_reduces_automatically_but_error_has_no_timeout():
     finished = _method(MAIN, "MainWindow", "_task_finished")
     pending = _method(MAIN, "MainWindow", "_show_pending_activity_error")
     hidden = _method(MAIN, "MainWindow", "_hide_activity_feedback")
-    assert "self._schedule_activity_reduce()" in finished
+    assert "window._schedule_activity_reduce()" in finished
     assert "timeout_add_seconds" not in pending
     assert "_show_pending_activity_error()" in hidden
 
@@ -124,10 +135,10 @@ def test_common_task_success_callbacks_use_activity_bar():
 def test_task_callbacks_ignore_late_start_and_repeated_finish():
     started = _method(MAIN, "MainWindow", "_task_started")
     finished = _method(MAIN, "MainWindow", "_task_finished")
-    assert "self._finished_task_ids.discard" not in started
+    assert "window._finished_task_ids.discard" not in started
     assert "register_task_start(" in started
     assert "register_task_finish(" in finished
-    assert finished.index("register_task_finish(") < finished.index("self.activity_feedback.finished(")
+    assert finished.index("register_task_finish(") < finished.index("window.activity_feedback.finished(")
 
 
 def test_taskrunner_delivery_stops_when_success_callback_closes_window():
@@ -219,13 +230,7 @@ def test_finished_callback_keeps_running_state_with_stale_remaining_count():
     """#1132: GTK feedback must reflect live tasks, not queued runner counts."""
     import types
 
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
-    from cifereca.gui.task_state import register_task_finish
-
-    namespace = {"register_task_finish": register_task_finish}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
+    from cifereca.gui.task_activity_adapter import task_finished
 
     class Widget:
         def __init__(self): self.label = None
@@ -244,7 +249,7 @@ def test_finished_callback_keeps_running_state_with_stale_remaining_count():
         busy_revealer=Widget(), busy_label=Widget(),
         activity_dismiss=Widget(), busy_spinner=Widget(),
     )
-    finished = namespace["_task_finished"]
+    finished = task_finished
     assert finished(window, 1, 0, "première", True, None) is False
     assert window.busy_label.label == "En cours · seconde"
     assert set(window._active_tasks) == {2}
@@ -256,13 +261,7 @@ def test_finished_callback_counts_two_live_tasks_when_runner_reports_one():
     """#1132: multiple still-running tasks must be counted from GTK state."""
     import types
 
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_finished")
-    from cifereca.gui.task_state import register_task_finish
-
-    namespace = {"register_task_finish": register_task_finish}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<finish>", "exec"), namespace)
+    from cifereca.gui.task_activity_adapter import task_finished
 
     class Widget:
         def __init__(self): self.label = None
@@ -284,7 +283,7 @@ def test_finished_callback_counts_two_live_tasks_when_runner_reports_one():
         busy_revealer=Widget(), busy_label=Widget(),
         activity_dismiss=Widget(), busy_spinner=Widget(),
     )
-    assert namespace["_task_finished"](window, 1, 1, "terminée", True, None) is False
+    assert task_finished(window, 1, 1, "terminée", True, None) is False
     assert window.busy_label.label == "En cours · 2 opérations · en cours"
 
 
@@ -292,13 +291,7 @@ def test_duplicate_task_start_does_not_duplicate_activity_feedback():
     """#1132: a repeated GTK start delivery is idempotent."""
     import types
 
-    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_started")
-    from cifereca.gui.task_state import register_task_start
-
-    namespace = {"register_task_start": register_task_start}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<start>", "exec"), namespace)
+    from cifereca.gui.task_activity_adapter import task_started
 
     calls = []
     window = types.SimpleNamespace(
@@ -308,7 +301,7 @@ def test_duplicate_task_start_does_not_duplicate_activity_feedback():
         activity_feedback=types.SimpleNamespace(started=lambda *args: calls.append("started")),
         _refresh_activity_history=lambda: calls.append("refresh"),
     )
-    assert namespace["_task_started"](window, 7, 1, "existante", 1, "task") is False
+    assert task_started(window, 7, 1, "existante", 1, "task") is False
     assert calls == []
     assert window._active_tasks == {7: (1, "existante", "task")}
 
@@ -317,12 +310,8 @@ def test_stale_progress_cannot_replace_live_task_banner():
     """#1132: a delayed progress update must not show a finished operation."""
     import types
 
-    method = _method(MAIN, "MainWindow", "_task_progress")
-    namespace = {}
-    from cifereca.gui.task_progress_presentation import live_task_progress_label
+    from cifereca.gui.task_activity_adapter import task_progress
 
-    namespace["live_task_progress_label"] = live_task_progress_label
-    exec(method, namespace)
     labels = []
     window = types.SimpleNamespace(
         _closed=False,
@@ -333,10 +322,10 @@ def test_stale_progress_cannot_replace_live_task_banner():
             set_label=labels.append,
         ),
     )
-    assert namespace["_task_progress"](window, "Téléchargement terminé") is False
+    assert task_progress(window, "Téléchargement terminé") is False
     assert labels == ["En cours · Synchronisation"]
-    assert namespace["_task_progress"](window, "Synchronisation 50 %") is False
+    assert task_progress(window, "Synchronisation 50 %") is False
     assert labels[-1] == "En cours · Synchronisation 50 %"
     window._active_tasks.clear()
-    assert namespace["_task_progress"](window, "Téléchargement terminé") is False
+    assert task_progress(window, "Téléchargement terminé") is False
     assert len(labels) == 2
