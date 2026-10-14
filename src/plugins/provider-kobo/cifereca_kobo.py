@@ -526,6 +526,18 @@ class KoboSession(ProviderSession):
         display_profile: str | None = None,
         include_acsm: bool | None = None,
     ) -> dict[str, Any]:
+        # A direct caller of this provider method can bypass the advisory
+        # backup manifest and personal search. It must not issue a private
+        # acquisition request after a disconnect or a failed account rebind.
+        # Entitlement and materialization remain Core decisions; this guard
+        # only establishes that the provider session is bound to one account.
+        if (
+            not self.connected or len(self._accounts) != 1
+            or self._accounts[0].provider_id != self.provider_id
+            or self._accounts[0].credential_id != self.credential_id
+            or not _strict_account_scope(self._accounts[0].unique_id)
+        ):
+            raise ProviderError("Kobo-Vault : acquisition sans compte attesté")
         profile = display_profile if self.supports_acquisition_display_profile else None
         if self.supports_acquisition_display_profile and profile is None:
             profile = self.display_profile
