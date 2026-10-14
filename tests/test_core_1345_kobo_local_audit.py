@@ -148,6 +148,37 @@ def test_two_identities_are_not_merged_even_when_bytes_equal(tmp_path):
         service.close()
 
 
+
+def test_entitlements_without_verified_local_artifacts_are_manual_only(tmp_path):
+    service, session = _service(tmp_path, [])
+    target = service._kobo_backup_target_dir("default") / "verified.epub"
+    _write_epub(target)
+    _backup(service, "has-local", target)
+    for item in ("has-local", "missing-right", "missing-right"):
+        service.storage.entitlement_put({
+            "provider_id": "kobo", "credential_id": "vault-1",
+            "identity_id": "default", "item_id": item,
+            "entitlement_type": "owned", "state": "active",
+        })
+    service.storage.catalog_entry_put({
+        "title": "PRIVATE orphan without product id",
+        "provider_id": "kobo", "identity_id": "default",
+        "local_state": "local", "metadata": {"path": "/home/PRIVATE.epub"},
+    })
+    try:
+        report = kobo_local_reconciliation_audit(service)
+        assert report["counts"]["active_entitlements_unmaterialized"] == 1
+        assert report["counts"]["linked_files_verified"] == 1
+        assert report["catalogue_entries_without_product_identity"] == 1
+        assert any(case["category"] == "active_entitlement_without_verified_artifact"
+                   for case in report["cases"])
+        assert report["downloads_authorized"] is False
+        assert "PRIVATE" not in json.dumps(report)
+    finally:
+        service.close()
+
+
+
 def test_offline_cli_does_not_connect_or_modify_local_backup(tmp_path, monkeypatch, capsys):
     service, session = _service(tmp_path, [])
     _backup(service, "PRIVATE_CLI_ITEM")
