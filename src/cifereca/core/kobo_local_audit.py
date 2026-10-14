@@ -127,6 +127,7 @@ def kobo_local_reconciliation_audit(
     valid_owner = {row["credential_id"]: row["identity_id"] for row in selected}
     records = service.storage.backup_list("kobo")
     catalog = service.storage.catalog_entries()
+    entitlements = service.storage.entitlements(provider_id="kobo", state="active")
     scopes = []
     for index, row in enumerate(selected, start=1):
         identity = row["identity_id"]
@@ -144,11 +145,14 @@ def kobo_local_reconciliation_audit(
 
     by_catalog: dict[tuple[str, str], list[object]] = defaultdict(list)
     unlinked_catalog = 0
+    selected_identities = {identity for _, _, identity, _ in scopes}
     for row in catalog[:_MAX_RECORDS]:
         if row.get("provider_id") != "kobo" or row.get("local_state") != "local":
             continue
         identity, product = row.get("identity_id"), row.get("item_id")
-        if type(identity) is not str or type(product) is not str or not product:
+        if identity not in selected_identities:
+            continue
+        if type(product) is not str or not product:
             unlinked_catalog += 1
             continue
         metadata = row.get("metadata")
@@ -156,7 +160,10 @@ def kobo_local_reconciliation_audit(
         if raw_path and type(raw_path) is str:
             by_catalog[(identity, product)].append(raw_path)
 
-    limited = len(records) > _MAX_RECORDS or len(catalog) > _MAX_RECORDS
+    limited = (
+        len(records) > _MAX_RECORDS or len(catalog) > _MAX_RECORDS
+        or len(entitlements) > _MAX_RECORDS
+    )
     checks_left = _MAX_FILES
     account_results = []
     # (identity, digest, byte count) -> distinct (item, path) assertions.
@@ -167,6 +174,7 @@ def kobo_local_reconciliation_audit(
         "unverified_placements": 0, "missing_or_unlinked": 0,
         "stored_hash_mismatch": 0, "unproven_catalogue_links": 0,
         "same_product_different_bytes": 0, "binary_match_groups": 0,
+        "active_entitlements_unmaterialized": 0,
     }
 
     def case(category: str, artifacts: int) -> None:
@@ -183,6 +191,7 @@ def kobo_local_reconciliation_audit(
             rec for rec in records[:_MAX_RECORDS]
             if rec.get("credential_id") == cred
         ]
+        verified_products: set[str] = set()
         for rec in scoped_rows:
             counts["backup_rows"] += 1
             # Corrupted or legacy ownership cannot authorize a file read.
@@ -219,6 +228,7 @@ def kobo_local_reconciliation_audit(
                     counts["unverified_placements"] += 1
                     continue
                 observed[proposed] = result
+                verified_products.add(product)
                 counts["linked_files_verified"] += 1
                 if idx > 0 or not stored:
                     counts["unproven_catalogue_links"] += 1
@@ -238,6 +248,22 @@ def kobo_local_reconciliation_audit(
             if len(distinct) > 1:
                 counts["same_product_different_bytes"] += 1
                 case("same_product_different_bytes", len(distinct))
+        # Local evidence only: an active persisted entitlement without an
+        # observed artifact is a manual-inspection candidate, never proof of
+        # a missing download right or permission to reacquire automatically.
+        entitlement_products = {
+            row.get("item_id")
+            for row in entitlements[:_MAX_RECORDS]
+            if row.get("credential_id") == cred
+            and row.get("identity_id") in {identity, None}
+            and type(row.get("item_id")) is str and row.get("item_id")
+        }
+        counts["active_entitlements_unmaterialized"] = len(
+            entitlement_products - verified_products
+        )
+        if counts["active_entitlements_unmaterialized"]:
+            case("active_entitlement_without_verified_artifact",
+                 counts["active_entitlements_unmaterialized"])
         account_results.append({"account": label, "counts": counts})
         for key, count in counts.items():
             totals[key] += count
@@ -263,7 +289,7 @@ def kobo_local_reconciliation_audit(
         "classification": "local_hash_evidence_not_entitlement_authority",
         "cases": cases,
         "limitations": [
-            "Only persisted Kobo backup and explicit catalogue paths were considered.",
+            "Only persisted Kobo backup, active rights and explicit catalogue paths were considered.",
             "Legacy paths outside the owning identity directory are not read.",
             "No filesystem crawl, remote rights refresh or EPUB/DRM inspection.",
             "Same SHA does not authorize deletion or automatic ownership transfer.",
