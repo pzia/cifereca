@@ -386,6 +386,20 @@ class NamingAuditTool(_ReadOnlyTool):
             },
         )
 
+    def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
+        # The audit itself is read-only, but a failed Core naming policy
+        # means the comparison is incomplete. Do not report a false success.
+        result = super().run(plan, control)
+        if int(plan.facts.get("policy_failures") or 0) <= 0:
+            return result
+        return MaintenanceResult(
+            ok=False,
+            changed=0,
+            summary=result.summary,
+            warnings=result.warnings,
+            facts=result.facts,
+        )
+
 
 class IntegrityAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
