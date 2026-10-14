@@ -7,6 +7,8 @@ from __future__ import annotations
 
 
 def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteRequest, TaskPriority, identity_has_attested_possession):
+    if getattr(window, '_closed', False):
+        return
     placement_id=str(item.get('placement_id') or '')
     identity_id=str(item.get('identity_id') or '')
     if not placement_id:
@@ -32,6 +34,8 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
     opening=window.action_button('Ouvrir','document-open-symbolic')
     opening._cifereca_action_id = 'open-local'
     def open_book(_button):
+        if getattr(window, '_closed', False):
+            return
         try:
             # Recheck existence and identity at activation, then launch without a shell.
             uri=window.service.local_book_path(placement_id,identity_id=identity_id).as_uri()
@@ -83,6 +87,8 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
         button=window.action_button('Envoyer à '+target.label,'document-send-symbolic')
         button._cifereca_action_id = 'send-local:'+target.identity_id
         def send(_button,target_id=target.identity_id):
+            if getattr(window, '_closed', False):
+                return
             def work():
                 window.service.local_book_path(placement_id,identity_id=identity_id)
                 return window.service.materialize_to_identity(placement_id,target_id)
@@ -110,6 +116,8 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                 target_button = Gtk.Button(label=str(target.target.label or target.target.target_id))
                 target_button.add_css_class('flat')
                 def route(_button, target_id=target.target.target_id):
+                    if getattr(window, '_closed', False):
+                        return
                     request = ArtifactRouteRequest(context.artifact, target_id=target_id, identity_id=identity_id or None)
                     def work():
                         plan = routing.plan(request)
