@@ -240,8 +240,35 @@ def main():
         report["checks"]["slow_worker_started_without_mutation"] = True
         def after():
             assert heartbeat[0] > before + 3, "GTK main loop blocked by scanning"
-            until(lambda: modal() is not None, first_dialog)
+            until(preview_allocated, first_dialog)
         later(after, 260)
+
+    def preview_allocated():
+        dialog = modal()
+        if dialog is None:
+            return False
+        preview_scroll = dialog.get_extra_child()
+        if not isinstance(preview_scroll, Gtk.ScrolledWindow):
+            return True  # first_dialog reports the actual layout violation.
+        content = next((w for w in walk(preview_scroll) if isinstance(w, Gtk.Label)), None)
+        if content is None:
+            return True
+        adjustment = preview_scroll.get_vadjustment()
+        geometry = {
+            "width": preview_scroll.get_width(),
+            "height": preview_scroll.get_height(),
+            "content_width": content.get_width(),
+            "content_height": content.get_height(),
+            "upper": adjustment.get_upper(),
+            "page_size": adjustment.get_page_size(),
+        }
+        report["preview_allocation"] = geometry
+        # Mapping precedes GTK's first size allocation. Wait for measurable
+        # widgets, not for overflow: first_dialog must still detect a broken
+        # scroll layout after the allocation has actually happened.
+        return all(geometry[key] > 0 for key in (
+            "width", "height", "content_width", "content_height", "page_size",
+        ))
 
     def first_dialog():
         dialog = modal()
