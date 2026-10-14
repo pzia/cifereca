@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import dashboard_render_controller
 from . import shell_identity_selector_controller
 from . import shell_layout_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
@@ -1043,66 +1044,9 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.add_response('close','Fermer');dialog.present()
 
     def _render_dashboard(self) -> None:
-        if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
-        for callback in list(getattr(self, "_overview_listeners", [])):
-            try: callback()
-            except Exception as exc: self.diagnostics.add("UI", "identity overview callback", "error", detail={"error": type(exc).__name__})
-        if not hasattr(self, "dashboard_cards"):
-            return
-        child = self.dashboard_cards.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling(); self.dashboard_cards.remove(child); child = nxt
-        for card in self.service.dashboard_state():
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            box.set_margin_top(12); box.set_margin_bottom(12); box.set_margin_start(14); box.set_margin_end(14)
-            add_css(box, "cover-frame")
-            head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            name = Gtk.Button(label=str(card.get("label") or "Utilisateur")); name.set_hexpand(True)
-            name.get_child().set_wrap(True)
-            name.set_tooltip_text("Sélectionner cette identité et ouvrir sa bibliothèque")
-            name.connect("clicked", lambda _b, iid=card["identity_id"]: self.open_identity_library(iid))
-            add_css(name, "flat", "book-title"); head.append(name)
-            sync = card.get("sync") or {}
-            badge = Gtk.Label(label=self._sync_status_label(sync.get("status"))); add_css(badge, "badge"); head.append(badge)
-            box.append(head)
-            stats=card.get('statistics') or {}
-            if stats:
-                loans=stats.get('known_loans')
-                count=Gtk.Label(label=f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} emprunts connus",xalign=0)
-                count.set_wrap(True);box.append(count)
-                actions=stats.get('actions') or {}
-                if actions:
-                    ok=sum(int(actions.get(key,0) or 0) for key in ('acquisitions_succeeded','imports_succeeded','synchronizations_succeeded','transformations_succeeded','transfers_succeeded'))
-                    failed=sum(int(actions.get(key,0) or 0) for key in ('acquisitions_failed','imports_failed','synchronizations_failed','transformations_failed','transfers_failed'))
-                    action_label=Gtk.Label(label=f"Actions (30 j) : {ok} réussies · {failed} échouées",xalign=0)
-                    action_label.set_wrap(True); add_css(action_label, 'caption', 'dim-label'); box.append(action_label)
-            providers = ", ".join(source["label"] + ("" if source["connected"] else " (à connecter)") for source in card.get("sources", [])) or "Aucune source connectée"
-            source_label = Gtk.Label(label=f"Sources : {providers}", xalign=0); source_label.set_wrap(True); box.append(source_label)
-            profile = "Lié" if card.get("adept_profile_id") else "À configurer"
-            box.append(Gtk.Label(label=f"Profil Adobe : {profile}", xalign=0))
-            deep_last_at = card.get("deep_last_at")
-            if deep_last_at:
-                try:
-                    deep_label = datetime.fromtimestamp(int(deep_last_at)).strftime("%d/%m/%Y %H:%M")
-                except Exception:
-                    deep_label = str(deep_last_at)
-                lab = Gtk.Label(label=f"Dernière vérification complète : {deep_label}", xalign=0); add_css(lab, "caption", "dim-label"); box.append(lab)
-            if sync:
-                sync_detail = sync.get("detail") or {}
-                provisioning = sync_detail.get("adept_provisioning") or {}
-                if provisioning.get("state"):
-                    box.append(Gtk.Label(label=f"Provisioning : {provisioning.get('state')}", xalign=0))
-                details = f"Nouvelles acquisitions : {sync.get('new_acquisitions', 0)} · Actions : {sync.get('attention_required', 0)} · Erreurs : {sync.get('errors', 0)}"
-                lab = Gtk.Label(label=details, xalign=0); lab.set_wrap(True); add_css(lab, "caption", "dim-label"); box.append(lab)
-                if sync.get("errors") or sync.get("attention_required"):
-                    issues = Gtk.Button(label="Voir les erreurs et actions")
-                    issues.connect("clicked", lambda _b, c=card: self._show_sync_issues(c)); box.append(issues)
-            box.set_size_request(300, -1)
-            for capability in card.get("capabilities", []):
-                label = Gtk.Label(label="✓ " + capability["label"], xalign=0); add_css(label, "caption")
-                box.append(label)
-            self.dashboard_cards.insert(box, -1)
-
+        return dashboard_render_controller.render_dashboard(
+            self, Gtk=Gtk, add_css=add_css,
+        )
 
     def _choose_identity_directory(self, entry, root: Path) -> None:
         from ..identities.directory_selection import directory_choice
