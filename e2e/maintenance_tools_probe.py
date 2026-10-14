@@ -247,8 +247,9 @@ def main():
         dialog = modal()
         preview_scroll = dialog.get_extra_child()
         assert isinstance(preview_scroll, Gtk.ScrolledWindow)
-        content = preview_scroll.get_child()
-        assert isinstance(content, Gtk.Label)
+        # GTK may insert a Gtk.Viewport between ScrolledWindow and Label.
+        content = next((w for w in walk(preview_scroll) if isinstance(w, Gtk.Label)), None)
+        assert content is not None
         body = content.get_text()
         assert all(label in body for label in (
             "Résumé :", "Changements prévus :", "Avertissements :", "Portée :",
