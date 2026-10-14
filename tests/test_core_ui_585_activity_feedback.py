@@ -10,9 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "src/cifereca/gui/main_window.py"
 RUNNER = ROOT / "src/cifereca/gui/task_runner.py"
 SYNC = ROOT / "src/cifereca/gui/sync_controller.py"
+STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
 
 
 def _method(path: Path, class_name: str, name: str) -> str:
+    if name == "connect_configured_sources":
+        path = STARTUP_OWNER
+        class_name = None
     if name in {"run_opening_sync", "run_kobo_backup", "_build_sync_page"}:
         path = SYNC
         class_name = None
@@ -114,7 +118,7 @@ def test_common_task_success_callbacks_use_activity_bar():
         "choose_acsm",
     ):
         source = _method(MAIN, "MainWindow", name)
-        assert "self._activity_result(" in source
+        assert ("window._activity_result(" if name == "connect_configured_sources" else "self._activity_result(") in source
 
 
 def test_task_callbacks_ignore_late_start_and_repeated_finish():
