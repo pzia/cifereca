@@ -56,9 +56,10 @@ def test_filtering_local_rows_does_not_require_service_or_network():
 
 
 def test_plugin_page_rebuild_preserves_search_and_library_query_states():
-    tree = ast.parse(SOURCE.read_text())
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_rebuild_plugin_pages")
+    owner = SOURCE.parent / "shell_page_controller.py"
+    tree = ast.parse(owner.read_text())
+    method = next(node for node in tree.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "rebuild_plugin_pages")
     text = ast.unparse(method)
 
     assert "controls.state()" in text
