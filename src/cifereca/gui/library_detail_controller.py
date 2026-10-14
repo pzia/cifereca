@@ -1,0 +1,92 @@
+"""Library book selection and detail presentation, GTK-independent (#1129).
+
+Owns orchestration only; all widgets, identity-aware services, public document
+links and actions remain with MainWindow and are passed via its stable facade.
+"""
+from __future__ import annotations
+
+
+def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_presentation, detail_language, document_links) -> None:
+    # Selection signals can arrive while widgets are being disposed.
+    if getattr(window, "_closed", False):
+        return
+    window._cancel_cached_book_details()
+    if not row:
+        window.library_page.detail.empty(
+            "Sélectionnez un livre",
+            "Sélectionnez un livre dans la liste pour afficher ses détails.",
+        )
+        return
+    item = window._library_objects.get(row.key)
+    if not item:
+        return
+    if item.get("source") == "loan" and item.get("loan_id"):
+        # A merged catalogue notice may not identify the exact borrower.
+        # In that case never expose an action for an arbitrary loan source.
+        loan = unique_library_loan(window.loan_objects.values(), item)
+        if loan:
+            window.library_page.detail.show_loan(loan, include_pnb_action=False)
+            actions = []
+            if window.service.can_download_loan(loan):
+                prepare = Gtk.Button(label="Télécharger le livre du prêt"); prepare.add_css_class("suggested-action")
+                prepare.set_tooltip_text("Récupère le prêt et traite son ACSM avec Kobo-Adept. Un fichier déjà présent est conservé ; une nouvelle copie peut être créée. Aucun nouvel emprunt.")
+                prepare.connect("clicked", lambda _b: window.prepare_pnb_for_loan(loan, False, prepare)); actions.append(prepare)
+            window.library_page.detail.add_actions(actions)
+            window._add_facets(window.library_page.detail, item, window.library_controls)
+            window._add_local_book_actions(window.library_page.detail, item)
+            window._add_book_recommendation_action(window.library_page.detail, item)
+            window._request_cached_book_details("library", row.key, item)
+            return
+
+    detail = window.library_page.detail
+    provider = str(item.get("provider_id") or "local")
+    availability = window._library_availability_label(item)
+    identity = window.service.identity_by_id(str(item.get("identity_id") or ""))
+    sync_label = window._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
+    if sync_label == "À jour":
+        sync_label = ""
+    description = window._book_description(item)
+    detail.show_presentation(book_detail_presentation(
+        title=str(item.get("title") or "Sans titre"),
+        subtitle=str(item.get("author") or ""),
+        thumbnail=item.get("thumbnail_url"),
+        badges=[],
+        section_rows=[
+            ("Essentiel", [
+                ("Source", window.service.provider_display_name(provider)),
+                ("Format", str(item.get("media_format") or "").upper()),
+                ("Langue", detail_language(item.get("metadata"))),
+                ("Disponibilité", availability),
+            ]),
+            ("Bibliothèque", [
+                ("Identité", identity.label if identity else str(item.get("identity_id") or "")),
+                ("Fichier local", str(item.get("local_path") or "")),
+                ("État acquisition", sync_label),
+            ]),
+        ],
+        links=document_links(item),
+        metadata=item.get('metadata'),
+    ), description=description)
+    placements = list(item.get('placements') or [])
+    possessions = list(item.get('possessions') or [])
+    presence_rows = []
+    for placement in placements:
+        iid = str(placement.get('identity_id') or '')
+        identity_ref = window.service.identity_by_id(iid) if iid else None
+        owner = identity_ref.label if identity_ref else (iid or 'Bibliothèque')
+        target = placement.get('storage_target_id') or placement.get('provider_id') or 'local'
+        presence_rows.append((owner, f"Stockage : {target}"))
+    for possession in possessions:
+        iid = str(possession.get('identity_id') or '')
+        identity_ref = window.service.identity_by_id(iid) if iid else None
+        owner = identity_ref.label if identity_ref else (iid or 'Compte')
+        provider_name = window.service.provider_display_name(str(possession.get('provider_id') or ''))
+        presence_rows.append((owner, f"Droit distant : {provider_name}"))
+    unique_presence = list(dict.fromkeys(presence_rows))
+    if len(unique_presence) > 1:
+        detail.add_group('Présence / Bibliothèques / Sources', unique_presence)
+    window._add_book_notice(detail,item, include_description=False)
+    window._add_local_book_actions(detail,item)
+    window._add_book_recommendation_action(detail, item)
+    window._add_facets(window.library_page.detail, item, window.library_controls)
+    window._request_cached_book_details("library", row.key, item)

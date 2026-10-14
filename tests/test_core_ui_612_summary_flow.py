@@ -10,6 +10,10 @@ SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name == "_library_selected":
+        owner = ast.parse(SOURCE.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in owner.body
+                                if isinstance(node, ast.FunctionDef) and node.name == "library_selected"))
     tree = ast.parse(gui_source_text(SOURCE))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
@@ -31,11 +35,11 @@ def test_search_local_summary_is_rendered_in_primary_presentation():
 
 def test_library_summary_is_rendered_before_library_notice_extensions():
     source = _method("_library_selected")
-    assert "description = self._book_description(item)" in source
+    assert "description = window._book_description(item)" in source
     assert "description=description" in source
     presentation = source.index("detail.show_presentation")
     presence = source.index("detail.add_group('Présence / Bibliothèques / Sources'")
-    notice = source.index("self._add_book_notice(detail, item, include_description=False)")
+    notice = source.index("window._add_book_notice(detail, item, include_description=False)")
     assert presentation < presence < notice
 
 

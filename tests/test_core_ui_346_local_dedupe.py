@@ -62,9 +62,11 @@ def test_library_list_does_not_add_empty_redundant_state():
 
 
 def test_library_detail_omits_redundant_availability_row_and_badge():
-    source = ast.unparse(_method("_library_selected"))
+    owner = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
+    source = ast.unparse(next(node for node in owner.body
+                              if isinstance(node, ast.FunctionDef) and node.name == "library_selected"))
 
-    assert "availability = self._library_availability_label(item)" in source
+    assert "availability = window._library_availability_label(item)" in source
     assert "Disponible hors ligne" not in source
     assert "('Disponibilité', availability)" in source
     assert "badges=[]" in source

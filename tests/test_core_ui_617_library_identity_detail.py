@@ -10,6 +10,10 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 def _method(name: str) -> str:
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    if name == "_library_selected":
+        tree = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in tree.body
+                                if isinstance(node, ast.FunctionDef) and node.name == "library_selected"))
     if name in {"_render_library", "_render_recent"}:
         owner = MAIN.with_name("library_render_controller.py")
         module = ast.parse(owner.read_text(encoding="utf-8"))
@@ -28,7 +32,7 @@ def _method(name: str) -> str:
 def test_library_none_selection_has_neutral_detail_state():
     source = _method("_library_selected")
     assert "if not row:" in source
-    assert "self.library_page.detail.empty(" in source
+    assert "window.library_page.detail.empty(" in source
     assert "Sélectionnez un livre" in source
 
 
