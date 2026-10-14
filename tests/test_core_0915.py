@@ -11,6 +11,7 @@ from cifereca.services import LibraryService
 from cifereca.identities.directory_selection import directory_choice
 from cifereca.identities.directory_migration import DirectoryMigrationError
 from cifereca.catalog import LocalCatalog
+from cifereca.gui.dashboard_render_controller import render_dashboard
 
 class Core0915(unittest.TestCase):
     def setUp(self):
@@ -168,8 +169,9 @@ class Core0915(unittest.TestCase):
         chooser.connect.call_args.args[1](chooser,1);entry.set_text.assert_called_once_with('target');window.show_error.assert_not_called()
         self.assertTrue((self.root/'target/paris/book.epub').exists());self.assertEqual(self.config.identities()[0]['directory_name'],'old')
     def test_overview_change_subscribers_called_without_fallback_widget(self):
-        ns={};exec(self.extract('_render_dashboard'),ns);callback=Mock()
-        ns['_render_dashboard'](NS(_overview_listeners=[callback]));callback.assert_called_once_with()
+        callback=Mock()
+        render_dashboard(NS(_overview_listeners=[callback]), Gtk=None, add_css=None)
+        callback.assert_called_once_with()
     def test_home_cards_use_two_column_grid_and_header_actions(self):
         boxes=[]
         def box(**kwargs):
@@ -187,7 +189,7 @@ class Core0915(unittest.TestCase):
         window=NS(dashboard_cards=Mock(),service=NS(dashboard_state=lambda:[card]),_sync_status_label=lambda status:'Jamais synchronisée',open_identity_library=Mock())
         window.dashboard_cards.get_first_child.return_value=None
         ns={'Gtk':NS(Box=lambda **kw:Mock(),Label=lambda **kw:Mock(),Button=button,Orientation=NS(VERTICAL=0,HORIZONTAL=1)),'add_css':Mock()}
-        exec(self.extract('_render_dashboard'),ns);ns['_render_dashboard'](window)
+        render_dashboard(window, Gtk=ns['Gtk'], add_css=ns['add_css'])
         self.assertEqual(buttons[0][0]['label'],'Hugues')
         buttons[0][1].connect.call_args.args[1](buttons[0][1]);window.open_identity_library.assert_called_once_with('stable-secret-id')
         window.dashboard_cards.insert.assert_called_once()
