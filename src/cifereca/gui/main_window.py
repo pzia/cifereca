@@ -1418,6 +1418,8 @@ class MainWindow(Adw.ApplicationWindow):
                 cancel_button=cancel, cancellation_state=active_cancel,
                 feedback=line_feedback, progress_scope=line_scope,
             ):
+                if self._closed or _button.get_root() is None:
+                    return
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
@@ -1526,7 +1528,9 @@ class MainWindow(Adw.ApplicationWindow):
                             if feedback is not None:
                                 feedback.finish(ticket, "cancelled")
                             return
-                        if feedback is not None and feedback.state.phase != "confirmation":
+                        if feedback is not None and (
+                            not feedback.valid(ticket) or feedback.state.phase != "confirmation"
+                        ):
                             return
                         current_identity = self.service.current_identity
                         if (current_identity.identity_id if current_identity else None) != context.identity_id:
