@@ -721,6 +721,9 @@ class SyncSourceRef:
     last_success: str = ""
     status: str = "idle"
     error: str = ""
+    # Source-level declarations, separate from the default metadata/rights
+    # synchronization operation. Never imply an acquisition is automatic.
+    sync_capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

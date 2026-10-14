@@ -79,6 +79,13 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     kobo_notices_only = getattr(source, "provider_id", "") == "kobo"
     if kobo_notices_only:
         summary += "\nActualise uniquement les notices Kobo en ligne ; ne télécharge aucun ebook."
+        if "local_materialization" in getattr(source, "sync_capabilities", ()):
+            summary += (
+                "\nAcquisition locale Kobo disponible sur commande dédiée ; "
+                "cette synchronisation ne la lance jamais."
+            )
+        else:
+            summary += "\nAcquisition locale Kobo : non prise en charge par ce compte."
     if status in {"partial", "error", "failed"} and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:

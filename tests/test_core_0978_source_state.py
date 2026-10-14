@@ -153,3 +153,93 @@ def test_opening_sync_partial_never_invents_success(tmp_path, monkeypatch):
         assert json.loads(storage.metadata_get(key))["status"] == "partial"
     finally:
         storage.close()
+
+
+def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tmp_path):
+    from cifereca.plugin_api import SyncSourceRef
+    storage = Storage(tmp_path / "caps.sqlite")
+    try:
+        accounts = [
+            Account(
+                display_name="Kobo 1", unique_id="reader-1",
+                provider_id="kobo", credential_id="vault-1",
+                provider_label="Kobo", identity_id="alice",
+            ),
+            Account(
+                display_name="Kobo 2", unique_id="reader-2",
+                provider_id="kobo", credential_id="vault-2",
+                provider_label="Kobo", identity_id="bob",
+            ),
+            Account(
+                display_name="Paris", unique_id="paris-reader",
+                provider_id="paris", credential_id="paris-1",
+                provider_label="Paris", identity_id="alice",
+            ),
+        ]
+        sessions = {
+            "kobo::vault-1": NS(capabilities=NS(personal_library=True, backup=True),
+                                connected=True),
+            "kobo::vault-2": NS(capabilities=NS(personal_library=True, backup=False),
+                                connected=True),
+            "paris::paris-1": NS(capabilities=NS(loans=True), connected=True),
+        }
+        calls = []
+        service = NS(
+            storage=storage, accounts=accounts,
+            accounts_for_identity=lambda identity=None: [
+                row for row in accounts
+                if identity is None or row.identity_id == identity
+            ],
+            _session_key=lambda provider, credential: f"{provider}::{credential}",
+            _sessions=sessions,
+            sync_kobo_backup=lambda *a, **k: calls.append(("acquire", a, k)),
+            synchronize_account_source=lambda *a, **k: calls.append(("sync", a, k)),
+        )
+        broker = SynchronizationBrokerImpl(service)
+        alice = broker.sources("alice")
+        bob = broker.sources("bob")
+        assert len(alice) == 2 and len(bob) == 1
+        by_provider = {row.provider_id: row for row in alice}
+        assert by_provider["kobo"].sync_capabilities == (
+            "remote_inventory", "entitlements", "local_materialization",
+        )
+        assert by_provider["paris"].sync_capabilities == ("entitlements",)
+        assert bob[0].sync_capabilities == ("remote_inventory", "entitlements")
+        assert "scheduled_refresh" not in by_provider["kobo"].sync_capabilities
+        assert SyncSourceRef(
+            source_id="legacy", identity_id="alice",
+            provider_id="kobo", account_id="legacy", label="Kobo",
+        ).sync_capabilities == ()
+        summary = sync_source_presentation(by_provider["kobo"]).summary
+        assert "ne télécharge aucun ebook" in summary
+        assert "Acquisition locale Kobo disponible sur commande dédiée" in summary
+        assert "Acquisition locale Kobo : non prise en charge" in (
+            sync_source_presentation(bob[0]).summary
+        )
+        assert calls == []  # Read-only projection never syncs or downloads.
+    finally:
+        storage.close()
+
+
+def test_sync_source_capabilities_are_not_exposed_without_session_proof(tmp_path):
+    storage = Storage(tmp_path / "no-session.sqlite")
+    try:
+        account = Account(
+            display_name="Kobo sans session", unique_id="reader",
+            provider_id="kobo", credential_id="missing",
+            provider_label="Kobo", identity_id="alice",
+        )
+        service = NS(
+            storage=storage, accounts=[account],
+            accounts_for_identity=lambda identity=None: [account],
+            _session_key=lambda provider, credential: f"{provider}::{credential}",
+            _sessions={},
+        )
+        source = SynchronizationBrokerImpl(service).sources()[0]
+        assert source.sync_capabilities == ()
+        assert source.connected is False
+        assert "Acquisition locale Kobo : non prise en charge" in (
+            sync_source_presentation(source).summary
+        )
+    finally:
+        storage.close()
