@@ -133,3 +133,51 @@ def test_detached_control_is_never_touched_at_submit_or_rejection():
     assert [event[0] for event in events] == ["started", "finished"]
     assert len(failures) == 1
     assert str(failures[0]) == "Traitement indisponible"
+
+
+def test_success_callback_closing_window_does_not_emit_late_toast():
+    """#1132: a success callback can synchronously tear down MainWindow."""
+    submit, pending = _submit()
+    runner, window, events = _runner()
+    class Finished:
+        def __init__(self, value):
+            self.value = value
+        def result(self):
+            return self.value
+        def add_done_callback(self, callback):
+            callback(self)
+    class ImmediateExecutor:
+        def submit(self, _priority, fn):
+            return Finished(fn())
+    runner.pool = ImmediateExecutor()
+    window._activity_result = lambda *args, **kwargs: events.append(("toast", args))
+    submit(
+        runner, "Connexion", lambda: "ok",
+        ok=lambda _value: setattr(window, "_closed", True),
+        success_toast="Succès",
+    )
+    assert len(pending) == 2
+    for callback, args in pending:
+        callback(*args)
+    assert runner._count == 0
+    assert [event[0] for event in events] == ["started", "finished"]
+    assert window._closed is True
+
+
+def test_success_callback_with_live_window_preserves_single_toast():
+    """#1132: keep normal success notification when the owner is alive."""
+    submit, pending = _submit()
+    runner, window, events = _runner()
+    class Finished:
+        def result(self):
+            return "ok"
+        def add_done_callback(self, callback):
+            callback(self)
+    runner.pool = NS(submit=lambda _priority, _fn: Finished())
+    window._activity_result = lambda *args, **kwargs: events.append(("toast", args))
+    submit(runner, "Connexion", lambda: "ok", success_toast="Succès")
+    for callback, args in pending:
+        callback(*args)
+    assert runner._count == 0
+    assert [event[0] for event in events] == ["started", "finished", "toast"]
+    assert events[-1][1] == ("Succès",)
