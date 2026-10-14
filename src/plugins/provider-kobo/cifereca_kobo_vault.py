@@ -418,6 +418,10 @@ class KoboVaultClient:
         # row on another page. Remember both *individually valid* candidates
         # until pagination completes, then quarantine all their occurrences.
         tainted_products: set[str] = set()
+        # Multiple individually valid rows for an edition are still ambiguous:
+        # revisions (or the same page replayed across cursors) must never be
+        # resolved by first/last-wins, especially for Core's legacy backup.
+        product_counts: dict[str, int] = {}
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(100):
@@ -441,6 +445,8 @@ class KoboVaultClient:
                                 "reason": "unverifiable_product_id",
                             })
                             continue
+                        product = _strict_product_id(raw)
+                        product_counts[product] = product_counts.get(product, 0) + 1
                         rows.append(dict(raw))
                     else:
                         self.last_manifest_rejections.append({
@@ -479,16 +485,25 @@ class KoboVaultClient:
             seen.add(cursor)
         else:
             raise KoboVaultError("Kobo-Vault : manifest trop volumineux ou pagination invalide", code="invalid_pagination")
-        if not tainted_products:
+        duplicate_products = {
+            product for product, count in product_counts.items() if count > 1
+        }
+        if not tainted_products and not duplicate_products:
             return rows
         safe_rows: list[dict[str, Any]] = []
         for row in rows:
-            if _strict_product_id(row) in tainted_products:
-                # Only a constant reason reaches public diagnostics. Never
-                # include an edition key, raw row or signed download URL.
+            product = _strict_product_id(row)
+            if product in tainted_products:
+                # Only constant reasons reach public diagnostics; no product,
+                # account, revision or signed acquisition URL may escape.
                 self.last_manifest_rejections.append({
                     "type": "invalid_shape",
                     "reason": "tainted_product_id",
+                })
+            elif product in duplicate_products:
+                self.last_manifest_rejections.append({
+                    "type": "invalid_scope",
+                    "reason": "duplicate_product_id",
                 })
             else:
                 safe_rows.append(row)
