@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -901,49 +901,11 @@ class MainWindow(Adw.ApplicationWindow):
         controls.append(menu)
 
     def _refresh_header_actions(self, route):
-        clear_box(self.header_actions)
-        defaults = ["search.open", "library.open", "library.import-acsm", "settings.open", "plugins.open"]
-        try:
-            selected = self._titlebar_service.selected_actions() if self._titlebar_service else defaults
-        except Exception:
-            selected = defaults
-        selected, obsolete = validate_action_selection(self._pages.values(), selected)
-        previous_obsolete = getattr(self, "_obsolete_titlebar_actions", ())
-        if obsolete and obsolete != previous_obsolete:
-            self.diagnostics.add(
-                "UI",
-                "titlebar action configuration",
-                "warning",
-                detail={"obsolete_action_ids": list(obsolete)},
-                level="normal",
-            )
-        self._obsolete_titlebar_actions = obsolete
-        host = self._UiHost(self)
-        for key, action in visible_actions(self._pages.values(), route, selected):
-            button = Gtk.Button.new_from_icon_name(action.icon_name); button.set_tooltip_text(action.title)
-            button.connect("clicked", lambda _b, a=action: self._invoke_ui_action(a, host))
-            self.header_actions.append(button)
-        model = Gio.Menu()
-        group = Gio.SimpleActionGroup()
-        count = 0
-        for title, entries in menu_sections(self._pages.values(), route):
-            section = Gio.Menu()
-            for label, action in entries:
-                name = f"item{count}"; count += 1
-                command = Gio.SimpleAction.new(name, None)
-                command.connect("activate", lambda _a, _p, a=action: self._invoke_ui_action(a, host))
-                group.add_action(command)
-                section.append(label, f"pagemenu.{name}")
-            model.append_section(title, section)
-        tools = Gio.Menu()
-        tools.append("Reconnecter les sources", "win.reconnect-sources")
-        tools.append("Raccourcis clavier", "win.shortcuts")
-        tools.append("Quitter", "win.quit")
-        model.append_section(None, tools)
-        self.insert_action_group("pagemenu", group)
-        self._page_menu_actions = group
-        self.shell_menu.set_menu_model(model)
-        self._ensure_pages_menu_rightmost()
+        return header_action_controller.refresh_header_actions(
+            self, route, Gtk=Gtk, Gio=Gio, clear_box=clear_box,
+            validate_action_selection=validate_action_selection,
+            visible_actions=visible_actions, menu_sections=menu_sections,
+        )
 
     def _invoke_ui_action(self, action, host):
         self.shell_menu.popdown()

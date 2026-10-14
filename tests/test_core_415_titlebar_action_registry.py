@@ -13,6 +13,7 @@ from cifereca.plugin_api import UiActionContribution, UiPageContribution
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "src/cifereca/gui/main_window.py"
+HEADER_OWNER = ROOT / "src/cifereca/gui/header_action_controller.py"
 PLUGIN_PAGE = ROOT / "src/cifereca/gui/plugin_manager_page.py"
 
 
@@ -92,6 +93,11 @@ def test_plugin_configuration_surfaces_scope_and_obsolete_ids():
 
 
 def _method_source(name: str) -> str:
+    if name == "_refresh_header_actions":
+        tree = ast.parse(HEADER_OWNER.read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in tree.body
+                                if isinstance(n, ast.FunctionDef)
+                                and n.name == "refresh_header_actions"))
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == name)
@@ -103,7 +109,7 @@ def test_shell_filters_configured_actions_before_render():
 
     assert "validate_action_selection" in source
     assert "obsolete_action_ids" in source
-    assert "visible_actions(self._pages.values(), route, selected)" in source
+    assert "visible_actions(window._pages.values(), route, selected)" in source
 
 
 def test_page_menu_is_reasserted_rightmost_after_build_refresh_and_reconstruction():
@@ -113,7 +119,7 @@ def test_page_menu_is_reasserted_rightmost_after_build_refresh_and_reconstructio
 
     assert "self._header_controls = controls" in create
     assert "self._ensure_pages_menu_rightmost()" in create
-    assert "self._ensure_pages_menu_rightmost()" in refresh
+    assert "window._ensure_pages_menu_rightmost()" in refresh
     assert "self._ensure_pages_menu_rightmost()" in changed
 
 
