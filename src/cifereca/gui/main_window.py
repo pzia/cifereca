@@ -37,6 +37,7 @@ from . import route_display_controller
 from . import dashboard_render_controller
 from . import shell_identity_selector_controller
 from . import shell_layout_controller
+from . import shell_body_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from .search_state import SearchStateField
 from .settings_lifetime import SettingsPageLifetime
@@ -457,72 +458,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- shell / navigation ----------
     def _build_main_shell(self) -> Gtk.Widget:
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.shell_root = root
-        from .navigation_history import NavigationHistory
-        self._navigation_history = NavigationHistory()
-        self._restoring_navigation = False
-        self.shell_header = self._create_shell_header()
-        root.append(self.shell_header)
-
-        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        body.set_vexpand(True)
-        root.append(body)
-        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.sidebar = sidebar
-        sidebar.set_size_request(160, -1)
-        add_css(sidebar, "sidebar")
-        body.append(sidebar)
-        brand = Gtk.Label(label=f"v{__version__}", xalign=0)
-        brand.set_margin_top(14); brand.set_margin_start(16); brand.set_margin_bottom(4)
-        add_css(brand, "caption", "dim-label")
-        sidebar.append(brand)
-        self.nav_list = Gtk.ListBox()
-        self.nav_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.nav_list.set_activate_on_single_click(True)
-        self.nav_list.connect("row-selected", self._nav_selected)
-        sidebar.append(self.nav_list)
-        self.nav_rows: dict[str, Gtk.ListBoxRow] = {}
-        self._nav_groups = {}
-        self._nav_group_expanded = {}
-        self.view_stack = Gtk.Stack()
-        self.view_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self.view_stack.set_hhomogeneous(False)
-        self.view_stack.set_hexpand(True); self.view_stack.set_vexpand(True)
-        body.append(self.view_stack)
-        self._rebuild_plugin_pages()
-
-        self.busy_revealer = Gtk.Revealer()
-        self.busy_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-        busy = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=9)
-        add_css(busy, "busy-bar")
-        self.busy_spinner = Gtk.Spinner(); self.busy_spinner.set_visible(False); busy.append(self.busy_spinner)
-        self.activity_status_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
-        self.activity_status_icon.set_visible(False); busy.append(self.activity_status_icon)
-        self.busy_label = Gtk.Label(label="", xalign=0)
-        self.busy_label.set_hexpand(True); self.busy_label.set_wrap(True); busy.append(self.busy_label)
-
-        self.activity_history_button = Gtk.MenuButton(label="Historique")
-        self.activity_history_button.set_icon_name("view-list-symbolic")
-        self.activity_history_button.set_tooltip_text("Historique des opérations")
-        self.activity_history_button.set_visible(False)
-        history_popover = Gtk.Popover()
-        self.activity_history_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
-        self.activity_history_box.set_margin_top(8); self.activity_history_box.set_margin_bottom(8)
-        self.activity_history_box.set_margin_start(10); self.activity_history_box.set_margin_end(10)
-        history_popover.set_child(self.activity_history_box)
-        self.activity_history_button.set_popover(history_popover)
-        busy.append(self.activity_history_button)
-
-        self.activity_dismiss = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        self.activity_dismiss.set_tooltip_text("Acquitter le résultat courant")
-        self.activity_dismiss.set_visible(False)
-        self.activity_dismiss.connect("clicked", lambda _button: self._dismiss_activity_feedback())
-        busy.append(self.activity_dismiss)
-        root.append(self.busy_revealer); self.busy_revealer.set_child(busy)
-
-        self.navigate("dashboard")
-        return root
+        return shell_body_controller.build_main_shell(
+            self, Gtk=Gtk, add_css=add_css, version=__version__,
+        )
 
     _UiHost = _UiHost
 
