@@ -12,6 +12,8 @@ from cifereca_kobo import DESCRIPTOR, KoboSession
 
 
 class FakeVault:
+    base_url = "https://vault.example"
+
     def __init__(self, rows):
         self.rows = rows
         self.calls = 0
@@ -168,7 +170,9 @@ def test_foreign_product_collision_quarantines_both_versions_before_core():
     try:
         assert [r["product_id"] for r in session.backup_manifest()] == ["independent"]
         policy = session.backup_manifest_policy
-        assert policy["counts"]["duplicate_product_id"] == 2
+        # Foreign rows have a higher-priority category than duplicates.
+        assert policy["counts"]["duplicate_product_id"] == 1
+        assert policy["counts"]["different_account"] == 1
         assert policy["manifest_authoritative"] is False
         assert session.backup_manifest_rejection_count == 2
         assert policy["manifest_rejections"] == 2
