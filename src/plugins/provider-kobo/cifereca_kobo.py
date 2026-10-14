@@ -6,7 +6,7 @@ from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient
 from cifereca_kobo_catalog import KoboCatalogService
-from cifereca_kobo_policy import classify_personal_manifest
+from cifereca_kobo_policy import classify_personal_manifest, _strict_product_id
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 
@@ -324,6 +324,10 @@ class KoboSession(ProviderSession):
         self.backup_manifest_rejection_count = 0
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
         items = self.client.library_manifest()
+        # Keep the complete raw snapshot only inside this provider call so
+        # its advisory classification can count foreign-account rows. Such
+        # rows must never reach Core's legacy materialization loop.
+        source_items = items
         # Transfer only a bounded *count* across the public provider boundary:
         # no upstream raw items, message strings, URLs or credentials.
         rejected = getattr(self.client, "last_manifest_rejections", ())
@@ -339,8 +343,44 @@ class KoboSession(ProviderSession):
             if self.connected and len(self._accounts) == 1
             else None
         )
+        if account_id is not None:
+            def foreign_account(row: Any) -> bool:
+                return (
+                    isinstance(row, dict) and "account_id" in row
+                    and (
+                        type(row["account_id"]) is not str
+                        or row["account_id"] != account_id
+                    )
+                )
+
+            # If a foreign row duplicates a local product ID, BOTH are
+            # ambiguous. Dropping the foreign row alone would hide this
+            # duplicate from Core's legacy per-product checkpoint guard.
+            foreign_products = {
+                product for row in items if foreign_account(row)
+                if (product := _strict_product_id(row)) is not None
+            }
+            accepted = []
+            rejected_count = 0
+            for item in items:
+                # Only an explicitly claimed account is checked here: legacy
+                # personal-library rows without account_id may still be
+                # reported, but never independently authorize downloading.
+                product = _strict_product_id(item) if isinstance(item, dict) else None
+                if foreign_account(item) or (
+                    product is not None and product in foreign_products
+                ):
+                    rejected_count += 1
+                    continue
+                accepted.append(item)
+            items = accepted
+            # Core treats ANY provider rejection as evidence that a partial
+            # manifest is unsuitable for authoritative rights prune.
+            self.backup_manifest_rejection_count = min(
+                1_000_000, self.backup_manifest_rejection_count + rejected_count,
+            )
         self.backup_manifest_policy = classify_personal_manifest(
-            items,
+            source_items,
             account_id=account_id,
             rejection_count=self.backup_manifest_rejection_count,
             acquisition_access=self.acquisition_access,
