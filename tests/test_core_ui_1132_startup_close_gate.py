@@ -199,3 +199,31 @@ def test_plugin_activation_diagnostics_do_not_disclose_exception_secrets():
     assert "private.invalid" not in repr(observed)
     assert len(queued) == 1
     assert queued[0]() is False
+
+
+
+def test_window_closes_after_provider_success_before_deferred_sync():
+    """A successful connection must not start sync after GTK teardown."""
+    host, calls, submitted, posted = _pending_connection()
+    calls.clear()
+    submitted[2]({"connected": ["provider"], "errors": {}})
+    assert len(posted) == 1
+    assert ("opening-sync",) not in calls
+    host._closed = True
+    assert posted[0]() is False
+    assert ("opening-sync",) not in calls
+
+
+def test_window_closes_during_plugin_attach_skips_refresh_and_provider_connect():
+    """Do not touch widgets or schedule network after a synchronous attach closes the UI."""
+    run, queued = _method("activate_startup_plugins")
+    host, calls = _host()
+
+    def attach(_manager):
+        calls.append(("attach",))
+        host._closed = True
+
+    host.service.attach_plugin_manager = attach
+    assert run(host) is False
+    assert [event[0] for event in calls] == ["activate", "attach", "perf"]
+    assert queued == []
