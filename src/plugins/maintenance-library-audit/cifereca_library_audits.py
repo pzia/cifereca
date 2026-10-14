@@ -488,11 +488,46 @@ class IntegrityAuditTool(_ReadOnlyTool):
         for index,row in enumerate(candidates,start=1):
             control.check_cancelled()
             control.report(current=index-1,total=total,message=f"Intégrité {index}/{total}")
-            issues=_file_integrity_issues(
-                row.get("path",""), row.get("format",""),
-                expected_size=int(row.get("expected_size") or 0),
-                expected_sha256=str(row.get("expected_sha256") or ""),
-            )
+            # Plans may be cached, restored, or supplied by a caller rather
+            # than produced by this exact plugin version. Revalidate runtime
+            # candidates: a malformed size must not crash the entire batch,
+            # and a non-mapping entry must not select an arbitrary path.
+            issues: tuple[str, ...]
+            if not isinstance(row, Mapping):
+                issues = ("reference_invalid",)
+            else:
+                raw_size = row.get("expected_size")
+                if type(raw_size) is int and raw_size >= 0:
+                    size = raw_size
+                elif raw_size is None:
+                    size = 0
+                elif (
+                    type(raw_size) is str and 1 <= len(raw_size) <= 20
+                    and raw_size.isascii() and raw_size.isdecimal()
+                ):
+                    size = int(raw_size)
+                else:
+                    size = None
+                path = row.get("path")
+                fmt = row.get("format")
+                digest = row.get("expected_sha256")
+                if (
+                    size is None or not isinstance(path, (str, Path))
+                    or not str(path).strip()
+                    or not isinstance(fmt, str)
+                    or not isinstance(digest, str)
+                ):
+                    issues = ("reference_invalid",)
+                else:
+                    try:
+                        issues = _file_integrity_issues(
+                            path, fmt, expected_size=size,
+                            expected_sha256=digest,
+                        )
+                    except (OSError, ValueError, TypeError, OverflowError):
+                        # Treat a single corrupted candidate as an invalid
+                        # reference; never surface its private exception text.
+                        issues = ("reference_invalid",)
             if issues:
                 invalid += 1
                 if "missing" in issues: missing += 1
