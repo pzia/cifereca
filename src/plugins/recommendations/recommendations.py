@@ -64,6 +64,32 @@ def _external_book_url(value: Any) -> str | None:
     return url
 
 
+def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
+    """Edition selectors, NOT borrowing permissions or exact item actions.
+
+    An ISBN here was checked by the recommendation engine. Recheck its form
+    and require original provider/credential/record coordinates so that a
+    merged title or unattributed ISBN never becomes an actionable source.
+    """
+    selections: list[str] = []
+    for notice in tuple(notices or ())[:64]:
+        if not getattr(notice, "has_source_coordinates", False):
+            continue
+        isbn = getattr(notice, "isbn", "")
+        if type(isbn) is not str or not re.fullmatch(r"97[89][0-9]{10}", isbn):
+            continue
+        if sum(
+            int(digit) * (1 if index % 2 == 0 else 3)
+            for index, digit in enumerate(isbn)
+        ) % 10:
+            continue
+        if isbn not in selections:
+            selections.append(isbn)
+        if len(selections) == 4:
+            break
+    return tuple(selections)
+
+
 _LANGUAGE_LABELS = {
     "fr": "Français",
     "en": "Anglais",
@@ -1189,6 +1215,35 @@ class UxRecommendationsView:
                     30,
                 )
             )
+
+        # Ranks may aggregate editions and accounts from several providers.
+        # Show only accountable, originally observed variants. Never display
+        # credential IDs, private record IDs or infer borrowing availability.
+        variants = tuple(getattr(ranked, "notices", ()) or ())
+        exact_variants = [
+            variant for variant in variants[:16]
+            if getattr(variant, "has_source_coordinates", False)
+        ]
+        if exact_variants:
+            edition_fields = []
+            for index, variant in enumerate(exact_variants, 1):
+                name = self._display_source(variant.source_provider)
+                valid_isbns = _attested_catalogue_isbns((variant,))
+                isbn = valid_isbns[0] if valid_isbns else ""
+                edition_fields.append(DetailField(
+                    f"source-edition-{index}", f"Notice source {index}",
+                    f"{name} · ISBN {isbn}" if isbn else
+                    f"{name} · édition non attestée",
+                ))
+            edition_fields.append(DetailField(
+                "source-edition-warning", "Actions disponibles",
+                "Choisir une notice dans Recherche pour consulter les "
+                "disponibilités et les actions réellement autorisées.",
+            ))
+            sections.append(DetailSection(
+                "source-editions", "Éditions et sources distinctes",
+                tuple(edition_fields), 35,
+            ))
         if self._llm_enabled and self._llm_explanation is not None and self._llm_selection_key == row.key:
             explanation = self._llm_explanation
             sections.append(DetailSection(
@@ -1206,6 +1261,33 @@ class UxRecommendationsView:
             ))
 
         actions = []
+        # This is an explicit local ISBN *search*, not a silent remote fetch
+        # or an exact catalogue action. Search owns the real availability and
+        # acquisition decision; Recommandations never duplicates that policy.
+        identity_at_selection = self.selected_identity_id()
+        generation_at_selection = self._generation
+        key_at_selection = row.key
+        if identity_at_selection:
+            for isbn in _attested_catalogue_isbns(variants):
+                def open_isbn(isbn=isbn):
+                    if (
+                        self._generation != generation_at_selection
+                        or self._llm_selection_key != key_at_selection
+                        or self.selected_identity_id() != identity_at_selection
+                    ):
+                        return False
+                    search = getattr(self.host, "search_books", None)
+                    if not callable(search):
+                        return False
+                    return bool(search(
+                        isbn, field="isbn", online=False,
+                        identity_id=identity_at_selection,
+                    ))
+                actions.append(UiBookDetailAction(
+                    f"recommendation.search.isbn.{isbn}",
+                    f"Chercher l’édition ISBN {isbn} dans Recherche",
+                    "system-search-symbolic", callback=open_isbn,
+                ))
         url = _external_book_url(get_field(item, "friendly_url", ""))
         if url:
             actions.append(
