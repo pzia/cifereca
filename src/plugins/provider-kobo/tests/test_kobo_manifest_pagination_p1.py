@@ -17,9 +17,9 @@ from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
 
 @pytest.mark.parametrize("bad_cursor", [
     0, False, True, 34, {}, [], ["PRIVATE_TOKEN"],
-    " ", "next page", "abc\\nBearer PRIVATE_TOKEN",
-    "abc\\rPRIVATE_ID", "abc\\tPRIVATE_ID", "abc\\x7fPRIVATE_ID",
-    "abc\\u202ePRIVATE_ID", "c" * 2049,
+    " ", "next page", "abc\nBearer PRIVATE_TOKEN",
+    "abc\rPRIVATE_ID", "abc\tPRIVATE_ID", "abc\x7fPRIVATE_ID",
+    "abc\u202ePRIVATE_ID", "c" * 2049,
 ])
 def test_invalid_page_cursor_is_a_structured_error_not_an_authoritative_end(bad_cursor):
     calls = []
