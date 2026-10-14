@@ -12,6 +12,50 @@ LOCAL_NODE_LIMIT = 300
 PAGE_CACHE_PROFILES = 8
 
 
+def constellation_detail_presentation(node) -> UiBookDetailPresentation:
+    """Public book-detail projection with individual bibliographic values.
+
+    The host continues to render its single DetailPanel. The graphed node
+    contributes neither an acquisition action nor proof of entitlement.
+    """
+    authors = tuple(
+        str(value).strip() for value in tuple(node.book.authors or ())
+        if str(value).strip()
+    )
+    sources = tuple(
+        str(value).strip() for value in tuple(node.sources or ())
+        if str(value).strip()
+    )
+    sections = []
+    if authors:
+        sections.append(DetailSection(
+            'bibliography', 'Bibliographie',
+            tuple(
+                DetailField(f'author-{index}', 'Auteur', value, kind='author')
+                for index, value in enumerate(authors)
+            ), order=10,
+        ))
+    if sources:
+        sections.append(DetailSection(
+            'provenance', 'Provenance',
+            tuple(
+                DetailField(f'source-{index}', 'Source', value, kind='copy')
+                for index, value in enumerate(sources)
+            ), order=20,
+        ))
+    links = (
+        (DocumentLink('notice', 'Voir la notice en ligne', node.url),)
+        if node.url else ()
+    )
+    return UiBookDetailPresentation(
+        title=str(node.book.title or ''),
+        subtitle=', '.join(authors),
+        badges=tuple(node.availability or ()),
+        links=links,
+        sections=tuple(sections),
+    )
+
+
 def neighbour_card_fields(edge):
     """Read-only presentation, with inferred reasons kept distinguishable."""
     book = edge.target.book
@@ -469,10 +513,7 @@ class View:
             self.master.empty_detail(); return
         node = self.center
         self.heading.set_label('Centre : ' + node.book.title)
-        links = (DocumentLink('notice', 'Voir la notice en ligne', node.url),) if node.url else ()
-        self.master.show_detail(UiBookDetailPresentation(node.book.title, ', '.join(node.book.authors),
-            badges=node.availability, links=links, sections=(DetailSection('provenance', 'Provenance',
-            (DetailField('sources', 'Sources', ', '.join(node.sources)),)),)))
+        self.master.show_detail(constellation_detail_presentation(node))
         # A single stable ranking keeps the first exploration comprehensible.
         edges = neighbours(self.nodes, node, mode='Confort', surprise=.25, profile=self.local, limit=12)
         self.neighbours_summary.set_label(neighbour_count_label(edges))
