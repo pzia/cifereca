@@ -706,6 +706,18 @@ class NamingRepairTool(_ReadOnlyTool):
             invalid_plan = True
             preview_failures = 0
 
+        # Plan warnings can come from a stale cache or a caller. Never copy
+        # arbitrary warning text (potential paths, credentials, titles) to a
+        # public maintenance result. Reconstruct only the known diagnostics
+        # from bounded counters produced by plan().
+        plan_counts: dict[str, int] = {}
+        for name in ("skipped", "read_failures"):
+            count = plan.facts.get(name, 0)
+            if type(count) is not int or not 0 <= count <= 1_000_000:
+                invalid_plan = True
+            else:
+                plan_counts[name] = count
+
         if invalid_plan:
             control.check_cancelled()
             control.report(message="Renormalisation impossible : plan invalide")
@@ -721,7 +733,17 @@ class NamingRepairTool(_ReadOnlyTool):
         changed = 0
         failures = 0
         total = len(ids)
-        warnings: list[str] = list(plan.warnings)
+        warnings: list[str] = []
+        if plan_counts["skipped"]:
+            warnings.append(f"{plan_counts['skipped']} entrée(s) non vérifiable(s) ignorée(s).")
+        if preview_failures:
+            warnings.append(
+                f"{preview_failures} placement(s) sans proposition valide de la politique Core."
+            )
+        if plan_counts["read_failures"]:
+            warnings.append(
+                f"{plan_counts['read_failures']} artefact(s) non inspecté(s) : broker library.read en erreur."
+            )
         control.check_cancelled()
         if not total:
             control.report(message="Aucun placement à renormaliser")
@@ -858,7 +880,22 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         changed = 0
         failures = 0
         total = len(pairs)
-        warnings: list[str] = list(plan.warnings)
+        # A cached or supplied plan can contain arbitrary warning text. Only
+        # publish diagnostics reconstructed from this tool's known facts:
+        # never pass paths, book titles or tokens from plan.warnings to GTK.
+        warnings: list[str] = []
+        safety_notice = "Chaque suppression est revérifiée par Core comme doublon du même artefact."
+        # Preserve the actual preview notice, but not caller-supplied text.
+        if pairs and type(plan.warnings) in (tuple, list) and any(
+            type(value) is str and value == safety_notice
+            for value in plan.warnings[:100]
+        ):
+            warnings.append(safety_notice)
+        read_failures = plan.facts.get("read_failures", 0)
+        if type(read_failures) is int and 0 < read_failures <= 1_000_000:
+            warnings.append(
+                f"{read_failures} artefact(s) non inspecté(s) : broker library.read en erreur."
+            )
         control.check_cancelled()
         if not total:
             control.report(message="Aucun doublon physique à nettoyer")
