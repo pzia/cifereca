@@ -6,6 +6,8 @@ on MainWindow. No import of MainWindow or new subscription belongs here.
 """
 from __future__ import annotations
 
+from .search_host_port import SearchDetailHost
+
 import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
@@ -17,7 +19,7 @@ from .detail_model import book_detail_presentation, detail_language
 from .task_runner import TaskPriority
 
 
-def _search_selected(self, row: BookListItem | None) -> None:
+def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     if getattr(self, "_closed", False):
         return
     # A result id alone is not enough: ids can be reused by another
@@ -100,7 +102,7 @@ def _search_selected(self, row: BookListItem | None) -> None:
     )
 
 
-def _search_detail_request_context(self) -> tuple[int, int, int, str | None]:
+def _search_detail_request_context(self: SearchDetailHost) -> tuple[int, int, int, str | None]:
     identity = self.service.current_identity
     return (
         self._search_detail_request_generation,
@@ -111,7 +113,7 @@ def _search_detail_request_context(self) -> tuple[int, int, int, str | None]:
 
 
 def _search_detail_context_current(
-    self, selected_id: str, context: tuple[int, int, int, str | None] | None,
+    self: SearchDetailHost, selected_id: str, context: tuple[int, int, int, str | None] | None,
 ) -> bool:
     if self._closed or self._selected_search_id != selected_id:
         return False
@@ -123,7 +125,7 @@ def _search_detail_context_current(
 
 
 def _apply_search_detail(
-    self, selected_id: str, item: SearchResult, detail: ItemDetail,
+    self: SearchDetailHost, selected_id: str, item: SearchResult, detail: ItemDetail,
     *, context: tuple[int, int, int, str | None] | None = None,
 ) -> None:
     if not self._search_detail_context_current(selected_id, context):
@@ -135,7 +137,7 @@ def _apply_search_detail(
 
 
 def _search_detail_error(
-    self, selected_id: str, item: SearchResult, exc: BaseException,
+    self: SearchDetailHost, selected_id: str, item: SearchResult, exc: BaseException,
     *, context: tuple[int, int, int, str | None] | None = None,
 ) -> None:
     if not self._search_detail_context_current(selected_id, context):
@@ -148,7 +150,7 @@ def _search_detail_error(
     self.toast("Disponibilités indisponibles. Réessayez ultérieurement.", 5)
 
 
-def _load_known_detail(self, item):
+def _load_known_detail(self: SearchDetailHost, item):
     if getattr(self, "_closed", False):
         return
     # Explicitly opening a known-catalogue detail supersedes a previous
