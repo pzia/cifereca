@@ -127,3 +127,65 @@ def test_personal_duplicate_quarantine_resets_on_subsequent_search(monkeypatch):
         assert vault.last_search_merge_rejections == []
     finally:
         vault.close()
+
+
+def test_library_only_scope_quarantines_duplicates_without_public_lookup(monkeypatch):
+    vault = KoboVaultClient("https://vault.example", "PRIVATE_TOKEN")
+    states = {"invalid": True}
+    catalog_calls = []
+
+    def no_catalog(*_args, **_kwargs):
+        catalog_calls.append(True)
+        raise AssertionError("Library-only scope must not query public catalogue")
+
+    def library(_query, **_kwargs):
+        if not states["invalid"]:
+            return {"items": [
+                {"product_id": "private-edition", "account_id": "current",
+                 "owned": True, "downloadable": True},
+            ], "next_cursor": "NEXT"}
+        return {"items": [
+            {"product_id": "private-edition", "account_id": "PRIVATE_A",
+             "owned": True, "revision_id": "PRIVATE_REV_A"},
+            {"product_id": "private-edition", "account_id": "PRIVATE_B",
+             "owned": True, "revision_id": "PRIVATE_REV_B"},
+            {"product_id": "alias-A", "id": "alias-B",
+             "account_id": "PRIVATE_A", "owned": True},
+            {"product_id": "alias-A", "owned": True},
+            {"product_id": "alias-B", "owned": True},
+            {"product_id": "safe", "account_id": "current", "owned": True},
+            {"product_id": 123, "id": "coerced", "owned": True},
+            "PRIVATE_MALFORMED",
+        ], "next_cursor": "NEXT"}
+
+    monkeypatch.setattr(vault, "search_catalog", no_catalog)
+    monkeypatch.setattr(vault, "search_library", library)
+    try:
+        response = vault.search("example", scope="library")
+        assert response["next_cursor"] == "NEXT"
+        assert [item["product_id"] for item in response["items"]] == ["safe"]
+        assert vault.last_search_merge_rejections == (
+            [{"source": "library", "type": "invalid_scope",
+              "reason": "duplicate_product_id"}] * 2
+            + [{"source": "library", "type": "invalid_shape",
+                "reason": "missing_product_id"}]
+            + [{"source": "library", "type": "invalid_scope",
+                "reason": "duplicate_product_id"}] * 2
+            + [{"source": "library", "type": "invalid_shape",
+                "reason": "missing_product_id"}]
+            + [{"source": "library", "type": "invalid_shape",
+                "reason": "item_not_object"}]
+        )
+        forbidden = json.dumps(response) + json.dumps(vault.last_search_merge_rejections)
+        for secret in ("PRIVATE_A", "PRIVATE_B", "PRIVATE_REV", "PRIVATE_MALFORMED",
+                       "coerced", "PRIVATE_TOKEN"):
+            assert secret not in forbidden
+
+        states["invalid"] = False
+        restored = vault.search("example", scope="library")
+        assert restored["items"][0]["owned"] is True
+        assert restored["items"][0]["downloadable"] is True
+        assert vault.last_search_merge_rejections == []
+        assert catalog_calls == []
+    finally:
+        vault.close()
