@@ -217,6 +217,7 @@ def kobo_local_reconciliation_audit(
                 counts["unverified_placements"] += 1
                 continue
             observed: dict[str, tuple[str, int, str]] = {}
+            attempted_paths: set[str] = set()
             stored = rec.get("local_path")
             proposals = [stored] if stored else []
             proposals.extend(by_catalog.get((identity, product), ())[:8])
@@ -232,9 +233,11 @@ def kobo_local_reconciliation_audit(
                     continue
                 if not proposed or type(proposed) is not str:
                     continue
-                # A duplicate reference to the same path is not a new file.
-                if proposed in observed:
+                # Count each candidate path once, even if its first check
+                # failed: repeated missing paths must not exhaust the budget.
+                if proposed in attempted_paths:
                     continue
+                attempted_paths.add(proposed)
                 checks_left -= 1
                 result = _read_hash_within(proposed, roots)
                 if result is None:
