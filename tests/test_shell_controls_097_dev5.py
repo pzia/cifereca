@@ -50,6 +50,7 @@ class ShellControls(unittest.TestCase):
         future=ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
         gtk=NS(Button=Widget,HeaderBar=Widget,Label=Widget,Box=Widget,DropDown=Widget,MenuButton=Widget,PopoverMenu=Widget,SignalListItemFactory=Widget,Orientation=NS(VERTICAL=0,HORIZONTAL=1))
         ns={'Gtk':gtk,'Adw':gtk,'Gio':NS(Menu=Menu,SimpleAction=Action,SimpleActionGroup=ActionGroup),
+            'Pango':NS(EllipsizeMode=NS(END=0,MIDDLE=1)),
             'menu_sections':menu_sections,'validate_action_selection':validate_action_selection,'visible_actions':lambda *args:[],'clear_box':lambda box:box.children.clear(),'header_action_controller':header_action_controller,
             'shell_layout_controller':shell_layout_controller,'shell_header_controller':shell_header_controller}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+methods,type_ignores=[])),str(source),'exec'),ns)
