@@ -62,7 +62,10 @@ class DummyTool:
         return SimpleNamespace(
             tool_id="library.duplicates.cleanup",
             summary="Aucune suppression réelle",
-            changes=("• fichier témoin simulé",),
+            changes=tuple(
+                f"fichier témoin simulé {i:02d} /chemin/long/vers/la/bibliothèque/romans/doublons/exemple.epub"
+                for i in range(20)
+            ),
             warnings=("Protection des artefacts Kobo",),
             facts={"version": self.version, "read_failures": 0},
         )
@@ -242,11 +245,33 @@ def main():
 
     def first_dialog():
         dialog = modal()
-        body = dialog.get_body()
+        preview_scroll = dialog.get_extra_child()
+        assert isinstance(preview_scroll, Gtk.ScrolledWindow)
+        content = preview_scroll.get_child()
+        assert isinstance(content, Gtk.Label)
+        body = content.get_text()
         assert all(label in body for label in (
             "Résumé :", "Changements prévus :", "Avertissements :", "Portée :",
         ))
         assert "\n" in body and "\\n" not in body, repr(body)
+        assert preview_scroll.get_policy()[1] == Gtk.PolicyType.AUTOMATIC
+        buttons = {
+            label: next((b for b in walk(dialog) if isinstance(b, Gtk.Button)
+                         and label in str(b.get_label() or "").replace("_", "")), None)
+            for label in ("Annuler", "Exécuter")
+        }
+        assert all(b is not None and b.get_mapped() for b in buttons.values()), (
+            "Preview response buttons must remain visible outside scrolling content"
+        )
+        adjustment = preview_scroll.get_vadjustment()
+        assert adjustment.get_upper() > adjustment.get_page_size(), (
+            "20 long preview entries must scroll without hiding dialog responses"
+        )
+        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        assert all(b.get_mapped() for b in buttons.values()), (
+            "Dialog action buttons disappeared after scrolling the preview"
+        )
+        report["checks"]["scrollable_preview_with_visible_actions_20_items"] = True
         assert tool.run_calls == 0, "Acquisition executed without confirmation"
         report["checks"]["real_multiline_confirmation_after_async_scan"] = True
         report["checks"]["gtk_heartbeat_during_slow_scan"] = heartbeat[0] > 5
