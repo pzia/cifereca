@@ -95,6 +95,8 @@ class TaskRunner:
                 self.window._task_finished(
                     task_id, remaining, label, False, "Traitement indisponible",
                 )
+                if getattr(self.window, "_closed", False):
+                    return False
                 failure = RuntimeError("Traitement indisponible")
                 if err:
                     err(failure)
