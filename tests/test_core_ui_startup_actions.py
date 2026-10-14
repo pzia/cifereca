@@ -7,9 +7,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_WINDOW = ROOT / "src/cifereca/gui/main_window.py"
 STARTUP_PAGE = ROOT / "src/cifereca/gui/startup_page.py"
+STARTUP_OWNER = ROOT / "src/cifereca/gui/startup_coordinator.py"
 
 
 def _method_source(class_name: str, method_name: str) -> str:
+    if method_name in {"connect_configured_sources", "activate_startup_plugins"}:
+        tree = ast.parse(STARTUP_OWNER.read_text())
+        method = next(n for n in tree.body
+                      if isinstance(n, ast.FunctionDef) and n.name == method_name)
+        return ast.unparse(method)
     tree = ast.parse(MAIN_WINDOW.read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
@@ -56,7 +62,7 @@ def test_mainwindow_startup_facade_still_delegates_without_import_cycle():
 def test_opening_sync_idle_callback_checks_window_liveness_at_dispatch():
     """#1132: the queued callback must guard the live window."""
     source = _method_source("MainWindow", "connect_configured_sources")
-    assert "GLib.idle_add(once_while_open(self, self.run_opening_sync))" in source
+    assert "idle_add(once_while_open(window, window.run_opening_sync))" in source
     from cifereca.gui.startup_lifecycle import once_while_open
 
     calls = []
@@ -86,7 +92,7 @@ def test_startup_without_plugin_manager_still_connects_providers():
         and any(isinstance(op, ast.Is) for op in node.test.ops)
     )
     body = ast.unparse(ast.Module(body=no_manager.body, type_ignores=[]))
-    assert "GLib.idle_add(self._connect_sources_if_open)" in body
+    assert "idle_add(window._connect_sources_if_open)" in body
     assert "return False" in body
     guarded = _method_source("MainWindow", "_connect_sources_if_open")
     assert "once_while_open(self, self.connect_configured_sources)()" in guarded
