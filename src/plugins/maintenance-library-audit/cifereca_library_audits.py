@@ -574,10 +574,12 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 for duplicate in ordered[1:]:
                     pairs.append((duplicate.placement_id, keep.placement_id))
                     if len(changes) < 100:
-                        changes.append(
-                            f"Supprimer {duplicate.filename or duplicate.placement_id} "
-                            f"(même artefact {artifact_id[:24]}…)"
-                        )
+                        # Preview surfaces travel through GTK and diagnostics:
+                        # filename, placement ID and artifact hash are private
+                        # operational data, not suitable as public labels.
+                        # Keep the exact identifiers only in facts["pairs"]
+                        # for Core to revalidate before a deletion.
+                        changes.append(f"Supprimer le doublon n°{len(pairs)}")
 
         warnings: list[str] = []
         if pairs:
