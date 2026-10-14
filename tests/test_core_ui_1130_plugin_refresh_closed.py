@@ -4,12 +4,28 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
+from cifereca.gui import plugin_reload_controller
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _callback(name, **namespace):
+    # Exercise the real implementation moved from MainWindow, not its AST facade.
+    if name == "_plugins_changed":
+        return plugin_reload_controller.plugins_changed
+    if name == "_subscribe_cached_book_details":
+        def dispatch(host):
+            glib = namespace.get("GLib", NS(
+                idle_add=lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("unexpected GLib scheduling")
+                ),
+            ))
+            return plugin_reload_controller.subscribe_cached_book_details(
+                host, idle_add=glib.idle_add,
+                subscribe_cached_book_detail_changes=namespace["subscribe_cached_book_detail_changes"],
+            )
+        return dispatch
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
     cls = next(n for n in tree.body
                if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
