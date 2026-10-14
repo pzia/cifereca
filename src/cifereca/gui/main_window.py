@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -1212,82 +1212,34 @@ class MainWindow(Adw.ApplicationWindow):
             self.plugins_page.refresh()
 
     def _navigation_state(self, route: str):
-        from .navigation_history import NavigationState
-        identity = self.service.current_identity
-        controls = getattr(self, route + "_controls", None)
-        query_state = controls.state() if controls is not None else None
-        return NavigationState(route, identity.identity_id if identity else None, query_state)
+        return navigation_controller.navigation_state(self, route)
 
     def _update_navigation_buttons(self) -> None:
-        history = getattr(self, "_navigation_history", None)
-        if hasattr(self, "back_button"):
-            self.back_button.set_sensitive(bool(history and history.can_back()))
-        if hasattr(self, "forward_button"):
-            self.forward_button.set_sensitive(bool(history and history.can_forward()))
+        return navigation_controller.update_navigation_buttons(self)
 
     def _visit_route(self, route: str) -> None:
-        if route not in self._pages:
-            return
-        if not getattr(self, "_restoring_navigation", False):
-            self._navigation_history.visit(self._navigation_state(route))
-        self._show_route(route)
-        self._update_navigation_buttons()
+        return navigation_controller.visit_route(self, route)
 
     def _restore_navigation_state(self, state) -> None:
-        if state is None or state.route not in self._pages:
-            self._update_navigation_buttons(); return
-        self._restoring_navigation = True
-        try:
-            current = self.service.current_identity
-            if state.identity_id:
-                # Never apply filters or navigate in another identity when a
-                # history entry refers to an identity that has been removed.
-                # This check also covers a stale current_identity pointer.
-                if self.service.identity_by_id(state.identity_id) is None:
-                    return
-                if current is None or current.identity_id != state.identity_id:
-                    self._activate_identity(state.identity_id)
-            controls = getattr(self, state.route + "_controls", None)
-            if controls is not None and state.query_state is not None:
-                controls.set_state(state.query_state)
-            row = self.nav_rows.get(state.route)
-            if row is not None:
-                self.nav_list.select_row(row)
-            self._show_route(state.route)
-            if state.route == "library": self._render_library()
-            elif state.route == "search": self._render_search_results()
-        finally:
-            self._restoring_navigation = False
-            self._update_navigation_buttons()
+        return navigation_controller.restore_navigation_state(self, state)
 
     def can_go_back(self) -> bool:
-        return bool(getattr(self, "_navigation_history", None) and self._navigation_history.can_back())
+        return navigation_controller.can_go_back(self)
 
     def can_go_forward(self) -> bool:
-        return bool(getattr(self, "_navigation_history", None) and self._navigation_history.can_forward())
+        return navigation_controller.can_go_forward(self)
 
     def go_back(self) -> None:
-        if getattr(self, "_navigation_history", None):
-            self._restore_navigation_state(self._navigation_history.back())
+        return navigation_controller.go_back(self)
 
     def go_forward(self) -> None:
-        if getattr(self, "_navigation_history", None):
-            self._restore_navigation_state(self._navigation_history.forward())
+        return navigation_controller.go_forward(self)
 
     def _nav_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
-        if row is None:
-            return
-        self._visit_route(row.get_name() or "library")
+        return navigation_controller.nav_selected(self, _listbox, row)
 
     def navigate(self, route: str) -> None:
-        row = self.nav_rows.get(route)
-        if row:
-            if self.nav_list.get_selected_row() is row:
-                self._visit_route(route)
-            else:
-                self.nav_list.select_row(row)
-            return
-        self._visit_route(route)
+        return navigation_controller.navigate(self, route)
 
     def _replace_dropdown_labels(self, dropdown, labels):
         model = dropdown.get_model()
