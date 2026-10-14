@@ -67,7 +67,7 @@ class SearchDetailHost(Protocol):
 SEARCH_RUN_CAPABILITIES = frozenset({
     "_closed", "_reset_search_enter", "search_controls", "service",
     "_search_generation", "toast", "_last_search_query", "_search_mode",
-    "_populate_local_search", "runner", "search_button", "_remote_query_key",
+    "_populate_local_search", "runner", "search_button", "search_global_button", "_remote_query_key",
     "_remote_search_results", "_search_local_objects", "_online_pending_key",
     "_online_pending_token", "_online_pending_generation", "_populate_search",
     "show_error",
