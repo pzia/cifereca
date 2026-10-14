@@ -8,16 +8,12 @@ from types import SimpleNamespace as NS
 from cifereca.gui.settings_lifetime import SettingsPageLifetime
 
 
-MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_diagnostics_actions.py"
 
 
 def _source_and_callback(name, namespace):
     tree = ast.parse(MAIN.read_text(encoding="utf-8"))
-    window = next(node for node in tree.body
-                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    build = next(node for node in window.body
-                 if isinstance(node, ast.FunctionDef)
-                 and node.name == "_build_settings_page")
+    build = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "bind_settings_diagnostics")
     owner = build
     if name == "clear_diagnostics":
         owner = ast.parse(MAIN.with_name("settings_diagnostic_actions.py").read_text(encoding="utf-8"))

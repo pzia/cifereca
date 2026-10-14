@@ -1,5 +1,6 @@
 from __future__ import annotations
 from tests.gui_source import gui_source_text
+from tests.settings_source import settings_source_text
 
 from pathlib import Path
 
@@ -47,7 +48,7 @@ def test_attention_rows_have_user_summary_and_bounded_technical_details():
 
 
 def test_settings_diagnostic_is_actionable_and_raw_details_are_collapsed():
-    source = gui_source_text(ROOT / "src/cifereca/gui/main_window.py")
+    source = settings_source_text()
     section = gui_source_text(ROOT / "src/cifereca/gui/settings_diagnostics_section.py")
     assert 'Gtk.DropDown.new_from_strings(["À examiner", "Tous"])' in section
     assert 'diag_scroll.set_visible(False)' in section

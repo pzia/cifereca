@@ -1,5 +1,6 @@
 """P0 #1127: Diagnostics Gtk section is presentation-only and headless-importable."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from pathlib import Path
@@ -109,10 +110,7 @@ def test_builder_never_attaches_signals_or_accesses_diagnostic_backend():
 
 def test_host_and_action_adapter_keep_expurgation_copy_export_navigation_and_refresh():
     source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py").read_text("utf-8")
-    tree = ast.parse(source)
-    window = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "MainWindow")
-    build = next(x for x in window.body if isinstance(x, ast.FunctionDef) and x.name == "_build_settings_page")
-    rendered = ast.unparse(build)
+    rendered = ast.unparse(ast.parse(settings_source_text()))
     assert "build_settings_diagnostics_section(" in rendered
     assert "settings_diagnostics_refresh_controller.refresh_settings_diagnostics(" in rendered
     owner = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_diagnostics_refresh_controller.py"

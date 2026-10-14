@@ -1,5 +1,6 @@
 """CoreUI P0 #1127: identity/ADEPT GTK presentation without any side effect."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from copy import deepcopy
@@ -136,12 +137,7 @@ def test_window_keeps_unique_identity_ids_exact_bindings_and_callback_ownership(
     source = (
         Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
     ).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    main = next(n for n in tree.body if isinstance(n, ast.ClassDef)
-                and n.name == "MainWindow")
-    build = next(n for n in main.body if isinstance(n, ast.FunctionDef)
-                 and n.name == "_build_settings_page")
-    body = ast.unparse(build)
+    body = ast.unparse(ast.parse(settings_source_text()))
     assert "while identity_id in existing_ids:" in body
     assert "self.service.storage.adept_profile_binding_get(" in body
     assert "self.service.normal_paris_adept_status(identity_id)" in body

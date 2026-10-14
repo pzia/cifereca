@@ -1,5 +1,6 @@
 """P0 #1127: headless tests of actual Settings shell with GTK doubles."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 import ast
 from pathlib import Path
 from types import SimpleNamespace
@@ -86,15 +87,11 @@ def test_render_has_no_handlers_and_no_backend_dependencies():
 
 def test_main_window_preserves_standalone_and_revision_host_ownership():
     main = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    tree = ast.parse(main.read_text(encoding="utf-8"))
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
-                  and n.name == "_build_settings_page")
-    source = ast.unparse(method)
+    source = ast.unparse(ast.parse(settings_source_text()))
     assert "build_settings_shell(" in source
     assert "settings_heading = shell.heading" in source
     assert "if not standalone:" in source
     assert "self._settings_tabs = tabs" in source
     assert "SettingsRevisionState(sections)" in source
     assert "settings_committer.submit(" in source
-    assert 'tabs.connect("notify::visible-child-name", update_settings_actions)' in main.read_text(encoding="utf-8")
+    assert 'tabs.connect("notify::visible-child-name", update_settings_actions)' in settings_source_text()

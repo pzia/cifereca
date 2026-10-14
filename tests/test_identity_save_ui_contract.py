@@ -11,10 +11,9 @@ from cifereca.core import CiferecaCore
 
 
 def _settings_save_nodes():
-    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_commit_actions.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    window = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    build = next(node for node in window.body if isinstance(node, ast.FunctionDef) and node.name == "_build_settings_page")
+    build = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "bind_settings_commit")
     save = next(node for node in ast.walk(build) if isinstance(node, ast.FunctionDef) and node.name == "save_settings")
     ok = next(node for node in save.body if isinstance(node, ast.FunctionDef) and node.name == "ok")
     return save, ok

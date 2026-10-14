@@ -1,5 +1,6 @@
 """P0 #1127: real AI settings renderer with headless GTK doubles."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from copy import deepcopy
@@ -124,11 +125,7 @@ def test_builder_adds_no_callbacks_and_has_no_service_dependency():
 
 def test_host_keeps_revocation_confirmations_task_runner_and_async_commit():
     source = (Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py").read_text("utf-8")
-    tree = ast.parse(source)
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
-                  and node.name == "_build_settings_page")
-    rendered = ast.unparse(method)
+    rendered = ast.unparse(ast.parse(settings_source_text()))
     ai_path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_ai_actions.py"
     ai_tree = ast.parse(ai_path.read_text("utf-8"))
     callbacks = ast.unparse(next(node for node in ai_tree.body

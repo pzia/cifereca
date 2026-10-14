@@ -1,5 +1,6 @@
 """P0 #1127: headless GTK doubles for the real Library/Downloads builder."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from copy import deepcopy
@@ -131,12 +132,7 @@ def test_missing_provider_settings_keep_blank_overrides_without_inference():
 
 def test_main_window_retains_async_saving_and_global_library_row_reference():
     root = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    tree = ast.parse(root.read_text(encoding="utf-8"))
-    window = next(n for n in tree.body if isinstance(n, ast.ClassDef)
-                  and n.name == "MainWindow")
-    method = next(n for n in window.body if isinstance(n, ast.FunctionDef)
-                  and n.name == "_build_settings_page")
-    source = ast.unparse(method)
+    source = ast.unparse(ast.parse(settings_source_text()))
     assert "build_library_download_section(" in source
     assert "download_group = download_settings.download_group" in source
     assert "provider_download_editors = download_settings.provider_download_editors" in source

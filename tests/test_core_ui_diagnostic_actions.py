@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 from tests.gui_source import gui_source_text
 
 import ast
@@ -15,7 +16,7 @@ def _method(class_name: str, method_name: str) -> ast.FunctionDef:
 def test_settings_diagnostic_actions_use_adaptive_bar_and_action_buttons():
     # MainWindow owns state/callbacks; the extracted builder owns GTK layout.
     method = _method("MainWindow", "_build_settings_page")
-    host = ast.unparse(method)
+    host = ast.unparse(ast.parse(settings_source_text()))
     assert "build_settings_diagnostics_section(" in host
     assert "adaptive_action_bar=AdaptiveActionBar" in host
     assert "action_button=self.action_button" in host

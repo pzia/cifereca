@@ -1,5 +1,6 @@
 """P0 #1099 — LLM settings without GTK, real network or secrets."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 import os
@@ -201,9 +202,7 @@ def test_typed_probe_never_contacts_unavailable_or_unapproved_destination():
 
 
 def test_coreui_tab_saves_llm_and_only_claims_restart_not_hot_reload():
-    source = (
-        Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    ).read_text(encoding="utf-8")
+    source = settings_source_text()
     ast.parse(source)
     shell_source = (
         Path(__file__).resolve().parents[1] / "src/cifereca/gui/settings_shell.py"

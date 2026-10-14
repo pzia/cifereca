@@ -1,5 +1,6 @@
 """P0 #1127: GTK account editor widget contracts without importing GTK."""
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from pathlib import Path
@@ -128,12 +129,7 @@ def test_builder_does_not_install_signals_or_mutate_configured_data():
 
 def test_window_keeps_guard_id_allocation_delete_dirty_and_async_save():
     root = Path(__file__).resolve().parents[1]
-    tree = ast.parse((root / "src/cifereca/gui/main_window.py").read_text("utf-8"))
-    main = next(node for node in tree.body if isinstance(node, ast.ClassDef)
-                and node.name == "MainWindow")
-    build = next(node for node in main.body if isinstance(node, ast.FunctionDef)
-                 and node.name == "_build_settings_page")
-    render = ast.unparse(build)
+    render = ast.unparse(ast.parse(settings_source_text()))
     assert "def add_account_editor" in render
     assert "descriptor.state != 'ready'" in render
     assert "provider_id in public_ids" in render

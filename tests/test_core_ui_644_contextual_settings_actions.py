@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.settings_source import settings_source_text
 
 import ast
 from pathlib import Path
@@ -42,11 +43,8 @@ def test_diagnostic_has_no_global_save_actions():
 
 
 def test_settings_page_tracks_tab_changes_and_dirty_revisions():
-    source = MAIN_WINDOW.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_build_settings_page")
-    rendered = ast.unparse(method)
+    source = settings_source_text()
+    rendered = ast.unparse(ast.parse(source))
 
     assert 'tabs.connect("notify::visible-child-name", update_settings_actions)' in source
     assert "track_all_settings_widgets()" in rendered
@@ -62,5 +60,5 @@ def test_settings_page_tracks_tab_changes_and_dirty_revisions():
 
 
 def test_add_delete_account_and_identity_operations_mark_accounts_dirty():
-    source = MAIN_WINDOW.read_text(encoding="utf-8")
+    source = settings_source_text()
     assert source.count('mark_settings_dirty("accounts")') >= 4
