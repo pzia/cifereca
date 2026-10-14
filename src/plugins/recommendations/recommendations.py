@@ -644,7 +644,9 @@ class UxRecommendationsView:
         if not self._identity_ids:
             return None
         index = int(self._identity.get_selected())
-        return self._identity_ids[index] if 0 <= index < len(self._identity_ids) else self._identity_ids[0]
+        # GTK can transiently report an invalid row while a model is
+        # reloaded or removed. Never fall back to another user's profile.
+        return self._identity_ids[index] if 0 <= index < len(self._identity_ids) else None
 
     def _identity_changed(self, *_args) -> None:
         if self._reloading_identities:
@@ -832,8 +834,19 @@ class UxRecommendationsView:
 
     def _start_refresh(self):
         self._reset_llm_selection(None)
+        # Advance the generation before any early return. Otherwise a prior
+        # worker's already queued GTK callback can repaint the wrong profile.
+        self._generation += 1
         if self._task_handle is not None:
             self._task_handle.cancel()
+        self._task_handle = None
+        # The previous task may have been busy even when the newly selected
+        # profile is no longer valid or the Core brokers disappear.
+        self._busy = False
+        stop_spinner = getattr(self._spinner, "stop", None)
+        if callable(stop_spinner):
+            stop_spinner()
+        self._refresh_button.set_sensitive(True)
 
         identity_id = self.selected_identity_id()
         if not identity_id:
@@ -850,7 +863,6 @@ class UxRecommendationsView:
             self._summary.set_label("Core incompatible : brokers metadata/catalog/tasks indisponibles.")
             return False
 
-        self._generation += 1
         generation = self._generation
         self._refresh_started_at = time.perf_counter()
         self._busy = True
@@ -952,7 +964,6 @@ class UxRecommendationsView:
         identity_id = self.selected_identity_id()
         profile_changed = (
             self._active_identity_id is not None
-            and identity_id is not None
             and identity_id != self._active_identity_id
         )
         self._active_identity_id = identity_id
