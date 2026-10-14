@@ -14,7 +14,10 @@ from gi.repository import Gtk, Adw, GLib
 
 from ..plugin_api import SyncRequest
 from .action_widgets import AdaptiveActionBar, add_css, clear_box
-from .sync_view import sync_identity_action_label, sync_source_presentation
+from .sync_view import (
+    sync_identity_action_label, sync_source_presentation,
+    sync_local_preflight_presentation,
+)
 from .task_runner import TaskPriority
 
 
@@ -62,6 +65,8 @@ def _refresh_sync_page(self) -> None:
     box = getattr(self, "_sync_sources_box", None)
     if box is None: return
     clear_box(box)
+    self._sync_preview_generation = getattr(self, "_sync_preview_generation", 0) + 1
+    preview_generation = self._sync_preview_generation
     broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
     identity = self.service.current_identity
     all_now = getattr(self, "_sync_all_button", None)
@@ -112,7 +117,63 @@ def _refresh_sync_page(self) -> None:
             self.runner.submit(f"Synchronisation {label}…", lambda: broker.synchronize_source(sid),
                 lambda _r: (self._refresh_sync_page(), self.refresh_library(False)), control=_button,
                 priority=TaskPriority.USER_ACTION, kind="source-sync")
-        now.connect("clicked", one); row.add_suffix(now); group.add(row)
+        now.connect("clicked", one); row.add_suffix(now)
+        if source.provider_id == "kobo":
+            # Only a targeted Core broker may resolve the private credential.
+            # Neither page building nor switching identity reads the ledger.
+            preflight = self.action_button(
+                "Aperçu local…", "document-properties-symbolic",
+            )
+            capability = "local_materialization" in source.sync_capabilities
+            supported = callable(getattr(broker, "preview_local_materialization", None))
+            preflight.set_sensitive(bool(source.enabled and capability and supported))
+            preflight.set_tooltip_text(
+                "Prévisualiser ce seul compte, hors réseau, sans téléchargement"
+                if capability and supported else
+                "Aperçu Kobo non pris en charge par cette source"
+            )
+            row.add_suffix(preflight)
+            preview_row = Adw.ActionRow()
+            preview_row.set_title("Aperçu local des acquisitions Kobo")
+            preview_row.set_subtitle(
+                "Non consulté · pas de téléchargement ni de rafraîchissement distant"
+            )
+            preview_row.set_subtitle_lines(0)
+            def preview_one(
+                button, sid=source.source_id, identity_id=source.identity_id,
+                version=preview_generation, output=preview_row,
+            ):
+                current = getattr(self.service.current_identity, "identity_id", None)
+                if getattr(self, "_closed", False) or current != identity_id:
+                    return
+                output.set_subtitle("Calcul local en cours…")
+                def still_current():
+                    return (
+                        not getattr(self, "_closed", False)
+                        and getattr(self, "_sync_preview_generation", None) == version
+                        and getattr(self.service.current_identity, "identity_id", None) == identity_id
+                    )
+                def completed(result):
+                    if still_current():
+                        output.set_subtitle(sync_local_preflight_presentation(result))
+                def failed(_error):
+                    if still_current():
+                        # Never display an exception that may contain private
+                        # paths, provider errors, credentials or bearer URLs.
+                        output.set_subtitle(
+                            "Aperçu local indisponible. Aucun téléchargement autorisé."
+                        )
+                self.runner.submit(
+                    "Prévisualisation locale Kobo…",
+                    lambda: broker.preview_local_materialization(sid),
+                    completed, failed, control=button,
+                    priority=TaskPriority.USER_ACTION, kind="sync-preflight",
+                )
+            preflight.connect("clicked", preview_one)
+            group.add(row)
+            group.add(preview_row)
+        else:
+            group.add(row)
 
 
 def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
