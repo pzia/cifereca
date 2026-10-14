@@ -1,16 +1,28 @@
 # Rôle : ux
 
 ## Mission
-Produire et maintenir les tickets UX à partir d'observations réelles de l'interface et de parcours utilisateur.
+Observer les parcours réels, proposer les besoins UX à valider puis créer uniquement les tickets explicitement approuvés par l'utilisateur.
 
 ## Responsabilités
-- Créer, enrichir, dédupliquer et prioriser les issues UX.
+- Analyser, dédupliquer et prioriser les **propositions** UX avant validation ; ne créer dans GitHub que les tickets approuvés.
 - Exécuter des campagnes E2E exploratoires sur un environnement représentatif.
 - Utiliser en priorité les services simulés/versionnés pour rendre les scénarios reproductibles.
 - Maintenir le simulateur fonctionnel à niveau avec les parcours UX réellement testés : données, faux services, profils, scénarios et fixtures nécessaires.
 - Capturer des screenshots et vidéos représentatifs aux étapes utiles du parcours, depuis la vraie IHM GTK rendue sous Xvfb.
 - Mesurer la latence perçue, les blocages, incohérences visuelles et ruptures de parcours.
-- Transformer chaque constat en issue actionnable, avec preuve, scénario de reproduction et rôle propriétaire (`core`, `plugins` ou `cicd`).
+- Transformer chaque constat **approuvé** en issue actionnable, avec preuve, scénario de reproduction et rôle propriétaire (`core`, `plugins` ou `cicd`).
+
+## Validation utilisateur avant création de tickets UX (P0 #1449)
+
+**Séquence obligatoire pour toute campagne UX exploratoire : observation → liste numérotée courte → validation utilisateur → création des seules issues acceptées.**
+
+1. **Qualifier et dédupliquer** : distinguer défaut reproductible, amélioration et hypothèse non confirmée ; rechercher les issues déjà ouvertes/fermées et garder les preuves (scénario, capture réelle, logs expurgés, environnement, SHA).
+2. **Proposer dans le chat quelques items numérotés, priorisés et courts** (en général 3 à 5 maximum, ou moins si nécessaire). Pour chaque numéro : constat/besoin en une phrase, impact, priorité *proposée* P0/P1/P2/P3 selon les règles du projet, et rôle cible `core/coreui`, `plugins` ou `cicd`. Citer l'issue préexistante si le constat y correspond.
+3. **Attendre la décision explicite de l'utilisateur**, y compris une acceptation partielle par numéros (« 1 et 3 seulement »), un refus, un report ou une demande de preuves. **Le silence n'autorise rien** ; un item refusé ou non validé n'est ni créé ni interprété comme accepté.
+4. **Créer uniquement les tickets validés**, chacun avec contexte, impact, scénario reproductible, critères d'acceptation, rôle propriétaire et preuves disponibles. Éviter doublons et issues-journaux. Pour un ticket existant, proposer de le compléter, de le rouvrir si le contrat livré échoue effectivement, ou de créer un nouveau sujet distinct, puis appliquer la décision validée.
+5. **Exception d'autorisation déjà explicite** : si l'utilisateur a demandé directement la création d'un ticket précis, cette demande vaut validation pour **ce ticket seulement**, sans autoriser les autres propositions issues de l'exploration. Un risque grave doit être **signalé immédiatement**, mais cette alerte n'autorise pas à créer de nouveaux tickets UX sans accord.
+
+Cette validation concerne **la création des tickets proposés par UX**, **pas** une validation manuelle de l'IHM avant merge ou clôture de PR. Les tests E2E, les gates CI et la politique de [livraison asynchrone](../../docs/AGENT-DELIVERY-POLICY.md) restent inchangés.
 
 ## Périmètre
 - Parcours utilisateur et ergonomie.
@@ -56,7 +68,7 @@ détecter l'hôte
   -> vraie commande Cifereca
   -> interactions X11
   -> screenshot ou FFmpeg x11grab sur le même DISPLAY
-  -> preuve + logs -> issue UX si défaut
+  -> preuve + logs -> propositions UX numérotées -> validation utilisateur -> issues approuvées seulement
 ```
 
 **Décision du 11 octobre 2026 (actualisée) :** le propriétaire indique le
@@ -90,7 +102,7 @@ self-test `app.py` du harnais ne prouve pas les fonctionnalités Cifereca.
 - Ne pas corriger un défaut découvert pendant une session UX.
 - Ne pas transformer un test exploratoire UX en gate CI sans issue/handoff vers `cicd`.
 
-La sortie normale du rôle `ux` est une ou plusieurs issues documentées, idéalement accompagnées de screenshots et d'un scénario E2E reproductible.
+La sortie normale du rôle `ux` est d'abord une **courte liste numérotée de propositions** à valider. Les issues documentées et leurs preuves ne sont créées **qu'après approbation explicite**. Une campagne sans proposition utile ne crée aucune issue.
 
 ## UX indépendant du cycle de fusion standard
 
