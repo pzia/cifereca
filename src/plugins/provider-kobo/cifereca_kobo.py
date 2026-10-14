@@ -323,6 +323,19 @@ class KoboSession(ProviderSession):
         # No diagnostic may outlive the previous manifest if fetching raises.
         self.backup_manifest_rejection_count = 0
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
+        # Backup manifests are a possible input to Core materialization, not
+        # merely a public inventory view. Do not fetch or expose personal rows
+        # unless the authenticated session identifies exactly one matching
+        # provider, credential and account. This also invalidates stale state
+        # after disconnect or failed account rebind.
+        if (
+            not self.connected or len(self._accounts) != 1
+            or self._accounts[0].provider_id != self.provider_id
+            or self._accounts[0].credential_id != self.credential_id
+            or not isinstance(self._accounts[0].unique_id, str)
+            or not self._accounts[0].unique_id.strip()
+        ):
+            return []
         items = self.client.library_manifest()
         # Keep the complete raw snapshot only inside this provider call so
         # its advisory classification can count foreign-account rows. Such
