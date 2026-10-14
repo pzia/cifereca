@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import statistics_presentation_controller
 from . import dashboard_render_controller
 from . import shell_identity_selector_controller
 from . import shell_layout_controller
@@ -955,39 +956,10 @@ class MainWindow(Adw.ApplicationWindow):
         return {"running": "En cours", "success": "Réussie", "partial": "Partielle", "failed": "Échouée"}.get(str(status or ""), "Jamais synchronisée")
 
     def _refresh_statistics(self):
-        if not hasattr(self,'statistics_button'):return
-        identity=self.service.current_identity
-        if not identity:return
-        stats=self.service.identity_statistics(identity.identity_id)
-        loans=stats['known_loans']
-        self.statistics_button.set_label(f"{stats['local_books']} livres · {loans if loans is not None else '—'} prêts")
+        return statistics_presentation_controller.refresh_statistics(self)
 
     def _show_statistics(self):
-        identity=self.service.current_identity
-        if not identity:return
-        stats=self.service.identity_statistics(identity.identity_id)
-        loans=stats['known_loans']
-        rows=[f"Livres locaux distincts : {stats['local_books']}",f"Emplacements locaux indexés présents : {stats['local_placements']}",
-              f"Emprunts connus : {loans if loans is not None else 'non actualisés'}",f"Sources de prêts observées : {stats['loan_sources_observed']}",
-              f"Droits d’achat distants actifs : {stats['remote_owned_rights']}"]
-        for title,key in [('Formats','formats'),('Sources locales','sources'),('Couvertures EPUB','epub_covers')]:
-            values=stats[key]
-            rows.append(title+' : '+(', '.join(f'{name} {count}' for name,count in sorted(values.items())) or '—'))
-        actions=stats.get('actions') or {}
-        if actions:
-            rows.append('Actions sur la période :')
-            rows.append(f"  Acquisitions : {actions.get('acquisitions_succeeded',0)} réussies · {actions.get('acquisitions_failed',0)} échouées")
-            rows.append(f"  Imports : {actions.get('imports_succeeded',0)} réussis · {actions.get('imports_failed',0)} échoués")
-            rows.append(f"  Synchronisations : {actions.get('synchronizations_succeeded',0)} réussies · {actions.get('synchronizations_failed',0)} échouées")
-            rows.append(f"  Transformations : {actions.get('transformations_succeeded',0)} réussies · {actions.get('transformations_failed',0)} échouées")
-            rows.append(f"  Transferts : {actions.get('transfers_succeeded',0)} réussis · {actions.get('transfers_failed',0)} échoués")
-            if actions.get('from_timestamp') and actions.get('to_timestamp'):
-                rows.append('  Fenêtre : '+datetime.fromtimestamp(actions['from_timestamp']).strftime('%d/%m/%Y %H:%M')+' → '+datetime.fromtimestamp(actions['to_timestamp']).strftime('%d/%m/%Y %H:%M'))
-        if stats.get('loans_observed_at'):
-            rows.append("Prêts observés au plus tôt : "+datetime.fromtimestamp(stats['loans_observed_at']).strftime('%d/%m/%Y %H:%M'))
-        rows.append("Inventaire issu du dernier scan ; prêts issus des dernières réponses disponibles, éventuellement partielles. Les statistiques d'actions utilisent la fenêtre indiquée.")
-        dialog=Adw.MessageDialog.new(self,f"Statistiques · {identity.label}",'\n'.join(rows))
-        dialog.add_response('close','Fermer');dialog.present()
+        return statistics_presentation_controller.show_statistics(self, Adw=Adw)
 
     def _render_dashboard(self) -> None:
         return dashboard_render_controller.render_dashboard(
