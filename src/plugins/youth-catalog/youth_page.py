@@ -1096,6 +1096,9 @@ class YouthView:
         self.update_action_availability()
 
     def selected(self, row):
+        if getattr(self, "disposed", False):
+            # A late GTK selection callback must not resurrect the detail.
+            return
         # Invalidate callbacks from the previous book on *every* selection,
         # including an empty selection and a new edition with the same title.
         # The public bridge also invokes this method on a lightweight host.
@@ -1167,7 +1170,8 @@ class YouthView:
         attests the current UI selection; it grants no ownership or download.
         """
         if (
-            generation != getattr(self, "_detail_selection_generation", 0)
+            getattr(self, "disposed", False)
+            or generation != getattr(self, "_detail_selection_generation", 0)
             or self.identity_id() != identity_id
             or getattr(self, "selected_book", None) is not book
             or getattr(self, "rows", {}).get(selection_key) is not book
@@ -1502,6 +1506,12 @@ class YouthView:
     def dispose(self):
         self.disposed = True
         self.generation += 1
+        # Actions in the shared detail can outlive GTK widgets if a callback
+        # was captured externally. Closing revokes their selection lease.
+        self._detail_selection_generation = (
+            getattr(self, "_detail_selection_generation", 0) + 1
+        )
+        self.selected_book = None
         if self.task:
             self.task.cancel()
         self.unsubscribe_sources()
