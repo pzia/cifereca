@@ -35,16 +35,24 @@ def test_notification_bar_is_closable_and_outside_detail_viewports():
 
 
 def test_notification_timeout_is_bounded_and_reuses_single_bar():
-    source = _method("MainWindow", "toast")
-    assert "self._cancel_notification_hide()" in source
-    assert "self.notification_label.set_label(str(message))" in source
-    assert "self.notification_revealer.set_reveal_child(True)" in source
+    # Inspect the real adapter rather than an obsolete inline MainWindow body.
+    from cifereca.gui import feedback_timers
+    import inspect
+    source = inspect.getsource(feedback_timers.toast)
+    facade = _method("MainWindow", "toast")
+    assert "window._cancel_notification_hide()" in source
+    assert "window.notification_label.set_label(str(message))" in source
+    assert "window.notification_revealer.set_reveal_child(True)" in source
     assert "bounded_timeout = bounded_seconds(timeout)" in source
-    assert "GLib.timeout_add_seconds" in source
+    assert "timeout_add_seconds(" in source
+    assert "GLib.timeout_add_seconds" in facade
     assert "Adw.Toast" not in source
 
 
 def test_explicit_dismissal_cancels_timeout_before_hiding():
-    source = _method("MainWindow", "_dismiss_notification")
-    assert "self._cancel_notification_hide()" in source
-    assert "self.notification_revealer.set_reveal_child(False)" in source
+    from cifereca.gui import feedback_timers
+    import inspect
+    source = inspect.getsource(feedback_timers.dismiss_notification)
+    assert "window._cancel_notification_hide()" in source
+    assert "window.notification_revealer.set_reveal_child(False)" in source
+    assert source.index("window._cancel_notification_hide()") < source.index("set_reveal_child(False)")
