@@ -124,3 +124,43 @@ def test_task_callbacks_ignore_late_start_and_repeated_finish():
     assert "if int(task_id) in self._finished_task_ids:" in started
     assert "if task_id in self._finished_task_ids:" in finished
     assert finished.index("if task_id in self._finished_task_ids:") < finished.index("self.activity_feedback.finished(")
+
+
+def test_activity_count_uses_live_tasks_when_queued_start_is_stale():
+    """#1132: a completion may be delivered before a queued GTK start."""
+    import types
+
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_task_started")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), "<task-started>", "exec"), namespace)
+
+    class Widget:
+        def __init__(self):
+            self.label = None
+        def set_visible(self, value): pass
+        def remove_css_class(self, value): pass
+        def set_reveal_child(self, value): pass
+        def start(self): pass
+        def set_label(self, value): self.label = value
+
+    window = types.SimpleNamespace(
+        _closed=False,
+        _finished_task_ids={1},
+        _active_tasks={2: (0, "autre", "task")},
+        _cancel_activity_hide=lambda: None,
+        activity_feedback=types.SimpleNamespace(started=lambda *args: None),
+        _refresh_activity_history=lambda: None,
+        busy_revealer=Widget(),
+        activity_status_icon=Widget(),
+        activity_dismiss=Widget(),
+        busy_label=Widget(),
+        busy_spinner=Widget(),
+    )
+    started = namespace["_task_started"]
+    assert started(window, 1, 2, "terminée", 0, "task") is False
+    assert window.busy_label.label is None
+    assert started(window, 3, 3, "courante", 0, "task") is False
+    assert window.busy_label.label == "En cours · 2 opérations · courante"
+    assert set(window._active_tasks) == {2, 3}
