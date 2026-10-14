@@ -479,10 +479,14 @@ class NamingRepairTool(_ReadOnlyTool):
         ids = tuple(str(x) for x in plan.facts.get("placement_ids", ()) if str(x))
         changed = 0
         failures = 0
+        total = len(ids)
         warnings: list[str] = list(plan.warnings)
+        control.check_cancelled()
+        if not total:
+            control.report(message="Aucun placement à renormaliser")
         for index, placement_id in enumerate(ids, start=1):
             control.check_cancelled()
-            control.report(current=index - 1, total=len(ids), message=f"Renormalisation {index}/{len(ids)}")
+            control.report(current=index - 1, total=total, message=f"Renormalisation {index}/{total}")
             try:
                 mutation = broker.plan(LibraryMutationRequest("normalize_filename", placement_id=placement_id))
                 result = broker.run(mutation, control)
@@ -491,9 +495,18 @@ class NamingRepairTool(_ReadOnlyTool):
                 changed += int(getattr(result, "changed", 0) or 0)
                 warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
             except Exception as exc:
+                # A cancellation during the Core mutation is not a failed
+                # placement to swallow. Never leak an exception's private path.
+                control.check_cancelled()
                 failures += 1
-                warnings.append(f"{placement_id}: {type(exc).__name__}: {exc}")
-        control.report(current=len(ids), total=len(ids) or 1, message="Renormalisation terminée")
+                warnings.append(f"Renormalisation {index}/{total} : {type(exc).__name__}")
+        # A cancellation during the last mutation must not emit completion.
+        control.check_cancelled()
+        if total:
+            status = "Renormalisation terminée" if not failures else f"Renormalisation : {failures} échec(s)"
+            control.report(current=total, total=total, message=status)
+        else:
+            control.report(message="Renormalisation terminée : aucun placement")
         return MaintenanceResult(
             ok=failures == 0,
             changed=changed,
