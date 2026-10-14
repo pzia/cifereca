@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -612,41 +612,17 @@ class MainWindow(Adw.ApplicationWindow):
     _UiHost = _UiHost
 
     def _plugins_changed(self) -> None:
-        # Plugin-manager callbacks may outlive the MainWindow that registered
-        # them. Never reconstruct detached GTK shell widgets after teardown.
         if getattr(self, "_closed", False):
             return
-        if self.plugin_manager is None:
-            return
-        try:
-            self.service.attach_plugin_manager(self.plugin_manager)
-        except Exception as exc:
-            self.diagnostics.add("PLUGIN", "provider refresh after plugin change", "error", detail={"error": str(exc)}, level="detailed")
-        old = self.shell_header
-        self.shell_root.remove(old)
-        self.shell_header = self._create_shell_header()
-        self.shell_root.prepend(self.shell_header)
-        self._ensure_pages_menu_rightmost()
-        self._rebuild_plugin_pages()
-        self._populate_accounts()
-        self._subscribe_cached_book_details()
+        return plugin_reload_controller.plugins_changed(self)
 
     def _subscribe_cached_book_details(self) -> None:
-        """Refresh the selected book on cache invalidation, not the full list."""
         if getattr(self, "_closed", False):
             return
-        self._cached_book_unsubscribe()
-        try:
-            services = tuple(self.plugin_manager.services("book.detail.enrichment"))
-        except Exception:
-            services = ()
-        self._cached_book_services = services
-        # Plugin callbacks may run on any thread; GTK must only be touched in
-        # an idle callback. These subscriptions are replaced on plugin changes.
-        self._cached_book_unsubscribe = subscribe_cached_book_detail_changes(
-            services, lambda: None if self._closed else GLib.idle_add(self._cached_book_cache_invalidated),
+        return plugin_reload_controller.subscribe_cached_book_details(
+            self, idle_add=GLib.idle_add,
+            subscribe_cached_book_detail_changes=subscribe_cached_book_detail_changes,
         )
-        self._cached_book_cache_invalidated()
 
     def _cached_book_cache_invalidated(self) -> bool:
         if self._closed:
