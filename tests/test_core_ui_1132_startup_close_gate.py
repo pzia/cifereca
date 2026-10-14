@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+from cifereca.gui.startup_lifecycle import once_while_open
+
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
@@ -26,6 +28,7 @@ def _method(name):
         "GLib": NS(idle_add=lambda callback: scheduled.append(callback)),
         "time": time,
         "TaskPriority": NS(PROVIDER_SYNC=30),
+        "once_while_open": once_while_open,
     }
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[future, method], type_ignores=[],
