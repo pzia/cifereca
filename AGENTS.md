@@ -32,7 +32,7 @@ Chaque **étape** a un rôle actif unique. Ne pas mélanger les responsabilités
 | **backlog** | Priorités, critères d'acceptation, déduplication, dépendances et issues actionnables. Pas de code ni de merge. |
 | **core** | Core métier, stockage, services, API publique, framework de plugins ; également CoreUI (GTK/libadwaita). Pas de logique métier spécifique à un plugin. |
 | **plugins** | Fonctionnalités sous src/plugins/, manifestes et tests de chaque plugin. Consommer uniquement cifereca.plugin_api ; demander une évolution Core si nécessaire. |
-| **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires, preuves GTK et tickets UX ; ne corrige pas le produit. |
+| **ux** | Analyse des parcours, simulation fonctionnelle, E2E exploratoires et preuves GTK ; **propositions numérotées courtes à valider avant création des nouveaux tickets UX**. Ne corrige pas le produit. |
 | **cicd** | Workflows, packaging, intégration des E2E ciblés, contrôles, **merge** des PR prêtes et vérification de la clôture des issues. |
 | **focus** | **Méta-rôle** : choisit les étapes selon P0 urgent → P1 actif ; P2 seulement sur demande/promotion, P3 en idées ; adopte `backlog`, `core`, `plugins` ou `cicd`. Le rôle `ux` reste indépendant et **exclu de focus**. |
 
@@ -59,6 +59,7 @@ Elle s'applique à tous les rôles et aux fils ChatGPT qui avancent en parallèl
 - **Preuve proportionnée au risque** : tests unitaires et intégration ciblés en premier ; E2E GTK/XTEST ciblé pour les parcours visuels ou sensibles. `cicd` possède l'orchestration/gates E2E existants ; Core et Plugins écrivent les assertions de leurs comportements ; UX conserve des recettes exploratoires indépendantes.
 - **Clôture après livraison** : `cicd` vérifie le SHA, les contrôles obligatoires et les critères du ticket, merge puis confirme la fermeture, avec liens vers les preuves. Aucun check réellement rouge ou requis inconnu n'est réputé réussi.
 - **Vérification terrain différée** : `backlog` identifie les livraisons à contrôler en priorité ; `ux` peut explorer un parcours précis. Une observation manuelle non effectuée reste **non vérifiée**, pas « en échec » ni « blocante » par défaut.
+- **Approbation préalable des nouveaux tickets UX** : après exploration, `ux` présente **une courte liste numérotée de propositions** (impact, priorité et rôle), attend l'accord explicite de l'utilisateur, y compris partiel, puis crée seulement les tickets acceptés. Ce contrôle ne s'applique **pas aux merges/clôtures**, qui suivent les preuves techniques et les gates. Voir [UX](.agents/roles/ux.md#validation-utilisateur-avant-création-de-tickets-ux-p0-1449).
 - **Défaut ultérieur** : réouvrir le même ticket si le contrat livré est défaillant, créer une nouvelle issue pour un problème distinct ; documenter le fait observable.
 - **Coordination des fils** : consulter issue, PR, branches, HEAD SHA et CI avant toute prise de travail ; garder un seul rôle pilote et un handoff GitHub exploitable, sans réservation tacite ni commentaires de simple progression.
 - **Exception de sécurité** : ne pas repousser après merge une preuve indispensable pour opérations destructives, secrets, intégrité ou installation. Si vraiment impossible, signaler un blocage réel et solliciter une décision explicite ; jamais inventer un PASS.
