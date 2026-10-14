@@ -60,6 +60,7 @@ from .timeout_policy import bounded_seconds
 from .startup_lifecycle import once_while_open
 from . import startup_coordinator
 from . import feedback_timers
+from . import activity_result_controller
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -413,33 +414,9 @@ class MainWindow(Adw.ApplicationWindow):
         persistent: bool = False,
         task_id: int | None = None,
     ) -> None:
-        if getattr(self, "_closed", False):
-            return
-        resolved_id = int(task_id) if task_id is not None else self._last_finished_task_id
-        if resolved_id is None:
-            return
-        self.activity_feedback.result(resolved_id, str(message), success=bool(success))
-        self._refresh_activity_history()
-        if self._active_tasks or not hasattr(self, "busy_revealer"):
-            return
-        if not success:
-            self._show_pending_activity_error()
-            return
-        # A later success must never mask an earlier error that the user has
-        # not acknowledged yet.
-        if self._show_pending_activity_error():
-            return
-        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
-        self.activity_status_icon.set_visible(True)
-        self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
-        self.activity_status_icon.add_css_class("activity-success")
-        self.activity_status_icon.remove_css_class("activity-error")
-        self.busy_label.set_visible(True)
-        self.busy_label.set_label(f"Terminé · {message}")
-        self.activity_dismiss.set_visible(bool(persistent))
-        self.busy_revealer.set_reveal_child(True)
-        if not persistent:
-            self._schedule_activity_reduce()
+        return activity_result_controller.activity_result(
+            self, message, success=success, persistent=persistent, task_id=task_id,
+        )
 
     def _task_started(self, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
         if getattr(self, '_closed', False):
