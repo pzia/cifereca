@@ -66,7 +66,7 @@ def test_naming_audit_does_not_export_private_current_or_suggested_filenames():
     plan = tool.plan(MaintenanceContext(scope="library", identity_id="current"))
     assert context.metadata.calls == [{"identity_id": "current"}]
     assert len(context.naming.calls) == 4
-    assert plan.facts == {"checked": 4, "mismatch": 3, "unavailable": 1}
+    assert plan.facts == {"checked": 4, "mismatch": 3, "unavailable": 1, "policy_failures": 0}
     assert plan.warnings == (
         "Nom non conforme : notice n°1",
         "Nom non conforme : notice n°2",
@@ -101,7 +101,7 @@ def test_naming_audit_warning_cap_keeps_full_counts():
     plan = NamingAuditTool().activate(context).plan(
         MaintenanceContext(scope="library", identity_id="current")
     )
-    assert plan.facts == {"checked": 23, "mismatch": 23, "unavailable": 0}
+    assert plan.facts == {"checked": 23, "mismatch": 23, "unavailable": 0, "policy_failures": 0}
     assert plan.warnings[:2] == (
         "Nom non conforme : notice n°1",
         "Nom non conforme : notice n°2",
