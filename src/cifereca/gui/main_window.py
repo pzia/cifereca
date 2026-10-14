@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import secondary_results_controller
 from . import history_language_projection
 from . import adept_loan_choice_controller
 from . import sync_issues_dialog_controller
@@ -1258,74 +1259,13 @@ class MainWindow(Adw.ApplicationWindow):
         self._populate_history(rows, preserve_all=True)
 
     def _populate_history(self, rows: list[HistoryItem], preserve_all: bool = False) -> None:
-        if not preserve_all:
-            self._history_all_rows = list(rows)
-        wanted_languages = set(self.history_languages.values()) if hasattr(self, 'history_languages') else set()
-        if wanted_languages:
-            # One local catalog read for the entire history batch, rather
-            # than a read per loan (which grows quadratically with list size).
-            catalog_rows = self.service.storage.catalog_entries() if rows else ()
-            rows = history_language_projection.history_rows_with_languages(
-                rows, wanted_languages, catalog_rows,
-            )
-        self.history_objects = {x.id: x for x in rows}
-        self._history_rows = list(rows)
-        self._history_loaded_count = 0
-        self._history_append_scheduled = False
-        initial = self._history_rows[: self._history_page_size]
-        self._history_loaded_count = len(initial)
-        self.history_page.show_rows(
-            [self._history_book_row(x) for x in initial],
-            total_count=len(self._history_rows),
-        )
-        if len(self._history_rows) > self._history_loaded_count:
-            self.diagnostics.add(
-                "UI", "history progressive load", "ok",
-                detail={
-                    "loaded": self._history_loaded_count,
-                    "total": len(self._history_rows),
-                    "page_size": self._history_page_size,
-                },
-                level="detailed",
-            )
-
+        return secondary_results_controller.populate_history(self, rows, preserve_all)
     def _history_scroll_changed(self, adjustment: Gtk.Adjustment) -> None:
-        if getattr(self, "_closed", False):
-            return
-        if self._history_loaded_count >= len(self._history_rows) or self._history_append_scheduled:
-            return
-        remaining = adjustment.get_upper() - (adjustment.get_value() + adjustment.get_page_size())
-        threshold = max(420.0, adjustment.get_page_size() * 0.75)
-        if remaining <= threshold:
-            self._history_append_scheduled = True
-            GLib.idle_add(self._append_history_chunk)
-
+        return secondary_results_controller.history_scroll_changed(
+            self, adjustment, GLib=GLib,
+        )
     def _append_history_chunk(self) -> bool:
-        self._history_append_scheduled = False
-        # A queued GTK idle may outlive the window and its history widgets.
-        if getattr(self, "_closed", False):
-            return False
-        if self._history_loaded_count >= len(self._history_rows):
-            return False
-        start = self._history_loaded_count
-        end = min(len(self._history_rows), start + self._history_page_size)
-        chunk = self._history_rows[start:end]
-        self._history_loaded_count = end
-        self.history_page.append_rows(
-            [self._history_book_row(x) for x in chunk],
-            total_count=len(self._history_rows),
-        )
-        self.diagnostics.add(
-            "UI", "history progressive load", "ok",
-            detail={
-                "loaded": self._history_loaded_count,
-                "total": len(self._history_rows),
-                "page_size": self._history_page_size,
-            },
-            level="detailed",
-        )
-        return False
-
+        return secondary_results_controller.append_history_chunk(self)
     def _history_selected(self, row: BookListItem | None) -> None:
         if row:
             item = self.history_objects.get(row.key)
@@ -1360,22 +1300,10 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _populate_bookings(self, rows: list[Booking]) -> None:
-        self.booking_objects = {x.id: x for x in rows}
-        ui_rows = []
-        for item in rows:
-            presentation = booking_presentation(item)
-            ui_rows.append(BookListItem(
-                item.id,
-                item.title,
-                item.location or "",
-                f"Réservé le {fr_date(item.booking_date)}",
-                presentation.status_label,
-                None,
-            ))
-        objects={x.id:{"source_provider":x.source_provider} for x in rows}
-        self._attach_row_facets(ui_rows,objects,self.search_controls)
-        self.booking_page.show_rows(ui_rows)
-
+        return secondary_results_controller.populate_bookings(
+            self, rows, BookListItem=BookListItem,
+            booking_presentation=booking_presentation, fr_date=fr_date,
+        )
     def _booking_selected(self, row: BookListItem | None) -> None:
         if row:
             item = self.booking_objects.get(row.key)
