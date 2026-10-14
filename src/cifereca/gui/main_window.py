@@ -46,6 +46,7 @@ from .timeout_policy import bounded_seconds
 from .startup_lifecycle import once_while_open
 from . import startup_coordinator
 from . import feedback_timers
+from .notification_widgets import build_notification_bar
 from . import activity_result_controller
 from . import activity_feedback_view_controller
 from .loan_view import (
@@ -189,20 +190,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.root_stack.set_vexpand(True)
         self.window_root.append(self.root_stack)
 
-        self.notification_revealer = Gtk.Revealer()
-        self.notification_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-        self.notification_revealer.set_reveal_child(False)
-        notification_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        add_css(notification_bar, "notification-bar")
-        self.notification_label = Gtk.Label(label="", xalign=0)
-        self.notification_label.set_hexpand(True)
-        self.notification_label.set_wrap(True)
-        notification_bar.append(self.notification_label)
-        self.notification_close = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        self.notification_close.set_tooltip_text("Fermer la notification")
+        notification = build_notification_bar(Gtk=Gtk, add_css=add_css)
+        self.notification_revealer = notification.revealer
+        self.notification_label = notification.label
+        self.notification_close = notification.close
         self.notification_close.connect("clicked", lambda _button: self._dismiss_notification())
-        notification_bar.append(self.notification_close)
-        self.notification_revealer.set_child(notification_bar)
         self.window_root.append(self.notification_revealer)
         self._notification_hide_source: int | None = None
         startup_started = time.perf_counter()
