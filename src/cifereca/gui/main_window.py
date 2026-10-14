@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2546,32 +2546,9 @@ class MainWindow(Adw.ApplicationWindow):
             detail.add_group('Image du livre',facts)
 
     def _recent_selected(self, row: BookListItem | None) -> None:
-        if not row:
-            return
-        item = self._recent_objects.get(row.key)
-        if not item:
-            return
-        detail = self.recent_page.detail
-        provider = str(item.get("provider_id") or "local")
-        full_path = str(item.get("path") or "")
-        file_name = Path(full_path).name if full_path else "—"
-        acquired = format_recent_timestamp(item.get("acquired_at"), detailed=True)
-        detail.show_summary(
-            title=str(item.get("title") or "Sans titre"),
-            subtitle=str(item.get("author") or ""),
-            thumbnail=item.get("thumbnail_url"),
-            badges=[provider.capitalize(), "Local"],
-            group_title="Récupération",
-            rows=[
-                ("Fichier", file_name),
-                ("Récupéré", acquired),
-                ("Provenance", provider.capitalize()),
-                ("Chemin", full_path or "—"),
-            ],
+        return recent_detail_controller.recent_selected(
+            self, row, Path=Path, format_recent_timestamp=format_recent_timestamp,
         )
-        self._add_book_notice(detail,item)
-        self._add_local_book_actions(detail,item)
-        self._add_facets(detail, item, self.search_controls)
 
     # Compatibility name used by the 0.8.0 refresh paths.
     def _render_kobo_loans(self) -> None:
