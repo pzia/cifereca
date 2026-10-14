@@ -157,7 +157,9 @@ def test_old_subscription_cancelled_before_new_service_registration_and_idle():
         ("cache-refresh",),
     ]
     assert callbacks[0]() is None
-    assert posted == [window._cached_book_cache_invalidated]
+    assert len(posted) == 1
+    assert posted[0]() is None
+    assert calls[-1] == ("cache-refresh",)
     window._closed = True
     assert callbacks[0]() is None
     assert len(posted) == 1

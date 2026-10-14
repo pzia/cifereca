@@ -38,24 +38,50 @@ def plugins_changed(window) -> None:
 
 
 def subscribe_cached_book_details(window, *, idle_add, subscribe_cached_book_detail_changes) -> None:
-    """Refresh the selected book on cache invalidation, not the full list."""
+    """Replace observers atomically; old or queued callbacks cannot refresh new data."""
     if getattr(window, "_closed", False):
         return
+    # Invalidate the previous observer *before* calling a plugin-owned
+    # unsubscriber: unsubscribe itself may dispatch a final notification.
+    token = object()
+    window._cached_book_subscription_token = token
     window._cached_book_unsubscribe()
-    # Unsubscribing may synchronously trigger teardown; never bind a new
-    # callback to a disposed MainWindow.
-    if getattr(window, "_closed", False):
+    if getattr(window, "_closed", False) or window._cached_book_subscription_token is not token:
         return
     try:
         services = tuple(window.plugin_manager.services("book.detail.enrichment"))
     except Exception:
         services = ()
-    if getattr(window, "_closed", False):
+    if getattr(window, "_closed", False) or window._cached_book_subscription_token is not token:
         return
     window._cached_book_services = services
-    # Plugin callbacks may run on any thread; GTK must only be touched in
-    # an idle callback. These subscriptions are replaced on plugin changes.
-    window._cached_book_unsubscribe = subscribe_cached_book_detail_changes(
-        services, lambda: None if window._closed else idle_add(window._cached_book_cache_invalidated),
-    )
+
+    def is_current():
+        return (
+            not getattr(window, "_closed", False)
+            and getattr(window, "_cached_book_subscription_token", None) is token
+        )
+
+    def deliver():
+        # An idle posted for the old plugin may execute *after* replacement.
+        # Guard at GTK delivery time as well as at the producer callback.
+        if not is_current():
+            return False
+        return window._cached_book_cache_invalidated()
+
+    def invalidated():
+        if is_current():
+            idle_add(deliver)
+
+    # Callbacks can arrive off the GTK thread and only schedule idle delivery.
+    unsubscribe = subscribe_cached_book_detail_changes(services, invalidated)
+    if not is_current():
+        # A plugin may synchronously close the window while registering.
+        # Do not keep a new observer alive after teardown.
+        try:
+            unsubscribe()
+        except Exception:
+            pass
+        return
+    window._cached_book_unsubscribe = unsubscribe
     window._cached_book_cache_invalidated()
