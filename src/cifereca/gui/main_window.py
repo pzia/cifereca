@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import secondary_page_controller
 from . import statistics_presentation_controller
 from . import dashboard_render_controller
 from . import shell_identity_selector_controller
@@ -1524,16 +1525,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- history ----------
     def _build_history_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Historique", "Documents précédemment empruntés", "Historique non chargé", "Ouvrez cet écran ou actualisez pour récupérer l'historique.")
-        page.set_total_only_count(True)
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser l'historique")
-        refresh.connect("clicked", lambda _b: self.refresh_history(True, refresh)); page.header_actions.append(refresh)
-        from cifereca.language import language_label
-        self.history_languages = MultiSelect('Langues', [(code, language_label(code)) for code in ('fr','en','de','es','it','pt','nl')], self._rerender_history)
-        page.toolbar.append(self.history_languages)
-        page.connect_selected(self._history_selected)
-        page.scroll.get_vadjustment().connect("value-changed", self._history_scroll_changed)
-        return page
+        return secondary_page_controller.build_history_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage, MultiSelect=MultiSelect,
+        )
 
     def _identity_request_current(self, identity_id: str | None, generation: int) -> bool:
         current = self.service.current_identity
@@ -1660,11 +1654,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- bookings ----------
     def _build_bookings_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Réservations", "Réservations physiques et numériques", "Aucune réservation", "Vos réservations apparaîtront ici.")
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser les réservations")
-        refresh.connect("clicked", lambda _b: self.refresh_bookings(True, refresh)); page.header_actions.append(refresh)
-        page.connect_selected(self._booking_selected)
-        return page
+        return secondary_page_controller.build_bookings_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
+        )
 
     def refresh_bookings(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
         current = self.service.current_identity
