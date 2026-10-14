@@ -225,6 +225,51 @@ class KoboVaultClient:
             ],
         }
 
+    def _quarantine_personal_search(
+        self, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Reject ambiguous personal editions before returning *any* search scope.
+
+        Identical IDs may represent conflicting revisions or distinct accounts.
+        Invalid alias pairs also taint each individually valid edition key.
+        Only constant rejection reasons cross the provider boundary.
+        """
+        rows = payload.get("items")
+        if not isinstance(rows, list):
+            return payload
+        counts: dict[str, int] = {}
+        tainted: set[str] = set()
+        for raw in rows:
+            if type(raw) is not dict:
+                continue
+            product = _strict_product_id(raw)
+            if product is not None:
+                counts[product] = counts.get(product, 0) + 1
+            else:
+                for alias in ("product_id", "id"):
+                    candidate = _strict_product_id({alias: raw.get(alias)})
+                    if candidate is not None:
+                        tainted.add(candidate)
+        tainted.update(key for key, count in counts.items() if count > 1)
+
+        accepted: list[dict[str, Any]] = []
+        for raw in rows:
+            if type(raw) is not dict:
+                reason, category = "item_not_object", "invalid_shape"
+            else:
+                product = _strict_product_id(raw)
+                if product is None:
+                    reason, category = "missing_product_id", "invalid_shape"
+                elif product in tainted:
+                    reason, category = "duplicate_product_id", "invalid_scope"
+                else:
+                    accepted.append(dict(raw))
+                    continue
+            self.last_search_merge_rejections.append({
+                "source": "library", "type": category, "reason": reason,
+            })
+        return {**payload, "items": accepted}
+
     def search(
         self,
         query: str,
@@ -255,38 +300,20 @@ class KoboVaultClient:
                 self.search_catalog(query, field=field, limit=limit, page=page)
             )
         if scope == "library":
-            return self.search_library(query, field=field, limit=limit, cursor=cursor)
+            return self._quarantine_personal_search(
+                self.search_library(query, field=field, limit=limit, cursor=cursor)
+            )
 
         catalog = self._public_catalog_payload(
             self.search_catalog(query, field=field, limit=limit, page=page)
         )
         library = self.search_library(query, field=field, limit=limit, cursor=cursor)
-        # /library/search may return several revisions or account variants of
-        # the same product. Last-wins would promote arbitrary ownership/rights
-        # to a public search result. Quarantine every personal variant while
-        # keeping any independently attested public catalogue result.
-        library_counts: dict[str, int] = {}
-        tainted_library_products: set[str] = set()
-        library_items = library.get("items")
-        if isinstance(library_items, list):
-            for raw in library_items:
-                if type(raw) is dict:
-                    product = _strict_product_id(raw)
-                    if product is not None:
-                        library_counts[product] = library_counts.get(product, 0) + 1
-                    else:
-                        # A conflicting pair of individually valid aliases
-                        # taints *both* editions, as with paged manifests.
-                        for alias in ("product_id", "id"):
-                            candidate = _strict_product_id({alias: raw.get(alias)})
-                            if candidate is not None:
-                                tainted_library_products.add(candidate)
-        ambiguous_library_products = tainted_library_products | {
-            product for product, count in library_counts.items() if count > 1
-        }
         merged: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for source, payload in (("catalog", catalog), ("library", library)):
+            if source == "library":
+                payload = self._quarantine_personal_search(payload)
+                library = payload
             items = payload.get("items")
             if not isinstance(items, list):
                 self.last_search_merge_rejections.append({
@@ -312,16 +339,6 @@ class KoboVaultClient:
                         "source": source,
                         "type": "invalid_shape",
                         "reason": "missing_product_id",
-                    })
-                    continue
-                if source == "library" and key in ambiguous_library_products:
-                    # Never select first/last, including when the duplicates
-                    # disagree about account_id, owned, or revision_id.
-                    # Keep diagnostics free of all untrusted product/account IDs.
-                    self.last_search_merge_rejections.append({
-                        "source": "library",
-                        "type": "invalid_scope",
-                        "reason": "duplicate_product_id",
                     })
                     continue
                 if key not in merged:
@@ -359,19 +376,6 @@ class KoboVaultClient:
                     merged[key] = combined
                 else:
                     merged[key] = dict(raw)
-        # The compatibility envelope also exposes a nested library payload.
-        # It must not re-export the conflicting private rows that were
-        # quarantined from "items", even when a caller inspects that envelope.
-        if isinstance(library_items, list):
-            library = {
-                **library,
-                "items": [
-                    raw for raw in library_items
-                    if type(raw) is dict
-                    and (product := _strict_product_id(raw)) is not None
-                    and product not in ambiguous_library_products
-                ],
-            }
         return {
             "items": [merged[key] for key in order],
             "catalog": catalog,
