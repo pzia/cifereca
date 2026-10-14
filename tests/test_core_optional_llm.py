@@ -314,3 +314,64 @@ def test_structured_llm_valid_nested_unicode_json_survives_unchanged():
     assert result.structured == nested
     assert result.text == content
     assert result.provider == "openai-compatible" and not result.remote
+
+
+
+@pytest.mark.parametrize("model", [
+    "test-model\\nBearer SECRET_AT_NEWLINE",
+    "test-model\\rOverwrite-model",
+    "model\\tPRIVATE_VALUE",
+    "model\\u202ePRIVATE_RTL",
+    "model\\u2066PRIVATE_ISOLATE",
+    "model\\u200ePRIVATE_MARK",
+    "model\\ud800PRIVATE_SURROGATE",
+    "x" * 129,
+])
+def test_direct_llm_service_rejects_spoofed_model_before_consent_or_http(model):
+    """#778: direct config and plugin clients must not bypass GTK validation."""
+    http = FakeHTTP()
+    service = OptionalLLMService(_config(model=model), opener=http)
+    assert not service.available()
+    assert service.capabilities() == ()
+    assert service.destination()["model"] == ""
+    result = service.generate(LLMRequest("Livre privé"))
+    assert result.reason == "unavailable"
+    assert result.model == ""
+    assert http.calls == []
+    for secret in ("SECRET_AT_NEWLINE", "PRIVATE_VALUE", "PRIVATE_RTL",
+                   "PRIVATE_ISOLATE", "PRIVATE_MARK", "PRIVATE_SURROGATE"):
+        assert secret not in repr(service.destination())
+        assert secret not in repr(result)
+
+
+@pytest.mark.parametrize("provider", [
+    "Bearer PRIVATE_PROVIDER", "custom\\nPRIVATE_PROVIDER", "unsupported-vendor",
+])
+def test_direct_llm_service_masks_unsupported_provider_in_diagnostics(provider):
+    http = FakeHTTP()
+    service = OptionalLLMService(_config(provider=provider), opener=http)
+    assert not service.available()
+    assert service.destination()["provider"] == "unsupported"
+    result = service.generate(LLMRequest("Confidentiel"))
+    assert result.provider == "unsupported"
+    assert "PRIVATE_PROVIDER" not in repr(result)
+    assert not http.calls
+
+
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf")])
+def test_llm_nonfinite_timeout_is_rejected_without_spawn_or_network(timeout):
+    http = FakeHTTP()
+    service = OptionalLLMService(_config(timeout_seconds=timeout), opener=http)
+    assert not service.available()
+    assert service.generate(LLMRequest("Contenu privé")).reason == "unavailable"
+    assert http.calls == []
+
+
+def test_valid_model_namespace_remains_supported_without_hidden_truncation():
+    http = FakeHTTP()
+    model = "org/models/deepseek-v3:8b+instruct"
+    service = OptionalLLMService(_config(model=model, provider=None), opener=http)
+    assert service.available()  # None retains the prior default provider.
+    assert service.destination()["model"] == model
+    assert service.generate(LLMRequest("ok")).ok
+    assert json.loads(http.calls[0][0].data)["model"] == model
