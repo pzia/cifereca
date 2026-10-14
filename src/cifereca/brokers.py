@@ -257,7 +257,13 @@ class SynchronizationBrokerImpl:
         return self._ref(account)
 
     def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None) -> SyncResult:
-        account = self._find_account(source_id)
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            # Source IDs are opaque; never reflect an arbitrary caller-supplied
+            # string (possibly a credential or URL) into broker error output.
+            return SyncResult(ok=False, warnings=("unknown sync source",),
+                              facts={"reason": "unknown_source"})
         # The source_id is a stable digest of the exact identity/provider/
         # credential/account tuple. An explicit request must not override any
         # coordinate or silently broaden one-account work to other identities.
