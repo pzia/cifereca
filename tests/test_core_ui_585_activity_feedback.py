@@ -301,3 +301,29 @@ def test_duplicate_task_start_does_not_duplicate_activity_feedback():
     assert namespace["_task_started"](window, 7, 1, "existante", 1, "task") is False
     assert calls == []
     assert window._active_tasks == {7: (1, "existante", "task")}
+
+
+def test_stale_progress_cannot_replace_live_task_banner():
+    """#1132: a delayed progress update must not show a finished operation."""
+    import types
+
+    method = _method(MAIN, "MainWindow", "_task_progress")
+    namespace = {}
+    exec(method, namespace)
+    labels = []
+    window = types.SimpleNamespace(
+        _closed=False,
+        _active_tasks={2: (1, "Synchronisation", "sync")},
+        busy_revealer=object(),
+        busy_label=types.SimpleNamespace(
+            set_visible=lambda *_: None,
+            set_label=labels.append,
+        ),
+    )
+    assert namespace["_task_progress"](window, "Téléchargement terminé") is False
+    assert labels == ["En cours · Synchronisation"]
+    assert namespace["_task_progress"](window, "Synchronisation 50 %") is False
+    assert labels[-1] == "En cours · Synchronisation 50 %"
+    window._active_tasks.clear()
+    assert namespace["_task_progress"](window, "Téléchargement terminé") is False
+    assert len(labels) == 2
