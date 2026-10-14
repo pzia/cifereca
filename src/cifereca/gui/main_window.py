@@ -465,7 +465,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _task_started(self, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
         if getattr(self, '_closed', False):return False
-        if int(task_id) in self._finished_task_ids or int(task_id) in self._active_tasks:
+        if int(task_id) in self._finished_task_ids:
+            return False
+        if int(task_id) in self._active_tasks:
             return False
         self._cancel_activity_hide()
         self._active_tasks[int(task_id)] = (int(priority), str(label), str(kind))
