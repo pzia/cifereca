@@ -1,0 +1,131 @@
+"""Local book actions for Library/Search detail, with explicit Core dependencies.
+
+Maintains identity-scoped source/placement verification and deferred rechecks;
+widgets and TaskRunner remain owned by the MainWindow facade (#1129).
+"""
+from __future__ import annotations
+
+
+def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteRequest, TaskPriority, identity_has_attested_possession):
+    if getattr(window, '_closed', False):
+        return
+    placement_id=str(item.get('placement_id') or '')
+    identity_id=str(item.get('identity_id') or '')
+    if not placement_id:
+        provider=item.get('provider_id') or item.get('source_provider')
+        credential=item.get('source_credential') or (item.get('metadata') or {}).get('source_credential')
+        item_id=item.get('item_id') or item.get('record_id')
+        current=getattr(window.service,'current_identity',None)
+        if not provider:
+            if item.get('title'): window._add_catalogue_action(detail, item)
+            return
+        if not credential or not item_id or not current:
+            window._add_catalogue_action(detail, item); return
+        placement=window.service.local_placement_for_source(provider_id=provider,credential_id=credential,
+            item_id=item_id,identity_id=current.identity_id)
+        if not placement:
+            window._add_catalogue_action(detail, item); return
+        placement_id=placement['placement_id'];identity_id=current.identity_id
+    if not identity_id:
+        window._add_catalogue_action(detail, item); return
+    try:window.service.local_book_path(placement_id,identity_id=identity_id)
+    except Exception:
+        window._add_catalogue_action(detail, item); return
+    opening=window.action_button('Ouvrir','document-open-symbolic')
+    opening._cifereca_action_id = 'open-local'
+    def open_book(_button):
+        if getattr(window, '_closed', False):
+            return
+        try:
+            # Recheck existence and identity at activation, then launch without a shell.
+            uri=window.service.local_book_path(placement_id,identity_id=identity_id).as_uri()
+            Gio.AppInfo.launch_default_for_uri(uri,None)
+        except Exception as exc:window.show_error(str(exc),'Ouverture du livre impossible')
+    opening.connect('clicked',open_book)
+    buttons=[opening]
+    source_provider = str(item.get('provider_id') or item.get('source_provider') or 'local')
+    source_credential = str(item.get('source_credential') or (item.get('metadata') or {}).get('source_credential') or '')
+    source_item_id = str(item.get('item_id') or item.get('source_item_id') or (item.get('record_id') or ''))
+    known_possessions = ()
+    manager = getattr(window, 'plugin_manager', None)
+    library_read = manager.broker('library.read') if manager else None
+    if library_read is not None:
+        try:
+            logical = library_read.book(source_item_id) if source_item_id else None
+            if logical is None and item.get('artifact_id'):
+                logical = library_read.for_artifact(str(item.get('artifact_id')))
+            known_possessions = tuple(logical.possessions) if logical is not None else ()
+        except Exception as exc:
+            window.diagnostics.add(
+                'UI', 'read known possessions', 'error',
+                detail={'error': type(exc).__name__, 'message': str(exc)},
+            )
+    for target in window.service.identities:
+        if target.identity_id==identity_id:continue
+        # A current Core possession is authoritative even when there is no
+        # local file yet for the target identity.
+        if source_item_id and identity_has_attested_possession(
+            known_possessions,
+            identity_id=target.identity_id,
+            provider_id=source_provider,
+            source_item_id=source_item_id,
+            credential_id=source_credential,
+        ):
+            continue
+        # Keep the placement fallback for older/local-only records that are
+        # not represented in the logical possession projection.
+        if source_item_id:
+            try:
+                already_owned = window.service.local_placement_for_source(
+                    provider_id=source_provider, credential_id=source_credential,
+                    item_id=source_item_id, identity_id=target.identity_id,
+                ) is not None
+            except Exception:
+                already_owned = False
+            if already_owned:
+                continue
+        button=window.action_button('Envoyer à '+target.label,'document-send-symbolic')
+        button._cifereca_action_id = 'send-local:'+target.identity_id
+        def send(_button,target_id=target.identity_id):
+            if getattr(window, '_closed', False):
+                return
+            def work():
+                window.service.local_book_path(placement_id,identity_id=identity_id)
+                return window.service.materialize_to_identity(placement_id,target_id)
+            window.runner.submit('Envoi du fichier local…',work,
+                lambda _result:(window._activity_result('Livre envoyé'),window.refresh_recent(),window.refresh_library(False)),
+                control=_button,priority=TaskPriority.USER_ACTION,kind='materialize')
+        button.connect('clicked',send);buttons.append(button)
+    routing = manager.broker('artifact.routing') if manager else None
+    context = window._book_action_context(item) if routing is not None else None
+    if routing is not None and context is not None and context.artifact is not None:
+        try:
+            route_request = ArtifactRouteRequest(context.artifact, identity_id=identity_id or None)
+            route_targets = tuple(routing.targets(route_request))
+        except Exception as exc:
+            route_targets = ()
+            window.diagnostics.add('UI','artifact routing targets','error',detail={'error':type(exc).__name__,'message':str(exc)})
+        if route_targets:
+            menu = Gtk.MenuButton(label='Envoyer vers…')
+            menu._cifereca_action_id = 'artifact-routing'
+            menu.set_tooltip_text('Envoyer cet artefact vers une cible de stockage compatible')
+            popover = Gtk.Popover()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            box.set_margin_top(8); box.set_margin_bottom(8); box.set_margin_start(8); box.set_margin_end(8)
+            for target in route_targets:
+                target_button = Gtk.Button(label=str(target.target.label or target.target.target_id))
+                target_button.add_css_class('flat')
+                def route(_button, target_id=target.target.target_id):
+                    if getattr(window, '_closed', False):
+                        return
+                    request = ArtifactRouteRequest(context.artifact, target_id=target_id, identity_id=identity_id or None)
+                    def work():
+                        plan = routing.plan(request)
+                        return routing.transfer(plan)
+                    window.runner.submit('Envoi vers le stockage…', work,
+                        lambda _result:(window._activity_result('Livre envoyé'), window.refresh_library(False), window.refresh_recent()),
+                        lambda exc:window.show_error(str(exc),'Envoi impossible'), control=_button,
+                        priority=TaskPriority.USER_ACTION, kind='artifact-route')
+                target_button.connect('clicked', route); box.append(target_button)
+            popover.set_child(box); menu.set_popover(popover); buttons.append(menu)
+    detail.add_actions(buttons)
