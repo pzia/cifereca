@@ -5,6 +5,8 @@ from pathlib import Path
 import tempfile
 import zipfile
 
+import pytest
+
 from cifereca.plugin_api import (
     ArtifactFormat,
     ArtifactRef,
@@ -204,3 +206,88 @@ def test_integrity_audit_reports_incomplete_reference_reads():
         assert result.ok is False
         assert result.facts["invalid"] == 0
         assert result.facts["read_failures"] == 1
+
+
+def _make_integrity_tool(root, entries, artifacts=None):
+    metadata = FakeMetadataBroker(entries)
+    library_read = FakeLibraryReadBroker(artifacts or {})
+    context = PluginContext(
+        plugin_id="maintenance.audit.integrity",
+        package_id="org.cifereca.maintenance.library-audit",
+        directories=PluginDirectories(data=root / "data", cache=root / "cache"),
+        _broker_resolver=lambda name: {
+            "metadata": metadata, "library.read": library_read,
+        }.get(name),
+    )
+    tool = IntegrityAuditTool().activate(context)
+    return tool, tool.plan(MaintenanceContext(scope="library", identity_id="id1"))
+
+
+def test_empty_integrity_run_never_invents_one_of_one_progress():
+    with tempfile.TemporaryDirectory() as tmp:
+        tool, plan = _make_integrity_tool(Path(tmp), [])
+        assert plan.facts["candidates"] == ()
+        control = Control()
+        outcome = tool.run(plan, control)
+        assert outcome.ok is True
+        assert outcome.changed == 0
+        assert outcome.facts["checked"] == 0
+        assert outcome.facts["invalid"] == 0
+        assert len(control.events) == 2
+        assert all("current" not in event and "total" not in event
+                   for event in control.events)
+        assert "aucun fichier" in control.events[-1]["message"].lower()
+
+
+def test_integrity_progress_counts_only_processed_files_without_private_paths():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        epub = root / "PRIVATE_FIRST.epub"
+        pdf = root / "PRIVATE_SECOND.pdf"
+        write_valid_epub(epub)
+        pdf.write_bytes(b"%PDF-1.4\nPRIVATE_TEST")
+        rows = [
+            {"identity_id": "id1", "local": True,
+             "local_path": str(epub), "title": "PRIVATE TITLE ONE"},
+            {"identity_id": "id1", "local": True,
+             "local_path": str(pdf), "title": "PRIVATE TITLE TWO"},
+        ]
+        tool, plan = _make_integrity_tool(root, rows)
+        control = Control()
+        result = tool.run(plan, control)
+        assert result.ok is True
+        assert result.facts["checked"] == 2
+        assert [(event.get("current"), event.get("total"))
+                for event in control.events] == [(0, 2), (1, 2), (2, 2)]
+        assert control.events[-1]["message"] == "Audit d’intégrité terminé"
+        assert all("PRIVATE" not in event["message"] and str(root) not in event["message"]
+                   for event in control.events)
+
+
+def test_cancellation_on_last_integrity_file_prevents_completed_progress():
+    class Aborted(Exception):
+        pass
+
+    class CancellingControl(Control):
+        def __init__(self):
+            super().__init__()
+            self.checked = 0
+
+        def check_cancelled(self):
+            self.checked += 1
+            if self.checked == 3:  # At the final gate, after the file scan.
+                raise Aborted()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        epub = root / "PRIVATE.epub"
+        write_valid_epub(epub)
+        tool, plan = _make_integrity_tool(root, [
+            {"identity_id": "id1", "local": True, "local_path": str(epub)}
+        ])
+        control = CancellingControl()
+        with pytest.raises(Aborted):
+            tool.run(plan, control)
+        assert control.events == [{
+            "current": 0, "total": 1, "message": "Intégrité 1/1",
+        }]
