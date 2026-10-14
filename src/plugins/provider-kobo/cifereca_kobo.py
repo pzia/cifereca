@@ -349,6 +349,28 @@ class KoboSession(ProviderSession):
             product for raw in items if foreign_account(raw)
             if (product := _strict_product_id(raw)) is not None
         }
+        # The personal library can contain repeated page entries or several
+        # revisions of one edition. No row wins by its order or its flags:
+        # quarantining the full product prevents accidental entitlement
+        # projection when Core later deduplicates or reconciles inventory.
+        product_counts: dict[str, int] = {}
+        tainted_products: set[str] = set()
+        for raw in items:
+            if type(raw) is not dict:
+                continue
+            product = _strict_product_id(raw)
+            if product is not None:
+                product_counts[product] = product_counts.get(product, 0) + 1
+            else:
+                # A contradictory pair of individually valid legacy aliases
+                # can poison both otherwise valid sibling editions.
+                for alias in ("product_id", "id"):
+                    candidate = _strict_product_id({alias: raw.get(alias)})
+                    if candidate is not None:
+                        tainted_products.add(candidate)
+        duplicated_products = tainted_products | {
+            product for product, count in product_counts.items() if count > 1
+        }
         _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
         # Never emit a credential/account, product, URL, or arbitrary Vault JSON
         # key in a trace: the list of keys itself may contain private data.
@@ -375,6 +397,13 @@ class KoboSession(ProviderSession):
                     "type": "invalid_scope",
                     "reason": ("different_account" if foreign_account(raw)
                                else "ambiguous_account_binding"),
+                })
+                continue
+            if product in duplicated_products:
+                # Keep only a fixed reason; never echo the product, account
+                # identifiers, revision IDs or downstream acquisition URLs.
+                self.last_library_rejections.append({
+                    "type": "invalid_scope", "reason": "duplicate_product_id",
                 })
                 continue
             try:
