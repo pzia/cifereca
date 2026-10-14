@@ -278,8 +278,8 @@ class KoboSession(ProviderSession):
             return []
         rows = self.catalog.search(query, field=field, limit=50, page=page)
         _TRACE_LOG.debug(
-            "TRACE kobo catalog plugin source=search credential=%s items=%s with_cover=%s",
-            self.credential_id, len(rows), sum(1 for row in rows if row.thumbnail_url),
+            "TRACE kobo catalog plugin source=search items=%s with_cover=%s",
+            len(rows), sum(1 for row in rows if row.thumbnail_url),
         )
         return rows
 
@@ -291,8 +291,12 @@ class KoboSession(ProviderSession):
             if isinstance(row, dict)
         ]
         _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
-        _sample_missing = next((sorted(x.keys()) for x in items if isinstance(x, dict) and not self.cover_url(x)), None)
-        _TRACE_LOG.debug("TRACE kobo covers source=library credential=%s items=%s with_cover=%s missing=%s sample_missing_keys=%s", self.credential_id, len(items), _cover_count, len(items)-_cover_count, _sample_missing)
+        # Never emit a credential/account, product, URL, or arbitrary Vault JSON
+        # key in a trace: the list of keys itself may contain private data.
+        _TRACE_LOG.debug(
+            "TRACE kobo covers source=library items=%s with_cover=%s missing=%s",
+            len(items), _cover_count, len(items) - _cover_count,
+        )
         rows: list[SearchResult] = []
         for raw in items:
             if not isinstance(raw, dict):
@@ -345,8 +349,10 @@ class KoboSession(ProviderSession):
             ),
         )
         _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
-        _sample_missing = next((sorted(x.keys()) for x in items if isinstance(x, dict) and not self.cover_url(x)), None)
-        _TRACE_LOG.debug("TRACE kobo covers source=backup credential=%s items=%s with_cover=%s missing=%s sample_missing_keys=%s", self.credential_id, len(items), _cover_count, len(items)-_cover_count, _sample_missing)
+        _TRACE_LOG.debug(
+            "TRACE kobo covers source=backup items=%s with_cover=%s missing=%s",
+            len(items), _cover_count, len(items) - _cover_count,
+        )
         return items
 
     def resolve_acquisition(
