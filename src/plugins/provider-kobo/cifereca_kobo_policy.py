@@ -25,6 +25,39 @@ _CATEGORIES = (
 _SCOPE_DENIED = frozenset({"denied", "forbidden", "requires_scope", "disabled", "unavailable"})
 
 
+def _strict_product_id(item: dict[str, Any]) -> str | None:
+    """Return one unambiguous edition/product key, never a coerced fallback.
+
+    Kobo-Vault may emit the legacy `id` alias and/or `product_id`. If
+    both are supplied, they must attest the *same* product. A false, numeric
+    or malformed primary must not be replaced with a valid-looking alias;
+    such a row could otherwise be counted as a safe, unique candidate.
+    """
+    values: list[str] = []
+    for key in ("product_id", "id"):
+        if key not in item or item[key] is None or item[key] == "":
+            continue
+        value = item[key]
+        if (
+            type(value) is not str or not 1 <= len(value) <= 256
+            or value != value.strip()
+            or any(not char.isprintable() or char.isspace() for char in value)
+        ):
+            return None
+        values.append(value)
+    if not values or any(value != values[0] for value in values[1:]):
+        return None
+    return values[0]
+
+
+def _strict_account_scope(account_id: object) -> bool:
+    """Mirror the provider's attested /account ID envelope for direct callers."""
+    return (
+        type(account_id) is str and 1 <= len(account_id) <= 256
+        and all(33 <= ord(char) <= 126 for char in account_id)
+    )
+
+
 def _blank_policy(state: str) -> dict[str, Any]:
     return {
         "schema": "kobo.manifest.materialization.policy/1",
@@ -60,7 +93,7 @@ def classify_personal_manifest(
     rights, account binding, guards and idempotence for each item.
     """
     result = _blank_policy("invalid_scope")
-    if type(account_id) is not str or not account_id or len(account_id) > 256:
+    if not _strict_account_scope(account_id):
         return result
     if type(rows) not in (list, tuple):
         result["status"] = "invalid_manifest"
@@ -79,8 +112,8 @@ def classify_personal_manifest(
     for item in source:
         if type(item) is not dict:
             continue
-        product = item.get("product_id") or item.get("id")
-        if type(product) is str and 0 < len(product) <= 256 and product.strip():
+        product = _strict_product_id(item)
+        if product is not None:
             product_ids[product] += 1
 
     scope_blocked = (
@@ -95,8 +128,10 @@ def classify_personal_manifest(
         if type(item) is not dict:
             category = "invalid_shape"
         else:
-            product = item.get("product_id") or item.get("id")
-            if type(product) is not str or not product.strip() or len(product) > 256:
+            product = _strict_product_id(item)
+            if product is None:
+                # Preserve the public v1 category vocabulary: contradictory
+                # identifiers are equivalent to lacking reliable provenance.
                 category = "missing_product_id"
             elif any(
                 key in item and item[key] is not None and type(item[key]) is not bool
