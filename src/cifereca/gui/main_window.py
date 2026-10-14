@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller
+from . import book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2224,26 +2224,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._add_plugin_book_actions(detail, item)
 
     def _book_action_context(self, item) -> UiActionContext:
-        metadata = dict(item.get("metadata") or {}) if isinstance(item, dict) else {}
-        book = book_ref_from_row(item)
-        artifact = None
-        path_value = item.get("local_path") or metadata.get("path")
-        artifact_id = str(item.get("artifact_id") or "")
-        if path_value and artifact_id:
-            path = Path(str(path_value))
-            size = 0
-            try: size = path.stat().st_size
-            except OSError: pass
-            sha = ""
-            try:
-                row = next((r for r in self.service.storage.artifacts() if str(r.get("artifact_id") or "") == artifact_id), None)
-                if row: sha = str(row.get("sha256") or "")
-            except Exception: pass
-            fmt = str(item.get("media_format") or path.suffix.lstrip(".") or "")
-            artifact = ArtifactRef(artifact_id=artifact_id, book_id=book.book_id or None,
-                format=ArtifactFormat("application/epub+zip" if fmt.lower() == "epub" else "application/octet-stream", fmt),
-                size_bytes=size, sha256=sha, filename=path.name)
-        return UiActionContext(target="book.detail", route=self.view_stack.get_visible_child_name() or "", book=book, artifact=artifact, metadata=metadata)
+        return book_action_context_controller.book_action_context(
+            self, item, Path=Path, ArtifactRef=ArtifactRef,
+            ArtifactFormat=ArtifactFormat, UiActionContext=UiActionContext,
+            book_ref_from_row=book_ref_from_row,
+        )
 
     def _add_plugin_book_actions(self, detail, item) -> None:
         pages = getattr(self, "_pages", {}).values()
