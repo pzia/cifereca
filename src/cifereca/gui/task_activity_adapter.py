@@ -34,11 +34,11 @@ def task_started(window, task_id: int, count: int, label: str, priority: int, ki
     return False
 
 
-def task_progress(window, label: str) -> bool:
+def task_progress(window, label: str, *, task_id: int | None = None) -> bool:
     if getattr(window, "_closed", False):
         return False
     if hasattr(window, "busy_revealer") and window._active_tasks:
-        presentation = live_task_progress_label(window._active_tasks, label)
+        presentation = live_task_progress_label(window._active_tasks, label, task_id=task_id)
         if presentation is not None:
             window.busy_label.set_visible(True)
             window.busy_label.set_label(presentation)

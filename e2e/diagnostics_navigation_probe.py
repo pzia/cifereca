@@ -114,6 +114,7 @@ def main() -> int:
     diagnostics_deadline = [None]
     slow_started = [None]
     d16_original_size = [None]
+    sync_progress_check = {}
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -140,6 +141,9 @@ def main() -> int:
             return
         report["status"] = "FAIL"
         report["error"] = str(exc)
+        gate = sync_progress_check.get("gate")
+        if gate is not None:
+            gate.set()
         if window[0] is not None:
             try:
                 capture("failure")
@@ -833,6 +837,81 @@ def main() -> int:
         assert len(broker.event_queries) == events_before
         report["checks"]["P0_stale_identity_history_preserves_gtk_filters"] = True
         capture("07b-stale-identity-history-rejected")
+        begin_sync_progress_checks()
+
+    def begin_sync_progress_checks():
+        # Acceptance for #1132: real MainWindow, TaskRunner worker and GTK
+        # footer. Only the provider operation is an offline fixture. Hold it
+        # open until GTK has actually displayed the producer's identity text.
+        w = window[0]
+        sync_progress_check["original"] = w.service.opening_sync
+        start_sync_progress_mode(False)
+
+    def start_sync_progress_mode(deep):
+        import threading
+        w = window[0]
+        deadline = monotonic() + 8
+
+        def launch_when_idle():
+            if w._active_tasks:
+                assert monotonic() < deadline, "P0: previous UI tasks did not finish"
+                later(60, launch_when_idle)
+                return
+            gate = threading.Event()
+            sync_progress_check["gate"] = gate
+
+            def offline_sync(progress=None, *, deep=False):
+                sync_progress_check["callback"] = progress
+                progress({"event": "identity_begin", "label": "Camille"})
+                assert gate.wait(8), "P0: sync progress fixture was not released"
+                return {"identities": []}
+
+            w.service.opening_sync = offline_sync
+            w.run_opening_sync(deep=deep)
+            await_progress()
+
+        def await_progress():
+            label = w.busy_label.get_text()
+            if (label == "En cours · Synchronisation · Camille…"
+                    and w.busy_label.get_mapped() and w.busy_revealer.get_reveal_child()):
+                assert w.view_stack.get_visible_child_name() == "library"
+                assert len(w._active_tasks) == 1
+                task_id, (_priority, _title, kind) = next(iter(w._active_tasks.items()))
+                assert kind == ("deep-sync" if deep else "opening-sync")
+                report["checks"]["P0_real_sync_identity_progress_deep" if deep
+                                 else "P0_real_sync_identity_progress_normal"] = True
+                capture("10-sync-progress-deep" if deep else "10-sync-progress-normal")
+                if deep:
+                    # Keep the real worker pending while closing the real
+                    # GTK window; subsequent producer/idle callbacks are inert.
+                    sync_progress_check["closing_pending_task"] = task_id
+                    close_baseline_window()
+                else:
+                    sync_progress_check["gate"].set()
+                    later(60, lambda: await_completion(task_id))
+                return
+            assert monotonic() < deadline, "P0: identity progress hidden: " + label
+            later(60, await_progress)
+
+        def await_completion(task_id):
+            if task_id not in w._finished_task_ids:
+                assert monotonic() < deadline, "P0: normal sync did not finish"
+                later(60, lambda: await_completion(task_id))
+                return
+            sync_progress_check["callback"]({
+                "event": "identity_begin", "label": "UX_STALE_SYNC_PROGRESS",
+            })
+            later(100, verify_stale_progress)
+
+        def verify_stale_progress():
+            assert "UX_STALE_SYNC_PROGRESS" not in w.busy_label.get_text()
+            report["checks"]["P0_finished_sync_progress_cannot_resurrect_footer"] = True
+            start_sync_progress_mode(True)
+
+        launch_when_idle()
+
+    def close_baseline_window():
+        w = window[0]
         # P0 #1130: retain one *real GTK* plugin action/button before closing
         # the owner, as a plugin could retain an action from an older route.
         late_action_calls = []
@@ -852,6 +931,15 @@ def main() -> int:
         listeners_before = tuple(getattr(w, "_overview_listeners", ()))
         w.close()
         assert w._closed
+        pending_sync = sync_progress_check.get("closing_pending_task")
+        assert pending_sync is not None
+        sync_progress_check["callback"]({
+            "event": "identity_begin", "label": "UX_CLOSED_SYNC_PROGRESS",
+        })
+        sync_progress_check["gate"].set()
+        w.service.opening_sync = sync_progress_check["original"]
+        assert "UX_CLOSED_SYNC_PROGRESS" not in w.busy_label.get_text()
+        report["checks"]["P0_close_during_real_sync_revokes_progress"] = True
         # P0 #1130/#1132: late plugin notifications are a no-op on an
         # actual closed GTK MainWindow, even if its manager is unavailable.
         # This is a synthetic post-close callback, not a provider operation.

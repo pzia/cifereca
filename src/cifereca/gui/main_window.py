@@ -364,6 +364,9 @@ class MainWindow(Adw.ApplicationWindow):
             return False
         return task_activity_adapter.task_progress(self, label)
 
+    def _task_progress_for_task(self, task_id: int, label: str) -> bool:
+        return task_activity_adapter.task_progress(self, label, task_id=task_id)
+
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
         if getattr(self, '_closed', False):
             return False
