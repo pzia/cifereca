@@ -153,7 +153,8 @@ def test_entitlements_without_verified_local_artifacts_are_manual_only(tmp_path)
     service, session = _service(tmp_path, [])
     target = service._kobo_backup_target_dir("default") / "verified.epub"
     _write_epub(target)
-    _backup(service, "has-local", target)
+    _backup(service, "has-local", target,
+            sha=hashlib.sha256(target.read_bytes()).hexdigest())
     for item in ("has-local", "missing-right", "missing-right"):
         service.storage.entitlement_put({
             "provider_id": "kobo", "credential_id": "vault-1",
