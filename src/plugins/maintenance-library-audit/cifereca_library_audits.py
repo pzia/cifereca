@@ -875,8 +875,53 @@ class DuplicateCleanupTool(_ReadOnlyTool):
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
         from cifereca.plugin_api import LibraryMutationRequest
 
+        # Validate the entire potentially restored plan before the destructive
+        # broker is accessed; never stringify untrusted placement IDs.
+        raw_pairs = plan.facts.get("pairs", ())
+        invalid_plan = type(raw_pairs) not in (list, tuple)
+        if not invalid_plan and len(raw_pairs) > 100_000:
+            invalid_plan = True
+        pairs: list[tuple[str, str]] = []
+        duplicates: set[str] = set()
+        keepers: set[str] = set()
+
+        def valid_id(value: Any) -> bool:
+            return (
+                type(value) is str and 0 < len(value) <= 1024
+                and value.strip() == value
+                and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+            )
+
+        if not invalid_plan:
+            for entry in raw_pairs:
+                if type(entry) not in (tuple, list) or len(entry) != 2:
+                    invalid_plan = True
+                    break
+                duplicate_id, keep_id = entry
+                if (
+                    not valid_id(duplicate_id) or not valid_id(keep_id)
+                    or duplicate_id == keep_id or duplicate_id in duplicates
+                ):
+                    invalid_plan = True
+                    break
+                duplicates.add(duplicate_id)
+                keepers.add(keep_id)
+                pairs.append((duplicate_id, keep_id))
+            if duplicates.intersection(keepers):
+                invalid_plan = True
+
+        if invalid_plan:
+            control.check_cancelled()
+            control.report(message="Nettoyage impossible : plan de doublons invalide")
+            control.check_cancelled()
+            return MaintenanceResult(
+                ok=False, changed=0,
+                summary="Aucun placement supprimé : plan de doublons invalide.",
+                warnings=("Plan de doublons invalide : aucune suppression.",),
+                facts={"planned": 0, "failures": 1, "invalid_plan": 1},
+            )
+
         broker = self._broker("library.maintenance")
-        pairs = tuple((str(a), str(b)) for a, b in plan.facts.get("pairs", ()) if str(a) and str(b))
         changed = 0
         failures = 0
         total = len(pairs)
