@@ -57,6 +57,7 @@ from .settings_diagnostic_actions import build_settings_diagnostic_callbacks
 from .task_progress_presentation import live_task_progress_label
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
+from .timer_lifecycle import cancel_source
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -292,13 +293,8 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _cancel_notification_hide(self) -> None:
         source = self._notification_hide_source
-        if source is None:
-            return
-        try:
-            GLib.source_remove(source)
-        except Exception:
-            pass
         self._notification_hide_source = None
+        cancel_source(source, GLib.source_remove)
 
     def _hide_notification(self) -> bool:
         self._notification_hide_source = None
@@ -352,12 +348,9 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _cancel_activity_hide(self) -> None:
-        if self._activity_hide_source is not None:
-            try:
-                GLib.source_remove(self._activity_hide_source)
-            except Exception:
-                pass
-            self._activity_hide_source = None
+        source = self._activity_hide_source
+        self._activity_hide_source = None
+        cancel_source(source, GLib.source_remove)
 
     def _refresh_activity_history(self) -> None:
         if getattr(self, "_closed", False):
