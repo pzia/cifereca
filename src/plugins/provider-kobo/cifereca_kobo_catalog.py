@@ -1,5 +1,7 @@
 from __future__ import annotations
 from typing import Any
+from ipaddress import ip_address
+import re
 from urllib.parse import urljoin, urlsplit
 
 from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag, description_text, description_element
@@ -64,6 +66,63 @@ class KoboCatalogService:
         return None
 
     @staticmethod
+    def _public_product_url(value: Any) -> str | None:
+        """Expose only ordinary public product pages, never private URLs.
+
+        Vault can return acquisition or signed-license destinations in a
+        product_url field. The URI appears both as a clickable friendly_url
+        and inside SearchResult.metadata, so both surfaces must be sanitized.
+        """
+        if type(value) is not str or not 1 <= len(value) <= 2048:
+            return None
+        if (
+            value != value.strip()
+            or any(ord(ch) < 33 or ord(ch) == 127 for ch in value)
+            or any(ch in value for ch in '<>\\')
+        ):
+            return None
+        try:
+            parsed = urlsplit(value)
+            host = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            return None
+        if (
+            parsed.scheme not in {'https', 'http'}
+            or not host
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or '%' in host
+            or port not in (None, 443 if parsed.scheme == 'https' else 80)
+        ):
+            return None
+        hostname = host.rstrip('.').casefold()
+        if (
+            '.' not in hostname
+            or hostname in {'localhost', 'local', 'internal'}
+            or hostname.endswith(
+                ('.localhost', '.local', '.internal', '.lan', '.home.arpa')
+            )
+            or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+        ):
+            return None
+        try:
+            address = ip_address(hostname)
+        except ValueError:
+            pass
+        else:
+            if not address.is_global:
+                return None
+        # Download/license/acquisition endpoints are not bibliographic
+        # product notices even if hosted on an otherwise public domain.
+        segments = [segment.casefold() for segment in parsed.path.split('/')]
+        if any(segment in {'download', 'downloads', 'license', 'licence', 'acquisition', 'authorize', 'oauth', 'token'} for segment in segments):
+            return None
+        return value
+
+    @staticmethod
     def _price(item: dict[str, Any]) -> tuple[str | None, str | None]:
         price = item.get("price")
         if isinstance(price, dict):
@@ -108,6 +167,11 @@ class KoboCatalogService:
         price, currency = self._price(item)
         cover = self.cover_url(item)
         metadata = {k: v for k, v in item.items() if k not in {"description"}}
+        product_url = self._public_product_url(item.get("product_url"))
+        if product_url is None:
+            metadata.pop("product_url", None)
+        else:
+            metadata["product_url"] = product_url
         if isinstance(metadata.get("language"), str):
             metadata["language"] = normalize_language_tag(metadata["language"])
         if isinstance(metadata.get("languages"), (list, tuple)):
@@ -129,7 +193,7 @@ class KoboCatalogService:
             publisher=str(item.get("publisher") or "").strip() or None,
             published_at=str(item.get("publication_date") or item.get("published_at") or "").strip() or None,
             description=description_text(item.get("description")),
-            thumbnail_url=cover, friendly_url=str(item.get("product_url") or "").strip() or None,
+            thumbnail_url=cover, friendly_url=product_url,
             scenario="KOBO", source_provider=self.provider_id, source_credential=self.credential_id,
             download_url=None, content_type=content_type, source_collection=collection,
             owned=owned_flag,
