@@ -30,6 +30,54 @@ def _vault_public_version(value: Any) -> str:
     return value if re.fullmatch(r"v?[0-9]{1,3}(?:\.[0-9]{1,4}){1,4}", value) else ""
 
 
+def _vault_account_id(account: Any) -> str | None:
+    """Identify one authenticated account, never invent a fallback identity.
+
+    Vault /account may carry both old and new ID keys. Reject conflicting,
+    malformed or missing values before Core persists an account target.
+    """
+    if type(account) is not dict:
+        return None
+    values = []
+    for key in ("id", "account_id"):
+        value = account.get(key)
+        if value is None or value == "":
+            continue
+        if (
+            type(value) is not str or not 1 <= len(value) <= 256
+            or any(not 33 <= ord(ch) <= 126 for ch in value)
+        ):
+            return None
+        values.append(value)
+    if not values or any(value != values[0] for value in values[1:]):
+        return None
+    return values[0]
+
+
+def _vault_account_label(account: dict[str, Any]) -> str:
+    """Present only bounded printable text, never arbitrary response objects."""
+    for key in ("display_name", "name", "email_hint"):
+        value = account.get(key)
+        if type(value) is not str:
+            continue
+        name = value.strip()
+        if (
+            name and len(name) <= 120
+            and all(
+                ord(ch) >= 32 and ord(ch) != 127
+                and not 0x80 <= ord(ch) <= 0x9F
+                and ord(ch) != 0x061C
+                and ord(ch) not in (0x200E, 0x200F)
+                and not 0x202A <= ord(ch) <= 0x202E
+                and not 0x2066 <= ord(ch) <= 0x2069
+                and not 0xD800 <= ord(ch) <= 0xDFFF
+                for ch in name
+            )
+        ):
+            return name
+    return "Compte Kobo"
+
+
 DESCRIPTOR = ProviderDescriptor(
     id="kobo",
     display_name="Kobo",
@@ -158,12 +206,19 @@ class KoboSession(ProviderSession):
             and bool(runtime_modes & {"kobo_delegated", "kobo_kdrm"})
         )
         account = self.client.account()
-        # Reauthorization only takes effect after a successful authenticated
-        # account request, not when connect() was merely invoked.
+        account_id = _vault_account_id(account)
+        if account_id is None:
+            # No synthetic "kobo" ID and no coercion of arbitrary upstream
+            # objects to strings: an ambiguous account cannot own files.
+            raise ProviderError(
+                "Kobo-Vault : identité du compte absente ou ambiguë"
+            )
+        display = _vault_account_label(account)
+        # Reauthorization only takes effect after a *validated* authenticated
+        # account identity, not when connect() was merely invoked. A malformed
+        # /account response must not clear a prior delegated-scope denial.
         self._cifereca_delegation_forbidden = False
         self._cifereca_delegation_attempts_saved = 0
-        account_id = str(account.get("id") or account.get("account_id") or "kobo")
-        display = str(account.get("display_name") or account.get("name") or account.get("email_hint") or "Compte Kobo")
         self.connected = True
         self._accounts = [Account(
             display_name=display,
