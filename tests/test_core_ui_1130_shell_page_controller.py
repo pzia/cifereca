@@ -176,3 +176,171 @@ def test_without_view_stack_does_not_touch_plugin_manager(monkeypatch):
     ))
     assert _rebuild(host) is None
     assert host._overview_listeners == []
+
+
+def test_closed_shell_never_clears_listeners_or_consults_pages(monkeypatch):
+    host, removed, names, navigation, events = _host(monkeypatch)
+    host._closed = True
+    host.plugin_manager.page_contributions = lambda: (_ for _ in ()).throw(
+        AssertionError("do not run plugins after teardown")
+    )
+    _rebuild(host)
+    assert host._overview_listeners == ["stale"]
+    assert removed == names == navigation == events == []
+
+
+def test_closure_during_filter_snapshot_stops_before_widget_removal(monkeypatch):
+    host, removed, names, navigation, events = _host(monkeypatch)
+    def snapshot():
+        host._closed = True
+        return "private"
+    host.search_controls.state = snapshot
+    _rebuild(host)
+    assert removed == names == navigation == events == []
+    assert host._closed is True
+
+
+def test_closure_during_widget_removal_stops_other_mutations(monkeypatch):
+    host, removed, names, navigation, events = _host(monkeypatch)
+    def remove(widget):
+        removed.append(widget)
+        host._closed = True
+    host.view_stack.remove = remove
+    _rebuild(host)
+    assert len(removed) == 1
+    assert host.nav_rows == {"stale": host.nav_rows["stale"]}
+    assert names == navigation == events == []
+
+
+def test_closure_during_plugin_discovery_never_constructs_pages(monkeypatch):
+    page_calls = []
+    page = _page("search", factory=lambda _: (page_calls.append("factory") or Widget()))
+    host, removed, names, navigation, events = _host(monkeypatch, contributions=[page])
+    def discovered():
+        host._closed = True
+        return [page]
+    host.plugin_manager.page_contributions = discovered
+    _rebuild(host)
+    assert page_calls == []
+    assert names == navigation == events == []
+
+
+def test_factory_that_closes_window_does_not_attach_or_render_its_page(monkeypatch):
+    def factory(_host):
+        host._closed = True
+        return Widget()
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("search", factory=factory)]
+    )
+    _rebuild(host)
+    assert names == navigation == []
+    assert host._plugin_page_widgets == {}
+    assert host._pages == {}
+    assert events == []
+
+
+def test_diagnostic_callback_that_disposes_shell_skips_recovery(monkeypatch):
+    def factory(_host):
+        raise RuntimeError("invalid")
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("settings", factory=factory)]
+    )
+    def diagnose(*args, **kwargs):
+        events.append(("diagnostic", args))
+        host._closed = True
+    host.diagnostics.add = diagnose
+    _rebuild(host)
+    assert [item[0] for item in events] == ["diagnostic"]
+    assert names == navigation == []
+    assert host._pages == {}
+
+
+def test_close_during_named_page_attachment_aborts_nav_rebuild(monkeypatch):
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("search")]
+    )
+    def add(widget, route):
+        names.append(route)
+        host._closed = True
+    host.view_stack.add_named = add
+    _rebuild(host)
+    assert names == ["search"]
+    assert navigation == []
+    assert host._plugin_page_widgets == {}
+    assert host._pages == {}
+
+
+def test_close_during_nav_row_addition_skips_group_visibility_and_navigation(monkeypatch):
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("search")]
+    )
+    def add_row(route, title, icon):
+        host.nav_rows[route] = Widget()
+        host._closed = True
+    host._add_nav_row = add_row
+    _rebuild(host)
+    assert names == ["search"]
+    assert navigation == []
+    assert host._nav_groups == {}
+
+
+def test_close_during_filter_restore_does_not_restore_other_route_or_navigate(monkeypatch):
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("search"), _page("library")]
+    )
+    def set_state(value):
+        events.append(("search", value))
+        host._closed = True
+    host.search_controls.set_state = set_state
+    _rebuild(host)
+    assert names == ["search", "library", "settings", "plugins"]
+    assert events == [("search", "search-query")]
+    assert navigation == []
+
+
+def test_recursive_plugin_rebuild_does_not_resume_stale_outer_rebuild(monkeypatch):
+    invoked = [False]
+    def factory(_host):
+        if not invoked[0]:
+            invoked[0] = True
+            _rebuild(host)
+        return Widget()
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("search", factory=factory)]
+    )
+    _rebuild(host)
+    # The outer builder cannot duplicate widgets/groups/route navigation
+    # after its nested successor has installed the new generation.
+    assert names == ["search", "settings", "plugins"]
+    assert navigation == ["search"]
+    assert set(host._pages) == {"search", "settings", "plugins"}
+
+
+def test_old_group_toggle_is_inert_after_rebuild_or_close(monkeypatch):
+    callbacks = []
+    class Toggle(Widget):
+        def connect(self, signal, callback):
+            assert signal == "toggled"
+            callbacks.append((self, callback))
+        def get_active(self):
+            return self.active
+    monkeypatch.setattr(GTK, "ToggleButton", Toggle)
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("search")]
+    )
+    toggled = []
+    host._toggle_nav_group = lambda group, value: toggled.append((group, value))
+    _rebuild(host)
+    old_toggle, old_callback = callbacks[0]
+    old_callback(old_toggle)
+    assert toggled == [("usage", True)]
+    _rebuild(host)
+    toggled.clear()
+    old_callback(old_toggle)
+    assert toggled == []
+    current_toggle, current_callback = callbacks[-2]  # usage on second rebuild
+    current_callback(current_toggle)
+    assert toggled == [("usage", True)]
+    host._closed = True
+    current_callback(current_toggle)
+    assert toggled == [("usage", True)]
