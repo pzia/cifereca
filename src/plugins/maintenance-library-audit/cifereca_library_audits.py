@@ -600,15 +600,14 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         pairs: list[tuple[str, str]] = []
         changes: list[str] = []
         read_failures: list[str] = []
-        seen_views: set[str] = set()
+        # Different identities may share the same logical book/artifact set.
+        # A book+artifacts dedupe key would hide the second identity's own
+        # redundant placements. Deduplicate the *actual scoped placements*
+        # instead, and never plan one physical deletion more than once.
+        seen_views: set[tuple[tuple[str, str, str], ...]] = set()
+        planned_deletions: set[str] = set()
 
         for _row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
-            key = str(getattr(view.book, "book_id", "") or "") + ":" + ",".join(
-                sorted(str(a.artifact_id) for a in getattr(view, "artifacts", ()))
-            )
-            if key in seen_views:
-                continue
-            seen_views.add(key)
             groups: dict[tuple[str, str | None], list[Any]] = {}
             for placement in getattr(view, "placements", ()):
                 if placement.kind != "library":
@@ -616,12 +615,22 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 if context.identity_id is not None and placement.identity_id != context.identity_id:
                     continue
                 groups.setdefault((placement.artifact_id, placement.identity_id), []).append(placement)
+            key = tuple(sorted(
+                (str(p.placement_id), str(p.artifact_id), str(p.identity_id))
+                for group in groups.values() for p in group
+            ))
+            if not key or key in seen_views:
+                continue
+            seen_views.add(key)
             for (artifact_id, _identity), placements in groups.items():
                 ordered = sorted(placements, key=lambda p: p.placement_id)
                 if len(ordered) < 2:
                     continue
                 keep = ordered[0]
                 for duplicate in ordered[1:]:
+                    if duplicate.placement_id in planned_deletions:
+                        continue
+                    planned_deletions.add(duplicate.placement_id)
                     pairs.append((duplicate.placement_id, keep.placement_id))
                     if len(changes) < 100:
                         # Preview surfaces travel through GTK and diagnostics:
