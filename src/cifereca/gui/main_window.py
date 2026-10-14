@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -725,68 +725,9 @@ class MainWindow(Adw.ApplicationWindow):
         return widget
 
     def _rebuild_plugin_pages(self) -> None:
-        self._overview_listeners = []
-        if not hasattr(self, "view_stack"):
-            return
-        query_states = {route: controls.state() for route in ("search", "library")
-                        if (controls := getattr(self, route + "_controls", None)) is not None}
-        previous = self.view_stack.get_visible_child_name() or "dashboard"
-        for widget in self._plugin_page_widgets.values():
-            self.view_stack.remove(widget)
-        self._plugin_page_widgets.clear()
-        clear_box(self.nav_list)
-        self.nav_rows.clear()
-        self._nav_groups.clear()
-        from ..builtin_ui.cifereca_builtin_ui import Pages
-        from dataclasses import replace
-        fallback = [replace(page, priority=-10000) for page in Pages().pages()]
-        try:
-            contributed = self.plugin_manager.page_contributions() if self.plugin_manager else []
-        except Exception:
-            contributed = []
-        if not contributed:
-            contributed = list(fallback)
-        # Management pages remain reachable to recover from broken/disabled UI.
-        contributed += [p for p in fallback if p.route in {"plugins", "settings"} and all(x.route != p.route for x in contributed)]
-        resolved = resolve_pages(contributed)
-        self._pages = {}
-        host = self._UiHost(self)
-        group = None
-        for page in resolved:
-            try:
-                widget = page.factory(host)
-                if not isinstance(widget, Gtk.Widget): raise TypeError("Page factory must return Gtk.Widget")
-            except Exception as exc:
-                self.diagnostics.add("PLUGIN", "ui.page build", "error", detail={"route": page.route, "error": str(exc)})
-                recovery = next((p for p in fallback if p.route == page.route and p.route in {"plugins", "settings"}), None)
-                if recovery is None: continue
-                widget = recovery.factory(host); page = recovery
-            self.view_stack.add_named(widget, page.route)
-            self._plugin_page_widgets[page.route] = widget
-            self._pages[page.route] = page
-            if page.group != group:
-                group = page.group
-                expanded = self._nav_group_expanded.setdefault(group, group != "configuration")
-                group_label = {"usage":"Pages", "configuration":"Configuration / Technique"}.get(group, group)
-                button = Gtk.ToggleButton()
-                button_label = Gtk.Label(label=group_label, xalign=0)
-                button_label.set_ellipsize(Pango.EllipsizeMode.END)
-                button.set_child(button_label)
-                button.set_active(expanded)
-                button.set_tooltip_text(f"{group_label} — Déplier / replier la rubrique")
-                button.connect("toggled", lambda b, g=group: self._toggle_nav_group(g, b.get_active()))
-                row = Gtk.ListBoxRow(); row.set_selectable(False); row.set_activatable(False); row.set_child(button)
-                self.nav_list.append(row)
-            self._add_nav_row(page.route, page.title, page.icon_name)
-            self._nav_groups[page.route] = group
-            self.nav_rows[page.route].set_visible(self._nav_group_expanded[group])
-        for route, state in query_states.items():
-            controls = getattr(self, route + "_controls", None)
-            if route in self._pages and controls is not None:
-                controls.set_state(state)
-        if self._pages:
-            self.navigate(previous if previous in self._pages else next(iter(self._pages)))
-
+        return shell_page_controller.rebuild_plugin_pages(
+            self, Gtk=Gtk, Pango=Pango, clear_box=clear_box, resolve_pages=resolve_pages,
+        )
     def _toggle_nav_group(self, group, expanded):
         self._nav_group_expanded[group] = expanded
         for route, row_group in self._nav_groups.items():
