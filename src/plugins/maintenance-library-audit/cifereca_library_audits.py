@@ -621,7 +621,19 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 if getattr(result, "ok", True) is False:
                     failures += 1
                 changed += int(getattr(result, "changed", 0) or 0)
-                warnings.extend(str(x) for x in getattr(result, "warnings", ()) if str(x))
+                # The Core mutation may return a private filesystem path,
+                # bearer token or provider response in warning text. The
+                # maintenance line and result must export counts only.
+                core_warnings = getattr(result, "warnings", ())
+                count = (
+                    len(core_warnings)
+                    if isinstance(core_warnings, (tuple, list))
+                    else 1 if core_warnings else 0
+                )
+                if count:
+                    warnings.append(
+                        f"Doublon {index}/{total} : {min(count, 1_000_000)} avertissement(s) du service"
+                    )
             except Exception as exc:
                 # A cancelled destructive mutation must stop the batch. Never
                 # expose placement IDs or the exception's private path.
