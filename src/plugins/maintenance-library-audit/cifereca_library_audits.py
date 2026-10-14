@@ -266,6 +266,7 @@ class NamingAuditTool(_ReadOnlyTool):
         checked = 0
         mismatch = 0
         unavailable = 0
+        policy_failures = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
             title = str(row.get("title") or "").strip()
@@ -277,13 +278,29 @@ class NamingAuditTool(_ReadOnlyTool):
                 unavailable += 1
                 continue
             extension = PurePath(current).suffix.lstrip(".") or str(row.get("format") or "epub").lower()
-            expected = naming.preview(
-                title=title,
-                author=str(row.get("author") or ""),
-                series=str(row.get("series") or row.get("collection") or ""),
-                index=str(row.get("series_index") or row.get("index") or ""),
-                extension=extension,
-            )
+            try:
+                expected = naming.preview(
+                    title=title,
+                    author=str(row.get("author") or ""),
+                    series=str(row.get("series") or row.get("collection") or ""),
+                    index=str(row.get("series_index") or row.get("index") or ""),
+                    extension=extension,
+                )
+            except Exception:
+                # A single unreadable/malformed entry must not abort the
+                # remaining read-only audit. The broker can embed private
+                # titles, paths or credentials in its error/class name.
+                policy_failures += 1
+                if len(samples) < 12:
+                    samples.append(f"Politique de nommage indisponible : notice n°{notice_index}")
+                continue
+            if expected is None or not str(expected).strip():
+                # An empty proposed name is not a legitimate discrepancy:
+                # comparison with it would classify every file as mismatched.
+                policy_failures += 1
+                if len(samples) < 12:
+                    samples.append(f"Politique de nommage indisponible : notice n°{notice_index}")
+                continue
             checked += 1
             if PurePath(current).name != PurePath(str(expected)).name:
                 mismatch += 1
@@ -296,12 +313,17 @@ class NamingAuditTool(_ReadOnlyTool):
         warnings = list(samples)
         if unavailable:
             warnings.append(f"{unavailable} entrée(s) sans nom/titre public vérifiable.")
+        if policy_failures:
+            warnings.append(f"{policy_failures} entrée(s) sans proposition valide de la politique Core.")
         warnings.append("Audit uniquement : aucune mutation de placement n'est effectuée.")
         return MaintenancePlan(
             tool_id=self.info.id,
             summary=summary,
             warnings=tuple(warnings),
-            facts={"checked": checked, "mismatch": mismatch, "unavailable": unavailable},
+            facts={
+                "checked": checked, "mismatch": mismatch,
+                "unavailable": unavailable, "policy_failures": policy_failures,
+            },
         )
 
 
