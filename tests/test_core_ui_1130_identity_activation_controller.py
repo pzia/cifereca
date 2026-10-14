@@ -34,7 +34,7 @@ def _page(name, events):
     return NS(
         clear_rows=lambda: events.append((name, "clear")),
         detail=NS(empty=lambda title, message:
-                  events.append((name, "empty", title, message)),
+                  events.append((name, "empty", title, message))),
     )
 
 
