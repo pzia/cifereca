@@ -58,7 +58,11 @@ class KoboVaultClient:
                 "User-Agent": "cifereca-kobo/1.2.1",
             },
             timeout=httpx.Timeout(timeout, connect=min(timeout, 15.0)),
-            follow_redirects=True,
+            # Provider API requests must never follow redirect targets,
+            # especially POST /library/{id}/acquisition: the revision and
+            # private account request body could otherwise be sent to a
+            # third-party origin following a 307/308 response.
+            follow_redirects=False,
             transport=transport,
         )
 
@@ -103,10 +107,26 @@ class KoboVaultClient:
             if not self.token:
                 raise KoboVaultError("Kobo-Vault : token API manquant", code="missing_token", status_code=401)
             headers["Authorization"] = f"Bearer {self.token}"
+        # Do not let callers of the private helper re-enable redirects. An
+        # unexpected Location header, even to this same host, cannot attest
+        # that the destination has the same authentication and rights policy.
+        kwargs.pop("follow_redirects", None)
         try:
-            response = self.client.request(method, self._url(path), headers=headers, **kwargs)
+            response = self.client.request(
+                method, self._url(path), headers=headers,
+                follow_redirects=False, **kwargs,
+            )
         except httpx.HTTPError as exc:
             raise KoboVaultError("Kobo-Vault : erreur de transport", code="network_error") from exc
+        if 300 <= response.status_code < 400:
+            # Never reflect Location, including its query/user-info. A 3xx is
+            # not an authoritative JSON provider response or an authorization
+            # to retry the private request elsewhere.
+            raise KoboVaultError(
+                "Kobo-Vault : redirection HTTP refusée",
+                code="redirect_denied",
+                status_code=response.status_code,
+            )
         if response.is_error:
             status = response.status_code
             # A fixed, minimal vocabulary replaces untrusted provider
