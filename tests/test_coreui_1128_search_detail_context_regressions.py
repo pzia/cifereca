@@ -123,3 +123,27 @@ def test_late_success_and_error_never_touch_deselected_book():
         host, "book-A", item, RuntimeError("secret"), context=(1, 2, 3, "old")
     )
     assert calls == []
+
+
+def test_current_failure_uses_generic_message_without_exception_details():
+    messages = []
+    calls = []
+    host = SimpleNamespace(
+        _search_detail_context_current=lambda *_args: True,
+        search_page=SimpleNamespace(detail=SimpleNamespace(
+            show_search=lambda *_args, **_kw: calls.append("search")
+        )),
+        _add_local_book_actions=lambda *_args: calls.append("actions"),
+        _request_cached_book_details=lambda *_args: calls.append("cache"),
+        toast=lambda message, *args: messages.append(message),
+    )
+    item = SimpleNamespace(id="book-A")
+    # Error presentation must work without leaking arbitrary provider details.
+    callback = _extract_search_detail_callback("_search_detail_error")
+    # Import of result_row is postponed until after context validation; inject
+    # only the expected projection for the live callback path.
+    callback.__globals__["result_row"] = lambda item: {"id": item.id}
+    callback(host, "book-A", item, RuntimeError("secret-token=LEAK"), context=(3, 7, 11, "identity-A"))
+    assert calls == ["search", "actions", "cache"]
+    assert messages == ["Disponibilités indisponibles. Réessayez ultérieurement."]
+    assert "LEAK" not in repr(messages)
