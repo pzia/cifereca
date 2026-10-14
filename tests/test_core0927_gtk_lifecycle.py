@@ -26,7 +26,12 @@ def _source(path: Path, class_name: str, method_name: str) -> str:
 
 
 def test_dropdown_refresh_preserves_existing_string_list_model():
-    source = _source(MAIN_WINDOW, "MainWindow", "_replace_dropdown_labels")
+    owner = MAIN_WINDOW.with_name("shell_identity_selector_controller.py")
+    tree = ast.parse(owner.read_text(encoding="utf-8"))
+    method = next(node for node in tree.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "replace_dropdown_labels")
+    source = ast.unparse(method)
 
     assert "model = dropdown.get_model()" in source
     assert "isinstance(model, Gtk.StringList)" in source
