@@ -60,7 +60,7 @@ def test_malformed_authors_and_languages_are_removed_from_public_details(monkeyp
     assert normalized.metadata["authors"] == ["Alice", "Bob"]
     assert "author" not in normalized.metadata
     assert normalized.metadata["language"] is None
-    assert normalized.metadata["languages"] == ["fr", "en", " "]
+    assert normalized.metadata["languages"] == ["fr", "en"]
     assert normalized.owned is False and normalized.downloadable is None
     exported = json.dumps({
         "author": normalized.author, "authors": normalized.metadata["authors"],
