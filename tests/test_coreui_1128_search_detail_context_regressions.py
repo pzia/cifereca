@@ -60,3 +60,29 @@ def test_none_context_remains_sync_compatibility_only_when_open_and_selected():
     assert _context_checker()(host, "book-A", None)
     host._selected_search_id = "book-B"
     assert not _context_checker()(host, "book-A", None)
+
+
+def test_async_search_callbacks_capture_context_for_success_and_failure():
+    """Both holdings callbacks must carry the same captured request context."""
+    tree = ast.parse(DETAILS.read_text(encoding="utf-8"))
+    selected = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_search_selected"
+    )
+    text = ast.unparse(selected)
+    assert "context = self._search_detail_request_context()" in text
+    assert "self._apply_search_detail(selected_id, item, detail, context=context)" in text
+    assert "self._search_detail_error(selected_id, item, exc, context=context)" in text
+
+
+def test_explicit_known_detail_uses_generation_guard_without_extra_search():
+    tree = ast.parse(DETAILS.read_text(encoding="utf-8"))
+    loader = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_load_known_detail"
+    )
+    text = ast.unparse(loader)
+    assert "self._search_detail_request_generation += 1" in text
+    assert "context = self._search_detail_request_context()" in text
+    assert "self._apply_search_detail(selected, item, detail, context=context)" in text
+    assert "self.run_search(" not in text
