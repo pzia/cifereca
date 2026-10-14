@@ -227,6 +227,14 @@ class CoverAuditTool(_ReadOnlyTool):
                 # relative cover paths used by legacy library entries.
                 suspicious = (
                     any(ord(ch) < 32 or ord(ch) == 127 for ch in cover)
+                    # Encoded CR/LF/NUL are control characters too. The
+                    # reference may be decoded by a later URL consumer.
+                    or any(
+                        cover[pos:pos + 3].casefold() in {
+                            "%00", "%09", "%0a", "%0d", "%7f"
+                        }
+                        for pos, ch in enumerate(cover) if ch == "%"
+                    )
                     or bool(scheme and scheme not in {"http", "https", "file"})
                 )
                 if scheme in {"http", "https"}:
