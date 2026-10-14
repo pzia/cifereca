@@ -140,13 +140,17 @@ class Core0915(unittest.TestCase):
             Orientation=NS(VERTICAL=0,HORIZONTAL=1),
         )
         ns={'MasterDetailPage':lambda *args:page,'Gtk':gtk}
-        exec(self.extract('_build_library_page'),ns);ns['_build_library_page'](window)
+        from cifereca.gui import library_page_controller
+        library_page_controller.build_library_page(window, Gtk=gtk, MasterDetailPage=ns['MasterDetailPage'])
         self.assertEqual(page.header_actions.append.call_count,3)
         page.toolbar.append.assert_called_once_with(controls)
     def test_recent_refresh_in_header_not_toolbar(self):
         page=NS(header_actions=Mock(),toolbar=Mock(),connect_selected=Mock());button=Mock()
         ns={'MasterDetailPage':lambda *args:page,'Gtk':NS(Button=NS(new_from_icon_name=lambda name:button))}
-        exec(self.extract('_build_recent_page'),ns);ns['_build_recent_page'](NS(_recent_selected=Mock()))
+        from cifereca.gui import library_page_controller
+        library_page_controller.build_recent_page(
+            NS(_recent_selected=Mock()), Gtk=ns['Gtk'], MasterDetailPage=ns['MasterDetailPage'],
+        )
         page.header_actions.append.assert_called_once_with(button);page.toolbar.append.assert_not_called()
     def test_scan_preserves_registered_owner_in_unconfigured_directory(self):
         self.book('target');self.service.catalog_scan();self.storage.identity_put({'identity_id':'other','label':'Other','directory_name':'elsewhere'})
