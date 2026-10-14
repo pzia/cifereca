@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2527,23 +2527,10 @@ class MainWindow(Adw.ApplicationWindow):
         return (metadata.get('epub_metadata') or {}).get('description') or metadata.get('description')
 
     def _add_book_notice(self, detail, item, *, include_description=True):
-        metadata=item.get('metadata') or {}
-        if include_description:
-            detail._show_description(self._book_description(item))
-        essential_labels={'Source','Provenance','Format','Langue','Langues','Disponibilité'}
-        rows=[row for row in notice_rows(metadata) if row[0] not in essential_labels]
-        if rows:detail.add_group('Notice EPUB' if metadata.get('epub_metadata') else 'Notice',rows)
-        catalogue=metadata.get('catalogue_metadata') or {}
-        if catalogue:
-            catalogue_rows=[row for row in notice_rows(catalogue) if row[0] not in essential_labels]
-            if catalogue_rows:detail.add_group('Catalogue',catalogue_rows)
-        if metadata.get('epub_metadata_schema'):
-            cover=metadata.get('epub_cover') or {}
-            labels={'extracted':'Extraite du fichier','no_usable_image':'Aucune image exploitable','metadata_unreadable':'Métadonnées illisibles'}
-            status=metadata.get('epub_cover_status') or 'not_inspected'
-            facts=[('Couverture',labels.get(status,'À réinspecter'))]
-            if cover.get('method'):facts.append(('Détection',{'declared':'Déclaration EPUB','declared_page':'Page de couverture déclarée','guide':'Guide de couverture','first_spine':'Image unique de la première page (déduction)'}.get(cover['method'],cover['method'])))
-            detail.add_group('Image du livre',facts)
+        return book_notice_controller.add_book_notice(
+            self, detail, item, notice_rows=notice_rows,
+            include_description=include_description,
+        )
 
     def _recent_selected(self, row: BookListItem | None) -> None:
         if not row:
