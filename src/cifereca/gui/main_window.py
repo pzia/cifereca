@@ -656,9 +656,10 @@ class MainWindow(Adw.ApplicationWindow):
             if getattr(self, "_closed", False):
                 return False
             self._plugins_changed()
-        except Exception as exc:
+        except Exception:
             if not getattr(self, "_closed", False):
-                self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
+                # Plugin errors may contain URLs, account IDs or tokens.
+                self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"reason": "activation_failed"})
                 if hasattr(self, "dashboard_loading_status"):
                     self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
                     self.dashboard_loading_status.set_visible(True)
