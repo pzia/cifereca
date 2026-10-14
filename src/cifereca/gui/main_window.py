@@ -59,6 +59,7 @@ from .task_progress_presentation import live_task_progress_label
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
+from .startup_lifecycle import once_while_open
 from .timer_lifecycle import cancel_source
 from .loan_view import (
     LOAN_FILTER_LABELS,
@@ -76,6 +77,7 @@ from .maintenance_tools import preview_maintenance_tool, execute_maintenance_too
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
+from .activity_hide_policy import can_reduce_activity
 from .plugin_manager_page import PluginManagerPage
 from .query_controls import QueryControls, MultiSelect
 from .action_widgets import AdaptiveActionBar
@@ -389,13 +391,13 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _hide_activity_feedback(self) -> bool:
         self._activity_hide_source = None
-        if getattr(self, "_closed", False):
+        if getattr(self, "_closed", False) or self._active_tasks:
             return False
-        if self._active_tasks:
-            return False
-        if self._show_pending_activity_error():
-            return False
-        if not hasattr(self, "busy_revealer"):
+        pending_error = self._show_pending_activity_error()
+        if not can_reduce_activity(
+            closed=False, active_count=0, pending_error=pending_error,
+            has_view=hasattr(self, "busy_revealer"),
+        ):
             return False
         self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
         self.activity_status_icon.set_visible(False)
@@ -597,12 +599,7 @@ class MainWindow(Adw.ApplicationWindow):
             self._render_dashboard()
             # A close can happen after the connection callback but before GTK
             # dispatches this idle source. Never start sync on a dead window.
-            def start_sync_if_open() -> bool:
-                if not self._closed:
-                    self.run_opening_sync()
-                return False
-
-            GLib.idle_add(start_sync_if_open)
+            GLib.idle_add(once_while_open(self, self.run_opening_sync))
 
         def err(exc: BaseException) -> None:
             if getattr(self, "_closed", False):
@@ -626,9 +623,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _connect_sources_if_open(self) -> bool:
         """One-shot GTK callback; never connect after window teardown."""
-        if not self._closed:
-            self.connect_configured_sources()
-        return False
+        return once_while_open(self, self.connect_configured_sources)()
 
     def activate_startup_plugins(self) -> bool:
         # Activation is posted to GTK after the window is presented. That
@@ -650,9 +645,10 @@ class MainWindow(Adw.ApplicationWindow):
             if getattr(self, "_closed", False):
                 return False
             self._plugins_changed()
-        except Exception as exc:
+        except Exception:
             if not getattr(self, "_closed", False):
-                self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"error": str(exc)})
+                # Plugin errors may contain URLs, account IDs or tokens.
+                self.diagnostics.add("PLUGIN", "startup activation", "error", detail={"reason": "activation_failed"})
                 if hasattr(self, "dashboard_loading_status"):
                     self.dashboard_loading_status.set_label("Certains modules n’ont pas pu être chargés. Le cœur reste disponible.")
                     self.dashboard_loading_status.set_visible(True)

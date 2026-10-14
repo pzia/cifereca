@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+from cifereca.gui.startup_lifecycle import once_while_open
+
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
@@ -26,6 +28,7 @@ def _method(name):
         "GLib": NS(idle_add=lambda callback: scheduled.append(callback)),
         "time": time,
         "TaskPriority": NS(PROVIDER_SYNC=30),
+        "once_while_open": once_while_open,
     }
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[future, method], type_ignores=[],
@@ -179,3 +182,20 @@ def test_live_provider_success_preserves_dashboard_and_single_deferred_sync():
     assert "opening-sync" not in [row[0] for row in calls]
     posted[0]()
     assert calls[-1] == ("opening-sync",)
+
+def test_plugin_activation_diagnostics_do_not_disclose_exception_secrets():
+    """Provider/plugin exceptions may contain private URLs and credentials."""
+    run, queued = _method("activate_startup_plugins")
+    observed = []
+    secret = "SENTINEL-PRIVATE-KEY"
+    host, _calls = _host(activate=lambda: (_ for _ in ()).throw(
+        RuntimeError(f"https://private.invalid/?token={secret}")
+    ))
+    host.diagnostics = NS(add=lambda *args, **kwargs: observed.append((args, kwargs)))
+    assert run(host) is False
+    assert len(observed) == 1
+    assert observed[0][1]["detail"] == {"reason": "activation_failed"}
+    assert secret not in repr(observed)
+    assert "private.invalid" not in repr(observed)
+    assert len(queued) == 1
+    assert queued[0]() is False

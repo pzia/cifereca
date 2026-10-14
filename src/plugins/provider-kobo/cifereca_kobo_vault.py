@@ -304,11 +304,27 @@ class KoboVaultClient:
                     "reason": "items_not_list",
                 })
             next_cursor = payload.get("next_cursor")
-            if not next_cursor:
+            # A malformed cursor is NOT the end of an authoritative personal
+            # manifest: e.g. 0, False, {}, whitespace or a control character
+            # would previously terminate early or be converted to a query.
+            # Vault cursors are opaque printable tokens, never user-facing.
+            if next_cursor is None or next_cursor == "":
                 break
-            cursor = str(next_cursor)
+            if (
+                type(next_cursor) is not str
+                or not 1 <= len(next_cursor) <= 2048
+                or any(not 33 <= ord(ch) <= 126 for ch in next_cursor)
+            ):
+                raise KoboVaultError(
+                    "Kobo-Vault : curseur de manifeste invalide",
+                    code="invalid_pagination",
+                )
+            cursor = next_cursor
             if cursor in seen:
-                raise KoboVaultError("Kobo-Vault : pagination manifest en boucle", code="invalid_pagination")
+                raise KoboVaultError(
+                    "Kobo-Vault : pagination manifest en boucle",
+                    code="invalid_pagination",
+                )
             seen.add(cursor)
         else:
             raise KoboVaultError("Kobo-Vault : manifest trop volumineux ou pagination invalide", code="invalid_pagination")
