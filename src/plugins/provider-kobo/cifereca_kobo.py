@@ -324,6 +324,10 @@ class KoboSession(ProviderSession):
         self.backup_manifest_rejection_count = 0
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
         items = self.client.library_manifest()
+        # Keep the complete raw snapshot only inside this provider call so
+        # its advisory classification can count foreign-account rows. Such
+        # rows must never reach Core's legacy materialization loop.
+        source_items = items
         # Transfer only a bounded *count* across the public provider boundary:
         # no upstream raw items, message strings, URLs or credentials.
         rejected = getattr(self.client, "last_manifest_rejections", ())
@@ -339,8 +343,31 @@ class KoboSession(ProviderSession):
             if self.connected and len(self._accounts) == 1
             else None
         )
+        if account_id is not None:
+            accepted = []
+            foreign_count = 0
+            for item in items:
+                # Only an explicitly claimed account is checked here: legacy
+                # personal-library rows without an account_id may still be
+                # reported, but never convey permission to download a file.
+                if (
+                    isinstance(item, dict) and "account_id" in item
+                    and (
+                        type(item["account_id"]) is not str
+                        or item["account_id"] != account_id
+                    )
+                ):
+                    foreign_count += 1
+                    continue
+                accepted.append(item)
+            items = accepted
+            # Core already treats any provider rejection as evidence that a
+            # partial manifest is unsuitable for authoritative rights prune.
+            self.backup_manifest_rejection_count = min(
+                1_000_000, self.backup_manifest_rejection_count + foreign_count,
+            )
         self.backup_manifest_policy = classify_personal_manifest(
-            items,
+            source_items,
             account_id=account_id,
             rejection_count=self.backup_manifest_rejection_count,
             acquisition_access=self.acquisition_access,
