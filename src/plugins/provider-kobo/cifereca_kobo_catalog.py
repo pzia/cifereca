@@ -46,35 +46,52 @@ class KoboCatalogService:
                     return None
                 if raw.scheme and raw.scheme.lower() not in {'http', 'https'}:
                     return None
+                base = urlsplit(self.client.base_url)
                 resolved = urljoin(self.client.base_url.rstrip('/') + '/', value)
                 parsed = urlsplit(resolved)
                 hostname = parsed.hostname
                 port = parsed.port
+                base_port = base.port
             except (ValueError, TypeError):
                 return None
+            # A user may explicitly configure a local Kobo Vault on loopback
+            # or LAN. Loading a cover from that *same exact API origin* is
+            # intentional, unlike following a URL supplied by a book record
+            # to a different private host or port.
+            trusted_vault_origin = (
+                parsed.scheme == base.scheme
+                and hostname == base.hostname
+                and port == base_port
+                and base.username is None and base.password is None
+                and not base.query and not base.fragment
+            )
             if (
                 parsed.scheme not in {'http', 'https'}
                 or not hostname
                 or parsed.username is not None or parsed.password is not None
                 or parsed.query or parsed.fragment
-                or port not in (None, 443 if parsed.scheme == 'https' else 80)
+                or (
+                    not trusted_vault_origin
+                    and port not in (None, 443 if parsed.scheme == 'https' else 80)
+                )
                 or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
             ):
                 return None
             host = hostname.rstrip('.').casefold()
-            if (
-                '.' not in host or '%' in host
-                or host in {'localhost', 'local', 'internal'}
-                or host.endswith(('.localhost', '.local', '.internal', '.lan', '.home.arpa'))
-            ):
-                return None
-            try:
-                address = ip_address(host)
-            except ValueError:
-                pass
-            else:
-                if not address.is_global:
+            if not trusted_vault_origin:
+                if (
+                    '.' not in host or '%' in host
+                    or host in {'localhost', 'local', 'internal'}
+                    or host.endswith(('.localhost', '.local', '.internal', '.lan', '.home.arpa'))
+                ):
                     return None
+                try:
+                    address = ip_address(host)
+                except ValueError:
+                    pass
+                else:
+                    if not address.is_global:
+                        return None
             return resolved
         def candidate(value, depth=0):
             budget[0]-=1
