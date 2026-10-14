@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncSourceRef
+from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
@@ -203,6 +203,74 @@ class SynchronizationBrokerImpl:
                 return account
         raise ValueError(f"unknown sync source: {source_id}")
 
+    @staticmethod
+    def _safe_phase_timestamp(value: Any) -> str:
+        """Normalize strictly bounded UTC timestamps; never reflect raw storage."""
+        if type(value) is not str or not 20 <= len(value) <= 35:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None or not 2000 <= parsed.year <= 2100:
+                return ""
+            return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+        except (ValueError, OverflowError):
+            return ""
+
+    def _phase_states(
+        self, account: Any, state: dict[str, Any], sync_caps: tuple[str, ...],
+    ) -> tuple[SyncPhaseState, ...]:
+        """Safe, read-only projection: no remote call, migration or acquisition."""
+        raw_status = state.get("status")
+        inventory_status = {
+            "ok": "success", "success": "success",
+            "running": "running", "partial": "partial",
+            "error": "failed", "failed": "failed",
+        }.get(raw_status, "idle")
+        inventory = SyncPhaseState(
+            phase="discover_rights", status=inventory_status,
+            last_attempt=self._safe_phase_timestamp(state.get("last_attempt")),
+            last_success=self._safe_phase_timestamp(state.get("last_success")),
+        )
+        if "local_materialization" not in sync_caps:
+            materialization = SyncPhaseState("materialize", "not_supported")
+        else:
+            identity = str(getattr(account, "identity_id", "") or "")
+            credential = str(getattr(account, "credential_id", "") or "")
+            # A checkpoint is credible only for its currently owning identity.
+            try:
+                bound = self.service.storage.identity_for_connection("kobo", credential)
+            except (AttributeError, TypeError, ValueError, KeyError):
+                bound = None
+            if not identity or not credential or bound != identity:
+                materialization = SyncPhaseState("materialize", "unknown")
+            else:
+                from .core.kobo_backup import _kobo_checkpoint_for
+                row = _kobo_checkpoint_for(self.service, identity, credential)
+                if row is None:
+                    materialization = SyncPhaseState("materialize")
+                else:
+                    status = {
+                        "complete": "success", "partial": "partial",
+                        "running": "running", "interrupted": "interrupted",
+                        "attention_required": "attention_required",
+                        "failed": "failed", "aborted": "failed",
+                        "cancelled": "cancelled",
+                    }.get(row.get("status"), "unknown")
+                    timestamp = row.get("updated_at")
+                    when = (
+                        datetime.fromtimestamp(timestamp, timezone.utc)
+                            .isoformat(timespec="seconds")
+                        if type(timestamp) is int and 946684800 <= timestamp <= 4102444800
+                        else ""
+                    )
+                    materialization = SyncPhaseState(
+                        phase="materialize", status=status, last_attempt=when,
+                        # A partial checkpoint does not attest historical success;
+                        # never substitute an inventory clock or fabricate it.
+                        last_success=when if status == "success" else "",
+                    )
+        return (inventory, materialization, SyncPhaseState("reconcile", "not_supported"))
+
     def _ref(self, account: Any) -> SyncSourceRef:
         source_id = self._source_id(account)
         account_ref = _account_ref(self.service, account)
@@ -243,6 +311,7 @@ class SynchronizationBrokerImpl:
             status=str(state.get("status") or "idle"),
             error=str(state.get("error") or ""),
             sync_capabilities=tuple(declared_sync_caps),
+            phase_states=self._phase_states(account, state, tuple(declared_sync_caps)),
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
