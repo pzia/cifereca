@@ -202,3 +202,29 @@ def test_offline_cli_does_not_connect_or_modify_local_backup(tmp_path, monkeypat
         assert called == ["close"]
     finally:
         service.close()
+
+
+def test_missing_path_referenced_twice_is_checked_only_once(tmp_path, monkeypatch):
+    """#1345: a failed backup path repeated by catalogue costs one probe."""
+    import cifereca.core.kobo_local_audit as audit_module
+
+    service, _session = _service(tmp_path, [])
+    missing = service._kobo_backup_target_dir("default") / "PRIVATE-missing.epub"
+    _backup(service, "private-duplicate-missing", missing)
+    _catalog(service, "private-duplicate-missing", missing)
+    calls = []
+    original = audit_module._read_hash_within
+
+    def count_probes(path, roots):
+        calls.append(path)
+        return original(path, roots)
+
+    monkeypatch.setattr(audit_module, "_read_hash_within", count_probes)
+    try:
+        report = kobo_local_reconciliation_audit(service)
+        assert calls == [str(missing)]
+        assert report["counts"]["linked_files_verified"] == 0
+        assert report["counts"]["unverified_placements"] == 1
+        assert report["counts"]["missing_or_unlinked"] == 0
+    finally:
+        service.close()
