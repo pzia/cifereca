@@ -64,9 +64,9 @@ def session(account):
     {"id": "ac-1", "account_id": 123},
     {"id": False, "account_id": "ac-1"},
     {"id": "a" * 257}, {"id": "ac 1"},
-    {"id": "ac\\nBearer PRIVATE_TOKEN"},
-    {"id": "ac\\rPRIVATE_TOKEN"}, {"id": "ac\\u202ePRIVATE_SPOOF"},
-    {"id": "ac\\u2066PRIVATE_ISOLATE"},
+    {"id": "ac\nBearer PRIVATE_TOKEN"},
+    {"id": "ac\rPRIVATE_TOKEN"}, {"id": "ac\u202ePRIVATE_SPOOF"},
+    {"id": "ac\u2066PRIVATE_ISOLATE"},
 ])
 def test_account_missing_or_ambiguous_fails_without_authentication_or_403_reset(account):
     provider, fake = session(account)
@@ -111,8 +111,8 @@ def test_connected_account_is_strictly_the_attested_opaque_vault_identifier(acco
 
 
 @pytest.mark.parametrize("unsafe_display", [
-    {"PRIVATE": "object"}, ["PRIVATE"], "PRIVATE\\nBearer SECRET",
-    "PRIVATE\\rSECRET", "PRIVATE\\u202eSECRET",
+    {"PRIVATE": "object"}, ["PRIVATE"], "PRIVATE\nBearer SECRET",
+    "PRIVATE\rSECRET", "PRIVATE\u202eSECRET",
     "x" * 121,
 ])
 def test_untrusted_vault_account_label_never_displays_raw_control_or_object(unsafe_display):
