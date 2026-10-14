@@ -93,6 +93,12 @@ def test_plugin_configuration_surfaces_scope_and_obsolete_ids():
 
 
 def _method_source(name: str) -> str:
+    if name == "_plugins_changed":
+        path = MAIN.parent / "plugin_reload_controller.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in tree.body
+                                if isinstance(node, ast.FunctionDef)
+                                and node.name == "plugins_changed"))
     if name == "_refresh_header_actions":
         tree = ast.parse(HEADER_OWNER.read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in tree.body
@@ -120,7 +126,9 @@ def test_page_menu_is_reasserted_rightmost_after_build_refresh_and_reconstructio
     assert "self._header_controls = controls" in create
     assert "self._ensure_pages_menu_rightmost()" in create
     assert "window._ensure_pages_menu_rightmost()" in refresh
-    assert "self._ensure_pages_menu_rightmost()" in changed
+    assert "window._ensure_pages_menu_rightmost()" in changed
+    main = MAIN.read_text(encoding="utf-8")
+    assert "plugin_reload_controller.plugins_changed(self)" in main
 
 
 def test_rightmost_helper_moves_menu_to_last_position_for_headless_box():
