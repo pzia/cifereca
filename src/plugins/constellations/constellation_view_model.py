@@ -47,8 +47,35 @@ def node_from_row(item, *, origin='catalogue'):
         row['provider_id'] = item.identifiers.get('provider', '')
         row['item_id'] = item.identifiers.get('source_item_id', '')
     metadata = dict(row.get('metadata') or {})
-    if row.get('local_path'):
-        metadata['owned'] = True
+    if origin == 'bibliothèque':
+        # Only a row fetched through the identity-scoped local metadata broker
+        # may establish that a concrete local file belongs to this profile.
+        if row.get('local_path'):
+            metadata['owned'] = True
+    else:
+        # A remote catalogue hit or a contextual selected BookRef is only
+        # bibliographic evidence. Flags and paths in those untrusted rows
+        # cannot assert possession by the current account.
+        ownership_keys = ('owned', 'possessed', 'local_path')
+        for container in (row, metadata):
+            for key in ownership_keys:
+                container.pop(key, None)
+            for key in ('availability', 'availability_state', 'access'):
+                if str(container.get(key) or '').strip().casefold() in {
+                    'owned', 'possessed', 'local',
+                }:
+                    container.pop(key, None)
+        raw_search = metadata.get('search_result')
+        if isinstance(raw_search, Mapping):
+            search = dict(raw_search)
+            for key in ownership_keys:
+                search.pop(key, None)
+            for key in ('availability', 'availability_state', 'access'):
+                if str(search.get(key) or '').strip().casefold() in {
+                    'owned', 'possessed', 'local',
+                }:
+                    search.pop(key, None)
+            metadata['search_result'] = search
     row['metadata'] = metadata
     ref = book_ref_from_row(row)
     if isinstance(item, BookRef):
