@@ -862,10 +862,13 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         # publish diagnostics reconstructed from this tool's known facts:
         # never pass paths, book titles or tokens from plan.warnings to GTK.
         warnings: list[str] = []
-        if pairs:
-            warnings.append(
-                "Chaque suppression est revérifiée par Core comme doublon du même artefact."
-            )
+        safety_notice = "Chaque suppression est revérifiée par Core comme doublon du même artefact."
+        # Preserve the actual preview notice, but not caller-supplied text.
+        if pairs and type(plan.warnings) in (tuple, list) and any(
+            type(value) is str and value == safety_notice
+            for value in plan.warnings[:100]
+        ):
+            warnings.append(safety_notice)
         read_failures = plan.facts.get("read_failures", 0)
         if type(read_failures) is int and 0 < read_failures <= 1_000_000:
             warnings.append(
