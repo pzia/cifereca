@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import history_language_projection
 from . import adept_loan_choice_controller
 from . import sync_issues_dialog_controller
 from . import shell_shortcut_controller
@@ -1057,19 +1058,12 @@ class MainWindow(Adw.ApplicationWindow):
         return sync_controller.run_opening_sync(self, control, deep=deep)
 
     def _known_item_languages(self, provider_id: str, item_id: str | None, metadata: dict[str, Any] | None = None) -> set[str]:
-        from cifereca.language import normalize_language_tag
-        values = []
-        meta = dict(metadata or {})
-        raw = meta.get('languages') or meta.get('language') or ()
-        values.extend(raw if isinstance(raw, (list, tuple, set)) else (raw,))
-        if item_id:
-            for row in self.service.storage.catalog_entries():
-                if str(row.get('provider_id') or '') != str(provider_id or ''): continue
-                if str(row.get('item_id') or '') != str(item_id): continue
-                row_meta = dict(row.get('metadata') or {})
-                raw = row_meta.get('languages') or row_meta.get('language') or ()
-                values.extend(raw if isinstance(raw, (list, tuple, set)) else (raw,))
-        return {tag for value in values if (tag := normalize_language_tag(value))}
+        # Keep the historical single-book contract (including direct loan
+        # metadata); history list filtering uses the batched projection below.
+        catalog_rows = self.service.storage.catalog_entries() if item_id else ()
+        return history_language_projection.item_languages(
+            provider_id, item_id, metadata, catalog_rows=catalog_rows,
+        )
 
     def _build_loans_page(self) -> MasterDetailPage:
         return loans_controller._build_loans_page(self)
@@ -1268,7 +1262,12 @@ class MainWindow(Adw.ApplicationWindow):
             self._history_all_rows = list(rows)
         wanted_languages = set(self.history_languages.values()) if hasattr(self, 'history_languages') else set()
         if wanted_languages:
-            rows = [x for x in rows if self._known_item_languages(x.source_provider, x.record_id or x.id).intersection(wanted_languages)]
+            # One local catalog read for the entire history batch, rather
+            # than a read per loan (which grows quadratically with list size).
+            catalog_rows = self.service.storage.catalog_entries() if rows else ()
+            rows = history_language_projection.history_rows_with_languages(
+                rows, wanted_languages, catalog_rows,
+            )
         self.history_objects = {x.id: x for x in rows}
         self._history_rows = list(rows)
         self._history_loaded_count = 0
