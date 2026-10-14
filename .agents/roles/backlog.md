@@ -40,6 +40,14 @@ Pour les constats issus d'une **campagne exploratoire du rôle `ux`**, le backlo
 
 Cette règle ne limite **ni la création directe de tickets par `backlog` sur demande explicite, ni la remontée d'un risque grave**, et ne crée **aucune recette utilisateur préalable obligatoire** pour les merges ou clôtures de tickets implémentés. Référence : [rôle UX](ux.md#validation-utilisateur-avant-création-de-tickets-ux-p0-1449).
 
+## Coordination des résolutions et collision des PR (#889)
+
+- Avant d'attribuer un correctif, vérifier l'issue canonique, les PR ouvertes **et leurs chemins modifiés** ; dédupliquer non seulement les tickets, mais aussi les **solutions concurrentes**, y compris entre agents du même rôle.
+- Inscrire dans l'issue le rôle pilote **de l'étape** (un seul propriétaire actif de la résolution), état `ready/doing/blocked/review`, critères, dépendances `blocking/blocked-by` et prochain handoff. Un signal de prise en charge est **souple**, sans expiration automatique, verrou technique ni commentaire de simple présence ; contrôler les HEAD avant toute reprise.
+- Pour un correctif Core/Plugin/UX/CI partagé, séparer les étapes et PR selon [la matrice commune](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889). La découverte UX suit toujours la validation utilisateur avant nouveaux tickets ; ne pas dupliquer les suggestions refusées ou en attente.
+- Audit de concurrence : noter **date, nombre de PR ouvertes, paires avec fichiers communs, conflits Git effectivement attestés, merges refusés et rebases inutiles documentés**. Le partage de fichiers ne prouve pas un conflit. Mesurer de nouveau à date ultérieure, sans annoncer d'amélioration chiffrée du fait de la seule publication de règles.
+- **Base du 14/10/2026 (ticket #889)** : photographie de 12 PR ouvertes ; une paire (#1044 / #1008) partage trois fichiers de Jeunesse. Les conflits réellement attestés restent **non mesurés** dans cette photographie. Cette donnée n'est pas un nombre d'incidents observés.
+
 ## Audit des livraisons fermées
 
 - GitHub fait foi : recenser les issues récemment **fermées après merge**, vérifier le lien vers la PR, les preuves disponibles et les limites explicitement déclarées.

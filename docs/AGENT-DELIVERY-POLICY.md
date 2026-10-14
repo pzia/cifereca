@@ -59,8 +59,12 @@ Distinguer sans ambiguïté :
    en gate CI. **Cette approbation de tickets n'est pas un gate de merge** :
    l'absence de campagne exploratoire ne bloque pas la clôture.
 7. **Ownership asynchrone explicite** : avant de travailler, lire issue,
-   branches, PR et checks actuels. Un rôle pilote et un prochain handoff
-   visibles par issue ; ne pas dupliquer le travail d'un autre fil.
+   branches, PR **et fichiers modifiés** et checks actuels. Un seul pilote
+   de la même résolution, même entre agents d'un même rôle, avec handoff
+   et dépendances visibles. Selon la [matrice des propriétaires](../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889),
+   séparer harnais CI, scénarios exploratoires et assertions fonctionnelles ;
+   traverser une frontière par PR/étapes indépendantes, pas par correctif
+   concurrent. Un partage de chemins n'est pas une preuve de conflit.
    Pas de verrou permanent ni de « réservation » tacite d'une issue.
 8. **Déblocage, merge et clôture pilotés par `cicd`** : revue du périmètre,
    des preuves, des checks sur le SHA pertinent et des protections ;

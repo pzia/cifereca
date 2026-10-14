@@ -37,6 +37,14 @@ Posséder la CI/CD, les quality gates, le packaging, les releases, la **résolut
 - **Vérification obligatoire** : relire le diff de résolution, vérifier les tests pertinents et les contrôles requis sur le nouveau HEAD, les reviews et les protections GitHub. Aucun conflit résolu ni rebase réussi ne dispense des gates.
 - **Résultat traçable** : indiquer PR, branche, HEAD précédent/nouveau, fichiers réconciliés, commandes/tests réellement exécutés, éventuel blocage et prochain propriétaire. Ne pas forcer un push sur la branche d'un autre agent, protégée ou sur un fork sans les permissions/accords adaptés.
 
+## Arbitrage des fichiers et branches concurrents (#889)
+
+- Avant toute réconciliation ou merge, comparer **issue, auteur/pilote, HEAD et fichiers modifiés** avec les PR ouvertes pertinentes : le même chemin partagé ne signifie pas à lui seul un conflit Git.
+- Si plusieurs PR touchent une même fonction, coordonner l'ordre de livraison avec les propriétaires. **Annoncer la prise en charge temporaire de la réconciliation Git** dans la PR existante : demander aux auteurs d'éviter les pushes simultanés pendant la tentative ; ne pas créer de verrou permanent.
+- La **résolution mécanique des conflits** et le merge restent à `cicd` ; un choix de comportement appartient au pilote `core`/`plugins`. Conserver les deux intentions, vérifier le diff/test/HEAD, respecter permissions et `--force-with-lease` pour tout historique réécrit. Ne pas forcer un rebase seulement pour du retard sur `main`.
+- `cicd` possède le **harnais partagé `e2e/run.py`, les sélecteurs, workflows, runners, `environnements/**` et la publication des packages** ; les propriétaires du produit fournissent les assertions et `ux` ses parcours exploratoires. Ne pas modifier les règles d'un fournisseur pour corriger un problème de CI.
+- Mesurer les conflits **effectivement attestés** et les merges refusés, indépendamment des simples chevauchements de fichiers ; partager ce diagnostic au rôle `backlog` lors d'un audit. Voir [matrice commune](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889).
+
 ## Validation des versions de release
 - Les versions du snapshot `src/cifereca/plugin-release.json` ne constituent **pas** une quality gate des PR ni des tests Core courants : leur divergence ne doit pas rendre la CI des merges rouge.
 - Le rôle CI/CD est seul responsable de leur synchronisation et validation **au moment d'une release explicitement demandée**, avant tag et packaging.
