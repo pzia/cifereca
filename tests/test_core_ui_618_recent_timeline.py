@@ -14,6 +14,10 @@ RECENT_ROWS = ROOT / "src/cifereca/gui/recent_rows.py"
 
 
 def _method(path: Path, class_name: str, method_name: str) -> str:
+    if path == MAIN and method_name == "_render_recent":
+        module = ast.parse(MAIN.with_name("library_render_controller.py").read_text())
+        return ast.unparse(next(node for node in module.body
+                               if isinstance(node, ast.FunctionDef) and node.name == "render_recent"))
     if path == SERVICES and method_name == "recent_acquisitions":
         module = ast.parse((ROOT / "src/cifereca/core/library_projection.py").read_text())
         return ast.unparse(next(n for n in module.body
@@ -55,7 +59,7 @@ def test_recent_list_exposes_compact_temporal_label():
     assert "temporal" in source
     facade = _method(MAIN, "MainWindow", "_render_recent")
     assert "project_recent_rows(items, row_factory=BookListItem)" in facade
-    assert "self._attach_row_facets(rows, self._recent_objects, self.search_controls)" in facade
+    assert "window._attach_row_facets(rows, window._recent_objects, window.search_controls)" in facade
 
 
 def test_recent_detail_prioritizes_filename_date_and_provenance():
