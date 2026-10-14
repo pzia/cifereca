@@ -72,6 +72,43 @@ class KoboVaultClient:
         return f"{self.base_url}{self.API_PREFIX}{path}"
 
     @staticmethod
+    def _checked_search_text(
+        value: Any, *, maximum: int = 4096, optional: bool = False,
+    ) -> str | None:
+        # A query/cursor may be opaque or contain Unicode but must not be an
+        # arbitrary object or an unbounded/control-character-bearing value.
+        # Never interpolate caller input into public provider errors.
+        if optional and value is None:
+            return None
+        if type(value) is not str or len(value) > maximum or (
+            not optional and maximum <= 256 and not value
+        ) or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+            raise ProviderError("Kobo-Vault : paramètre de recherche invalide")
+        return value
+
+    @staticmethod
+    def _checked_pagination(value: Any, *, minimum: int, maximum: int) -> int:
+        # Legacy numeric-string inputs remain supported, but booleans, floats
+        # and arbitrary objects must not be coerced by int(), whose error may
+        # echo a private token or signed URL.
+        if type(value) is int:
+            number = value
+        elif (
+            type(value) is str and 1 <= len(value) <= 16
+            and (
+                value.isascii() and value.isdecimal()
+                or (
+                    value.startswith("-") and len(value) > 1
+                    and value[1:].isascii() and value[1:].isdecimal()
+                )
+            )
+        ):
+            number = int(value)
+        else:
+            raise ProviderError("Kobo-Vault : pagination invalide")
+        return max(minimum, min(number, maximum))
+
+    @staticmethod
     def _error_code(response: httpx.Response) -> str | None:
         """Accept only enumerated provider error codes, never response prose.
 
@@ -163,13 +200,14 @@ class KoboVaultClient:
         language: str | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
-            "q": query,
-            "field": field,
-            "limit": max(1, min(int(limit), 100)),
-            "page": max(0, int(page)),
+            "q": self._checked_search_text(query),
+            "field": self._checked_search_text(field, maximum=128),
+            "limit": self._checked_pagination(limit, minimum=1, maximum=100),
+            "page": self._checked_pagination(page, minimum=0, maximum=1_000_000),
         }
-        if language:
-            params["language"] = language
+        lang = self._checked_search_text(language, maximum=128, optional=True)
+        if lang:
+            params["language"] = lang
         return self._json("GET", "/catalog/search", params=params)
 
     def search_library(
@@ -181,12 +219,13 @@ class KoboVaultClient:
         cursor: str | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
-            "q": query,
-            "field": field,
-            "limit": max(1, min(int(limit), 100)),
+            "q": self._checked_search_text(query),
+            "field": self._checked_search_text(field, maximum=128),
+            "limit": self._checked_pagination(limit, minimum=1, maximum=100),
         }
-        if cursor:
-            params["cursor"] = cursor
+        checked_cursor = self._checked_search_text(cursor, optional=True)
+        if checked_cursor:
+            params["cursor"] = checked_cursor
         return self._json("GET", "/library/search", params=params)
 
     @staticmethod
@@ -318,6 +357,11 @@ class KoboVaultClient:
         if type(scope) is not str or scope.lower() not in {"catalog", "library", "all"}:
             raise ProviderError("Kobo-Vault : portée de recherche invalide")
         scope = scope.lower()
+        if scope in {"library", "all"}:
+            # all starts with a public GET. Validate personal cursor before
+            # that first call, so a bad private cursor never causes partial
+            # network activity or misleading public-only success.
+            self._checked_search_text(cursor, optional=True)
         if scope == "catalog":
             return self._public_catalog_payload(
                 self.search_catalog(query, field=field, limit=limit, page=page)
@@ -406,9 +450,12 @@ class KoboVaultClient:
         }
 
     def library_manifest_page(self, *, cursor: str | None = None, limit: int = 200) -> dict[str, Any]:
-        params: dict[str, Any] = {"limit": max(1, min(int(limit), 500))}
-        if cursor:
-            params["cursor"] = cursor
+        params: dict[str, Any] = {
+            "limit": self._checked_pagination(limit, minimum=1, maximum=500),
+        }
+        checked_cursor = self._checked_search_text(cursor, optional=True)
+        if checked_cursor:
+            params["cursor"] = checked_cursor
         return self._json("GET", "/library/manifest", params=params)
 
     def library_manifest(self) -> list[dict[str, Any]]:
