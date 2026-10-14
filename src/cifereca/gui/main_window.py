@@ -61,6 +61,7 @@ from .startup_lifecycle import once_while_open
 from . import startup_coordinator
 from . import feedback_timers
 from . import activity_result_controller
+from . import activity_feedback_view_controller
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -343,64 +344,20 @@ class MainWindow(Adw.ApplicationWindow):
         return feedback_timers.cancel_activity_hide(self, source_remove=GLib.source_remove)
 
     def _refresh_activity_history(self) -> None:
-        if getattr(self, "_closed", False):
-            return
-        if not hasattr(self, "activity_history_box"):
-            return
-        clear_box(self.activity_history_box)
-        rows = activity_history_rows(self.activity_feedback.rows())
-        for display_text, is_error in rows:
-            label = Gtk.Label(label=display_text, xalign=0)
-            label.set_wrap(True)
-            label.add_css_class("caption")
-            if is_error:
-                label.add_css_class("warning")
-            self.activity_history_box.append(label)
-        self.activity_history_button.set_visible(bool(rows))
+        return activity_feedback_view_controller.refresh_activity_history(
+            self, Gtk=Gtk, clear_box=clear_box, activity_history_rows=activity_history_rows,
+        )
 
     def _show_pending_activity_error(self) -> bool:
-        if getattr(self, "_closed", False):
-            return False
-        entry = self.activity_feedback.latest_unacknowledged_error()
-        if entry is None or not hasattr(self, "busy_revealer"):
-            return False
-        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
-        self.activity_status_icon.set_visible(True)
-        self.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
-        self.activity_status_icon.add_css_class("activity-error")
-        self.activity_status_icon.remove_css_class("activity-success")
-        self.busy_label.set_visible(True)
-        self.busy_label.set_label(entry.display_text)
-        self.activity_dismiss.set_visible(True)
-        self.busy_revealer.set_reveal_child(True)
-        return True
+        return activity_feedback_view_controller.show_pending_activity_error(self)
 
     def _hide_activity_feedback(self) -> bool:
-        self._activity_hide_source = None
-        if getattr(self, "_closed", False) or self._active_tasks:
-            return False
-        pending_error = self._show_pending_activity_error()
-        if not can_reduce_activity(
-            closed=False, active_count=0, pending_error=pending_error,
-            has_view=hasattr(self, "busy_revealer"),
-        ):
-            return False
-        self.busy_spinner.stop(); self.busy_spinner.set_visible(False)
-        self.activity_status_icon.set_visible(False)
-        self.activity_dismiss.set_visible(False)
-        rows = self.activity_feedback.rows()
-        self.busy_label.set_visible(False)
-        self.activity_history_button.set_visible(bool(rows))
-        self.busy_revealer.set_reveal_child(bool(rows))
-        return False
+        return activity_feedback_view_controller.hide_activity_feedback(
+            self, can_reduce_activity=can_reduce_activity,
+        )
 
     def _dismiss_activity_feedback(self) -> None:
-        if getattr(self, "_closed", False):
-            return
-        self._cancel_activity_hide()
-        self.activity_feedback.acknowledge_errors()
-        self._refresh_activity_history()
-        self._hide_activity_feedback()
+        return activity_feedback_view_controller.dismiss_activity_feedback(self)
 
     def _schedule_activity_reduce(self, delay: int = 4) -> None:
         if getattr(self, "_closed", False):
