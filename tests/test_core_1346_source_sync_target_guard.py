@@ -20,7 +20,7 @@ def _setup():
     return service, broker, refs
 
 
-@pytest.mark.parametrize("request,expected", [
+@pytest.mark.parametrize("sync_request,expected", [
     (SyncRequest(identity_id="reader-b"), "identity_mismatch"),
     (SyncRequest(identity_id="alice", scopes=("materialize",)), "unsupported_scope"),
     (SyncRequest(identity_id="alice", scopes=("remote_inventory",)), "unsupported_scope"),
@@ -30,11 +30,11 @@ def _setup():
     (SyncRequest(identity_id="alice", options={"unexpected_scope": "download"}), "target_mismatch"),
     (SyncRequest(identity_id="alice", deep=1), "unsupported_scope"),
 ])
-def test_single_account_scope_mismatch_has_no_reads_writes_or_refresh(request, expected):
+def test_single_account_scope_mismatch_has_no_reads_writes_or_refresh(sync_request, expected):
     service, broker, refs = _setup()
     # State/checkpoint must remain untouched even if source is disabled.
     before = dict(service.storage.values)
-    response = broker.synchronize_source(refs["a1"].source_id, request)
+    response = broker.synchronize_source(refs["a1"].source_id, sync_request)
     assert not response.ok and response.changed == 0
     assert response.facts == {"reason": expected}
     assert service.calls == []
@@ -59,17 +59,17 @@ def test_exact_account_contract_can_refresh_only_requested_source():
     assert broker.sources("alice")[1].status == "ok"
 
 
-@pytest.mark.parametrize("request,reason", [
+@pytest.mark.parametrize("sync_request,reason", [
     (SyncRequest(), "identity_required"),
     (SyncRequest(identity_id="", deep=True), "identity_required"),
     (SyncRequest(identity_id="alice", scopes=("materialize",)), "unsupported_scope"),
     (SyncRequest(identity_id="alice", options={"account_id": "a1"}), "unsupported_scope"),
     (SyncRequest(identity_id="alice", deep=1), "unsupported_scope"),
 ])
-def test_global_batch_rejects_implicit_identity_or_materialization(request, reason):
+def test_global_batch_rejects_implicit_identity_or_materialization(sync_request, reason):
     service, broker, refs = _setup()
     before = dict(service.storage.values)
-    receipt = broker.synchronize(request)
+    receipt = broker.synchronize(sync_request)
     assert not receipt.ok and receipt.changed == 0
     assert receipt.facts == {"reason": reason}
     assert service.calls == []
