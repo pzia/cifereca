@@ -86,3 +86,28 @@ def test_search_does_not_resurrect_personal_results_after_disconnect_or_rebind()
         assert vault.manifest_calls == 0 and vault.acquisition_calls == 0
     finally:
         session.close()
+
+
+def test_search_invalid_account_identity_never_attests_legacy_personal_hits():
+    """A verified provider/credential alone is not evidence of an account."""
+    vault = FakeVault([])
+    session = session_with_vault(vault)
+    session.catalog = catalog = Catalog(session, _hits())
+    try:
+        for invalid_id in (None, "", "with spaces", "\n", "a" * 257, False, 17):
+            session.connected = True
+            session._accounts = [Account(
+                unique_id=invalid_id, display_name="Synthetic",
+                provider_id=session.provider_id,
+                credential_id=session.credential_id,
+            )]
+            # /catalog remains public; /library items without account_id
+            # must not inherit authority from an unverified session.
+            result = session.search("book")
+            assert [item.record_id for item in result] == ["public"]
+            assert result[0].owned is False
+
+        assert len(catalog.calls) == 7
+        assert vault.manifest_calls == 0 and vault.acquisition_calls == 0
+    finally:
+        session.close()
