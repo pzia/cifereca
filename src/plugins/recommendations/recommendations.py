@@ -5,7 +5,7 @@ import re
 import time
 from ipaddress import ip_address
 from typing import Any, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from cifereca.plugin_api import (
     Cancelled,
@@ -50,47 +50,81 @@ def _reference_selection_key(book: Any) -> str:
 
 
 def _external_book_url(value: Any) -> str | None:
-    url = str(value or "").strip()
+    """Only ordinary public book pages may become external detail actions.
+
+    Catalogue values are untrusted. In particular, direct acquisition links,
+    signed paths, localhost aliases and non-standard ports must not escape
+    through the shared detail panel as if they were public notices.
+    """
+    if type(value) is not str or not 1 <= len(value) <= 2048:
+        return None
+    url = value.strip()
     if (
-        not url or len(url) > 2048
-        or any(ord(char) < 33 or ord(char) == 127 for char in url)
+        not url
+        or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url)
         or any(char in url for char in "<>\\")
     ):
         return None
     try:
         parsed = urlsplit(url)
-        _ = parsed.port
+        port = parsed.port
     except ValueError:
         return None
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return None
-    if parsed.port not in (None, 443 if parsed.scheme == "https" else 80):
+    if parsed.username is not None or parsed.password is not None:
         return None
-    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
-        # A signed acquisition URL, referral token or fragment is not an
-        # attested public book notice. Never reflect it in an external action.
+    if parsed.query or parsed.fragment:
+        # Never export signed acquisition links or session identifiers.
         return None
+    if port is not None and port != (443 if parsed.scheme == "https" else 80):
+        return None
+
     host = parsed.hostname.lower().rstrip(".")
     if (
-        not host or "." not in host or "%" in host
-        or host == "localhost"
-        or host.endswith((
-            ".local", ".localhost", ".internal", ".lan", ".home.arpa",
-        ))
-        or any(ord(ch) < 33 or ord(ch) == 127 for ch in host)
+        not host or "." not in host
+        or host == "localhost" or host.endswith((".local", ".localhost", ".internal", ".lan", ".home.arpa"))
+        or len(host) > 253
+        or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part)
+               for part in host.split("."))
     ):
         return None
     try:
         address = ip_address(host)
     except ValueError:
         address = None
-    if address is not None and not address.is_global:
+    if address is not None:
+        if not address.is_global:
+            return None
+    elif not re.fullmatch(r"[a-z][a-z0-9-]{1,62}", host.rsplit(".", 1)[-1]):
+        # Reject noncanonical numeric hosts such as 127.1 and 0177.0.0.1.
         return None
-    if "%" in parsed.path and re.search(r"%(?:0[0-9a-f]|1[0-9a-f]|7f)", parsed.path, re.I):
-        # Do not let encoded control characters round-trip through the browser
-        # or into a book-action link handed off to a helper.
-        return None
-    return url
+
+    path = parsed.path
+    forbidden_segments = {
+        "download", "downloads", "acquisition", "acquire",
+        "licence", "license", "licenses", "licences",
+        "token", "tokens", "oauth", "authorize", "authorization",
+        "login", "signin", "drm", "adept",
+    }
+    # A path segment or control byte may be encoded several times. Never
+    # dereference it; decoding here is used exclusively for rejection.
+    for _ in range(4):
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            return None
+        segments = [part.casefold() for part in path.split("/") if part]
+        if any(
+            part in forbidden_segments
+            or part.endswith((".acsm", ".lcpl", ".epub", ".kepub"))
+            for part in segments
+        ):
+            return None
+        decoded = unquote(path)
+        if decoded == path:
+            return url
+        path = decoded
+    # Do not accept deeply nested encodings with uninspected final content.
+    return None
 
 
 def _public_cover_url(item: Any) -> str | None:
