@@ -99,6 +99,14 @@ Elle s'applique à tous les rôles et aux fils ChatGPT qui avancent en parallèl
 
 Un push de journal sur main peut déclencher les workflows Core, Plugins et validation de l'installation, créer du bruit et des conflits, sans apporter de meilleure traçabilité qu'une issue. **Choix par défaut : issue/PR**, mise à jour aux changements d'état, et non push direct d'un journal.
 
+## Tests non bloquants pour l'agent : passer à l'opération suivante
+
+**Règle d'exécution : ne pas attendre une exécution de tests et passer à l'opération suivante.** Dès qu'une suite de tests ou un workflow CI/E2E a été lancé et peut continuer de façon autonome, enregistrer **PR/ticket, HEAD SHA, lien du run, tests concernés et état `en cours`**, puis avancer vers la **prochaine opération utile et indépendante autorisée** (autre PR, autre ticket prioritaire ou préparation non conflictuelle). Ne pas immobiliser un agent en sondant une CI en boucle, ni relancer pour accélérer ou déclencher un résultat.
+
+À la prochaine revue de la PR ou avant une opération **qui dépend du résultat** (notamment fusion, clôture, release, déploiement ou action touchant secrets/intégrité), revenir consulter **les résultats effectifs sur le bon SHA**. **Un test en cours, absent ou inconnu n'est jamais un PASS** : ne pas merger/fermer une issue dont les contrôles requis restent en attente ou échouent ; consigner l'attente puis avancer ailleurs. Les protections GitHub, permissions, reviews et exigences de sécurité restent intégralement applicables.
+
+Cette règle concerne **le temps d'attente de l'agent**, pas une dispense de tests ni l'autorisation de prendre une opération dépendante de résultats non connus. Si aucune exécution non bloquante n'est disponible, ne pas prétendre l'avoir déclenchée ; utiliser le moyen de test réellement disponible et restituer honnêtement la preuve obtenue.
+
 ## Frugalité des GitHub Actions : règle commune
 
 **Chaque minute de CI doit apporter une preuve nécessaire.** Cette discipline s'applique à tous les rôles, y compris `focus`, et ne diminue jamais les contrôles obligatoires.

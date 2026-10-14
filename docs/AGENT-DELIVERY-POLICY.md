@@ -93,6 +93,12 @@ Distinguer sans ambiguïté :
     documenter un blocage **réel** et demander arbitrage ; jamais inventer
     une validation ni contourner les protections de branche.
 
+## Enchaîner les opérations pendant l'exécution des tests
+
+**Ne pas attendre une exécution de tests : passer à l'opération suivante**, **à condition qu'elle ne dépende pas de leur résultat**. Après lancement asynchrone de tests/CI/E2E, garder sur l'issue ou la PR le lien vers le run, les suites demandées, le **HEAD SHA** et l'état honnête `en cours / non vérifié`. Prendre un autre travail utile et autorisé, sans attente active, polling répété ni nouvelle CI de relance superflue. Recontrôler les résultats lors de la prochaine revue ou avant toute opération dépendante.
+
+**Barrière inchangée** : avant de fusionner, fermer une issue livrée, publier ou engager une action sensible, vérifier les résultats réellement exigés sur le bon SHA. Un run en cours, une absence de verdict, un job ignoré alors que requis ou un échec **ne vaut pas réussite** et impose de différer cette opération précise, **pas tout le travail de l'agent**. Respecter la politique d'exception documentée et ne jamais inventer une exécution de tests.
+
 ## Politique de preuves avant fusion
 
 | Nature du changement | Preuves normalement attendues |

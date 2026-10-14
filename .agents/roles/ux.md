@@ -96,6 +96,10 @@ Pour une vidéo, filmer le display Xvfb réel avec FFmpeg `x11grab`. Une vidéo
 reconstruite avec PIL, une maquette de l'interface, un terminal filmé ou le
 self-test `app.py` du harnais ne prouve pas les fonctionnalités Cifereca.
 
+## Attente non bloquante des campagnes E2E
+
+Si une recette GTK/E2E est lancée en exécution autonome, ne pas attendre passivement sa fin : conserver l'identifiant du run, le scénario et le HEAD SHA, puis avancer sur une **autre observation ou préparation indépendante**. Revenir analyser les captures, logs et verdicts dès qu'ils sont disponibles, **avant** de qualifier un comportement ou de soumettre une proposition de ticket comme défaut avéré. Un scénario `en cours` n'est pas un succès ; les nouveaux tickets UX exigent toujours la validation utilisateur préalable par liste numérotée.
+
 ## Interdits
 - Aucune implémentation produit.
 - Aucun changement Core, plugin, CI/CD ou merge.

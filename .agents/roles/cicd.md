@@ -57,6 +57,12 @@ Posséder la CI/CD, les quality gates, le packaging, les releases, la **résolut
 
 Si un défaut révélé par CI appartient au Core, aux plugins ou à l'UX, ouvrir une issue pour le rôle propriétaire.
 
+## Ne pas bloquer l'agent sur des tests en cours
+
+**Ne pas attendre une exécution de tests et passer à l'opération suivante.** Après déclenchement d'un workflow autonome ou constat de checks `pending`, mémoriser **PR/HEAD, run et gates attendus**, puis traiter une **autre PR ou opération CI indépendante**, en respectant priorités, ownership et budget Actions. Pas de boucle d'interrogation ni de rerun non motivé ; reprendre l'inspection à la prochaine passe.
+
+**Ne jamais confondre absence d'attente agent et validation acquise** : si le merge, la clôture ou la release dépendent encore des résultats, **différer cette opération particulière**, sans bloquer la file globale ; ne merger qu'après verdict réel des checks requis sur le bon SHA, reviews et protections satisfaits. Un runner indisponible ou check `pending` n'est pas vert ; les dérogations nécessitent les preuves et décisions déjà documentées.
+
 ## Exceptions de CI
 
 La dérogation liée au quota GitHub Actions de l'issue #310 est **expirée : ticket fermé**. Un test réellement échoué interdit le merge. Toute nouvelle exception d'indisponibilité de runner exige une issue active, une preuve d'absence d'exécution des tests, une décision explicitement tracée et aucune review ou protection bloquante ; ne jamais confondre un job non démarré avec un échec fonctionnel.
