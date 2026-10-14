@@ -274,6 +274,15 @@ class KoboSession(ProviderSession):
         return self.catalog.normalize_item(item, default_collection=default_collection)
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        # The host uses all/digital/physical; catalog is also exposed for
+        # explicitly public discovery. Unknown or malformed scopes must not
+        # silently become an authenticated all-sources search and issue a
+        # private /library/search request. Keep diagnostics independent of
+        # the rejected caller value (which could contain a signed URL).
+        if type(scope) is not str or scope not in {
+            "all", "digital", "physical", "catalog",
+        }:
+            raise ProviderError("Kobo-Vault : portée de recherche invalide")
         if scope == "physical":
             return []
         # Determine whether personal discovery is authorized *before* the
