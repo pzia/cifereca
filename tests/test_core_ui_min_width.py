@@ -16,7 +16,11 @@ def _method_source(class_name: str, method_name: str) -> str:
 
 
 def test_navigation_group_header_can_shrink_at_minimum_window_width():
-    source = _method_source("MainWindow", "_rebuild_plugin_pages")
+    owner = ROOT / "src/cifereca/gui/shell_page_controller.py"
+    tree = ast.parse(owner.read_text(encoding="utf-8"))
+    method = next(node for node in tree.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "rebuild_plugin_pages")
+    source = ast.unparse(method)
 
     assert "button = Gtk.ToggleButton()" in source
     assert "button_label = Gtk.Label(label=group_label, xalign=0)" in source
