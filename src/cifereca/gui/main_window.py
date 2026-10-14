@@ -552,18 +552,9 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _build_standard_page(self, route):
-        builders = {"dashboard": self._build_dashboard_page, "loans": self._build_loans_page,
-                    "search": self._build_search_page, "history": self._build_history_page,
-                    "bookings": self._build_bookings_page, "library": self._build_library_page,
-                    "recent": self._build_recent_page, "sync": self._build_sync_page,
-                    "tools": self._build_tools_page, "settings": self._build_settings_page,
-                    "plugins": lambda: PluginManagerPage(self, self.plugin_manager, self._plugins_changed)
-                    if self.plugin_manager else Gtk.Label(label="Gestionnaire indisponible")}
-        widget = builders[route]()
-        attr = {"loans": "loan", "bookings": "booking"}.get(route, route)
-        setattr(self, attr + "_page", widget)
-        if route == "library": self.kobo_page = widget
-        return widget
+        return shell_page_controller.build_standard_page(
+            self, route, Gtk=Gtk, PluginManagerPage=PluginManagerPage,
+        )
 
     def _rebuild_plugin_pages(self) -> None:
         return shell_page_controller.rebuild_plugin_pages(
