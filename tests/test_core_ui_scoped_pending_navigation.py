@@ -16,13 +16,12 @@ def _main_method(name):
 
 
 def _methods():
-    selected = [_main_method(name) for name in (
-        "_open_library_item", "_select_pending_library_item",
-    )]
-    module = ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[]))
-    namespace = {}
-    exec(compile(module, str(MAIN), "exec"), namespace)
-    return namespace
+    # Execute the actual headless implementation; MainWindow keeps only facades.
+    from cifereca.gui import library_navigation
+    return {
+        "_open_library_item": library_navigation.open_library_item,
+        "_select_pending_library_item": library_navigation.select_pending_library_item,
+    }
 
 
 def _host():
