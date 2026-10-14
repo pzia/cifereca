@@ -15,4 +15,8 @@ def test_settings_tabs_stay_compact_without_shortening_labels():
     assert '("sync", "Synchronisation")' in shell
     assert 'switcher.add_css_class("settings-tabs")' in shell
     assert "build_settings_shell(Gtk=Gtk, Adw=Adw, add_css=add_css)" in settings_source_text()
-    assert '.settings-tabs button { padding-left: 8px; padding-right: 8px; min-width: 0; }' in source
+    assert "shell_stylesheet_controller.install_css(" in source
+    stylesheet = (ROOT / "src/cifereca/gui/shell_stylesheet_controller.py").read_text(
+        encoding="utf-8"
+    )
+    assert '.settings-tabs button { padding-left: 8px; padding-right: 8px; min-width: 0; }' in stylesheet
