@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import public_catalogue_action_controller
 from . import acsm_import_chooser_controller
 from . import shell_stylesheet_controller
 from . import settings_chooser_controller
@@ -1544,38 +1545,9 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as exc: self.show_error(str(exc), 'Ouverture du livre impossible')
 
     def _add_catalogue_action(self, detail, item):
-        target = self.service.public_catalogue_target(item)
-        if not target:
-            return
-        kind, url = target
-        if url in getattr(detail, "_rendered_document_urls", set()):
-            return
-        is_notice = kind == 'notice'
-        button = self.action_button(
-            'Ouvrir la notice' if is_notice else 'Ouvrir le catalogue',
-            'web-browser-symbolic',
+        return public_catalogue_action_controller.add_catalogue_action(
+            self, detail, item, Gio=Gio,
         )
-        button._cifereca_action_id = 'open-notice' if is_notice else 'open-catalogue'
-        button.set_tooltip_text(
-            'Ouvrir la page publique de ce livre'
-            if is_notice else 'Ouvrir le catalogue général pour y rechercher ce livre'
-        )
-
-        def open_catalogue(_button):
-            try:
-                # The classification may have changed since rendering. Never
-                # turn a button promising a book notice into a generic homepage.
-                current = self.service.public_catalogue_target(item)
-                if current and current[0] == kind:
-                    Gio.AppInfo.launch_default_for_uri(current[1], None)
-                elif current:
-                    self.toast('La destination du lien a changé ; actualisez la fiche.')
-            except Exception as exc:
-                self.show_error(str(exc), 'Ouverture de la page publique impossible')
-
-        button.connect('clicked', open_catalogue)
-        detail.add_actions([button])
-
 
     @staticmethod
     def _book_description(item):
