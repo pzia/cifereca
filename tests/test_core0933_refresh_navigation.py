@@ -75,13 +75,18 @@ def test_identity_activation_ignores_late_results_from_previous_identity():
 
 
 def test_filtered_identity_navigation_validates_route_identity_and_providers():
-    source = _method_source(MAIN, "MainWindow", "open_identity_view")
+    facade = _method_source(MAIN, "MainWindow", "open_identity_view")
+    source = _method_source(
+        MAIN.with_name("identity_view_controller.py"), None, "open_identity_view",
+    )
 
+    assert "identity_view_controller.open_identity_view" in facade
     assert "if route not in {'search', 'library'}:" in source
-    assert "if isinstance(providers, str) or any((not isinstance(p, str) or not p for p in providers)):" in source
-    assert "allowed = {d.id for d in self.service.provider_descriptors()} | {'local'}" in source
+    assert "snapshot = tuple(providers)" in source
+    assert "selected = tuple(dict.fromkeys(snapshot))" in source
+    assert "allowed = {descriptor.id for descriptor in window.service.provider_descriptors()} | {'local'}" in source
     assert "if not set(selected) <= allowed:" in source
-    assert "self._activate_identity(identity_id)" in source
+    assert "window._activate_identity(identity_id)" in source
     assert "controls.set_state(QueryState(scope='digital', providers=selected))" in source
 
 
