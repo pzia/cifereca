@@ -142,10 +142,12 @@ class KoboSession(ProviderSession):
             pass
 
     def connect(self) -> list[Account]:
-        # Do not discard a denied delegated scope until the new connection
-        # has actually authenticated. A failed status/account request is not
-        # proof that permissions changed, and a live session can still hold
-        # the previous token after an unsuccessful reconnect.
+        # A reconnect may use a replaced token, so the previous successful
+        # account handshake must not continue to authorize operations while
+        # /status or /account is being queried. Keep the previous account
+        # binding as provenance, but never keep the session ACTIVE on failure.
+        # The delegated-scope denial is preserved until a verified success.
+        self.connected = False
         self.capability_names = set()
         self.capability_details = {}
         self.supports_acquisition_acsm = False
