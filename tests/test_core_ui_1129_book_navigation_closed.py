@@ -28,7 +28,8 @@ def _method(name: str):
             fn,
         ], type_ignores=[],
     ))
-    namespace = {"__package__": "cifereca.gui"}
+    from cifereca.gui import library_navigation
+    namespace = {"__package__": "cifereca.gui", "library_navigation": library_navigation}
     exec(compile(module, str(MAIN), "exec"), namespace)
     return namespace[name]
 
