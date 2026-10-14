@@ -96,7 +96,7 @@ Le plan opérationnel et les tests de sélection sont suivis dans [#856](https:/
 ## Livraison et garde-fous
 
 - Une PR = un changement cohérent et réversible, avec tests et critères d'acceptation. Corriger un blocage dans le rôle propriétaire ; sinon transmettre une issue ciblée.
-- **cicd** vérifie la CI, les reviews, les conflits et les risques avant merge. Un test réellement échoué n'est pas un simple check indisponible. Ne pas rebaser une PR uniquement parce qu'elle est derrière main ; actualiser seulement en cas de nécessité réelle.
+- **cicd** vérifie la CI, les reviews, les conflits et les risques avant merge. **Il tente de résoudre les conflits de PR**, de préférence par rebase Git natif si nécessaire et autorisé : résolution mécanique conservant les changements pertinents, diff revu, tests/gates à nouveau vérifiés sur le nouveau SHA, puis merge. Les arbitrages métier ou architecturaux reviennent au rôle propriétaire avec un diagnostic concret ; ne pas se contenter de déclarer un conflit bloquant sans tentative réalisable. Un test réellement échoué n'est pas un simple check indisponible. Ne pas rebaser une PR uniquement parce qu'elle est derrière main ; actualiser seulement en cas de nécessité réelle. Voir [le profil cicd](.agents/roles/cicd.md#responsabilité-active-de-résolution-des-conflits).
 - **Aucune release implicite** : un merge, un « next », une PR ou une demande de préparation ne valent pas autorisation de publier.
 - Utiliser les skills locaux de .agents/skills/ : cifereca-plugin, cifereca-tests, cifereca-simulation et cifereca-release.
 
