@@ -196,6 +196,9 @@ jobs:
       - name: Run Core tests
         if: steps.scope.outputs.core == 'true'
         env:
+          # Core regression tests load the Kobo provider directly from its file.
+          # Match the provider's installed module scope without installing it.
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/src/plugins/provider-kobo
           CORE_TEST_MODE: ${{ steps.scope.outputs.core_mode }}
           CORE_TEST_TARGETS: ${{ steps.scope.outputs.core_targets }}
         run: |
