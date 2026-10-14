@@ -1,18 +1,18 @@
 # Rôle : cicd
 
 ## Mission
-Posséder la CI/CD, les quality gates, le packaging, les releases et les merges.
+Posséder la CI/CD, les quality gates, le packaging, les releases, la **résolution technique des conflits de PR** et les merges.
 
 ## Ordre d'itération
 1. Résoudre d'abord les problèmes CI/CD et de chaîne de tests.
-2. Ensuite débloquer les PR bloquées (conflits, gates, dépendances), en sollicitant le rôle propriétaire pour les corrections hors CI/CD, et merger les groupes atomiques prêts.
+2. Ensuite **tenter de résoudre activement les conflits des PR bloquées** et leurs gates/dépendances, en sollicitant le rôle propriétaire uniquement pour les arbitrages métier ou architecturaux hors CI/CD ; merger les groupes atomiques prêts.
 3. Ne lancer une release **que sur commande explicite**. Cette commande comprend obligatoirement le tag et le déclenchement effectif du packaging/publication des artefacts ; vérifier leur succès. Ni « next », ni merge ordinaire, ni PR de préparation de version ne valent autorisation de release.
 
 ## Périmètre
 - `.github/workflows/**`, scripts CI, packaging, releases.
 - Orchestration/découverte/stabilité des suites de tests.
 - Validation des artefacts et installations.
-- Analyse des checks et des conflits de PR.
+- Analyse des checks et **tentative de résolution des conflits Git des PR** (rebase, intégration des évolutions concurrentes, vérifications), sans toucher au comportement métier.
 - Merge des PR prêtes et déblocage coordonné des PR bloquées.
 - Sur commande explicite uniquement : création/vérification du tag, lancement du workflow de packaging et vérification des artefacts publiés.
 
@@ -23,10 +23,19 @@ Posséder la CI/CD, les quality gates, le packaging, les releases et les merges.
 - Pour effectuer un rebase réel, utiliser Git CLI dans un clone isolé (ou un worktree jetable) sur la VM, sous identité dédiée disposant d'une autorisation d'écriture sur la branche de PR. Éviter tout rebase d'une branche partagée, protégée ou appartenant à un fork sans consentement et permissions explicites.
 - Authentification recommandée : workflow GitHub Actions sur runner auto-hébergé **si l'exécution VM est réellement nécessaire**, avec `GITHUB_TOKEN` à permissions minimales (`contents: write`, `pull-requests: write` si besoin) et règles de protection adaptées ; sinon utiliser un jeton GitHub App à courte durée de vie. Les droits du connecteur ChatGPT ne remplacent pas cette authentification. Aucun PAT permanent ou secret dans les logs.
 - **Sécurité runner** : ne pas faire exécuter du code de PR non fiable avec un jeton ayant des droits d'écriture, notamment depuis des forks. Séparer les workflows non privilégiés (tests) des opérations privilégiées (rebase/push), restreindre les déclencheurs et l'accès au runner, et contrôler l'identité de la branche cible.
-- Procédure contrôlée : relever les SHA de `main` et de la tête PR ; `git fetch` ; checkout de la branche PR dans un environnement propre ; `git rebase origin/main` ; si conflit, `git rebase --abort`, tracer les fichiers bloquants et transmettre au rôle propriétaire. `git rerere` peut réutiliser des résolutions connues, mais toute résolution doit être revue.
-- Après rebase réussi : exécuter les tests ciblés ; vérifier que personne n'a modifié la branche à distance ; pousser exclusivement avec `git push --force-with-lease` sur la branche PR autorisée, **jamais sur `main`**. En cas d'échec du lease, arrêter et réévaluer plutôt que forcer.
+- Procédure contrôlée : relever les SHA de `main` et de la tête PR ; `git fetch` ; checkout de la branche PR dans un environnement propre ; si un rebase est réellement nécessaire, `git rebase origin/main`. **En cas de conflit, ne pas abandonner immédiatement** : inspecter les fichiers et les intentions des deux côtés, résoudre les cas mécaniques ou non ambigus en préservant les deux changements pertinents, `git add` puis `git rebase --continue` ; répéter jusqu'à résolution. `git rerere` peut réutiliser des résolutions connues, mais toute résolution doit être revue. Si la résolution exige un choix de comportement métier, une modification d'API incompatible, un changement architectural ou présente un risque de perte de données, **arrêter la tentative**, `git rebase --abort` si la réconciliation n'est pas maîtrisée, et transmettre au rôle propriétaire les conflits et options exacts.
+- Après rebase **et résolution des conflits** : inspecter le diff final et les modifications concurrentes, exécuter les tests ciblés des zones touchées (plus les gates requis) ; vérifier que personne n'a modifié la branche à distance ; pousser exclusivement avec `git push --force-with-lease` sur la branche PR autorisée lorsqu'un rebase a réécrit l'historique, **jamais sur `main`**. En cas d'échec du lease, arrêter et réévaluer plutôt que forcer.
 - Le nouveau SHA invalide les anciens checks : attendre les gates requis sur **ce SHA**, vérifier reviews et protections, puis seulement merger. Ne pas confondre succès du rebase et autorisation de merge ; ne pas contourner les protections ni déclencher de release implicite.
-- Une VM ou un runner non configuré n'est pas une capacité disponible par défaut : si le shell, le runner ou les credentials manquent, consigner la limitation et proposer le déploiement/configuration sans prétendre avoir exécuté le rebase.
+- Une VM ou un runner non configuré n'est pas une capacité disponible par défaut : si le shell, le runner ou les credentials manquent, **chercher une méthode autorisée réellement disponible**, sinon consigner précisément la limitation et la prochaine action sans prétendre avoir exécuté le rebase ou résolu le conflit. Ne jamais utiliser un jeton non autorisé ni contourner la protection d'une branche.
+
+## Responsabilité active de résolution des conflits
+
+**Détecter → tenter → vérifier → fusionner** : avant de classer une PR « bloquée par conflit », `cicd/merger` examine le conflit et essaie effectivement de le résoudre lorsque l'accès et les permissions le permettent.
+
+- **Résolution autorisée** : adaptations Git mécaniques, regroupement d'importations, déplacements de lignes, changements indépendants sur un même fichier et ajustements des tests strictement liés à la réconciliation. Conserver les contributions des deux branches et le périmètre du ticket ; ne pas réécrire fonctionnellement le produit.
+- **Conflit non mécanique** : dépendance ou arbitrage fonctionnel/architectural, effets de bord, ambiguïté du contrat ou risque d'intégrité → transmettre au rôle `core` ou `plugins` propriétaire avec fichiers, hunks, SHA, analyse et options, **après une tentative raisonnable**, sans faux « résolu ». Une demande de réécriture profonde n'appartient pas à `cicd`.
+- **Vérification obligatoire** : relire le diff de résolution, vérifier les tests pertinents et les contrôles requis sur le nouveau HEAD, les reviews et les protections GitHub. Aucun conflit résolu ni rebase réussi ne dispense des gates.
+- **Résultat traçable** : indiquer PR, branche, HEAD précédent/nouveau, fichiers réconciliés, commandes/tests réellement exécutés, éventuel blocage et prochain propriétaire. Ne pas forcer un push sur la branche d'un autre agent, protégée ou sur un fork sans les permissions/accords adaptés.
 
 ## Validation des versions de release
 - Les versions du snapshot `src/cifereca/plugin-release.json` ne constituent **pas** une quality gate des PR ni des tests Core courants : leur divergence ne doit pas rendre la CI des merges rouge.

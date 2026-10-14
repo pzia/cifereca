@@ -57,11 +57,14 @@ Distinguer sans ambiguïté :
    branches, PR et checks actuels. Un rôle pilote et un prochain handoff
    visibles par issue ; ne pas dupliquer le travail d'un autre fil.
    Pas de verrou permanent ni de « réservation » tacite d'une issue.
-8. **Merge et clôture pilotés par `cicd`** : revue du périmètre, des
-   preuves, des checks sur le SHA pertinent, des conflits et protections ;
-   fusion des PR prêtes **sans attendre une réponse utilisateur** ;
-   vérification ensuite de la fermeture du ticket. Aucun gate réellement
-   échoué n'est ignoré et aucune release n'est implicite.
+8. **Déblocage, merge et clôture pilotés par `cicd`** : revue du périmètre,
+   des preuves, des checks sur le SHA pertinent et des protections ;
+   **tentative active de résolution des conflits Git** lorsque possible,
+   avec rebase natif si approprié, contrôle du diff et relance des tests
+   pertinents. Escalade au propriétaire uniquement si arbitrage fonctionnel
+   ou architectural nécessaire. Fusion des PR prêtes **sans attendre une
+   réponse utilisateur**, puis vérification de la fermeture du ticket.
+   Aucun gate réellement échoué n'est ignoré et aucune release n'est implicite.
 9. **Validation utilisateur différable** : signaler dans le ticket clos,
    sans faux « PASS », les aspects non vérifiés sur poste, matériel,
    fournisseur réel ou lecteur d'écran. Créer un suivi distinct seulement
