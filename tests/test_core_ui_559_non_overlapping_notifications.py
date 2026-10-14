@@ -39,7 +39,7 @@ def test_notification_timeout_is_bounded_and_reuses_single_bar():
     assert "self._cancel_notification_hide()" in source
     assert "self.notification_label.set_label(str(message))" in source
     assert "self.notification_revealer.set_reveal_child(True)" in source
-    assert "bounded_timeout = max(1, min(int(timeout), 10))" in source
+    assert "bounded_timeout = bounded_seconds(timeout)" in source
     assert "GLib.timeout_add_seconds" in source
     assert "Adw.Toast" not in source
 
