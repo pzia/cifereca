@@ -232,17 +232,17 @@ def kobo_local_reconciliation_audit(
             if len(proposals) > 9:
                 limited = True
             for idx, proposed in enumerate(proposals[:9]):
+                if not proposed or type(proposed) is not str:
+                    continue
+                # Repeated paths are not new probes, even when the global
+                # hashing budget has already been exhausted.
+                if proposed in attempted_paths:
+                    continue
+                attempted_paths.add(proposed)
                 if checks_left == 0:
                     limited = True
                     counts["unverified_placements"] += 1
                     continue
-                if not proposed or type(proposed) is not str:
-                    continue
-                # Count each candidate path once, even if its first check
-                # failed: repeated missing paths must not exhaust the budget.
-                if proposed in attempted_paths:
-                    continue
-                attempted_paths.add(proposed)
                 checks_left -= 1
                 result = _read_hash_within(proposed, roots)
                 if result is None:
