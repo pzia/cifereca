@@ -51,7 +51,11 @@ def _reference_selection_key(book: Any) -> str:
 
 def _external_book_url(value: Any) -> str | None:
     url = str(value or "").strip()
-    if not url or any(char.isspace() for char in url):
+    if (
+        not url or len(url) > 2048
+        or any(ord(char) < 33 or ord(char) == 127 for char in url)
+        or any(char in url for char in "<>\\")
+    ):
         return None
     try:
         parsed = urlsplit(url)
@@ -60,14 +64,19 @@ def _external_book_url(value: Any) -> str | None:
         return None
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return None
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+    if parsed.port not in (None, 443 if parsed.scheme == "https" else 80):
+        return None
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
         # A signed acquisition URL, referral token or fragment is not an
         # attested public book notice. Never reflect it in an external action.
         return None
     host = parsed.hostname.lower().rstrip(".")
     if (
-        not host or "." not in host
-        or host == "localhost" or host.endswith((".local", ".localhost", ".internal"))
+        not host or "." not in host or "%" in host
+        or host == "localhost"
+        or host.endswith((
+            ".local", ".localhost", ".internal", ".lan", ".home.arpa",
+        ))
         or any(ord(ch) < 33 or ord(ch) == 127 for ch in host)
     ):
         return None
@@ -82,6 +91,20 @@ def _external_book_url(value: Any) -> str | None:
         # or into a book-action link handed off to a helper.
         return None
     return url
+
+
+def _public_cover_url(item: Any) -> str | None:
+    """Conservative cover URL for both list rows and the detail panel.
+
+    The renderer may load thumbnails automatically, without a user click.
+    Reject credentials, signed URLs and private origins before either view
+    receives the image URL. Try the second declared image if the first fails.
+    """
+    for field in ("thumbnail_url", "cover_url"):
+        url = _external_book_url(get_field(item, field, None))
+        if url:
+            return url
+    return None
 
 
 def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
@@ -1141,11 +1164,7 @@ class UxRecommendationsView:
                     subtitle=author,
                     meta=" · ".join(meta_parts),
                     badge=f"Affinité {ranked.score}/100",
-                    thumbnail_url=str(
-                        get_field(item, "thumbnail_url", "")
-                        or get_field(item, "cover_url", "")
-                        or ""
-                    ) or None,
+                    thumbnail_url=_public_cover_url(item),
                 )
             )
 
@@ -1170,6 +1189,14 @@ class UxRecommendationsView:
             return
         ranked = self._ranked_by_key.get(row.key)
         if ranked is None:
+            # A fast filter refresh can invalidate the selected row before
+            # GTK delivers its selection callback. Never leave the previous
+            # book's detail and actions attached to a stale list identity.
+            self._reset_llm_selection(None)
+            self._master.empty_detail(
+                "Notice indisponible",
+                "Cette recommandation n’est plus dans les résultats du profil.",
+            )
             return
         self._llm_selected_row = row
         if self._llm_button is not None:
@@ -1177,7 +1204,8 @@ class UxRecommendationsView:
 
         item = ranked.item
         title = str(get_field(item, "title", "") or "Sans titre")
-        author = str(get_field(item, "author", "") or "").strip()
+        authors = tuple(author_values(item))
+        author = ", ".join(authors)
         fmt = str(get_field(item, "format", "") or "").strip()
         published = str(get_field(item, "published_at", "") or "").strip()
         reasons = " · ".join(ranked.reasons)
@@ -1207,7 +1235,10 @@ class UxRecommendationsView:
                 reasons or "Plusieurs signaux concordants",
             ),
         ]
-        catalogue_fields = []
+        catalogue_fields = [
+            DetailField(f"author-{index}", "Auteur", value, kind="author")
+            for index, value in enumerate(authors)
+        ]
         if source_labels:
             catalogue_fields.append(
                 DetailField("source", "Source", " · ".join(source_labels))
@@ -1324,11 +1355,7 @@ class UxRecommendationsView:
                 )
             )
 
-        thumbnail = str(
-            get_field(item, "thumbnail_url", "")
-            or get_field(item, "cover_url", "")
-            or ""
-        ) or None
+        thumbnail = _public_cover_url(item)
         badges = [f"Affinité {ranked.score}/100", *source_labels]
         if self._provisional_active:
             badges.append("Provisoire")
