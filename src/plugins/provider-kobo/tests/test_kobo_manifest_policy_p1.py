@@ -230,3 +230,65 @@ def test_account_scope_and_plugin_code_has_no_core_private_imports():
     assert "from cifereca.core." not in policy + provider
     assert "classify_personal_manifest(" in provider
     assert "self.client.library_manifest()" in provider
+
+
+def test_three_accounts_9_522_5_are_isolated_and_403_never_fans_out():
+    """P1 #1346: a provider policy never reads or retries another account."""
+    sizes = (9, 522, 5)
+    vaults = [
+        FakeVault([{"product_id": f"item-{i}", "owned": True} for i in range(size)])
+        for size in sizes
+    ]
+    sessions = [
+        session_with_vault(vault, account_id=f"reader-{i}")
+        for i, vault in enumerate(vaults, start=1)
+    ]
+    try:
+        # Preview/account 2 only; no implicit batch or delegated GET on 1/3.
+        sessions[1]._cifereca_delegation_forbidden = True
+        result = sessions[1].backup_manifest()
+        assert len(result) == 522
+        assert [v.manifest_calls for v in vaults] == [0, 1, 0]
+        assert [v.acquisition_calls for v in vaults] == [0, 0, 0]
+        assert sessions[1].backup_manifest_policy["counts"]["blocked_scope"] == 522
+        assert sessions[1].backup_manifest_policy["status"] == "blocked_scope"
+        # Access to the second source cannot publish a policy for the others.
+        assert sessions[0].backup_manifest_policy["status"] == "invalid_scope"
+        assert sessions[2].backup_manifest_policy["status"] == "invalid_scope"
+
+        # An explicit subsequent manifest request to each other account is
+        # independent; it cannot clear account 2's persisted scope denial.
+        assert len(sessions[0].backup_manifest()) == 9
+        assert len(sessions[2].backup_manifest()) == 5
+        assert [v.manifest_calls for v in vaults] == [1, 1, 1]
+        assert sessions[0].backup_manifest_policy["counts"]["candidate_unverified"] == 9
+        assert sessions[2].backup_manifest_policy["counts"]["candidate_unverified"] == 5
+        assert sessions[1].backup_manifest_policy["counts"]["blocked_scope"] == 522
+        assert all(
+            not session.backup_manifest_policy["acquisition_authorized"]
+            for session in sessions
+        )
+        public = json.dumps([session.backup_manifest_policy for session in sessions])
+        for private in ("PRIVATE", "reader-1", "reader-2", "reader-3"):
+            assert private not in public
+    finally:
+        for session in sessions:
+            session.close()
+
+
+def test_manifest_with_an_explicit_foreign_account_never_becomes_a_candidate():
+    vault = FakeVault([{
+        "product_id": "private-book", "account_id": "reader-other",
+        "owned": True, "downloadable": True,
+    }])
+    session = session_with_vault(vault, account_id="reader-selected")
+    try:
+        session.backup_manifest()
+        report = session.backup_manifest_policy
+        assert report["counts"]["different_account"] == 1
+        assert report["counts"]["candidate_unverified"] == 0
+        assert not report["manifest_authoritative"]
+        assert not report["acquisition_authorized"]
+        assert "reader-other" not in json.dumps(report)
+    finally:
+        session.close()
