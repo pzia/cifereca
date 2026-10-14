@@ -257,9 +257,46 @@ class SynchronizationBrokerImpl:
 
     def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None) -> SyncResult:
         account = self._find_account(source_id)
+        # The source_id is a stable digest of the exact identity/provider/
+        # credential/account tuple. An explicit request must not override any
+        # coordinate or silently broaden one-account work to other identities.
+        expected_identity = str(getattr(account, "identity_id", "") or "")
+        if request is not None and not isinstance(request, SyncRequest):
+            return SyncResult(ok=False, warnings=("invalid source sync request",),
+                              facts={"reason": "invalid_request"})
+        request = request or SyncRequest(identity_id=expected_identity)
+        if not expected_identity or (
+            request.identity_id is not None and request.identity_id != expected_identity
+        ):
+            return SyncResult(ok=False, warnings=("source identity mismatch",),
+                              facts={"reason": "identity_mismatch"})
+        # The current generic broker only implements inventory/rights refresh.
+        # Never reinterpret an explicit materialization, narrow phase or
+        # unsupported option as a safe metadata refresh with fake success.
+        if (
+            type(request.deep) is not bool
+            or type(request.scopes) is not tuple or request.scopes
+            or not isinstance(request.options, dict) and
+               not hasattr(request.options, "items")
+        ):
+            return SyncResult(ok=False, warnings=("unsupported source sync scope",),
+                              facts={"reason": "unsupported_scope"})
+        options = dict(request.options)
+        actual = {
+            "identity_id": expected_identity,
+            "provider_id": str(getattr(account, "provider_id", "") or ""),
+            "credential_id": str(getattr(account, "credential_id", "") or ""),
+            "account_id": _account_id(account),
+        }
+        if any(
+            key not in actual or type(value) is not str or value != actual[key]
+            for key, value in options.items()
+        ):
+            return SyncResult(ok=False, warnings=("source target mismatch",),
+                              facts={"reason": "target_mismatch"})
         if not self._enabled(source_id):
-            return SyncResult(ok=True, changed=0, warnings=("source disabled",), facts={"source_id": source_id, "skipped": True})
-        request = request or SyncRequest(identity_id=str(getattr(account, "identity_id", "") or ""))
+            return SyncResult(ok=True, changed=0, warnings=("source disabled",),
+                              facts={"source_id": source_id, "skipped": True})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
         state.update(last_attempt=now, status="running", error="", scope="manual",
@@ -293,6 +330,13 @@ class SynchronizationBrokerImpl:
             return SyncResult(ok=False, warnings=(str(exc),), facts={"source_id": source_id})
 
     def synchronize(self, request: SyncRequest, control: Any = None) -> SyncResult:
+        # An omitted identity must never turn a nominal "Sync" into an
+        # unpreviewed batch across all provider accounts.
+        if not isinstance(request, SyncRequest) or (
+            type(request.identity_id) is not str or not request.identity_id
+        ):
+            return SyncResult(ok=False, changed=0, warnings=("explicit identity required",),
+                              facts={"reason": "identity_required"})
         sources = [row for row in self.sources(request.identity_id) if row.enabled and row.connected and row.sync_capable]
         total = 0; warnings: list[str] = []; facts: dict[str, Any] = {"sources": {}}
         for index, source in enumerate(sources, 1):
