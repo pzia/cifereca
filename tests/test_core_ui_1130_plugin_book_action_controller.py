@@ -34,7 +34,7 @@ def _setup(*, enabled=True, page=True, action_id="act"):
     action = UiActionContribution(
         id=action_id, title="Plugin action", icon_name="starred-symbolic",
         callback=lambda host: calls.append(("callback", host.context)),
-        enabled=(lambda ctx: enabled),
+        target="book.detail", enabled_when=(lambda ctx: enabled),
     )
     pages = {"plugin": UiPageContribution(
         route="plugin", title="Plugin", factory=lambda _: None,
@@ -106,6 +106,7 @@ def test_reloaded_plugin_with_same_id_cannot_execute_old_callback():
     replacement = UiActionContribution(
         id=action.id, title=action.title, icon_name=action.icon_name,
         callback=lambda host: calls.append(("replacement", host.context)),
+        target="book.detail",
     )
     window._pages = {"plugin": UiPageContribution(
         route="plugin", title="Plugin", factory=lambda _: None,
