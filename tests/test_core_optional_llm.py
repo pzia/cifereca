@@ -375,3 +375,23 @@ def test_valid_model_namespace_remains_supported_without_hidden_truncation():
     assert service.destination()["model"] == model
     assert service.generate(LLMRequest("ok")).ok
     assert json.loads(http.calls[0][0].data)["model"] == model
+
+
+
+@pytest.mark.parametrize("suffix", [
+    "\u202ePRIVATE_BIDI",
+    "\u2066PRIVATE_ISOLATE",
+    "\u200fPRIVATE_MARK",
+    "\ud800PRIVATE_SURROGATE",
+    "\x85PRIVATE_C1",
+])
+def test_direct_llm_endpoint_rejects_hidden_controls_before_http(suffix):
+    http = FakeHTTP()
+    service = OptionalLLMService(
+        _config(endpoint="http://127.0.0.1:12345/v1/chat/completions" + suffix),
+        opener=http,
+    )
+    assert service.available() is False
+    assert service.destination()["host"] == ""
+    assert service.generate(LLMRequest("Livre privé")).reason == "unavailable"
+    assert not http.calls
