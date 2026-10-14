@@ -820,7 +820,9 @@ class UxRecommendationsView:
         # The previous task may have been busy even when the newly selected
         # profile is no longer valid or the Core brokers disappear.
         self._busy = False
-        self._spinner.stop()
+        stop_spinner = getattr(self._spinner, "stop", None)
+        if callable(stop_spinner):
+            stop_spinner()
         self._refresh_button.set_sensitive(True)
 
         identity_id = self.selected_identity_id()
