@@ -130,4 +130,4 @@ def test_identity_change_clears_recent_list_and_selected_detail_immediately():
     assert "window._recent_entries_cache = []" in body
     assert "window._recent_objects = {}" in body
     assert "window.recent_page.clear_rows()" in body
-    assert 'self.recent_page.detail.empty(' in body
+    assert 'window.recent_page.detail.empty(' in body
