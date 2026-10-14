@@ -93,3 +93,13 @@ def test_two_distinct_identities_cannot_refresh_each_other_by_reusing_source_id(
     )
     assert allowed.ok
     assert service.calls == [("kobo-b", False)]
+
+
+def test_unknown_source_identifier_is_safe_and_never_written():
+    service, broker, refs = _setup()
+    supplied = "https://PRIVATE_HOST.invalid/?token=PRIVATE_BEARER"
+    result = broker.synchronize_source(supplied, SyncRequest(identity_id="alice"))
+    assert result.facts == {"reason": "unknown_source"}
+    assert not result.ok
+    assert supplied not in repr(result)
+    assert not service.storage.values and not service.calls
