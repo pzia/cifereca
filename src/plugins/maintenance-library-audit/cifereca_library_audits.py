@@ -373,7 +373,10 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 if "missing" in issues: missing += 1
                 for issue in issues: by_issue[issue]=by_issue.get(issue,0)+1
                 if len(warnings)<100:
-                    warnings.append(f"{row.get('title') or PurePath(str(row.get('path') or '')).name}: {', '.join(issues)}")
+                    # Result warnings may be surfaced in the activity UI or
+                    # diagnostics. Never disclose a library title, filename,
+                    # path, or upstream string while reporting a file failure.
+                    warnings.append(f"Fichier {index}/{total} : {', '.join(issues)}")
         # A cancellation received while the last file was being inspected
         # must not publish a misleading completed/100% state.
         control.check_cancelled()
