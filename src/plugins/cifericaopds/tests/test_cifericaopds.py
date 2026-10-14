@@ -1118,3 +1118,75 @@ def test_legitimate_accented_bibliography_remains_available():
     assert row.title == "À la recherche du secret"
     assert "Łukasz Żak" in row.author
     assert row.publisher == "Éditions L'École des loisirs"
+
+
+def test_candidate_fixture_search_fields_are_exact_and_public_only(tmp_path):
+    """#969: an ISBN filter cannot silently degrade into a title search."""
+    ctx = context(tmp_path)
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    (tmp_path / "fixture-results.json").write_text(json.dumps({
+        "alpha": {"items": [
+            {"id": "title-only", "title": "9780306406157 catalogue"},
+            {"id": "real-edition", "title": "La vraie édition",
+             "author": "Auteure Test", "isbn13": "9780306406157",
+             "language": "fr"},
+            {"id": "other", "title": "Autre ouvrage",
+             "author": "Autrice Différente", "isbn13": "9780140328721",
+             "language": "en"},
+        ]},
+    }))
+    collection = CifericaCollection().activate(ctx)
+    collection.refresh(explicit=True)
+    plugin = collection.create_provider("alpha")
+    session = plugin.create_session(
+        credential_id="__public__", label="Alpha",
+        credentials={}, options={}, config=None, storage=None,
+        diagnostics=None,
+    )
+    session.connect()
+    try:
+        assert [r.record_id for r in session.search(
+            "9780306406157", field="isbn",
+        )] == ["real-edition"]
+        assert [r.record_id for r in session.search(
+            "978-0-306-40615-7", field="isbn",
+        )] == ["real-edition"]
+        assert session.search("9780306406158", field="isbn") == []
+        assert [r.record_id for r in session.search(
+            "9780306406157", field="title",
+        )] == ["title-only"]
+        assert [r.record_id for r in session.search(
+            "test", field="author",
+        )] == ["real-edition"]
+        assert [r.record_id for r in session.search(
+            "FR", field="language",
+        )] == ["real-edition"]
+        assert session.search("fr", field="title") == []
+        for unsupported in ("subject", "series", "isbn_or_title", "", None):
+            with pytest.raises(ContractUnavailable, match="unsupported candidate search field"):
+                session.search("ouvrage", field=unsupported)
+    finally:
+        session.close()
+
+
+def test_candidate_remote_search_rejects_unverified_field_before_any_http(tmp_path):
+    (tmp_path / "fixture-sources.json").write_text(json.dumps(inventory("alpha")))
+    collection = CifericaCollection().activate(context(tmp_path))
+    collection.refresh(explicit=True)
+    plugin = collection.create_provider("alpha")
+    session = plugin.create_session(
+        credential_id="__public__", label="Alpha",
+        credentials={}, options={}, config=None, storage=None,
+        diagnostics=None,
+    )
+    session.connect()
+    calls = []
+    session._mode = "candidate_v02"
+    session._client = NS(get=lambda *a, **kw: calls.append((a, kw)))
+    try:
+        for field in ("isbn", "title", "author", "language"):
+            with pytest.raises(ContractUnavailable, match="search field unverified"):
+                session.search("9780306406157", field=field)
+        assert calls == []
+    finally:
+        session.close()
