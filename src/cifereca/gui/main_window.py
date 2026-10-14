@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -54,8 +54,6 @@ from .settings_shell import build_settings_shell
 from .settings_lifetime import SettingsPageLifetime
 from .settings_tracking import bind_settings_actions
 from .settings_diagnostic_actions import build_settings_diagnostic_callbacks
-from .task_state import register_task_start, register_task_finish
-from .task_progress_presentation import live_task_progress_label
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
@@ -444,86 +442,19 @@ class MainWindow(Adw.ApplicationWindow):
             self._schedule_activity_reduce()
 
     def _task_started(self, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
-        if getattr(self, '_closed', False):return False
-        if not register_task_start(
-            self._active_tasks, self._finished_task_ids,
-            task_id, priority, label, kind,
-        ):
+        if getattr(self, '_closed', False):
             return False
-        self._cancel_activity_hide()
-        self.activity_feedback.started(int(task_id), str(label), str(kind))
-        self._refresh_activity_history()
-        if hasattr(self, "busy_revealer"):
-            self.activity_status_icon.set_visible(False)
-            self.activity_status_icon.remove_css_class("activity-success")
-            self.activity_status_icon.remove_css_class("activity-error")
-            self.activity_dismiss.set_visible(False)
-            self.busy_label.set_visible(True)
-            active_count = len(self._active_tasks)
-            prefix = f"{active_count} opérations · " if active_count > 1 else ""
-            self.busy_label.set_label("En cours · " + prefix + str(label))
-            self.busy_revealer.set_reveal_child(True)
-            self.busy_spinner.set_visible(True)
-            self.busy_spinner.start()
-        return False
+        return task_activity_adapter.task_started(self, task_id, count, label, priority, kind)
 
     def _task_progress(self, label: str) -> bool:
-        if getattr(self, "_closed", False):
+        if getattr(self, '_closed', False):
             return False
-        if hasattr(self, "busy_revealer") and self._active_tasks:
-            presentation = live_task_progress_label(self._active_tasks, label)
-            if presentation is not None:
-                self.busy_label.set_visible(True)
-                self.busy_label.set_label(presentation)
-        return False
+        return task_activity_adapter.task_progress(self, label)
 
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
-        if getattr(self, '_closed', False):return False
-        task_id = int(task_id)
-        # TaskRunner may deliver completion before the queued "started" UI
-        # callback. Record it once and ignore any repeated completion, so a
-        # late callback cannot resurrect a finished task or duplicate a toast.
-        accepted, kind = register_task_finish(
-            self._active_tasks, self._finished_task_ids, task_id,
-        )
-        if not accepted:
+        if getattr(self, '_closed', False):
             return False
-        self._last_finished_task_id = int(task_id)
-        functional = self._functional_error_message(error or "") if not success else ""
-        self.activity_feedback.finished(
-            int(task_id),
-            str(label),
-            str(kind),
-            success=bool(success),
-            error=functional,
-        )
-        self._refresh_activity_history()
-        if not hasattr(self, "busy_revealer"):
-            return False
-        if self._active_tasks:
-            _priority, next_label, _kind = sorted(self._active_tasks.values(), key=lambda row: row[0])[0]
-            active_count = len(self._active_tasks)
-            prefix = f"{active_count} opérations · " if active_count > 1 else ""
-            self.busy_label.set_visible(True)
-            self.busy_label.set_label("En cours · " + prefix + next_label)
-            self.activity_dismiss.set_visible(False)
-            self.busy_spinner.set_visible(True)
-            self.busy_spinner.start()
-            return False
-        if self._show_pending_activity_error():
-            return False
-        self.busy_spinner.stop()
-        self.busy_spinner.set_visible(False)
-        self.activity_status_icon.set_visible(True)
-        self.activity_status_icon.set_from_icon_name("emblem-ok-symbolic")
-        self.activity_status_icon.add_css_class("activity-success")
-        self.activity_status_icon.remove_css_class("activity-error")
-        self.busy_label.set_visible(True)
-        self.busy_label.set_label(f"Terminé · {label}")
-        self.activity_dismiss.set_visible(False)
-        self.busy_revealer.set_reveal_child(True)
-        self._schedule_activity_reduce()
-        return False
+        return task_activity_adapter.task_finished(self, task_id, remaining, label, success, error)
 
     @staticmethod
     def _functional_error_message(message: str) -> str:
