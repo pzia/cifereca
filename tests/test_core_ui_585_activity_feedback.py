@@ -124,3 +124,34 @@ def test_task_callbacks_ignore_late_start_and_repeated_finish():
     assert "if int(task_id) in self._finished_task_ids:" in started
     assert "if task_id in self._finished_task_ids:" in finished
     assert finished.index("if task_id in self._finished_task_ids:") < finished.index("self.activity_feedback.finished(")
+
+
+def test_taskrunner_delivery_stops_when_success_callback_closes_window():
+    """#1132: do not report a success toast after callback-triggered teardown."""
+    import threading
+    from types import SimpleNamespace
+
+    tree = ast.parse(RUNNER.read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "TaskRunner")
+    submit = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "submit")
+    done = next(n for n in ast.walk(submit) if isinstance(n, ast.FunctionDef) and n.name == "done")
+    deliver = next(n for n in ast.walk(done) if isinstance(n, ast.FunctionDef) and n.name == "deliver")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[deliver], type_ignores=[])), "<deliver>", "exec"), namespace)
+
+    events = []
+    window = SimpleNamespace(_closed=False)
+    window._task_finished = lambda *args: events.append("finished")
+    window._activity_result = lambda *args, **kwargs: events.append("toast")
+    runner = SimpleNamespace(window=window, _lock=threading.Lock(), _count=1)
+    def close_in_callback(value):
+        events.append("ok")
+        window._closed = True
+
+    namespace.update(
+        self=runner, control=None, outcome=("ok", "value"), task_id=1,
+        label="test", ok=close_in_callback, err=None, success_toast="success",
+    )
+    assert namespace["deliver"]() is False
+    assert events == ["finished", "ok"]
+    assert runner._count == 0
