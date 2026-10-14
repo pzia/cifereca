@@ -157,6 +157,8 @@ def _method():
         "MaintenanceCancelledError": guard.MaintenanceCancelledError,
         "MaintenanceBusyError": guard.MaintenanceBusyError,
         "MaintenancePlanChangedError": guard.MaintenancePlanChangedError,
+        "BUSY_MESSAGE": guard.BUSY_MESSAGE,
+        "CHANGED_MESSAGE": guard.CHANGED_MESSAGE,
         "preview_maintenance_tool": guard.preview_maintenance_tool,
         "execute_maintenance_tool": guard.execute_maintenance_tool,
         "TaskPriority": NS(MAINTENANCE=1),

@@ -195,7 +195,8 @@ def test_worker_preserves_safe_actionable_maintenance_guard_errors(error):
     args, _kwargs = m.jobs[-1]
     with pytest.raises(type(error)) as caught:
         args[1]()
-    assert caught.value is error
+    assert str(caught.value) == str(error)
+    assert caught.value.__suppress_context__
 
 
 def test_widget_shows_indeterminate_spinner_before_counts_arrive():
@@ -215,3 +216,44 @@ def test_widget_shows_indeterminate_spinner_before_counts_arrive():
     assert label.text == 'Purge en cours…'
     assert spinner.visible and spinner.running
     assert not bar.visible
+
+@pytest.mark.parametrize('error_type,message', [
+    (guard.MaintenanceBusyError, guard.BUSY_MESSAGE),
+    (guard.MaintenancePlanChangedError, guard.CHANGED_MESSAGE),
+])
+@pytest.mark.parametrize('phase', ['preview', 'run'])
+def test_guard_reasons_remain_actionable_without_private_payload(error_type, message, phase):
+    m = mounted()
+    private_error = error_type('/secret/path bearer-token')
+    if phase == 'preview':
+        m.preview.click()
+        args, _kwargs = m.jobs[-1]
+    else:
+        args = execute(m)
+    args[3](private_error)
+    flush(m)
+    assert m.errors[-1][0] == message
+    assert m.feedback.state.phase == 'error'
+
+
+@pytest.mark.parametrize('error_type,message', [
+    (guard.MaintenanceBusyError, guard.BUSY_MESSAGE),
+    (guard.MaintenancePlanChangedError, guard.CHANGED_MESSAGE),
+])
+@pytest.mark.parametrize('phase', ['preview', 'run'])
+def test_worker_guard_reason_is_safe_before_global_activity(error_type, message, phase):
+    m = mounted()
+    def fail(*_args):
+        raise error_type('/secret/path bearer-token')
+    if phase == 'preview':
+        m.tool.plan = fail
+        m.preview.click()
+        args, _kwargs = m.jobs[-1]
+    else:
+        m.tool.run = fail
+        args = execute(m)
+    with pytest.raises(error_type) as caught:
+        args[1]()
+    assert str(caught.value) == message
+    assert caught.value.__suppress_context__
+

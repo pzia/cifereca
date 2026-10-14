@@ -72,7 +72,7 @@ from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
-from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError
+from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError, BUSY_MESSAGE, CHANGED_MESSAGE
 from .maintenance_line_widgets import build_maintenance_line
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
@@ -1425,7 +1425,15 @@ class MainWindow(Adw.ApplicationWindow):
                         if feedback is not None and worker_cancel_control is not None:
                             worker_cancel_control.check_cancelled()
                         return result
-                    except (MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError):
+                    except MaintenanceBusyError:
+                        if feedback is None:
+                            raise
+                        raise MaintenanceBusyError(BUSY_MESSAGE) from None
+                    except MaintenancePlanChangedError:
+                        if feedback is None:
+                            raise
+                        raise MaintenancePlanChangedError(CHANGED_MESSAGE) from None
+                    except MaintenanceCancelledError:
                         raise
                     except Exception:
                         if feedback is None:
@@ -1607,7 +1615,8 @@ class MainWindow(Adw.ApplicationWindow):
                                 )
                             else:
                                 self.show_error(
-                                    str(exc) if isinstance(exc, (MaintenanceBusyError, MaintenancePlanChangedError))
+                                    BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
+                                    else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
                                     else ("Nettoyage des caches impossible." if feedback is not None else str(exc)),
                                     meta.title,
                                 )
@@ -1641,7 +1650,8 @@ class MainWindow(Adw.ApplicationWindow):
                     if feedback is not None:
                         feedback.finish(ticket, "error")
                     self.show_error(
-                        str(exc) if isinstance(exc, MaintenanceBusyError)
+                        BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
+                        else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
                         else ("Analyse des caches impossible." if feedback is not None else str(exc)),
                         meta.title,
                     )
