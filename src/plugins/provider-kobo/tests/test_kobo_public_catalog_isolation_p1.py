@@ -67,8 +67,9 @@ def test_public_catalogue_cannot_forge_owned_book_or_download_right(
         assert record["price"] == {"amount": "2.99", "currency": "EUR"}
         assert record["description"] == "<p>Public synopsis</p>"
         assert record["collection"] == "catalog"
+        assert record["owned"] is False
         for name in (
-            "owned", "downloadable", "archived", "account_id",
+            "downloadable", "archived", "account_id",
             "credential_id", "source_credential", "revision_id",
             "acquisition", "entitlements", "rights", "local_path",
             "download_url", "license_url", "signed_url",
@@ -84,7 +85,7 @@ def test_public_catalogue_cannot_forge_owned_book_or_download_right(
         assert "PRIVATE" not in public
         if scope == "all":
             assert result["catalog"]["items"][0]["collection"] == "catalog"
-            assert "owned" not in result["catalog"]["items"][0]
+            assert result["catalog"]["items"][0]["owned"] is False
     finally:
         client.close()
 
