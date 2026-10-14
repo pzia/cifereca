@@ -466,7 +466,6 @@ class MainWindow(Adw.ApplicationWindow):
     def _task_started(self, task_id: int, count: int, label: str, priority: int, kind: str) -> bool:
         if getattr(self, '_closed', False):return False
         if int(task_id) in self._finished_task_ids:
-            self._finished_task_ids.discard(int(task_id))
             return False
         self._cancel_activity_hide()
         self._active_tasks[int(task_id)] = (int(priority), str(label), str(kind))
@@ -497,13 +496,18 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
         if getattr(self, '_closed', False):return False
-        current = self._active_tasks.get(int(task_id))
+        task_id = int(task_id)
+        # TaskRunner may deliver completion before the queued "started" UI
+        # callback. Record it once and ignore any repeated completion, so a
+        # late callback cannot resurrect a finished task or duplicate a toast.
+        if task_id in self._finished_task_ids:
+            return False
+        current = self._active_tasks.get(task_id)
         kind = current[2] if current is not None else "task"
-        if int(task_id) not in self._active_tasks:
-            self._finished_task_ids.add(int(task_id))
-            if len(self._finished_task_ids) > 100:
-                self._finished_task_ids = set(sorted(self._finished_task_ids)[-50:])
-        self._active_tasks.pop(int(task_id), None)
+        self._finished_task_ids.add(task_id)
+        if len(self._finished_task_ids) > 100:
+            self._finished_task_ids = set(sorted(self._finished_task_ids)[-50:])
+        self._active_tasks.pop(task_id, None)
         self._last_finished_task_id = int(task_id)
         functional = self._functional_error_message(error or "") if not success else ""
         self.activity_feedback.finished(
