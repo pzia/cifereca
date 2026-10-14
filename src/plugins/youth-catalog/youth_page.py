@@ -1169,6 +1169,7 @@ class YouthView:
             generation != getattr(self, "_detail_selection_generation", 0)
             or self.identity_id() != identity_id
             or getattr(self, "selected_book", None) is not book
+            or getattr(self, "rows", {}).get(book_key(book)) is not book
         ):
             return False
         self._search_library(query, identity_id, field=field)
