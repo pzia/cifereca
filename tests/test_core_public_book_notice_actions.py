@@ -126,12 +126,17 @@ def test_document_link_explicit_metadata_never_relabels_generic_homepage():
 
 def test_ui_action_distinguishes_book_notice_from_generic_catalogue():
     path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_add_catalogue_action")
+    owner = ast.parse(path.with_name("public_catalogue_action_controller.py").read_text(encoding="utf-8"))
+    method = next(n for n in owner.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "add_catalogue_action")
     source = ast.unparse(method)
     assert "public_catalogue_target(item)" in source
     assert "'Ouvrir la notice'" in source
     assert "'Ouvrir le catalogue'" in source
     assert "current[0] == kind" in source
     assert "_rendered_document_urls" in source
+    main = ast.parse(path.read_text(encoding="utf-8"))
+    cls = next(n for n in main.body if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    facade = next(n for n in cls.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_add_catalogue_action")
+    assert "public_catalogue_action_controller.add_catalogue_action" in ast.unparse(facade)
