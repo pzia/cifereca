@@ -1,0 +1,259 @@
+"""P0 #1129: provider-aware query widget factory without a GTK import."""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace as NS
+from unittest.mock import Mock
+
+import pytest
+
+from cifereca.gui.query_widget_factory_controller import build_query_controls
+
+
+ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
+MAIN = ROOT / "main_window.py"
+OWNER = ROOT / "query_widget_factory_controller.py"
+
+
+def _setup(*, catalog=None, manager=True, extra_catalog=None):
+    events = []
+    caps = object()
+    service = NS(
+        searchable_providers=lambda: (
+            events.append(("searchable",)) or
+            [("remote-z", "Zulu"), ("remote-a", "Alpha"), ("local", "Legacy Local")]
+        ),
+        catalog_entries=lambda: (
+            events.append(("catalog",)) or
+            list(extra_catalog if extra_catalog is not None else [
+                {"provider_id": "remote-a"},
+                {"provider_id": "remote-b"},
+                {"provider_id": None},
+                {"provider_id": "remote-b"},
+            ])
+        ),
+        provider_display_name=lambda provider: (
+            events.append(("label", provider)) or f"Display {provider}"
+        ),
+        provider_search_capabilities=lambda: (
+            events.append(("capabilities",)) or caps
+        ),
+    )
+    plugin_manager = NS(widget_catalog=lambda: (
+        events.append(("widget-catalog",)) or catalog
+    )) if manager else None
+    window = NS(
+        service=service,
+        plugin_manager=plugin_manager,
+        diagnostics=NS(add=lambda *args, **kwargs:
+                       events.append(("diagnostic", args, kwargs))),
+    )
+    factory_calls = []
+
+    class Fallback:
+        def __init__(self, providers, changed, activate, *, library=False):
+            factory_calls.append((providers, changed, activate, library))
+            self.providers = providers
+            self.changed = changed
+            self.activate = activate
+            self.library = library
+            self.capability_updates = []
+
+        def set_provider_search_capabilities(self, values):
+            self.capability_updates.append(values)
+            events.append(("set-capabilities", values))
+
+    changed = Mock()
+    activate = Mock()
+    def create(library=False, fallback=Fallback):
+        return build_query_controls(
+            window, changed, activate, library=library, QueryControls=fallback,
+        )
+    return window, events, factory_calls, changed, activate, caps, create
+
+
+EXPECTED_PROVIDERS = [
+    ("remote-a", "Alpha"),
+    ("remote-b", "Display remote-b"),
+    ("local", "Local"),
+    ("remote-z", "Zulu"),
+]
+
+
+def test_controller_imports_without_gtk_and_retains_public_mainwindow_contract():
+    tree = ast.parse(OWNER.read_text(encoding="utf-8"))
+    imports = [ast.unparse(n) for n in ast.walk(tree)
+               if isinstance(n, (ast.Import, ast.ImportFrom))]
+    assert not any("import gi" in item or "main_window" in item for item in imports)
+    main = ast.parse(MAIN.read_text(encoding="utf-8"))
+    owner = next(n for n in main.body
+                 if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    method = next(n for n in owner.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_query_controls")
+    assert [arg.arg for arg in method.args.args] == ["self", "changed", "activate"]
+    assert [arg.arg for arg in method.args.kwonlyargs] == ["library"]
+    assert "query_widget_factory_controller.build_query_controls" in ast.unparse(method)
+    assert "QueryControls=QueryControls" in ast.unparse(method)
+
+
+def test_without_manager_uses_fallback_and_current_provider_order():
+    window, events, calls, changed, activate, caps, create = _setup(manager=False)
+    widget = create()
+    assert widget.providers == EXPECTED_PROVIDERS
+    assert widget.changed is changed
+    assert widget.activate is activate
+    assert widget.library is False
+    assert calls == [(EXPECTED_PROVIDERS, changed, activate, False)]
+    assert widget.capability_updates == [caps]
+    assert ("widget-catalog",) not in events
+
+
+def test_local_provider_label_is_authoritative_even_if_remote_lists_local():
+    window, events, calls, changed, activate, caps, create = _setup(manager=False)
+    widget = create()
+    assert widget.providers[2] == ("local", "Local")
+    assert widget.providers.count(("local", "Local")) == 1
+    assert len([p for p, _ in widget.providers if p == "remote-b"]) == 1
+
+
+def test_catalog_entry_without_provider_id_maps_to_local_without_duplicate():
+    window, events, calls, changed, activate, caps, create = _setup(manager=False)
+    widget = create()
+    assert sum(p == "local" for p, _ in widget.providers) == 1
+    assert ("label", "local") in events
+
+
+def test_catalog_provider_order_stably_sorted_by_display_name():
+    window, events, calls, changed, activate, caps, create = _setup(
+        manager=False, extra_catalog=[
+            {"provider_id": "x"}, {"provider_id": "b"}, {"provider_id": "x"},
+        ],
+    )
+    widget = create()
+    assert widget.providers == [
+        ("remote-a", "Alpha"), ("b", "Display b"), ("x", "Display x"),
+        ("local", "Local"), ("remote-z", "Zulu"),
+    ]
+
+
+def test_public_plugin_factory_receives_complete_provider_list_and_callbacks():
+    received = []
+    plugin_widget = NS(set_provider_search_capabilities=Mock())
+    catalog = NS(build_query_controls=lambda *args, **kwargs: (
+        received.append((args, kwargs)) or plugin_widget
+    ))
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    result = create()
+    assert result is plugin_widget
+    assert calls == []
+    assert received == [((EXPECTED_PROVIDERS, changed, activate), {"library": False})]
+    plugin_widget.set_provider_search_capabilities.assert_called_once_with(caps)
+
+
+def test_library_plugin_widget_skips_provider_search_capabilities():
+    plugin_widget = NS(set_provider_search_capabilities=Mock())
+    catalog = NS(build_query_controls=lambda *args, **kwargs: plugin_widget)
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    result = create(library=True)
+    assert result is plugin_widget
+    assert calls == []
+    plugin_widget.set_provider_search_capabilities.assert_not_called()
+    assert ("capabilities",) not in events
+
+
+def test_library_fallback_keeps_library_scope_and_skips_capabilities():
+    window, events, calls, changed, activate, caps, create = _setup(manager=False)
+    widget = create(library=True)
+    assert widget.library is True
+    assert widget.capability_updates == []
+    assert calls == [(EXPECTED_PROVIDERS, changed, activate, True)]
+    assert ("capabilities",) not in events
+
+
+def test_missing_widget_catalog_uses_fallback_not_none():
+    window, events, calls, changed, activate, caps, create = _setup(catalog=None)
+    widget = create()
+    assert widget.providers == EXPECTED_PROVIDERS
+    assert calls
+    assert events.count(("widget-catalog",)) == 1
+
+
+def test_non_callable_plugin_factory_uses_standard_controls():
+    window, events, calls, changed, activate, caps, create = _setup(
+        catalog=NS(build_query_controls="not callable"),
+    )
+    widget = create()
+    assert widget.providers == EXPECTED_PROVIDERS
+    assert len(calls) == 1
+
+
+def test_plugin_factory_returning_none_falls_back_without_diagnostics():
+    catalog = NS(build_query_controls=lambda *a, **kw: None)
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    widget = create()
+    assert widget.providers == EXPECTED_PROVIDERS
+    assert len(calls) == 1
+    assert not any(e[0] == "diagnostic" for e in events)
+
+
+def test_plugin_build_error_is_logged_and_fallback_used():
+    def broken_factory(*_args, **_kwargs):
+        raise RuntimeError("factory unavailable")
+    catalog = NS(build_query_controls=broken_factory)
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    widget = create()
+    assert widget.providers == EXPECTED_PROVIDERS
+    assert len(calls) == 1
+    assert ("diagnostic", ("PLUGIN", "query widget", "error"),
+            {"detail": {"error": "factory unavailable"}}) in events
+
+
+def test_no_capability_setter_is_supported_for_legacy_plugin_widgets():
+    widget = NS()
+    catalog = NS(build_query_controls=lambda *a, **kw: widget)
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    assert create() is widget
+    assert calls == []
+    assert ("capabilities",) not in events
+
+
+def test_non_callable_capability_setter_is_ignored():
+    widget = NS(set_provider_search_capabilities="not callable")
+    catalog = NS(build_query_controls=lambda *a, **kw: widget)
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    assert create() is widget
+    assert ("capabilities",) not in events
+
+
+def test_plugin_factory_failure_does_not_replace_original_callbacks():
+    received = []
+    def broken_factory(providers, changed, activate, *, library):
+        received.append((changed, activate, library))
+        raise ValueError("widget failure")
+    catalog = NS(build_query_controls=broken_factory)
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    widget = create()
+    assert received == [(changed, activate, False)]
+    assert widget.changed is changed
+    assert widget.activate is activate
+    assert widget.library is False
+
+
+def test_provider_discovery_failure_does_not_create_partial_widget():
+    window, events, calls, changed, activate, caps, create = _setup(manager=False)
+    window.service.searchable_providers = Mock(side_effect=ValueError("bad registry"))
+    with pytest.raises(ValueError, match="bad registry"):
+        create()
+    assert calls == []
+
+
+def test_library_never_touches_plugin_search_capability_registry():
+    widget = NS(set_provider_search_capabilities=Mock())
+    catalog = NS(build_query_controls=lambda *args, **kw: widget)
+    window, events, calls, changed, activate, caps, create = _setup(catalog=catalog)
+    window.service.provider_search_capabilities = Mock(
+        side_effect=AssertionError("library widget must not read search hints")
+    )
+    create(library=True)
+    window.service.provider_search_capabilities.assert_not_called()
