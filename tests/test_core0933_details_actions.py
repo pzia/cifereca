@@ -12,6 +12,15 @@ SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
 
 
 def _method(class_name: str, method_name: str, namespace=None):
+    if class_name == "MainWindow" and method_name == "_add_facets":
+        from cifereca.gui.detail_facets_controller import add_facets
+        dependencies = dict(namespace or {})
+        return lambda host, detail, item, controls: add_facets(
+            host, detail, item, controls,
+            Adw=dependencies["Adw"],
+            Gtk=dependencies.get("Gtk", NS()),
+            TaskPriority=dependencies["TaskPriority"],
+        )
     tree = ast.parse(gui_source_text(SOURCE))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
@@ -55,9 +64,9 @@ def test_action_width_budget_has_exact_fit_boundary():
 
 
 def test_detail_facets_replace_previous_inline_value_group_without_footer_tags():
-    tree = ast.parse(gui_source_text(SOURCE))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_add_facets")
+    owner = ast.parse(SOURCE.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
+    method = next(node for node in owner.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "add_facets")
     source = ast.unparse(method)
 
     assert "_append_content" not in source
