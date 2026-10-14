@@ -77,6 +77,7 @@ from .maintenance_tools import preview_maintenance_tool, execute_maintenance_too
 from .return_feedback import loan_return_feedback
 from .ui_perf import UiPerfMonitor
 from .activity_feedback import ActivityFeedback
+from .activity_history_projection import activity_history_rows
 from .activity_hide_policy import can_reduce_activity
 from .plugin_manager_page import PluginManagerPage
 from .query_controls import QueryControls, MultiSelect
@@ -362,12 +363,12 @@ class MainWindow(Adw.ApplicationWindow):
         if not hasattr(self, "activity_history_box"):
             return
         clear_box(self.activity_history_box)
-        rows = self.activity_feedback.rows()
-        for entry in rows:
-            label = Gtk.Label(label=entry.display_text, xalign=0)
+        rows = activity_history_rows(self.activity_feedback.rows())
+        for display_text, is_error in rows:
+            label = Gtk.Label(label=display_text, xalign=0)
             label.set_wrap(True)
             label.add_css_class("caption")
-            if entry.state == "error":
+            if is_error:
                 label.add_css_class("warning")
             self.activity_history_box.append(label)
         self.activity_history_button.set_visible(bool(rows))
