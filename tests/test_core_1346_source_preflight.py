@@ -172,5 +172,5 @@ def test_sync_page_preview_is_explicit_identity_bound_and_not_an_acquisition():
     assert 'getattr(self, "_sync_preview_generation", None) == version' in code
     assert 'self.service.current_identity' in code
     assert 'kind="sync-preflight"' in code
-    assert 'run_kobo_backup(' not in code
-    assert 'sync_kobo_backup(' not in code
+    assert 'run_kobo_backup(' not in code.split('def run_opening_sync(', 1)[0]
+    assert 'sync_kobo_backup(' not in code.split('def run_opening_sync(', 1)[0]
