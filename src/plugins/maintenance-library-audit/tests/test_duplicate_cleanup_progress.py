@@ -148,3 +148,43 @@ def test_nonsequence_mutation_warning_is_summarized_not_iterated():
     assert result.warnings == (
         "Doublon 1/1 : 1 avertissement(s) du service",
     )
+
+
+@pytest.mark.parametrize("step", ("plan", "run"))
+def test_broker_exception_class_and_message_never_leak_from_duplicate_cleanup(step):
+    """An untrusted broker may generate an exception class containing a secret."""
+    SecretFailure = type("Bearer_PRIVATE_TOKEN_home_PRIVATE_PATH", (OSError,), {})
+
+    class PoisonedBroker(Broker):
+        def plan(self, request):
+            self.requests.append(request)
+            if request.placement_id == "PRIVATE_DUPLICATE" and step == "plan":
+                raise SecretFailure("PRIVATE_PASSWORD /home/PRIVATE_USER/secret.epub")
+            return request
+
+        def run(self, request, control):
+            if request.placement_id == "PRIVATE_DUPLICATE" and step == "run":
+                raise SecretFailure("PRIVATE_PASSWORD /home/PRIVATE_USER/secret.epub")
+            return LibraryMutationResult(True, changed=1, summary="PRIVATE_CORE_TITLE")
+
+    broker = PoisonedBroker()
+    tool, plan, control, _ = _case((
+        ("PRIVATE_DUPLICATE", "PRIVATE_KEEP"),
+        ("other-duplicate", "other-keep"),
+    ), broker)
+    result = tool.run(plan, control)
+    assert result.ok is False
+    assert result.changed == 1
+    assert result.facts == {"planned": 2, "failures": 1}
+    assert result.warnings == ("Doublon 1/2 : échec du service",)
+    assert [
+        (event.get("current"), event.get("total")) for event in control.events
+    ] == [(0, 2), (1, 2), (2, 2)]
+    assert "échec" in control.events[-1]["message"]
+    assert [request.placement_id for request in broker.requests] == [
+        "PRIVATE_DUPLICATE", "other-duplicate",
+    ]
+    for secret in ("PRIVATE", "Bearer", "TOKEN", "PASSWORD", "/home/", "OSError"):
+        assert secret not in str(result.warnings)
+        assert secret not in result.summary
+        assert all(secret not in event["message"] for event in control.events)
