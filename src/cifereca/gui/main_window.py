@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import sync_issues_dialog_controller
 from . import shell_shortcut_controller
 from . import statistics_presentation_controller
 from . import dashboard_page_controller
@@ -763,16 +764,7 @@ class MainWindow(Adw.ApplicationWindow):
                            lambda exc: self.show_error(str(exc), "Profils ADE"), control=control)
 
     def _show_sync_issues(self, card):
-        from .sync_issues import sync_issues_text
-        dialog = Adw.MessageDialog.new(self, "Synchronisation · " + str(card.get("label") or ""), sync_issues_text(card.get("sync") or {}))
-        dialog.add_response("settings", "Paramètres des identités")
-        dialog.add_response("close", "Fermer")
-        def response(_dialog, selected):
-            if selected == "settings":
-                self.navigate("settings")
-                self._settings_tabs.set_visible_child_name("accounts")
-        dialog.connect("response", response)
-        dialog.present()
+        return sync_issues_dialog_controller.show_sync_issues(self, card, Adw=Adw)
 
     def _build_sync_page(self):
         return sync_controller._build_sync_page(self)
