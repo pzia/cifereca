@@ -266,14 +266,22 @@ class KoboVaultClient:
         # to a public search result. Quarantine every personal variant while
         # keeping any independently attested public catalogue result.
         library_counts: dict[str, int] = {}
+        tainted_library_products: set[str] = set()
         library_items = library.get("items")
         if isinstance(library_items, list):
             for raw in library_items:
-                if isinstance(raw, dict):
+                if type(raw) is dict:
                     product = _strict_product_id(raw)
                     if product is not None:
                         library_counts[product] = library_counts.get(product, 0) + 1
-        ambiguous_library_products = {
+                    else:
+                        # A conflicting pair of individually valid aliases
+                        # taints *both* editions, as with paged manifests.
+                        for alias in ("product_id", "id"):
+                            candidate = _strict_product_id({alias: raw.get(alias)})
+                            if candidate is not None:
+                                tainted_library_products.add(candidate)
+        ambiguous_library_products = tainted_library_products | {
             product for product, count in library_counts.items() if count > 1
         }
         merged: dict[str, dict[str, Any]] = {}
@@ -351,6 +359,19 @@ class KoboVaultClient:
                     merged[key] = combined
                 else:
                     merged[key] = dict(raw)
+        # The compatibility envelope also exposes a nested library payload.
+        # It must not re-export the conflicting private rows that were
+        # quarantined from "items", even when a caller inspects that envelope.
+        if isinstance(library_items, list):
+            library = {
+                **library,
+                "items": [
+                    raw for raw in library_items
+                    if type(raw) is dict
+                    and (product := _strict_product_id(raw)) is not None
+                    and product not in ambiguous_library_products
+                ],
+            }
         return {
             "items": [merged[key] for key in order],
             "catalog": catalog,
