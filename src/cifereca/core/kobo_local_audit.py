@@ -21,6 +21,58 @@ _MAX_RECORDS = 4096
 _MAX_FILES = 256
 _MAX_FILE_BYTES = 512 * 1024 * 1024
 _MAX_CASES = 24
+_MAX_DIRECTORY_ENTRIES = 256
+
+
+def _unindexed_identity_files(
+    root: Path, indexed_paths: set[str], budget: int,
+) -> tuple[int, int, bool]:
+    """Count possible local files in ONE identity directory, never open them.
+
+    Do not follow symlinked ancestors, directories or leaf files. This is
+    intentionally nonrecursive: a file absent from our persisted index is
+    merely a *candidate*, not proof of an orphan or Kobo ownership.
+    """
+    if budget <= 0 or not root.is_absolute() or not hasattr(os, "O_NOFOLLOW"):
+        return 0, 0, True
+    flags = (
+        os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    fd = -1
+    inspected = 0
+    candidates = 0
+    try:
+        fd = os.open("/", flags)
+        absolute = Path(os.path.abspath(root))
+        for component in absolute.parts[1:]:
+            next_fd = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                if inspected >= budget:
+                    return candidates, inspected, True
+                inspected += 1
+                if not entry.name.lower().endswith((".epub", ".pdf")):
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                absolute_entry = str(absolute / entry.name)
+                if absolute_entry not in indexed_paths:
+                    candidates += 1
+        return candidates, inspected, False
+    except FileNotFoundError:
+        # A missing backup folder is normal. Nothing was scanned or created.
+        return 0, inspected, False
+    except (OSError, ValueError, TypeError):
+        # Permission errors, symlinked ancestors and races are inconclusive.
+        return candidates, inspected, True
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 
 
 def _read_hash_within(path_text: object, roots: tuple[Path, ...]) -> tuple[str, int, str] | None:
@@ -137,11 +189,28 @@ def kobo_local_reconciliation_audit(
         row for row in service.storage.backup_list("kobo")
         if row.get("credential_id") in valid_owner
     ]
+    # Other providers' indexed local files are not Kobo orphan candidates.
+    # The only scan roots remain confined to the selected Kobo identities.
+    all_catalog = service.storage.catalog_entries()
     catalog = [
-        row for row in service.storage.catalog_entries()
+        row for row in all_catalog
         if row.get("provider_id") == "kobo"
         and row.get("identity_id") in selected_identities
     ]
+    indexed_paths: dict[str, set[str]] = {
+        identity: set() for identity in selected_identities
+    }
+    for row in all_catalog:
+        identity = row.get("identity_id")
+        metadata = row.get("metadata")
+        path = metadata.get("path") if isinstance(metadata, dict) else None
+        if identity in indexed_paths and type(path) is str and os.path.isabs(path):
+            indexed_paths[identity].add(os.path.abspath(path))
+    for row in records:
+        identity = valid_owner[row["credential_id"]]
+        path = row.get("local_path")
+        if type(path) is str and os.path.isabs(path):
+            indexed_paths[identity].add(os.path.abspath(path))
     entitlements = [
         row for row in service.storage.entitlements(
             provider_id="kobo", state="active",
@@ -193,6 +262,8 @@ def kobo_local_reconciliation_audit(
         "stored_hash_mismatch": 0, "unproven_catalogue_links": 0,
         "same_product_different_bytes": 0, "binary_match_groups": 0,
         "active_entitlements_unmaterialized": 0,
+        "unindexed_regular_file_candidates": 0,
+        "identity_flat_file_candidates": 0,
     }
 
     def case(category: str, artifacts: int) -> None:
@@ -203,6 +274,7 @@ def kobo_local_reconciliation_audit(
                 "decision": "manual_review_only",
             })
 
+    directory_entries_left = _MAX_DIRECTORY_ENTRIES
     for label, cred, identity, roots in scopes:
         counts = {key: 0 for key in totals if key != "binary_match_groups"}
         scoped_rows = [
@@ -295,6 +367,23 @@ def kobo_local_reconciliation_audit(
         if counts["active_entitlements_unmaterialized"]:
             case("active_entitlement_without_verified_artifact",
                  counts["active_entitlements_unmaterialized"])
+        # Read *names and stat metadata only*, never file bytes or EPUBs.
+        # roots[0] is the account's Kobo directory; roots[1] is its
+        # identity-specific historical flat directory. Never traverse the
+        # shared library root, other identities or arbitrary subdirectories.
+        for index, directory in enumerate(roots):
+            count, inspected, incomplete = _unindexed_identity_files(
+                directory, indexed_paths[identity], directory_entries_left,
+            )
+            directory_entries_left -= inspected
+            counts["unindexed_regular_file_candidates"] += count
+            if index == 1:
+                counts["identity_flat_file_candidates"] += count
+            if incomplete:
+                limited = True
+        if counts["unindexed_regular_file_candidates"]:
+            case("unindexed_identity_file_candidate",
+                 counts["unindexed_regular_file_candidates"])
         account_results.append({"account": label, "counts": counts})
         for key, count in counts.items():
             totals[key] += count
@@ -315,6 +404,7 @@ def kobo_local_reconciliation_audit(
         "catalogue_entries_without_product_identity": unlinked_catalog,
         "truncated": limited,
         "files_hashed_limit": _MAX_FILES,
+        "directory_entries_limit": _MAX_DIRECTORY_ENTRIES,
         "offline": True, "read_only": True, "dry_run": True,
         "mutations_authorized": False, "downloads_authorized": False,
         "classification": "local_hash_evidence_not_entitlement_authority",
@@ -322,7 +412,10 @@ def kobo_local_reconciliation_audit(
         "limitations": [
             "Only persisted Kobo backup, active rights and explicit catalogue paths were considered.",
             "Legacy paths outside the owning identity directory are not read.",
-            "No filesystem crawl, remote rights refresh or EPUB/DRM inspection.",
+            "Only immediate identity-owned folders are enumerated, up to the shared scan limit.",
+            "Unindexed file names are candidates, not proven Kobo ownership or orphans.",
+            "Legacy paths in the shared global library root cannot be assigned to an identity.",
+            "No remote rights refresh or EPUB/DRM inspection.",
             "Same SHA does not authorize deletion or automatic ownership transfer.",
         ],
     }
