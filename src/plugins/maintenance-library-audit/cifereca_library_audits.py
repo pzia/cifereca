@@ -117,8 +117,12 @@ class _ReadOnlyTool:
         return self.info
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
+        # These audits perform their scan entirely in plan(), where the public
+        # contract has no progress callback.  Returning the precomputed result
+        # is not an independently measurable one-item operation: no 1/1.
         control.check_cancelled()
-        control.report(current=1, total=1, message=plan.summary)
+        control.report(message=plan.summary)
+        control.check_cancelled()
         return MaintenanceResult(
             ok=True,
             changed=0,
