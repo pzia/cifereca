@@ -28,10 +28,13 @@ def test_notifications_reserve_layout_space_instead_of_overlaying_content():
 
 def test_notification_bar_is_closable_and_outside_detail_viewports():
     source = _method("MainWindow", "__init__")
-    assert "self.notification_close = Gtk.Button.new_from_icon_name('window-close-symbolic')" in source
-    assert "Fermer la notification" in source
+    builder = ast.unparse(ast.parse(MAIN.with_name("notification_widgets.py").read_text(encoding="utf-8")))
+    assert "close = Gtk.Button.new_from_icon_name('window-close-symbolic')" in builder
+    assert "Fermer la notification" in builder
     assert "self._dismiss_notification()" in source
-    assert "self.notification_label.set_wrap(True)" in source
+    assert "label.set_wrap(True)" in builder
+    assert "self.notification_close = notification.close" in source
+    assert "self.notification_revealer = notification.revealer" in source
 
 
 def test_notification_timeout_is_bounded_and_reuses_single_bar():

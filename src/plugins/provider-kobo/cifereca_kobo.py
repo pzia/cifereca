@@ -276,10 +276,10 @@ class KoboSession(ProviderSession):
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
         if scope == "physical":
             return []
-        rows = self.catalog.search(query, field=field, limit=50, page=page)
-        # The public catalogue remains queryable without a personal account.
-        # Only a verified account may publish private /library/search facts.
-        # Never trust a returned account_id over the authenticated session.
+        # Determine whether personal discovery is authorized *before* the
+        # service can issue /library/search. Post-filtering private hits is
+        # insufficient: a disconnected or mismatched account must not incur
+        # a private HTTP request, nor be blocked by a personal 429/5xx.
         account_id = (
             self._accounts[0].unique_id
             if self.connected and len(self._accounts) == 1
@@ -290,6 +290,10 @@ class KoboSession(ProviderSession):
             and _strict_account_scope(self._accounts[0].unique_id)
             else None
         )
+        options = {"field": field, "limit": 50, "page": page}
+        if account_id is None or scope == "catalog":
+            options["scope"] = "catalog"
+        rows = self.catalog.search(query, **options)
         accepted: list[SearchResult] = []
         for item in rows:
             # SearchResult is the normal catalogue contract. Some legacy
@@ -522,6 +526,18 @@ class KoboSession(ProviderSession):
         display_profile: str | None = None,
         include_acsm: bool | None = None,
     ) -> dict[str, Any]:
+        # A direct caller of this provider method can bypass the advisory
+        # backup manifest and personal search. It must not issue a private
+        # acquisition request after a disconnect or a failed account rebind.
+        # Entitlement and materialization remain Core decisions; this guard
+        # only establishes that the provider session is bound to one account.
+        if (
+            not self.connected or len(self._accounts) != 1
+            or self._accounts[0].provider_id != self.provider_id
+            or self._accounts[0].credential_id != self.credential_id
+            or not _strict_account_scope(self._accounts[0].unique_id)
+        ):
+            raise ProviderError("Kobo-Vault : acquisition sans compte attesté")
         profile = display_profile if self.supports_acquisition_display_profile else None
         if self.supports_acquisition_display_profile and profile is None:
             profile = self.display_profile

@@ -52,7 +52,9 @@ def test_window_lifecycle_disposes_on_close_rebuild_and_standalone():
     init = get("__init__")
     build = ast.unparse(ast.parse(settings_source_text()))
     close = get("_on_close_request")
-    standalone = get("_open_prelogin_diagnostics")
+    facade = get("_open_prelogin_diagnostics")
+    assert "standalone_settings_controller.open_standalone_settings(" in facade
+    standalone = (path.parent / "standalone_settings_controller.py").read_text(encoding="utf-8")
     assert "SettingsPageLifetime()" in build
     assert "previous.dispose()" in build
     assert "page_lifetime.alive" in build

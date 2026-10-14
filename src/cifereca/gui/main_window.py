@@ -35,19 +35,24 @@ from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
 from . import shell_shortcut_controller
+from . import statistics_presentation_controller
+from . import dashboard_render_controller
+from . import shell_identity_selector_controller
 from . import shell_layout_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from .search_state import SearchStateField
 from .settings_lifetime import SettingsPageLifetime
-from . import settings_page
+from . import settings_page, standalone_settings_controller
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
 from .startup_lifecycle import once_while_open
 from . import startup_coordinator
 from . import feedback_timers
+from .notification_widgets import build_notification_bar
 from . import activity_result_controller
 from . import activity_feedback_view_controller
+from . import feedback_dialog_controller
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -189,20 +194,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.root_stack.set_vexpand(True)
         self.window_root.append(self.root_stack)
 
-        self.notification_revealer = Gtk.Revealer()
-        self.notification_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
-        self.notification_revealer.set_reveal_child(False)
-        notification_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        add_css(notification_bar, "notification-bar")
-        self.notification_label = Gtk.Label(label="", xalign=0)
-        self.notification_label.set_hexpand(True)
-        self.notification_label.set_wrap(True)
-        notification_bar.append(self.notification_label)
-        self.notification_close = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        self.notification_close.set_tooltip_text("Fermer la notification")
+        notification = build_notification_bar(Gtk=Gtk, add_css=add_css)
+        self.notification_revealer = notification.revealer
+        self.notification_label = notification.label
+        self.notification_close = notification.close
         self.notification_close.connect("clicked", lambda _button: self._dismiss_notification())
-        notification_bar.append(self.notification_close)
-        self.notification_revealer.set_child(notification_bar)
         self.window_root.append(self.notification_revealer)
         self._notification_hide_source: int | None = None
         startup_started = time.perf_counter()
@@ -303,27 +299,14 @@ class MainWindow(Adw.ApplicationWindow):
     def show_error(self, message: str, title: str = "Une erreur est survenue") -> None:
         if getattr(self, "_closed", False):
             return
-        display_message = self._functional_error_message(message)
-        self.toast(display_message, 6)
-        dialog = Adw.MessageDialog.new(self, title, display_message)
-        dialog.add_response("ok", "Fermer")
-        dialog.set_default_response("ok")
-        dialog.set_close_response("ok")
-        dialog.present()
+        return feedback_dialog_controller.show_error(self, message, title, Adw=Adw)
 
     def show_attention(self, message: str, *, code: str = "attention_required") -> None:
         """Present a remediable condition without framing it as a crash."""
         if getattr(self, "_closed", False):
             return
-        dialog = Adw.MessageDialog.new(self, "Action requise", message)
-        dialog.add_response("close", "Fermer")
-        dialog.set_default_response("close")
-        dialog.set_close_response("close")
-        dialog.set_body_use_markup(False)
-        dialog.present()
-        self.diagnostics.add(
-            "UX", "attention required", "warning",
-            detail={"code": code, "message": message}, level="detailed",
+        return feedback_dialog_controller.show_attention(
+            self, message, code=code, Adw=Adw,
         )
 
     def _cancel_activity_hide(self) -> None:
@@ -424,43 +407,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.reconnect_sources()
 
     def _open_prelogin_diagnostics(self) -> None:
-        win = Adw.Window(transient_for=self, modal=False)
-        win.set_title("Diagnostic / Configuration")
-        win.set_default_size(900, 650)
-
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        header = Adw.HeaderBar()
-        header.set_title_widget(Gtk.Label(label="Configuration et diagnostic"))
-        close = Gtk.Button.new_from_icon_name("window-close-symbolic")
-        close.set_tooltip_text("Fermer")
-        close.connect("clicked", lambda _b: win.close())
-        header.pack_end(close)
-        content.append(header)
-        page = self._build_settings_page(standalone=True)
-        page.set_vexpand(True)
-        content.append(page)
-        win.set_content(content)
-
-        keys = Gtk.EventControllerKey()
-        def on_key(_controller, keyval, _keycode, _state):
-            if keyval == Gdk.KEY_Escape:
-                win.close()
-                return True
-            return False
-        keys.connect("key-pressed", on_key)
-        win.add_controller(keys)
-        # Garder une référence explicite pendant toute la vie de la fenêtre.
-        self._standalone_settings_window = win
-        def standalone_closed(_window):
-            if getattr(self, "_standalone_settings_window", None) is win:
-                standalone_lifetime = self._settings_standalone_lifetime
-                if standalone_lifetime is not None:
-                    standalone_lifetime.dispose()
-                    self._settings_standalone_lifetime = None
-                self._standalone_settings_window = None
-            return False
-        win.connect("close-request", standalone_closed)
-        win.present()
+        return standalone_settings_controller.open_standalone_settings(
+            self, Gtk=Gtk, Adw=Adw, Gdk=Gdk,
+        )
 
     # ---------- shell / navigation ----------
     def _build_main_shell(self) -> Gtk.Widget:
@@ -781,44 +730,17 @@ class MainWindow(Adw.ApplicationWindow):
         return navigation_controller.navigate(self, route)
 
     def _replace_dropdown_labels(self, dropdown, labels):
-        model = dropdown.get_model()
-        if isinstance(model, Gtk.StringList):
-            previous = [model.get_string(i) for i in range(model.get_n_items())]
-            if previous != labels:model.splice(0, model.get_n_items(), labels)
-        else:
-            dropdown.set_model(Gtk.StringList.new(labels))
+        return shell_identity_selector_controller.replace_dropdown_labels(
+            dropdown, labels, Gtk=Gtk,
+        )
 
     def _populate_account_dropdown(self, identity_id: str | None) -> None:
-        self._account_changing = True
-        try:
-            public = {a.provider_id for a in self.service.accounts
-                      if getattr(getattr(self.service._provider_plugin_status(a.provider_id), "descriptor", None), "instantiation", "multiple") == "singleton_public"}
-            self._visible_accounts = delegated_accounts(self.service.accounts, identity_id, public)
-            self.account_dropdown.set_visible(bool(self._visible_accounts))
-            labels = [
-                f"{a.provider_label} · {a.display_name or ('Compte principal' if a.is_primary else 'Compte lié')}"
-                for a in self._visible_accounts
-            ]
-            self._replace_dropdown_labels(self.account_dropdown, labels)
-            current = self.service.current_account
-            account_index = next((i for i, account in enumerate(self._visible_accounts) if account is current), Gtk.INVALID_LIST_POSITION)
-            self.account_dropdown.set_selected(account_index if self._visible_accounts else Gtk.INVALID_LIST_POSITION)
-        finally:
-            self._account_changing = False
+        return shell_identity_selector_controller.populate_account_dropdown(
+            self, identity_id, Gtk=Gtk, delegated_accounts=delegated_accounts,
+        )
 
     def _populate_accounts(self) -> None:
-        self._identity_changing = True
-        try:
-            identities = list(self.service.identities)
-            self._replace_dropdown_labels(self.identity_dropdown, [identity.label for identity in identities])
-            selected_identity = self.service.current_identity.identity_id if self.service.current_identity else None
-            selected_index = next((i for i, identity in enumerate(identities) if identity.identity_id == selected_identity), 0)
-            self.identity_dropdown.set_selected(selected_index if identities else Gtk.INVALID_LIST_POSITION)
-        finally:
-            self._identity_changing = False
-
-        self._populate_account_dropdown(selected_identity)
-        if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
+        return shell_identity_selector_controller.populate_accounts(self, Gtk=Gtk)
 
     def _identity_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
         if self._identity_changing:
@@ -993,101 +915,15 @@ class MainWindow(Adw.ApplicationWindow):
         return {"running": "En cours", "success": "Réussie", "partial": "Partielle", "failed": "Échouée"}.get(str(status or ""), "Jamais synchronisée")
 
     def _refresh_statistics(self):
-        if not hasattr(self,'statistics_button'):return
-        identity=self.service.current_identity
-        if not identity:return
-        stats=self.service.identity_statistics(identity.identity_id)
-        loans=stats['known_loans']
-        self.statistics_button.set_label(f"{stats['local_books']} livres · {loans if loans is not None else '—'} prêts")
+        return statistics_presentation_controller.refresh_statistics(self)
 
     def _show_statistics(self):
-        identity=self.service.current_identity
-        if not identity:return
-        stats=self.service.identity_statistics(identity.identity_id)
-        loans=stats['known_loans']
-        rows=[f"Livres locaux distincts : {stats['local_books']}",f"Emplacements locaux indexés présents : {stats['local_placements']}",
-              f"Emprunts connus : {loans if loans is not None else 'non actualisés'}",f"Sources de prêts observées : {stats['loan_sources_observed']}",
-              f"Droits d’achat distants actifs : {stats['remote_owned_rights']}"]
-        for title,key in [('Formats','formats'),('Sources locales','sources'),('Couvertures EPUB','epub_covers')]:
-            values=stats[key]
-            rows.append(title+' : '+(', '.join(f'{name} {count}' for name,count in sorted(values.items())) or '—'))
-        actions=stats.get('actions') or {}
-        if actions:
-            rows.append('Actions sur la période :')
-            rows.append(f"  Acquisitions : {actions.get('acquisitions_succeeded',0)} réussies · {actions.get('acquisitions_failed',0)} échouées")
-            rows.append(f"  Imports : {actions.get('imports_succeeded',0)} réussis · {actions.get('imports_failed',0)} échoués")
-            rows.append(f"  Synchronisations : {actions.get('synchronizations_succeeded',0)} réussies · {actions.get('synchronizations_failed',0)} échouées")
-            rows.append(f"  Transformations : {actions.get('transformations_succeeded',0)} réussies · {actions.get('transformations_failed',0)} échouées")
-            rows.append(f"  Transferts : {actions.get('transfers_succeeded',0)} réussis · {actions.get('transfers_failed',0)} échoués")
-            if actions.get('from_timestamp') and actions.get('to_timestamp'):
-                rows.append('  Fenêtre : '+datetime.fromtimestamp(actions['from_timestamp']).strftime('%d/%m/%Y %H:%M')+' → '+datetime.fromtimestamp(actions['to_timestamp']).strftime('%d/%m/%Y %H:%M'))
-        if stats.get('loans_observed_at'):
-            rows.append("Prêts observés au plus tôt : "+datetime.fromtimestamp(stats['loans_observed_at']).strftime('%d/%m/%Y %H:%M'))
-        rows.append("Inventaire issu du dernier scan ; prêts issus des dernières réponses disponibles, éventuellement partielles. Les statistiques d'actions utilisent la fenêtre indiquée.")
-        dialog=Adw.MessageDialog.new(self,f"Statistiques · {identity.label}",'\n'.join(rows))
-        dialog.add_response('close','Fermer');dialog.present()
+        return statistics_presentation_controller.show_statistics(self, Adw=Adw)
 
     def _render_dashboard(self) -> None:
-        if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
-        for callback in list(getattr(self, "_overview_listeners", [])):
-            try: callback()
-            except Exception as exc: self.diagnostics.add("UI", "identity overview callback", "error", detail={"error": type(exc).__name__})
-        if not hasattr(self, "dashboard_cards"):
-            return
-        child = self.dashboard_cards.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling(); self.dashboard_cards.remove(child); child = nxt
-        for card in self.service.dashboard_state():
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            box.set_margin_top(12); box.set_margin_bottom(12); box.set_margin_start(14); box.set_margin_end(14)
-            add_css(box, "cover-frame")
-            head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            name = Gtk.Button(label=str(card.get("label") or "Utilisateur")); name.set_hexpand(True)
-            name.get_child().set_wrap(True)
-            name.set_tooltip_text("Sélectionner cette identité et ouvrir sa bibliothèque")
-            name.connect("clicked", lambda _b, iid=card["identity_id"]: self.open_identity_library(iid))
-            add_css(name, "flat", "book-title"); head.append(name)
-            sync = card.get("sync") or {}
-            badge = Gtk.Label(label=self._sync_status_label(sync.get("status"))); add_css(badge, "badge"); head.append(badge)
-            box.append(head)
-            stats=card.get('statistics') or {}
-            if stats:
-                loans=stats.get('known_loans')
-                count=Gtk.Label(label=f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} emprunts connus",xalign=0)
-                count.set_wrap(True);box.append(count)
-                actions=stats.get('actions') or {}
-                if actions:
-                    ok=sum(int(actions.get(key,0) or 0) for key in ('acquisitions_succeeded','imports_succeeded','synchronizations_succeeded','transformations_succeeded','transfers_succeeded'))
-                    failed=sum(int(actions.get(key,0) or 0) for key in ('acquisitions_failed','imports_failed','synchronizations_failed','transformations_failed','transfers_failed'))
-                    action_label=Gtk.Label(label=f"Actions (30 j) : {ok} réussies · {failed} échouées",xalign=0)
-                    action_label.set_wrap(True); add_css(action_label, 'caption', 'dim-label'); box.append(action_label)
-            providers = ", ".join(source["label"] + ("" if source["connected"] else " (à connecter)") for source in card.get("sources", [])) or "Aucune source connectée"
-            source_label = Gtk.Label(label=f"Sources : {providers}", xalign=0); source_label.set_wrap(True); box.append(source_label)
-            profile = "Lié" if card.get("adept_profile_id") else "À configurer"
-            box.append(Gtk.Label(label=f"Profil Adobe : {profile}", xalign=0))
-            deep_last_at = card.get("deep_last_at")
-            if deep_last_at:
-                try:
-                    deep_label = datetime.fromtimestamp(int(deep_last_at)).strftime("%d/%m/%Y %H:%M")
-                except Exception:
-                    deep_label = str(deep_last_at)
-                lab = Gtk.Label(label=f"Dernière vérification complète : {deep_label}", xalign=0); add_css(lab, "caption", "dim-label"); box.append(lab)
-            if sync:
-                sync_detail = sync.get("detail") or {}
-                provisioning = sync_detail.get("adept_provisioning") or {}
-                if provisioning.get("state"):
-                    box.append(Gtk.Label(label=f"Provisioning : {provisioning.get('state')}", xalign=0))
-                details = f"Nouvelles acquisitions : {sync.get('new_acquisitions', 0)} · Actions : {sync.get('attention_required', 0)} · Erreurs : {sync.get('errors', 0)}"
-                lab = Gtk.Label(label=details, xalign=0); lab.set_wrap(True); add_css(lab, "caption", "dim-label"); box.append(lab)
-                if sync.get("errors") or sync.get("attention_required"):
-                    issues = Gtk.Button(label="Voir les erreurs et actions")
-                    issues.connect("clicked", lambda _b, c=card: self._show_sync_issues(c)); box.append(issues)
-            box.set_size_request(300, -1)
-            for capability in card.get("capabilities", []):
-                label = Gtk.Label(label="✓ " + capability["label"], xalign=0); add_css(label, "caption")
-                box.append(label)
-            self.dashboard_cards.insert(box, -1)
-
+        return dashboard_render_controller.render_dashboard(
+            self, Gtk=Gtk, add_css=add_css,
+        )
 
     def _choose_identity_directory(self, entry, root: Path) -> None:
         from ..identities.directory_selection import directory_choice
