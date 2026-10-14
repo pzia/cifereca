@@ -81,7 +81,6 @@ def test_duplicate_personal_search_variants_keep_only_public_evidence(monkeypatc
         public_and_diagnostics = json.dumps({
             "public": rows[:2],
             "rejections": vault.last_search_merge_rejections,
-            "filtered_library": payload["library"],
         })
         for secret in (
             "PRIVATE_ALICE", "PRIVATE_BOB", "PRIVATE_TITLE", "PRIVATE_REVISION",
