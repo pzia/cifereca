@@ -1123,14 +1123,15 @@ class YouthView:
             identity_id = self.identity_id()
             selection_generation = self._detail_selection_generation
             selected_book = self.selected_book
+            selection_key = row.key
             actions = list(presentation.actions)
             if 2 <= len(title) <= 512:
                 actions.append(UiBookDetailAction(
                     id="search-library",
                     title="Rechercher en bibliothèque",
                     icon_name="system-search-symbolic",
-                    callback=lambda q=title, identity=identity_id, token=selection_generation, book=selected_book: self._search_selected_book(
-                        q, identity, token, book, field="title",
+                    callback=lambda q=title, identity=identity_id, token=selection_generation, key=selection_key, book=selected_book: self._search_selected_book(
+                        q, identity, token, key, book, field="title",
                     ),
                 ))
             # ISBN is a bibliographic *lookup* only. It does not establish
@@ -1147,8 +1148,8 @@ class YouthView:
                     id="search-library-isbn",
                     title="Rechercher cette édition par ISBN",
                     icon_name="system-search-symbolic",
-                    callback=lambda q=isbn, identity=identity_id, token=selection_generation, book=selected_book: self._search_selected_book(
-                        q, identity, token, book, field="isbn",
+                    callback=lambda q=isbn, identity=identity_id, token=selection_generation, key=selection_key, book=selected_book: self._search_selected_book(
+                        q, identity, token, key, book, field="isbn",
                     ),
                 ))
             if actions:
@@ -1158,7 +1159,7 @@ class YouthView:
 
     def _search_selected_book(
         self, query: str, identity_id: str, generation: int,
-        book: object, *, field: str = "title",
+        selection_key: str, book: object, *, field: str = "title",
     ) -> bool:
         """Never invoke an action from an old book edition or old profile.
 
@@ -1169,7 +1170,7 @@ class YouthView:
             generation != getattr(self, "_detail_selection_generation", 0)
             or self.identity_id() != identity_id
             or getattr(self, "selected_book", None) is not book
-            or getattr(self, "rows", {}).get(book_key(book)) is not book
+            or getattr(self, "rows", {}).get(selection_key) is not book
         ):
             return False
         self._search_library(query, identity_id, field=field)
