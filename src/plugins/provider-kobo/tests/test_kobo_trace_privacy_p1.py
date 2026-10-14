@@ -104,6 +104,11 @@ def test_debug_traces_do_not_iterate_or_reveal_untrusted_manifest_keys(caplog):
     )
     session.client.close()
     session.client = FakeVault([source])
+    session.connected = True
+    session._accounts = [Account(
+        unique_id="PRIVATE_ACCOUNT", provider_id="kobo",
+        credential_id=session.credential_id, display_name="Private reader",
+    )]
     session.catalog = NS(cover_url=lambda _item: None)
     try:
         with caplog.at_level(logging.DEBUG, logger="cifereca"):
