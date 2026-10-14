@@ -329,14 +329,20 @@ class IntegrityAuditTool(_ReadOnlyTool):
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
         candidates=tuple(plan.facts.get("candidates",()))
+        total=len(candidates)
         warnings=list(plan.warnings)
         read_failures=int(plan.facts.get("read_failures") or 0)
         invalid=0
         missing=0
         by_issue={}
+        # The plan enumerates file candidates but does not examine their bytes.
+        # Only the run can report measured progress. An empty batch is not 1/1.
+        control.check_cancelled()
+        if not total:
+            control.report(message="Aucun fichier local à vérifier")
         for index,row in enumerate(candidates,start=1):
             control.check_cancelled()
-            control.report(current=index-1,total=len(candidates) or 1,message=f"Intégrité {index}/{len(candidates)}")
+            control.report(current=index-1,total=total,message=f"Intégrité {index}/{total}")
             issues=_file_integrity_issues(
                 row.get("path",""), row.get("format",""),
                 expected_size=int(row.get("expected_size") or 0),
@@ -348,7 +354,13 @@ class IntegrityAuditTool(_ReadOnlyTool):
                 for issue in issues: by_issue[issue]=by_issue.get(issue,0)+1
                 if len(warnings)<100:
                     warnings.append(f"{row.get('title') or PurePath(str(row.get('path') or '')).name}: {', '.join(issues)}")
-        control.report(current=len(candidates),total=len(candidates) or 1,message="Audit d’intégrité terminé")
+        # A cancellation received while the last file was being inspected
+        # must not publish a misleading completed/100% state.
+        control.check_cancelled()
+        if total:
+            control.report(current=total,total=total,message="Audit d’intégrité terminé")
+        else:
+            control.report(message="Audit d’intégrité terminé : aucun fichier")
         return MaintenanceResult(
             ok=invalid==0 and read_failures==0,
             changed=0,
