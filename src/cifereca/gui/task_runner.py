@@ -131,6 +131,8 @@ class TaskRunner:
                 if kind_outcome == "ok":
                     if ok:
                         ok(payload)
+                    if getattr(self.window, "_closed", False):
+                        return False
                     # A success callback may close the window itself.
                     # Never update detached GTK feedback after that callback.
                     if success_toast and not getattr(self.window, "_closed", False):
@@ -140,6 +142,8 @@ class TaskRunner:
                         else:
                             self.window.toast(success_toast)
                 else:
+                    if getattr(self.window, "_closed", False):
+                        return False
                     if err:
                         err(payload)
                     else:
