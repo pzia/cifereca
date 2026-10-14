@@ -36,6 +36,7 @@ from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
 from . import query_widget_factory_controller
 from . import history_language_projection
+from . import known_languages_controller
 from . import adept_loan_choice_controller
 from . import sync_issues_dialog_controller
 from . import shell_shortcut_controller
@@ -1059,11 +1060,8 @@ class MainWindow(Adw.ApplicationWindow):
         return sync_controller.run_opening_sync(self, control, deep=deep)
 
     def _known_item_languages(self, provider_id: str, item_id: str | None, metadata: dict[str, Any] | None = None) -> set[str]:
-        # Keep the historical single-book contract (including direct loan
-        # metadata); history list filtering uses the batched projection below.
-        catalog_rows = self.service.storage.catalog_entries() if item_id else ()
-        return history_language_projection.item_languages(
-            provider_id, item_id, metadata, catalog_rows=catalog_rows,
+        return known_languages_controller.known_item_languages(
+            self, provider_id, item_id, metadata,
         )
 
     def _build_loans_page(self) -> MasterDetailPage:
