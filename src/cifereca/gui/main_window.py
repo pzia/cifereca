@@ -1640,7 +1640,8 @@ class MainWindow(Adw.ApplicationWindow):
                     if feedback is not None:
                         feedback.finish(ticket, "error")
                     self.show_error(
-                        "Analyse des caches impossible." if feedback is not None else str(exc),
+                        str(exc) if isinstance(exc, MaintenanceBusyError)
+                        else ("Analyse des caches impossible." if feedback is not None else str(exc)),
                         meta.title,
                     )
 
