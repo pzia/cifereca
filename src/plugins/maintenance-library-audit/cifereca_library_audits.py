@@ -70,7 +70,12 @@ def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected
     # Open the same inode once for size, SHA and structural checks. O_NOFOLLOW
     # avoids following a link substituted after the initial lstat; NONBLOCK
     # prevents a concurrently substituted FIFO from hanging the audit.
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        # Never silently degrade the security invariant on platforms where
+        # no-follow cannot be requested atomically.
+        return ("unreadable",)
+    flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(target, flags)
     except OSError as exc:
