@@ -117,7 +117,7 @@ def test_explicit_personal_denial_overrides_catalogue_rights(monkeypatch):
     {"product_id": "victim", "id": "unrelated", "description": "PRIVATE_POISON"},
     {"product_id": 123, "id": "victim", "description": "PRIVATE_POISON"},
     {"product_id": " victim", "description": "PRIVATE_POISON"},
-    {"product_id": "victim\\nPRIVATE_TOKEN", "description": "PRIVATE_POISON"},
+    {"product_id": "victim\nPRIVATE_TOKEN", "description": "PRIVATE_POISON"},
 ])
 def test_conflicting_catalogue_product_aliases_cannot_enrich_account_record(
     monkeypatch, poisoned,
