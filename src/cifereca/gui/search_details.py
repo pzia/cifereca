@@ -15,6 +15,7 @@ from .book_widgets import BookListItem
 from .query_model import result_row
 from .detail_model import book_detail_presentation, detail_language
 from .task_runner import TaskPriority
+from .search_detail_context import detail_callback_is_current
 
 
 def _search_selected(self, row: BookListItem | None) -> None:
@@ -115,11 +116,11 @@ def _search_detail_context_current(
 ) -> bool:
     if self._closed or self._selected_search_id != selected_id:
         return False
-    if context is None:
-        # Compatibility for synchronous callers; every async callback
-        # created by this class supplies a captured request context.
-        return True
-    return context == self._search_detail_request_context()
+    return detail_callback_is_current(
+        closed=False, selected_id=selected_id, expected_id=selected_id,
+        captured=context,
+        current=self._search_detail_request_context() if context is not None else None,
+    )
 
 
 def _apply_search_detail(

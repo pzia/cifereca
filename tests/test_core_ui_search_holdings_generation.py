@@ -33,7 +33,8 @@ def _host():
         body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
               *methods], type_ignores=[],
     ))
-    env = {"result_row": lambda item: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1, METADATA=3)}
+    from cifereca.gui.search_detail_context import detail_callback_is_current
+    env = {"result_row": lambda item: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1, METADATA=3), "detail_callback_is_current": detail_callback_is_current}
     exec(compile(compiled, str(MAIN), "exec"), env)
 
     class Runner:
