@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 from cifereca.gui.window_close import close_window_resources
+from cifereca.gui import feedback_timers
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,7 @@ def _unbound_method(path: Path, owner: str, method_name: str):
     module = ast.fix_missing_locations(ast.Module(
         body=[future, function], type_ignores=[],
     ))
-    namespace = {"TaskPriority": NS(NORMAL=0)}
+    namespace = {"TaskPriority": NS(NORMAL=0), "feedback_timers": feedback_timers}
     exec(compile(module, str(path), "exec"), namespace)
     return namespace[method_name]
 

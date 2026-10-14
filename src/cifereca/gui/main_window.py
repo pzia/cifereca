@@ -60,7 +60,7 @@ from .window_close import close_window_resources
 from .startup_page import build_startup_page
 from .timeout_policy import bounded_seconds
 from .startup_lifecycle import once_while_open
-from .timer_lifecycle import cancel_source
+from . import feedback_timers
 from .loan_view import (
     LOAN_FILTER_LABELS,
     loan_context_label,
@@ -297,34 +297,20 @@ class MainWindow(Adw.ApplicationWindow):
             Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def _cancel_notification_hide(self) -> None:
-        source = self._notification_hide_source
-        self._notification_hide_source = None
-        cancel_source(source, GLib.source_remove)
+        return feedback_timers.cancel_notification_hide(self, source_remove=GLib.source_remove)
 
     def _hide_notification(self) -> bool:
-        self._notification_hide_source = None
-        if getattr(self, "_closed", False):
-            return False
-        self.notification_revealer.set_reveal_child(False)
-        return False
+        return feedback_timers.hide_notification(self)
 
     def _dismiss_notification(self) -> None:
         if getattr(self, "_closed", False):
             return
-        self._cancel_notification_hide()
-        self.notification_revealer.set_reveal_child(False)
+        return feedback_timers.dismiss_notification(self)
 
     def toast(self, message: str, timeout: int = 3) -> None:
         if getattr(self, "_closed", False):
             return
-        self._cancel_notification_hide()
-        self.notification_label.set_label(str(message))
-        self.notification_revealer.set_reveal_child(True)
-        bounded_timeout = bounded_seconds(timeout)
-        self._notification_hide_source = GLib.timeout_add_seconds(
-            bounded_timeout,
-            self._hide_notification,
-        )
+        return feedback_timers.toast(self, message, timeout, timeout_add_seconds=GLib.timeout_add_seconds)
 
     def show_error(self, message: str, title: str = "Une erreur est survenue") -> None:
         if getattr(self, "_closed", False):
@@ -353,9 +339,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _cancel_activity_hide(self) -> None:
-        source = self._activity_hide_source
-        self._activity_hide_source = None
-        cancel_source(source, GLib.source_remove)
+        return feedback_timers.cancel_activity_hide(self, source_remove=GLib.source_remove)
 
     def _refresh_activity_history(self) -> None:
         if getattr(self, "_closed", False):
@@ -420,11 +404,7 @@ class MainWindow(Adw.ApplicationWindow):
     def _schedule_activity_reduce(self, delay: int = 4) -> None:
         if getattr(self, "_closed", False):
             return
-        self._cancel_activity_hide()
-        self._activity_hide_source = GLib.timeout_add_seconds(
-            bounded_seconds(delay, maximum=3600, default=4),
-            self._hide_activity_feedback,
-        )
+        return feedback_timers.schedule_activity_reduce(self, delay, timeout_add_seconds=GLib.timeout_add_seconds)
 
     def _activity_result(
         self,
