@@ -10,6 +10,11 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name in {"_search_facet", "_facet_value_group", "_facet_value_button"}:
+        target = name.lstrip("_")
+        owner = ast.parse(MAIN.with_name("facet_value_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body
+                                if isinstance(n, ast.FunctionDef) and n.name == target))
     if name == "_add_facets":
         owner = ast.parse(MAIN.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "add_facets"))
@@ -33,14 +38,14 @@ def test_filterable_value_itself_is_the_native_button_target():
     assert "Filtrer par" in source
     assert "Gtk.AccessibleProperty.LABEL" in source
     assert "button.connect('clicked'" in source
-    assert "self._search_facet" in source
+    assert "window._search_facet" in source
 
 
 def test_filterable_values_wrap_consistently():
     source = _method("_facet_value_group")
     assert "group = Gtk.FlowBox()" in source
     assert "group.set_max_children_per_line(4)" in source
-    assert "self._facet_value_button" in source
+    assert "window._facet_value_button" in source
 
 
 def test_all_supported_detail_facets_share_same_affordance():
