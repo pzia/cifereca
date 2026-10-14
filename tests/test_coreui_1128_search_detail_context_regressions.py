@@ -6,6 +6,8 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 
+from cifereca.gui.search_detail_context import detail_callback_is_current
+
 
 DETAILS = Path(__file__).resolve().parents[1] / "src/cifereca/gui/search_details.py"
 
@@ -16,7 +18,8 @@ def _context_checker():
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "_search_detail_context_current"
     )
-    namespace = {}
+    # AST-extracted methods retain their imported pure-policy dependency.
+    namespace = {"detail_callback_is_current": detail_callback_is_current}
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), method],
         type_ignores=[],
