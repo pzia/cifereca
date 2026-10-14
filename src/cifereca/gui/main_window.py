@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import identity_activation_controller
 from . import statistics_presentation_controller
 from . import dashboard_render_controller
 from . import shell_identity_selector_controller
@@ -814,83 +815,7 @@ class MainWindow(Adw.ApplicationWindow):
         else: self._render_library()
 
     def _activate_identity(self, identity_id: str) -> None:
-        identity = self.service.identity_by_id(identity_id)
-        if identity is None:
-            raise ValueError("Identité inconnue")
-        current = self.service.current_identity
-        current_identity_id = current.identity_id if current is not None else None
-        if not identity_change_required(current_identity_id, identity.identity_id):
-            _TRACE_LOG.debug("Identity selection notification ignored: already current identity=%s", identity.identity_id)
-            return
-        self.service.select_identity(identity.identity_id)
-        self._identity_context_generation += 1
-        self._dispose_maintenance_lines()
-        if self.view_stack.get_visible_child_name() == "tools":
-            self._refresh_tools_page()
-        self._account_context_generation += 1
-        self._cached_book_request_generation += 1
-        self._cached_book_context = None
-        # Pending Library navigation belongs to the previous identity context.
-        # Cancel it before rendering the new identity's (initially empty) list.
-        self._pending_library_selection_key = None
-        self._pending_library_selection_identity_id = None
-        self._pending_library_selection_generation = None
-        identity_generation = self._identity_context_generation
-        self._populate_accounts()
-        self._render_dashboard()
-        self._search_generation = getattr(self, "_search_generation", 0) + 1
-        self._search_detail_request_generation += 1
-        self._search_local_objects = {}; self.search_objects = {}; self._remote_search_results = []
-        self._search_mode = "local"; self._remote_query_key = None; self._selected_search_id = None
-        if hasattr(self, "search_page"):
-            self.search_page.clear_rows()
-            self.search_page.detail.empty("Nouvelle identité", "Lancez une recherche dans le connu.")
-        # Do not rebuild the identity dropdown from its own notify::selected callback:
-        # GTK may deliver the resulting notification asynchronously after the guard
-        # is released, causing an unbounded refresh/task loop.
-        self._populate_account_dropdown(identity.identity_id)
-        self.service.last_history = []
-        self.service.last_bookings = []
-        self.history_objects = {}
-        self.booking_objects = {}
-        self._history_all_rows = []
-        self._history_rows = []
-        self._history_loaded_count = 0
-        self._history_append_scheduled = False
-        if hasattr(self, "history_page"):
-            self.history_page.clear_rows()
-        if hasattr(self, "booking_page"):
-            self.booking_page.clear_rows()
-        self._library_entries_cache = []
-        self._recent_entries_cache = []
-        self._recent_objects = {}
-        if hasattr(self, "recent_page"):
-            self.recent_page.clear_rows()
-            self.recent_page.detail.empty("Nouvelle identité", "Chargement des récupérations…")
-        if hasattr(self, "library_page"):
-            self._render_library([])
-            self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
-        def identity_loaded(rows: list[Loan]) -> None:
-            if not self.service.current_identity or self.service.current_identity.identity_id != identity.identity_id:
-                return
-            if not self._identity_request_current(identity.identity_id, identity_generation):
-                return
-            self._populate_loans(rows)
-            self.refresh_library(False)
-            self.refresh_recent()
-            route = self.view_stack.get_visible_child_name() if hasattr(self, "view_stack") else None
-            if route == "history":
-                self.refresh_history(False)
-            elif route == "bookings":
-                self.refresh_bookings(False)
-            self._activity_result(f"Identité chargée : {identity.label}")
-        self.runner.submit(
-            f"Chargement de {identity.label}…",
-            lambda: self.service.refresh_identity_loans(force=False, identity_id=identity.identity_id),
-            identity_loaded,
-            priority=TaskPriority.USER_ACTION,
-            kind="identity",
-        )
+        return identity_activation_controller.activate_identity(self, identity_id)
 
     def _account_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
         if self._account_changing:
