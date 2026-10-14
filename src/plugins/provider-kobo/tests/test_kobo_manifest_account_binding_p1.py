@@ -155,3 +155,26 @@ def test_upstream_rejection_count_and_foreign_account_count_accumulate_safely():
         assert "different-account" not in repr(session.backup_manifest_policy)
     finally:
         session.close()
+
+
+def test_foreign_product_collision_quarantines_both_versions_before_core():
+    """A foreign duplicate must not disappear and make the local row 'unique'."""
+    vault = FakeVault([
+        {"product_id": "same-book", "account_id": "alice", "revision_id": "r1"},
+        {"id": "same-book", "account_id": "bob", "revision_id": "r2"},
+        {"product_id": "independent", "account_id": "alice"},
+    ])
+    session = _session(vault)
+    try:
+        assert [r["product_id"] for r in session.backup_manifest()] == ["independent"]
+        policy = session.backup_manifest_policy
+        assert policy["counts"]["duplicate_product_id"] == 2
+        assert policy["manifest_authoritative"] is False
+        assert session.backup_manifest_rejection_count == 2
+        assert policy["manifest_rejections"] == 2
+        assert policy["acquisition_authorized"] is False
+        assert vault.calls == 1
+        assert "same-book" not in json.dumps(policy)
+        assert "bob" not in json.dumps(policy)
+    finally:
+        session.close()
