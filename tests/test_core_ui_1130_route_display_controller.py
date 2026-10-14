@@ -199,3 +199,121 @@ def test_focused_plugin_page_uses_existing_gtk_window_root_and_tab_forward():
     )
     show_route(host, "custom", Gtk=GTK)
     assert focus_events == []
+
+
+def test_closed_during_maintenance_disposal_skips_detached_route_widgets():
+    host, events = _context()
+    def dispose():
+        events.append(("dispose",))
+        host._closed = True
+    host._dispose_maintenance_lines = dispose
+    show_route(host, "library", Gtk=GTK)
+    assert events == [("dispose",)]
+
+
+def test_closed_by_visible_child_signal_skips_header_and_render():
+    host, events = _context()
+    def select(route):
+        events.append(("view", route))
+        host._closed = True
+    host.view_stack.set_visible_child_name = select
+    show_route(host, "library", Gtk=GTK)
+    assert events == [("view", "library")]
+
+
+def test_closed_by_subtitle_callback_skips_header_and_content():
+    host, events = _context()
+    def subtitle(value):
+        events.append(("subtitle", value))
+        host._closed = True
+    host.header_subtitle.set_label = subtitle
+    show_route(host, "library", Gtk=GTK)
+    assert events == [("view", "library"), ("subtitle", "Title library")]
+
+
+def test_closed_by_header_callback_skips_page_render_and_network_refresh():
+    host, events = _context(library=[])
+    def header(route):
+        events.append(("header", route))
+        host._closed = True
+    host._refresh_header_actions = header
+    show_route(host, "library", Gtk=GTK)
+    assert [row[0] for row in events] == ["view", "subtitle", "header"]
+
+
+def test_closed_during_plugin_widget_root_skips_focus_and_render():
+    host, events = _context()
+    focus = []
+    def root():
+        host._closed = True
+        return GtkWindow()
+    host._plugin_page_widgets["custom"] = NS(
+        get_root=root, child_focus=lambda direction: focus.append(direction),
+    )
+    show_route(host, "custom", Gtk=GTK)
+    assert focus == []
+    assert [row[0] for row in events] == ["view", "subtitle", "header"]
+
+
+def test_closed_during_plugin_focus_skips_following_route_refresh():
+    host, events = _context(library=[])
+    def focus(direction):
+        events.append(("focus", direction))
+        host._closed = True
+    host._plugin_page_widgets["library"] = NS(
+        get_root=GtkWindow, child_focus=focus,
+    )
+    show_route(host, "library", Gtk=GTK)
+    assert [row[0] for row in events] == ["view", "subtitle", "header", "focus"]
+
+
+def test_closed_during_empty_library_render_does_not_schedule_lazy_refresh():
+    host, events = _context(library=[])
+    def render(rows):
+        events.append(("library", rows))
+        host._closed = True
+    host._render_library = render
+    show_route(host, "library", Gtk=GTK)
+    assert [row[0] for row in events] == ["view", "subtitle", "header", "library"]
+
+
+def test_closed_during_empty_recent_render_does_not_schedule_lazy_refresh():
+    host, events = _context(recent=[])
+    def render(rows):
+        events.append(("recent", rows))
+        host._closed = True
+    host._render_recent = render
+    show_route(host, "recent", Gtk=GTK)
+    assert [row[0] for row in events] == ["view", "subtitle", "header", "recent"]
+
+
+def test_nested_route_selection_wins_over_superseded_page_render():
+    host, events = _context(library=[])
+    def header(route):
+        events.append(("header", route))
+        if route == "library":
+            show_route(host, "search", Gtk=GTK)
+    host._refresh_header_actions = header
+    show_route(host, "library", Gtk=GTK)
+    assert events == [
+        ("view", "library"), ("subtitle", "Title library"), ("header", "library"),
+        ("view", "search"), ("subtitle", "Title search"), ("header", "search"),
+    ]
+
+
+def test_nested_route_selection_from_render_skips_obsolete_lazy_refresh():
+    host, events = _context(library=[])
+    def render(rows):
+        events.append(("library", rows))
+        show_route(host, "search", Gtk=GTK)
+    host._render_library = render
+    show_route(host, "library", Gtk=GTK)
+    assert [row[0] for row in events] == [
+        "view", "subtitle", "header", "library", "view", "subtitle", "header",
+    ]
+    assert not any(row[0] == "library-refresh" for row in events)
+
+
+def test_route_close_never_reenters_disposed_widget_tree():
+    host = NS(_closed=True)
+    show_route(host, "library", Gtk=GTK)
