@@ -1,6 +1,7 @@
 from __future__ import annotations
 import ast
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -276,8 +277,7 @@ class SynchronizationBrokerImpl:
         if (
             type(request.deep) is not bool
             or type(request.scopes) is not tuple or request.scopes
-            or not isinstance(request.options, dict) and
-               not hasattr(request.options, "items")
+            or not isinstance(request.options, Mapping)
         ):
             return SyncResult(ok=False, warnings=("unsupported source sync scope",),
                               facts={"reason": "unsupported_scope"})
@@ -337,6 +337,13 @@ class SynchronizationBrokerImpl:
         ):
             return SyncResult(ok=False, changed=0, warnings=("explicit identity required",),
                               facts={"reason": "identity_required"})
+        if (
+            type(request.deep) is not bool or type(request.scopes) is not tuple
+            or request.scopes or not isinstance(request.options, Mapping)
+            or bool(request.options)
+        ):
+            return SyncResult(ok=False, changed=0, warnings=("unsupported batch scope",),
+                              facts={"reason": "unsupported_scope"})
         sources = [row for row in self.sources(request.identity_id) if row.enabled and row.connected and row.sync_capable]
         total = 0; warnings: list[str] = []; facts: dict[str, Any] = {"sources": {}}
         for index, source in enumerate(sources, 1):
