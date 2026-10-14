@@ -256,6 +256,87 @@ class SynchronizationBrokerImpl:
         self._notify()
         return self._ref(account)
 
+    def preview_local_materialization(
+        self, source_id: str, *, verify_local_files: bool = False,
+    ) -> SyncResult:
+        """Read-only, offline, account-scoped Kobo preview (#1346/#1347).
+
+        The broker alone resolves the private credential. The result contains
+        only stable allowlisted counters, never a product, path, token or a
+        potentially provider-supplied message. A preview never authorizes a
+        download, even when the local ledger looks complete.
+        """
+        def rejected(reason: str) -> SyncResult:
+            return SyncResult(
+                ok=False, changed=0, warnings=(reason,),
+                facts={"phase": "local_materialization", "status": reason,
+                       "read_only": True, "acquisition_authorized": False},
+            )
+
+        if type(verify_local_files) is not bool:
+            return rejected("invalid_options")
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            return rejected("unknown_source")
+        if str(getattr(account, "provider_id", "")) != "kobo":
+            return rejected("not_supported")
+        if not self._enabled(source_id):
+            return rejected("source_disabled")
+        credential = str(getattr(account, "credential_id", "") or "")
+        identity = str(getattr(account, "identity_id", "") or "")
+        if not credential or not identity:
+            return rejected("invalid_source")
+        # A session's presence and its declared backup capability are
+        # checked; no automatic connect/reconnect is ever attempted here.
+        session = getattr(self.service, "_sessions", {}).get(
+            self.service._session_key("kobo", credential)
+        )
+        if not bool(getattr(getattr(session, "capabilities", None), "backup", False)):
+            return rejected("not_supported")
+        try:
+            raw = self.service.kobo_backup_preview(
+                credential, refresh_manifest=False,
+                verify_local_files=verify_local_files,
+            )
+        except Exception:
+            # Provider/local errors can include bearer URLs and private
+            # paths. Never reflect the exception into UI/diagnostic output.
+            return rejected("preview_unavailable")
+        if not isinstance(raw, dict) or raw.get("acquisition_authorized") is not False:
+            return rejected("preview_unavailable")
+        allowed = (
+            "already_local_linked", "already_local_verified",
+            "needs_reconciliation", "attention_required", "blocked_scope",
+            "blocked_unlinked", "not_downloadable", "candidate_unverified",
+            "potentially_missing", "invalid_manifest_items",
+        )
+        values = raw.get("counts")
+        if not isinstance(values, dict):
+            return rejected("preview_unavailable")
+        counts = {}
+        for field in allowed:
+            value = values.get(field)
+            if type(value) is not int or not 0 <= value <= 1_000_000:
+                return rejected("preview_unavailable")
+            counts[field] = value
+        known = raw.get("known_item_count")
+        if type(known) is not int or not 0 <= known <= 1_000_000:
+            return rejected("preview_unavailable")
+        return SyncResult(
+            ok=True, changed=0,
+            facts={
+                "phase": "local_materialization",
+                "status": "preview_only",
+                "read_only": True, "acquisition_authorized": False,
+                "manifest_refreshed": False,
+                "requires_manifest_validation": True,
+                "files_verified": verify_local_files,
+                "known_item_count": known,
+                "counts": counts,
+            },
+        )
+
     def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None) -> SyncResult:
         try:
             account = self._find_account(source_id)
