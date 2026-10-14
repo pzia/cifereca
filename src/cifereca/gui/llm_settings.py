@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Callable, Mapping
+from dataclasses import dataclass
+from typing import Any, Callable, Literal, Mapping
 from urllib.parse import urlsplit
 
 from cifereca.config_defaults import DEFAULT_CONFIG
@@ -101,35 +102,83 @@ def env_key_is_set(settings: Mapping[str, Any]) -> bool:
                 and os.environ.get(name))
 
 
-def probe_llm_connection(
+# Only these non-sensitive codes may be returned by a synthetic probe, used
+# by UI and tracing. Do not add endpoint, host, model or free-form exceptions.
+LLMProbeStatus = Literal[
+    "success", "cancelled", "timeout", "auth_refused", "not_found",
+    "rate_limited", "invalid_request", "backend_unavailable", "busy",
+    "invalid_config", "inconclusive", "internal_error",
+]
+_PROBE_LABELS: dict[str, str] = {
+    "success": "Test réussi",
+    "cancelled": "Test annulé",
+    "timeout": "Délai de connexion dépassé",
+    "auth_refused": "Authentification refusée",
+    "not_found": "Modèle ou endpoint introuvable",
+    "rate_limited": "Service limité temporairement",
+    "invalid_request": "Requête de test invalide",
+    "backend_unavailable": "Serveur injoignable ou réponse non concluante",
+    "busy": "Service momentanément occupé",
+    "invalid_config": "Configuration invalide",
+    "inconclusive": "Test non concluant",
+    "internal_error": "Test non concluant ; vérifier la configuration",
+}
+_PROBE_REASON_CODES = frozenset({
+    "cancelled", "timeout", "auth_refused", "not_found", "rate_limited",
+    "invalid_request", "backend_unavailable", "busy",
+})
+
+
+@dataclass(frozen=True)
+class LLMProbeResult:
+    """A status category and a fixed UI label; never untrusted provider text."""
+    status: LLMProbeStatus
+    label: str
+
+
+def _probe_outcome(code: str) -> LLMProbeResult:
+    status = code if code in _PROBE_LABELS else "inconclusive"
+    return LLMProbeResult(status=status, label=_PROBE_LABELS[status])
+
+
+def probe_llm_connection_result(
     settings: Mapping[str, Any], *, remote_confirmed: bool = False,
     service_factory: Callable[..., Any] = OptionalLLMService,
-) -> str:
-    """Only an explicit UI action may call this. No books or user data in prompt."""
+) -> LLMProbeResult:
+    """One explicit synthetic probe; never return payloads or free error text."""
     cfg = normalize_llm_settings(settings)
     if not cfg["enabled"]:
-        return "Désactivé"
-    host, remote = destination_summary(cfg)
+        return _probe_outcome("invalid_config")
+    _host, remote = destination_summary(cfg)
     if remote and not remote_confirmed:
         raise LLMSettingsError("Confirmer l’essai distant avant tout envoi")
     service = service_factory(cfg)
     if not service.available():
-        return "Configuration invalide"
+        return _probe_outcome("invalid_config")
     result = service.generate(LLMRequest(
         "Test de connexion technique. Réponds uniquement OK.",
         task="generate", max_output_tokens=8,
     ))
-    if result.ok and type(result.text) is str and result.text.strip():
-        return "Test réussi"
+    if result.ok:
+        if type(result.text) is str and result.text.strip():
+            return _probe_outcome("success")
+        return _probe_outcome("inconclusive")
     reason = result.reason if type(result.reason) is str else ""
-    return {
-        "cancelled": "Test annulé",
-        "timeout": "Délai de connexion dépassé",
-        "auth_refused": "Authentification refusée",
-        "not_found": "Modèle ou endpoint introuvable",
-        "rate_limited": "Service limité temporairement",
-        "unavailable": "Configuration invalide",
-        "invalid_request": "Requête de test invalide",
-        "backend_unavailable": "Serveur injoignable ou réponse non concluante",
-        "busy": "Service momentanément occupé",
-    }.get(reason, "Test non concluant")
+    if reason == "unavailable":
+        return _probe_outcome("invalid_config")
+    if reason == "request_too_large":
+        return _probe_outcome("invalid_request")
+    return _probe_outcome(reason if reason in _PROBE_REASON_CODES else "inconclusive")
+
+
+def probe_llm_connection(
+    settings: Mapping[str, Any], *, remote_confirmed: bool = False,
+    service_factory: Callable[..., Any] = OptionalLLMService,
+) -> str:
+    """Legacy UI text contract; the typed result drives new observability."""
+    cfg = normalize_llm_settings(settings)
+    if not cfg["enabled"]:
+        return "Désactivé"
+    return probe_llm_connection_result(
+        cfg, remote_confirmed=remote_confirmed, service_factory=service_factory,
+    ).label
