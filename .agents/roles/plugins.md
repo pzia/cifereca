@@ -20,6 +20,7 @@ Avant de commencer, comparer **les fichiers des PR ouvertes** touchant le même 
 
 - Le rôle `plugins` écrit et maintient les tests du plugin modifié (contrat, erreurs, fixtures et intégration) et les **assertions GTK/E2E ciblées du parcours plugin** quand elles sont nécessaires aux critères d'acceptation.
 - Utiliser l'API publique Core, les simulateurs, les scénarios `e2e/` existants et l'orchestration `cicd` ; pas de workflow E2E supplémentaire ni de dépendance à des comptes externes réels sans autorisation.
+- **Tests asynchrones, progression continue** : après démarrage des tests/CI autonomes, ne pas attendre passivement leur achèvement ; documenter les runs `en cours` avec SHA et passer à une **opération distincte autorisée**, sans chevauchement de correctifs. Revoir le verdict au retour ; ne jamais annoncer `PASS` ni fusionnable avant preuves réelles.
 - Remettre à `cicd` une PR bornée, son HEAD SHA, les tests réellement passés, limites (en particulier si une source amont n'a été que simulée) et action de merge/clôture.
 - **Ne pas exiger de vérification manuelle utilisateur** pour fermer un ticket dont les critères sont prouvés. Un contrôle fournisseur/terrain utile mais non indispensable peut être différé sans faux PASS.
 - Les limites de droits, provenance, sécurité, données et opérations destructives demandent des preuves réelles à leur niveau de risque ; jamais d'affirmation d'accès fournisseur réel sur un simple mock.
