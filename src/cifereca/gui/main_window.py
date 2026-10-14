@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, local_book_action_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2363,120 +2363,12 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _add_local_book_actions(self, detail, item):
-        placement_id=str(item.get('placement_id') or '')
-        identity_id=str(item.get('identity_id') or '')
-        if not placement_id:
-            provider=item.get('provider_id') or item.get('source_provider')
-            credential=item.get('source_credential') or (item.get('metadata') or {}).get('source_credential')
-            item_id=item.get('item_id') or item.get('record_id')
-            current=getattr(self.service,'current_identity',None)
-            if not provider:
-                if item.get('title'): self._add_catalogue_action(detail, item)
-                return
-            if not credential or not item_id or not current:
-                self._add_catalogue_action(detail, item); return
-            placement=self.service.local_placement_for_source(provider_id=provider,credential_id=credential,
-                item_id=item_id,identity_id=current.identity_id)
-            if not placement:
-                self._add_catalogue_action(detail, item); return
-            placement_id=placement['placement_id'];identity_id=current.identity_id
-        if not identity_id:
-            self._add_catalogue_action(detail, item); return
-        try:self.service.local_book_path(placement_id,identity_id=identity_id)
-        except Exception:
-            self._add_catalogue_action(detail, item); return
-        opening=self.action_button('Ouvrir','document-open-symbolic')
-        opening._cifereca_action_id = 'open-local'
-        def open_book(_button):
-            try:
-                # Recheck existence and identity at activation, then launch without a shell.
-                uri=self.service.local_book_path(placement_id,identity_id=identity_id).as_uri()
-                Gio.AppInfo.launch_default_for_uri(uri,None)
-            except Exception as exc:self.show_error(str(exc),'Ouverture du livre impossible')
-        opening.connect('clicked',open_book)
-        buttons=[opening]
-        source_provider = str(item.get('provider_id') or item.get('source_provider') or 'local')
-        source_credential = str(item.get('source_credential') or (item.get('metadata') or {}).get('source_credential') or '')
-        source_item_id = str(item.get('item_id') or item.get('source_item_id') or (item.get('record_id') or ''))
-        known_possessions = ()
-        manager = getattr(self, 'plugin_manager', None)
-        library_read = manager.broker('library.read') if manager else None
-        if library_read is not None:
-            try:
-                logical = library_read.book(source_item_id) if source_item_id else None
-                if logical is None and item.get('artifact_id'):
-                    logical = library_read.for_artifact(str(item.get('artifact_id')))
-                known_possessions = tuple(logical.possessions) if logical is not None else ()
-            except Exception as exc:
-                self.diagnostics.add(
-                    'UI', 'read known possessions', 'error',
-                    detail={'error': type(exc).__name__, 'message': str(exc)},
-                )
-        for target in self.service.identities:
-            if target.identity_id==identity_id:continue
-            # A current Core possession is authoritative even when there is no
-            # local file yet for the target identity.
-            if source_item_id and identity_has_attested_possession(
-                known_possessions,
-                identity_id=target.identity_id,
-                provider_id=source_provider,
-                source_item_id=source_item_id,
-                credential_id=source_credential,
-            ):
-                continue
-            # Keep the placement fallback for older/local-only records that are
-            # not represented in the logical possession projection.
-            if source_item_id:
-                try:
-                    already_owned = self.service.local_placement_for_source(
-                        provider_id=source_provider, credential_id=source_credential,
-                        item_id=source_item_id, identity_id=target.identity_id,
-                    ) is not None
-                except Exception:
-                    already_owned = False
-                if already_owned:
-                    continue
-            button=self.action_button('Envoyer à '+target.label,'document-send-symbolic')
-            button._cifereca_action_id = 'send-local:'+target.identity_id
-            def send(_button,target_id=target.identity_id):
-                def work():
-                    self.service.local_book_path(placement_id,identity_id=identity_id)
-                    return self.service.materialize_to_identity(placement_id,target_id)
-                self.runner.submit('Envoi du fichier local…',work,
-                    lambda _result:(self._activity_result('Livre envoyé'),self.refresh_recent(),self.refresh_library(False)),
-                    control=_button,priority=TaskPriority.USER_ACTION,kind='materialize')
-            button.connect('clicked',send);buttons.append(button)
-        routing = manager.broker('artifact.routing') if manager else None
-        context = self._book_action_context(item) if routing is not None else None
-        if routing is not None and context is not None and context.artifact is not None:
-            try:
-                route_request = ArtifactRouteRequest(context.artifact, identity_id=identity_id or None)
-                route_targets = tuple(routing.targets(route_request))
-            except Exception as exc:
-                route_targets = ()
-                self.diagnostics.add('UI','artifact routing targets','error',detail={'error':type(exc).__name__,'message':str(exc)})
-            if route_targets:
-                menu = Gtk.MenuButton(label='Envoyer vers…')
-                menu._cifereca_action_id = 'artifact-routing'
-                menu.set_tooltip_text('Envoyer cet artefact vers une cible de stockage compatible')
-                popover = Gtk.Popover()
-                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-                box.set_margin_top(8); box.set_margin_bottom(8); box.set_margin_start(8); box.set_margin_end(8)
-                for target in route_targets:
-                    target_button = Gtk.Button(label=str(target.target.label or target.target.target_id))
-                    target_button.add_css_class('flat')
-                    def route(_button, target_id=target.target.target_id):
-                        request = ArtifactRouteRequest(context.artifact, target_id=target_id, identity_id=identity_id or None)
-                        def work():
-                            plan = routing.plan(request)
-                            return routing.transfer(plan)
-                        self.runner.submit('Envoi vers le stockage…', work,
-                            lambda _result:(self._activity_result('Livre envoyé'), self.refresh_library(False), self.refresh_recent()),
-                            lambda exc:self.show_error(str(exc),'Envoi impossible'), control=_button,
-                            priority=TaskPriority.USER_ACTION, kind='artifact-route')
-                    target_button.connect('clicked', route); box.append(target_button)
-                popover.set_child(box); menu.set_popover(popover); buttons.append(menu)
-        detail.add_actions(buttons)
+        return local_book_action_controller.add_local_book_actions(
+            self, detail, item,
+            Gtk=Gtk, Gio=Gio, ArtifactRouteRequest=ArtifactRouteRequest,
+            TaskPriority=TaskPriority,
+            identity_has_attested_possession=identity_has_attested_possession,
+        )
 
     def _open_placement(self, placement):
         try:
