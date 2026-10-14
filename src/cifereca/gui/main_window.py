@@ -34,6 +34,7 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import shell_identity_selector_controller
 from . import shell_layout_controller
 from . import book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from .search_state import SearchStateField
@@ -822,44 +823,17 @@ class MainWindow(Adw.ApplicationWindow):
         return navigation_controller.navigate(self, route)
 
     def _replace_dropdown_labels(self, dropdown, labels):
-        model = dropdown.get_model()
-        if isinstance(model, Gtk.StringList):
-            previous = [model.get_string(i) for i in range(model.get_n_items())]
-            if previous != labels:model.splice(0, model.get_n_items(), labels)
-        else:
-            dropdown.set_model(Gtk.StringList.new(labels))
+        return shell_identity_selector_controller.replace_dropdown_labels(
+            dropdown, labels, Gtk=Gtk,
+        )
 
     def _populate_account_dropdown(self, identity_id: str | None) -> None:
-        self._account_changing = True
-        try:
-            public = {a.provider_id for a in self.service.accounts
-                      if getattr(getattr(self.service._provider_plugin_status(a.provider_id), "descriptor", None), "instantiation", "multiple") == "singleton_public"}
-            self._visible_accounts = delegated_accounts(self.service.accounts, identity_id, public)
-            self.account_dropdown.set_visible(bool(self._visible_accounts))
-            labels = [
-                f"{a.provider_label} · {a.display_name or ('Compte principal' if a.is_primary else 'Compte lié')}"
-                for a in self._visible_accounts
-            ]
-            self._replace_dropdown_labels(self.account_dropdown, labels)
-            current = self.service.current_account
-            account_index = next((i for i, account in enumerate(self._visible_accounts) if account is current), Gtk.INVALID_LIST_POSITION)
-            self.account_dropdown.set_selected(account_index if self._visible_accounts else Gtk.INVALID_LIST_POSITION)
-        finally:
-            self._account_changing = False
+        return shell_identity_selector_controller.populate_account_dropdown(
+            self, identity_id, Gtk=Gtk, delegated_accounts=delegated_accounts,
+        )
 
     def _populate_accounts(self) -> None:
-        self._identity_changing = True
-        try:
-            identities = list(self.service.identities)
-            self._replace_dropdown_labels(self.identity_dropdown, [identity.label for identity in identities])
-            selected_identity = self.service.current_identity.identity_id if self.service.current_identity else None
-            selected_index = next((i for i, identity in enumerate(identities) if identity.identity_id == selected_identity), 0)
-            self.identity_dropdown.set_selected(selected_index if identities else Gtk.INVALID_LIST_POSITION)
-        finally:
-            self._identity_changing = False
-
-        self._populate_account_dropdown(selected_identity)
-        if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
+        return shell_identity_selector_controller.populate_accounts(self, Gtk=Gtk)
 
     def _identity_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
         if self._identity_changing:
