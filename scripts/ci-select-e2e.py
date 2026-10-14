@@ -47,6 +47,8 @@ LOCAL_GUI = {
     "settings_lifetime.py": LLM,
     "llm_settings.py": LLM,
     "maintenance_tools.py": MAINT,
+    "maintenance_line_progress.py": MAINT,
+    "maintenance_line_widgets.py": MAINT,
 }
 PROBES = {
     "e2e/book_detail_probe.py": ("book-detail-1366",),

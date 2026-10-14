@@ -30,6 +30,19 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(mod.select([path]), mod.MAINT)
         self.assertTrue(set(mod.MAINT).issubset(set(mod.MAINWINDOW)))
 
+    def test_1492_line_progress_dependencies_select_maintenance_at_both_widths(self):
+        paths = ("src/cifereca/gui/maintenance_line_progress.py",
+                 "src/cifereca/gui/maintenance_line_widgets.py")
+        for path in paths:
+            self.assertEqual(mod.select([path]), mod.MAINT, path)
+        self.assertEqual(mod.select(list(paths) + [
+            "src/cifereca/gui/maintenance_tools.py",
+            "e2e/maintenance_tools_probe.py",
+        ]), mod.MAINT)
+        self.assertEqual(set(mod.select(list(paths) + [
+            "src/cifereca/gui/main_window.py",
+        ])), set(mod.MAINWINDOW))
+
     def test_volume_only(self):
         self.assertEqual(mod.select(["e2e/diagnostics_volume_probe.py"]),
                          ("diagnostics-volume-1366",))
