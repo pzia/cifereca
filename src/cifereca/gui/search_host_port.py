@@ -91,3 +91,35 @@ class SearchRunPort:
         if name not in SEARCH_RUN_CAPABILITIES:
             raise AttributeError(name)
         setattr(self._window, name, value)
+
+
+SEARCH_DETAIL_CAPABILITIES = frozenset({
+    "_closed", "_search_detail_request_generation", "_identity_context_generation",
+    "_search_generation", "_selected_search_id", "_search_local_objects",
+    "search_objects", "search_page", "search_controls", "service", "runner",
+    "_last_search_query", "_cancel_cached_book_details", "_library_availability_label",
+    "_kobo_backup_status_label", "_book_description", "_known_search_result",
+    "_open_library_item", "_load_known_detail", "run_search", "_add_book_notice",
+    "_add_local_book_actions", "_add_facets", "_request_cached_book_details",
+    "_search_detail_request_context", "_search_detail_context_current",
+    "_apply_search_detail", "_search_detail_error", "toast",
+})
+
+
+class SearchDetailPort:
+    """Only search/detail capabilities are available to the view adapter."""
+
+    __slots__ = ("_window",)
+
+    def __init__(self, window: Any) -> None:
+        object.__setattr__(self, "_window", window)
+
+    def __getattr__(self, name: str) -> Any:
+        if name not in SEARCH_DETAIL_CAPABILITIES:
+            raise AttributeError(name)
+        return getattr(self._window, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name not in SEARCH_DETAIL_CAPABILITIES:
+            raise AttributeError(name)
+        setattr(self._window, name, value)
