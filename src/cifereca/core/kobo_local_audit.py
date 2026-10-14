@@ -49,14 +49,19 @@ def _read_hash_within(path_text: object, roots: tuple[Path, ...]) -> tuple[str, 
         if not candidates:
             return None
         _, parent, pieces = max(candidates)
-        # The configured root itself is a trusted local setting. Refuse a
-        # symlink at this final root too: never chase legacy redirections.
+        # O_NOFOLLOW only protects the last path component. Resolve the
+        # entire configured root from '/' using no-follow directory FDs, or
+        # an ancestor link library/alice -> bob can cross identity boundaries.
         flags_dir = (
             os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
             | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         )
-        fd = os.open(parent, flags_dir)
+        fd = os.open("/", flags_dir)
         try:
+            for directory in parent.parts[1:]:
+                newfd = os.open(directory, flags_dir, dir_fd=fd)
+                os.close(fd)
+                fd = newfd
             for directory in pieces[:-1]:
                 newfd = os.open(directory, flags_dir, dir_fd=fd)
                 os.close(fd)
