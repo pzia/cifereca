@@ -35,21 +35,31 @@ def test_rare_library_operations_are_grouped_in_named_menu():
     assert "Opérations avancées et maintenance" in source
     assert "Réinspecter les couvertures" in source
     assert "Importer un ACSM…" in source
-    assert "Synchroniser les comptes Kobo" in source
+    assert "Gérer la synchronisation Kobo…" in source
     assert "advanced_box.append(covers)" in source
     assert "advanced_box.append(acsm)" in source
     assert "advanced_box.append(acquire)" in source
 
 
-def test_global_kobo_operation_is_explicitly_described_as_global():
+def test_library_kobo_action_is_only_safe_navigation_to_sync():
     source = _method("_build_library_page")
-    assert "Opération globale" in source
-    assert "tous les comptes Kobo connectés compatibles" in source
+    assert "Gérer la synchronisation Kobo" in source
+    assert "self.navigate('sync')" in source
+    assert "self.run_kobo_backup(" not in source
+    assert "aucun téléchargement ne démarre depuis Bibliothèque" in source
 
 
 def test_underlying_business_callbacks_are_unchanged():
     source = _method("_build_library_page")
     assert "self.refresh_library(True, covers, refresh_covers=True)" in source
     assert "self.choose_acsm()" in source
-    assert "self.run_kobo_backup(True, acquire)" in source
+    assert "self.navigate('sync')" in source
     assert "self.open_library_folder()" in source
+
+def test_sync_page_explains_metadata_only_and_global_download_not_embedded():
+    path = ROOT / "src/cifereca/gui/sync_controller.py"
+    text = path.read_text(encoding="utf-8")
+    assert "Actualiser les sources met à jour les notices et droits en ligne" in text
+    assert "Ce bouton ne télécharge aucun ebook" in text
+    assert "self.service.sync_kobo_backup(progress=progress)" in text
+    assert "self.service.sync_kobo_backup(" not in _method("_build_library_page")
