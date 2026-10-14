@@ -29,11 +29,14 @@ def add_catalogue_action(window, detail, item, *, Gio):
         if is_notice else "Ouvrir le catalogue général pour y rechercher ce livre"
     )
     generation = getattr(window, "_identity_context_generation", None)
+    account_generation = getattr(window, "_account_context_generation", None)
 
     def open_catalogue(_button):
         if getattr(window, "_closed", False):
             return
         if getattr(window, "_identity_context_generation", None) != generation:
+            return
+        if getattr(window, "_account_context_generation", None) != account_generation:
             return
         try:
             # Re-evaluate the Core public target at click time; never allow a
