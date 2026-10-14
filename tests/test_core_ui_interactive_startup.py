@@ -47,7 +47,13 @@ def test_application_records_window_presented_timing():
     assert 'self.window.ui_perf.record("startup.window_presented", presented_ms)' in source
 
 def test_dashboard_exposes_local_background_connection_state():
-    build = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_build_dashboard_page"))
+    owner = MAIN_WINDOW.with_name("dashboard_page_controller.py")
+    tree = ast.parse(owner.read_text(encoding="utf-8"))
+    build = ast.unparse(next(node for node in tree.body
+                             if isinstance(node, ast.FunctionDef)
+                             and node.name == "build_dashboard_page"))
+    shell_facade = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "_build_dashboard_page"))
+    assert "dashboard_page_controller.build_dashboard_page" in shell_facade
     connect = ast.unparse(_startup_owner_method("connect_configured_sources"))
     facade = ast.unparse(_class_method(MAIN_WINDOW, "MainWindow", "connect_configured_sources"))
     assert "Connexion aux sources en arrière-plan…" in build
