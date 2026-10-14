@@ -6,7 +6,7 @@ from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient
 from cifereca_kobo_catalog import KoboCatalogService
-from cifereca_kobo_policy import classify_personal_manifest, _strict_product_id
+from cifereca_kobo_policy import classify_personal_manifest, _strict_product_id, _strict_account_scope
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 
@@ -332,8 +332,7 @@ class KoboSession(ProviderSession):
             not self.connected or len(self._accounts) != 1
             or self._accounts[0].provider_id != self.provider_id
             or self._accounts[0].credential_id != self.credential_id
-            or not isinstance(self._accounts[0].unique_id, str)
-            or not self._accounts[0].unique_id.strip()
+            or not _strict_account_scope(self._accounts[0].unique_id)
         ):
             return []
         items = self.client.library_manifest()
