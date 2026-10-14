@@ -36,6 +36,9 @@ def _method(path: Path, class_name: str, name: str) -> str:
         path = MAIN.with_name("identity_activation_controller.py")
         class_name = None
         name = "activate_identity"
+    if name == "choose_acsm":
+        path = MAIN.with_name("acsm_import_chooser_controller.py")
+        class_name = None
     if name == "_activity_result":
         path = RESULT_OWNER
         class_name = None
@@ -155,7 +158,7 @@ def test_common_task_success_callbacks_use_activity_bar():
         "choose_acsm",
     ):
         source = _method(MAIN, "MainWindow", name)
-        expected = "window._activity_result(" if name in {"connect_configured_sources", "_activate_identity"} else "self._activity_result("
+        expected = "window._activity_result(" if name in {"connect_configured_sources", "_activate_identity", "choose_acsm"} else "self._activity_result("
         assert expected in source
 
 
