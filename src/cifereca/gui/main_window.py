@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2386,61 +2386,9 @@ class MainWindow(Adw.ApplicationWindow):
         return True
 
     def _open_library_item(self, key: str) -> None:
-        """Navigate to Library while retaining the book *and identity* context."""
-        if getattr(self, "_closed", False):
-            return
-        current = getattr(getattr(self, "service", None), "current_identity", None)
-        self._pending_library_selection_key = str(key)
-        self._pending_library_selection_identity_id = str(
-            getattr(current, "identity_id", "") or ""
-        )
-        self._pending_library_selection_generation = getattr(
-            self, "_identity_context_generation", None
-        )
-        self.navigate("library")
-        self._select_pending_library_item()
-
+        return library_navigation.open_library_item(self, key)
     def _select_pending_library_item(self) -> bool:
-        if getattr(self, "_closed", False):
-            return False
-        key = getattr(self, "_pending_library_selection_key", None)
-        if not key:
-            return False
-        pending_identity = getattr(self, "_pending_library_selection_identity_id", None)
-        pending_generation = getattr(self, "_pending_library_selection_generation", None)
-        current = getattr(getattr(self, "service", None), "current_identity", None)
-        current_identity = str(getattr(current, "identity_id", "") or "")
-        generation = getattr(self, "_identity_context_generation", None)
-
-        def clear() -> None:
-            self._pending_library_selection_key = None
-            self._pending_library_selection_identity_id = None
-            self._pending_library_selection_generation = None
-
-        # A key (including a shared content SHA) is not permission to carry a
-        # pending selection across identities, nor across an A -> B -> A cycle.
-        if (pending_identity and current_identity != pending_identity) or (
-            pending_generation is not None and generation != pending_generation
-        ):
-            clear()
-            return False
-        if not hasattr(self, "library_page"):
-            return False
-        if self.library_page.select_key(key):
-            clear()
-            return True
-        entries = list(getattr(self, "_library_entries_cache", ()))
-        if not entries:
-            # Keep the request while the initial Library refresh is pending.
-            return False
-        full_keys = {str(item.get("key") or "") for item in entries}
-        if key in full_keys:
-            self.toast("Ce livre est masqué par les filtres actifs de la Bibliothèque.", 5)
-        else:
-            self.toast("Ce livre n’est plus présent dans la Bibliothèque.", 5)
-        clear()
-        return False
-
+        return library_navigation.select_pending_library_item(self)
     def _render_library(self, entries: list[dict[str, Any]] | None = None) -> None:
         if not hasattr(self, "library_page"):
             return
