@@ -493,8 +493,19 @@ class MainWindow(Adw.ApplicationWindow):
         if hasattr(self, "busy_revealer") and self._active_tasks:
             count = len(self._active_tasks)
             prefix = f"{count} opérations · " if count > 1 else ""
+            # Progress can be delivered after its operation completed.
+            # Never overwrite the live task banner with a stale label.
+            active_labels = tuple(row[1] for row in self._active_tasks.values())
+            display_label = str(label)
+            if not any(
+                display_label == active or display_label.startswith(active + " ")
+                for active in active_labels
+            ):
+                _priority, display_label, _kind = min(
+                    self._active_tasks.values(), key=lambda row: row[0]
+                )
             self.busy_label.set_visible(True)
-            self.busy_label.set_label("En cours · " + prefix + str(label))
+            self.busy_label.set_label("En cours · " + prefix + display_label)
         return False
 
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
