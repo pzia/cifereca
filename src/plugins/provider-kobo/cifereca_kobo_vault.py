@@ -8,6 +8,8 @@ import httpx
 
 from cifereca.plugin_api import ProviderError
 
+from cifereca_kobo_policy import _strict_product_id
+
 
 
 class KoboVaultError(ProviderError):
@@ -290,6 +292,17 @@ class KoboVaultClient:
             if isinstance(items, list):
                 for raw in items:
                     if isinstance(raw, dict):
+                        # This is the provider's last trust boundary before
+                        # Core receives product identifiers for a future
+                        # account-specific acquisition. Reject ambiguous IDs
+                        # here as well as in advisory policy counters: Core's
+                        # legacy reader does not yet consume that policy.
+                        if _strict_product_id(raw) is None:
+                            self.last_manifest_rejections.append({
+                                "type": "invalid_shape",
+                                "reason": "unverifiable_product_id",
+                            })
+                            continue
                         rows.append(dict(raw))
                     else:
                         self.last_manifest_rejections.append({
