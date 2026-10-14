@@ -395,6 +395,15 @@ class CifericaSession(ProviderSession):
         if not isinstance(query, str) or len(query) > 300 or any(
                 ord(ch) < 32 or ord(ch) == 127 for ch in query):
             raise ContractUnavailable("invalid search query")
+        # The candidate v0.2 GET /search has only q/source_id: it cannot
+        # guarantee provider-side filtering by ISBN, author or language.
+        # Never present a broad query as an exact attributed search.
+        if type(field) is not str or field not in {
+            "all", "title", "author", "isbn", "language",
+        }:
+            raise ContractUnavailable("unsupported candidate search field")
+        if self._mode != "fixture" and field != "all":
+            raise ContractUnavailable("candidate server search field unverified")
         if type(page) is not int or not 0 <= page <= 100:
             raise ContractUnavailable("invalid search page")
         if page:
@@ -414,7 +423,28 @@ class CifericaSession(ProviderSession):
                 raise ContractUnavailable("invalid local results fixture")
             values = candidate_results(data.get(sid, {"items": []}), self.provider_id)
             q = str(query).strip().casefold()
-            rows = [x for x in values if q in x.title.casefold() or q in (x.author or "").casefold()]
+            if field == "isbn":
+                # Exact valid ISBN-13 only; never match a title containing the
+                # same digits, or an unverified provider-specific identifier.
+                canonical = _published_isbn(query.strip())
+                rows = [
+                    x for x in values
+                    if canonical and x.metadata.get("isbn") == canonical
+                ]
+            elif field == "language":
+                rows = [
+                    x for x in values
+                    if str(x.metadata.get("language") or "").casefold() == q
+                ]
+            elif field == "title":
+                rows = [x for x in values if q in x.title.casefold()]
+            elif field == "author":
+                rows = [x for x in values if q in (x.author or "").casefold()]
+            else:
+                rows = [
+                    x for x in values
+                    if q in x.title.casefold() or q in (x.author or "").casefold()
+                ]
         else:
             # Explicit user search only; candidate HTTP is NOT confirmed v0.2.
             data = self._client.get("/api/v1/search", params={"source_id": sid, "q": str(query)})
