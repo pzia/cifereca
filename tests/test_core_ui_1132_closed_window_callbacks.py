@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 
 from cifereca.gui.window_close import close_window_resources
 from cifereca.gui import feedback_timers
+from cifereca.gui.activity_result_controller import activity_result
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,10 @@ RUNNER = ROOT / "src/cifereca/gui/task_runner.py"
 
 
 def _unbound_method(path: Path, owner: str, method_name: str):
+    # A moved callback is executed through its real headless controller:
+    # extracting only the MainWindow facade would lose its module binding.
+    if path == MAIN and owner == "MainWindow" and method_name == "_activity_result":
+        return activity_result
     tree = ast.parse(path.read_text(encoding="utf-8"))
     cls = next(x for x in tree.body
                if isinstance(x, ast.ClassDef) and x.name == owner)
