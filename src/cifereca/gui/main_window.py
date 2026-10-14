@@ -38,7 +38,7 @@ from .paris_adept_presentation import normal_paris_adept_summary
 from .settings_model import SettingsCommitController, SettingsRevisionState
 from .settings_draft import build_settings_draft, SettingsValidationError
 from .diagnostic_presentation import diagnostic_plugin_rows
-from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
+from . import loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_recommendation_controller, shell_page_controller, library_navigation, header_action_controller, plugin_reload_controller, library_render_controller, library_detail_controller
 from .search_state import SearchStateField
 from .settings_action_bars import build_settings_action_bars
 from .settings_sync_section import build_kobo_sync_section, kobo_backup_action_state
@@ -2599,36 +2599,9 @@ class MainWindow(Adw.ApplicationWindow):
         return None
 
     def _add_book_recommendation_action(self, detail, item) -> None:
-        if self._book_recommendation_target(item) is None:
-            return
-        button = self.action_button(
-            "Recommander à partir de ce livre",
-            "starred-symbolic",
+        return book_recommendation_controller.add_book_recommendation_action(
+            self, detail, item,
         )
-        button._cifereca_action_id = "recommend-from-book"
-        button._cifereca_action_priority = 25
-
-        def recommend(_button):
-            target = self._book_recommendation_target(item)
-            if target is None:
-                self.toast("Le service de recommandation n’est plus disponible.")
-                return
-            service, book = target
-            try:
-                route = str(service.recommend_from_book(book) or "").strip()
-            except Exception as exc:
-                self.show_error(str(exc), "Recommandation impossible")
-                return
-            if not route:
-                self.show_error(
-                    "Le service n’a fourni aucune page à ouvrir.",
-                    "Recommandation impossible",
-                )
-                return
-            self.navigate(route)
-
-        button.connect("clicked", recommend)
-        detail.add_actions([button])
 
     def _library_selected(self, row: BookListItem | None) -> None:
         return library_detail_controller.library_selected(
