@@ -80,7 +80,7 @@ def test_session_rejection_count_makes_valid_subset_non_authoritative_then_reset
         rows = [{"product_id": "good-book", "owned": True}]
         if state["invalid"]:
             rows += [
-                {"id": "different", "product_id": "spoof", "owned": True},
+                {"id": "PRIVATE_FOREIGN_ID", "product_id": "spoof", "owned": True},
                 {"product_id": 1234, "id": "coerced", "owned": True},
             ]
         return httpx.Response(200, json={"items": rows, "next_cursor": None})
@@ -122,7 +122,7 @@ def test_session_rejection_count_makes_valid_subset_non_authoritative_then_reset
         assert second["acquisition_authorized"] is False
         assert len(calls) == 2
         public = json.dumps(second) + json.dumps(first)
-        for secret in ("PRIVATE", "good-book", "different", "spoof", "coerced"):
+        for secret in ("PRIVATE_FOREIGN_ID", "good-book", "spoof", "coerced"):
             assert secret not in public
     finally:
         session.close()
