@@ -686,12 +686,13 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                     warnings.append(
                         f"Doublon {index}/{total} : {min(count, 1_000_000)} avertissement(s) du service"
                     )
-            except Exception as exc:
+            except Exception:
                 # A cancelled destructive mutation must stop the batch. Never
-                # expose placement IDs or the exception's private path.
+                # expose placement IDs, exception messages *or exception class
+                # names* (third-party brokers may generate private class names).
                 control.check_cancelled()
                 failures += 1
-                warnings.append(f"Doublon {index}/{total} : {type(exc).__name__}")
+                warnings.append(f"Doublon {index}/{total} : échec du service")
         # Cancellation during the final mutation must not report completion.
         control.check_cancelled()
         if total:
