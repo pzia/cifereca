@@ -58,6 +58,7 @@ from .task_state import register_task_start, register_task_finish
 from .task_progress_presentation import live_task_progress_label
 from .window_close import close_window_resources
 from .startup_page import build_startup_page
+from .timeout_policy import bounded_seconds
 from .timer_lifecycle import cancel_source
 from .loan_view import (
     LOAN_FILTER_LABELS,
@@ -316,7 +317,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._cancel_notification_hide()
         self.notification_label.set_label(str(message))
         self.notification_revealer.set_reveal_child(True)
-        bounded_timeout = max(1, min(int(timeout), 10))
+        bounded_timeout = bounded_seconds(timeout)
         self._notification_hide_source = GLib.timeout_add_seconds(
             bounded_timeout,
             self._hide_notification,
@@ -418,7 +419,7 @@ class MainWindow(Adw.ApplicationWindow):
             return
         self._cancel_activity_hide()
         self._activity_hide_source = GLib.timeout_add_seconds(
-            max(1, int(delay)),
+            bounded_seconds(delay, maximum=3600, default=4),
             self._hide_activity_feedback,
         )
 
