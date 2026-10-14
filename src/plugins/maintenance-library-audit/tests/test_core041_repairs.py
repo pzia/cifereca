@@ -125,7 +125,9 @@ def test_duplicate_cleanup_reports_mutation_failure_as_failed_result():
     assert result.ok is False
     assert result.changed==0
     assert result.facts['failures']==1
-    assert result.warnings == ('Doublon 1/1 : échec du service',)
+    # The planning warning is retained, followed by one redacted run failure.
+    assert result.warnings[-1] == 'Doublon 1/1 : échec du service'
+    assert any('Chaque suppression' in message for message in result.warnings)
 
 
 def test_naming_repair_reports_unsuccessful_mutation_result():
