@@ -858,7 +858,19 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         changed = 0
         failures = 0
         total = len(pairs)
-        warnings: list[str] = list(plan.warnings)
+        # A cached or supplied plan can contain arbitrary warning text. Only
+        # publish diagnostics reconstructed from this tool's known facts:
+        # never pass paths, book titles or tokens from plan.warnings to GTK.
+        warnings: list[str] = []
+        if pairs:
+            warnings.append(
+                "Chaque suppression est revérifiée par Core comme doublon du même artefact."
+            )
+        read_failures = plan.facts.get("read_failures", 0)
+        if type(read_failures) is int and 0 < read_failures <= 1_000_000:
+            warnings.append(
+                f"{read_failures} artefact(s) non inspecté(s) : broker library.read en erreur."
+            )
         control.check_cancelled()
         if not total:
             control.report(message="Aucun doublon physique à nettoyer")
