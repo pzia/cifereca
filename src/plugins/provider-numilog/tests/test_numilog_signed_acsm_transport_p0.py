@@ -272,3 +272,64 @@ def test_loopback_redirect_cannot_replay_the_same_signed_token(tmp_path):
         _assert_clean(tmp_path)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("destination", (
+    "https://entrepot2r.numilog.com.evil.example/fulfillment/evil.acsm",
+    "http://entrepot2r.numilog.com/fulfillment/evil.acsm",
+    "https://entrepot2r.numilog.com:8443/fulfillment/evil.acsm",
+))
+def test_second_redirect_from_allowed_signed_acsm_is_rejected_before_network(
+    tmp_path, destination,
+):
+    """Allowed first hop does not authorize any subsequent destination."""
+    seen = []
+
+    def handler(request):
+        url = str(request.url)
+        seen.append(url)
+        if url == READ_BOOK:
+            return httpx.Response(302, headers={"location": SIGNED})
+        if url == SIGNED:
+            return httpx.Response(302, headers={"location": destination})
+        raise AssertionError("Unsafe third HTTP request was actually sent")
+
+    session, diag, acquisition = setup(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError, match="destination réseau inattendue"):
+            session._download(READ_BOOK, tmp_path / "target.epub")
+        assert seen == [READ_BOOK, SIGNED]
+        assert acquisition.calls == []
+        assert "SYNTHETIC_NOT_A_CREDENTIAL" not in repr(diag.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+def test_stream_body_limit_is_enforced_even_if_content_length_is_falsely_small(tmp_path):
+    """The bytes actually read override the server's declared size."""
+    seen = []
+
+    def handler(request):
+        url = str(request.url)
+        seen.append(url)
+        if url == READ_BOOK:
+            return httpx.Response(302, headers={"location": SIGNED})
+        assert url == SIGNED
+        return httpx.Response(
+            200, content=b"x" * 1500, headers={
+                "content-type": "application/octet-stream",
+                "content-length": "8",
+            },
+        )
+
+    session, diag, acquisition = setup(tmp_path, handler)
+    session.maximum = 1024
+    try:
+        with pytest.raises(ProviderError, match="trop volumineux"):
+            session._download(READ_BOOK, tmp_path / "target.epub")
+        assert seen == [READ_BOOK, SIGNED]
+        assert acquisition.calls == []
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
