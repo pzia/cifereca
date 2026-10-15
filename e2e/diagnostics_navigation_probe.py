@@ -631,7 +631,13 @@ def main() -> int:
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
-    def begin_constellations_acceptance():
+    def constellation_check(name):
+        origin = constellation_fixture.get("origin_route", "library")
+        if origin == "search":
+            name = "search_" + name.replace("from_library", "from_search")
+        report["checks"]["P0_constellations_" + name] = True
+
+    def begin_constellations_acceptance(origin_route="library"):
         # Real plugin factory + Core public host/registry; only its metadata,
         # identities and task scheduling brokers are isolated here.
         from concurrent.futures import ThreadPoolExecutor
@@ -640,6 +646,17 @@ def main() -> int:
         sys.path.insert(0, str(ROOT / "src/plugins/constellations"))
         from constellations_page import ConstellationsPlugin
         w = window[0]
+        assert w.view_stack.get_visible_child_name() == origin_route
+        constellation_fixture["origin_route"] = origin_route
+        constellation_fixture["listener_count"] = len(w._overview_listeners)
+        history_before = w._navigation_history.current
+        filters_before = (w.library_controls.state(), w.search_controls.state())
+        w.navigate("p0-unknown-route-must-be-inert")
+        assert w.view_stack.get_visible_child_name() == origin_route
+        assert w._navigation_history.current == history_before
+        assert (w.library_controls.state(), w.search_controls.state()) == filters_before
+        assert w.service.current_identity.identity_id == "camille"
+        constellation_check("unknown_route_preserves_real_window_context")
         rows = tuple(w._library_entries_cache[i] for i in (562, 0, 1))
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="p0-constellations")
         constellation_fixture["executor"] = executor
@@ -657,9 +674,11 @@ def main() -> int:
             return handle
         def forbidden_search(*args, **kwargs):
             raise AssertionError("Constellations a lancé une recherche distante implicite")
+        profiles = [{"identity_id": "camille", "label": "Camille"}]
+        constellation_fixture["profiles"] = profiles
         brokers = {
             "metadata": NS(library_entries=library_entries),
-            "identities": NS(identities=lambda: [{"identity_id": "camille", "label": "Camille"}]),
+            "identities": NS(identities=lambda: list(profiles)),
             "tasks": NS(submit=submit),
             "catalog": NS(search=forbidden_search),
         }
@@ -673,16 +692,21 @@ def main() -> int:
         w._pages[page.route] = page
         w._plugin_page_widgets[page.route] = widget
         w.view_stack.add_named(widget, page.route)
-        w._library_selected(w.library_page.selection.get_selected_item())
+        source_page = w.search_page if origin_route == "search" else w.library_page
+        if origin_route == "search":
+            w._search_selected(source_page.selection.get_selected_item())
+        else:
+            w._library_selected(source_page.selection.get_selected_item())
         buttons = [
-            node for node in walk(w.library_page.detail)
+            node for node in walk(source_page.detail)
             if isinstance(node, Gtk.Button)
             and getattr(node, "_cifereca_action_id", "") == "plugin:constellations.explore"
         ]
-        assert len(buttons) == 1, "Action Constellations absente ou dupliquée dans Bibliothèque"
+        assert len(buttons) == 1, f"Action Constellations absente ou dupliquée dans {origin_route}"
+        constellation_fixture["origin_action"] = buttons[0]
         assert plugin.pending is None and plugin.view.center is None
         assert not requests, "Collecte Constellations avant activation utilisateur"
-        report["checks"]["P0_constellations_real_context_action_no_implicit_load"] = True
+        constellation_check("real_context_action_no_implicit_load")
         # Native GTK activation signals exercise the registered Core callback;
         # these steps are not represented as XTEST pointer gestures.
         buttons[0].emit("clicked")
@@ -706,7 +730,7 @@ def main() -> int:
         assert view.origin_book.title == "Notice volume 562"
         assert view.widget.get_mapped() and view.master.widget.get_mapped()
         assert constellation_fixture["requests"], "Snapshot local jamais lu"
-        report["checks"]["P0_constellations_origin_book_and_profile_from_library"] = True
+        constellation_check("origin_book_and_profile_from_library")
         visit_constellation_neighbour("Notice volume 000", constellation_b)
 
     def visit_constellation_neighbour(title, callback):
@@ -720,7 +744,7 @@ def main() -> int:
         wait_constellation_center(title, callback)
 
     def constellation_b():
-        report["checks"]["P0_constellations_native_A_to_B"] = True
+        constellation_check("native_A_to_B")
         visit_constellation_neighbour("Notice volume 001", constellation_c)
 
     def constellation_c():
@@ -728,13 +752,14 @@ def main() -> int:
         assert view.origin_identity == "camille"
         assert view.origin_book.title == "Notice volume 562"
         assert view.back_button.get_sensitive()
-        report["checks"]["P0_constellations_native_B_to_C_keeps_origin"] = True
-        capture("03d-constellations-center-C")
+        constellation_check("native_B_to_C_keeps_origin")
+        suffix = "-search" if constellation_fixture["origin_route"] == "search" else ""
+        capture("03d-constellations-center-C" + suffix)
         view.back_button.emit("clicked")
         wait_constellation_center("Notice volume 000", constellation_back)
 
     def constellation_back():
-        report["checks"]["P0_constellations_native_history_returns_to_B"] = True
+        constellation_check("native_history_returns_to_B")
         constellation_fixture["plugin"].view.origin_button.emit("clicked")
         await_route("library", constellation_returned)
 
@@ -748,13 +773,69 @@ def main() -> int:
             isinstance(node, Gtk.Label) and node.get_text() == "Notice volume 562"
             for node in walk(w.library_page.detail)
         ), "Retour origine sans détail du livre A"
-        report["checks"]["P0_constellations_origin_return_preserves_book_profile_filter"] = True
-        capture("03e-constellations-return-original-library-book")
+        constellation_check("origin_return_preserves_book_profile_filter")
+        origin = constellation_fixture["origin_route"]
+        if origin == "search":
+            assert w.search_controls.state() == library_volume["search_expected"]
+        capture("03e-constellations-return-original-library-book" + ("-search" if origin == "search" else ""))
+        if origin == "search":
+            reads = len(constellation_fixture["requests"])
+            constellation_fixture["profiles"].clear()
+            view = constellation_fixture["plugin"].view
+            view.invalidate()
+            assert view.identity_id() == "" and view.center is None
+            assert "Aucun profil" in view.status.get_text()
+            assert len(constellation_fixture["requests"]) == reads
+            constellation_check("missing_profile_clears_detail_without_metadata_read")
         widget = w._plugin_page_widgets.pop("constellations")
         w.view_stack.remove(widget)
         w._pages.pop("constellations")
         cleanup_constellations()
-        restore_volume_snapshot()
+        assert len(w._overview_listeners) == constellation_fixture["listener_count"]
+        # The old real Gtk.Button must not resurrect an unregistered plugin.
+        constellation_fixture["origin_action"].emit("clicked")
+        assert w.view_stack.get_visible_child_name() == "library"
+        assert "constellations" not in w._pages
+        constellation_check("removed_action_inert_and_subscription_released")
+        if origin == "library":
+            begin_search_origin()
+        else:
+            restore_search_snapshot()
+            restore_volume_snapshot()
+
+    def begin_search_origin():
+        from dataclasses import replace
+        w = window[0]
+        library_volume["search_snapshot"] = {
+            "state": w.search_controls.state(),
+            "local": dict(w._search_local_objects),
+            "remote": list(w._remote_search_results),
+            "objects": dict(w.search_objects),
+            "mode": w._search_mode,
+            "selected": w._selected_search_id,
+            "global_sensitive": w.search_global_button.get_sensitive(),
+        }
+        state = replace(w.search_controls.state(), text="Notice volume 562", field="title",
+                        scope="all", providers=(), types=(), languages=())
+        w.search_controls.set_state(state, notify=False)
+        library_volume["search_expected"] = w.search_controls.state()
+        w._populate_local_search([w._library_entries_cache[562]])
+        assert w.search_page.store.get_n_items() == 1
+        assert w.search_page.select_key("p0-volume-562")
+        w.navigate("search")
+        await_route("search", lambda: begin_constellations_acceptance("search"))
+
+    def restore_search_snapshot():
+        w = window[0]
+        snapshot = library_volume["search_snapshot"]
+        w.search_controls.set_state(snapshot["state"], notify=False)
+        w._search_local_objects = snapshot["local"]
+        w._remote_search_results = snapshot["remote"]
+        w.search_objects = snapshot["objects"]
+        w._search_mode = snapshot["mode"]
+        w._render_search_results()
+        w._selected_search_id = snapshot["selected"]
+        w.search_global_button.set_sensitive(snapshot["global_sensitive"])
 
     def restore_volume_snapshot():
         w = window[0]
