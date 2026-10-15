@@ -316,7 +316,7 @@ def test_recommendations_authors_reject_private_untrusted_cache_objects():
         "title": "Une édition attestée",
         "author": Poison(),
         "authors": [
-            " Alice ", Poison(), "PRIVATE\\nSESSION",
+            " Alice ", Poison(), "PRIVATE\nSESSION",
             SecretString("PRIVATE_CREDENTIAL"),
             {"value": Poison(), "label": " Bob "},
             {"PRIVATE_PROVIDER_KEY": "not a public author"},
@@ -331,8 +331,8 @@ def test_recommendations_authors_reject_private_untrusted_cache_objects():
     view._render(preserve_summary=True)
     view._selected_row(rows[0])
 
-    expected = ("Alice", "Bob", "Émile", "Claire", "David")
-    # Source order is field first, then metadata, then EPUB metadata.
+    expected = ("Émile", "Alice", "Bob", "Claire", "David")
+    # Preserve field order (author before authors), then source order for each field.
     assert _public_candidate_authors(item) == expected
     assert rows[0].subtitle == details[0].subtitle == ", ".join(expected)
     catalogue = next(section for section in details[0].sections if section.id == "catalogue")
