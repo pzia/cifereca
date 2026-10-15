@@ -23,13 +23,14 @@ def kobo_backup_action_state(*, persisted_enabled: bool, draft_enabled: bool, di
         return ("Modifications à enregistrer avant de consulter la synchronisation.", False)
     if persisted_enabled is False:
         return (
-            "Acquisition au démarrage désactivée. La page Synchronisation permet "
-            "de consulter les sources et droits en ligne sans télécharger de livres.", True,
+            "Acquisition au démarrage désactivée par défaut. "
+            "Activez explicitement chaque compte concerné dans Synchronisation ; "
+            "actualiser ses notices ne télécharge aucun livre.", True,
         )
     return (
-        "Acquisition locale configurée au démarrage si l’intervalle est écoulé. "
-        "Consultez chaque compte sur la page Synchronisation et son aperçu local "
-        "sans lancement de lot global depuis Paramètres.", True,
+        "Ancienne préférence globale au démarrage enregistrée, mais inactive : "
+        "elle n’autorise aucun téléchargement. "
+        "Configurez séparément chaque compte dans Synchronisation.", True,
     )
 
 
@@ -51,13 +52,20 @@ def build_kobo_sync_section(
 ) -> KoboSyncSettings:
     """Build original controls in original order, without binding new signals."""
     backup_group = Adw.PreferencesGroup(); backup_group.set_title("Kobo — acquisition locale des fichiers"); section.append(backup_group)
-    backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title("Autoriser les téléchargements Kobo au démarrage")
-    backup_auto_row.set_subtitle(
-        "Tente une acquisition locale à l’ouverture, uniquement si l’intervalle est écoulé. "
-        "N’installe pas de minuterie périodique ; actualiser les notices et droits "
-        "sur la page Synchronisation ne télécharge aucun livre."
+    backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title(
+        "Ancienne préférence globale Kobo · lecture seule"
     )
-    backup_switch = Gtk.Switch(); backup_switch.set_active((config.get("kobo_backup.enabled", False) is True)); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
+    backup_auto_row.set_subtitle(
+        "Conservée pour compatibilité mais sans effet sur les acquisitions. "
+        "Seul le consentement explicite par compte dans Synchronisation "
+        "autorise un téléchargement au démarrage. Aucun timer périodique."
+    )
+    backup_switch = Gtk.Switch()
+    backup_switch.set_active(config.get("kobo_backup.enabled", False) is True)
+    backup_switch.set_sensitive(False)
+    backup_switch.set_valign(Gtk.Align.CENTER)
+    backup_auto_row.add_suffix(backup_switch)
+    backup_group.add(backup_auto_row)
     # The source sync page only refreshes online metadata. Downloading books
     # is a separate, explicit operation with the persisted safety settings.
     manual_row = Adw.ActionRow()
