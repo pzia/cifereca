@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any
 
-from cifereca_kobo_vault import KoboVaultClient
+from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
 from cifereca_kobo_catalog import KoboCatalogService
 from cifereca_kobo_policy import (
     classify_personal_manifest, _strict_account_scope, _strict_product_id,
@@ -577,13 +577,25 @@ class KoboSession(ProviderSession):
         if self.supports_acquisition_display_profile and profile is None:
             profile = self.display_profile
         acsm = include_acsm if self.supports_acquisition_acsm else None
-        return self.client.acquisition(
-            product_id,
-            revision_id=revision_id,
-            mode=mode,
-            display_profile=profile,
-            include_acsm=acsm,
-        )
+        try:
+            return self.client.acquisition(
+                product_id,
+                revision_id=revision_id,
+                mode=mode,
+                display_profile=profile,
+                include_acsm=acsm,
+            )
+        except KoboVaultError as exc:
+            # A direct delegated 403 must affect only this verified account,
+            # just as Core's executor does. Persist the denial *before*
+            # propagating so the next book cannot produce another POST.
+            # Descriptor/ACSM rights remain an independent decision.
+            if (
+                type(mode) is str and mode.casefold() == "delegated"
+                and type(exc.status_code) is int and exc.status_code == 403
+            ):
+                self._cifereca_delegation_forbidden = True
+            raise
 
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         if item.owned:
