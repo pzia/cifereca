@@ -59,6 +59,96 @@ class UiPerfMonitor:
             else "unknown"
         )
 
+    def enable_detailed_capture(self, enabled: bool) -> None:
+        """Explicit opt-in timeline: aggregate measurements stay passive."""
+        if type(enabled) is not bool:
+            raise ValueError("invalid_performance_capture_option")
+        with self._lock:
+            if enabled and not self._detailed_capture:
+                self._phase_events.clear()
+                self._events_dropped = 0
+                self._started_at = self._clock()
+            self._detailed_capture = enabled
+
+    def record_phase(
+        self, category: str, phase: str, duration_ms: float, *,
+        operation_id: int | None = None,
+        trigger: str = "unspecified", outcome: str = "unknown",
+    ) -> bool:
+        """Store observed elapsed time only; reject raw private metadata."""
+        try:
+            elapsed = float(duration_ms)
+        except (TypeError, ValueError, OverflowError):
+            elapsed = float("nan")
+        if not math.isfinite(elapsed) or not 0 <= elapsed <= 86_400_000:
+            with self._lock:
+                self._invalid_samples += 1
+            return False
+        category = category if type(category) is str and category in _PERF_CATEGORIES else "other"
+        if type(phase) is not str or phase not in _PERF_PHASES:
+            with self._lock:
+                self._invalid_samples += 1
+            return False
+        trigger = trigger if type(trigger) is str and trigger in _PERF_TRIGGERS else "unspecified"
+        outcome = outcome if type(outcome) is str and outcome in _PERF_OUTCOMES else "unknown"
+        operation_id = (
+            operation_id if type(operation_id) is int
+            and 0 < operation_id <= 1_000_000_000 else None
+        )
+        key = f"{category}.{phase}"
+        with self._lock:
+            self._phase_samples[key].append(elapsed)
+            if self._detailed_capture:
+                if len(self._phase_events) == self._max_events:
+                    self._events_dropped += 1
+                self._phase_events.append({
+                    "operation_id": operation_id,
+                    "category": category,
+                    "phase": phase,
+                    "elapsed_ms": round(elapsed, 2),
+                    "at_ms": round(max(0.0, (self._clock() - self._started_at) * 1000), 2),
+                    "trigger": trigger,
+                    "outcome": outcome,
+                })
+        return True
+
+    def performance_report(self) -> dict[str, object]:
+        """Versioned, bounded, offline export; no raw operation labels."""
+        with self._lock:
+            samples = {
+                key: list(values) for key, values in self._phase_samples.items()
+                if values
+            }
+            events = [dict(row) for row in self._phase_events]
+            enabled = self._detailed_capture
+            dropped = self._events_dropped
+            invalid = self._invalid_samples
+        stats = {}
+        for key, values in sorted(samples.items()):
+            ordered = sorted(values)
+            p95 = max(0, min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.95))))
+            stats[key] = {
+                "count": len(ordered),
+                "p50_ms": round(statistics.median(ordered), 2),
+                "p95_ms": round(ordered[p95], 2),
+                "max_ms": round(ordered[-1], 2),
+            }
+        return {
+            "schema": "cifereca.performance.phases/1",
+            "measurement_origin": self._measurement_origin,
+            "no_samples": not bool(stats),
+            "detailed_capture_enabled": enabled,
+            "stats": stats,
+            "events": events,
+            "events_dropped": dropped,
+            "invalid_samples": invalid,
+            "limits": {
+                "max_samples_per_phase": self.max_samples,
+                "max_events": self._max_events,
+            },
+            "remote_upload": False,
+        }
+
     def record(self, operation: str, duration_ms: float) -> None:
         value = float(duration_ms)
         with self._lock:
