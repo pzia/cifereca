@@ -343,16 +343,21 @@ def _refresh_sync_page(self) -> None:
                 if can_download else
                 "Compte Kobo connecté et capable de téléchargement requis"
             )
-            row.add_suffix(download_button)
             stop_download = self.action_button("Annuler le téléchargement", "process-stop-symbolic")
             stop_download.set_sensitive(False)
-            row.add_suffix(stop_download)
+            # Do not add these actions to the existing source row: its
+            # refresh, preview and audit buttons already consume horizontal
+            # space. At 1366px GTK otherwise squeezes the source title into
+            # a one-character column and expands the row to several thousand
+            # pixels, putting even unrelated audit actions off-screen.
             acquisition_row = Adw.ActionRow()
             acquisition_row.set_title("Téléchargement local · confirmation obligatoire")
             acquisition_row.set_subtitle(
                 "Non préparé · aucun fichier téléchargé. Vérifiez d’abord les droits et fichiers."
             )
             acquisition_row.set_subtitle_lines(0)
+            acquisition_row.add_suffix(download_button)
+            acquisition_row.add_suffix(stop_download)
             group.add(acquisition_row)
             acquisition_state = {"serial": 0, "cancel": None}
 
