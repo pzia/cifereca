@@ -1392,6 +1392,42 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                     if len(changes) < 100:
                         changes.append(f"Supprimer le doublon n°{len(pairs)}")
 
+        # A placement may appear in overlapping Core read views. Publishing
+        # the same duplicate twice makes run() reject the *entire* destructive
+        # plan, including independent safe candidates. Worse, competing
+        # keepers or a keeper that is deleted elsewhere make its preview
+        # ambiguous. Drop those references before presenting any actions;
+        # Core will still revalidate every retained delete_duplicate call.
+        keepers_by_duplicate: dict[str, set[str]] = {}
+        for duplicate_id, keep_id in pairs:
+            keepers_by_duplicate.setdefault(duplicate_id, set()).add(keep_id)
+        duplicate_ids = set(keepers_by_duplicate)
+        keeper_ids = {keep for keeps in keepers_by_duplicate.values() for keep in keeps}
+        ambiguous_ids = duplicate_ids & keeper_ids
+        ambiguous_ids.update(
+            duplicate_id for duplicate_id, keep_ids in keepers_by_duplicate.items()
+            if len(keep_ids) != 1
+        )
+        if ambiguous_ids:
+            # This is an incomplete scan/preview, not a successful cleanup.
+            # Never publish the identifiers themselves in the diagnostic.
+            read_failures.append("unavailable")
+        safe_pairs: list[tuple[str, str]] = []
+        seen_safe_duplicates: set[str] = set()
+        for duplicate_id, keep_id in pairs:
+            if (
+                duplicate_id in ambiguous_ids or keep_id in ambiguous_ids
+                or duplicate_id in seen_safe_duplicates
+            ):
+                continue
+            seen_safe_duplicates.add(duplicate_id)
+            safe_pairs.append((duplicate_id, keep_id))
+        pairs = safe_pairs
+        changes = [
+            f"Supprimer le doublon n°{index}"
+            for index in range(1, min(100, len(pairs)) + 1)
+        ]
+
         warnings: list[str] = []
         if pairs:
             warnings.append(
