@@ -108,3 +108,23 @@ def test_overview_update_same_profile_still_coalesces_during_current_worker():
     assert view._overview_refresh_pending is True
     assert view.GLib.sources == {}
     assert rendered == []
+
+
+def test_last_profile_removed_while_busy_immediately_revokes_private_result():
+    rows = [{"identity_id": "default", "selected": True}]
+    view, dropdown, _, cancelled, rendered, labels = _busy_view(rows)
+    rows.clear()
+
+    view._identity_overview_changed()
+
+    assert view._identity_ids == []
+    assert dropdown.selected == 0xFFFFFFFF
+    assert view.selected_identity_id() is None
+    assert view._active_identity_id is None
+    assert cancelled == ["old-profile-worker"]
+    assert view._generation == 42
+    assert view._ranked == []
+    assert rendered[0] == ("rows", ())
+    assert view._base_complete(41, None, None) is False
+    assert labels[-1] == "Aucun profil disponible."
+    assert not view._overview_refresh_pending
