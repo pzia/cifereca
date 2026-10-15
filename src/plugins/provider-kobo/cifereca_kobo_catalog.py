@@ -22,6 +22,36 @@ def _unsafe_encoded_cover_path(path: str) -> bool:
     return True
 
 
+def _unsafe_cover_resource_path(path: str) -> bool:
+    """Only image-like paths cross the public, auto-loaded thumbnail boundary.
+
+    urljoin() normalizes ordinary '..' segments, so inspect the *original*
+    source path before joining, including repeatedly percent-encoded slashes.
+    Do not rewrite the URL or accept partially decoded opaque paths.
+    """
+    private_segments = {
+        "acquire", "acquisition", "download", "downloads", "fulfillment",
+        "license", "licence", "licenses", "licences", "oauth", "token",
+        "tokens", "authorization", "authorize", "delegate", "drm", "adept",
+    }
+    for _ in range(5):
+        segments = (
+            segment.casefold() for segment in path.replace("\\", "/").split("/")
+            if segment
+        )
+        if any(
+            segment == ".." or segment in private_segments
+            or segment.endswith((".acsm", ".lcpl", ".epub", ".kepub", ".pdf"))
+            for segment in segments
+        ):
+            return True
+        decoded = unquote(path)
+        if decoded == path:
+            return False
+        path = decoded
+    return True
+
+
 class KoboCatalogService:
     """Credential-bound Kobo catalogue projection.
 
@@ -53,7 +83,7 @@ class KoboCatalogService:
                 return None
             try:
                 raw = urlsplit(value)
-                if raw.query or raw.fragment:
+                if raw.query or raw.fragment or _unsafe_cover_resource_path(raw.path):
                     return None
                 if not raw.scheme and not raw.netloc and '/' not in raw.path and '.' not in raw.path:
                     return None
@@ -88,6 +118,7 @@ class KoboCatalogService:
                     and port not in (None, 443 if parsed.scheme == 'https' else 80)
                 )
                 or _unsafe_encoded_cover_path(parsed.path)
+                or _unsafe_cover_resource_path(parsed.path)
             ):
                 return None
             host = hostname.rstrip('.').casefold()
