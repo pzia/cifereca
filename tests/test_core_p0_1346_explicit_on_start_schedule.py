@@ -263,3 +263,31 @@ def test_failed_attempt_clock_read_or_write_never_launches_automatically(
         assert mark_on_start_attempt(service, account) is False
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("invalid", ["BAD-CLOCK", "-1", "999999999999999999999", "0x10"])
+def test_invalid_persisted_clock_never_triggers_download(tmp_path, invalid):
+    service = _service(tmp_path)
+    try:
+        _enable_on_start(service)
+        source = SynchronizationBrokerImpl._source_id(service.accounts[0])
+        service.storage.metadata_set(
+            "sync.source.materialization.last_attempt." + source, invalid,
+        )
+        assert on_start_due(service, service.accounts[0]) is False
+    finally:
+        service.close()
+
+
+def test_future_attempt_clock_does_not_cause_automatic_retry(tmp_path):
+    service = _service(tmp_path)
+    try:
+        _enable_on_start(service)
+        source = SynchronizationBrokerImpl._source_id(service.accounts[0])
+        service.storage.metadata_set(
+            "sync.source.materialization.last_attempt." + source,
+            str(int(time.time()) + 3600),
+        )
+        assert on_start_due(service, service.accounts[0]) is False
+    finally:
+        service.close()
