@@ -220,3 +220,44 @@ def test_multiple_identities_are_never_fused_into_one_credential():
     # A newly rebound account cannot borrow the other identity's authorization.
     accounts[0].identity_id = "b"
     assert {s.credential_id for s in kobo_on_start_sessions(host)} == {"c2"}
+
+
+@pytest.mark.parametrize("malformed", ["garbage", " True ", "2", "", "false", "0"])
+def test_malformed_or_disabled_source_switch_never_enables_automatic_download(
+    tmp_path, malformed,
+):
+    service = _service(tmp_path)
+    try:
+        _enable_on_start(service)
+        source = SynchronizationBrokerImpl._source_id(service.accounts[0])
+        service.storage.metadata_set("sync.source.enabled." + source, malformed)
+        assert kobo_on_start_sessions(service) == ()
+    finally:
+        service.close()
+
+
+def test_failed_attempt_clock_read_or_write_never_launches_automatically(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path)
+    try:
+        _enable_on_start(service)
+        account = service.accounts[0]
+        original_get = service.storage.metadata_get
+        monkeypatch.setattr(
+            service.storage, "metadata_get",
+            lambda key: (_ for _ in ()).throw(OSError("private-path"))
+            if key.startswith("sync.source.materialization.last_attempt.") else original_get(key),
+        )
+        assert on_start_due(service, account) is False
+        monkeypatch.undo()
+        original_set = service.storage.metadata_set
+        monkeypatch.setattr(
+            service.storage, "metadata_set",
+            lambda key, value: (_ for _ in ()).throw(OSError("private-path"))
+            if key.startswith("sync.source.materialization.last_attempt.")
+            else original_set(key, value),
+        )
+        assert mark_on_start_attempt(service, account) is False
+    finally:
+        service.close()
