@@ -21,8 +21,8 @@ def view(artifact, *, prefix, book_id="shared-book", identity="current"):
         book=NS(book_id=book_id),
         artifacts=(),  # Legacy read view without a declared artifact list.
         placements=(
-            ArtifactPlacementRef(f"{prefix}-keep", artifact, identity),
-            ArtifactPlacementRef(f"{prefix}-duplicate", artifact, identity),
+            ArtifactPlacementRef(f"{prefix}-0-keep", artifact, identity),
+            ArtifactPlacementRef(f"{prefix}-1-duplicate", artifact, identity),
         ),
     )
 
@@ -74,8 +74,8 @@ def test_independent_views_with_same_book_id_are_not_silently_skipped():
     plan = tool.plan(MaintenanceContext(scope="library", identity_id="current"))
     assert context.calls == [A, B]
     assert plan.facts["pairs"] == (
-        ("a-duplicate", "a-keep"),
-        ("b-duplicate", "b-keep"),
+        ("a-1-duplicate", "a-0-keep"),
+        ("b-1-duplicate", "b-0-keep"),
     )
     assert plan.facts["read_failures"] == 0
     assert plan.changes == (
@@ -86,7 +86,7 @@ def test_independent_views_with_same_book_id_are_not_silently_skipped():
     result = tool.run(plan, control)
     assert result.changed == 2 and result.ok
     assert [(r.placement_id, r.keep_placement_id) for r in context.requests] == [
-        ("a-duplicate", "a-keep"), ("b-duplicate", "b-keep"),
+        ("a-1-duplicate", "a-0-keep"), ("b-1-duplicate", "b-0-keep"),
     ]
     assert [event.get("current") for event in control.events] == [0, 1, 2]
     assert all(event.get("total") == 2 for event in control.events)
@@ -104,7 +104,7 @@ def test_replayed_views_with_identical_placements_remain_deduplicated():
         MaintenanceContext(scope="library", identity_id="current")
     )
     assert context.calls == ["artifact-one", "artifact-two", "artifact-three"]
-    assert plan.facts["pairs"] == (("a-duplicate", "a-keep"),)
+    assert plan.facts["pairs"] == (("a-1-duplicate", "a-0-keep"),)
     assert plan.facts["read_failures"] == 0
     assert plan.changes == ("Supprimer le doublon n°1",)
 
@@ -117,5 +117,5 @@ def test_another_identity_remains_outside_its_scoped_cleanup_plan():
     plan = DuplicateCleanupTool().activate(context).plan(
         MaintenanceContext(scope="library", identity_id="current")
     )
-    assert plan.facts["pairs"] == (("b-duplicate", "b-keep"),)
+    assert plan.facts["pairs"] == (("b-1-duplicate", "b-0-keep"),)
     assert plan.changes == ("Supprimer le doublon n°1",)
