@@ -405,6 +405,73 @@ class LanguageAuditTool(_ReadOnlyTool):
         )
 
 
+    def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
+        """Render only language audit facts/ordinals that this tool generates.
+
+        A restored plan is an untrusted input, not a safe UI string source.
+        """
+        facts = plan.facts
+        keys = {
+            "language_values", "invalid", "noncanonical",
+            "malformed", "normalization_failures",
+        }
+        valid = plan.tool_id == self.info.id and type(facts) is dict and set(facts) == keys
+        counts = {}
+        if valid:
+            for key in keys:
+                value = facts.get(key)
+                if type(value) is not int or not 0 <= value <= 1_000_000:
+                    valid = False
+                    break
+                counts[key] = value
+        if valid and (
+            counts["invalid"] + counts["noncanonical"]
+            + counts["normalization_failures"] > counts["language_values"]
+        ):
+            valid = False
+        expected = (
+            f'{counts["language_values"]} valeur(s) de langue ; '
+            f'{counts["invalid"]} invalide(s), '
+            f'{counts["noncanonical"]} non canonique(s).'
+        ) if valid else ""
+        if valid and (counts["malformed"] or counts["normalization_failures"]):
+            expected += (
+                f' {counts["malformed"]} valeur(s) non textuelle(s) ;'
+                f' {counts["normalization_failures"]} normalisation(s) indisponible(s).'
+            )
+        if valid:
+            valid = type(plan.summary) is str and plan.summary == expected
+        safe_warnings = []
+        if valid:
+            valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 12
+            if valid:
+                import re
+                for warning in plan.warnings:
+                    if type(warning) is not str or re.fullmatch(
+                        r"Langue (?:non textuelle|non vérifiable|invalide|non canonique) : notice n°[1-9][0-9]{0,6}",
+                        warning,
+                    ) is None:
+                        valid = False
+                        break
+                    safe_warnings.append(warning)
+        control.check_cancelled()
+        if not valid:
+            control.report(message="Audit des langues impossible : plan invalide")
+            control.check_cancelled()
+            return MaintenanceResult(
+                ok=False, changed=0,
+                summary="Audit des langues non vérifiable : plan invalide.",
+                warnings=("Plan de langues invalide : relancez l’analyse.",),
+                facts={"invalid_plan": 1},
+            )
+        control.report(message=expected)
+        control.check_cancelled()
+        return MaintenanceResult(
+            ok=True, changed=0, summary=expected,
+            warnings=tuple(safe_warnings), facts=counts,
+        )
+
+
 class NamingAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
         id="library.naming.audit",
