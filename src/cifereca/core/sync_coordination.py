@@ -24,6 +24,11 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     not prevent the other sources from being synchronized.
     """
     result: dict[str, Any] = {"provider": account.provider_id, "account_id": account.unique_id or "primary"}
+    # The low-level facade is callable without the public broker. Re-evaluate
+    # the same enablement switch under the shared acquisition lock, before
+    # any provider/session request. A corrupt preference must fail closed.
+    if not self.sync_source_enabled(account):
+        return {**result, "status": "skipped", "reason": "source_disabled"}
     session = self._session_for_account(account)
     if not session.connected:
         raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
@@ -62,7 +67,13 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
         # processes; never wait for the lock on a caller/UI thread.
         with InterProcessLock(acquisition_lock_file()):
             result = self._synchronize_account_source_impl(account, deep=deep, control=control)
-        self._record_action(account.identity_id, "synchronization", "success", provider_id=account.provider_id, facts={"deep": bool(deep)})
+        outcome = "skipped" if result.get("status") == "skipped" else "success"
+        self._record_action(
+            account.identity_id, "synchronization", outcome,
+            provider_id=account.provider_id, facts={
+                "deep": bool(deep), "reason": result.get("reason", ""),
+            },
+        )
         return result
     except LockBusyError as exc:
         self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "operation_busy"})
